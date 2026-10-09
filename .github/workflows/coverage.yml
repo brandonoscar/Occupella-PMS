@@ -4,6 +4,7 @@ name: coverage
 #   - overall coverage can't drop below the baseline in ci/thresholds.toml, which only goes up;
 #   - lines a PR changes need changed_lines_min coverage (diff-cover, Python and SQL);
 #   - the money module needs its statement and branch floors.
+# The same image also lints our PL/pgSQL statically (plpgsql_check), before the tests run.
 on:
   pull_request:
   push:
@@ -63,12 +64,15 @@ jobs:
           fi
           echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
       - run: pip install -r requirements-dev.txt
+      - name: Lint our PL/pgSQL (plpgsql_check, every warning class)
+        run: coverage run -m tools.sql_lint
       - name: Every test, with Python and PL/pgSQL coverage
+        if: ${{ !cancelled() }}
         env:
           PMS_SQL_COVERAGE_OUT: coverage/sql-raw.json
           HYPOTHESIS_PROFILE: pr
         run: |
-          coverage run -m pytest -q -p no:cacheprovider
+          coverage run -a -m pytest -q -p no:cacheprovider
           coverage xml -o coverage/python.xml
       - name: Money module floors and the overall baseline
         run: |

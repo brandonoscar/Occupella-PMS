@@ -76,6 +76,9 @@ statement = "The app role reads the ledger and writes only through the ledger fu
 tests = [
   "tests/test_privileges.py::test_app_role_table_privileges_are_exact",
   "tests/test_privileges.py::test_app_role_function_privileges_are_exact",
+  "tests/test_privileges.py::test_every_relation_and_function_is_pinned",
+  "tests/test_privileges.py::test_no_function_that_runs_as_owner_is_callable_by_public",
+  "tests/test_privileges.py::test_no_role_but_the_owner_may_delete_or_truncate",
   "tests/test_trust_model.py::test_app_role_sets_up_and_posts_through_functions_only",
 ]
 

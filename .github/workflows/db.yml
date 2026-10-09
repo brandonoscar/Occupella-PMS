@@ -1,9 +1,10 @@
 name: db
 
 # Migrations: lint new ones with squawk, apply every one to an empty database, check down/up,
-# and fail on schema drift. On PRs that touch the self-host build, the self-host check runs
-# after this job (as a reusable call to selfhost.yml), so PR CI never runs more than 8 jobs at
-# once.
+# fail on schema drift, then upgrade a database that already holds money (the base branch's
+# schema and seed) and check that money is untouched. On PRs that touch the self-host build, the
+# self-host check runs after this job (as a reusable call to selfhost.yml), so PR CI never runs
+# more than 8 jobs at once.
 on:
   pull_request:
   push:
@@ -98,6 +99,10 @@ jobs:
         run: scripts/dump_schema.sh
       - name: Fail if db/schema.sql drifted
         run: git diff --exit-code -- db/schema.sql
+      - name: Upgrade a database that holds money; committed migrations unedited
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python -m tools.check_upgrade --base "$BASE_SHA"
 
   selfhost:
     name: selfhost (PR)
