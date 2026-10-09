@@ -9,7 +9,12 @@ import psycopg
 import pytest
 from helpers import balance, make_pmc, running_balance_breaks, transfer, transfer_batch
 
-LEDGER_HISTORY = ["pgledger_transfers", "pgledger_entries", "trust_ledger_accounts"]
+LEDGER_HISTORY = [
+    "pgledger_transfers",
+    "pgledger_entries",
+    "trust_ledger_accounts",
+    "trust_idempotency_keys",
+]
 REWRITES = {
     "UPDATE": "UPDATE {table} SET created_at = created_at",
     "DELETE": "DELETE FROM {table}",

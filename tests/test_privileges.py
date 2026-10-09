@@ -26,6 +26,7 @@ TABLES = {
     "trust_properties": {"SELECT", "INSERT"},
     "trust_tenants": {"SELECT", "INSERT"},
     "trust_ledger_accounts": {"SELECT"},
+    "trust_idempotency_keys": set(),  # only trust_post_transfers reads and writes it
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
@@ -44,6 +45,7 @@ FUNCTIONS = {
     "pgledger_create_transfers(transfer_request[])": {"trust_app"},
     "pgledger_create_transfers(transfer_request[],timestamptz,jsonb)": {"trust_app"},
     "trust_open_ledger_account(uuid,uuid,text,uuid,uuid,uuid)": {"trust_app"},
+    "trust_post_transfers(uuid,text,transfer_request[],timestamptz,jsonb)": {"trust_app"},
     # Opens a bare pgledger account with no trust kind; only trust_open_ledger_account may.
     "pgledger_create_account(text,text,boolean,boolean,jsonb)": set(),
     # Id helpers and checks that read nothing they are not handed: callable by anyone.
@@ -66,6 +68,7 @@ MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUB
 SECURITY_DEFINER = {
     "pgledger_create_transfers(transfer_request[],timestamptz,jsonb)",
     "trust_open_ledger_account(uuid,uuid,text,uuid,uuid,uuid)",
+    "trust_post_transfers(uuid,text,transfer_request[],timestamptz,jsonb)",
 }
 
 

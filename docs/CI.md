@@ -64,7 +64,8 @@ at the ledger, and check the money invariants after every step:
 - no held account below zero;
 - book cash equals what is held for others;
 - history is append-only;
-- running balances chain.
+- running balances chain;
+- an idempotency key posts once, and is refused for a different posting.
 
 `ci/registry.toml` maps every required invariant to its test or to the open issue for what isn't
 built yet. PRs run 200 examples per property. Nightly runs 16 jobs, each with its own seed and
@@ -72,8 +73,9 @@ built yet. PRs run 200 examples per property. Nightly runs 16 jobs, each with it
 sequence. Nightly also runs every `@pytest.mark.timing` test (threads, lock waits, timeouts) 50
 times on GitHub's runners. One failure fails the job, because a flaky test teaches everyone to
 ignore red. Measured before adding it: 100 of 100 local runs passed, 50 of them with every CPU
-core busy, and the slowest took 2.2 s against limits of 20 s and more. Random sequences find the overdraft or double-post that nobody thought to write an
-example for. Run it with `HYPOTHESIS_PROFILE=pr pytest tests/properties` (or `nightly`).
+core busy, and the slowest took 2.2 s against limits of 20 s and more. Random sequences find the
+overdraft or double-post that nobody thought to write an example for. Run it with
+`HYPOTHESIS_PROFILE=pr pytest tests/properties` (or `nightly`).
 
 **golden.yml** (PRs and main): every report function (`trust_report_*`) must have a golden case
 under `tests/golden/cases/`. Each case builds a fixed synthetic fixture and must produce exactly

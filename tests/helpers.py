@@ -9,6 +9,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from psycopg import sql
+from psycopg.types.json import Jsonb
 
 # A WHERE clause for catalog queries: leave out objects that belong to an extension, such as
 # plpgsql_check, which only the coverage job's test database loads. Format in the catalog
@@ -123,6 +124,17 @@ def transfer_batch(connection, requests) -> list[str]:
     rows = sql.SQL(", ").join(sql.SQL("(%s, %s, %s::numeric)::transfer_request") for _ in requests)
     query = sql.SQL("SELECT id FROM pgledger_create_transfers(ARRAY[{}])").format(rows)
     params = [value for request in requests for value in request]
+    return [row[0] for row in connection.execute(query, params).fetchall()]
+
+
+def post(connection, pmc_id, key, requests, event_at=None, metadata=None) -> list[str]:
+    """Post through trust_post_transfers with an idempotency key; the transfer ids, in order."""
+    rows = sql.SQL(", ").join(sql.SQL("(%s, %s, %s::numeric)::transfer_request") for _ in requests)
+    query = sql.SQL(
+        "SELECT id FROM trust_post_transfers(%s, %s, ARRAY[{}]::transfer_request[], %s, %s)"
+    ).format(rows)
+    params = [pmc_id, key, *(value for request in requests for value in request)]
+    params += [event_at, None if metadata is None else Jsonb(metadata)]
     return [row[0] for row in connection.execute(query, params).fetchall()]
 
 

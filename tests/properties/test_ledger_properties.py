@@ -13,7 +13,9 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
   - per PMC, book cash equals the sum of every balance held for someone;
   - history is append-only: rows once written never change, and a correction is a new,
     reversing transfer;
-  - every entry carries the running balance and the account's version, chained from zero.
+  - every entry carries the running balance and the account's version, chained from zero;
+  - an idempotency key posts once: retrying it returns the original transfers and writes
+    nothing, and reusing it for a different posting is refused.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly; a failure prints the shortest
 sequence of steps that breaks an invariant.
@@ -23,7 +25,7 @@ from decimal import Decimal
 
 import psycopg
 import pytest
-from helpers import make_pmc, running_balance_breaks, transfer, transfer_batch
+from helpers import make_pmc, post, running_balance_breaks, transfer, transfer_batch
 from hypothesis import strategies as st
 from hypothesis.stateful import (
     RuleBasedStateMachine,
@@ -35,6 +37,8 @@ from hypothesis.stateful import (
 
 CENT = Decimal("0.01")
 AMOUNTS = st.integers(min_value=1, max_value=1_000_000).map(lambda cents: Decimal(cents) / 100)
+# A small pool, so keys come back often within one example.
+KEYS = st.sampled_from([f"key-{n}" for n in range(4)])
 
 ROWS = """
 SELECT 'transfer', t.id, t.from_account_id || '>' || t.to_account_id, t.amount, NULL::numeric
@@ -73,6 +77,7 @@ class LedgerMachine(RuleBasedStateMachine):
         self.conns = {"owner": owner_conn, "app": app_conn}
         self.conn = owner_conn
         pmc = make_pmc(owner_conn, owners=3)
+        self.pmc_id = pmc.pmc_id
         self.kinds = {
             pmc.operating_cash: "bank_cash",
             pmc.deposit_cash: "bank_cash",
@@ -86,6 +91,7 @@ class LedgerMachine(RuleBasedStateMachine):
         self.posted: list[tuple[str, tuple[str, str, Decimal]]] = []
         self.seen_rows: dict[tuple[str, str], tuple] = {}
         self.other_pmc_owner = None
+        self.keyed: dict[str, tuple[list, list[str]]] = {}  # key -> (requests, transfer ids)
 
     # --- helpers -------------------------------------------------------------------------
 
@@ -108,8 +114,9 @@ class LedgerMachine(RuleBasedStateMachine):
             self.conn.execute(BALANCES, self.ids).fetchall()
         )
 
-    def attempt(self, conn, requests):
-        """Post a batch the model predicts; all of it lands, or none of it."""
+    def attempt(self, conn, requests, key=None):
+        """Post a batch the model predicts; all of it lands, or none of it. With a key, it goes
+        through trust_post_transfers and a posting that lands files the key."""
         expected = dict(self.model)
         allowed = True
         for source, target, amount in requests:
@@ -119,15 +126,22 @@ class LedgerMachine(RuleBasedStateMachine):
                 allowed = False
                 break
 
+        def send():
+            if key is None:
+                return transfer_batch(conn, requests)
+            return post(conn, self.pmc_id, key, requests)
+
         if allowed:
-            ids = transfer_batch(conn, requests)
+            ids = send()
             assert len(ids) == len(requests)
             self.model = expected
             self.posted.extend(zip(ids, requests, strict=True))
+            if key is not None:
+                self.keyed[key] = (requests, ids)
         else:
             before = self.snapshot()
             with pytest.raises(psycopg.errors.CheckViolation, match="below zero"):
-                transfer_batch(conn, requests)
+                send()
             assert self.snapshot() == before
 
     # --- rules: what the test may do next -------------------------------------------------
@@ -139,6 +153,25 @@ class LedgerMachine(RuleBasedStateMachine):
     @rule(data=st.data(), size=st.integers(min_value=2, max_value=4))
     def post_batch(self, data, size):
         self.attempt(self.conns["app"], [self.draw_request(data) for _ in range(size)])
+
+    @rule(data=st.data(), key=KEYS, retry=st.booleans())
+    def post_with_key(self, data, key, retry):
+        if key not in self.keyed:
+            size = data.draw(st.integers(min_value=1, max_value=3))
+            self.attempt(self.conns["app"], [self.draw_request(data) for _ in range(size)], key)
+            return
+        requests, ids = self.keyed[key]
+        before = self.snapshot()
+        if retry:
+            # A retry after a timeout: same key, same posting. The original comes back.
+            assert post(self.conns["app"], self.pmc_id, key, requests) == ids
+        else:
+            # The same key for a different posting is refused.
+            source, target, amount = requests[0]
+            changed = [(source, target, amount + CENT), *requests[1:]]
+            with pytest.raises(psycopg.errors.UniqueViolation, match="different posting"):
+                post(self.conns["app"], self.pmc_id, key, changed)
+        assert self.snapshot() == before
 
     @precondition(lambda self: self.posted)
     @rule(data=st.data())
@@ -210,6 +243,14 @@ class LedgerMachine(RuleBasedStateMachine):
     @invariant()
     def entries_carry_the_running_balance(self):
         assert running_balance_breaks(self.conn, self.accounts) == []
+
+    @invariant()
+    def each_key_posted_once(self):
+        rows = self.conn.execute(
+            "SELECT idempotency_key, transfer_ids FROM trust_idempotency_keys WHERE pmc_id = %s",
+            (self.pmc_id,),
+        ).fetchall()
+        assert dict(rows) == {key: ids for key, (_, ids) in self.keyed.items()}
 
 
 def test_ledger_invariants_hold_under_random_postings(database_url):
