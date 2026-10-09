@@ -26,8 +26,8 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
   - every security deposit sits in the security-deposit trust account, which holds nothing
     else, so its cash is exactly the deposits held; no account opens in the wrong kind;
   - the three-way reconciliation report of every approved period agrees with the model: its
-    trust journal is the book balance approved, its ledgers add up to that, and its only
-    difference is the statement's;
+    trust journal is the book balance approved, its ledgers add up to that and list in byte
+    order, and its only difference is the statement's;
   - an owner statement for any period agrees with the model: the opening balance, each posting
     in date order with the balance after it, the closing balance and the totals.
 
@@ -114,6 +114,12 @@ class LedgerMachine(RuleBasedStateMachine):
         self.conns = {"owner": owner_conn, "app": app_conn}
         self.conn = owner_conn
         pmc = make_pmc(owner_conn, owners=3)
+        # "Owner 1", "owner 2", "Owner 3": byte order and language rules sort these differently,
+        # so the reports' ordering is checked on any server that sorts by language rules.
+        owner_conn.execute(
+            "UPDATE trust_owners SET display_name = 'owner 2' WHERE id = %s",
+            (pmc.owners[1].owner_id,),
+        )
         self.pmc = pmc
         self.pmc_id = pmc.pmc_id
         self.tenant_id = owner_conn.execute(
@@ -510,11 +516,14 @@ class LedgerMachine(RuleBasedStateMachine):
         cash_of = {bank_id: cash for cash, bank_id in self.bank_id.items()}
         for reconciliation, bank_id, period_end, statement in approvals:
             rows = self.conn.execute(
-                "SELECT item, amount FROM trust_report_three_way_reconciliation(%s, %s)",
+                "SELECT item, detail, amount FROM trust_report_three_way_reconciliation(%s, %s)",
                 (self.pmc_id, reconciliation),
             ).fetchall()
-            figures = {item: amount for item, amount in rows if item != "ledger"}
-            ledgers = [amount for item, amount in rows if item == "ledger"]
+            figures = {item: amount for item, _, amount in rows if item != "ledger"}
+            ledgers = [amount for item, _, amount in rows if item == "ledger"]
+            # Ledger lines list in byte order, the same on every server.
+            holders = [detail for item, detail, _ in rows if item == "ledger"]
+            assert holders == sorted(holders, key=str.encode)
             # Each batch is one transaction with one date, and ties out on its own, so at any
             # instant the books and the ledgers agree.
             book = self.book_balance(cash_of[bank_id], period_end)

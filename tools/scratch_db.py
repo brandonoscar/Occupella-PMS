@@ -20,12 +20,19 @@ def url_for(server_url: str, database: str) -> str:
 
 
 @contextmanager
-def scratch_database(server_url: str, prefix: str) -> Iterator[str]:
-    """Create an empty database, yield its URL, then drop it."""
+def scratch_database(server_url: str, prefix: str, icu_locale: str | None = None) -> Iterator[str]:
+    """Create an empty database, yield its URL, then drop it. With `icu_locale` (say "en-US"),
+    the database sorts text by that language's rules, as most servers do, instead of the
+    server's default."""
     name = f"{prefix}_{uuid.uuid4().hex[:10]}"
     admin_url = url_for(server_url, "postgres")
+    create = sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name))
+    if icu_locale is not None:
+        create += sql.SQL(" TEMPLATE template0 LOCALE_PROVIDER icu ICU_LOCALE {}").format(
+            sql.Literal(icu_locale)
+        )
     with psycopg.connect(admin_url, autocommit=True) as admin:
-        admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
+        admin.execute(create)
     try:
         yield url_for(server_url, name)
     finally:

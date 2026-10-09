@@ -1,0 +1,13 @@
+line	item	detail	amount
+1	PMC	Golden PMC	NULL
+2	trust bank account	Golden operating trust account (operating)	NULL
+3	period	2026-01-01 00:00:00 to 2026-02-01 00:00:00 UTC	NULL
+4	prepared by	Preparer 1	NULL
+5	approved by	Approver 1 at 2026-02-03 17:30:00 UTC	NULL
+6	bank statement balance	NULL	20.00
+7	trust journal (book cash)	NULL	20.00
+8	beneficiary ledgers	NULL	20.00
+9	difference: bank statement - trust journal	NULL	0.00
+10	difference: trust journal - beneficiary ledgers	NULL	0.00
+11	ledger	owner_property: Owner b / Property 2	10.00
+12	ledger	owner_property: owner a / Property 1	10.00
