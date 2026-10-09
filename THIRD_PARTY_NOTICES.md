@@ -1,7 +1,7 @@
 # Third-party notices
 
-This repository is private and has no license of its own. It includes code from the projects
-below, under their licenses.
+This repository is licensed under the Apache License 2.0 (`LICENSE`). It includes code from the
+projects below, under their own licenses.
 
 ## pgledger
 

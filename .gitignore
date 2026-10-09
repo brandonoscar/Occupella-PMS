@@ -4,3 +4,8 @@ __pycache__/
 .ruff_cache/
 # dbmate reads DATABASE_URL from .env; keep any local one out of git.
 .env
+coverage/
+.coverage
+mutation/
+failing-case/
+.hypothesis/

@@ -4,7 +4,7 @@ Free trust accounting for property management companies (100–5,000 doors) that
 money in trust. Occupella's AI is sold on top and will connect later through an API key that
 cannot move money.
 
-Private repository. No license.
+Apache License 2.0 (see `LICENSE`). Third-party code and its licenses: `THIRD_PARTY_NOTICES.md`.
 
 ## Status: Phase 0
 
@@ -20,4 +20,6 @@ The decision and the Phase 0 plan live in AgenticHelixis:
 
 ## Working here
 
-Read [CLAUDE.md](CLAUDE.md) first: the hard rules, the conventions, and how to run the tests.
+Read [CLAUDE.md](CLAUDE.md) first: the hard rules, the standing rule that tests come with the
+code, the conventions, and how to run the checks. [docs/CI.md](docs/CI.md) explains every CI
+workflow and lists the required checks.
