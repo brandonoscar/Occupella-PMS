@@ -8,8 +8,9 @@ Survivors are listed, each one a missing test.
 
 What gets mutated:
   - the bodies of the money functions listed in ci/thresholds.toml [coverage.money];
-  - trigger definitions, ALTER FUNCTION ... SECURITY DEFINER, and GRANT/REVOKE statements in
-    the ledger migrations (deleted one at a time: each is a guard on money).
+  - trigger definitions (constraint triggers too), ALTER FUNCTION ... SECURITY DEFINER, and
+    GRANT/REVOKE statements in every migration but the verbatim upstream one (deleted one at a
+    time: each is a guard on money).
 
 usage:
   python -m tools.sql_mutation --list
@@ -72,11 +73,13 @@ OPERATORS: list[tuple[str, str, str]] = [
     (r"(?<![\w.])1(?![\w.])", "0", "1 to 0"),
 ]
 
-# Statements deleted whole, one at a time, from the migrations that hold ledger guards.
+# Statements deleted whole, one at a time, from every migration we wrote. The first migration
+# is pgledger copied verbatim from upstream (CLAUDE.md), so its statements are left alone.
 GUARD_STATEMENTS = re.compile(
-    r"^(CREATE TRIGGER|ALTER FUNCTION|GRANT|REVOKE)\b.*?;\n", re.MULTILINE | re.DOTALL
+    r"^(CREATE (?:CONSTRAINT )?TRIGGER|ALTER FUNCTION|GRANT|REVOKE)\b.*?;\n",
+    re.MULTILINE | re.DOTALL,
 )
-GUARD_FILES = re.compile(r"_(ledger_append_only|trust_model)\.sql$")
+UPSTREAM_FILES = re.compile(r"_ledger_core\.sql$")
 FUNCTION = re.compile(r"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(\w+)\s*\(", re.IGNORECASE)
 NOT_CODE = re.compile(r"--[^\n]*|'(?:[^']|'')*'")
 
@@ -126,11 +129,11 @@ def generate(files: dict[str, str], money: set[str]) -> list[Mutant]:
     for path in sorted(files):
         text = files[path]
         spans = list(function_bodies(text, money))
-        if GUARD_FILES.search(path):
+        if not UPSTREAM_FILES.search(path):
             for match in GUARD_STATEMENTS.finditer(text):
                 first = match.group(0).splitlines()[0]
                 add(path, match.start(), match.end(), "", f"delete `{first[:60]}`")
-                if match.group(1) == "CREATE TRIGGER":
+                if match.group(1).startswith("CREATE"):
                     spans.append((match.start(), match.end()))
         for span_start, span_end in sorted(spans):
             for code_start, code_end in code_positions(text, span_start, span_end):

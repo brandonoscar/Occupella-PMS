@@ -441,6 +441,41 @@ $$;
 
 
 --
+-- Name: trust_check_bank_tie_out(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_bank_tie_out() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bank uuid;
+    v_off numeric;
+BEGIN
+    FOR v_bank IN
+        SELECT DISTINCT t.bank_account_id
+        FROM trust_ledger_accounts AS t
+        WHERE t.ledger_account_id IN (NEW.from_account_id, NEW.to_account_id)
+    LOOP
+        SELECT sum(a.balance) INTO v_off
+        FROM trust_ledger_accounts AS t
+        JOIN pgledger_accounts AS a ON a.id = t.ledger_account_id
+        WHERE t.bank_account_id = v_bank;
+
+        IF v_off <> 0 THEN
+            RAISE EXCEPTION 'trust: trust bank account % does not tie out (off by %)',
+                v_bank, v_off
+                USING ERRCODE = 'check_violation',
+                      HINT = 'Money held in one trust bank account moves to another only with '
+                             'its cash: post both transfers in one transaction.';
+        END IF;
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: trust_check_transfer_scope(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -493,6 +528,31 @@ BEGIN
     ) VALUES (
         v_ledger_account_id, p_pmc_id, p_bank_account_id, p_kind,
         p_owner_id, p_property_id, p_tenant_id
+    );
+
+    RETURN v_ledger_account_id;
+END;
+$$;
+
+
+--
+-- Name: trust_open_vendor_account(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_open_vendor_account(p_pmc_id uuid, p_bank_account_id uuid, p_vendor_id uuid) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_ledger_account_id text;
+BEGIN
+    SELECT a.id INTO v_ledger_account_id
+    FROM pgledger_create_account('vendor_payable', 'USD') AS a;
+
+    INSERT INTO trust_ledger_accounts (
+        ledger_account_id, pmc_id, bank_account_id, kind, vendor_id
+    ) VALUES (
+        v_ledger_account_id, p_pmc_id, p_bank_account_id, 'vendor_payable', p_vendor_id
     );
 
     RETURN v_ledger_account_id;
@@ -722,7 +782,8 @@ CREATE TABLE public.trust_ledger_accounts (
     property_id uuid,
     tenant_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT trust_ledger_accounts_kind_shape CHECK ((((kind = 'owner_property'::text) AND (owner_id IS NOT NULL) AND (property_id IS NOT NULL) AND (tenant_id IS NULL)) OR ((kind = 'tenant_deposit'::text) AND (tenant_id IS NOT NULL) AND (owner_id IS NULL) AND (property_id IS NULL)) OR ((kind = ANY (ARRAY['pmc_income'::text, 'bank_cash'::text])) AND (owner_id IS NULL) AND (property_id IS NULL) AND (tenant_id IS NULL))))
+    vendor_id uuid,
+    CONSTRAINT trust_ledger_accounts_kind_shape_v2 CHECK ((((kind = 'owner_property'::text) AND (owner_id IS NOT NULL) AND (property_id IS NOT NULL) AND (tenant_id IS NULL) AND (vendor_id IS NULL)) OR ((kind = ANY (ARRAY['tenant_deposit'::text, 'prepaid_rent'::text])) AND (tenant_id IS NOT NULL) AND (owner_id IS NULL) AND (property_id IS NULL) AND (vendor_id IS NULL)) OR ((kind = 'vendor_payable'::text) AND (vendor_id IS NOT NULL) AND (owner_id IS NULL) AND (property_id IS NULL) AND (tenant_id IS NULL)) OR ((kind = ANY (ARRAY['pmc_income'::text, 'bank_cash'::text])) AND (owner_id IS NULL) AND (property_id IS NULL) AND (tenant_id IS NULL) AND (vendor_id IS NULL))))
 );
 
 
@@ -775,6 +836,19 @@ CREATE TABLE public.trust_tenants (
     display_name text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_tenants_display_name_check CHECK ((display_name <> ''::text))
+);
+
+
+--
+-- Name: trust_vendors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_vendors (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    display_name text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_vendors_display_name_check CHECK ((display_name <> ''::text))
 );
 
 
@@ -899,6 +973,22 @@ ALTER TABLE ONLY public.trust_tenants
 
 
 --
+-- Name: trust_vendors trust_vendors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_vendors
+    ADD CONSTRAINT trust_vendors_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_vendors trust_vendors_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_vendors
+    ADD CONSTRAINT trust_vendors_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: pgledger_entries_account_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -934,6 +1024,13 @@ CREATE INDEX pgledger_transfers_to_account_id_idx ON public.pgledger_transfers U
 
 
 --
+-- Name: trust_ledger_accounts_bank_account_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_ledger_accounts_bank_account_id ON public.trust_ledger_accounts USING btree (bank_account_id);
+
+
+--
 -- Name: trust_ledger_accounts_one_bank_cash; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -955,10 +1052,24 @@ CREATE UNIQUE INDEX trust_ledger_accounts_one_pmc_income ON public.trust_ledger_
 
 
 --
+-- Name: trust_ledger_accounts_one_prepaid_rent; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_ledger_accounts_one_prepaid_rent ON public.trust_ledger_accounts USING btree (bank_account_id, tenant_id) WHERE (kind = 'prepaid_rent'::text);
+
+
+--
 -- Name: trust_ledger_accounts_one_tenant_deposit; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE UNIQUE INDEX trust_ledger_accounts_one_tenant_deposit ON public.trust_ledger_accounts USING btree (bank_account_id, tenant_id) WHERE (kind = 'tenant_deposit'::text);
+
+
+--
+-- Name: trust_ledger_accounts_one_vendor_payable; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_ledger_accounts_one_vendor_payable ON public.trust_ledger_accounts USING btree (bank_account_id, vendor_id) WHERE (kind = 'vendor_payable'::text);
 
 
 --
@@ -994,6 +1105,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_ledger_accounts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: pgledger_transfers trust_bank_tie_out; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_bank_tie_out AFTER INSERT ON public.pgledger_transfers DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_bank_tie_out();
 
 
 --
@@ -1107,6 +1225,14 @@ ALTER TABLE ONLY public.trust_ledger_accounts
 
 
 --
+-- Name: trust_ledger_accounts trust_ledger_accounts_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ledger_accounts
+    ADD CONSTRAINT trust_ledger_accounts_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
 -- Name: trust_owners trust_owners_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1139,6 +1265,14 @@ ALTER TABLE ONLY public.trust_tenants
 
 
 --
+-- Name: trust_vendors trust_vendors_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_vendors
+    ADD CONSTRAINT trust_vendors_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
 -- PostgreSQL database dump complete
 --
 
@@ -1153,4 +1287,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261009000001'),
     ('20261009000002'),
     ('20261009000003'),
-    ('20261009000004');
+    ('20261009000004'),
+    ('20261009000005');

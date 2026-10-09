@@ -20,6 +20,8 @@ functions = [
   "trust_check_transfer_scope",
   "trust_open_ledger_account",
   "trust_post_transfers",
+  "trust_open_vendor_account",
+  "trust_check_bank_tie_out",
 ]
 # Python money modules (none yet). Each needs the same line and branch floors.
 python_paths = []
@@ -28,8 +30,8 @@ python_paths = []
 # Measured overall coverage, rounded down to 0.1. It only goes up: coverage.yml fails when
 # coverage drops below it, and also when coverage rose and this wasn't raised to match.
 python_lines = 99.3
-sql_statements = 98.4
-sql_branches = 97.3
+sql_statements = 98.5
+sql_branches = 97.5
 
 [mutation]
 # Share of valid SQL mutants of the money functions that the tests kill (mutation.yml, nightly).
@@ -39,6 +41,15 @@ equivalent = [
   # Postgres grants PUBLIC no table privileges by default: revoking them again is a no-op.
   "20261009000002_ledger_append_only.sql: delete `REVOKE ALL ON`",
   "20261009000003_trust_model.sql: delete `REVOKE ALL ON`",
+  "20261009000004_idempotency_keys.sql: delete `REVOKE ALL ON trust_idempotency_keys FROM PUBLIC;`",
+  "20261009000005_trust_account_tie_out.sql: delete `REVOKE ALL ON trust_vendors FROM PUBLIC;`",
+  # trust_check_bank_tie_out sums one trust bank account. With `<>` in the join or the filter,
+  # it sums (1 or n) x every balance in the database, minus this bank's: double entry keeps
+  # every balance in the database summing to zero, so the result is zero exactly when the
+  # bank's own sum is, and the check behaves the same. This file's other two `= to <>`
+  # mutants are invalid SQL. Committed migrations never change, so this key can't match new
+  # code.
+  "20261009000005_trust_account_tie_out.sql: = to <>",
   # trust_app was never granted INSERT/UPDATE/DELETE/TRUNCATE on these tables.
   "20261009000002_ledger_append_only.sql: delete `REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON`",
 ]

@@ -18,6 +18,14 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 CREATE FUNCTION other() RETURNS int AS $$ BEGIN RETURN 1 + 1; END; $$ LANGUAGE plpgsql;
+GRANT EXECUTE ON FUNCTION money(numeric) TO app;
+"""
+LATER = """-- migrate:up
+CREATE CONSTRAINT TRIGGER ties_out
+AFTER INSERT ON t
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION money();
+REVOKE ALL ON FUNCTION money(numeric) FROM PUBLIC;
 """
 GUARDS = """-- migrate:up
 CREATE TRIGGER guard
@@ -34,6 +42,7 @@ def files():
     return {
         "db/migrations/001_ledger_core.sql": LEDGER,
         "db/migrations/002_ledger_append_only.sql": GUARDS,
+        "db/migrations/005_trust_account_tie_out.sql": LATER,
     }
 
 
@@ -52,6 +61,20 @@ def test_only_money_bodies_and_guard_statements_are_mutated(files):
     raise_line = [m for m in ledger if m.line == 6]
     assert [m.description for m in raise_line] == ["RAISE EXCEPTION to NOTICE"]
     assert [m.id for m in mutants[:2]] == ["m001", "m002"]
+
+
+def test_guards_in_every_migration_we_wrote_are_mutated_but_not_upstream(files):
+    described = {
+        (m.file.split("/")[-1], m.description) for m in sql_mutation.generate(files, {"money"})
+    }
+    later = "005_trust_account_tie_out.sql"
+    assert (later, "delete `CREATE CONSTRAINT TRIGGER ties_out`") in described
+    assert (later, "delete `REVOKE ALL ON FUNCTION money(numeric) FROM PUBLIC;`") in described
+    # pgledger's own file is copied verbatim from upstream: none of its statements are deleted.
+    assert not any(
+        file == "001_ledger_core.sql" and description.startswith("delete")
+        for file, description in described
+    )
 
 
 def test_apply_changes_one_place(files):

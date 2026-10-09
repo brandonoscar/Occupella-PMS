@@ -62,7 +62,7 @@ throw random sequences of postings, batches, reversals, cross-PMC attempts and h
 at the ledger, and check the money invariants after every step:
 - debits equal credits;
 - no held account below zero;
-- book cash equals what is held for others;
+- in each trust bank account, book cash equals what is held for others;
 - history is append-only;
 - running balances chain;
 - an idempotency key posts once, and is refused for a different posting.

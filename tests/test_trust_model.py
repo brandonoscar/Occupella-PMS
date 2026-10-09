@@ -7,13 +7,7 @@ from helpers import balance, make_pmc, snapshot, transfer, transfer_batch
 
 
 def all_accounts(pmc):
-    return [
-        pmc.operating_cash,
-        pmc.deposit_cash,
-        pmc.pmc_income,
-        pmc.tenant_deposit,
-        *(owner.account for owner in pmc.owners),
-    ]
+    return pmc.accounts()
 
 
 def test_transfer_that_would_take_owner_account_below_zero_is_refused_and_nothing_written(conn):
@@ -73,14 +67,14 @@ def test_editing_an_owner_balance_below_zero_directly_is_refused(conn):
     assert balance(conn, owner) == 0
 
 
-@pytest.mark.parametrize("kind", ["tenant_deposit", "pmc_income"])
+@pytest.mark.parametrize("kind", ["tenant_deposit", "pmc_income", "prepaid_rent", "vendor_payable"])
 def test_other_held_accounts_cannot_go_below_zero_either(conn, kind):
     pmc = make_pmc(conn)
     account = getattr(pmc, kind)
     before = snapshot(conn, all_accounts(pmc))
 
     with pytest.raises(psycopg.errors.CheckViolation, match=f"{kind} account"):
-        transfer(conn, account, pmc.operating_cash, "0.01")
+        transfer(conn, account, pmc.cash_for(account), "0.01")
 
     assert snapshot(conn, all_accounts(pmc)) == before
 

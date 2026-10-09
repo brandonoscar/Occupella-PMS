@@ -25,6 +25,7 @@ TABLES = {
     "trust_owners": {"SELECT", "INSERT"},
     "trust_properties": {"SELECT", "INSERT"},
     "trust_tenants": {"SELECT", "INSERT"},
+    "trust_vendors": {"SELECT", "INSERT"},
     "trust_ledger_accounts": {"SELECT"},
     "trust_idempotency_keys": set(),  # only trust_post_transfers reads and writes it
     "schema_migrations": set(),  # dbmate's record of applied migrations
@@ -36,6 +37,7 @@ RENAMEABLE = [
     "trust_owners",
     "trust_properties",
     "trust_tenants",
+    "trust_vendors",
 ]
 
 # Who may call each function, besides the role that owns it.
@@ -46,6 +48,7 @@ FUNCTIONS = {
     "pgledger_create_transfers(transfer_request[],timestamptz,jsonb)": {"trust_app"},
     "trust_open_ledger_account(uuid,uuid,text,uuid,uuid,uuid)": {"trust_app"},
     "trust_post_transfers(uuid,text,transfer_request[],timestamptz,jsonb)": {"trust_app"},
+    "trust_open_vendor_account(uuid,uuid,uuid)": {"trust_app"},
     # Opens a bare pgledger account with no trust kind; only trust_open_ledger_account may.
     "pgledger_create_account(text,text,boolean,boolean,jsonb)": set(),
     # Id helpers and checks that read nothing they are not handed: callable by anyone.
@@ -62,6 +65,7 @@ FUNCTIONS = {
     "trust_refuse_ledger_rewrite()": {"PUBLIC"},
     "trust_refuse_negative_balance()": {"PUBLIC"},
     "trust_check_transfer_scope()": {"PUBLIC"},
+    "trust_check_bank_tie_out()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.
@@ -69,6 +73,7 @@ SECURITY_DEFINER = {
     "pgledger_create_transfers(transfer_request[],timestamptz,jsonb)",
     "trust_open_ledger_account(uuid,uuid,text,uuid,uuid,uuid)",
     "trust_post_transfers(uuid,text,transfer_request[],timestamptz,jsonb)",
+    "trust_open_vendor_account(uuid,uuid,uuid)",
 }
 
 
