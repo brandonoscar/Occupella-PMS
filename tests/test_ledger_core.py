@@ -6,7 +6,7 @@ from decimal import Decimal
 
 import psycopg
 import pytest
-from helpers import balance, make_pmc, transfer, transfer_batch
+from helpers import balance, make_pmc, running_balance_breaks, transfer, transfer_batch
 
 LEDGER_HISTORY = ["pgledger_transfers", "pgledger_entries", "trust_ledger_accounts"]
 REWRITES = {
@@ -84,6 +84,13 @@ def test_every_account_balance_equals_the_sum_of_its_entries(conn):
     assert balance(conn, pmc.owners[0].account) == Decimal("1334.90")
 
 
+def test_every_entry_carries_the_running_balance_and_account_version(conn):
+    post_sample_transfers(conn)
+    accounts = [row[0] for row in conn.execute("SELECT id FROM pgledger_accounts")]
+
+    assert running_balance_breaks(conn, accounts) == []
+
+
 @pytest.mark.parametrize("statement", REWRITES)
 @pytest.mark.parametrize("table", LEDGER_HISTORY)
 def test_ledger_history_cannot_be_rewritten_even_by_the_owner(conn, table, statement):
@@ -158,3 +165,18 @@ def test_concurrent_transfers_all_finish_and_balances_add_up(conn, database_url)
     assert balance(conn, pmc.operating_cash) == Decimal("-4000000.00")
     assert transfers_whose_entries_do_not_balance(conn) == []
     assert accounts_whose_balance_is_not_the_sum_of_entries(conn) == []
+
+
+def test_transfers_on_unrelated_accounts_do_not_wait_for_each_other(conn, database_url):
+    first, second = make_pmc(conn), make_pmc(conn)
+    with psycopg.connect(database_url) as holder:
+        # An open transaction holds the row locks on the first PMC's two accounts...
+        transfer(holder, first.operating_cash, first.owners[0].account, "1.00")
+        with psycopg.connect(database_url, autocommit=True) as other:
+            # ...and a transfer between two other accounts must not wait for it.
+            other.execute("SET lock_timeout = '2s'")
+            transfer(other, second.operating_cash, second.owners[0].account, "1.00")
+        holder.rollback()
+
+    assert balance(conn, second.owners[0].account) == 1
+    assert balance(conn, first.owners[0].account) == 0
