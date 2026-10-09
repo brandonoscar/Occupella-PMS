@@ -130,8 +130,12 @@ pending = "https://github.com/brandonoscar/Occupella-PMS/issues/8"
 
 [[report]]
 id = "three-way-reconciliation"
-statement = "Three-way reconciliation report, compared to a checked-in golden file."
-pending = "https://github.com/brandonoscar/Occupella-PMS/issues/9"
+statement = "Three-way reconciliation report (bank statement, trust journal and beneficiary ledgers of one approved reconciliation, with every difference listed), compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_three_way_reconciliation.py::test_a_move_split_across_the_period_end_shows_in_both_accounts",
+  "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+]
 
 [[report]]
 id = "rent-roll"
