@@ -1,0 +1,102 @@
+name: mutation
+
+# Nightly mutation testing of the money logic (PL/pgSQL): tools/sql_mutation.py makes one small
+# change at a time to the ledger functions, triggers and grants, and checks a test fails. The
+# score goes in the job summary; the run fails if it drops below the baseline in
+# ci/thresholds.toml. 4 shards in parallel, then one scoring job.
+on:
+  schedule:
+    - cron: "17 4 * * *" # nightly 04:17 UTC, after ledger-invariants
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+env:
+  DBMATE_VERSION: v2.36.0
+  DBMATE_SHA256: 47e284b3d8cbad1ba5f090495aa05afd1bbd5f35e2ed5577aad06da74ce780ce
+  DATABASE_URL: postgres://postgres@localhost:5432/pms?sslmode=disable
+
+jobs:
+  mutants:
+    name: mutants (shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        shard: [1, 2, 3, 4]
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dbmate
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+            "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
+          echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/bin/dbmate"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Use pg_dump 16
+        run: |
+          if [ ! -x /usr/lib/postgresql/16/bin/pg_dump ]; then
+            sudo apt-get update -q && sudo apt-get install -y -q postgresql-client-16
+          fi
+          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
+      - run: pip install -r requirements-dev.txt
+      - name: The unmutated code passes (otherwise every mutant would look killed)
+        env:
+          HYPOTHESIS_PROFILE: mutation
+        run: pytest -x -q -p no:cacheprovider --ignore=tests/tools
+      - name: Run this shard's mutants
+        run: python -m tools.sql_mutation --shard ${{ matrix.shard }}/4 --out mutation/shard-${{ matrix.shard }}.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mutation-shard-${{ matrix.shard }}
+          path: mutation/
+          retention-days: 30
+
+  score:
+    name: mutation score
+    needs: mutants
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: mutation-shard-*
+          path: mutation
+          merge-multiple: true
+      - name: Score against the baseline
+        run: |
+          test "$(find mutation -name '*.json' | wc -l)" -eq 4 || { echo "::error::expected 4 shard results"; exit 1; }
+          python -m tools.sql_mutation --score mutation/*.json --summary "$GITHUB_STEP_SUMMARY"

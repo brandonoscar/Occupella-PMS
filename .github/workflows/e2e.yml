@@ -1,0 +1,38 @@
+name: e2e
+
+# Placeholder: browser tests (Playwright) against the seeded self-host app. There is no UI yet,
+# so this only runs when UI paths change, and it fails if a UI exists while the Playwright
+# steps are still off. Enable it in the first PR that adds screens:
+#   1. add e2e/ with playwright.config.ts and tests that run against `docker compose up`;
+#   2. replace the "Placeholder" step below with: setup-node (pinned by SHA), `npm ci`,
+#      `npx playwright install --with-deps`, `docker compose up -d --wait`, and
+#      `npx playwright test`, uploading the report on failure;
+#   3. add `e2e` to the required checks (docs/CI.md).
+on:
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "web/**"
+      - "ui/**"
+      - "e2e/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: e2e
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Placeholder
+        run: |
+          if [ -d frontend ] || [ -d web ] || [ -d ui ] || [ -d e2e ]; then
+            echo "::error::A UI exists now. Enable the Playwright steps in .github/workflows/e2e.yml in this PR."
+            exit 1
+          fi
+          echo "## e2e: not running yet, there is no UI. See the header of e2e.yml." >> "$GITHUB_STEP_SUMMARY"

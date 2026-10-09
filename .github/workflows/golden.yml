@@ -1,0 +1,84 @@
+name: golden
+
+# Reports (owner statements, three-way reconciliation, rent roll) are generated from fixed
+# synthetic fixtures and compared byte for byte with checked-in expected files. Changing an
+# expected file is deliberate: the PR needs the `golden-update` label, which only maintainers
+# can set, and the diff is shown in the job summary for review.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  DBMATE_VERSION: v2.36.0
+  DBMATE_SHA256: 47e284b3d8cbad1ba5f090495aa05afd1bbd5f35e2ed5577aad06da74ce780ce
+  DATABASE_URL: postgres://postgres@localhost:5432/pms?sslmode=disable
+
+jobs:
+  golden:
+    name: golden
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dbmate
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+            "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
+          echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/bin/dbmate"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: pip install -r requirements-dev.txt
+      - name: Every report has a golden case, and every case matches
+        run: pytest tests/golden -v -p no:cacheprovider
+      - name: A changed expected file needs the golden-update label
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          changed=$(git diff --name-only "$BASE_SHA...HEAD" -- ':(glob)tests/golden/**/*.expected.txt')
+          if [ -z "$changed" ]; then
+            echo "No expected file changed."
+            exit 0
+          fi
+          {
+            echo "## Golden files changed in this PR"
+            echo
+            echo '```diff'
+            git diff "$BASE_SHA...HEAD" -- ':(glob)tests/golden/**/*.expected.txt' | head -n 400
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          case ",$LABELS," in
+            *,golden-update,*) echo "golden-update label present; the diff is in the job summary." ;;
+            *) echo "::error::Expected files changed: $changed. Review the diff in the job summary, then add the golden-update label."; exit 1 ;;
+          esac

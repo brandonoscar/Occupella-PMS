@@ -1,0 +1,108 @@
+name: db
+
+# Migrations: lint new ones with squawk, apply every one to an empty database, check down/up,
+# and fail on schema drift. On PRs that touch the self-host build, the self-host check runs
+# after this job (as a reusable call to selfhost.yml), so PR CI never runs more than 8 jobs at
+# once.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  DBMATE_VERSION: v2.36.0
+  DBMATE_SHA256: 47e284b3d8cbad1ba5f090495aa05afd1bbd5f35e2ed5577aad06da74ce780ce
+  DATABASE_URL: postgres://postgres@localhost:5432/pms?sslmode=disable
+
+jobs:
+  migrations:
+    name: migrations
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      selfhost: ${{ steps.selfhost.outputs.changed }}
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dbmate
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+            "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
+          echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/bin/dbmate"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Use pg_dump 16
+        run: |
+          if [ ! -x /usr/lib/postgresql/16/bin/pg_dump ]; then
+            sudo apt-get update -q && sudo apt-get install -y -q postgresql-client-16
+          fi
+          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
+      - run: pip install -r requirements-dev.txt
+      - name: Changed files
+        id: selfhost
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            git diff --name-only --diff-filter=AM "$BASE_SHA...HEAD" -- 'db/migrations/*.sql' \
+              > "$RUNNER_TEMP/new-migrations.txt"
+            if git diff --name-only "$BASE_SHA...HEAD" | grep -qE \
+              '^(Dockerfile|\.dockerignore|compose\.yaml|requirements\.txt|db/migrations/|selfhost/)'; then
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            fi
+          else
+            : > "$RUNNER_TEMP/new-migrations.txt"
+          fi
+          echo "New or changed migrations:"; cat "$RUNNER_TEMP/new-migrations.txt"
+      - name: pgledger blocks match upstream at the pinned commit
+        run: python scripts/check_pgledger_verbatim.py
+      - name: Lint new migrations (squawk; destructive changes need an explicit squawk-ignore)
+        run: |
+          if [ -s "$RUNNER_TEMP/new-migrations.txt" ]; then
+            xargs squawk --config .squawk.toml < "$RUNNER_TEMP/new-migrations.txt"
+          else
+            echo "No new or changed migrations to lint."
+          fi
+      - name: Apply every migration to an empty database
+        run: dbmate --no-dump-schema up
+      - name: Down/up where supported; ledger migrations must refuse to roll back
+        run: python -m tools.check_rollback
+      - name: Dump the schema
+        run: scripts/dump_schema.sh
+      - name: Fail if db/schema.sql drifted
+        run: git diff --exit-code -- db/schema.sql
+
+  selfhost:
+    name: selfhost (PR)
+    needs: migrations
+    if: needs.migrations.outputs.selfhost == 'true'
+    permissions:
+      contents: read
+    uses: ./.github/workflows/selfhost.yml

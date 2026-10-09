@@ -1,0 +1,38 @@
+name: selfhost
+
+# The self-hosted build on plain Postgres 16, no Supabase-only features: build the image, apply
+# every migration, seed a synthetic 50-door PMC, post one month of rent, check health. Runs
+# nightly, by hand, and on PRs that touch the Dockerfile, compose file or migrations (db.yml
+# calls it after its own job, so PR CI stays within 8 jobs at a time).
+on:
+  workflow_call:
+  schedule:
+    - cron: "17 5 * * *" # nightly 05:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  selfhost:
+    name: selfhost
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the image
+        run: docker compose build
+      - name: Start plain Postgres 16
+        run: docker compose up -d --wait db
+      - name: Apply every migration
+        run: docker compose run --rm migrate
+      - name: Seed 50 doors, post a month of rent, check health
+        run: docker compose run --rm smoke
+      - name: Logs
+        if: failure()
+        run: docker compose logs
+      - name: Clean up
+        if: always()
+        run: docker compose down -v
