@@ -81,8 +81,20 @@ tests = [
 
 [[invariant]]
 id = "concurrent-postings-all-finish"
-statement = "Concurrent transfers across the same accounts all finish, and the balances still add up."
-tests = ["tests/test_ledger_core.py::test_concurrent_transfers_all_finish_and_balances_add_up"]
+statement = "Concurrent transfers across the same accounts all finish, and the balances still add up: accounts are locked in one global order, and unrelated transfers never wait for each other."
+tests = [
+  "tests/test_ledger_core.py::test_concurrent_transfers_all_finish_and_balances_add_up",
+  "tests/test_ledger_core.py::test_batches_lock_accounts_in_sorted_order_before_changing_anything",
+  "tests/test_ledger_core.py::test_transfers_on_unrelated_accounts_do_not_wait_for_each_other",
+]
+
+[[invariant]]
+id = "running-balance"
+statement = "Every entry carries the account's running balance and version, chained from zero, so an auditor can walk the ledger line by line (Cal. Reg. 2831)."
+tests = [
+  "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+  "tests/test_ledger_core.py::test_every_entry_carries_the_running_balance_and_account_version",
+]
 
 # --- Reports (golden.yml) ------------------------------------------------------------------
 

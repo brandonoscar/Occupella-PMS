@@ -1,0 +1,49 @@
+# Every number in this file is a floor. A PR may raise one, never lower one:
+# tools/check_thresholds.py compares this file with the base branch and fails on any decrease.
+# A money function may leave [coverage.money] only when it no longer exists in db/schema.sql.
+
+[coverage]
+# Lines changed by a PR (Python and PL/pgSQL) that tests execute, measured by diff-cover.
+changed_lines_min = 90.0
+
+[coverage.money]
+# The money module: PL/pgSQL functions that move or guard money. Measured with plpgsql_check.
+statements_min = 95.0
+branches_min = 95.0
+functions = [
+  "pgledger_create_account",
+  "pgledger_check_account_balance_constraints",
+  "pgledger_create_transfer",
+  "pgledger_create_transfers",
+  "trust_refuse_ledger_rewrite",
+  "trust_refuse_negative_balance",
+  "trust_check_transfer_scope",
+  "trust_open_ledger_account",
+]
+# Python money modules (none yet). Each needs the same line and branch floors.
+python_paths = []
+
+[coverage.baseline]
+# Measured overall coverage, rounded down to 0.1. It only goes up: coverage.yml fails when
+# coverage drops below it, and also when coverage rose and this wasn't raised to match.
+python_lines = 99.3
+sql_statements = 98.3
+sql_branches = 96.7
+
+[mutation]
+# Share of valid SQL mutants of the money functions that the tests kill (mutation.yml, nightly).
+baseline_score = 100.0
+# Mutants that can't change behavior, so no test can kill them. Each needs a reason.
+equivalent = [
+  # Postgres grants PUBLIC no table privileges by default: revoking them again is a no-op.
+  "20261009000002_ledger_append_only.sql: delete `REVOKE ALL ON`",
+  "20261009000003_trust_model.sql: delete `REVOKE ALL ON`",
+  # trust_app was never granted INSERT/UPDATE/DELETE/TRUNCATE on these tables.
+  "20261009000002_ledger_append_only.sql: delete `REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON`",
+]
+
+[properties]
+# Hypothesis examples per property test.
+pr_examples = 200
+nightly_examples = 3000
+steps_per_example = 40

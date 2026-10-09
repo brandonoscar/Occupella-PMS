@@ -2,6 +2,7 @@
 
 import random
 import threading
+import time
 from decimal import Decimal
 
 import psycopg
@@ -180,3 +181,79 @@ def test_transfers_on_unrelated_accounts_do_not_wait_for_each_other(conn, databa
 
     assert balance(conn, second.owners[0].account) == 1
     assert balance(conn, first.owners[0].account) == 0
+
+
+def accounts_locked_by_a_blocked_batch(conn, database_url, accounts, source, held):
+    """Hold `held`'s row lock, start a batch from `source` that touches every account, and
+    return the accounts the batch had already locked when it stopped to wait for `held`."""
+    batch = [(source, target, "1.00") for target in reversed(accounts) if target != source]
+    errors = []
+
+    def post(worker):
+        try:
+            transfer_batch(worker, batch)
+        except Exception as exc:  # reported below
+            errors.append(repr(exc))
+
+    with (
+        psycopg.connect(database_url) as holder,
+        psycopg.connect(database_url, autocommit=True) as worker,
+    ):
+        holder.execute("SELECT 1 FROM pgledger_accounts WHERE id = %s FOR UPDATE", (held,))
+        worker_pid = worker.execute("SELECT pg_backend_pid()").fetchone()[0]
+        thread = threading.Thread(target=post, args=(worker,))
+        thread.start()
+        try:
+            for _ in range(500):
+                waiting = conn.execute(
+                    "SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s", (worker_pid,)
+                ).fetchone()
+                if waiting and waiting[0] == "Lock":
+                    break
+                time.sleep(0.01)
+            else:
+                raise AssertionError("the batch never waited for the held account")
+            locked = set()
+            for account in accounts:
+                if account == held:
+                    continue
+                try:
+                    conn.execute(
+                        "SELECT 1 FROM pgledger_accounts WHERE id = %s FOR UPDATE NOWAIT",
+                        (account,),
+                    )
+                except psycopg.errors.LockNotAvailable:
+                    locked.add(account)
+        finally:
+            holder.rollback()
+            thread.join(timeout=30)
+    assert errors == []
+    return locked
+
+
+def test_batches_lock_accounts_in_sorted_order_before_changing_anything(conn, database_url):
+    # pgledger avoids deadlocks by locking every account a batch touches in one global order
+    # (sorted ids) before changing any balance. The concurrency test above only catches a
+    # broken order when a deadlock happens to occur; this checks the order directly.
+    pmc = make_pmc(conn, owners=8)
+    accounts = [
+        row[0]
+        for row in conn.execute(
+            "SELECT id FROM unnest(%s::text[]) AS id ORDER BY id",
+            (
+                [
+                    pmc.operating_cash,
+                    pmc.deposit_cash,
+                    pmc.pmc_income,
+                    pmc.tenant_deposit,
+                    *(owner.account for owner in pmc.owners),
+                ],
+            ),
+        )
+    ]
+    for held in (accounts[-1], accounts[0], accounts[len(accounts) // 2]):
+        expected = set(accounts[: accounts.index(held)])
+        locked = accounts_locked_by_a_blocked_batch(
+            conn, database_url, accounts, pmc.operating_cash, held
+        )
+        assert locked == expected
