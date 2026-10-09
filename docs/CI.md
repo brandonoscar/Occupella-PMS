@@ -4,20 +4,31 @@ What each workflow checks, why it matters for the money a PMC holds in trust, an
 yourself. Every workflow uses only synthetic data, needs no secret beyond GitHub's automatic
 read-only token, and pins every action to a full commit SHA. The local commands assume the setup
 in `CLAUDE.md` ("Run the checks"): Postgres 16 in `DATABASE_URL`, dbmate on `PATH`, and
-`pip install -r requirements-dev.txt`.
+`pip install -r requirements-dev.txt`. `scripts/check.sh` runs all of the PR checks it can in
+one go (see "Before you push" below).
 
 ## The workflows
 
 **ci.yml** (PRs and main): lint (ruff), format check (ruff), typecheck (mypy, strict on `tools/`,
-`selfhost/` and `scripts/`), the standing-rule checks, and every example test against a fresh
-database. The standing-rule checks fail a PR that:
+`selfhost/` and `scripts/`), shellcheck on `scripts/*.sh`, the synthetic-data scan, the
+standing-rule checks, and every example test against a fresh database.
+
+The synthetic-data scan (`tools/check_synthetic_data.py`) reads every tracked file for values
+shaped like real records: routing numbers that pass the ABA checksum with a real Fed prefix,
+SSNs, ITINs and EINs that could be issued, emails outside the reserved domains, and US phone
+numbers outside 555-0100 to 555-0199. It accepts only never-issued forms, reports file and line
+but never the value (the logs are public), and takes exceptions only in `ci/synthetic_data.toml`
+with a reason. Real names and street addresses have no shape to match; review them.
+
+The standing-rule checks fail a PR that:
 - changes code without changing tests;
 - changes ledger SQL without a property test;
 - lowers any number in `ci/thresholds.toml`;
 - leaves a required invariant with neither a test nor an open issue.
 
 This is the first line of defense: a ledger bug that an example test can see never reaches main.
-Run it with `ruff check . && ruff format --check . && mypy && pytest --ignore=tests/properties`.
+Run it with `ruff check . && ruff format --check . && mypy && python -m
+tools.check_synthetic_data && pytest --ignore=tests/properties`.
 
 **db.yml** (PRs and main): checks the migrations.
 - squawk lints new or changed migrations. A destructive change (drop, rename, type change) needs
@@ -27,6 +38,16 @@ Run it with `ruff check . && ruff format --check . && mypy && pytest --ignore=te
   back and leave the schema untouched.
 - The dumped schema must equal `db/schema.sql`.
 - The pgledger code must match upstream byte for byte.
+- Upgrade with data (`tools/check_upgrade.py`):
+  - it fails if a migration the base branch already has was edited or deleted;
+  - it builds the base branch's schema and fills it with the base branch's own self-host seed:
+    a 50-door PMC, deposits and a month of rent;
+  - it applies this branch's migrations on top. Ledger history, and every account's balance and
+    version, must be unchanged;
+  - this branch's smoke check then runs on the upgraded database.
+
+  The empty-database check misses migrations that only fail once rows exist, such as a NOT NULL
+  column with no default or a CHECK constraint that existing rows break.
 
 Trust records are kept for years, so a migration that silently drops or rewrites ledger data is
 the worst kind of change. On PRs that touch the Dockerfile, compose file or migrations, it then
@@ -34,6 +55,7 @@ runs the self-host check. Run it with:
 - `squawk --config .squawk.toml db/migrations/<new>.sql`
 - `dbmate --no-dump-schema up && python -m tools.check_rollback`
 - `scripts/dump_schema.sh && git diff --exit-code db/schema.sql`
+- `python -m tools.check_upgrade --base origin/main`
 
 **ledger-invariants.yml** (PRs, main and nightly): property-based tests with Hypothesis. They
 throw random sequences of postings, batches, reversals, cross-PMC attempts and history rewrites
@@ -59,7 +81,15 @@ three-way reconciliation and rent roll are tracked in issues #8, #9 and #10. Run
 `pytest tests/golden`, and update deliberately with `pytest tests/golden --update-goldens`.
 
 **coverage.yml** (PRs and main): Python coverage (coverage.py) and coverage of the PL/pgSQL
-money logic (the plpgsql_check profiler, loaded only in this job's database). It fails when:
+money logic (the plpgsql_check profiler, loaded only in this job's database).
+
+First it lints our PL/pgSQL (`tools/sql_lint.py`): plpgsql_check reads every statement of every
+`trust_*` function without running it, including each trigger function against each of its
+tables, with every warning class on. Any finding fails the job. PL/pgSQL is only parsed when it
+runs, so a misspelled column or a wrong type on a branch no test reaches would otherwise ship.
+The pgledger and ULID functions are upstream and verbatim, so they are listed but not linted.
+
+Then it measures coverage, and fails when:
 - overall coverage drops below the baseline in `ci/thresholds.toml`, or rises without the
   baseline being raised to match;
 - lines a PR changes are under 90% covered (diff-cover, Python and SQL);
@@ -67,6 +97,7 @@ money logic (the plpgsql_check profiler, loaded only in this job's database). It
 
 Untested money code is where shortages hide. Running it locally needs Postgres started with
 `shared_preload_libraries=plpgsql_check`; `ci/postgres-coverage.Dockerfile` builds one. Then run
+`python -m tools.sql_lint`, then
 `PMS_SQL_COVERAGE_OUT=coverage/sql-raw.json coverage run -m pytest`, followed by
 `coverage xml -o coverage/python.xml` and `python -m tools.coverage_gate --sql-raw
 coverage/sql-raw.json --python-xml coverage/python.xml --sql-xml-out coverage/sql.xml`.
@@ -104,7 +135,8 @@ adds screens.
 - CodeQL on the Python and on the workflows themselves.
 - Dependency review, which fails a PR that adds a dependency with a high-severity advisory.
 - gitleaks: the PR's commits on PRs, full history on main and weekly. Besides the default rules,
-  `.gitleaks.toml` adds SSN- and EIN-shaped patterns.
+  `.gitleaks.toml` adds SSN- and EIN-shaped patterns. They let through only the never-issued
+  forms the synthetic-data scan accepts, and a test keeps the two in step.
 - OpenSSF Scorecard: weekly and on main.
 
 A leaked credential or a poisoned dependency in a trust-accounting system is a breach of client
@@ -117,6 +149,20 @@ freely. Run it with `python -m tools.check_licenses`.
 
 **dependabot** (`.github/dependabot.yml`): weekly updates for GitHub Actions, pip, the Dockerfiles
 and the compose file.
+
+## Before you push: `scripts/check.sh`
+
+One command for every PR check that can run locally, in CI's order:
+- the ci, licenses and db checks, with the database ones on a throwaway database;
+- the upgrade check;
+- the PL/pgSQL lint, if the server has plpgsql_check;
+- every test, with the coverage gates and diff-cover if plpgsql_check is preloaded;
+- gitleaks, if installed.
+
+It ends with a summary. A check it couldn't run is listed as NOT RUN, never as passed: CodeQL and
+dependency review are GitHub-only, and the self-host image needs Docker. It compares against the
+merge base with `origin/main` (or `$BASE`), so commit first. `tests/tools/test_check_script.py`
+fails if a PR workflow runs a command that `check.sh` doesn't.
 
 ## Required checks for branch protection on `main`
 

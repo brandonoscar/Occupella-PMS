@@ -1,7 +1,8 @@
 name: ci
 
-# Lint, format, typecheck, the standing-rule checks, and the example tests. Property tests run
-# in ledger-invariants.yml; coverage in coverage.yml. No secrets, no LLM calls.
+# Lint, format, typecheck, the synthetic-data scan, the standing-rule checks, and the example
+# tests. Property tests run in ledger-invariants.yml; coverage in coverage.yml. No secrets, no
+# LLM calls.
 on:
   pull_request:
   push:
@@ -72,6 +73,10 @@ jobs:
         run: ruff format --check .
       - name: Typecheck
         run: mypy
+      - name: Synthetic data only (no real-looking bank numbers, tax IDs, emails or phones)
+        run: python -m tools.check_synthetic_data
+      - name: Shell scripts (shellcheck, preinstalled on the runner)
+        run: shellcheck scripts/*.sh
       - name: Standing rule (tests come with the code)
         if: github.event_name == 'pull_request'
         env:

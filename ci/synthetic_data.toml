@@ -1,0 +1,11 @@
+# Values tools/check_synthetic_data.py finds in tracked files that look real but aren't. Prefer
+# rewriting the value into a never-issued form (see the tool's docstring); allow one here only
+# when it must stay, with the file, the exact value and why it isn't anyone's real data. An
+# allowance that matches nothing fails the check, so this list can't go stale.
+#
+# [[allow]]
+# path = "tests/fixtures/sample.csv"
+# value = "<the exact text the check flagged>"
+# reason = "<why this isn't anyone's real data>"
+
+allow = []

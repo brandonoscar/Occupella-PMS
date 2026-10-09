@@ -1,5 +1,9 @@
 # gitleaks config: the default rules, plus two for US tax IDs. No real tax ID may ever appear
 # here; fixtures are synthetic only (CLAUDE.md, hard rule 2).
+#
+# Each tax-ID rule lets through exactly the forms that are never issued, the same ones
+# tools/check_synthetic_data.py accepts (a test there reads this file), so a fixture written the
+# way that check asks for passes both.
 title = "occupella-pms"
 
 [extend]
@@ -10,7 +14,17 @@ id = "us-ssn"
 description = "Looks like a US Social Security number"
 regex = '''\b\d{3}-\d{2}-\d{4}\b'''
 
+[[rules.allowlists]]
+description = "Never issued: area 000 or 666, group 00, or serial 0000"
+regexTarget = "match"
+regexes = ['''^(000|666)-''', '''^\d{3}-00-''', '''-0000$''']
+
 [[rules]]
 id = "us-ein"
 description = "Looks like a US employer identification number"
 regex = '''\b\d{2}-\d{7}\b'''
+
+[[rules.allowlists]]
+description = "Never assigned by the IRS: these two-digit prefixes"
+regexTarget = "match"
+regexes = ['''^(00|07|08|09|17|18|19|28|29|49|69|70|78|79|89|96|97)-''']

@@ -10,6 +10,16 @@ from uuid import UUID
 
 from psycopg import sql
 
+# A WHERE clause for catalog queries: leave out objects that belong to an extension, such as
+# plpgsql_check, which only the coverage job's test database loads. Format in the catalog
+# (`'pg_proc'`) and the object's oid column (`p.oid`).
+NOT_FROM_AN_EXTENSION = """
+    NOT EXISTS (
+        SELECT 1 FROM pg_depend d
+        WHERE d.classid = {catalog}::regclass AND d.objid = {oid} AND d.deptype = 'e'
+    )
+"""
+
 
 @dataclass
 class Owner:
