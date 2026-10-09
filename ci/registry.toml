@@ -55,8 +55,17 @@ tests = [
 
 [[invariant]]
 id = "reconciliation-locked"
-statement = "An approved reconciliation is locked."
-pending = "https://github.com/brandonoscar/Occupella-PMS/issues/5"
+statement = "An approved reconciliation is locked: the record never changes, its trust bank account is closed through the period's end so nothing dated inside it can be posted, and periods follow one another with no gap or overlap."
+tests = [
+  "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+  "tests/test_reconciliation.py::test_a_posting_dated_inside_a_closed_period_is_refused",
+  "tests/test_reconciliation.py::test_periods_follow_one_another_with_no_gap_or_overlap",
+  "tests/test_reconciliation.py::test_no_role_moves_the_closing_date_by_hand",
+  "tests/test_reconciliation.py::test_a_posting_waits_for_an_approval_in_progress_and_is_then_refused",
+  "tests/test_reconciliation.py::test_an_approval_waits_for_a_posting_in_flight_and_counts_it",
+  "tests/test_reconciliation.py::test_a_posting_from_an_older_snapshot_cannot_slip_into_a_period_closed_since",
+  "tests/test_ledger_core.py::test_ledger_history_cannot_be_rewritten_even_by_the_owner",
+]
 
 [[invariant]]
 id = "deposits-in-deposit-account"
@@ -79,7 +88,7 @@ tests = [
 
 [[invariant]]
 id = "app-role-cannot-move-money-directly"
-statement = "The app role reads the ledger and writes only through the ledger functions."
+statement = "The app role reads the ledger and writes only through the trust functions; it posts only through trust_post_transfers, so every posting it makes carries an idempotency key."
 tests = [
   "tests/test_privileges.py::test_app_role_table_privileges_are_exact",
   "tests/test_privileges.py::test_app_role_function_privileges_are_exact",

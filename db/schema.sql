@@ -281,7 +281,7 @@ $$;
 --
 
 CREATE FUNCTION public.pgledger_create_transfers(transfer_requests public.transfer_request[], event_at timestamp with time zone DEFAULT NULL::timestamp with time zone, metadata jsonb DEFAULT NULL::jsonb) RETURNS SETOF public.pgledger_transfers_view
-    LANGUAGE plpgsql SECURITY DEFINER
+    LANGUAGE plpgsql
     SET search_path TO 'public', 'pg_temp'
     AS $$
 DECLARE
@@ -437,6 +437,74 @@ CREATE FUNCTION public.pgledger_uuidv7_microsecond() RETURNS uuid
         substring(uuid_send(gen_random_uuid()) from 9 for 8)
         , 'hex')::uuid
     from (select extract(epoch from clock_timestamp())*1000 as t_ms) s
+$$;
+
+
+--
+-- Name: trust_approve_reconciliation(uuid, uuid, timestamp with time zone, timestamp with time zone, numeric, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_approve_reconciliation(p_pmc_id uuid, p_bank_account_id uuid, p_period_start timestamp with time zone, p_period_end timestamp with time zone, p_statement_balance numeric, p_prepared_by text, p_approved_by text) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_closed_through timestamptz;
+    v_book_balance numeric;
+    v_id uuid;
+BEGIN
+    -- The book balance must count every posting that committed while this waited for the lock
+    -- below. At REPEATABLE READ or SERIALIZABLE it would read a snapshot taken before them.
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'trust: approve a reconciliation at READ COMMITTED, not %',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
+
+    IF p_period_end > now() THEN
+        RAISE EXCEPTION 'trust: the period ends at %, which has not come yet', p_period_end
+            USING ERRCODE = 'invalid_parameter_value',
+                  HINT = 'Approve a reconciliation once its period has ended.';
+    END IF;
+
+    -- Waits for postings in flight on this account (they hold the row FOR SHARE), and holds new
+    -- ones off until this commits.
+    SELECT b.closed_through INTO v_closed_through
+    FROM trust_bank_accounts AS b
+    WHERE b.id = p_bank_account_id AND b.pmc_id = p_pmc_id
+    FOR NO KEY UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no trust bank account % in PMC %', p_bank_account_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    IF p_period_start <> v_closed_through THEN
+        RAISE EXCEPTION 'trust: the next period of trust bank account % starts at %',
+            p_bank_account_id, v_closed_through
+            USING ERRCODE = 'invalid_parameter_value',
+                  HINT = 'Periods follow one another: no gap, no overlap.';
+    END IF;
+
+    -- The cash the books say the bank held at the period's end: -balance of its bank_cash.
+    SELECT coalesce(-sum(e.amount), 0) INTO v_book_balance
+    FROM trust_ledger_accounts AS t
+    JOIN pgledger_entries AS e ON e.account_id = t.ledger_account_id
+    JOIN pgledger_transfers AS tr ON tr.id = e.transfer_id
+    WHERE t.bank_account_id = p_bank_account_id AND t.kind = 'bank_cash'
+      AND tr.event_at < p_period_end;
+
+    INSERT INTO trust_reconciliations (
+        pmc_id, bank_account_id, period_start, period_end, statement_balance, book_balance,
+        prepared_by, approved_by
+    ) VALUES (
+        p_pmc_id, p_bank_account_id, p_period_start, p_period_end, p_statement_balance,
+        v_book_balance, p_prepared_by, p_approved_by
+    ) RETURNING id INTO v_id;
+
+    UPDATE trust_bank_accounts SET closed_through = p_period_end WHERE id = p_bank_account_id;
+
+    RETURN v_id;
+END;
 $$;
 
 
@@ -647,6 +715,29 @@ $$;
 
 
 --
+-- Name: trust_refuse_moving_closed_through(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_refuse_moving_closed_through() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NEW.closed_through IS DISTINCT FROM (
+        SELECT max(r.period_end) FROM trust_reconciliations AS r
+        WHERE r.bank_account_id = NEW.id
+    ) THEN
+        RAISE EXCEPTION 'trust: trust bank account % is closed through the end of its newest '
+            'approved reconciliation, not %', NEW.id, NEW.closed_through
+            USING ERRCODE = 'restrict_violation',
+                  HINT = 'Only trust_approve_reconciliation moves it.';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_refuse_negative_balance(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -664,6 +755,41 @@ BEGIN
             USING ERRCODE = 'check_violation',
                   HINT = 'An account held for someone may never be overdrawn (Cal. Reg. 2832.1).';
     END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_refuse_posting_into_closed_period(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_refuse_posting_into_closed_period() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bank uuid;
+    v_closed_through timestamptz;
+BEGIN
+    -- FOR SHARE waits for an approval in progress on either account and then reads the date
+    -- it set. At REPEATABLE READ or SERIALIZABLE, an approval that committed after this
+    -- transaction's snapshot makes the lock fail with a serialization error instead.
+    FOR v_bank, v_closed_through IN
+        SELECT b.id, b.closed_through
+        FROM trust_bank_accounts AS b
+        JOIN trust_ledger_accounts AS t ON t.bank_account_id = b.id
+        WHERE t.ledger_account_id IN (NEW.from_account_id, NEW.to_account_id)
+        ORDER BY b.id
+        FOR SHARE OF b
+    LOOP
+        IF NEW.event_at < v_closed_through THEN
+            RAISE EXCEPTION 'trust: trust bank account % is reconciled and closed through %; '
+                'a transfer dated % can''t be posted', v_bank, v_closed_through, NEW.event_at
+                USING ERRCODE = 'check_violation',
+                      HINT = 'Date the correction in the next open period.';
+        END IF;
+    END LOOP;
     RETURN NEW;
 END;
 $$;
@@ -749,6 +875,7 @@ CREATE TABLE public.trust_bank_accounts (
     kind text NOT NULL,
     display_name text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    closed_through timestamp with time zone,
     CONSTRAINT trust_bank_accounts_display_name_check CHECK ((display_name <> ''::text)),
     CONSTRAINT trust_bank_accounts_kind_check CHECK ((kind = ANY (ARRAY['operating'::text, 'security_deposit'::text])))
 );
@@ -822,6 +949,27 @@ CREATE TABLE public.trust_properties (
     display_name text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_properties_display_name_check CHECK ((display_name <> ''::text))
+);
+
+
+--
+-- Name: trust_reconciliations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_reconciliations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    bank_account_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    period_end timestamp with time zone NOT NULL,
+    statement_balance numeric NOT NULL,
+    book_balance numeric NOT NULL,
+    prepared_by text NOT NULL,
+    approved_by text NOT NULL,
+    approved_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_reconciliations_approved_by_check CHECK ((approved_by <> ''::text)),
+    CONSTRAINT trust_reconciliations_check CHECK ((period_end > period_start)),
+    CONSTRAINT trust_reconciliations_prepared_by_check CHECK ((prepared_by <> ''::text))
 );
 
 
@@ -957,6 +1105,14 @@ ALTER TABLE ONLY public.trust_properties
 
 
 --
+-- Name: trust_reconciliations trust_reconciliations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_reconciliations
+    ADD CONSTRAINT trust_reconciliations_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_tenants trust_tenants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1080,6 +1236,13 @@ CREATE INDEX trust_ledger_accounts_pmc_id ON public.trust_ledger_accounts USING 
 
 
 --
+-- Name: trust_reconciliations_bank_account_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_reconciliations_bank_account_id ON public.trust_reconciliations USING btree (bank_account_id, period_end);
+
+
+--
 -- Name: pgledger_entries trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -1108,10 +1271,31 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_reconciliations trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_reconciliations FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: pgledger_transfers trust_bank_tie_out; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE CONSTRAINT TRIGGER trust_bank_tie_out AFTER INSERT ON public.pgledger_transfers DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_bank_tie_out();
+
+
+--
+-- Name: pgledger_transfers trust_closed_period; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_closed_period BEFORE INSERT ON public.pgledger_transfers FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_posting_into_closed_period();
+
+
+--
+-- Name: trust_bank_accounts trust_closed_through; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_closed_through BEFORE INSERT OR UPDATE OF closed_through ON public.trust_bank_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_moving_closed_through();
 
 
 --
@@ -1249,6 +1433,22 @@ ALTER TABLE ONLY public.trust_properties
 
 
 --
+-- Name: trust_reconciliations trust_reconciliations_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_reconciliations
+    ADD CONSTRAINT trust_reconciliations_pmc_id_bank_account_id_fkey FOREIGN KEY (pmc_id, bank_account_id) REFERENCES public.trust_bank_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_reconciliations trust_reconciliations_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_reconciliations
+    ADD CONSTRAINT trust_reconciliations_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
 -- Name: trust_tenants trust_tenants_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1288,4 +1488,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261009000002'),
     ('20261009000003'),
     ('20261009000004'),
-    ('20261009000005');
+    ('20261009000005'),
+    ('20261009000006'),
+    ('20261009000007');

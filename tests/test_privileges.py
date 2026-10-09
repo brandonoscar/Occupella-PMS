@@ -28,6 +28,7 @@ TABLES = {
     "trust_vendors": {"SELECT", "INSERT"},
     "trust_ledger_accounts": {"SELECT"},
     "trust_idempotency_keys": set(),  # only trust_post_transfers reads and writes it
+    "trust_reconciliations": {"SELECT"},  # written only by trust_approve_reconciliation
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
@@ -43,12 +44,17 @@ RENAMEABLE = [
 # Who may call each function, besides the role that owns it.
 FUNCTIONS = {
     # The write paths: the app role and nobody else.
-    "pgledger_create_transfer(text,text,numeric,timestamptz,jsonb)": {"trust_app"},
-    "pgledger_create_transfers(transfer_request[])": {"trust_app"},
-    "pgledger_create_transfers(transfer_request[],timestamptz,jsonb)": {"trust_app"},
     "trust_open_ledger_account(uuid,uuid,text,uuid,uuid,uuid)": {"trust_app"},
     "trust_post_transfers(uuid,text,transfer_request[],timestamptz,jsonb)": {"trust_app"},
     "trust_open_vendor_account(uuid,uuid,uuid)": {"trust_app"},
+    "trust_approve_reconciliation(uuid,uuid,timestamptz,timestamptz,numeric,text,text)": {
+        "trust_app"
+    },
+    # pgledger's posting functions take no idempotency key, so a retried request could post
+    # twice: only the owner calls them (trust_post_transfers does, as the owner).
+    "pgledger_create_transfer(text,text,numeric,timestamptz,jsonb)": set(),
+    "pgledger_create_transfers(transfer_request[])": set(),
+    "pgledger_create_transfers(transfer_request[],timestamptz,jsonb)": set(),
     # Opens a bare pgledger account with no trust kind; only trust_open_ledger_account may.
     "pgledger_create_account(text,text,boolean,boolean,jsonb)": set(),
     # Id helpers and checks that read nothing they are not handed: callable by anyone.
@@ -66,14 +72,16 @@ FUNCTIONS = {
     "trust_refuse_negative_balance()": {"PUBLIC"},
     "trust_check_transfer_scope()": {"PUBLIC"},
     "trust_check_bank_tie_out()": {"PUBLIC"},
+    "trust_refuse_posting_into_closed_period()": {"PUBLIC"},
+    "trust_refuse_moving_closed_through()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.
 SECURITY_DEFINER = {
-    "pgledger_create_transfers(transfer_request[],timestamptz,jsonb)",
     "trust_open_ledger_account(uuid,uuid,text,uuid,uuid,uuid)",
     "trust_post_transfers(uuid,text,transfer_request[],timestamptz,jsonb)",
     "trust_open_vendor_account(uuid,uuid,uuid)",
+    "trust_approve_reconciliation(uuid,uuid,timestamptz,timestamptz,numeric,text,text)",
 }
 
 

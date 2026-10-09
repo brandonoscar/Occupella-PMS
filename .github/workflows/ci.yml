@@ -32,7 +32,7 @@ jobs:
       issues: read # check_registry reads whether each pending issue is still open
     services:
       postgres:
-        image: postgres:16
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:

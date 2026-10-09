@@ -5,7 +5,9 @@ Each example is a fresh synthetic PMC with two trust bank accounts, three owners
 account kind. A Python model tracks what each balance should be, so every posting is predicted
 before it is sent: the database must accept exactly the postings the model accepts, refuse the
 rest, and leave nothing behind when it refuses. Postings go through both the owner role and
-trust_app, the role the application uses.
+trust_app, the role the application uses, which posts only with an idempotency key. A synthetic
+clock dates every posting; it moves forward, reconciliations close periods behind it, and some
+postings are dated back into them.
 
 Invariants checked after every step (ci/registry.toml maps each to this test):
   - debits equal credits: each transfer has one -amount and one +amount entry;
@@ -17,17 +19,21 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     reversing transfer;
   - every entry carries the running balance and the account's version, chained from zero;
   - an idempotency key posts once: retrying it returns the original transfers and writes
-    nothing, and reusing it for a different posting is refused.
+    nothing, and reusing it for a different posting is refused;
+  - an approved reconciliation is locked: the record never changes, nothing dated inside its
+    period is posted after it (so its book balance still holds), and periods follow one
+    another with no gap or overlap.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly; a failure prints the shortest
 sequence of steps that breaks an invariant.
 """
 
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import psycopg
 import pytest
-from helpers import make_pmc, post, running_balance_breaks, transfer, transfer_batch
+from helpers import approve, make_pmc, post, running_balance_breaks, transfer, transfer_batch
 from hypothesis import strategies as st
 from hypothesis.stateful import (
     RuleBasedStateMachine,
@@ -41,6 +47,12 @@ CENT = Decimal("0.01")
 AMOUNTS = st.integers(min_value=1, max_value=1_000_000).map(lambda cents: Decimal(cents) / 100)
 # A small pool, so keys come back often within one example.
 KEYS = st.sampled_from([f"key-{n}" for n in range(4)])
+# The synthetic clock starts here and moves at most 41 days a step, so even at 100 steps it
+# stays years before the real now(): a reconciliation may only close a period that has ended.
+CLOCK_START = datetime(2000, 1, 1, tzinfo=UTC)
+FIRST_PERIOD_START = datetime(1999, 12, 1, tzinfo=UTC)
+BACK = st.timedeltas(min_value=timedelta(microseconds=1), max_value=timedelta(days=90))
+CLOSED = "reconciled and closed"
 
 ROWS = """
 SELECT 'transfer', t.id, t.from_account_id || '>' || t.to_account_id, t.amount, NULL::numeric
@@ -72,6 +84,22 @@ WHERE a.id = ANY(%(ids)s)
 GROUP BY a.id, a.balance
 """
 
+BOOKS_CHANGED_SINCE_APPROVAL = """
+SELECT * FROM (
+    SELECT r.id, r.book_balance, (
+        SELECT coalesce(-sum(e.amount), 0)
+        FROM trust_ledger_accounts t
+        JOIN pgledger_entries e ON e.account_id = t.ledger_account_id
+        JOIN pgledger_transfers tr ON tr.id = e.transfer_id
+        WHERE t.bank_account_id = r.bank_account_id AND t.kind = 'bank_cash'
+          AND tr.event_at < r.period_end
+    ) AS books_now
+    FROM trust_reconciliations r
+    WHERE r.pmc_id = %s
+) checked
+WHERE book_balance <> books_now
+"""
+
 
 class LedgerMachine(RuleBasedStateMachine):
     def __init__(self, owner_conn, app_conn):
@@ -92,12 +120,24 @@ class LedgerMachine(RuleBasedStateMachine):
         self.accounts = sorted(self.kinds)
         # Each account's trust bank account, named by that account's bank_cash.
         self.bank = {account: pmc.cash_for(account) for account in self.accounts}
+        self.bank_id = {
+            pmc.operating_cash: pmc.operating_bank_id,
+            pmc.deposit_cash: pmc.deposit_bank_id,
+        }
         self.ids = {"ids": self.accounts}
         self.model = dict.fromkeys(self.accounts, Decimal(0))
-        self.posted: list[tuple[str, tuple[str, str, Decimal]]] = []
+        # (transfer id, request, event_at) of every transfer that landed.
+        self.posted: list[tuple[str, tuple[str, str, Decimal], datetime]] = []
         self.seen_rows: dict[tuple[str, str], tuple] = {}
         self.other_pmc_owner = None
-        self.keyed: dict[str, tuple[list, list[str]]] = {}  # key -> (requests, transfer ids)
+        # key -> (requests, event_at, transfer ids)
+        self.keyed: dict[str, tuple[list, datetime, list[str]]] = {}
+        self.fresh_keys = 0
+        self.tried_without_a_key = False
+        self.now = CLOCK_START
+        self.closed: dict[str, datetime | None] = dict.fromkeys(self.bank_id)
+        # (bank_cash, period_start, period_end, book balance) of every approved reconciliation.
+        self.reconciled: list[tuple[str, datetime, datetime, Decimal]] = []
 
     # --- helpers -------------------------------------------------------------------------
 
@@ -110,10 +150,12 @@ class LedgerMachine(RuleBasedStateMachine):
             choices += [st.just(held), st.just(held + CENT)]
         return data.draw(st.one_of(*choices))
 
-    def draw_request(self, data):
+    def draw_request(self, data, bank=None):
         """Mostly inside one trust bank account; one in five crosses to the other, which the
-        tie-out check refuses unless the cash moves in the same batch."""
-        source = data.draw(st.sampled_from(self.accounts))
+        tie-out check refuses unless the cash moves in the same batch. With `bank`, the money
+        comes from an account in that trust bank account."""
+        sources = [a for a in self.accounts if bank is None or self.bank[a] == bank]
+        source = data.draw(st.sampled_from(sources))
         cross = data.draw(st.integers(min_value=0, max_value=4)) == 0
         targets = [
             a for a in self.accounts if a != source and (self.bank[a] != self.bank[source]) == cross
@@ -126,52 +168,79 @@ class LedgerMachine(RuleBasedStateMachine):
             self.conn.execute(BALANCES, self.ids).fetchall()
         )
 
-    def attempt(self, conn, requests, key=None):
-        """Post a batch the model predicts; all of it lands, or none of it. With a key, it goes
-        through trust_post_transfers and a posting that lands files the key."""
+    def is_closed(self, account, when):
+        closed_through = self.closed[self.bank[account]]
+        return closed_through is not None and when < closed_through
+
+    def attempt(self, role, requests, key=None, when=None):
+        """Post a batch the model predicts, dated `when` (the clock by default); all of it
+        lands, or none of it. The app always posts through trust_post_transfers with a key (a
+        new one unless given), and a posting that lands files its key; the owner posts through
+        pgledger directly when no key is given."""
+        when = self.now if when is None else when
+        if role == "app" and key is None:
+            self.fresh_keys += 1
+            key = f"fresh-{self.fresh_keys}"
         expected = dict(self.model)
-        overdrawn = False
+        refusal = None
+        # pgledger works through a batch in order: each transfer's balances are checked first,
+        # then its row is inserted, which is when a closed period refuses it.
         for source, target, amount in requests:
             expected[source] -= amount
             expected[target] += amount
             if self.kinds[source] != "bank_cash" and expected[source] < 0:
-                overdrawn = True
+                refusal = "below zero"
+                break
+            if self.is_closed(source, when) or self.is_closed(target, when):
+                refusal = CLOSED
                 break
         # Checked at commit: every trust bank account's balances still sum to zero.
         ties_out = all(
             sum(expected[a] for a in self.accounts if self.bank[a] == bank) == 0
             for bank in set(self.bank.values())
         )
-        allowed = not overdrawn and ties_out
+        if refusal is None and not ties_out:
+            refusal = "does not tie out"
 
         def send():
             if key is None:
-                return transfer_batch(conn, requests)
-            return post(conn, self.pmc_id, key, requests)
+                return transfer_batch(self.conns[role], requests, event_at=when)
+            return post(self.conns[role], self.pmc_id, key, requests, event_at=when)
 
-        if allowed:
+        if refusal is None:
             ids = send()
             assert len(ids) == len(requests)
             self.model = expected
-            self.posted.extend(zip(ids, requests, strict=True))
+            self.posted.extend((i, r, when) for i, r in zip(ids, requests, strict=True))
             if key is not None:
-                self.keyed[key] = (requests, ids)
+                self.keyed[key] = (requests, when, ids)
         else:
             before = self.snapshot()
-            refusal = "below zero" if overdrawn else "does not tie out"
             with pytest.raises(psycopg.errors.CheckViolation, match=refusal):
                 send()
             assert self.snapshot() == before
+
+    def book_balance(self, cash, period_end):
+        """The cash the model says a trust bank account held at period_end."""
+        book = Decimal(0)
+        for _, (source, target, amount), when in self.posted:
+            if when >= period_end:
+                continue
+            if source == cash:  # cash arrives: bank_cash pays out to an account held for someone
+                book += amount
+            elif target == cash:  # cash leaves
+                book -= amount
+        return book
 
     # --- rules: what the test may do next -------------------------------------------------
 
     @rule(data=st.data(), role=st.sampled_from(["owner", "app"]))
     def post(self, data, role):
-        self.attempt(self.conns[role], [self.draw_request(data)])
+        self.attempt(role, [self.draw_request(data)])
 
     @rule(data=st.data(), size=st.integers(min_value=2, max_value=4))
     def post_batch(self, data, size):
-        self.attempt(self.conns["app"], [self.draw_request(data) for _ in range(size)])
+        self.attempt("app", [self.draw_request(data) for _ in range(size)])
 
     @rule(data=st.data())
     def move_between_bank_accounts(self, data):
@@ -191,32 +260,129 @@ class LedgerMachine(RuleBasedStateMachine):
         )
         amount = self.amount_for(data, source)
         cash_move = (self.bank[target], self.bank[source], amount)
-        self.attempt(self.conns["app"], [(source, target, amount), cash_move])
+        self.attempt("app", [(source, target, amount), cash_move])
 
     @rule(data=st.data(), key=KEYS, retry=st.booleans())
     def post_with_key(self, data, key, retry):
         if key not in self.keyed:
             size = data.draw(st.integers(min_value=1, max_value=3))
-            self.attempt(self.conns["app"], [self.draw_request(data) for _ in range(size)], key)
+            self.attempt("app", [self.draw_request(data) for _ in range(size)], key)
             return
-        requests, ids = self.keyed[key]
+        requests, when, ids = self.keyed[key]
         before = self.snapshot()
         if retry:
-            # A retry after a timeout: same key, same posting. The original comes back.
-            assert post(self.conns["app"], self.pmc_id, key, requests) == ids
+            # A retry after a timeout: same key, same posting. The original comes back, even
+            # once a reconciliation has closed the period it is dated in.
+            assert post(self.conns["app"], self.pmc_id, key, requests, event_at=when) == ids
         else:
             # The same key for a different posting is refused.
             source, target, amount = requests[0]
             changed = [(source, target, amount + CENT), *requests[1:]]
             with pytest.raises(psycopg.errors.UniqueViolation, match="different posting"):
-                post(self.conns["app"], self.pmc_id, key, changed)
+                post(self.conns["app"], self.pmc_id, key, changed, event_at=when)
         assert self.snapshot() == before
 
     @precondition(lambda self: self.posted)
     @rule(data=st.data())
     def correct_with_a_reversal(self, data):
-        _, (source, target, amount) = data.draw(st.sampled_from(self.posted))
-        self.attempt(self.conns["app"], [(target, source, amount)])
+        # Dated today, so a correction to a closed period lands in the open one.
+        _, (source, target, amount), _ = data.draw(st.sampled_from(self.posted))
+        self.attempt("app", [(target, source, amount)])
+
+    @rule(data=st.data(), role=st.sampled_from(["owner", "app"]), back=BACK)
+    def post_backdated(self, data, role, back):
+        """A posting dated before today: refused if that date is closed for either side."""
+        self.attempt(role, [self.draw_request(data)], when=self.now - back)
+
+    @precondition(lambda self: any(self.closed.values()))
+    @rule(data=st.data(), role=st.sampled_from(["owner", "app"]), back=BACK)
+    def try_to_post_into_a_closed_period(self, data, role, back):
+        cash = data.draw(st.sampled_from([c for c, end in self.closed.items() if end]))
+        self.attempt(role, [self.draw_request(data, bank=cash)], when=self.closed[cash] - back)
+
+    @precondition(lambda self: not self.tried_without_a_key)  # once is enough per example
+    @rule()
+    def app_cannot_post_without_a_key(self):
+        # pgledger's posting functions take no key: only the owner role may call them.
+        self.tried_without_a_key = True
+        source = next(a for a in self.accounts if self.kinds[a] == "bank_cash")
+        target = next(a for a in self.accounts if self.bank[a] == source and a != source)
+        before = self.snapshot()
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            transfer_batch(self.conns["app"], [(source, target, CENT)], event_at=self.now)
+        assert self.snapshot() == before
+
+    @rule(days=st.integers(min_value=1, max_value=40), micros=st.integers(0, 86_399_999_999))
+    def advance_clock(self, days, micros):
+        self.now += timedelta(days=days, microseconds=micros)
+
+    def next_period_start(self, cash):
+        return self.closed[cash] or FIRST_PERIOD_START
+
+    @precondition(lambda self: any(self.next_period_start(c) < self.now for c in self.closed))
+    @rule(data=st.data(), role=st.sampled_from(["owner", "app"]), statement=AMOUNTS)
+    def approve_reconciliation(self, data, role, statement):
+        cash = data.draw(
+            st.sampled_from(sorted(c for c in self.closed if self.next_period_start(c) < self.now))
+        )
+        start = self.next_period_start(cash)
+        # Any end after the start, up to today: a period is approved once it has ended.
+        end = start + data.draw(
+            st.timedeltas(min_value=timedelta(microseconds=1), max_value=self.now - start)
+        )
+        approved = approve(self.conns[role], self.pmc_id, self.bank_id[cash], start, end, statement)
+        book = self.book_balance(cash, end)
+        row = self.conn.execute(
+            "SELECT bank_account_id, period_start, period_end, statement_balance, book_balance"
+            " FROM trust_reconciliations WHERE id = %s",
+            (approved,),
+        ).fetchone()
+        assert row == (self.bank_id[cash], start, end, statement, book)
+        self.closed[cash] = end
+        self.reconciled.append((cash, start, end, book))
+
+    @precondition(lambda self: any(self.closed.values()))
+    @rule(data=st.data(), shift=BACK, later=st.booleans())
+    def try_to_approve_out_of_sequence(self, data, shift, later):
+        """A period that overlaps the last approved one, or leaves a gap after it."""
+        cash = data.draw(st.sampled_from([c for c, end in self.closed.items() if end]))
+        start = self.closed[cash] + shift if later else self.closed[cash] - shift
+        before = self.reconciliations()
+        with pytest.raises(psycopg.errors.InvalidParameterValue, match="next period"):
+            approve(self.conn, self.pmc_id, self.bank_id[cash], start, start + shift)
+        assert self.reconciliations() == before
+
+    @precondition(lambda self: self.reconciled)
+    @rule(
+        statement=st.sampled_from(
+            [
+                "UPDATE trust_reconciliations SET period_end = period_start + interval '1 day'",
+                "UPDATE trust_reconciliations SET book_balance = book_balance + 1",
+                "DELETE FROM trust_reconciliations",
+            ]
+        )
+    )
+    def try_to_change_a_reconciliation(self, statement):
+        where = f"{statement} WHERE pmc_id = %s"
+        before = self.reconciliations()
+        with pytest.raises(psycopg.errors.RestrictViolation, match="append-only"):
+            self.conn.execute(where, (self.pmc_id,))
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            self.conns["app"].execute(where, (self.pmc_id,))
+        reopen = "UPDATE trust_bank_accounts SET closed_through = NULL WHERE pmc_id = %s"
+        with pytest.raises(psycopg.errors.RestrictViolation, match="newest approved"):
+            self.conn.execute(reopen, (self.pmc_id,))
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            self.conns["app"].execute(reopen, (self.pmc_id,))
+        assert self.reconciliations() == before
+
+    def reconciliations(self):
+        return self.conn.execute(
+            "SELECT r.*, b.closed_through FROM trust_reconciliations r"
+            " JOIN trust_bank_accounts b ON b.id = r.bank_account_id"
+            " WHERE r.pmc_id = %s ORDER BY r.id",
+            (self.pmc_id,),
+        ).fetchall()
 
     @rule(amount=AMOUNTS)
     def try_to_cross_pmcs(self, amount):
@@ -293,7 +459,26 @@ class LedgerMachine(RuleBasedStateMachine):
             "SELECT idempotency_key, transfer_ids FROM trust_idempotency_keys WHERE pmc_id = %s",
             (self.pmc_id,),
         ).fetchall()
-        assert dict(rows) == {key: ids for key, (_, ids) in self.keyed.items()}
+        assert dict(rows) == {key: ids for key, (_, _, ids) in self.keyed.items()}
+
+    @invariant()
+    def approved_periods_stay_closed(self):
+        rows = self.conn.execute(
+            "SELECT b.id, b.closed_through FROM trust_bank_accounts b WHERE b.pmc_id = %s",
+            (self.pmc_id,),
+        ).fetchall()
+        assert dict(rows) == {self.bank_id[cash]: end for cash, end in self.closed.items()}
+
+        approved = self.conn.execute(
+            "SELECT bank_account_id, period_start, period_end, book_balance"
+            " FROM trust_reconciliations WHERE pmc_id = %s ORDER BY period_end, bank_account_id",
+            (self.pmc_id,),
+        ).fetchall()
+        expected = [(self.bank_id[c], s, e, b) for c, s, e, b in self.reconciled]
+        assert approved == sorted(expected, key=lambda r: (r[2], r[0]))
+        # Nothing dated inside an approved period landed after its approval, so the books
+        # still show, at each period's end, the cash they showed when it was approved.
+        assert self.conn.execute(BOOKS_CHANGED_SINCE_APPROVAL, (self.pmc_id,)).fetchall() == []
 
 
 def test_ledger_invariants_hold_under_random_postings(database_url):

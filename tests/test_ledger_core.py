@@ -7,24 +7,41 @@ from decimal import Decimal
 
 import psycopg
 import pytest
-from helpers import balance, make_pmc, running_balance_breaks, transfer, transfer_batch
+from helpers import (
+    approve,
+    balance,
+    make_pmc,
+    post,
+    running_balance_breaks,
+    transfer,
+    transfer_batch,
+)
 
 LEDGER_HISTORY = [
     "pgledger_transfers",
     "pgledger_entries",
     "trust_ledger_accounts",
     "trust_idempotency_keys",
+    "trust_reconciliations",
 ]
+# The column each table stamps when a row is written.
+WRITTEN_AT = {"trust_reconciliations": "approved_at"}
 REWRITES = {
-    "UPDATE": "UPDATE {table} SET created_at = created_at",
+    "UPDATE": "UPDATE {table} SET {written_at} = {written_at}",
     "DELETE": "DELETE FROM {table}",
     "TRUNCATE": "TRUNCATE {table} CASCADE",
 }
 
 
+def rewrite(statement, table):
+    return REWRITES[statement].format(table=table, written_at=WRITTEN_AT.get(table, "created_at"))
+
+
 def post_sample_transfers(conn):
-    """Rent in, a management fee, a vendor bill paid, a deposit in, and one batch."""
+    """A reconciled month, then rent in, a management fee, a vendor bill paid, a deposit in, and
+    one batch, all dated today."""
     pmc = make_pmc(conn, owners=2)
+    approve(conn, pmc.pmc_id, pmc.operating_bank_id, "2026-01-01", "2026-02-01")
     first, second = pmc.owners
     transfer(conn, pmc.operating_cash, first.account, "1500.00")
     transfer(conn, pmc.operating_cash, second.account, "980.25")
@@ -104,7 +121,7 @@ def test_ledger_history_cannot_be_rewritten_even_by_the_owner(conn, table, state
     before = conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
 
     with pytest.raises(psycopg.errors.RestrictViolation, match="append-only"):
-        conn.execute(REWRITES[statement].format(table=table))
+        conn.execute(rewrite(statement, table))
 
     assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == before
 
@@ -117,7 +134,7 @@ def test_app_role_has_no_grant_to_rewrite_ledger_history(conn, app_conn, table, 
 
     # Refused by missing privilege, before the trigger is even reached.
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
-        app_conn.execute(REWRITES[statement].format(table=table))
+        app_conn.execute(rewrite(statement, table))
 
     assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == before
 
@@ -141,7 +158,7 @@ def test_concurrent_transfers_all_finish_and_balances_add_up(conn, database_url)
                 worker_conn.execute("SET ROLE trust_app")
                 worker_conn.execute("SET lock_timeout = '20s'")
                 barrier.wait(timeout=30)
-                for _ in range(rounds):
+                for round_ in range(rounds):
                     a, b, c = rng.sample(accounts, 3)
                     # A cycle a -> b -> c -> a in one batch: without consistent lock ordering,
                     # two workers holding opposite ends of it deadlock.
@@ -150,7 +167,7 @@ def test_concurrent_transfers_all_finish_and_balances_add_up(conn, database_url)
                         (b, c, Decimal(rng.randint(1, 1000)) / 100),
                         (c, a, Decimal(rng.randint(1, 1000)) / 100),
                     ]
-                    posted.extend(transfer_batch(worker_conn, batch))
+                    posted.extend(post(worker_conn, pmc.pmc_id, f"w{seed}-{round_}", batch))
         except Exception as exc:  # collected and asserted below
             errors.append(repr(exc))
 

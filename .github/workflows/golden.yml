@@ -29,7 +29,7 @@ jobs:
     timeout-minutes: 10
     services:
       postgres:
-        image: postgres:16
+        image: mirror.gcr.io/library/postgres:16
         env:
           POSTGRES_HOST_AUTH_METHOD: trust
         ports:
