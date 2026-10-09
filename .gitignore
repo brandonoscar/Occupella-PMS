@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+# dbmate reads DATABASE_URL from .env; keep any local one out of git.
+.env

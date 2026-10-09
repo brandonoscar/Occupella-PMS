@@ -1,0 +1,16 @@
+# gitleaks config: the default rules, plus two for US tax IDs. No real tax ID may ever appear
+# here; fixtures are synthetic only (CLAUDE.md, hard rule 2).
+title = "occupella-pms"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "us-ssn"
+description = "Looks like a US Social Security number"
+regex = '''\b\d{3}-\d{2}-\d{4}\b'''
+
+[[rules]]
+id = "us-ein"
+description = "Looks like a US employer identification number"
+regex = '''\b\d{2}-\d{7}\b'''

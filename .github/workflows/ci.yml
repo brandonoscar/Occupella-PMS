@@ -1,0 +1,122 @@
+name: ci
+
+# Every push to any branch, so a branch is green before its PR opens. No LLM calls, no secrets.
+on:
+  push:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DBMATE_VERSION: v2.36.0
+  # sha256 of dbmate-linux-amd64 v2.36.0, computed when it was pinned (dbmate publishes none).
+  DBMATE_SHA256: 47e284b3d8cbad1ba5f090495aa05afd1bbd5f35e2ed5577aad06da74ce780ce
+  # The throwaway Postgres service below uses trust auth, so there is no password anywhere.
+  DATABASE_URL: postgres://postgres@localhost:5432/pms?sslmode=disable
+
+jobs:
+  migrate:
+    name: migrate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install dbmate
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+            "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
+          echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/bin/dbmate"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Use pg_dump 16
+        run: |
+          if [ ! -x /usr/lib/postgresql/16/bin/pg_dump ]; then
+            sudo apt-get update -q && sudo apt-get install -y -q postgresql-client-16
+          fi
+          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
+      - name: Show versions
+        run: |
+          dbmate --version
+          pg_dump --version
+          psql "postgres://postgres@localhost:5432/postgres?sslmode=disable" -Atc 'select version()'
+      - name: pgledger blocks match upstream at the pinned commit
+        run: python3 scripts/check_pgledger_verbatim.py
+      - name: Apply every migration to an empty database
+        run: dbmate --no-dump-schema up
+      - name: Dump the schema
+        run: scripts/dump_schema.sh
+      - name: Fail if db/schema.sql drifted
+        run: git diff --exit-code -- db/schema.sql
+
+  test:
+    name: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - name: Install dbmate
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+            "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
+          echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/bin/dbmate"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: pip install -r requirements-dev.txt
+      - name: pytest (fresh database, every migration; a skipped test fails the run)
+        run: pytest -v
+
+  lint:
+    name: lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: ruff format --check .
