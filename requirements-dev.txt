@@ -1,7 +1,7 @@
 # Test, lint and CI tools, on top of the runtime dependencies. Pinned; dependabot proposes
 # updates weekly.
 -r requirements.txt
-coverage==7.16.1
+coverage==7.16.2
 diff-cover==10.6.0
 hypothesis==6.168.1
 mypy==2.3.1
