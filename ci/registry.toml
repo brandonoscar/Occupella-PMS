@@ -1,0 +1,133 @@
+# What the ledger must guarantee, and what proves it. tools/check_registry.py fails CI when a
+# listed test doesn't exist, when an entry has neither tests nor an open issue, when a pending
+# issue is closed, or when a PR removes an entry or one of its tests.
+#
+#   tests   = test node ids that prove the entry
+#   pending = the open issue for what isn't built yet (an entry may have both)
+
+# --- Ledger invariants (ledger-invariants.yml) ---------------------------------------------
+
+[[invariant]]
+id = "debits-equal-credits"
+statement = "Every transaction's debits equal its credits."
+tests = [
+  "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+  "tests/test_ledger_core.py::test_every_transfer_writes_entries_that_sum_to_zero",
+]
+
+[[invariant]]
+id = "no-owner-ledger-below-zero"
+statement = "No owner/property ledger (or any held account) goes below zero; the posting is rejected and nothing is written."
+tests = [
+  "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+  "tests/test_trust_model.py::test_transfer_that_would_take_owner_account_below_zero_is_refused_and_nothing_written",
+  "tests/test_trust_model.py::test_no_negative_rule_does_not_rely_on_pgledgers_own_flag",
+]
+
+[[invariant]]
+id = "trust-account-tie-out"
+statement = "Per trust account: book cash = owner balances + prepaid rent + deposits held + unpaid vendor bills. Tested per PMC today; per trust account needs #3."
+tests = [
+  "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+]
+pending = "https://github.com/brandonoscar/Occupella-PMS/issues/3"
+
+[[invariant]]
+id = "append-only-history"
+statement = "Posted entries are never updated or deleted; corrections are reversing entries."
+tests = [
+  "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+  "tests/test_ledger_core.py::test_ledger_history_cannot_be_rewritten_even_by_the_owner",
+  "tests/test_ledger_core.py::test_app_role_has_no_grant_to_rewrite_ledger_history",
+]
+
+[[invariant]]
+id = "idempotency-key"
+statement = "Posting with the same idempotency key twice creates one entry."
+pending = "https://github.com/brandonoscar/Occupella-PMS/issues/4"
+
+[[invariant]]
+id = "reconciliation-locked"
+statement = "An approved reconciliation is locked."
+pending = "https://github.com/brandonoscar/Occupella-PMS/issues/5"
+
+[[invariant]]
+id = "deposits-in-deposit-account"
+statement = "Security deposits post only to the deposit trust account."
+pending = "https://github.com/brandonoscar/Occupella-PMS/issues/6"
+
+[[invariant]]
+id = "broker-money-cap"
+statement = "Broker money in trust can't go above a configured cap."
+pending = "https://github.com/brandonoscar/Occupella-PMS/issues/7"
+
+[[invariant]]
+id = "transfers-stay-in-one-pmc"
+statement = "A transfer never crosses PMCs and only touches accounts with a trust kind."
+tests = [
+  "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+  "tests/test_trust_model.py::test_transfer_across_pmcs_is_refused",
+  "tests/test_trust_model.py::test_transfer_touching_an_account_with_no_trust_kind_is_refused",
+]
+
+[[invariant]]
+id = "app-role-cannot-move-money-directly"
+statement = "The app role reads the ledger and writes only through the ledger functions."
+tests = [
+  "tests/test_privileges.py::test_app_role_table_privileges_are_exact",
+  "tests/test_privileges.py::test_app_role_function_privileges_are_exact",
+  "tests/test_trust_model.py::test_app_role_sets_up_and_posts_through_functions_only",
+]
+
+[[invariant]]
+id = "concurrent-postings-all-finish"
+statement = "Concurrent transfers across the same accounts all finish, and the balances still add up: accounts are locked in one global order, and unrelated transfers never wait for each other."
+tests = [
+  "tests/test_ledger_core.py::test_concurrent_transfers_all_finish_and_balances_add_up",
+  "tests/test_ledger_core.py::test_batches_lock_accounts_in_sorted_order_before_changing_anything",
+  "tests/test_ledger_core.py::test_transfers_on_unrelated_accounts_do_not_wait_for_each_other",
+]
+
+[[invariant]]
+id = "running-balance"
+statement = "Every entry carries the account's running balance and version, chained from zero, so an auditor can walk the ledger line by line (Cal. Reg. 2831)."
+tests = [
+  "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+  "tests/test_ledger_core.py::test_every_entry_carries_the_running_balance_and_account_version",
+]
+
+# --- Reports (golden.yml) ------------------------------------------------------------------
+
+[[report]]
+id = "owner-statement"
+statement = "Owner statement per property and per owner, compared to a checked-in golden file."
+pending = "https://github.com/brandonoscar/Occupella-PMS/issues/8"
+
+[[report]]
+id = "three-way-reconciliation"
+statement = "Three-way reconciliation report, compared to a checked-in golden file."
+pending = "https://github.com/brandonoscar/Occupella-PMS/issues/9"
+
+[[report]]
+id = "rent-roll"
+statement = "Rent roll, compared to a checked-in golden file."
+pending = "https://github.com/brandonoscar/Occupella-PMS/issues/10"
+
+# --- Self-host (selfhost.yml) --------------------------------------------------------------
+
+[[selfhost]]
+id = "plain-postgres"
+statement = "The image applies every migration to plain Postgres 16, seeds a synthetic 50-door PMC, posts a month of rent and passes the health checks."
+tests = [
+  "tests/test_selfhost_smoke.py::test_smoke_seeds_posts_rent_and_reports_healthy",
+]
+
+[[selfhost]]
+id = "owner-statement"
+statement = "The self-host smoke run produces one owner statement."
+pending = "https://github.com/brandonoscar/Occupella-PMS/issues/8"
+
+[[selfhost]]
+id = "app-health"
+statement = "The self-hosted app answers its health endpoint."
+pending = "https://github.com/brandonoscar/Occupella-PMS/issues/11"

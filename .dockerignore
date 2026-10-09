@@ -1,0 +1,5 @@
+*
+!requirements.txt
+!db/migrations
+!selfhost
+selfhost/__pycache__

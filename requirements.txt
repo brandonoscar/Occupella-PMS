@@ -1,0 +1,3 @@
+# Runtime dependencies (the self-host image installs only these). Pinned; dependabot proposes
+# updates weekly. scripts/check_licenses.py fails CI on a license outside ci/licenses.toml.
+psycopg[binary]==3.3.6

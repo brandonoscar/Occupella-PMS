@@ -1,0 +1,8 @@
+# Changes to the checks themselves, the golden files and the schema go to the owner. This is
+# enforced once branch protection requires code-owner review (docs/CI.md).
+/.github/ @brandonoscar
+/ci/ @brandonoscar
+/tools/ @brandonoscar
+/tests/golden/ @brandonoscar
+/db/migrations/ @brandonoscar
+/CLAUDE.md @brandonoscar

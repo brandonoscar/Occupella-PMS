@@ -134,3 +134,36 @@ def snapshot(connection, accounts):
         """,
         {"ids": list(accounts)},
     ).fetchone()
+
+
+RUNNING_BALANCE_BREAKS = """
+WITH ordered AS (
+    SELECT e.account_id, e.account_version, e.amount,
+           e.account_previous_balance AS previous, e.account_current_balance AS current,
+           lag(e.account_current_balance, 1, 0::numeric) OVER w AS expected_previous,
+           row_number() OVER w AS position
+    FROM pgledger_entries e
+    WHERE e.account_id = ANY(%(ids)s)
+    WINDOW w AS (PARTITION BY e.account_id ORDER BY e.account_version)
+)
+SELECT account_id, account_version FROM ordered
+WHERE previous <> expected_previous OR previous + amount <> current
+   OR account_version <> position
+UNION ALL
+SELECT a.id, a.version
+FROM pgledger_accounts a
+LEFT JOIN LATERAL (
+    SELECT count(*) AS entries,
+           (array_agg(e.account_current_balance ORDER BY e.account_version DESC))[1] AS last
+    FROM pgledger_entries e WHERE e.account_id = a.id
+) s ON true
+WHERE a.id = ANY(%(ids)s) AND (a.version <> s.entries OR a.balance <> coalesce(s.last, 0))
+"""
+
+
+def running_balance_breaks(connection, accounts) -> list[tuple]:
+    """Entries whose running balance doesn't chain, or accounts whose version and balance don't
+    match their last entry. Each entry must start where the previous one ended (from zero), add
+    its amount, and carry the account's version: 1, 2, 3... A ledger an auditor can walk line
+    by line (Cal. Reg. 2831's running balance)."""
+    return connection.execute(RUNNING_BALANCE_BREAKS, {"ids": list(accounts)}).fetchall()
