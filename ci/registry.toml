@@ -69,8 +69,14 @@ tests = [
 
 [[invariant]]
 id = "deposits-in-deposit-account"
-statement = "Security deposits post only to the deposit trust account."
-pending = "https://github.com/brandonoscar/Occupella-PMS/issues/6"
+statement = "Security deposits sit only in the security-deposit trust account, which holds nothing else, for every PMC: no ledger account opens in the other kind of trust bank account, and a trust bank account never changes kind."
+tests = [
+  "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+  "tests/test_deposit_account.py::test_money_held_in_trust_opens_only_in_its_own_kind_of_account",
+  "tests/test_deposit_account.py::test_the_deposit_accounts_cash_is_exactly_the_deposits_it_holds",
+  "tests/test_deposit_account.py::test_a_trust_bank_accounts_kind_never_changes",
+  "tests/test_deposit_account.py::test_the_migration_refuses_books_that_already_mix_them",
+]
 
 [[invariant]]
 id = "broker-money-cap"

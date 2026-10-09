@@ -25,6 +25,8 @@ functions = [
   "trust_approve_reconciliation",
   "trust_refuse_moving_closed_through",
   "trust_refuse_posting_into_closed_period",
+  "trust_check_account_bank_kind",
+  "trust_refuse_changing_bank_kind",
 ]
 # Python money modules (none yet). Each needs the same line and branch floors.
 python_paths = []
@@ -33,8 +35,8 @@ python_paths = []
 # Measured overall coverage, rounded down to 0.1. It only goes up: coverage.yml fails when
 # coverage drops below it, and also when coverage rose and this wasn't raised to match.
 python_lines = 99.3
-sql_statements = 98.7
-sql_branches = 98.1
+sql_statements = 98.8
+sql_branches = 98.2
 
 [mutation]
 # Share of valid SQL mutants of the money functions that the tests kill (mutation.yml, nightly).

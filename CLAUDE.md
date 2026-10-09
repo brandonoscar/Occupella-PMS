@@ -78,6 +78,10 @@ required invariant, report and self-host step.
   needs, never DELETE. `tests/test_privileges.py` pins the exact grants of every table and
   function: a new one fails until it is listed there, with who may use it. Postgres lets PUBLIC
   call a new function unless the migration revokes it.
+- Each kind of money sits in its own kind of trust bank account, for every PMC: tenant deposits
+  in the `security_deposit` one, everything else held in trust in the `operating` one (each has
+  its own `bank_cash`). A trigger refuses an account opened in the other kind, and a trust bank
+  account never changes kind.
 - Only `bank_cash` accounts may go below zero; a trigger refuses it for every other kind.
   Every transfer stays inside one PMC. No foreign key cascades into trust tables.
 - Every trust bank account ties out: its book cash equals everything held in it (owners,

@@ -74,6 +74,8 @@ FUNCTIONS = {
     "trust_check_bank_tie_out()": {"PUBLIC"},
     "trust_refuse_posting_into_closed_period()": {"PUBLIC"},
     "trust_refuse_moving_closed_through()": {"PUBLIC"},
+    "trust_check_account_bank_kind()": {"PUBLIC"},
+    "trust_refuse_changing_bank_kind()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.

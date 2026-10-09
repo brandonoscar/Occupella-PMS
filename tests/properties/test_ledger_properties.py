@@ -22,7 +22,9 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     nothing, and reusing it for a different posting is refused;
   - an approved reconciliation is locked: the record never changes, nothing dated inside its
     period is posted after it (so its book balance still holds), and periods follow one
-    another with no gap or overlap.
+    another with no gap or overlap;
+  - every security deposit sits in the security-deposit trust account, which holds nothing
+    else, so its cash is exactly the deposits held; no account opens in the wrong kind.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly; a failure prints the shortest
 sequence of steps that breaks an invariant.
@@ -107,7 +109,12 @@ class LedgerMachine(RuleBasedStateMachine):
         self.conns = {"owner": owner_conn, "app": app_conn}
         self.conn = owner_conn
         pmc = make_pmc(owner_conn, owners=3)
+        self.pmc = pmc
         self.pmc_id = pmc.pmc_id
+        self.tenant_id = owner_conn.execute(
+            "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
+            (pmc.tenant_deposit,),
+        ).fetchone()[0]
         self.kinds = {
             pmc.operating_cash: "bank_cash",
             pmc.deposit_cash: "bank_cash",
@@ -394,6 +401,35 @@ class LedgerMachine(RuleBasedStateMachine):
             transfer(self.conn, source, self.other_pmc_owner, amount)
         assert self.snapshot() == before
 
+    @rule(
+        kind=st.sampled_from(
+            ["tenant_deposit", "owner_property", "pmc_income", "prepaid_rent", "vendor_payable"]
+        ),
+        role=st.sampled_from(["owner", "app"]),
+    )
+    def try_to_open_an_account_in_the_wrong_trust_account(self, kind, role):
+        """Deposits only in the deposit account; nothing else held in trust in it."""
+        pmc, owner = self.pmc, self.pmc.owners[0]
+        wrong_bank = pmc.operating_bank_id if kind == "tenant_deposit" else pmc.deposit_bank_id
+        if kind == "vendor_payable":
+            query = "SELECT trust_open_vendor_account(%s, %s, %s)"
+            params: tuple = (self.pmc_id, wrong_bank, pmc.vendor_id)
+        else:
+            owner_id, property_id = (
+                (owner.owner_id, owner.property_id) if kind == "owner_property" else (None, None)
+            )
+            tenant_id = self.tenant_id if kind in ("tenant_deposit", "prepaid_rent") else None
+            query = "SELECT trust_open_ledger_account(%s, %s, %s, %s, %s, %s)"
+            params = (self.pmc_id, wrong_bank, kind, owner_id, property_id, tenant_id)
+        opened = (
+            "SELECT (SELECT count(*) FROM pgledger_accounts),"
+            " (SELECT count(*) FROM trust_ledger_accounts)"
+        )
+        before = self.conn.execute(opened).fetchone()
+        with pytest.raises(psycopg.errors.CheckViolation, match="accounts belong in the"):
+            self.conns[role].execute(query, params)
+        assert self.conn.execute(opened).fetchone() == before
+
     @precondition(lambda self: self.posted)
     @rule(
         data=st.data(),
@@ -414,6 +450,26 @@ class LedgerMachine(RuleBasedStateMachine):
             self.conns["app"].execute(query, (transfer_id,))
 
     # --- invariants: checked after every step ---------------------------------------------
+
+    @invariant()
+    def deposits_sit_only_in_the_deposit_account(self):
+        rows = self.conn.execute(
+            "SELECT b.kind, t.kind, sum(a.balance)"
+            " FROM trust_ledger_accounts t"
+            " JOIN trust_bank_accounts b ON b.id = t.bank_account_id"
+            " JOIN pgledger_accounts a ON a.id = t.ledger_account_id"
+            " WHERE t.pmc_id = %s GROUP BY b.kind, t.kind",
+            (self.pmc_id,),
+        ).fetchall()
+        held = {(bank_kind, kind): amount for bank_kind, kind, amount in rows}
+        assert {kind for bank_kind, kind in held if bank_kind == "security_deposit"} == {
+            "bank_cash",
+            "tenant_deposit",
+        }
+        assert ("operating", "tenant_deposit") not in held
+        # The deposit account's cash is every deposit held, and nothing but deposits.
+        deposits = sum(amount for (_, kind), amount in held.items() if kind == "tenant_deposit")
+        assert -held[("security_deposit", "bank_cash")] == deposits
 
     @invariant()
     def debits_equal_credits(self):
