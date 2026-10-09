@@ -19,4 +19,5 @@ Tick what applies. CI checks most of these on its own (docs/CI.md); the rest are
 
 ## Verified
 
-<!-- What you ran and what it showed. Write NOT VERIFIED for anything you didn't check. -->
+<!-- What you ran and what it showed: start with the summary scripts/check.sh printed, NOT RUN
+lines included. Write NOT VERIFIED for anything you didn't check. -->
