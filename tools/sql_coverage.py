@@ -48,6 +48,9 @@ FROM plpgsql_profiler_function_statements_tb(%s)
 ORDER BY stmtid
 """
 
+# Version 2.10 dropped the parent_note column that branch_count() needs.
+EXTENSION_VERSION = "2.7"
+
 LOOPS = frozenset(
     {
         "LOOP",
@@ -70,6 +73,15 @@ def start(conn: psycopg.Connection[Any], database: str) -> None:
             "shared_preload_libraries = 'plpgsql_check'."
         )
     conn.execute("CREATE EXTENSION IF NOT EXISTS plpgsql_check")
+    version = conn.execute(
+        "SELECT extversion FROM pg_extension WHERE extname = 'plpgsql_check'"
+    ).fetchone()
+    if version is None or str(version[0]) != EXTENSION_VERSION:
+        raise RuntimeError(
+            f"PL/pgSQL coverage needs plpgsql_check {EXTENSION_VERSION}.x (its profiler reports "
+            f"parent_note, which branch_count() reads); found {version}. "
+            "See ci/postgres-coverage.Dockerfile."
+        )
     conn.execute(
         sql.SQL("ALTER DATABASE {} SET plpgsql_check.profiler = on").format(
             sql.Identifier(database)

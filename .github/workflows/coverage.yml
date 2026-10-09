@@ -83,7 +83,7 @@ jobs:
           git fetch --no-tags origin "$BASE_REF"
           min=$(python -m tools.coverage_gate --print coverage.changed_lines_min)
           diff-cover coverage/python.xml coverage/sql.xml --compare-branch="origin/$BASE_REF" \
-            --fail-under="$min" --markdown-report coverage/diff-cover.md
+            --fail-under="$min" --format markdown:coverage/diff-cover.md
       - name: Add the changed-lines report to the summary
         if: ${{ !cancelled() && github.event_name == 'pull_request' }}
         run: cat coverage/diff-cover.md >> "$GITHUB_STEP_SUMMARY" || true

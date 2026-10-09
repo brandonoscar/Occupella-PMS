@@ -108,16 +108,23 @@ def test_read_migrations_keys_paths_from_the_repo_root(tmp_path):
 
 
 class FakeConnection:
-    def __init__(self, preload):
-        self.preload = preload
+    """Answers SHOW shared_preload_libraries and the extension-version query."""
+
+    def __init__(self, preload, version="2.7"):
+        self.answers = {"SHOW": (preload,), "extversion": (version,) if version else None}
         self.statements = []
+        self.last = None
 
     def execute(self, statement, *args):
         self.statements.append(statement)
+        self.last = str(statement)
         return self
 
     def fetchone(self):
-        return (self.preload,)
+        for key, answer in self.answers.items():
+            if key in self.last:
+                return answer
+        return None
 
 
 def test_start_needs_the_profiler_preloaded():
@@ -125,7 +132,13 @@ def test_start_needs_the_profiler_preloaded():
         sql_coverage.start(FakeConnection(""), "db")
 
 
+@pytest.mark.parametrize("version", ["2.10", None])
+def test_start_refuses_another_extension_version(version):
+    with pytest.raises(RuntimeError, match="needs plpgsql_check 2.7"):
+        sql_coverage.start(FakeConnection("plpgsql_check", version), "db")
+
+
 def test_start_turns_the_profiler_on_for_the_database():
     connection = FakeConnection("plpgsql_check")
     sql_coverage.start(connection, "pms_test_x")
-    assert len(connection.statements) == 4
+    assert len(connection.statements) == 5
