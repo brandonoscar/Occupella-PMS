@@ -39,6 +39,8 @@ the no-negative rule. If one of these looks needed, stop and ask the founder.
 7. Never weaken a check, lower a threshold or skip a test to get green. If something can't pass
    yet, open an issue and link it: in `ci/registry.toml` (`pending`), or as a strict xfail whose
    reason is the issue URL. Skips fail the run.
+8. A test that depends on threads, lock waits or timeouts gets `@pytest.mark.timing`; nightly CI
+   runs those 50 times. A flaky test is fixed, never retried until green.
 
 CI enforces most of this (`docs/CI.md`): diff coverage on changed lines, `tools/check_pr_rules.py`
 for tests-with-code, `tools/check_thresholds.py` for floors, `tools/check_registry.py` for every

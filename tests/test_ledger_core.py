@@ -117,6 +117,7 @@ def test_app_role_has_no_grant_to_rewrite_ledger_history(conn, app_conn, table, 
     assert conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] == before
 
 
+@pytest.mark.timing
 def test_concurrent_transfers_all_finish_and_balances_add_up(conn, database_url):
     threads, rounds = 8, 40
     pmc = make_pmc(conn, owners=4)
@@ -168,6 +169,7 @@ def test_concurrent_transfers_all_finish_and_balances_add_up(conn, database_url)
     assert accounts_whose_balance_is_not_the_sum_of_entries(conn) == []
 
 
+@pytest.mark.timing
 def test_transfers_on_unrelated_accounts_do_not_wait_for_each_other(conn, database_url):
     first, second = make_pmc(conn), make_pmc(conn)
     with psycopg.connect(database_url) as holder:
@@ -231,6 +233,7 @@ def accounts_locked_by_a_blocked_batch(conn, database_url, accounts, source, hel
     return locked
 
 
+@pytest.mark.timing
 def test_batches_lock_accounts_in_sorted_order_before_changing_anything(conn, database_url):
     # pgledger avoids deadlocks by locking every account a batch touches in one global order
     # (sorted ids) before changing any balance. The concurrency test above only catches a
