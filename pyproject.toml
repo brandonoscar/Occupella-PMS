@@ -10,6 +10,9 @@ testpaths = ["tests"]
 pythonpath = ["."]
 addopts = "-ra --strict-markers --strict-config"
 xfail_strict = true
+markers = [
+    "timing: depends on threads, lock waits or timeouts; ledger-invariants.yml repeats it nightly",
+]
 
 [tool.mypy]
 # Strict on everything that ships or guards CI. Tests are plain pytest and not type-checked.

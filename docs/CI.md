@@ -69,7 +69,10 @@ at the ledger, and check the money invariants after every step:
 `ci/registry.toml` maps every required invariant to its test or to the open issue for what isn't
 built yet. PRs run 200 examples per property. Nightly runs 16 jobs, each with its own seed and
 3,000 examples. A failing case is uploaded as an artifact with the seed and the shortest failing
-sequence. Random sequences find the overdraft or double-post that nobody thought to write an
+sequence. Nightly also runs every `@pytest.mark.timing` test (threads, lock waits, timeouts) 50
+times on GitHub's runners. One failure fails the job, because a flaky test teaches everyone to
+ignore red. Measured before adding it: 100 of 100 local runs passed, 50 of them with every CPU
+core busy, and the slowest took 2.2 s against limits of 20 s and more. Random sequences find the overdraft or double-post that nobody thought to write an
 example for. Run it with `HYPOTHESIS_PROFILE=pr pytest tests/properties` (or `nightly`).
 
 **golden.yml** (PRs and main): every report function (`trust_report_*`) must have a golden case
@@ -148,7 +151,9 @@ non-commercial or source-available. A PMC that self-hosts needs to be able to us
 freely. Run it with `python -m tools.check_licenses`.
 
 **dependabot** (`.github/dependabot.yml`): weekly updates for GitHub Actions, pip, the Dockerfiles
-and the compose file.
+and the compose file. pip and Actions updates come as one grouped pull request each, because
+separate pull requests for neighbouring lines of `requirements-dev.txt` conflicted with each other
+as soon as one merged.
 
 ## Before you push: `scripts/check.sh`
 
@@ -188,7 +193,7 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
 - A PR runs the 8 required checks above. The self-host check is chained after `migrations`, so a
   PR never has more than 8 jobs running at once.
 - Nightly runs are staggered so they don't overlap:
-  - 03:17 UTC ledger-invariants (16 jobs);
+  - 03:17 UTC ledger-invariants (16 property jobs and 1 timing job);
   - 04:17 mutation (4 shards, then 1 scoring job);
   - 05:17 selfhost (1);
   - Mondays 06:17 security (codeql, gitleaks history, scorecard: 3).

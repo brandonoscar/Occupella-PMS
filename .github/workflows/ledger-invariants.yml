@@ -3,7 +3,7 @@ name: ledger-invariants
 # Property-based tests (Hypothesis): random sequences of postings against the ledger, with the
 # money invariants checked after every step. PRs: ci/thresholds.toml pr_examples per property.
 # Nightly: 16 jobs, each with its own seed and nightly_examples per property. Any failing case
-# is uploaded as an artifact (synthetic data only).
+# is uploaded as an artifact (synthetic data only). Nightly also runs the timing tests 50 times.
 on:
   pull_request:
   push:
@@ -140,3 +140,53 @@ jobs:
             .hypothesis/
           include-hidden-files: true
           retention-days: 30
+
+  timing:
+    # Tests that depend on threads, lock waits or timeouts (@pytest.mark.timing) pass once per
+    # PR; a flaky one only shows up over many runs. Fifty runs a night on GitHub's runners, and
+    # one failure fails the job: a flake gets fixed, never retried away.
+    name: timing tests (nightly, 50 runs)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dbmate
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+            "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
+          echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/bin/dbmate"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: pip install -r requirements-dev.txt
+      - name: Every timing test, 50 times (pytest exits non-zero if none are marked)
+        run: |
+          failed=0
+          for run in $(seq 1 50); do
+            if ! pytest -q -p no:cacheprovider -m timing tests; then
+              failed=$((failed + 1))
+              echo "::error::run $run of 50 failed"
+            fi
+          done
+          echo "Timing tests: $failed of 50 runs failed." | tee -a "$GITHUB_STEP_SUMMARY"
+          test "$failed" -eq 0
