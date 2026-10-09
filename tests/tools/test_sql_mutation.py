@@ -77,6 +77,23 @@ def test_guards_in_every_migration_we_wrote_are_mutated_but_not_upstream(files):
     )
 
 
+def test_down_sections_are_not_mutated():
+    reversible = """-- migrate:up
+REVOKE EXECUTE ON FUNCTION money(numeric) FROM app;
+CREATE FUNCTION money(x numeric) RETURNS numeric AS $$ BEGIN RETURN x + 1; END; $$;
+-- migrate:down
+GRANT EXECUTE ON FUNCTION money(numeric) TO app;
+CREATE FUNCTION money(x numeric) RETURNS numeric AS $$ BEGIN RETURN x - 1; END; $$;
+"""
+    mutants = sql_mutation.generate({"db/migrations/007_keys.sql": reversible}, {"money"})
+
+    assert [(m.line, m.description) for m in mutants] == [
+        (2, "delete `REVOKE EXECUTE ON FUNCTION money(numeric) FROM app;`"),
+        (3, "+ to -"),
+        (3, "1 to 0"),
+    ]
+
+
 def test_apply_changes_one_place(files):
     mutant = next(m for m in sql_mutation.generate(files, {"money"}) if m.description == "< to <=")
     changed = sql_mutation.apply(files, mutant)[mutant.file]

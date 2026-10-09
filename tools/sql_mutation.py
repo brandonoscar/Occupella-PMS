@@ -11,6 +11,8 @@ What gets mutated:
   - trigger definitions (constraint triggers too), ALTER FUNCTION ... SECURITY DEFINER, and
     GRANT/REVOKE statements in every migration but the verbatim upstream one (deleted one at a
     time: each is a guard on money).
+Only up sections are mutated: the tests apply migrations up, never down (tools/check_rollback.py
+checks the down sections).
 
 usage:
   python -m tools.sql_mutation --list
@@ -128,9 +130,13 @@ def generate(files: dict[str, str], money: set[str]) -> list[Mutant]:
 
     for path in sorted(files):
         text = files[path]
-        spans = list(function_bodies(text, money))
+        # Only what `dbmate up` applies: the tests never run a down section, so a mutant there
+        # could never be killed.
+        down = text.find("-- migrate:down")
+        up_end = len(text) if down < 0 else down
+        spans = [span for span in function_bodies(text, money) if span[0] < up_end]
         if not UPSTREAM_FILES.search(path):
-            for match in GUARD_STATEMENTS.finditer(text):
+            for match in GUARD_STATEMENTS.finditer(text, 0, up_end):
                 first = match.group(0).splitlines()[0]
                 add(path, match.start(), match.end(), "", f"delete `{first[:60]}`")
                 if match.group(1).startswith("CREATE"):

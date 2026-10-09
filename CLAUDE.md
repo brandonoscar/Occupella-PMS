@@ -65,12 +65,14 @@ required invariant, report and self-host step.
 
 - The first migration holds pgledger and its two ULID helper files verbatim, at the commit in
   `THIRD_PARTY_NOTICES.md`. Never edit those blocks; CI diffs them against upstream.
-- `pgledger_transfers`, `pgledger_entries`, `trust_ledger_accounts` and `trust_idempotency_keys`
-  are append-only, enforced by triggers. Fix a mistake with a new reversing transfer.
-- The app role `trust_app` only reads ledger tables. It writes through
-  `pgledger_create_transfer(s)`, `trust_post_transfers` and `trust_open_ledger_account`, which run
-  as the table owner. `trust_post_transfers` takes an idempotency key, unique per PMC, so a
-  posting is safe to retry: the same key returns the original transfers, and a different posting
+- `pgledger_transfers`, `pgledger_entries`, `trust_ledger_accounts`, `trust_idempotency_keys`
+  and `trust_reconciliations` are append-only, enforced by triggers. Fix a mistake with a new
+  reversing transfer.
+- The app role `trust_app` only reads ledger tables. It writes through `trust_post_transfers`,
+  `trust_open_ledger_account`, `trust_open_vendor_account` and `trust_approve_reconciliation`,
+  which run as the table owner. It can't call pgledger's posting functions: every posting it
+  makes goes through `trust_post_transfers`, which takes an idempotency key, unique per PMC, so
+  it is safe to retry: the same key returns the original transfers, and a different posting
   under it is refused.
 - A new table starts with `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it
   needs, never DELETE. `tests/test_privileges.py` pins the exact grants of every table and
@@ -81,6 +83,10 @@ required invariant, report and self-host step.
 - Every trust bank account ties out: its book cash equals everything held in it (owners,
   prepaid rent, deposits, vendors, the PMC's fees). A deferred trigger checks it at commit, so
   held money moves to another trust bank account only with its cash, in the same transaction.
+- An approved reconciliation closes its trust bank account through the period's end
+  (`trust_bank_accounts.closed_through`): a transfer dated before it is refused, whoever posts
+  it, so a late correction is dated in the next open period. Periods follow one another with no
+  gap or overlap, and only `trust_approve_reconciliation` moves the closing date.
 
 ## Run the checks
 

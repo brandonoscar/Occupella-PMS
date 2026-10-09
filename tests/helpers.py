@@ -168,11 +168,12 @@ def transfer(connection, from_account, to_account, amount) -> str:
     )
 
 
-def transfer_batch(connection, requests) -> list[str]:
-    """Post several transfers in one call: all of them are written, or none."""
+def transfer_batch(connection, requests, event_at=None) -> list[str]:
+    """Post several transfers in one call: all of them are written, or none. Only the owner
+    role may; the app posts through `post`, with an idempotency key."""
     rows = sql.SQL(", ").join(sql.SQL("(%s, %s, %s::numeric)::transfer_request") for _ in requests)
-    query = sql.SQL("SELECT id FROM pgledger_create_transfers(ARRAY[{}])").format(rows)
-    params = [value for request in requests for value in request]
+    query = sql.SQL("SELECT id FROM pgledger_create_transfers(ARRAY[{}], %s)").format(rows)
+    params = [*(value for request in requests for value in request), event_at]
     return [row[0] for row in connection.execute(query, params).fetchall()]
 
 
@@ -185,6 +186,32 @@ def post(connection, pmc_id, key, requests, event_at=None, metadata=None) -> lis
     params = [pmc_id, key, *(value for request in requests for value in request)]
     params += [event_at, None if metadata is None else Jsonb(metadata)]
     return [row[0] for row in connection.execute(query, params).fetchall()]
+
+
+def approve(
+    connection,
+    pmc_id,
+    bank_id,
+    period_start,
+    period_end,
+    statement_balance="0.00",
+    prepared_by="Preparer 1",
+    approved_by="Approver 1",
+) -> UUID:
+    """Approve a reconciliation of one trust bank account, closing it through period_end."""
+    return _one(
+        connection,
+        "SELECT trust_approve_reconciliation(%s, %s, %s, %s, %s, %s, %s)",
+        (
+            pmc_id,
+            bank_id,
+            period_start,
+            period_end,
+            Decimal(statement_balance),
+            prepared_by,
+            approved_by,
+        ),
+    )
 
 
 def balance(connection, account) -> Decimal:

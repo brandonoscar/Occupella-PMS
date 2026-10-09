@@ -58,14 +58,17 @@ runs the self-host check. Run it with:
 - `python -m tools.check_upgrade --base origin/main`
 
 **ledger-invariants.yml** (PRs, main and nightly): property-based tests with Hypothesis. They
-throw random sequences of postings, batches, reversals, cross-PMC attempts and history rewrites
-at the ledger, and check the money invariants after every step:
+throw random sequences of postings, batches, reversals, cross-PMC attempts, history rewrites and
+reconciliations at the ledger, on a synthetic clock with some postings dated back into closed
+periods, and check the money invariants after every step:
 - debits equal credits;
 - no held account below zero;
 - in each trust bank account, book cash equals what is held for others;
 - history is append-only;
 - running balances chain;
-- an idempotency key posts once, and is refused for a different posting.
+- an idempotency key posts once, and is refused for a different posting;
+- an approved reconciliation never changes, nothing dated inside its period lands after it,
+  and periods follow one another.
 
 `ci/registry.toml` maps every required invariant to its test or to the open issue for what isn't
 built yet. PRs run 200 examples per property. Nightly runs 16 jobs, each with its own seed and

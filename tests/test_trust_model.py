@@ -3,7 +3,7 @@
 
 import psycopg
 import pytest
-from helpers import balance, make_pmc, snapshot, transfer, transfer_batch
+from helpers import balance, make_pmc, post, snapshot, transfer, transfer_batch
 
 
 def all_accounts(pmc):
@@ -115,10 +115,10 @@ def test_transfer_touching_an_account_with_no_trust_kind_is_refused(conn):
 
 
 def test_app_role_sets_up_and_posts_through_functions_only(app_conn):
-    # The normal path works with only trust_app's grants.
+    # The normal path works with only trust_app's grants: every posting carries a key.
     pmc = make_pmc(app_conn)
     owner = pmc.owners[0].account
-    transfer(app_conn, pmc.operating_cash, owner, "75.00")
+    post(app_conn, pmc.pmc_id, "rent", [(pmc.operating_cash, owner, "75.00")])
     assert balance(app_conn, owner) == 75
 
     # Every direct write to the ledger is refused for lack of a grant.
@@ -136,6 +136,16 @@ def test_app_role_sets_up_and_posts_through_functions_only(app_conn):
             (pmc.pmc_id, pmc.operating_bank_id),
         ),
         ("SELECT pgledger_create_account('stray', 'USD')", ()),
+        # pgledger's own posting functions take no key, so a retried request could post twice.
+        ("SELECT pgledger_create_transfer(%s, %s, 1)", (pmc.operating_cash, owner)),
+        (
+            "SELECT pgledger_create_transfers(ARRAY[(%s, %s, 1)::transfer_request])",
+            (pmc.operating_cash, owner),
+        ),
+        (
+            "SELECT pgledger_create_transfers(ARRAY[(%s, %s, 1)::transfer_request], now(), NULL)",
+            (pmc.operating_cash, owner),
+        ),
         ("DELETE FROM trust_owners WHERE id = %s", (pmc.owners[0].owner_id,)),
     ]
     for query, params in direct_writes:
