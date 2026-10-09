@@ -509,6 +509,42 @@ $$;
 
 
 --
+-- Name: trust_check_account_bank_kind(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_account_bank_kind() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bank_kind text;
+    v_belongs_in text;
+BEGIN
+    SELECT b.kind INTO v_bank_kind
+    FROM trust_bank_accounts AS b
+    WHERE b.id = NEW.bank_account_id;
+
+    -- bank_cash is the bank side of whichever account it opens in.
+    v_belongs_in := CASE NEW.kind
+        WHEN 'bank_cash' THEN v_bank_kind
+        WHEN 'tenant_deposit' THEN 'security_deposit'
+        ELSE 'operating'
+    END;
+
+    -- An unknown trust bank account leaves v_bank_kind NULL; the foreign key refuses the row.
+    IF v_bank_kind <> v_belongs_in THEN
+        RAISE EXCEPTION 'trust: % accounts belong in the % trust bank account, not the % one',
+            NEW.kind, v_belongs_in, v_bank_kind
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Tenant deposits go in the security-deposit trust account; everything '
+                         'else held in trust goes in the operating one.';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_bank_tie_out(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -694,6 +730,26 @@ BEGIN
     FROM unnest(v_transfer_ids) WITH ORDINALITY AS k (id, n)
     JOIN pgledger_transfers_view AS v ON v.id = k.id
     ORDER BY k.n;
+END;
+$$;
+
+
+--
+-- Name: trust_refuse_changing_bank_kind(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_refuse_changing_bank_kind() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NEW.kind IS DISTINCT FROM OLD.kind THEN
+        RAISE EXCEPTION 'trust: trust bank account % is %, and its kind never changes',
+            OLD.id, OLD.kind
+            USING ERRCODE = 'restrict_violation',
+                  HINT = 'Open a new trust bank account of the other kind.';
+    END IF;
+    RETURN NEW;
 END;
 $$;
 
@@ -1243,6 +1299,13 @@ CREATE INDEX trust_reconciliations_bank_account_id ON public.trust_reconciliatio
 
 
 --
+-- Name: trust_ledger_accounts trust_account_in_its_bank; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_account_in_its_bank BEFORE INSERT ON public.trust_ledger_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_check_account_bank_kind();
+
+
+--
 -- Name: pgledger_entries trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -1275,6 +1338,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_reconciliations FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_bank_accounts trust_bank_kind_fixed; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_bank_kind_fixed BEFORE UPDATE OF kind ON public.trust_bank_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_changing_bank_kind();
 
 
 --
@@ -1490,4 +1560,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261009000004'),
     ('20261009000005'),
     ('20261009000006'),
-    ('20261009000007');
+    ('20261009000007'),
+    ('20261009000008');

@@ -74,7 +74,8 @@ periods, and check the money invariants after every step:
 - running balances chain;
 - an idempotency key posts once, and is refused for a different posting;
 - an approved reconciliation never changes, nothing dated inside its period lands after it,
-  and periods follow one another.
+  and periods follow one another;
+- every security deposit sits in the security-deposit trust account, which holds nothing else.
 
 `ci/registry.toml` maps every required invariant to its test or to the open issue for what isn't
 built yet. PRs run 200 examples per property. Nightly runs 16 jobs, each with its own seed and
