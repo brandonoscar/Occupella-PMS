@@ -1,0 +1,5 @@
+# squawk lints new or changed migrations in db.yml. dbmate runs each migration in a transaction.
+# A destructive change (drop, rename, type change...) fails unless the migration says so on
+# purpose, right above the statement:  -- squawk-ignore ban-drop-column
+assume_in_transaction = true
+pg_version = "16"

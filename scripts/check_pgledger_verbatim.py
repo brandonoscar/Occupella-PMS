@@ -35,13 +35,14 @@ def upstream_text(path: str, upstream_dir: Path | None) -> str:
         return (upstream_dir / path).read_bytes().decode("utf-8")
     url = RAW_URL.format(commit=PGLEDGER_COMMIT, path=path)
     with urllib.request.urlopen(url, timeout=30) as response:
-        return response.read().decode("utf-8")
+        body: bytes = response.read()
+    return body.decode("utf-8")
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--upstream", type=Path, help="local pgledger checkout at the pinned SHA")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     migration = MIGRATION.read_bytes().decode("utf-8")
     if PGLEDGER_COMMIT not in migration:

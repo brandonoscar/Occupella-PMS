@@ -1,0 +1,60 @@
+# Licenses a dependency may carry. This repo is Apache-2.0 (LICENSE). Anything not listed fails
+# tools/check_licenses.py, so a new license is a deliberate, reviewed change to this file.
+#
+# Never add a non-commercial or source-available license (SSPL, BUSL, Elastic, Commons Clause,
+# PolyForm, CC BY-NC, and similar). Strong copyleft (GPL, AGPL) is also left off: it would bind
+# what we ship.
+
+allowed = [
+  "0BSD",
+  "Apache-2.0",
+  "BSD",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "CC0-1.0",
+  "ISC",
+  # Weak copyleft, fine for a library we import unmodified (psycopg is LGPL-3.0).
+  "LGPL-2.1-only",
+  "LGPL-2.1-or-later",
+  "LGPL-3.0-only",
+  "LGPL-3.0-or-later",
+  "MIT",
+  "MPL-2.0",
+  "PostgreSQL",
+  "PSF-2.0",
+  "Unlicense",
+  "Zlib",
+]
+
+# Names that always fail, with a clearer message than "not on the allowlist".
+denied_patterns = [
+  "SSPL",
+  "BUSL",
+  "Business Source",
+  "Elastic",
+  "Commons Clause",
+  "PolyForm",
+  "NC",
+  "Non-Commercial",
+  "NonCommercial",
+  "Server Side Public",
+]
+
+# Package metadata often uses trove classifier names instead of SPDX ids.
+[aliases]
+"Apache Software License" = "Apache-2.0"
+"Apache License 2.0" = "Apache-2.0"
+"BSD License" = "BSD"
+"GNU Lesser General Public License v3 (LGPLv3)" = "LGPL-3.0-only"
+"GNU Lesser General Public License v3 or later (LGPLv3+)" = "LGPL-3.0-or-later"
+"ISC License (ISCL)" = "ISC"
+"MIT License" = "MIT"
+"Mozilla Public License 2.0 (MPL 2.0)" = "MPL-2.0"
+"Python Software Foundation License" = "PSF-2.0"
+"The Unlicense (Unlicense)" = "Unlicense"
+
+# When a package's metadata is missing or wrong, record what it really is and why.
+# [packages.example]
+# license = "MIT"
+# reason = "metadata says UNKNOWN; LICENSE file in the sdist is MIT"
+[packages]
