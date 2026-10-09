@@ -125,8 +125,12 @@ tests = [
 
 [[report]]
 id = "owner-statement"
-statement = "Owner statement per property and per owner, compared to a checked-in golden file."
-pending = "https://github.com/brandonoscar/Occupella-PMS/issues/8"
+statement = "Owner statement per property (opening balance, each posting in date order with the balance after it, closing balance) and per owner, compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_owner_statement.py::test_the_period_includes_its_start_and_not_its_end",
+  "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+]
 
 [[report]]
 id = "three-way-reconciliation"
@@ -153,8 +157,11 @@ tests = [
 
 [[selfhost]]
 id = "owner-statement"
-statement = "The self-host smoke run produces one owner statement."
-pending = "https://github.com/brandonoscar/Occupella-PMS/issues/8"
+statement = "The self-host smoke run produces one owner statement, and it matches that owner's ledgers."
+tests = [
+  "tests/test_selfhost_smoke.py::test_smoke_produces_an_owner_statement",
+  "tests/test_selfhost_smoke.py::test_main_runs_against_database_url",
+]
 
 [[selfhost]]
 id = "app-health"
