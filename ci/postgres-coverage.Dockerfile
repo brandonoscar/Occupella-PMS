@@ -12,13 +12,13 @@ ARG PLPGSQL_CHECK_COMMIT=35de2769e3b4c26d4b324e48093c55afffec5ad0
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-        ca-certificates git build-essential postgresql-server-dev-16; \
+        ca-certificates git build-essential postgresql-server-dev-16 libicu-dev; \
     git clone --quiet --depth 1 --branch "$PLPGSQL_CHECK_TAG" \
         https://github.com/okbob/plpgsql_check /tmp/plpgsql_check; \
     test "$(git -C /tmp/plpgsql_check rev-parse HEAD)" = "$PLPGSQL_CHECK_COMMIT"; \
     make -C /tmp/plpgsql_check USE_PGXS=1 with_llvm=no; \
     make -C /tmp/plpgsql_check USE_PGXS=1 with_llvm=no install; \
-    apt-get purge -y --auto-remove git build-essential postgresql-server-dev-16; \
+    apt-get purge -y --auto-remove git build-essential postgresql-server-dev-16 libicu-dev; \
     rm -rf /tmp/plpgsql_check /var/lib/apt/lists/*
 
 CMD ["postgres", "-c", "shared_preload_libraries=plpgsql_check"]

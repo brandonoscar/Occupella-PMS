@@ -76,7 +76,7 @@ jobs:
             --python-xml coverage/python.xml --sql-xml-out coverage/sql.xml \
             --summary "$GITHUB_STEP_SUMMARY"
       - name: Lines changed by this PR
-        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && hashFiles('coverage/python.xml') != '' }}
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
@@ -85,8 +85,8 @@ jobs:
           diff-cover coverage/python.xml coverage/sql.xml --compare-branch="origin/$BASE_REF" \
             --fail-under="$min" --format markdown:coverage/diff-cover.md
       - name: Add the changed-lines report to the summary
-        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
-        run: cat coverage/diff-cover.md >> "$GITHUB_STEP_SUMMARY" || true
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && hashFiles('coverage/diff-cover.md') != '' }}
+        run: cat coverage/diff-cover.md >> "$GITHUB_STEP_SUMMARY"
       - name: Upload coverage reports
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
