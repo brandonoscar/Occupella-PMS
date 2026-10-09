@@ -10,7 +10,9 @@ trust_app, the role the application uses.
 Invariants checked after every step (ci/registry.toml maps each to this test):
   - debits equal credits: each transfer has one -amount and one +amount entry;
   - no held account (anything but bank_cash) is ever below zero, and balances match the model;
-  - per PMC, book cash equals the sum of every balance held for someone;
+  - per trust bank account, book cash equals the sum of every balance held for someone in it
+    (owners, prepaid rent, security deposits, vendors, the PMC's fees): held money moves
+    between trust bank accounts only together with its cash;
   - history is append-only: rows once written never change, and a correction is a new,
     reversing transfer;
   - every entry carries the running balance and the account's version, chained from zero;
@@ -83,9 +85,13 @@ class LedgerMachine(RuleBasedStateMachine):
             pmc.deposit_cash: "bank_cash",
             pmc.pmc_income: "pmc_income",
             pmc.tenant_deposit: "tenant_deposit",
+            pmc.prepaid_rent: "prepaid_rent",
+            pmc.vendor_payable: "vendor_payable",
             **{owner.account: "owner_property" for owner in pmc.owners},
         }
         self.accounts = sorted(self.kinds)
+        # Each account's trust bank account, named by that account's bank_cash.
+        self.bank = {account: pmc.cash_for(account) for account in self.accounts}
         self.ids = {"ids": self.accounts}
         self.model = dict.fromkeys(self.accounts, Decimal(0))
         self.posted: list[tuple[str, tuple[str, str, Decimal]]] = []
@@ -105,8 +111,14 @@ class LedgerMachine(RuleBasedStateMachine):
         return data.draw(st.one_of(*choices))
 
     def draw_request(self, data):
+        """Mostly inside one trust bank account; one in five crosses to the other, which the
+        tie-out check refuses unless the cash moves in the same batch."""
         source = data.draw(st.sampled_from(self.accounts))
-        target = data.draw(st.sampled_from([a for a in self.accounts if a != source]))
+        cross = data.draw(st.integers(min_value=0, max_value=4)) == 0
+        targets = [
+            a for a in self.accounts if a != source and (self.bank[a] != self.bank[source]) == cross
+        ]
+        target = data.draw(st.sampled_from(targets))
         return (source, target, self.amount_for(data, source))
 
     def snapshot(self):
@@ -118,13 +130,19 @@ class LedgerMachine(RuleBasedStateMachine):
         """Post a batch the model predicts; all of it lands, or none of it. With a key, it goes
         through trust_post_transfers and a posting that lands files the key."""
         expected = dict(self.model)
-        allowed = True
+        overdrawn = False
         for source, target, amount in requests:
             expected[source] -= amount
             expected[target] += amount
             if self.kinds[source] != "bank_cash" and expected[source] < 0:
-                allowed = False
+                overdrawn = True
                 break
+        # Checked at commit: every trust bank account's balances still sum to zero.
+        ties_out = all(
+            sum(expected[a] for a in self.accounts if self.bank[a] == bank) == 0
+            for bank in set(self.bank.values())
+        )
+        allowed = not overdrawn and ties_out
 
         def send():
             if key is None:
@@ -140,7 +158,8 @@ class LedgerMachine(RuleBasedStateMachine):
                 self.keyed[key] = (requests, ids)
         else:
             before = self.snapshot()
-            with pytest.raises(psycopg.errors.CheckViolation, match="below zero"):
+            refusal = "below zero" if overdrawn else "does not tie out"
+            with pytest.raises(psycopg.errors.CheckViolation, match=refusal):
                 send()
             assert self.snapshot() == before
 
@@ -153,6 +172,26 @@ class LedgerMachine(RuleBasedStateMachine):
     @rule(data=st.data(), size=st.integers(min_value=2, max_value=4))
     def post_batch(self, data, size):
         self.attempt(self.conns["app"], [self.draw_request(data) for _ in range(size)])
+
+    @rule(data=st.data())
+    def move_between_bank_accounts(self, data):
+        """Held money changes trust bank account with its cash, in one batch: a deposit kept for
+        damages goes to the owner, and the cash goes from the deposit account to operating."""
+        source = data.draw(
+            st.sampled_from([a for a in self.accounts if self.kinds[a] != "bank_cash"])
+        )
+        target = data.draw(
+            st.sampled_from(
+                [
+                    a
+                    for a in self.accounts
+                    if self.bank[a] != self.bank[source] and self.kinds[a] != "bank_cash"
+                ]
+            )
+        )
+        amount = self.amount_for(data, source)
+        cash_move = (self.bank[target], self.bank[source], amount)
+        self.attempt(self.conns["app"], [(source, target, amount), cash_move])
 
     @rule(data=st.data(), key=KEYS, retry=st.booleans())
     def post_with_key(self, data, key, retry):
@@ -224,11 +263,15 @@ class LedgerMachine(RuleBasedStateMachine):
                 assert amount >= 0, (self.kinds[account], account, amount)
 
     @invariant()
-    def book_cash_equals_held_balances(self):
+    def each_trust_bank_account_ties_out(self):
         rows = self.conn.execute(BALANCES, self.ids).fetchall()
-        cash = sum(amount for account, amount, _ in rows if self.kinds[account] == "bank_cash")
-        held = sum(amount for account, amount, _ in rows if self.kinds[account] != "bank_cash")
-        assert -cash == held
+        for bank in set(self.bank.values()):
+            in_bank = [
+                (account, amount) for account, amount, _ in rows if self.bank[account] == bank
+            ]
+            cash = sum(amount for account, amount in in_bank if self.kinds[account] == "bank_cash")
+            held = sum(amount for account, amount in in_bank if self.kinds[account] != "bank_cash")
+            assert -cash == held, bank
 
     @invariant()
     def history_is_append_only(self):

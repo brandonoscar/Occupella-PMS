@@ -26,11 +26,13 @@ tests = [
 
 [[invariant]]
 id = "trust-account-tie-out"
-statement = "Per trust account: book cash = owner balances + prepaid rent + deposits held + unpaid vendor bills. Tested per PMC today; per trust account needs #3."
+statement = "Per trust bank account: book cash = owner balances + prepaid rent + deposits held + unpaid vendor bills + the PMC's earned fees. Checked at every commit; held money changes trust bank account only with its cash."
 tests = [
   "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+  "tests/test_tie_out.py::test_held_money_cannot_change_trust_account_without_its_cash",
+  "tests/test_tie_out.py::test_a_deposit_kept_for_damages_moves_with_its_cash",
+  "tests/test_tie_out.py::test_the_check_runs_at_commit",
 ]
-pending = "https://github.com/brandonoscar/Occupella-PMS/issues/3"
 
 [[invariant]]
 id = "append-only-history"

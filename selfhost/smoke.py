@@ -43,11 +43,11 @@ CHECKS = {
         SELECT count(*) FROM trust_ledger_accounts t
         JOIN pgledger_accounts a ON a.id = t.ledger_account_id
         WHERE t.kind <> 'bank_cash' AND a.balance < 0""",
-    "PMCs whose book cash doesn't equal what they hold for others": """
+    "trust bank accounts whose book cash doesn't equal what they hold for others": """
         SELECT count(*) FROM (
-            SELECT t.pmc_id FROM trust_ledger_accounts t
+            SELECT t.bank_account_id FROM trust_ledger_accounts t
             JOIN pgledger_accounts a ON a.id = t.ledger_account_id
-            GROUP BY t.pmc_id HAVING sum(a.balance) <> 0
+            GROUP BY t.bank_account_id HAVING sum(a.balance) <> 0
         ) bad""",
 }
 

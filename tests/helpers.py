@@ -38,7 +38,26 @@ class Pmc:
     deposit_cash: str  # bank_cash ledger account of the security-deposit trust account
     pmc_income: str
     tenant_deposit: str
+    prepaid_rent: str  # the tenant's rent paid ahead, in the operating trust account
+    vendor_id: UUID
+    vendor_payable: str  # money set aside for the vendor's bill, in the operating trust account
     owners: list[Owner] = field(default_factory=list)
+
+    def accounts(self) -> list[str]:
+        return [
+            self.operating_cash,
+            self.deposit_cash,
+            self.pmc_income,
+            self.tenant_deposit,
+            self.prepaid_rent,
+            self.vendor_payable,
+            *(owner.account for owner in self.owners),
+        ]
+
+    def cash_for(self, account) -> str:
+        """The bank_cash account of the trust bank account that `account` sits in."""
+        in_deposit_bank = account in (self.deposit_cash, self.tenant_deposit)
+        return self.deposit_cash if in_deposit_bank else self.operating_cash
 
 
 def _one(connection, query, params=()):
@@ -97,6 +116,12 @@ def make_pmc(connection, owners=2) -> Pmc:
         (pmc_id, owner_rows[0].property_id, "Tenant 1"),
     )
 
+    vendor_id = _one(
+        connection,
+        "INSERT INTO trust_vendors (pmc_id, display_name) VALUES (%s, %s) RETURNING id",
+        (pmc_id, "Vendor 1"),
+    )
+
     return Pmc(
         pmc_id=pmc_id,
         operating_bank_id=banks["operating"],
@@ -107,7 +132,31 @@ def make_pmc(connection, owners=2) -> Pmc:
         tenant_deposit=open_account(
             connection, pmc_id, banks["security_deposit"], "tenant_deposit", tenant_id=tenant_id
         ),
+        prepaid_rent=open_account(
+            connection, pmc_id, banks["operating"], "prepaid_rent", tenant_id=tenant_id
+        ),
+        vendor_id=vendor_id,
+        vendor_payable=_one(
+            connection,
+            "SELECT trust_open_vendor_account(%s, %s, %s)",
+            (pmc_id, banks["operating"], vendor_id),
+        ),
         owners=owner_rows,
+    )
+
+
+def bank_sums(connection, pmc_id) -> dict:
+    """Per trust bank account of the PMC, the sum of every balance in it: zero when it ties out."""
+    return dict(
+        connection.execute(
+            """
+            SELECT t.bank_account_id, sum(a.balance)
+            FROM trust_ledger_accounts t JOIN pgledger_accounts a ON a.id = t.ledger_account_id
+            WHERE t.pmc_id = %s
+            GROUP BY t.bank_account_id
+            """,
+            (pmc_id,),
+        ).fetchall()
     )
 
 

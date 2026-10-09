@@ -190,10 +190,9 @@ def test_transfers_on_unrelated_accounts_do_not_wait_for_each_other(conn, databa
     assert balance(conn, first.owners[0].account) == 0
 
 
-def accounts_locked_by_a_blocked_batch(conn, database_url, accounts, source, held):
-    """Hold `held`'s row lock, start a batch from `source` that touches every account, and
-    return the accounts the batch had already locked when it stopped to wait for `held`."""
-    batch = [(source, target, "1.00") for target in reversed(accounts) if target != source]
+def accounts_locked_by_a_blocked_batch(conn, database_url, accounts, batch, held):
+    """Hold `held`'s row lock, start `batch` (which touches every account), and return the
+    accounts the batch had already locked when it stopped to wait for `held`."""
     errors = []
 
     def post(worker):
@@ -247,21 +246,18 @@ def test_batches_lock_accounts_in_sorted_order_before_changing_anything(conn, da
     accounts = [
         row[0]
         for row in conn.execute(
-            "SELECT id FROM unnest(%s::text[]) AS id ORDER BY id",
-            (
-                [
-                    pmc.operating_cash,
-                    pmc.deposit_cash,
-                    pmc.pmc_income,
-                    pmc.tenant_deposit,
-                    *(owner.account for owner in pmc.owners),
-                ],
-            ),
+            "SELECT id FROM unnest(%s::text[]) AS id ORDER BY id", (pmc.accounts(),)
         )
+    ]
+    # Every account receives from its own trust bank account's cash, so the batch ties out and
+    # still touches every account (the two bank_cash accounts as senders).
+    cash = {pmc.operating_cash, pmc.deposit_cash}
+    batch = [
+        (pmc.cash_for(target), target, "1.00")
+        for target in reversed(accounts)
+        if target not in cash
     ]
     for held in (accounts[-1], accounts[0], accounts[len(accounts) // 2]):
         expected = set(accounts[: accounts.index(held)])
-        locked = accounts_locked_by_a_blocked_batch(
-            conn, database_url, accounts, pmc.operating_cash, held
-        )
+        locked = accounts_locked_by_a_blocked_batch(conn, database_url, accounts, batch, held)
         assert locked == expected

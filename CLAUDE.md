@@ -78,6 +78,9 @@ required invariant, report and self-host step.
   call a new function unless the migration revokes it.
 - Only `bank_cash` accounts may go below zero; a trigger refuses it for every other kind.
   Every transfer stays inside one PMC. No foreign key cascades into trust tables.
+- Every trust bank account ties out: its book cash equals everything held in it (owners,
+  prepaid rent, deposits, vendors, the PMC's fees). A deferred trigger checks it at commit, so
+  held money moves to another trust bank account only with its cash, in the same transaction.
 
 ## Run the checks
 
