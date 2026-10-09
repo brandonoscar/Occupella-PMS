@@ -108,4 +108,9 @@ def test_main_on_the_real_migrations(scratch, monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", scratch.env["DATABASE_URL"])
     assert scratch.run("--migrations-dir", str(real), "--no-dump-schema", "up").returncode == 0
     assert check_rollback.main(["--migrations", str(real)]) == 0
-    assert "20261009000003_trust_model.sql refuses to roll back" in capsys.readouterr().out
+    newest_irreversible = next(
+        path.name
+        for path in sorted(real.glob("*.sql"), reverse=True)
+        if check_rollback.is_irreversible(path.read_text())
+    )
+    assert f"{newest_irreversible} refuses to roll back" in capsys.readouterr().out

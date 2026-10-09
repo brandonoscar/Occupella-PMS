@@ -43,8 +43,13 @@ tests = [
 
 [[invariant]]
 id = "idempotency-key"
-statement = "Posting with the same idempotency key twice creates one entry."
-pending = "https://github.com/brandonoscar/Occupella-PMS/issues/4"
+statement = "Posting with the same idempotency key twice creates one transfer and returns the original; the same key with a different posting is refused."
+tests = [
+  "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+  "tests/test_idempotency.py::test_same_key_twice_posts_once_and_returns_the_original",
+  "tests/test_idempotency.py::test_same_key_with_different_contents_is_refused_and_nothing_written",
+  "tests/test_idempotency.py::test_two_calls_with_one_key_at_once_post_once",
+]
 
 [[invariant]]
 id = "reconciliation-locked"

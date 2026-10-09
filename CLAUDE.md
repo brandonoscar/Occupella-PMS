@@ -65,14 +65,17 @@ required invariant, report and self-host step.
 
 - The first migration holds pgledger and its two ULID helper files verbatim, at the commit in
   `THIRD_PARTY_NOTICES.md`. Never edit those blocks; CI diffs them against upstream.
-- `pgledger_transfers`, `pgledger_entries` and `trust_ledger_accounts` are append-only, enforced
-  by triggers. Fix a mistake with a new reversing transfer.
-- The app role `trust_app` only reads ledger tables. It writes through `pgledger_create_transfer(s)`
-  and `trust_open_ledger_account`, which run as the table owner. A new table starts with
-  `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it needs, never DELETE.
-  `tests/test_privileges.py` pins the exact grants of every table and function: a new one fails
-  until it is listed there, with who may use it. Postgres lets PUBLIC call a new function unless
-  the migration revokes it.
+- `pgledger_transfers`, `pgledger_entries`, `trust_ledger_accounts` and `trust_idempotency_keys`
+  are append-only, enforced by triggers. Fix a mistake with a new reversing transfer.
+- The app role `trust_app` only reads ledger tables. It writes through
+  `pgledger_create_transfer(s)`, `trust_post_transfers` and `trust_open_ledger_account`, which run
+  as the table owner. `trust_post_transfers` takes an idempotency key, unique per PMC, so a
+  posting is safe to retry: the same key returns the original transfers, and a different posting
+  under it is refused.
+- A new table starts with `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it
+  needs, never DELETE. `tests/test_privileges.py` pins the exact grants of every table and
+  function: a new one fails until it is listed there, with who may use it. Postgres lets PUBLIC
+  call a new function unless the migration revokes it.
 - Only `bank_cash` accounts may go below zero; a trigger refuses it for every other kind.
   Every transfer stays inside one PMC. No foreign key cascades into trust tables.
 

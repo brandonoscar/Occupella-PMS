@@ -501,6 +501,76 @@ $$;
 
 
 --
+-- Name: trust_post_transfers(uuid, text, public.transfer_request[], timestamp with time zone, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_post_transfers(p_pmc_id uuid, p_idempotency_key text, p_transfers public.transfer_request[], p_event_at timestamp with time zone DEFAULT NULL::timestamp with time zone, p_metadata jsonb DEFAULT NULL::jsonb) RETURNS SETOF public.pgledger_transfers_view
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_request jsonb := jsonb_build_object(
+        'transfers', to_jsonb(p_transfers),
+        'event_at', extract(epoch FROM p_event_at),
+        'metadata', p_metadata
+    );
+    v_existing trust_idempotency_keys;
+    v_transfer_ids text[];
+BEGIN
+    IF coalesce(cardinality(p_transfers), 0) = 0 THEN
+        RAISE EXCEPTION 'trust: a posting needs at least one transfer'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    -- The key is filed under p_pmc_id, so every account must belong to that PMC. (The transfer
+    -- scope trigger already keeps each transfer inside one PMC; this pins which one.)
+    IF EXISTS (
+        SELECT r.from_account_id
+        FROM unnest(p_transfers) AS r
+        LEFT JOIN trust_ledger_accounts AS f ON f.ledger_account_id = r.from_account_id
+        LEFT JOIN trust_ledger_accounts AS t ON t.ledger_account_id = r.to_account_id
+        WHERE f.pmc_id IS DISTINCT FROM p_pmc_id OR t.pmc_id IS DISTINCT FROM p_pmc_id
+    ) THEN
+        RAISE EXCEPTION 'trust: a transfer in this posting is not in PMC %', p_pmc_id
+            USING ERRCODE = 'integrity_constraint_violation';
+    END IF;
+
+    -- Same PMC and key: wait here until any earlier call with them commits or rolls back.
+    -- (A hash collision with another key only means waiting a little longer.)
+    PERFORM pg_advisory_xact_lock(
+        hashtext('trust_post_transfers'), hashtext(p_pmc_id || '/' || p_idempotency_key)
+    );
+
+    SELECT * INTO v_existing
+    FROM trust_idempotency_keys
+    WHERE pmc_id = p_pmc_id AND idempotency_key = p_idempotency_key;
+
+    IF NOT FOUND THEN
+        SELECT array_agg(t.id ORDER BY t.ordinality) INTO v_transfer_ids
+        FROM pgledger_create_transfers(p_transfers, p_event_at, p_metadata)
+            WITH ORDINALITY AS t;
+
+        INSERT INTO trust_idempotency_keys (pmc_id, idempotency_key, request, transfer_ids)
+        VALUES (p_pmc_id, p_idempotency_key, v_request, v_transfer_ids);
+    ELSIF v_existing.request IS DISTINCT FROM v_request THEN
+        RAISE EXCEPTION 'trust: idempotency key % was already used for a different posting',
+            p_idempotency_key
+            USING ERRCODE = 'unique_violation',
+                  HINT = 'Use a new key for a new posting; resend a key only to retry.';
+    ELSE
+        v_transfer_ids := v_existing.transfer_ids;  -- a retry: the original transfers
+    END IF;
+
+    RETURN QUERY
+    SELECT v.*
+    FROM unnest(v_transfer_ids) WITH ORDINALITY AS k (id, n)
+    JOIN pgledger_transfers_view AS v ON v.id = k.id
+    ORDER BY k.n;
+END;
+$$;
+
+
+--
 -- Name: trust_refuse_ledger_rewrite(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -625,6 +695,21 @@ CREATE TABLE public.trust_bank_accounts (
 
 
 --
+-- Name: trust_idempotency_keys; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_idempotency_keys (
+    pmc_id uuid NOT NULL,
+    idempotency_key text NOT NULL,
+    request jsonb NOT NULL,
+    transfer_ids text[] NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_idempotency_keys_idempotency_key_check CHECK (((idempotency_key <> ''::text) AND (length(idempotency_key) <= 200))),
+    CONSTRAINT trust_idempotency_keys_transfer_ids_check CHECK ((cardinality(transfer_ids) > 0))
+);
+
+
+--
 -- Name: trust_ledger_accounts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -739,6 +824,14 @@ ALTER TABLE ONLY public.trust_bank_accounts
 
 ALTER TABLE ONLY public.trust_bank_accounts
     ADD CONSTRAINT trust_bank_accounts_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_idempotency_keys trust_idempotency_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_idempotency_keys
+    ADD CONSTRAINT trust_idempotency_keys_pkey PRIMARY KEY (pmc_id, idempotency_key);
 
 
 --
@@ -890,6 +983,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.p
 
 
 --
+-- Name: trust_idempotency_keys trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_idempotency_keys FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_ledger_accounts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -948,6 +1048,14 @@ ALTER TABLE ONLY public.pgledger_transfers
 
 ALTER TABLE ONLY public.trust_bank_accounts
     ADD CONSTRAINT trust_bank_accounts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_idempotency_keys trust_idempotency_keys_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_idempotency_keys
+    ADD CONSTRAINT trust_idempotency_keys_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
 
 
 --
@@ -1044,4 +1152,5 @@ ALTER TABLE ONLY public.trust_tenants
 INSERT INTO public.schema_migrations (version) VALUES
     ('20261009000001'),
     ('20261009000002'),
-    ('20261009000003');
+    ('20261009000003'),
+    ('20261009000004');
