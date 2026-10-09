@@ -7,6 +7,12 @@ in `CLAUDE.md` ("Run the checks"): Postgres 16 in `DATABASE_URL`, dbmate on `PAT
 `pip install -r requirements-dev.txt`. `scripts/check.sh` runs all of the PR checks it can in
 one go (see "Before you push" below).
 
+Images (Postgres for the jobs, the bases of `Dockerfile` and `ci/postgres-coverage.Dockerfile`)
+come from `mirror.gcr.io/library/`, Google's mirror of Docker Hub, at the same pinned digests.
+Docker Hub caps anonymous pulls per IP address, and GitHub's runners share addresses: on
+2026-10-09 that cap failed five checks before any test ran. `tests/tools/test_container_images.py`
+fails on an image pulled from anywhere else.
+
 ## The workflows
 
 **ci.yml** (PRs and main): lint (ruff), format check (ruff), typecheck (mypy, strict on `tools/`,
