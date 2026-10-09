@@ -91,8 +91,10 @@ overdraft or double-post that nobody thought to write an example for. Run it wit
 under `tests/golden/cases/`. Each case builds a fixed synthetic fixture and must produce exactly
 its checked-in `.expected.txt`. A PR that changes an expected file fails until a maintainer adds
 the `golden-update` label; the diff is in the job summary. Owners and auditors read these
-reports, so a change to one has to be on purpose. No report exists yet: the owner statement,
-three-way reconciliation and rent roll are tracked in issues #8, #9 and #10. Run it with
+reports, so a change to one has to be on purpose. Reports so far:
+`trust_report_three_way_reconciliation` (bank statement, trust journal and beneficiary ledgers of
+one approved reconciliation, with every difference listed). The owner statement and rent roll are
+tracked in issues #8 and #10. Run it with
 `pytest tests/golden`, and update deliberately with `pytest tests/golden --update-goldens`.
 
 **coverage.yml** (PRs and main): Python coverage (coverage.py) and coverage of the PL/pgSQL

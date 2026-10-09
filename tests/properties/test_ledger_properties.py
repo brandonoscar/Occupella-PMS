@@ -24,7 +24,10 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     period is posted after it (so its book balance still holds), and periods follow one
     another with no gap or overlap;
   - every security deposit sits in the security-deposit trust account, which holds nothing
-    else, so its cash is exactly the deposits held; no account opens in the wrong kind.
+    else, so its cash is exactly the deposits held; no account opens in the wrong kind;
+  - the three-way reconciliation report of every approved period agrees with the model: its
+    trust journal is the book balance approved, its ledgers add up to that, and its only
+    difference is the statement's.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly; a failure prints the shortest
 sequence of steps that breaks an invariant.
@@ -450,6 +453,29 @@ class LedgerMachine(RuleBasedStateMachine):
             self.conns["app"].execute(query, (transfer_id,))
 
     # --- invariants: checked after every step ---------------------------------------------
+
+    @invariant()
+    def three_way_reconciliation_reports_agree(self):
+        approvals = self.conn.execute(
+            "SELECT id, bank_account_id, period_end, statement_balance"
+            " FROM trust_reconciliations WHERE pmc_id = %s",
+            (self.pmc_id,),
+        ).fetchall()
+        cash_of = {bank_id: cash for cash, bank_id in self.bank_id.items()}
+        for reconciliation, bank_id, period_end, statement in approvals:
+            rows = self.conn.execute(
+                "SELECT item, amount FROM trust_report_three_way_reconciliation(%s, %s)",
+                (self.pmc_id, reconciliation),
+            ).fetchall()
+            figures = {item: amount for item, amount in rows if item != "ledger"}
+            ledgers = [amount for item, amount in rows if item == "ledger"]
+            # Each batch is one transaction with one date, and ties out on its own, so at any
+            # instant the books and the ledgers agree.
+            book = self.book_balance(cash_of[bank_id], period_end)
+            assert figures["trust journal (book cash)"] == book
+            assert figures["beneficiary ledgers"] == book == sum(ledgers)
+            assert figures["difference: trust journal - beneficiary ledgers"] == 0
+            assert figures["difference: bank statement - trust journal"] == statement - book
 
     @invariant()
     def deposits_sit_only_in_the_deposit_account(self):
