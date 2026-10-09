@@ -1,0 +1,36 @@
+# Self-host smoke setup: plain Postgres 16 and the image built from ./Dockerfile, nothing from
+# Supabase. CI runs it in .github/workflows/selfhost.yml:
+#   docker compose build
+#   docker compose run --rm migrate
+#   docker compose run --rm smoke
+#
+# Not a production setup: the database trusts every connection inside this compose network,
+# publishes no port, and has no TLS and no backups.
+services:
+  db:
+    image: postgres:16@sha256:ca0bd484cb98bf4b24eb1010e73fb3fcbd6714d240fbc1a10eea5b7dbecb641d
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  migrate:
+    build: .
+    image: occupella-pms:local
+    environment:
+      DATABASE_URL: postgres://postgres@db:5432/pms?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+
+  smoke:
+    image: occupella-pms:local
+    command: ["python", "-m", "selfhost.smoke"]
+    environment:
+      DATABASE_URL: postgres://postgres@db:5432/pms?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
