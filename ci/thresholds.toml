@@ -34,9 +34,9 @@ python_paths = []
 [coverage.baseline]
 # Measured overall coverage, rounded down to 0.1. It only goes up: coverage.yml fails when
 # coverage drops below it, and also when coverage rose and this wasn't raised to match.
-python_lines = 99.3
+python_lines = 99.4
 sql_statements = 98.8
-sql_branches = 98.2
+sql_branches = 98.3
 
 [mutation]
 # Share of valid SQL mutants of the money functions that the tests kill (mutation.yml, nightly).

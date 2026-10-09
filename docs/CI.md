@@ -93,8 +93,9 @@ its checked-in `.expected.txt`. A PR that changes an expected file fails until a
 the `golden-update` label; the diff is in the job summary. Owners and auditors read these
 reports, so a change to one has to be on purpose. Reports so far:
 `trust_report_three_way_reconciliation` (bank statement, trust journal and beneficiary ledgers of
-one approved reconciliation, with every difference listed). The owner statement and rent roll are
-tracked in issues #8 and #10. Run it with
+one approved reconciliation, with every difference listed) and `trust_report_owner_statement`
+(per property an opening balance, each posting in date order with the balance after it and a
+closing balance, then the owner's totals). The rent roll is tracked in issue #10. Run it with
 `pytest tests/golden`, and update deliberately with `pytest tests/golden --update-goldens`.
 
 **coverage.yml** (PRs and main): Python coverage (coverage.py) and coverage of the PL/pgSQL
@@ -137,9 +138,10 @@ migrations): builds the image and runs `compose.yaml` with plain Postgres 16 and
 Supabase. It applies every migration, then runs the smoke check:
 - seeds a synthetic 50-door PMC;
 - posts one month of rent;
+- runs one owner statement for that month and checks it against the owner's ledgers;
 - checks database health and every ledger invariant.
 
-The owner statement and an app health endpoint aren't built yet (issues #8 and #11). This proves
+An app health endpoint isn't built yet (issue #11). This proves
 a PMC could run its books on its own Postgres. Run it with `docker compose build && docker
 compose up -d --wait db && docker compose run --rm migrate && docker compose run --rm smoke`.
 

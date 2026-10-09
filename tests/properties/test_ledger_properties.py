@@ -27,7 +27,9 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     else, so its cash is exactly the deposits held; no account opens in the wrong kind;
   - the three-way reconciliation report of every approved period agrees with the model: its
     trust journal is the book balance approved, its ledgers add up to that, and its only
-    difference is the statement's.
+    difference is the statement's;
+  - an owner statement for any period agrees with the model: the opening balance, each posting
+    in date order with the balance after it, the closing balance and the totals.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly; a failure prints the shortest
 sequence of steps that breaks an invariant.
@@ -393,6 +395,50 @@ class LedgerMachine(RuleBasedStateMachine):
             " WHERE r.pmc_id = %s ORDER BY r.id",
             (self.pmc_id,),
         ).fetchall()
+
+    @rule(
+        data=st.data(),
+        role=st.sampled_from(["owner", "app"]),
+        back=st.timedeltas(min_value=timedelta(0), max_value=timedelta(days=120)),
+        length=st.timedeltas(min_value=timedelta(microseconds=1), max_value=timedelta(days=150)),
+    )
+    def check_an_owner_statement(self, data, role, back, length):
+        owner = data.draw(st.sampled_from(self.pmc.owners))
+        start = self.now - back
+        end = start + length
+        rows = (
+            self.conns[role]
+            .execute(
+                "SELECT posted_on, item, amount, balance"
+                " FROM trust_report_owner_statement(%s, %s, %s, %s)",
+                (self.pmc_id, owner.owner_id, start, end),
+            )
+            .fetchall()
+        )
+
+        def change(source, target, amount):
+            return amount if target == owner.account else -amount if source == owner.account else 0
+
+        mine = [(when, change(*request)) for _, request, when in self.posted]
+        mine = [(when, amount) for when, amount in mine if amount]
+        opening = sum((a for when, a in mine if when < start), Decimal(0))
+        # Date order; a stable sort keeps posting order for the same instant.
+        inside = sorted(((w, a) for w, a in mine if start <= w < end), key=lambda p: p[0])
+        expected = [(None, "opening balance", None, opening)]
+        running = opening
+        for when, amount in inside:
+            running += amount
+            expected.append((when.strftime("%Y-%m-%d"), "posting", amount, running))
+        expected.append((None, "closing balance", None, running))
+        money_in = sum((a for _, a in inside if a > 0), Decimal(0))
+        money_out = sum((a for _, a in inside if a < 0), Decimal(0))
+        expected += [
+            (None, "all properties: opening balance", None, opening),
+            (None, "all properties: money in", money_in, None),
+            (None, "all properties: money out", money_out, None),
+            (None, "all properties: closing balance", None, running),
+        ]
+        assert rows[3:] == expected
 
     @rule(amount=AMOUNTS)
     def try_to_cross_pmcs(self, amount):

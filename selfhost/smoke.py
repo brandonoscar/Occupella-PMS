@@ -4,8 +4,8 @@ Against the database in $DATABASE_URL (already migrated by `dbmate up`), it:
   1. seeds a synthetic 50-door PMC: 10 owners, 50 properties, 50 tenants, and a security
      deposit held for each tenant;
   2. posts one month of rent for every door;
-  3. checks health: the database answers and every ledger invariant holds.
-The owner statement step waits on the report itself (tracked in ci/registry.toml).
+  3. runs the first owner's statement for that month, which must match the owner's ledgers;
+  4. checks health: the database answers and every ledger invariant holds.
 
 Every name and amount is synthetic. Exit code 0 means healthy.
 
@@ -58,6 +58,7 @@ class Seeded:
     operating_cash: str
     deposit_cash: str
     doors: list[str] = field(default_factory=list)  # owner_property account per door
+    owners: list[Any] = field(default_factory=list)  # owner ids, in order
 
 
 def one(conn: psycopg.Connection[Any], query: str, params: tuple[Any, ...] = ()) -> Any:
@@ -124,6 +125,7 @@ def seed(conn: psycopg.Connection[Any], doors: int = DOORS, owners: int = OWNERS
         )
         for n in range(1, owners + 1)
     ]
+    seeded.owners = owner_ids
     for door in range(1, doors + 1):
         owner_id = owner_ids[(door - 1) % owners]
         property_id = one(
@@ -155,6 +157,38 @@ def post_month_of_rent(conn: psycopg.Connection[Any], seeded: Seeded, month: dat
     return total
 
 
+@dataclass
+class Statement:
+    owner: str
+    properties: int
+    closing: Decimal  # all properties, from the statement
+    held: Decimal  # the same owner's ledger balances, read directly
+
+
+def owner_statement(conn: psycopg.Connection[Any], seeded: Seeded, month: date) -> Statement:
+    """The first owner's statement for the month, and what their ledgers hold, to compare."""
+    start = datetime(month.year, month.month, 1, tzinfo=UTC)
+    end = datetime(month.year + month.month // 12, month.month % 12 + 1, 1, tzinfo=UTC)
+    owner_id = seeded.owners[0]
+    rows = conn.execute(
+        "SELECT item, detail, balance FROM trust_report_owner_statement(%s, %s, %s, %s)",
+        (seeded.pmc_id, owner_id, start, end),
+    ).fetchall()
+    held = one(
+        conn,
+        "SELECT coalesce(sum(a.balance), 0) FROM trust_ledger_accounts t"
+        " JOIN pgledger_accounts a ON a.id = t.ledger_account_id"
+        " WHERE t.owner_id = %s AND t.kind = 'owner_property'",
+        (owner_id,),
+    )
+    return Statement(
+        owner=next(detail for item, detail, _ in rows if item == "owner"),
+        properties=sum(1 for item, _, _ in rows if item == "closing balance"),
+        closing=next(b for item, _, b in rows if item == "all properties: closing balance"),
+        held=held,
+    )
+
+
 def health(conn: psycopg.Connection[Any]) -> list[str]:
     problems = []
     if one(conn, "SELECT 1") != 1:
@@ -178,8 +212,17 @@ def main() -> int:
         )
         total = post_month_of_rent(conn, seeded, date(2026, 2, 1))
         print(f"posted: {len(seeded.doors)} rent payments for 2026-02, {total} in total")
-        print("owner statement: pending, see ci/registry.toml selfhost:owner-statement")
+        statement = owner_statement(conn, seeded, date(2026, 2, 1))
+        print(
+            f"owner statement: {statement.owner}, 2026-02, {statement.properties} properties,"
+            f" closing {statement.closing}"
+        )
         problems = health(conn)
+        if statement.closing != statement.held:
+            problems.append(
+                f"{statement.owner}'s statement closes at {statement.closing}"
+                f" but their ledgers hold {statement.held}"
+            )
     for problem in problems:
         print(f"FAIL: {problem}")
     if not problems:

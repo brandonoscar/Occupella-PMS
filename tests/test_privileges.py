@@ -52,6 +52,7 @@ FUNCTIONS = {
     },
     # Reports read trust records, so only the app; they run with the caller's own read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app"},
+    "trust_report_owner_statement(uuid,uuid,timestamptz,timestamptz)": {"trust_app"},
     # pgledger's posting functions take no idempotency key, so a retried request could post
     # twice: only the owner calls them (trust_post_transfers does, as the owner).
     "pgledger_create_transfer(text,text,numeric,timestamptz,jsonb)": set(),
