@@ -107,6 +107,15 @@ approvals, sets bills aside, pays them and pays owners, and checks:
 - a draw never pays out more than the balance above the reserve and the unpaid bills, and the
   owner balances and unpaid bills reports match the model as of any day.
 
+A fourth machine opens the PMC's two trust bank accounts with balances carried over from another
+system (now and then a cent off, or with an account of the other trust bank account), sends
+openings again unchanged and changed, posts money in and out on random dates and approves
+reconciliations, and checks:
+- a trust bank account opens once, before any posting or reconciliation in it; the same opening
+  again returns the original transfers and a different one is refused;
+- no transfer touching it is dated before its cutover, and its first reconciliation starts there;
+- the trial balance as of any day matches the model line by line.
+
 `ci/registry.toml` maps every required invariant to its test or to the open issue for what isn't
 built yet. PRs run 200 examples per property. Nightly runs 16 jobs, each with its own seed and
 3,000 examples. A failing case is uploaded as an artifact with the seed and the shortest failing

@@ -446,6 +446,26 @@ def assess_late_fees(connection, pmc_id, as_of) -> int:
     return _one(connection, "SELECT trust_assess_late_fees(%s, %s)", (pmc_id, as_of))
 
 
+def open_with_balances(
+    connection, pmc_id, bank_id, opened_on, balances, book_cash, entered_by="Preparer 1"
+) -> list[str]:
+    """Open a trust bank account with the balances carried over from another system:
+    `balances` maps each ledger account to what it held at the start of opened_on. The
+    transfer ids, one per account in byte order of its id."""
+    return _one(
+        connection,
+        "SELECT trust_post_opening_balances(%s, %s, %s, %s, %s, %s)",
+        (
+            pmc_id,
+            bank_id,
+            opened_on,
+            Jsonb(balances),
+            None if book_cash is None else Decimal(book_cash),
+            entered_by,
+        ),
+    )
+
+
 def balance(connection, account) -> Decimal:
     return _one(connection, "SELECT balance FROM pgledger_accounts WHERE id = %s", (account,))
 

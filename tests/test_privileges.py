@@ -49,6 +49,7 @@ TABLES = {
     "trust_work_order_steps": {"SELECT", "INSERT"},
     "trust_late_fee_policies": {"SELECT", "INSERT"},
     "trust_late_fees": {"SELECT"},  # written only by trust_assess_late_fees
+    "trust_opening_balances": {"SELECT"},  # written only by trust_post_opening_balances
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
@@ -82,6 +83,7 @@ FUNCTIONS = {
     "trust_pay_bill(uuid,uuid,timestamptz)": {"trust_app"},
     "trust_charge_rent_due(uuid,date)": {"trust_app"},
     "trust_assess_late_fees(uuid,date)": {"trust_app"},
+    "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)": {"trust_app"},
     # Helpers the fee, draw and bill functions call as the owner: nobody else.
     "trust_lock_owner_account(uuid,text)": set(),
     "trust_agreement_on(text,date)": set(),
@@ -133,6 +135,7 @@ FUNCTIONS = {
     "trust_check_bill_account()": {"PUBLIC"},
     "trust_check_work_order()": {"PUBLIC"},
     "trust_check_work_order_step()": {"PUBLIC"},
+    "trust_refuse_moving_opened_at()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.
@@ -151,6 +154,7 @@ SECURITY_DEFINER = {
     "trust_set_aside_bill(uuid,uuid,timestamptz)",
     "trust_pay_bill(uuid,uuid,timestamptz)",
     "trust_assess_late_fees(uuid,date)",
+    "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)",
 }
 
 

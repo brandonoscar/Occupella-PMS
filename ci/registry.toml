@@ -279,6 +279,23 @@ tests = [
   "tests/test_rent_automation.py::test_two_runs_at_once_charge_one_late_fee",
 ]
 
+[[invariant]]
+id = "cutover-opens-once-and-first"
+statement = "A trust bank account opens with balances carried over from another system once, before any posting or approved reconciliation in it: posted from its cash at the start of the cutover date (UTC), adding up to the old book cash given with them. The same opening again returns the original transfers; a different one is refused. From then on no transfer touching it is dated before the cutover, whoever posts it, and its first reconciliation starts at the cutover."
+tests = [
+  "tests/properties/test_cutover_properties.py::test_cutover_invariants_hold_under_random_openings_postings_and_reconciliations",
+  "tests/test_cutover.py::test_opening_balances_are_posted_from_cash_at_the_start_of_the_cutover_date",
+  "tests/test_cutover.py::test_the_same_opening_again_returns_the_original_transfers",
+  "tests/test_cutover.py::test_a_different_opening_of_the_same_trust_bank_account_is_refused",
+  "tests/test_cutover.py::test_opening_balances_come_before_any_posting",
+  "tests/test_cutover.py::test_opening_balances_come_before_any_reconciliation",
+  "tests/test_cutover.py::test_nothing_is_dated_before_the_cutover_once_opened",
+  "tests/test_cutover.py::test_the_first_reconciliation_starts_at_the_cutover",
+  "tests/test_cutover.py::test_no_role_sets_or_moves_the_cutover_by_hand",
+  "tests/test_cutover.py::test_a_posting_waits_for_an_opening_in_progress_and_is_then_refused",
+  "tests/test_cutover.py::test_an_opening_waits_for_a_posting_in_flight_and_is_then_refused",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]
