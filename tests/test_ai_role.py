@@ -102,6 +102,10 @@ REPORTS = {
         "SELECT * FROM trust_report_security_deposits(%s, %s)",
         lambda pmc, _: (pmc.pmc_id, date(2026, 2, 28)),
     ),
+    "general ledger": (
+        "SELECT * FROM trust_report_general_ledger(%s, %s, %s)",
+        lambda pmc, _: (pmc.pmc_id, date(2026, 1, 1), date(2026, 2, 28)),
+    ),
 }
 
 
