@@ -92,6 +92,15 @@ records management agreements, takes fees and pays owners, and checks:
   fee once per lease; a draw never pays out more than the balance above the reserve, and the
   owner balances report as of any day matches the model.
 
+A third machine enters vendor bills (one vendor has no account to pay from), records owners'
+approvals, sets bills aside, pays them and pays owners, and checks:
+- a vendor's reference is entered once; a bill is set aside at most once, with the owner's
+  approval when it is over the limit in force on its date, and paid at most once, after it was
+  set aside and never dated before that;
+- each vendor's account holds exactly what was set aside for its bills and not yet paid;
+- a draw never pays out more than the balance above the reserve and the unpaid bills, and the
+  owner balances report, unpaid bills included, matches the model as of any day.
+
 `ci/registry.toml` maps every required invariant to its test or to the open issue for what isn't
 built yet. PRs run 200 examples per property. Nightly runs 16 jobs, each with its own seed and
 3,000 examples. A failing case is uploaded as an artifact with the seed and the shortest failing
@@ -113,7 +122,8 @@ one approved reconciliation, with every difference listed) and `trust_report_own
 closing balance, then the owner's totals) and `trust_report_rent_roll` (per unit as of the end
 of a day: the lease, its tenants, deposits and prepaid rent held, charged, paid and balance due,
 then totals that tie back to the ledger) and `trust_report_owner_balances` (per owner's
-property the balance, the reserve kept back and what is available to pay the owner). Run it
+property the balance, the reserve kept back, unpaid bills and what is available to pay the
+owner). Run it
 with
 `pytest tests/golden`, and update deliberately with `pytest tests/golden --update-goldens`.
 

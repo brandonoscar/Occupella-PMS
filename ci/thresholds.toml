@@ -38,6 +38,10 @@ functions = [
   "trust_post_management_fee",
   "trust_post_leasing_fee",
   "trust_draw_owner",
+  "trust_check_bill_account",
+  "trust_lock_bill",
+  "trust_set_aside_bill",
+  "trust_pay_bill",
 ]
 # Python money modules (none yet). Each needs the same line and branch floors.
 python_paths = []
@@ -47,7 +51,7 @@ python_paths = []
 # coverage drops below it, and also when coverage rose and this wasn't raised to match.
 python_lines = 99.4
 sql_statements = 99.4
-sql_branches = 99.3
+sql_branches = 99.4
 
 [mutation]
 # Share of valid SQL mutants of the money functions that the tests kill (mutation.yml, nightly).
@@ -63,6 +67,7 @@ equivalent = [
   "20261010000012_leases_and_charges.sql: delete `REVOKE ALL ON trust_units, trust_leases, trust_lease_tenants`",
   "20261010000014_payment_reversals.sql: delete `REVOKE ALL ON trust_payment_reversals FROM PUBLIC;`",
   "20261010000016_owner_money.sql: delete `REVOKE ALL ON`",
+  "20261010000017_vendor_bills.sql: delete `REVOKE ALL ON trust_bills, trust_bill_approvals, trust_bill_`",
   # trust_check_bank_tie_out sums one trust bank account. With `<>` in the join or the filter,
   # it sums (1 or n) x every balance in the database, minus this bank's: double entry keeps
   # every balance in the database summing to zero, so the result is zero exactly when the
