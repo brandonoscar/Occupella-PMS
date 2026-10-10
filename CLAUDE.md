@@ -74,12 +74,12 @@ required invariant, report and self-host step.
   `trust_open_ledger_account`, `trust_open_vendor_account`, `trust_approve_reconciliation`,
   `trust_open_lease`, `trust_end_lease`, `trust_apply_payment`, `trust_reverse_payment`,
   `trust_post_management_fee`, `trust_post_leasing_fee`, `trust_draw_owner`,
-  `trust_set_aside_bill`, `trust_pay_bill`, `trust_assess_late_fees` and
-  `trust_post_opening_balances`, which run as the table owner (`trust_charge_rent_due` runs
-  with the app's own grants). It can't call pgledger's posting functions: every posting it
-  makes goes through `trust_post_transfers`, which takes an idempotency key, unique per PMC, so
-  it is safe to retry: the same key returns the original transfers, and a different posting
-  under it is refused.
+  `trust_set_aside_bill`, `trust_pay_bill`, `trust_assess_late_fees`,
+  `trust_post_opening_balances` and `trust_record_owner_contribution`, which run as the table
+  owner (`trust_charge_rent_due` runs with the app's own grants). It can't call pgledger's
+  posting functions: every posting it makes goes through `trust_post_transfers`, which takes an
+  idempotency key, unique per PMC, so it is safe to retry: the same key returns the original
+  transfers, and a different posting under it is refused.
 - `trust_ai_agent`, the role behind Occupella's API key, reads what `trust_app` reads and runs
   the reports. It holds no other grant: no write on any table, no function that writes. Grant
   it a new table's SELECT only if `trust_app` has it, and never a write path.
@@ -142,6 +142,9 @@ required invariant, report and self-host step.
   unless the PMC allowed that transfer on every hold in force. Holds, releases and allowances
   are append-only rows the app inserts; a hold's trigger takes the lease's lock so matches and holds
   wait for each other. No state's rule is built in.
+- Owner contributions: `trust_record_owner_contribution` moves cash into an owner's property
+  account as its own kind (`trust_owner_contributions`), once per request key, and
+  `trust_apply_payment` never matches one to a tenant's charge.
 
 ## Run the checks
 

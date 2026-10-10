@@ -530,6 +530,14 @@ BEGIN
         RAISE EXCEPTION 'trust: no transfer %', p_transfer_id
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    IF EXISTS (
+        SELECT c.transfer_id FROM trust_owner_contributions AS c
+        WHERE c.transfer_id = p_transfer_id
+    ) THEN
+        RAISE EXCEPTION 'trust: transfer % is an owner''s contribution, not a tenant''s payment',
+            p_transfer_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
 
     SELECT u.property_id INTO v_property_id
     FROM trust_leases AS l JOIN trust_units AS u ON u.id = l.unit_id
@@ -1858,6 +1866,65 @@ BEGIN
     FROM unnest(v_transfer_ids) WITH ORDINALITY AS k (id, n)
     JOIN pgledger_transfers_view AS v ON v.id = k.id
     ORDER BY k.n;
+END;
+$$;
+
+
+--
+-- Name: trust_record_owner_contribution(uuid, text, text, numeric, timestamp with time zone, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_record_owner_contribution(p_pmc_id uuid, p_account text, p_request_key text, p_amount numeric, p_event_at timestamp with time zone, p_memo text DEFAULT NULL::text) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_account trust_ledger_accounts;
+    v_taken trust_owner_contributions;
+    v_cash text;
+    v_transfer_id text;
+BEGIN
+    IF p_amount IS NULL OR p_amount <= 0 OR p_amount <> round(p_amount, 2) THEN
+        RAISE EXCEPTION 'trust: a contribution is a positive amount in cents, not %', p_amount
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- READ COMMITTED, and contributions to one account wait for each other.
+    v_account := trust_lock_owner_account(p_pmc_id, p_account);
+
+    SELECT c.* INTO v_taken
+    FROM trust_owner_contributions AS c
+    WHERE c.pmc_id = p_pmc_id AND c.request_key = p_request_key;
+    IF FOUND THEN
+        IF (v_taken.ledger_account_id, v_taken.amount) IS DISTINCT FROM (p_account, p_amount) THEN
+            RAISE EXCEPTION 'trust: request key % already recorded % into %',
+                p_request_key, v_taken.amount, v_taken.ledger_account_id
+                USING ERRCODE = 'unique_violation',
+                      HINT = 'Use a new key for a new contribution; resend a key only to retry.';
+        END IF;
+        RETURN v_taken.transfer_id;  -- a retry: the original contribution
+    END IF;
+
+    -- Money reaches an owner's account through its trust bank account's cash.
+    SELECT t.ledger_account_id INTO v_cash
+    FROM trust_ledger_accounts AS t
+    WHERE t.bank_account_id = v_account.bank_account_id AND t.kind = 'bank_cash';
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: open the cash account (bank_cash) of trust bank account % first',
+            v_account.bank_account_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    SELECT t.id INTO v_transfer_id
+    FROM pgledger_create_transfers(
+        ARRAY[(v_cash, p_account, p_amount)::transfer_request],
+        p_event_at,
+        jsonb_build_object('memo', coalesce(nullif(p_memo, ''), 'Owner contribution'))
+    ) AS t;
+
+    INSERT INTO trust_owner_contributions (
+        pmc_id, request_key, ledger_account_id, amount, transfer_id
+    ) VALUES (p_pmc_id, p_request_key, p_account, p_amount, v_transfer_id);
+    RETURN v_transfer_id;
 END;
 $$;
 
@@ -3779,6 +3846,22 @@ CREATE TABLE public.trust_opening_balances (
 
 
 --
+-- Name: trust_owner_contributions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_owner_contributions (
+    pmc_id uuid NOT NULL,
+    request_key text NOT NULL,
+    ledger_account_id text NOT NULL,
+    amount numeric NOT NULL,
+    transfer_id text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_owner_contributions_amount_check CHECK ((amount > (0)::numeric)),
+    CONSTRAINT trust_owner_contributions_request_key_check CHECK (((request_key <> ''::text) AND (length(request_key) <= 200)))
+);
+
+
+--
 -- Name: trust_owner_draws; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4229,6 +4312,22 @@ ALTER TABLE ONLY public.trust_management_fees
 
 ALTER TABLE ONLY public.trust_opening_balances
     ADD CONSTRAINT trust_opening_balances_pkey PRIMARY KEY (bank_account_id);
+
+
+--
+-- Name: trust_owner_contributions trust_owner_contributions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_contributions
+    ADD CONSTRAINT trust_owner_contributions_pkey PRIMARY KEY (pmc_id, request_key);
+
+
+--
+-- Name: trust_owner_contributions trust_owner_contributions_transfer_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_contributions
+    ADD CONSTRAINT trust_owner_contributions_transfer_id_key UNIQUE (transfer_id);
 
 
 --
@@ -4801,6 +4900,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_owner_contributions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_owner_contributions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_owner_draws trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -4966,6 +5072,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_mana
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_opening_balances FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_owner_contributions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owner_contributions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -5596,6 +5709,30 @@ ALTER TABLE ONLY public.trust_opening_balances
 
 
 --
+-- Name: trust_owner_contributions trust_owner_contributions_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_contributions
+    ADD CONSTRAINT trust_owner_contributions_ledger_account_id_fkey FOREIGN KEY (ledger_account_id) REFERENCES public.trust_ledger_accounts(ledger_account_id);
+
+
+--
+-- Name: trust_owner_contributions trust_owner_contributions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_contributions
+    ADD CONSTRAINT trust_owner_contributions_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_owner_contributions trust_owner_contributions_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_contributions
+    ADD CONSTRAINT trust_owner_contributions_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
 -- Name: trust_owner_draws trust_owner_draws_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5871,4 +6008,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261010000022'),
     ('20261010000023'),
     ('20261010000024'),
-    ('20261010000025');
+    ('20261010000025'),
+    ('20261010000026');

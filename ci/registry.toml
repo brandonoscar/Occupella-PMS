@@ -325,6 +325,17 @@ tests = [
   "tests/test_payment_holds.py::test_a_hold_waits_for_a_match_in_flight_which_stands",
 ]
 
+[[invariant]]
+id = "owner-contribution-is-not-a-payment"
+statement = "An owner's contribution moves the trust bank account's cash into the owner's property account as its own kind, once per request key (the same request returns the original transfer; a different one under the key is refused), and is never matched to a tenant's charge, so it is never rent collected."
+tests = [
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+  "tests/test_owner_contributions.py::test_a_contribution_moves_cash_into_the_owners_account",
+  "tests/test_owner_contributions.py::test_the_same_request_again_returns_the_original",
+  "tests/test_owner_contributions.py::test_a_different_contribution_under_a_used_key_is_refused",
+  "tests/test_owner_contributions.py::test_a_contribution_is_never_matched_to_a_tenants_charge",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]

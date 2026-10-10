@@ -50,6 +50,7 @@ functions = [
   "trust_check_payment_hold",
   "trust_check_hold_release",
   "trust_check_hold_allowance",
+  "trust_record_owner_contribution",
 ]
 # Python money modules (none yet). Each needs the same line and branch floors.
 python_paths = []
@@ -82,6 +83,7 @@ equivalent = [
   "20261010000024_audit_log.sql: delete `REVOKE ALL ON trust_staff FROM PUBLIC;`",
   "20261010000024_audit_log.sql: delete `REVOKE ALL ON trust_audit_log FROM PUBLIC;`",
   "20261010000025_payment_holds.sql: delete `REVOKE ALL ON trust_payment_holds, trust_payment_hold_releas`",
+  "20261010000026_owner_contributions.sql: delete `REVOKE ALL ON trust_owner_contributions FROM PUBLIC;`",
   # trust_check_bank_tie_out sums one trust bank account. With `<>` in the join or the filter,
   # it sums (1 or n) x every balance in the database, minus this bank's: double entry keeps
   # every balance in the database summing to zero, so the result is zero exactly when the
