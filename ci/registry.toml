@@ -129,6 +129,7 @@ tests = [
   "tests/test_leases_and_charges.py::test_two_leases_of_one_unit_never_overlap",
   "tests/test_leases_and_charges.py::test_the_owner_writing_leases_directly_is_held_to_the_same_rule",
   "tests/test_leases_and_charges.py::test_a_lease_waits_for_one_in_progress_on_the_unit_and_is_then_refused",
+  "tests/test_leases_and_charges.py::test_leases_of_different_units_do_not_wait_for_each_other",
   "tests/test_leases_and_charges.py::test_leases_are_written_at_read_committed",
 ]
 

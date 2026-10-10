@@ -249,6 +249,22 @@ def test_a_lease_waits_for_one_in_progress_on_the_unit_and_is_then_refused(
     assert f"overlap lease {held}" in str(outcome["error"])
 
 
+@pytest.mark.timing
+def test_leases_of_different_units_do_not_wait_for_each_other(
+    conn, database_url, pmc, unit, tenant
+):
+    others = [add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, f"Unit {n}") for n in (2, 3)]
+    with psycopg.connect(database_url) as holder:
+        # An open transaction holds the first unit's lock...
+        open_lease(holder, pmc.pmc_id, unit, JAN_1, None, RENT, [tenant])
+        with psycopg.connect(database_url, autocommit=True) as other:
+            # ...and leases of the other units must not wait for it.
+            other.execute("SET lock_timeout = '2s'")
+            for other_unit in others:
+                open_lease(other, pmc.pmc_id, other_unit, JAN_1, None, RENT, [tenant])
+        holder.rollback()
+
+
 @pytest.mark.parametrize("statement", ["UPDATE", "DELETE"])
 def test_a_leases_tenants_are_kept_for_good(conn, lease, statement):
     query = (
