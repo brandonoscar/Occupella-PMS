@@ -140,7 +140,7 @@ required invariant, report and self-host step.
 - Payment holds (an eviction filed): from a hold's first day until its release, by the
   transfer's UTC date, `trust_apply_payment` refuses to match a payment to the lease's charges
   unless the PMC allowed that transfer on every hold in force. Holds, releases and allowances
-  are append-only rows the app inserts; a trigger takes the lease's lock so matches and holds
+  are append-only rows the app inserts; a hold's trigger takes the lease's lock so matches and holds
   wait for each other. No state's rule is built in.
 
 ## Run the checks

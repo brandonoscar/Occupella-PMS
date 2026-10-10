@@ -48,6 +48,8 @@ functions = [
   "trust_post_opening_balances",
   "trust_audit",
   "trust_check_payment_hold",
+  "trust_check_hold_release",
+  "trust_check_hold_allowance",
 ]
 # Python money modules (none yet). Each needs the same line and branch floors.
 python_paths = []

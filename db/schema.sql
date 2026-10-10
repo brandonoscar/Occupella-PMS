@@ -981,28 +981,15 @@ $$;
 
 
 --
--- Name: trust_check_payment_hold(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: trust_check_hold_allowance(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.trust_check_payment_hold() RETURNS trigger
-    LANGUAGE plpgsql SECURITY DEFINER
+CREATE FUNCTION public.trust_check_hold_allowance() RETURNS trigger
+    LANGUAGE plpgsql
     SET search_path TO 'public', 'pg_temp'
     AS $$
-DECLARE
-    v_starts_on date;
 BEGIN
-    IF TG_TABLE_NAME = 'trust_payment_holds' THEN
-        -- Waits for matches in flight on the lease (they hold its row FOR SHARE), and holds
-        -- new ones off until this commits.
-        PERFORM l.id FROM trust_leases AS l WHERE l.id = NEW.lease_id FOR NO KEY UPDATE;
-    ELSIF TG_TABLE_NAME = 'trust_payment_hold_releases' THEN
-        SELECT h.starts_on INTO v_starts_on FROM trust_payment_holds AS h WHERE h.id = NEW.hold_id;
-        IF NEW.ends_on <= v_starts_on THEN
-            RAISE EXCEPTION 'trust: hold % starts on %; its release must end it later, not on %',
-                NEW.hold_id, v_starts_on, NEW.ends_on
-                USING ERRCODE = 'check_violation';
-        END IF;
-    ELSIF NOT EXISTS (
+    IF NOT EXISTS (
         SELECT t.ledger_account_id
         FROM pgledger_transfers AS tr
         JOIN trust_ledger_accounts AS t ON t.ledger_account_id = tr.from_account_id
@@ -1011,6 +998,45 @@ BEGIN
         RAISE EXCEPTION 'trust: transfer % is not in PMC %', NEW.transfer_id, NEW.pmc_id
             USING ERRCODE = 'check_violation';
     END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_hold_release(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_hold_release() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_starts_on date;
+BEGIN
+    SELECT h.starts_on INTO v_starts_on FROM trust_payment_holds AS h WHERE h.id = NEW.hold_id;
+    IF NEW.ends_on <= v_starts_on THEN
+        RAISE EXCEPTION 'trust: hold % starts on %; its release must end it later, not on %',
+            NEW.hold_id, v_starts_on, NEW.ends_on
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_payment_hold(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_payment_hold() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    -- Waits for matches in flight on the lease (they hold its row FOR SHARE), and holds new
+    -- ones off until this commits.
+    PERFORM l.id FROM trust_leases AS l WHERE l.id = NEW.lease_id FOR NO KEY UPDATE;
     RETURN NEW;
 END;
 $$;
@@ -5069,17 +5095,17 @@ CREATE TRIGGER trust_bill_account BEFORE INSERT ON public.trust_bills FOR EACH R
 
 
 --
--- Name: trust_payment_hold_allowances trust_check_payment_hold; Type: TRIGGER; Schema: public; Owner: -
+-- Name: trust_payment_hold_allowances trust_check_hold_allowance; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trust_check_payment_hold BEFORE INSERT ON public.trust_payment_hold_allowances FOR EACH ROW EXECUTE FUNCTION public.trust_check_payment_hold();
+CREATE TRIGGER trust_check_hold_allowance BEFORE INSERT ON public.trust_payment_hold_allowances FOR EACH ROW EXECUTE FUNCTION public.trust_check_hold_allowance();
 
 
 --
--- Name: trust_payment_hold_releases trust_check_payment_hold; Type: TRIGGER; Schema: public; Owner: -
+-- Name: trust_payment_hold_releases trust_check_hold_release; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trust_check_payment_hold BEFORE INSERT ON public.trust_payment_hold_releases FOR EACH ROW EXECUTE FUNCTION public.trust_check_payment_hold();
+CREATE TRIGGER trust_check_hold_release BEFORE INSERT ON public.trust_payment_hold_releases FOR EACH ROW EXECUTE FUNCTION public.trust_check_hold_release();
 
 
 --

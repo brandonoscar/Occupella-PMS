@@ -148,6 +148,8 @@ FUNCTIONS = {
     "trust_check_bill_account()": {"PUBLIC"},
     "trust_check_work_order()": {"PUBLIC"},
     "trust_check_work_order_step()": {"PUBLIC"},
+    "trust_check_hold_release()": {"PUBLIC"},
+    "trust_check_hold_allowance()": {"PUBLIC"},
     "trust_refuse_moving_opened_at()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
