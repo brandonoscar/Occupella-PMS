@@ -50,6 +50,9 @@ TABLES = {
     "trust_late_fee_policies": {"SELECT", "INSERT"},
     "trust_late_fees": {"SELECT"},  # written only by trust_assess_late_fees
     "trust_opening_balances": {"SELECT"},  # written only by trust_post_opening_balances
+    "trust_staff": {"SELECT", "INSERT"},
+    "trust_audit_log": {"SELECT"},  # written only by the trust_audit trigger
+    "trust_audit_log_id_seq": set(),  # the log's ids; only the trigger draws them
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
@@ -61,6 +64,7 @@ RENAMEABLE = [
     "trust_tenants",
     "trust_vendors",
     "trust_units",
+    "trust_staff",
 ]
 
 # Who may call each function, besides the role that owns it.
@@ -90,6 +94,8 @@ FUNCTIONS = {
     "trust_post_fee(trust_ledger_accounts,numeric,timestamptz,text)": set(),
     "trust_lock_bill(uuid,uuid)": set(),
     "trust_unpaid_bills(text,date)": set(),
+    # Records every write as the owner: no role may call it, or write the log, on its own.
+    "trust_audit()": set(),
     # Reports read trust records, so only the app and the AI; they run with the caller's own
     # read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app", "trust_ai_agent"},
@@ -105,6 +111,7 @@ FUNCTIONS = {
     "trust_report_trial_balance(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_security_deposits(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_general_ledger(uuid,date,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_audit_log(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     # pgledger's posting functions take no idempotency key, so a retried request could post
     # twice: only the owner calls them (trust_post_transfers does, as the owner).
     "pgledger_create_transfer(text,text,numeric,timestamptz,jsonb)": set(),
@@ -156,6 +163,7 @@ SECURITY_DEFINER = {
     "trust_pay_bill(uuid,uuid,timestamptz)",
     "trust_assess_late_fees(uuid,date)",
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)",
+    "trust_audit()",  # writes the audit log, which no other role may write
 }
 
 

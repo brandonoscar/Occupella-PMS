@@ -117,6 +117,14 @@ reconciliations, and checks:
 - no transfer touching it is dated before its cutover, and its first reconciliation starts there;
 - the trial balance as of any day matches the model line by line.
 
+A fifth machine makes random writes (postings, a batch of two, units added and renamed, staff
+added, reconciliations approved) through the owner role and trust_app, each naming a random
+member of the PMC's staff, nobody, another PMC's staff member or someone on no staff, and checks:
+- the PMC's audit log is the model's row for row (table, action, staff, role), and the audit
+  report reads the same as any role;
+- a write naming someone not on the PMC's staff is refused and nothing of it is logged;
+- every transfer has exactly one audit row, and the log only grows.
+
 `ci/registry.toml` maps every required invariant to its test or to the open issue for what isn't
 built yet. PRs run 200 examples per property. Nightly runs 16 jobs, each with its own seed and
 3,000 examples. A failing case is uploaded as an artifact with the seed and the shortest failing
@@ -146,7 +154,8 @@ payments and bounces with a running balance) and `trust_report_trial_balance` (p
 account, its book cash against everything it holds) and `trust_report_security_deposits` (each
 tenant's deposit against the deposit account's cash) and `trust_report_general_ledger` (per
 ledger account over a period: its opening balance, every entry with the balance after it, and
-its closing balance). Run it
+its closing balance) and `trust_report_audit_log` (each change to the PMC's records and ledger
+over a period, with who made it). Run it
 with
 `pytest tests/golden`, and update deliberately with `pytest tests/golden --update-goldens`.
 

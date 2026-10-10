@@ -466,6 +466,29 @@ def open_with_balances(
     )
 
 
+def add_staff(connection, pmc_id, name="Staff 1") -> UUID:
+    """A member of the PMC's staff, whom the application names on the writes they make."""
+    return _one(
+        connection,
+        "INSERT INTO trust_staff (pmc_id, display_name) VALUES (%s, %s) RETURNING id",
+        (pmc_id, name),
+    )
+
+
+@contextmanager
+def acting_as(connection, staff_id) -> Iterator[None]:
+    """Name a staff member (or, with None, nobody) on every write the session makes inside the
+    block, as the application will for whoever is signed in."""
+    connection.execute(
+        "SELECT set_config('trust.staff_id', %s, false)",
+        ("" if staff_id is None else str(staff_id),),
+    )
+    try:
+        yield
+    finally:
+        connection.execute("SELECT set_config('trust.staff_id', '', false)")
+
+
 def balance(connection, account) -> Decimal:
     return _one(connection, "SELECT balance FROM pgledger_accounts WHERE id = %s", (account,))
 

@@ -132,6 +132,11 @@ required invariant, report and self-host step.
   against the old book cash. Once per account, before any posting or reconciliation in it, safe
   to retry; then nothing touching it is dated before the cutover, and its first reconciliation
   starts there. Tenants' unpaid charges carry over as charges with their own due dates.
+- Audit: every write to a trust table or `pgledger_transfers` is logged in `trust_audit_log`
+  (append-only, written only by the `trust_audit` trigger): when, the row (and the row before an
+  update), the database role, and the staff member the app names with
+  `set_config('trust.staff_id', ...)`, who must be on the PMC's `trust_staff`. Naming one is
+  optional until logins exist. A new trust table gets the trigger (`tests/test_audit_log.py`).
 
 ## Run the checks
 

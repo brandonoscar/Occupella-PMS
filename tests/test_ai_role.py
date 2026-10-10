@@ -106,6 +106,10 @@ REPORTS = {
         "SELECT * FROM trust_report_general_ledger(%s, %s, %s)",
         lambda pmc, _: (pmc.pmc_id, date(2026, 1, 1), date(2026, 2, 28)),
     ),
+    "audit log": (
+        "SELECT * FROM trust_report_audit_log(%s, %s, %s)",
+        lambda pmc, _: (pmc.pmc_id, date(2000, 1, 1), date(2100, 1, 1)),
+    ),
 }
 
 
@@ -232,6 +236,8 @@ def kind_of(conn, table):
     ).fetchone()
     if relkind in ("r", "p"):
         return "table"
+    if relkind == "S":
+        return "sequence"
     return "updatable view" if updatable else "read-only view"
 
 
@@ -239,6 +245,13 @@ def kind_of(conn, table):
 @pytest.mark.parametrize("statement", ["INSERT", "UPDATE", "DELETE", "TRUNCATE"])
 def test_the_ai_role_writes_no_table(conn, ai_conn, table, statement):
     kind = kind_of(conn, table)
+    if kind == "sequence":  # writing a sequence is drawing from it or resetting it
+        query = (
+            "SELECT nextval(%s)" if statement in ("INSERT", "DELETE") else "SELECT setval(%s, 1)"
+        )
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            ai_conn.execute(query, (table,))
+        return
     if statement == "TRUNCATE" and kind != "table":
         statement = "DELETE"  # a view can't be truncated, by anyone
     column = conn.execute(
