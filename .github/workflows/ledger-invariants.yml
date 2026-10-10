@@ -83,7 +83,9 @@ jobs:
     name: properties (nightly, seed ${{ matrix.seed }})
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # Two machines at 3,000 examples each: measured locally at PR depth (200) they take 113 s
+    # and 50 s, so about 41 minutes here; the limit leaves room for a slower runner.
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       max-parallel: 16
