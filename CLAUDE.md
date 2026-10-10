@@ -74,11 +74,12 @@ required invariant, report and self-host step.
   `trust_open_ledger_account`, `trust_open_vendor_account`, `trust_approve_reconciliation`,
   `trust_open_lease`, `trust_end_lease`, `trust_apply_payment`, `trust_reverse_payment`,
   `trust_post_management_fee`, `trust_post_leasing_fee`, `trust_draw_owner`,
-  `trust_set_aside_bill`, `trust_pay_bill` and `trust_assess_late_fees`, which run as the
-  table owner (`trust_charge_rent_due` runs with the app's own grants). It can't call
-  pgledger's posting functions: every posting it makes goes through `trust_post_transfers`,
-  which takes an idempotency key, unique per PMC, so it is safe to retry: the same key returns
-  the original transfers, and a different posting under it is refused.
+  `trust_set_aside_bill`, `trust_pay_bill`, `trust_assess_late_fees` and
+  `trust_post_opening_balances`, which run as the table owner (`trust_charge_rent_due` runs
+  with the app's own grants). It can't call pgledger's posting functions: every posting it
+  makes goes through `trust_post_transfers`, which takes an idempotency key, unique per PMC, so
+  it is safe to retry: the same key returns the original transfers, and a different posting
+  under it is refused.
 - `trust_ai_agent`, the role behind Occupella's API key, reads what `trust_app` reads and runs
   the reports. It holds no other grant: no write on any table, no function that writes. Grant
   it a new table's SELECT only if `trust_app` has it, and never a write path.
@@ -126,6 +127,11 @@ required invariant, report and self-host step.
   cap) are in force from a date; `trust_assess_late_fees` charges a rent still unpaid at the
   end of its last grace day (UTC) one late fee under the terms in force on its due date. READ
   COMMITTED.
+- Cutover: `trust_post_opening_balances` opens a trust bank account with what each account in
+  it held in the old system, from its cash at the start of the cutover date (UTC), checked
+  against the old book cash. Once per account, before any posting or reconciliation in it, safe
+  to retry; then nothing touching it is dated before the cutover, and its first reconciliation
+  starts there. Tenants' unpaid charges carry over as charges with their own due dates.
 
 ## Run the checks
 

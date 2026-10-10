@@ -21,6 +21,7 @@ from helpers import (
     enter_bill,
     make_pmc,
     open_lease,
+    open_with_balances,
     post,
     set_aside_bill,
     snapshot,
@@ -200,6 +201,9 @@ WRITES = {
         c, pmc.pmc_id, pmc.owners[0].property_id, FEB.date(), 5, "50"
     ),
     "assess late fees": lambda c, pmc, *_: assess_late_fees(c, pmc.pmc_id, FEB.date()),
+    "open with balances carried over": lambda c, pmc, *_: open_with_balances(
+        c, pmc.pmc_id, pmc.deposit_bank_id, JAN.date(), {pmc.tenant_deposit: "1.00"}, "1.00"
+    ),
 }
 
 
