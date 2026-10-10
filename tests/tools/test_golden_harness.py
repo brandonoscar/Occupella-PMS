@@ -56,6 +56,7 @@ def test_compare_matches_diffs_and_updates(tmp_path):
 def test_report_discovery_and_missing_cases(conn, tmp_path):
     # Finds the report functions the migrations created, and nothing that merely looks like one.
     assert golden.report_functions(conn) == [
+        "trust_report_audit_log",
         "trust_report_delinquency",
         "trust_report_general_ledger",
         "trust_report_owner_balances",

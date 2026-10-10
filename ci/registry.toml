@@ -296,6 +296,20 @@ tests = [
   "tests/test_cutover.py::test_an_opening_waits_for_a_posting_in_flight_and_is_then_refused",
 ]
 
+[[invariant]]
+id = "audit-log-records-every-write"
+statement = "Every write to a trust record or the ledger (each transfer once) is logged with when, what (the row, and the row before an update), the database role it was made through and the staff member the application named, if any. A write naming someone not on the PMC's staff is refused with nothing written. The log is append-only, and only its trigger writes it; every trust table carries the trigger."
+tests = [
+  "tests/properties/test_audit_properties.py::test_audit_invariants_hold_under_random_writes_by_random_staff",
+  "tests/test_audit_log.py::test_every_table_with_trust_records_is_audited",
+  "tests/test_audit_log.py::test_a_posting_records_the_staff_member_and_the_role_behind_it",
+  "tests/test_audit_log.py::test_a_write_path_that_runs_as_the_owner_records_its_caller",
+  "tests/test_audit_log.py::test_a_write_naming_someone_not_on_the_pmcs_staff_is_refused",
+  "tests/test_audit_log.py::test_the_log_never_changes_even_for_the_owner",
+  "tests/test_audit_log.py::test_only_the_trigger_writes_the_log",
+  "tests/test_audit_log.py::test_every_transfer_has_exactly_one_audit_row",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]
@@ -407,6 +421,15 @@ tests = [
   "tests/test_general_ledger.py::test_each_account_runs_from_its_opening_to_its_closing_balance",
   "tests/test_general_ledger.py::test_each_closing_balance_is_the_trial_balances",
   "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+]
+
+[[report]]
+id = "audit-log"
+statement = "Audit log for a period of whole days (UTC): each change to the PMC's records and ledger in the order made, with who made it (or not recorded), the role, the action, the record and what changed. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_audit_log.py::test_the_report_lists_each_change_with_who_made_it",
+  "tests/properties/test_audit_properties.py::test_audit_invariants_hold_under_random_writes_by_random_staff",
 ]
 
 [[report]]

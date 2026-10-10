@@ -749,6 +749,49 @@ $$;
 
 
 --
+-- Name: trust_audit(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_audit() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    SET "TimeZone" TO 'UTC'
+    AS $$
+DECLARE
+    v_row jsonb := to_jsonb(CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END);
+    v_pmc uuid;
+    v_staff uuid := nullif(current_setting('trust.staff_id', true), '')::uuid;
+BEGIN
+    IF TG_TABLE_NAME = 'pgledger_transfers' THEN
+        SELECT t.pmc_id INTO v_pmc
+        FROM trust_ledger_accounts AS t WHERE t.ledger_account_id = v_row ->> 'from_account_id';
+    ELSE
+        v_pmc := (v_row ->> 'pmc_id')::uuid;
+    END IF;
+
+    IF v_staff IS NOT NULL AND NOT EXISTS (
+        SELECT s.id FROM trust_staff AS s WHERE s.id = v_staff AND s.pmc_id = v_pmc
+    ) THEN
+        RAISE EXCEPTION 'trust: % is not a staff member of PMC %', v_staff, v_pmc
+            USING ERRCODE = 'invalid_parameter_value',
+                  HINT = 'Set trust.staff_id to one of the PMC''s staff (trust_staff), or not at all.';
+    END IF;
+
+    INSERT INTO trust_audit_log (pmc_id, staff_id, db_role, action, table_name, row_data, before)
+    VALUES (
+        v_pmc, v_staff,
+        -- The role the session acts as: SET ROLE's, else the one it logged in with. (The
+        -- owner's, inside a write path that runs as the owner, is never the one recorded.)
+        coalesce(nullif(current_setting('role'), 'none'), session_user),
+        lower(TG_OP), TG_TABLE_NAME, v_row,
+        CASE WHEN TG_OP = 'UPDATE' THEN to_jsonb(OLD) END
+    );
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: trust_charge_rent_due(uuid, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1910,6 +1953,116 @@ BEGIN
         END IF;
     END LOOP;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_report_audit_log(uuid, date, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_audit_log(p_pmc_id uuid, p_from date, p_to date) RETURNS TABLE(line integer, item text, at text, staff text, db_role text, action text, record text, detail text)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+#variable_conflict use_column
+DECLARE
+    v_start timestamptz := p_from::timestamp AT TIME ZONE 'UTC';
+    v_end timestamptz := (p_to + 1)::timestamp AT TIME ZONE 'UTC';
+BEGIN
+    IF p_from IS NULL OR p_to IS NULL OR p_to < p_from THEN
+        RAISE EXCEPTION 'trust: an audit log runs from a day to the same day or a later one '
+            '(got % to %)', p_from, p_to
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF NOT EXISTS (SELECT pmc.pmc_id FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id) THEN
+        RAISE EXCEPTION 'trust: no PMC %', p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    RETURN QUERY
+    WITH holders AS (
+        SELECT t.ledger_account_id AS id,
+               t.kind || ': ' || CASE t.kind
+                   WHEN 'bank_cash' THEN b.display_name
+                   WHEN 'owner_property' THEN o.display_name || ' / ' || pr.display_name
+                   WHEN 'vendor_payable' THEN v.display_name
+                   WHEN 'pmc_income' THEN pmc.display_name
+                   ELSE tn.display_name
+               END AS holder
+        FROM trust_ledger_accounts AS t
+        JOIN trust_bank_accounts AS b ON b.id = t.bank_account_id
+        JOIN trust_pmcs AS pmc ON pmc.pmc_id = t.pmc_id
+        LEFT JOIN trust_owners AS o ON o.id = t.owner_id
+        LEFT JOIN trust_properties AS pr ON pr.id = t.property_id
+        LEFT JOIN trust_tenants AS tn ON tn.id = t.tenant_id
+        LEFT JOIN trust_vendors AS v ON v.id = t.vendor_id
+        WHERE t.pmc_id = p_pmc_id
+    ),
+    changes AS (
+        SELECT a.id, a.at, coalesce(s.display_name, 'not recorded') AS staff, a.db_role,
+               a.action, regexp_replace(a.table_name, '^(trust|pgledger)_', '') AS record,
+               CASE
+                   -- A transfer: how much, from and to whom, dated when, and its memo.
+                   WHEN a.table_name = 'pgledger_transfers' THEN
+                       (a.row_data ->> 'amount') || ' from ' || f.holder || ' to ' || t.holder
+                       || ' dated ' || (a.row_data ->> 'event_at')
+                       || coalesce(' - ' || (a.row_data -> 'metadata' ->> 'memo'), '')
+                   -- An update: each field it changed, from what to what.
+                   WHEN a.action = 'update' THEN (
+                       SELECT coalesce(string_agg(
+                           n.key || ': ' || coalesce(a.before ->> n.key, 'null') || ' to '
+                           || coalesce(n.value #>> '{}', 'null'),
+                           ', ' ORDER BY n.key COLLATE "C"
+                       ), 'no change')
+                       FROM jsonb_each(a.row_data) AS n
+                       WHERE n.value IS DISTINCT FROM a.before -> n.key
+                   )
+                   -- Anything else: its fields, but ids and the clock's time of writing it
+                   -- (the log's own time says when).
+                   ELSE (
+                       SELECT string_agg(
+                           n.key || ': ' || n.value, ', ' ORDER BY n.key COLLATE "C"
+                       )
+                       FROM jsonb_each_text(a.row_data) AS n
+                       WHERE n.value IS NOT NULL AND n.key <> 'id' AND n.key NOT LIKE '%\_id'
+                         AND n.key NOT IN ('created_at', 'approved_at')
+                   )
+               END AS detail
+        FROM trust_audit_log AS a
+        LEFT JOIN trust_staff AS s ON s.id = a.staff_id
+        LEFT JOIN holders AS f ON f.id = a.row_data ->> 'from_account_id'
+        LEFT JOIN holders AS t ON t.id = a.row_data ->> 'to_account_id'
+        WHERE a.pmc_id = p_pmc_id AND a.at >= v_start AND a.at < v_end
+    ),
+    lines AS (
+        SELECT 0 AS section, NULL::bigint AS id, 'PMC' AS item, NULL::timestamptz AS at,
+               pmc.display_name AS staff, NULL::text AS db_role, NULL::text AS action,
+               NULL::text AS record, NULL::text AS detail
+        FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
+        UNION ALL
+        SELECT 1, NULL, 'period', NULL,
+               to_char(p_from, 'YYYY-MM-DD') || ' to ' || to_char(p_to, 'YYYY-MM-DD')
+                   || ', whole days UTC',
+               NULL, NULL, NULL, NULL
+        UNION ALL
+        SELECT 2, c.id, 'change', c.at, c.staff, c.db_role, c.action, c.record, c.detail
+        FROM changes AS c
+        UNION ALL
+        SELECT 3, NULL, 'total', NULL, NULL, NULL, NULL, NULL,
+               (SELECT count(*) FROM changes) || ' changes'
+    )
+    SELECT row_number() OVER (ORDER BY l.section, l.id)::integer,
+           l.item,
+           to_char(l.at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US'),
+           -- The PMC's name and the period sit in the staff column of the first two lines.
+           l.staff,
+           l.db_role,
+           l.action,
+           l.record,
+           l.detail
+    FROM lines AS l
+    ORDER BY 1;
 END;
 $$;
 
@@ -3292,6 +3445,39 @@ CREATE TABLE public.schema_migrations (
 
 
 --
+-- Name: trust_audit_log; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_audit_log (
+    id bigint NOT NULL,
+    pmc_id uuid NOT NULL,
+    at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    staff_id uuid,
+    db_role text NOT NULL,
+    action text NOT NULL,
+    table_name text NOT NULL,
+    row_data jsonb NOT NULL,
+    before jsonb,
+    CONSTRAINT trust_audit_log_action_check CHECK ((action = ANY (ARRAY['insert'::text, 'update'::text, 'delete'::text]))),
+    CONSTRAINT trust_audit_log_check CHECK (((action = 'update'::text) = (before IS NOT NULL)))
+);
+
+
+--
+-- Name: trust_audit_log_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_audit_log ALTER COLUMN id ADD GENERATED BY DEFAULT AS IDENTITY (
+    SEQUENCE NAME public.trust_audit_log_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: trust_bank_accounts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3596,6 +3782,19 @@ CREATE TABLE public.trust_reconciliations (
 
 
 --
+-- Name: trust_staff; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_staff (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    display_name text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_staff_display_name_check CHECK ((display_name <> ''::text))
+);
+
+
+--
 -- Name: trust_tenants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3700,6 +3899,14 @@ ALTER TABLE ONLY public.pgledger_transfers
 
 ALTER TABLE ONLY public.schema_migrations
     ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (version);
+
+
+--
+-- Name: trust_audit_log trust_audit_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_audit_log
+    ADD CONSTRAINT trust_audit_log_pkey PRIMARY KEY (id);
 
 
 --
@@ -3959,6 +4166,22 @@ ALTER TABLE ONLY public.trust_reconciliations
 
 
 --
+-- Name: trust_staff trust_staff_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_staff
+    ADD CONSTRAINT trust_staff_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_staff trust_staff_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_staff
+    ADD CONSTRAINT trust_staff_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_tenants trust_tenants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4063,6 +4286,13 @@ CREATE INDEX pgledger_transfers_from_account_id_idx ON public.pgledger_transfers
 --
 
 CREATE INDEX pgledger_transfers_to_account_id_idx ON public.pgledger_transfers USING btree (to_account_id);
+
+
+--
+-- Name: trust_audit_log_pmc_id_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_audit_log_pmc_id_at ON public.trust_audit_log USING btree (pmc_id, at);
 
 
 --
@@ -4297,6 +4527,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.p
 
 
 --
+-- Name: trust_audit_log trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_audit_log FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_bill_approvals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -4430,6 +4667,202 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: pgledger_transfers trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.pgledger_transfers FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_bank_accounts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bank_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_bill_approvals trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bill_approvals FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_bill_payments trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bill_payments FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_bills trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bills FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_charge_payments trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_charge_payments FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_charges trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_charges FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_late_fee_policies trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_late_fee_policies FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_late_fees trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_late_fees FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_lease_tenants trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_tenants FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_leases trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_leases FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_leasing_fees trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_leasing_fees FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_ledger_accounts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_ledger_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_management_agreements trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_management_agreements FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_management_fees trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_management_fees FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_opening_balances trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_opening_balances FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_owner_draws trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owner_draws FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_owners trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owners FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_payment_reversals trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_reversals FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_pmcs trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_pmcs FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_properties trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_properties FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_reconciliations trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_reconciliations FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_staff trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_staff FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_tenants trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_tenants FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_units trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_units FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_vendors trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_vendors FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_work_order_steps trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_work_order_steps FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_work_orders trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_work_orders FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_bank_accounts trust_bank_kind_fixed; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -4536,6 +4969,22 @@ ALTER TABLE ONLY public.pgledger_transfers
 
 ALTER TABLE ONLY public.pgledger_transfers
     ADD CONSTRAINT pgledger_transfers_to_account_id_fkey FOREIGN KEY (to_account_id) REFERENCES public.pgledger_accounts(id);
+
+
+--
+-- Name: trust_audit_log trust_audit_log_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_audit_log
+    ADD CONSTRAINT trust_audit_log_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_audit_log trust_audit_log_pmc_id_staff_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_audit_log
+    ADD CONSTRAINT trust_audit_log_pmc_id_staff_id_fkey FOREIGN KEY (pmc_id, staff_id) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -5003,6 +5452,14 @@ ALTER TABLE ONLY public.trust_reconciliations
 
 
 --
+-- Name: trust_staff trust_staff_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_staff
+    ADD CONSTRAINT trust_staff_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
 -- Name: trust_tenants trust_tenants_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5124,4 +5581,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261010000020'),
     ('20261010000021'),
     ('20261010000022'),
-    ('20261010000023');
+    ('20261010000023'),
+    ('20261010000024');
