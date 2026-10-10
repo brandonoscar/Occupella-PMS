@@ -94,6 +94,8 @@ records management agreements, takes fees and pays owners, and checks:
 - the rent run charges every lease in effect on its due date once; each late rent is charged one
   late fee, worked from what was unpaid when its grace ran out under the terms in force on its
   due date.
+- the delinquency report matches the model line by line as of any day, and each lease's tenant
+  ledger closes at its balance due.
 
 A third machine enters vendor bills (one vendor has no account to pay from), records owners'
 approvals, sets bills aside, pays them and pays owners, and checks:
@@ -127,7 +129,9 @@ of a day: the lease, its tenants, deposits and prepaid rent held, charged, paid 
 then totals that tie back to the ledger) and `trust_report_owner_balances` (per owner's
 property the balance, the reserve kept back, unpaid bills and what is available to pay the
 owner) and `trust_report_unpaid_bills` (every bill not yet paid, by vendor, with what was set
-aside for it and how far past due it is). Run it
+aside for it and how far past due it is) and `trust_report_delinquency` (each lease that owes
+money, by how long it is past due) and `trust_report_tenant_ledger` (one lease's charges,
+payments and bounces with a running balance). Run it
 with
 `pytest tests/golden`, and update deliberately with `pytest tests/golden --update-goldens`.
 

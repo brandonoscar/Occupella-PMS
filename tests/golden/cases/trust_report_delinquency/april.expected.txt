@@ -1,0 +1,7 @@
+line	item	property	unit	tenants	current_due	days_1_30	days_31_60	days_61_90	over_90	total
+1	PMC	NULL	NULL	Golden PMC	NULL	NULL	NULL	NULL	NULL	NULL
+2	as of	NULL	NULL	2026-04-30, end of day UTC	NULL	NULL	NULL	NULL	NULL	NULL
+3	lease	Property 1	Unit 1	Tenant 1, Tenant 2	0.00	1500.00	500.00	0.00	0.00	2000.00
+4	lease	Property 1	Unit 2	Tenant 4	50.00	0.00	0.00	0.00	0.00	50.00
+5	lease	Property 2	Unit 3	Tenant 3	0.00	0.00	0.00	1200.00	1000.00	2200.00
+6	total	NULL	NULL	NULL	50.00	1500.00	500.00	1200.00	1000.00	4250.00
