@@ -105,6 +105,21 @@ tests = [
 ]
 
 [[invariant]]
+id = "ai-role-cannot-move-money"
+statement = "The role behind the API key Occupella will hold (trust_ai_agent) reads what the app reads and runs the reports, and nothing else: no write on any table, no column grant, no function that writes, no other role's grants. Every posting or record change it tries is refused with nothing written."
+tests = [
+  "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+  "tests/test_privileges.py::test_ai_role_reads_only_what_the_app_reads",
+  "tests/test_privileges.py::test_ai_role_holds_no_column_grant",
+  "tests/test_privileges.py::test_ai_role_calls_only_the_reports",
+  "tests/test_privileges.py::test_ai_role_has_no_powers_beyond_its_grants",
+  "tests/test_ai_role.py::test_the_ai_role_cannot_move_money_or_change_a_record",
+  "tests/test_ai_role.py::test_the_ai_role_writes_no_table",
+  "tests/test_ai_role.py::test_the_ai_role_runs_every_report_and_sees_what_the_owner_sees",
+]
+
+[[invariant]]
 id = "concurrent-postings-all-finish"
 statement = "Concurrent transfers across the same accounts all finish, and the balances still add up: accounts are locked in one global order, and unrelated transfers never wait for each other."
 tests = [

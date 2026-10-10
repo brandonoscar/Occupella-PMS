@@ -115,6 +115,14 @@ def app_conn(database_url):
         yield connection
 
 
+@pytest.fixture
+def ai_conn(database_url):
+    """A connection acting as trust_ai_agent, the role behind the API key Occupella will hold."""
+    with psycopg.connect(database_url, autocommit=True) as connection:
+        connection.execute("SET ROLE trust_ai_agent")
+        yield connection
+
+
 def pytest_addoption(parser):
     parser.addoption(
         "--update-goldens",

@@ -29,7 +29,9 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     trust journal is the book balance approved, its ledgers add up to that and list in byte
     order, and its only difference is the statement's;
   - an owner statement for any period agrees with the model: the opening balance, each posting
-    in date order with the balance after it, the closing balance and the totals.
+    in date order with the balance after it, the closing balance and the totals;
+  - the AI's role (trust_ai_agent) reads the same statement, and every posting it tries is
+    refused with nothing written: the AI never moves money.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly; a failure prints the shortest
 sequence of steps that breaks an invariant.
@@ -109,9 +111,9 @@ WHERE book_balance <> books_now
 
 
 class LedgerMachine(RuleBasedStateMachine):
-    def __init__(self, owner_conn, app_conn):
+    def __init__(self, owner_conn, app_conn, ai_conn):
         super().__init__()
-        self.conns = {"owner": owner_conn, "app": app_conn}
+        self.conns = {"owner": owner_conn, "app": app_conn, "ai": ai_conn}
         self.conn = owner_conn
         pmc = make_pmc(owner_conn, owners=3)
         # "Owner 1", "owner 2", "Owner 3": byte order and language rules sort these differently,
@@ -404,7 +406,7 @@ class LedgerMachine(RuleBasedStateMachine):
 
     @rule(
         data=st.data(),
-        role=st.sampled_from(["owner", "app"]),
+        role=st.sampled_from(["owner", "app", "ai"]),
         back=st.timedeltas(min_value=timedelta(0), max_value=timedelta(days=120)),
         length=st.timedeltas(min_value=timedelta(microseconds=1), max_value=timedelta(days=150)),
     )
@@ -445,6 +447,20 @@ class LedgerMachine(RuleBasedStateMachine):
             (None, "all properties: closing balance", None, running),
         ]
         assert rows[3:] == expected
+
+    @rule(data=st.data(), path=st.sampled_from(["with a key", "through pgledger"]), back=BACK)
+    def the_ai_role_cannot_post(self, data, path, back):
+        """Whatever the AI tries to post, valid or not, dated now or back in a closed period, is
+        refused for lack of a grant before anything is checked or written."""
+        requests = [self.draw_request(data)]
+        when = self.now - back
+        before = self.snapshot()
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            if path == "with a key":
+                post(self.conns["ai"], self.pmc_id, "ai-key", requests, event_at=when)
+            else:
+                transfer_batch(self.conns["ai"], requests, event_at=when)
+        assert self.snapshot() == before
 
     @rule(amount=AMOUNTS)
     def try_to_cross_pmcs(self, amount):
@@ -622,6 +638,8 @@ def test_ledger_invariants_hold_under_random_postings(database_url):
     with (
         psycopg.connect(database_url, autocommit=True) as owner_conn,
         psycopg.connect(database_url, autocommit=True) as app_conn,
+        psycopg.connect(database_url, autocommit=True) as ai_conn,
     ):
         app_conn.execute("SET ROLE trust_app")
-        run_state_machine_as_test(lambda: LedgerMachine(owner_conn, app_conn))
+        ai_conn.execute("SET ROLE trust_ai_agent")
+        run_state_machine_as_test(lambda: LedgerMachine(owner_conn, app_conn, ai_conn))

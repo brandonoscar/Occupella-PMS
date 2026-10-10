@@ -21,7 +21,7 @@ ledger schema and its tests only. Background: AgenticHelixis
 6. Say what you measured and what you didn't. Write NOT VERIFIED when that's the truth.
 
 Carried over from Occupella: the AI never moves money. The API key Occupella will hold must not
-be able to move money in this system either.
+be able to move money in this system either: its role, `trust_ai_agent`, can't (see below).
 
 Out of scope for Phase 0: any API, UI, login, Stripe, bank files, 1099s, and state rules beyond
 the no-negative rule. If one of these looks needed, stop and ask the founder.
@@ -77,6 +77,9 @@ required invariant, report and self-host step.
   makes goes through `trust_post_transfers`, which takes an idempotency key, unique per PMC, so
   it is safe to retry: the same key returns the original transfers, and a different posting
   under it is refused.
+- `trust_ai_agent`, the role behind Occupella's API key, reads what `trust_app` reads and runs
+  the reports. It holds no other grant: no write on any table, no function that writes. Grant
+  it a new table's SELECT only if `trust_app` has it, and never a write path.
 - A new table starts with `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it
   needs, never DELETE. `tests/test_privileges.py` pins the exact grants of every table and
   function: a new one fails until it is listed there, with who may use it. Postgres lets PUBLIC
