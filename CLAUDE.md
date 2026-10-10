@@ -72,8 +72,9 @@ required invariant, report and self-host step.
   reversing transfer.
 - The app role `trust_app` only reads ledger tables. It writes through `trust_post_transfers`,
   `trust_open_ledger_account`, `trust_open_vendor_account`, `trust_approve_reconciliation`,
-  `trust_open_lease`, `trust_end_lease`, `trust_apply_payment` and `trust_reverse_payment`,
-  which run as the table owner. It can't call pgledger's posting functions: every posting it
+  `trust_open_lease`, `trust_end_lease`, `trust_apply_payment`, `trust_reverse_payment`,
+  `trust_post_management_fee`, `trust_post_leasing_fee` and `trust_draw_owner`, which run as
+  the table owner. It can't call pgledger's posting functions: every posting it
   makes goes through `trust_post_transfers`, which takes an idempotency key, unique per PMC, so
   it is safe to retry: the same key returns the original transfers, and a different posting
   under it is refused.
@@ -104,6 +105,11 @@ required invariant, report and self-host step.
   amount or the transfer's, and safe to retry. A bounced payment is undone with
   `trust_reverse_payment`, against the ledger transfer that moved the money back; matches are
   never rewritten. Leases, matches and reversals are written at READ COMMITTED.
+- The owner money loop: a management agreement per owner's property account, in force from a
+  date (new terms are a new row). `trust_post_management_fee` takes its percent of rent
+  collected in a period (net of bounces), or the minimum, plus a flat fee, into the PMC's fee
+  account, once per period; `trust_post_leasing_fee` once per lease; `trust_draw_owner` pays
+  out the balance above the reserve, once per request key. All at READ COMMITTED.
 
 ## Run the checks
 

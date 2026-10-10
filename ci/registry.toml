@@ -182,6 +182,39 @@ tests = [
   "tests/test_payment_reversals.py::test_two_reversals_at_once_cannot_undo_more_than_the_match",
 ]
 
+[[invariant]]
+id = "management-fee-once-per-period"
+statement = "A management fee is the agreement's percent of rent collected in the period (net of bounced payments), or its minimum if that is more, plus its flat fee. It is taken once per owner account and period, an account's fee periods never overlap, and the same period retried returns the fee taken."
+tests = [
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+  "tests/test_owner_money.py::test_the_fee_is_a_percent_of_rent_collected_in_the_period",
+  "tests/test_owner_money.py::test_a_bounce_in_the_period_counts_against_it",
+  "tests/test_owner_money.py::test_taking_the_fee_again_returns_it_and_posts_once",
+  "tests/test_owner_money.py::test_a_period_overlapping_one_taken_is_refused",
+  "tests/test_owner_money.py::test_the_same_fee_taken_twice_at_once_posts_once",
+]
+
+[[invariant]]
+id = "leasing-fee-once-per-lease"
+statement = "A leasing fee is the agreement's leasing percent of a new lease's monthly rent, taken once per lease from an owner of the lease's property; a retry returns the fee taken."
+tests = [
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+  "tests/test_owner_money.py::test_the_leasing_fee_is_taken_once_per_lease",
+  "tests/test_owner_money.py::test_the_leasing_fee_comes_from_an_owner_of_the_leases_property",
+]
+
+[[invariant]]
+id = "owner-draw-within-reserve"
+statement = "An owner draw never pays out more than the account's balance above the reserve in force that day, its request key pays once, and it can never be recorded as a bounced payment coming back."
+tests = [
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+  "tests/test_owner_money.py::test_a_draw_pays_everything_above_the_reserve",
+  "tests/test_owner_money.py::test_a_draw_of_a_set_amount_stays_within_what_is_available",
+  "tests/test_owner_money.py::test_a_draw_retried_with_its_key_returns_the_original",
+  "tests/test_owner_money.py::test_two_draws_at_once_cannot_pay_out_more_than_is_there",
+  "tests/test_owner_money.py::test_an_owner_draw_cannot_be_recorded_as_a_bounced_payment",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]
@@ -210,6 +243,16 @@ tests = [
   "tests/test_rent_roll.py::test_charges_count_by_due_date_and_payments_by_their_transfers_date",
   "tests/test_rent_roll.py::test_money_for_tenants_off_the_roll_still_adds_up_to_the_ledger",
   "tests/test_rent_roll.py::test_a_bounced_payment_counts_as_unpaid_from_its_reversals_date",
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+]
+
+[[report]]
+id = "owner-balances"
+statement = "Owner balances as of the end of a day (UTC): per owner's property its balance, the reserve its agreement keeps back that day, and what is available to pay the owner; then the totals. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_owner_balances.py::test_each_property_shows_its_balance_reserve_and_what_is_available",
+  "tests/test_owner_balances.py::test_balances_are_as_of_the_end_of_the_day_and_the_reserve_in_force_that_day",
   "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
 ]
 

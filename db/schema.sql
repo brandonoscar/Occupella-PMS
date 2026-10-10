@@ -441,6 +441,45 @@ $$;
 
 
 --
+-- Name: trust_management_agreements; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_management_agreements (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    ledger_account_id text NOT NULL,
+    starts_on date NOT NULL,
+    fee_percent numeric DEFAULT 0 NOT NULL,
+    minimum_fee numeric DEFAULT 0 NOT NULL,
+    flat_fee numeric DEFAULT 0 NOT NULL,
+    leasing_fee_percent numeric DEFAULT 0 NOT NULL,
+    reserve numeric DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_management_agreements_fee_percent_check CHECK (((fee_percent >= (0)::numeric) AND (fee_percent <= (100)::numeric))),
+    CONSTRAINT trust_management_agreements_flat_fee_check CHECK ((flat_fee >= (0)::numeric)),
+    CONSTRAINT trust_management_agreements_leasing_fee_percent_check CHECK (((leasing_fee_percent >= (0)::numeric) AND (leasing_fee_percent <= (100)::numeric))),
+    CONSTRAINT trust_management_agreements_minimum_fee_check CHECK ((minimum_fee >= (0)::numeric)),
+    CONSTRAINT trust_management_agreements_reserve_check CHECK ((reserve >= (0)::numeric))
+);
+
+
+--
+-- Name: trust_agreement_on(text, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_agreement_on(p_account text, p_day date) RETURNS public.trust_management_agreements
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT a.*
+    FROM trust_management_agreements AS a
+    WHERE a.ledger_account_id = p_account AND a.starts_on <= p_day
+    ORDER BY a.starts_on DESC
+    LIMIT 1
+$$;
+
+
+--
 -- Name: trust_apply_payment(uuid, uuid, text, numeric); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -656,6 +695,29 @@ $$;
 
 
 --
+-- Name: trust_check_agreement_account(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_agreement_account() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT t.ledger_account_id FROM trust_ledger_accounts AS t
+        WHERE t.ledger_account_id = NEW.ledger_account_id AND t.pmc_id = NEW.pmc_id
+          AND t.kind = 'owner_property'
+    ) THEN
+        RAISE EXCEPTION 'trust: a management agreement is for an owner''s property account in '
+            'its own PMC; % is not one in PMC %', NEW.ledger_account_id, NEW.pmc_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_bank_tie_out(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -723,6 +785,77 @@ $$;
 
 
 --
+-- Name: trust_draw_owner(uuid, text, text, numeric, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_draw_owner(p_pmc_id uuid, p_account text, p_request_key text, p_amount numeric, p_event_at timestamp with time zone) RETURNS numeric
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_account trust_ledger_accounts := trust_lock_owner_account(p_pmc_id, p_account);
+    v_taken trust_owner_draws;
+    v_reserve numeric;
+    v_available numeric;
+    v_cash text;
+    v_transfer_id text;
+BEGIN
+    IF coalesce(p_request_key, '') = '' THEN
+        RAISE EXCEPTION 'trust: an owner draw needs a request key, so a retry can''t pay twice'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF p_amount <= 0 THEN
+        RAISE EXCEPTION 'trust: a draw pays a positive amount, not %', p_amount
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    SELECT d.* INTO v_taken
+    FROM trust_owner_draws AS d
+    WHERE d.pmc_id = p_pmc_id AND d.request_key = p_request_key;
+    IF FOUND THEN
+        IF v_taken.ledger_account_id <> p_account
+            OR v_taken.amount <> coalesce(p_amount, v_taken.amount) THEN
+            RAISE EXCEPTION 'trust: request key % already paid % from %',
+                p_request_key, v_taken.amount, v_taken.ledger_account_id
+                USING ERRCODE = 'unique_violation',
+                      HINT = 'Use a new key for a new draw; resend a key only to retry.';
+        END IF;
+        RETURN v_taken.amount;  -- a retry: the original draw
+    END IF;
+
+    -- pgledger dates a transfer with no date now, so the reserve is today's.
+    v_reserve := coalesce((
+        trust_agreement_on(p_account, (coalesce(p_event_at, now()) AT TIME ZONE 'UTC')::date)
+    ).reserve, 0);
+    SELECT a.balance - v_reserve INTO v_available
+    FROM pgledger_accounts AS a WHERE a.id = p_account;
+    IF coalesce(p_amount, v_available) > v_available OR v_available <= 0 THEN
+        RAISE EXCEPTION 'trust: % is available to draw from % (its balance less a reserve of %); '
+            '% is too much', greatest(v_available, 0), p_account, v_reserve,
+            coalesce(p_amount, v_available)
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    -- Money reaches an owner's account only through its trust bank account's cash, so a
+    -- balance to draw means that cash account exists.
+    SELECT t.ledger_account_id INTO v_cash
+    FROM trust_ledger_accounts AS t
+    WHERE t.bank_account_id = v_account.bank_account_id AND t.kind = 'bank_cash';
+    SELECT t.id INTO v_transfer_id
+    FROM pgledger_create_transfers(
+        ARRAY[(p_account, v_cash, coalesce(p_amount, v_available))::transfer_request],
+        p_event_at,
+        jsonb_build_object('memo', 'Owner draw')
+    ) AS t;
+
+    INSERT INTO trust_owner_draws (pmc_id, request_key, ledger_account_id, amount, transfer_id)
+    VALUES (p_pmc_id, p_request_key, p_account, coalesce(p_amount, v_available), v_transfer_id);
+    RETURN coalesce(p_amount, v_available);
+END;
+$$;
+
+
+--
 -- Name: trust_end_lease(uuid, uuid, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -736,6 +869,53 @@ BEGIN
         RAISE EXCEPTION 'trust: no lease % in PMC %', p_lease_id, p_pmc_id
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+END;
+$$;
+
+
+--
+-- Name: trust_ledger_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_ledger_accounts (
+    ledger_account_id text NOT NULL,
+    pmc_id uuid NOT NULL,
+    bank_account_id uuid NOT NULL,
+    kind text NOT NULL,
+    owner_id uuid,
+    property_id uuid,
+    tenant_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    vendor_id uuid,
+    CONSTRAINT trust_ledger_accounts_kind_shape_v2 CHECK ((((kind = 'owner_property'::text) AND (owner_id IS NOT NULL) AND (property_id IS NOT NULL) AND (tenant_id IS NULL) AND (vendor_id IS NULL)) OR ((kind = ANY (ARRAY['tenant_deposit'::text, 'prepaid_rent'::text])) AND (tenant_id IS NOT NULL) AND (owner_id IS NULL) AND (property_id IS NULL) AND (vendor_id IS NULL)) OR ((kind = 'vendor_payable'::text) AND (vendor_id IS NOT NULL) AND (owner_id IS NULL) AND (property_id IS NULL) AND (tenant_id IS NULL)) OR ((kind = ANY (ARRAY['pmc_income'::text, 'bank_cash'::text])) AND (owner_id IS NULL) AND (property_id IS NULL) AND (tenant_id IS NULL) AND (vendor_id IS NULL))))
+);
+
+
+--
+-- Name: trust_lock_owner_account(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_lock_owner_account(p_pmc_id uuid, p_account text) RETURNS public.trust_ledger_accounts
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_account trust_ledger_accounts;
+BEGIN
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'trust: take fees and draws at READ COMMITTED, not %',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
+    SELECT t.* INTO v_account
+    FROM trust_ledger_accounts AS t
+    WHERE t.ledger_account_id = p_account AND t.pmc_id = p_pmc_id AND t.kind = 'owner_property'
+    FOR NO KEY UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: % is not an owner''s property account in PMC %', p_account, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    RETURN v_account;
 END;
 $$;
 
@@ -834,6 +1014,169 @@ BEGIN
     );
 
     RETURN v_ledger_account_id;
+END;
+$$;
+
+
+--
+-- Name: trust_post_fee(public.trust_ledger_accounts, numeric, timestamp with time zone, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_post_fee(p_account public.trust_ledger_accounts, p_amount numeric, p_event_at timestamp with time zone, p_memo text) RETURNS text
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_income text;
+    v_transfer_id text;
+BEGIN
+    SELECT t.ledger_account_id INTO v_income
+    FROM trust_ledger_accounts AS t
+    WHERE t.bank_account_id = p_account.bank_account_id AND t.kind = 'pmc_income';
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: open the PMC''s fee account (pmc_income) in trust bank account % '
+            'before taking fees', p_account.bank_account_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT t.id INTO v_transfer_id
+    FROM pgledger_create_transfers(
+        ARRAY[(p_account.ledger_account_id, v_income, p_amount)::transfer_request],
+        p_event_at,
+        jsonb_build_object('memo', p_memo)
+    ) AS t;
+    RETURN v_transfer_id;
+END;
+$$;
+
+
+--
+-- Name: trust_post_leasing_fee(uuid, uuid, text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_post_leasing_fee(p_pmc_id uuid, p_lease_id uuid, p_account text, p_event_at timestamp with time zone) RETURNS numeric
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_account trust_ledger_accounts := trust_lock_owner_account(p_pmc_id, p_account);
+    v_lease trust_leases;
+    v_property_id uuid;
+    v_taken trust_leasing_fees;
+    v_agreement trust_management_agreements;
+    v_fee numeric;
+BEGIN
+    SELECT l.* INTO v_lease FROM trust_leases AS l WHERE l.id = p_lease_id AND l.pmc_id = p_pmc_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no lease % in PMC %', p_lease_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT u.property_id INTO v_property_id FROM trust_units AS u WHERE u.id = v_lease.unit_id;
+    IF v_account.property_id <> v_property_id THEN
+        RAISE EXCEPTION 'trust: % is not an owner''s account for the lease''s property', p_account
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    SELECT f.* INTO v_taken FROM trust_leasing_fees AS f WHERE f.lease_id = p_lease_id;
+    IF FOUND THEN
+        IF v_taken.ledger_account_id <> p_account THEN
+            RAISE EXCEPTION 'trust: the leasing fee for lease % was taken from %, not %',
+                p_lease_id, v_taken.ledger_account_id, p_account
+                USING ERRCODE = 'unique_violation';
+        END IF;
+        RETURN v_taken.fee;  -- a retry: the fee already taken
+    END IF;
+
+    v_agreement := trust_agreement_on(p_account, v_lease.starts_on);
+    IF v_agreement.id IS NULL THEN
+        RAISE EXCEPTION 'trust: no management agreement for % in force on %',
+            p_account, v_lease.starts_on
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_fee := round(v_agreement.leasing_fee_percent / 100 * v_lease.monthly_rent, 2);
+
+    INSERT INTO trust_leasing_fees (
+        pmc_id, lease_id, ledger_account_id, agreement_id, fee, transfer_id
+    ) VALUES (
+        p_pmc_id, p_lease_id, p_account, v_agreement.id, v_fee,
+        CASE WHEN v_fee > 0 THEN trust_post_fee(
+            v_account, v_fee, p_event_at, format('Leasing fee, lease from %s', v_lease.starts_on)
+        ) END
+    );
+    RETURN v_fee;
+END;
+$$;
+
+
+--
+-- Name: trust_post_management_fee(uuid, text, date, date, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_post_management_fee(p_pmc_id uuid, p_account text, p_period_start date, p_period_end date, p_event_at timestamp with time zone) RETURNS numeric
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_account trust_ledger_accounts := trust_lock_owner_account(p_pmc_id, p_account);
+    v_start timestamptz := p_period_start::timestamp AT TIME ZONE 'UTC';
+    v_end timestamptz := p_period_end::timestamp AT TIME ZONE 'UTC';
+    v_taken trust_management_fees;
+    v_agreement trust_management_agreements;
+    v_collected numeric;
+    v_fee numeric;
+BEGIN
+    IF p_period_start IS NULL OR p_period_end IS NULL OR p_period_end <= p_period_start THEN
+        RAISE EXCEPTION 'trust: a fee period must end after it starts (got % to %)',
+            p_period_start, p_period_end
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    SELECT f.* INTO v_taken
+    FROM trust_management_fees AS f
+    WHERE f.ledger_account_id = p_account
+      AND f.period_start < p_period_end AND p_period_start < f.period_end
+    LIMIT 1;
+    IF FOUND THEN
+        IF (v_taken.period_start, v_taken.period_end) = (p_period_start, p_period_end) THEN
+            RETURN v_taken.fee;  -- a retry: the fee already taken
+        END IF;
+        RAISE EXCEPTION 'trust: the fee for % to % overlaps the one taken for % to %',
+            p_period_start, p_period_end, v_taken.period_start, v_taken.period_end
+            USING ERRCODE = 'exclusion_violation';
+    END IF;
+
+    v_agreement := trust_agreement_on(p_account, p_period_start);
+    IF v_agreement.id IS NULL THEN
+        RAISE EXCEPTION 'trust: no management agreement for % in force on %',
+            p_account, p_period_start
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    SELECT coalesce(sum(cp.amount), 0) INTO v_collected
+    FROM trust_charge_payments AS cp
+    JOIN trust_charges AS c ON c.id = cp.charge_id AND c.kind = 'rent'
+    JOIN pgledger_transfers AS t ON t.id = cp.transfer_id
+    WHERE t.to_account_id = p_account AND t.event_at >= v_start AND t.event_at < v_end;
+    SELECT v_collected - coalesce(sum(r.amount), 0) INTO v_collected
+    FROM trust_payment_reversals AS r
+    JOIN trust_charges AS c ON c.id = r.charge_id AND c.kind = 'rent'
+    JOIN pgledger_transfers AS t ON t.id = r.reversal_id
+    WHERE t.from_account_id = p_account AND t.event_at >= v_start AND t.event_at < v_end;
+
+    v_fee := greatest(round(v_agreement.fee_percent / 100 * v_collected, 2),
+                      v_agreement.minimum_fee)
+             + v_agreement.flat_fee;
+
+    INSERT INTO trust_management_fees (
+        pmc_id, ledger_account_id, period_start, period_end, agreement_id, collected, fee,
+        transfer_id
+    ) VALUES (
+        p_pmc_id, p_account, p_period_start, p_period_end, v_agreement.id, v_collected, v_fee,
+        CASE WHEN v_fee > 0 THEN trust_post_fee(
+            v_account, v_fee, p_event_at,
+            format('Management fee %s to %s', p_period_start, p_period_end - 1)
+        ) END
+    );
+    RETURN v_fee;
 END;
 $$;
 
@@ -1056,6 +1399,97 @@ BEGIN
         END IF;
     END LOOP;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_report_owner_balances(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_owner_balances(p_pmc_id uuid, p_as_of date) RETURNS TABLE(line integer, item text, owner text, property text, detail text, balance numeric, reserve numeric, available numeric)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+#variable_conflict use_column
+DECLARE
+    v_cutoff timestamptz := (p_as_of + 1)::timestamp AT TIME ZONE 'UTC';
+BEGIN
+    IF p_as_of IS NULL THEN
+        RAISE EXCEPTION 'trust: owner balances are as of a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF NOT EXISTS (SELECT pmc.pmc_id FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id) THEN
+        RAISE EXCEPTION 'trust: no PMC %', p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    RETURN QUERY
+    WITH accounts AS (
+        SELECT t.ledger_account_id AS account, o.display_name AS owner_name,
+               pr.display_name AS property_name,
+               coalesce((
+                   SELECT sum(e.amount)
+                   FROM pgledger_entries AS e
+                   JOIN pgledger_transfers AS tr ON tr.id = e.transfer_id
+                   WHERE e.account_id = t.ledger_account_id AND tr.event_at < v_cutoff
+               ), 0.00) AS held,
+               ag.id, ag.fee_percent, ag.minimum_fee, ag.flat_fee, ag.reserve
+        FROM trust_ledger_accounts AS t
+        JOIN trust_owners AS o ON o.id = t.owner_id
+        JOIN trust_properties AS pr ON pr.id = t.property_id
+        -- The agreement in force that day: the latest one starting on or before it.
+        LEFT JOIN LATERAL (
+            SELECT g.id, g.fee_percent, g.minimum_fee, g.flat_fee, g.reserve
+            FROM trust_management_agreements AS g
+            WHERE g.ledger_account_id = t.ledger_account_id AND g.starts_on <= p_as_of
+            ORDER BY g.starts_on DESC
+            LIMIT 1
+        ) AS ag ON true
+        WHERE t.pmc_id = p_pmc_id AND t.kind = 'owner_property'
+    ),
+    lines AS (
+        SELECT 0 AS section, NULL::text AS owner_name, NULL::text AS property_name,
+               NULL::text AS account, 1 AS step, 'PMC' AS item, pmc.display_name AS detail,
+               NULL::numeric AS held, NULL::numeric AS kept
+        FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
+        UNION ALL
+        SELECT 0, NULL, NULL, NULL, 2, 'as of',
+               to_char(p_as_of, 'YYYY-MM-DD') || ', end of day UTC', NULL, NULL
+        UNION ALL
+        SELECT 1, a.owner_name, a.property_name, a.account, 0, 'owner property',
+               CASE
+                   WHEN a.id IS NULL THEN 'no management agreement'
+                   ELSE trim_scale(a.fee_percent)::text || '% of collected rent'
+                        || ', minimum ' || to_char(a.minimum_fee, 'FM999999990.00')
+                        || ', flat ' || to_char(a.flat_fee, 'FM999999990.00')
+               END,
+               a.held, coalesce(a.reserve, 0.00)
+        FROM accounts AS a
+        UNION ALL
+        SELECT 2, NULL, NULL, NULL, 0, 'total', NULL,
+               coalesce((SELECT sum(a.held) FROM accounts AS a), 0.00),
+               coalesce((SELECT sum(coalesce(a.reserve, 0.00)) FROM accounts AS a), 0.00)
+    )
+    SELECT row_number() OVER (
+               ORDER BY l.section, l.owner_name COLLATE "C", l.property_name COLLATE "C",
+                        l.account, l.step
+           )::integer,
+           l.item,
+           l.owner_name,
+           l.property_name,
+           l.detail,
+           round(l.held, 2),
+           round(l.kept, 2),
+           round(CASE
+               WHEN l.section = 1 THEN greatest(l.held - l.kept, 0.00)
+               WHEN l.section = 2 THEN coalesce((
+                   SELECT sum(greatest(a.held - coalesce(a.reserve, 0.00), 0.00))
+                   FROM accounts AS a
+               ), 0.00)
+           END, 2)
+    FROM lines AS l
+    ORDER BY 1;
 END;
 $$;
 
@@ -1496,6 +1930,14 @@ BEGIN
         RAISE EXCEPTION 'trust: no transfer %', p_reversal_id
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    -- A draw also moves money from the owner's account to cash, but it paid the owner.
+    IF EXISTS (
+        SELECT d.transfer_id FROM trust_owner_draws AS d WHERE d.transfer_id = p_reversal_id
+    ) THEN
+        RAISE EXCEPTION 'trust: transfer % paid the owner (an owner draw); it reverses no payment',
+            p_reversal_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
     IF v_reversal.from_account_id <> v_payment.to_account_id
         OR v_reversal.to_account_id <> v_payment.from_account_id THEN
         RAISE EXCEPTION 'trust: transfer % does not move money back the way transfer % came',
@@ -1706,20 +2148,55 @@ CREATE TABLE public.trust_leases (
 
 
 --
--- Name: trust_ledger_accounts; Type: TABLE; Schema: public; Owner: -
+-- Name: trust_leasing_fees; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.trust_ledger_accounts (
-    ledger_account_id text NOT NULL,
+CREATE TABLE public.trust_leasing_fees (
     pmc_id uuid NOT NULL,
-    bank_account_id uuid NOT NULL,
-    kind text NOT NULL,
-    owner_id uuid,
-    property_id uuid,
-    tenant_id uuid,
+    lease_id uuid NOT NULL,
+    ledger_account_id text NOT NULL,
+    agreement_id uuid NOT NULL,
+    fee numeric NOT NULL,
+    transfer_id text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    vendor_id uuid,
-    CONSTRAINT trust_ledger_accounts_kind_shape_v2 CHECK ((((kind = 'owner_property'::text) AND (owner_id IS NOT NULL) AND (property_id IS NOT NULL) AND (tenant_id IS NULL) AND (vendor_id IS NULL)) OR ((kind = ANY (ARRAY['tenant_deposit'::text, 'prepaid_rent'::text])) AND (tenant_id IS NOT NULL) AND (owner_id IS NULL) AND (property_id IS NULL) AND (vendor_id IS NULL)) OR ((kind = 'vendor_payable'::text) AND (vendor_id IS NOT NULL) AND (owner_id IS NULL) AND (property_id IS NULL) AND (tenant_id IS NULL)) OR ((kind = ANY (ARRAY['pmc_income'::text, 'bank_cash'::text])) AND (owner_id IS NULL) AND (property_id IS NULL) AND (tenant_id IS NULL) AND (vendor_id IS NULL))))
+    CONSTRAINT trust_leasing_fees_check CHECK (((fee = (0)::numeric) = (transfer_id IS NULL))),
+    CONSTRAINT trust_leasing_fees_fee_check CHECK ((fee >= (0)::numeric))
+);
+
+
+--
+-- Name: trust_management_fees; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_management_fees (
+    pmc_id uuid NOT NULL,
+    ledger_account_id text NOT NULL,
+    period_start date NOT NULL,
+    period_end date NOT NULL,
+    agreement_id uuid NOT NULL,
+    collected numeric NOT NULL,
+    fee numeric NOT NULL,
+    transfer_id text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_management_fees_check CHECK ((period_end > period_start)),
+    CONSTRAINT trust_management_fees_check1 CHECK (((fee = (0)::numeric) = (transfer_id IS NULL))),
+    CONSTRAINT trust_management_fees_fee_check CHECK ((fee >= (0)::numeric))
+);
+
+
+--
+-- Name: trust_owner_draws; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_owner_draws (
+    pmc_id uuid NOT NULL,
+    request_key text NOT NULL,
+    ledger_account_id text NOT NULL,
+    amount numeric NOT NULL,
+    transfer_id text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_owner_draws_amount_check CHECK ((amount > (0)::numeric)),
+    CONSTRAINT trust_owner_draws_request_key_check CHECK ((request_key <> ''::text))
 );
 
 
@@ -1943,11 +2420,51 @@ ALTER TABLE ONLY public.trust_leases
 
 
 --
+-- Name: trust_leasing_fees trust_leasing_fees_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_leasing_fees
+    ADD CONSTRAINT trust_leasing_fees_pkey PRIMARY KEY (lease_id);
+
+
+--
 -- Name: trust_ledger_accounts trust_ledger_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.trust_ledger_accounts
     ADD CONSTRAINT trust_ledger_accounts_pkey PRIMARY KEY (ledger_account_id);
+
+
+--
+-- Name: trust_management_agreements trust_management_agreements_ledger_account_id_starts_on_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_management_agreements
+    ADD CONSTRAINT trust_management_agreements_ledger_account_id_starts_on_key UNIQUE (ledger_account_id, starts_on);
+
+
+--
+-- Name: trust_management_agreements trust_management_agreements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_management_agreements
+    ADD CONSTRAINT trust_management_agreements_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_management_fees trust_management_fees_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_management_fees
+    ADD CONSTRAINT trust_management_fees_pkey PRIMARY KEY (ledger_account_id, period_start);
+
+
+--
+-- Name: trust_owner_draws trust_owner_draws_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_draws
+    ADD CONSTRAINT trust_owner_draws_pkey PRIMARY KEY (pmc_id, request_key);
 
 
 --
@@ -2125,6 +2642,27 @@ CREATE INDEX trust_leases_unit_id ON public.trust_leases USING btree (unit_id, s
 
 
 --
+-- Name: trust_leasing_fees_agreement_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_leasing_fees_agreement_id ON public.trust_leasing_fees USING btree (agreement_id);
+
+
+--
+-- Name: trust_leasing_fees_ledger_account_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_leasing_fees_ledger_account_id ON public.trust_leasing_fees USING btree (ledger_account_id);
+
+
+--
+-- Name: trust_leasing_fees_transfer_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_leasing_fees_transfer_id ON public.trust_leasing_fees USING btree (transfer_id);
+
+
+--
 -- Name: trust_ledger_accounts_bank_account_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2181,6 +2719,34 @@ CREATE INDEX trust_ledger_accounts_pmc_id ON public.trust_ledger_accounts USING 
 
 
 --
+-- Name: trust_management_fees_agreement_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_management_fees_agreement_id ON public.trust_management_fees USING btree (agreement_id);
+
+
+--
+-- Name: trust_management_fees_transfer_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_management_fees_transfer_id ON public.trust_management_fees USING btree (transfer_id);
+
+
+--
+-- Name: trust_owner_draws_ledger_account_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_owner_draws_ledger_account_id ON public.trust_owner_draws USING btree (ledger_account_id);
+
+
+--
+-- Name: trust_owner_draws_transfer_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_owner_draws_transfer_id ON public.trust_owner_draws USING btree (transfer_id);
+
+
+--
 -- Name: trust_payment_reversals_reversal_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2206,6 +2772,13 @@ CREATE INDEX trust_units_property_id ON public.trust_units USING btree (property
 --
 
 CREATE TRIGGER trust_account_in_its_bank BEFORE INSERT ON public.trust_ledger_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_check_account_bank_kind();
+
+
+--
+-- Name: trust_management_agreements trust_agreement_account; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_agreement_account BEFORE INSERT ON public.trust_management_agreements FOR EACH ROW EXECUTE FUNCTION public.trust_check_agreement_account();
 
 
 --
@@ -2251,10 +2824,38 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_leasing_fees trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_leasing_fees FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_ledger_accounts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_ledger_accounts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_management_agreements trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_management_agreements FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_management_fees trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_management_fees FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_owner_draws trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_owner_draws FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -2449,6 +3050,46 @@ ALTER TABLE ONLY public.trust_leases
 
 
 --
+-- Name: trust_leasing_fees trust_leasing_fees_agreement_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_leasing_fees
+    ADD CONSTRAINT trust_leasing_fees_agreement_id_fkey FOREIGN KEY (agreement_id) REFERENCES public.trust_management_agreements(id);
+
+
+--
+-- Name: trust_leasing_fees trust_leasing_fees_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_leasing_fees
+    ADD CONSTRAINT trust_leasing_fees_ledger_account_id_fkey FOREIGN KEY (ledger_account_id) REFERENCES public.trust_ledger_accounts(ledger_account_id);
+
+
+--
+-- Name: trust_leasing_fees trust_leasing_fees_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_leasing_fees
+    ADD CONSTRAINT trust_leasing_fees_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_leasing_fees trust_leasing_fees_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_leasing_fees
+    ADD CONSTRAINT trust_leasing_fees_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_leasing_fees trust_leasing_fees_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_leasing_fees
+    ADD CONSTRAINT trust_leasing_fees_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
 -- Name: trust_ledger_accounts trust_ledger_accounts_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2502,6 +3143,78 @@ ALTER TABLE ONLY public.trust_ledger_accounts
 
 ALTER TABLE ONLY public.trust_ledger_accounts
     ADD CONSTRAINT trust_ledger_accounts_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
+-- Name: trust_management_agreements trust_management_agreements_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_management_agreements
+    ADD CONSTRAINT trust_management_agreements_ledger_account_id_fkey FOREIGN KEY (ledger_account_id) REFERENCES public.trust_ledger_accounts(ledger_account_id);
+
+
+--
+-- Name: trust_management_agreements trust_management_agreements_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_management_agreements
+    ADD CONSTRAINT trust_management_agreements_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_management_fees trust_management_fees_agreement_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_management_fees
+    ADD CONSTRAINT trust_management_fees_agreement_id_fkey FOREIGN KEY (agreement_id) REFERENCES public.trust_management_agreements(id);
+
+
+--
+-- Name: trust_management_fees trust_management_fees_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_management_fees
+    ADD CONSTRAINT trust_management_fees_ledger_account_id_fkey FOREIGN KEY (ledger_account_id) REFERENCES public.trust_ledger_accounts(ledger_account_id);
+
+
+--
+-- Name: trust_management_fees trust_management_fees_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_management_fees
+    ADD CONSTRAINT trust_management_fees_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_management_fees trust_management_fees_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_management_fees
+    ADD CONSTRAINT trust_management_fees_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
+-- Name: trust_owner_draws trust_owner_draws_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_draws
+    ADD CONSTRAINT trust_owner_draws_ledger_account_id_fkey FOREIGN KEY (ledger_account_id) REFERENCES public.trust_ledger_accounts(ledger_account_id);
+
+
+--
+-- Name: trust_owner_draws trust_owner_draws_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_draws
+    ADD CONSTRAINT trust_owner_draws_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_owner_draws trust_owner_draws_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_draws
+    ADD CONSTRAINT trust_owner_draws_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
 
 
 --
@@ -2634,4 +3347,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261010000012'),
     ('20261010000013'),
     ('20261010000014'),
-    ('20261010000015');
+    ('20261010000015'),
+    ('20261010000016');
