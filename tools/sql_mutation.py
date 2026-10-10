@@ -97,15 +97,46 @@ class Mutant:
     line: int
 
 
-def function_bodies(text: str, names: set[str]) -> Iterator[tuple[int, int]]:
-    """(start, end) of each `$$ ... $$` body of a function named in `names`."""
+def signature(text: str, match: re.Match[str]) -> str:
+    """A function's name and argument list with the spacing taken out: how a later CREATE OR
+    REPLACE names the same function, and how two overloads differ."""
+    depth, cursor = 1, match.end()
+    while depth and cursor < len(text):
+        depth += {"(": 1, ")": -1}.get(text[cursor], 0)
+        cursor += 1
+    arguments = re.sub(r"\s+", "", text[match.end() : cursor - 1]).lower()
+    return f"{match.group(1)}({arguments})"
+
+
+def function_bodies(text: str, names: set[str]) -> Iterator[tuple[str, int, int]]:
+    """(signature, start, end) of each `$$ ... $$` body of a function named in `names`."""
     for match in FUNCTION.finditer(text):
         if match.group(1) not in names:
             continue
         start = text.find("$$", match.end())
         end = text.find("$$", start + 2)
         if start >= 0 and end > start:
-            yield start + 2, end
+            yield signature(text, match), start + 2, end
+
+
+def up_section_end(text: str) -> int:
+    """Where the up section ends: the tests never run a down section, so a mutant there could
+    never be killed."""
+    down = text.find("-- migrate:down")
+    return len(text) if down < 0 else down
+
+
+def latest_definitions(files: dict[str, str], money: set[str]) -> set[tuple[str, int]]:
+    """(file, body start) of the definition of each money function the database ends up with.
+    A later migration may CREATE OR REPLACE one; the earlier body is then never run, so a
+    mutant of it changes nothing a test could catch."""
+    latest: dict[str, tuple[str, int]] = {}
+    for path in sorted(files):
+        text = files[path]
+        for key, start, _ in function_bodies(text, money):
+            if start < up_section_end(text):
+                latest[key] = (path, start)
+    return set(latest.values())
 
 
 def code_positions(text: str, start: int, end: int) -> list[tuple[int, int]]:
@@ -128,13 +159,16 @@ def generate(files: dict[str, str], money: set[str]) -> list[Mutant]:
             Mutant(f"m{len(mutants) + 1:03d}", path, start, end, replacement, description, line)
         )
 
+    latest = latest_definitions(files, money)
     for path in sorted(files):
         text = files[path]
-        # Only what `dbmate up` applies: the tests never run a down section, so a mutant there
-        # could never be killed.
-        down = text.find("-- migrate:down")
-        up_end = len(text) if down < 0 else down
-        spans = [span for span in function_bodies(text, money) if span[0] < up_end]
+        # Only what `dbmate up` applies, and of each money function only its last definition.
+        up_end = up_section_end(text)
+        spans = [
+            (start, end)
+            for _, start, end in function_bodies(text, money)
+            if start < up_end and (path, start) in latest
+        ]
         if not UPSTREAM_FILES.search(path):
             for match in GUARD_STATEMENTS.finditer(text, 0, up_end):
                 first = match.group(0).splitlines()[0]
