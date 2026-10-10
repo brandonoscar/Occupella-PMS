@@ -144,7 +144,7 @@ tests = [
 
 [[invariant]]
 id = "payments-never-overpay"
-statement = "A payment is matched to a charge only within both amounts: no charge is paid past its amount, no transfer pays more than it moved, only a payment into the owner's account for the charge's property from cash or a lease tenant's held money counts, and the same match retried returns the original."
+statement = "A payment is matched to a charge only within both amounts: no charge is paid past its amount, no transfer pays more than it moved, only a payment into the owner's account for the charge's property from cash or a lease tenant's held money counts, and the same match retried returns the original. A charge's paid amount is net of reversals."
 tests = [
   "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
   "tests/test_leases_and_charges.py::test_a_charge_is_never_paid_past_its_amount",
@@ -152,6 +152,19 @@ tests = [
   "tests/test_leases_and_charges.py::test_the_same_match_retried_returns_the_original",
   "tests/test_leases_and_charges.py::test_a_transfer_that_did_not_pay_the_leases_rent_is_refused",
   "tests/test_leases_and_charges.py::test_two_payments_at_once_cannot_overpay_a_charge",
+]
+
+[[invariant]]
+id = "bounced-payments-reversed"
+statement = "A payment that bounces is undone by a reversal record tied to its reversing ledger transfer, never by rewriting the match: the transfer must move the money back the way it came, dated no earlier; a reversal undoes no more than its match and spends its transfer no more than its amount; the charge can then be paid again, the bounced transfer pays nothing else, and the same reversal retried returns the original."
+tests = [
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+  "tests/test_payment_reversals.py::test_a_bounced_payment_is_reversed_and_the_charge_can_be_paid_again",
+  "tests/test_payment_reversals.py::test_a_reversal_undoes_no_more_than_the_match",
+  "tests/test_payment_reversals.py::test_a_reversing_transfer_is_spent_no_more_than_its_amount",
+  "tests/test_payment_reversals.py::test_a_transfer_that_does_not_move_the_money_back_is_refused",
+  "tests/test_payment_reversals.py::test_a_bounced_payment_never_pays_anything_else",
+  "tests/test_payment_reversals.py::test_two_reversals_at_once_cannot_undo_more_than_the_match",
 ]
 
 # --- Reports (golden.yml) ------------------------------------------------------------------
@@ -181,6 +194,7 @@ tests = [
   "tests/golden/test_golden.py::test_every_golden_case_matches",
   "tests/test_rent_roll.py::test_charges_count_by_due_date_and_payments_by_their_transfers_date",
   "tests/test_rent_roll.py::test_money_for_tenants_off_the_roll_still_adds_up_to_the_ledger",
+  "tests/test_rent_roll.py::test_a_bounced_payment_counts_as_unpaid_from_its_reversals_date",
   "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
 ]
 
