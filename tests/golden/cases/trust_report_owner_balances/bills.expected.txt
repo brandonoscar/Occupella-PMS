@@ -1,0 +1,6 @@
+line	item	owner	property	detail	balance	reserve	bills	available
+1	PMC	NULL	NULL	Golden PMC	NULL	NULL	NULL	NULL
+2	as of	NULL	NULL	2026-01-31, end of day UTC	NULL	NULL	NULL	NULL
+3	owner property	Owner 1	Property 1	0% of collected rent, minimum 0.00, flat 0.00	650.00	200.00	120.00	330.00
+4	owner property	Owner 2	Property 2	0% of collected rent, minimum 0.00, flat 0.00	800.00	0.00	300.00	500.00
+5	total	NULL	NULL	NULL	1450.00	200.00	420.00	830.00

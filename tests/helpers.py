@@ -300,13 +300,14 @@ def add_agreement(
     flat_fee="0",
     leasing_fee_percent="0",
     reserve="0",
+    approval_limit="0",
 ) -> UUID:
     """A management agreement for one owner's property account, in force from starts_on."""
     return _one(
         connection,
         "INSERT INTO trust_management_agreements (pmc_id, ledger_account_id, starts_on,"
-        " fee_percent, minimum_fee, flat_fee, leasing_fee_percent, reserve)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        " fee_percent, minimum_fee, flat_fee, leasing_fee_percent, reserve, approval_limit)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
         (
             pmc_id,
             account,
@@ -316,6 +317,7 @@ def add_agreement(
             Decimal(flat_fee),
             Decimal(leasing_fee_percent),
             Decimal(reserve),
+            Decimal(approval_limit),
         ),
     )
 
@@ -343,6 +345,43 @@ def draw_owner(connection, pmc_id, account, request_key, amount, event_at):
         "SELECT trust_draw_owner(%s, %s, %s, %s, %s)",
         (pmc_id, account, request_key, None if amount is None else Decimal(amount), event_at),
     )
+
+
+def enter_bill(
+    connection,
+    pmc_id,
+    vendor_id,
+    account,
+    reference,
+    bill_date,
+    due_on,
+    amount,
+    memo="Repair",
+) -> UUID:
+    """A vendor's bill against one owner's property account."""
+    return _one(
+        connection,
+        "INSERT INTO trust_bills (pmc_id, vendor_id, ledger_account_id, reference, bill_date,"
+        " due_on, amount, memo) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, vendor_id, account, reference, bill_date, due_on, Decimal(amount), memo),
+    )
+
+
+def approve_bill(connection, pmc_id, bill_id, approved_on, approved_by) -> None:
+    """Record the owner's approval of a bill over the approval limit."""
+    connection.execute(
+        "INSERT INTO trust_bill_approvals (pmc_id, bill_id, approved_on, approved_by)"
+        " VALUES (%s, %s, %s, %s)",
+        (pmc_id, bill_id, approved_on, approved_by),
+    )
+
+
+def set_aside_bill(connection, pmc_id, bill_id, event_at) -> str:
+    return _one(connection, "SELECT trust_set_aside_bill(%s, %s, %s)", (pmc_id, bill_id, event_at))
+
+
+def pay_bill(connection, pmc_id, bill_id, event_at) -> str:
+    return _one(connection, "SELECT trust_pay_bill(%s, %s, %s)", (pmc_id, bill_id, event_at))
 
 
 def balance(connection, account) -> Decimal:

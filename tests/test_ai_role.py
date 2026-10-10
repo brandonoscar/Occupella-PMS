@@ -9,13 +9,16 @@ from datetime import UTC, date, datetime
 import psycopg
 import pytest
 from helpers import (
+    add_agreement,
     add_unit,
     apply_payment,
     approve,
     charge,
+    enter_bill,
     make_pmc,
     open_lease,
     post,
+    set_aside_bill,
     snapshot,
     transfer_batch,
 )
@@ -25,6 +28,9 @@ from test_privileges import TABLES
 JAN = datetime(2026, 1, 1, tzinfo=UTC)
 JAN_3 = datetime(2026, 1, 3, tzinfo=UTC)
 FEB = datetime(2026, 2, 1, tzinfo=UTC)
+FEB_2 = datetime(2026, 2, 2, tzinfo=UTC)
+# The books fixture's bill, found by the AI's own read grant.
+THE_BILL = "(SELECT id FROM trust_bills WHERE pmc_id = %s AND reference = 'INV-1')"
 
 
 @pytest.fixture
@@ -42,6 +48,13 @@ def books(conn):
     (paid,) = transfer_batch(conn, [(pmc.operating_cash, pmc.owners[0].account, "1500.00")], JAN_3)
     apply_payment(conn, pmc.pmc_id, rent, paid, "1500.00")
     reconciliation = approve(conn, pmc.pmc_id, pmc.operating_bank_id, JAN, FEB)
+    # A bill within the approval limit, set aside and ready to pay: each bill write the AI
+    # tries below is one the app could make.
+    add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, date(2026, 1, 1), approval_limit="100")
+    bill = enter_bill(
+        conn, pmc.pmc_id, pmc.vendor_id, pmc.owners[0].account, "INV-1", FEB, FEB, "10.00"
+    )
+    set_aside_bill(conn, pmc.pmc_id, bill, FEB_2)
     return pmc, lease, rent, paid, reconciliation
 
 
@@ -76,7 +89,8 @@ def test_the_ai_role_reads_balances_live(conn, ai_conn, books):
     pmc, *_ = books
     query = "SELECT balance FROM pgledger_accounts WHERE id = %s"
 
-    assert ai_conn.execute(query, (pmc.owners[0].account,)).fetchone()[0] == 1500
+    # 1500.00 of rent, less the 10.00 bill set aside.
+    assert ai_conn.execute(query, (pmc.owners[0].account,)).fetchone()[0] == 1490
 
 
 WRITES = {
@@ -128,6 +142,20 @@ WRITES = {
     "pay the owner": lambda c, pmc, *_: c.execute(
         "SELECT trust_draw_owner(%s, %s, 'ai-draw', NULL, now())",
         (pmc.pmc_id, pmc.owners[0].account),
+    ),
+    "enter a bill": lambda c, pmc, *_: enter_bill(
+        c, pmc.pmc_id, pmc.vendor_id, pmc.owners[0].account, "AI-1", FEB, FEB, "1.00"
+    ),
+    "approve a bill": lambda c, pmc, *_: c.execute(
+        "INSERT INTO trust_bill_approvals (pmc_id, bill_id, approved_on, approved_by)"
+        f" VALUES (%s, {THE_BILL}, '2026-02-01', 'The AI')",
+        (pmc.pmc_id, pmc.pmc_id),
+    ),
+    "set a bill aside": lambda c, pmc, *_: c.execute(
+        f"SELECT trust_set_aside_bill(%s, {THE_BILL}, now())", (pmc.pmc_id, pmc.pmc_id)
+    ),
+    "pay a bill": lambda c, pmc, *_: c.execute(
+        f"SELECT trust_pay_bill(%s, {THE_BILL}, now())", (pmc.pmc_id, pmc.pmc_id)
     ),
 }
 

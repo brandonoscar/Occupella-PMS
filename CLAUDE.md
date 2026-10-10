@@ -73,8 +73,8 @@ required invariant, report and self-host step.
 - The app role `trust_app` only reads ledger tables. It writes through `trust_post_transfers`,
   `trust_open_ledger_account`, `trust_open_vendor_account`, `trust_approve_reconciliation`,
   `trust_open_lease`, `trust_end_lease`, `trust_apply_payment`, `trust_reverse_payment`,
-  `trust_post_management_fee`, `trust_post_leasing_fee` and `trust_draw_owner`, which run as
-  the table owner. It can't call pgledger's posting functions: every posting it
+  `trust_post_management_fee`, `trust_post_leasing_fee`, `trust_draw_owner`,
+  `trust_set_aside_bill` and `trust_pay_bill`, which run as the table owner. It can't call pgledger's posting functions: every posting it
   makes goes through `trust_post_transfers`, which takes an idempotency key, unique per PMC, so
   it is safe to retry: the same key returns the original transfers, and a different posting
   under it is refused.
@@ -109,7 +109,14 @@ required invariant, report and self-host step.
   date (new terms are a new row). `trust_post_management_fee` takes its percent of rent
   collected in a period (net of bounces), or the minimum, plus a flat fee, into the PMC's fee
   account, once per period; `trust_post_leasing_fee` once per lease; `trust_draw_owner` pays
-  out the balance above the reserve, once per request key. All at READ COMMITTED.
+  out the balance above the reserve and unpaid bills, once per request key. All at READ
+  COMMITTED.
+- Vendor bills: entered once per vendor reference against an owner's property account. A bill
+  over the approval limit of the agreement in force on its date (0 without one) needs the
+  owner's approval recorded first. `trust_set_aside_bill` moves its amount from the owner's
+  account to the vendor's (`vendor_payable`); `trust_pay_bill` then sends it out through the
+  trust bank account's cash, no earlier than it was set aside. Each step once per bill, at READ
+  COMMITTED.
 
 ## Run the checks
 

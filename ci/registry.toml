@@ -205,14 +205,45 @@ tests = [
 
 [[invariant]]
 id = "owner-draw-within-reserve"
-statement = "An owner draw never pays out more than the account's balance above the reserve in force that day, its request key pays once, and it can never be recorded as a bounced payment coming back."
+statement = "An owner draw never pays out more than the account's balance above the reserve in force that day and its unpaid bills, its request key pays once, and it can never be recorded as a bounced payment coming back."
 tests = [
   "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+  "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
   "tests/test_owner_money.py::test_a_draw_pays_everything_above_the_reserve",
+  "tests/test_owner_money.py::test_a_draw_with_no_date_is_dated_now_and_keeps_todays_reserve",
+  "tests/test_vendor_bills.py::test_a_draw_keeps_back_unpaid_bills_on_top_of_the_reserve",
   "tests/test_owner_money.py::test_a_draw_of_a_set_amount_stays_within_what_is_available",
   "tests/test_owner_money.py::test_a_draw_retried_with_its_key_returns_the_original",
   "tests/test_owner_money.py::test_two_draws_at_once_cannot_pay_out_more_than_is_there",
   "tests/test_owner_money.py::test_an_owner_draw_cannot_be_recorded_as_a_bounced_payment",
+]
+
+[[invariant]]
+id = "bill-set-aside-once-with-approval"
+statement = "A vendor's bill is entered once per vendor reference, against an owner's property account of its PMC; its money is set aside once, from that owner's account to the vendor's, and only with the owner's approval when it is over the approval limit in force on its date. A retry returns the original transfer."
+tests = [
+  "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
+  "tests/test_vendor_bills.py::test_a_vendors_bill_is_entered_once",
+  "tests/test_vendor_bills.py::test_a_bill_over_the_limit_waits_for_the_owners_approval",
+  "tests/test_vendor_bills.py::test_the_limit_in_force_on_the_bills_date_applies",
+  "tests/test_vendor_bills.py::test_setting_a_bill_aside_again_returns_its_transfer_and_moves_money_once",
+]
+
+[[invariant]]
+id = "bill-paid-once-after-set-aside"
+statement = "A bill is paid once, out of the vendor's account through the trust bank account's cash, only after its money was set aside and never dated before that. A retry returns the original transfer."
+tests = [
+  "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
+  "tests/test_vendor_bills.py::test_paying_a_bill_sends_the_money_set_aside_out_through_cash",
+  "tests/test_vendor_bills.py::test_a_bill_is_set_aside_before_it_is_paid",
+]
+
+[[invariant]]
+id = "vendor-holds-what-is-set-aside"
+statement = "Each vendor's account holds exactly what was set aside for its bills and not yet paid."
+tests = [
+  "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
+  "tests/test_vendor_bills.py::test_paying_a_bill_sends_the_money_set_aside_out_through_cash",
 ]
 
 # --- Reports (golden.yml) ------------------------------------------------------------------
@@ -248,9 +279,10 @@ tests = [
 
 [[report]]
 id = "owner-balances"
-statement = "Owner balances as of the end of a day (UTC): per owner's property its balance, the reserve its agreement keeps back that day, and what is available to pay the owner; then the totals. Compared to a checked-in golden file."
+statement = "Owner balances as of the end of a day (UTC): per owner's property its balance, the reserve its agreement keeps back that day, its unpaid bills, and what is available to pay the owner; then the totals. Compared to a checked-in golden file."
 tests = [
   "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
   "tests/test_owner_balances.py::test_each_property_shows_its_balance_reserve_and_what_is_available",
   "tests/test_owner_balances.py::test_balances_are_as_of_the_end_of_the_day_and_the_reserve_in_force_that_day",
   "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",

@@ -1,6 +1,6 @@
 """trust_report_owner_balances: per owner's property, what it holds at the end of a day (UTC),
-the reserve its agreement keeps back that day, and what is available to pay the owner
-(migration 20261010000016).
+the reserve its agreement keeps back that day, its unpaid bills, and what is available to pay
+the owner (migrations 20261010000016 and 20261010000017).
 
 The golden case under tests/golden/cases/ pins the full layout; these check the rules behind it.
 """
@@ -11,7 +11,14 @@ from decimal import Decimal
 
 import psycopg
 import pytest
-from helpers import add_agreement, language_sorted_database, make_pmc, transfer_batch
+from helpers import (
+    add_agreement,
+    enter_bill,
+    language_sorted_database,
+    make_pmc,
+    set_aside_bill,
+    transfer_batch,
+)
 
 JAN_1, JAN_31, FEB_1 = date(2026, 1, 1), date(2026, 1, 31), date(2026, 2, 1)
 
@@ -154,3 +161,35 @@ def test_owners_and_properties_list_in_the_same_order_on_any_server(database_url
         rows = report(conn, pmc, JAN_31)
 
     assert [row[0] for row in lines(rows)] == ["Owner b", "owner a"]
+
+
+def test_unpaid_bills_are_kept_back_until_their_money_is_set_aside(conn):
+    pmc = make_pmc(conn)
+    owner = pmc.owners[0].account
+    add_agreement(conn, pmc.pmc_id, owner, JAN_1, reserve="100", approval_limit="1000")
+    transfer_batch(conn, [(pmc.operating_cash, owner, "1000.00")], datetime(2026, 1, 3, tzinfo=UTC))
+    january = enter_bill(conn, pmc.pmc_id, pmc.vendor_id, owner, "INV-1", JAN_31, FEB_1, "300")
+    enter_bill(conn, pmc.pmc_id, pmc.vendor_id, owner, "INV-2", FEB_1, FEB_1, "50.00")
+    set_aside_bill(conn, pmc.pmc_id, january, datetime(2026, 2, 1, 0, 0, tzinfo=UTC))
+
+    def owner_1(as_of):
+        return conn.execute(
+            "SELECT balance, reserve, bills, available FROM trust_report_owner_balances(%s, %s)"
+            " WHERE owner = 'Owner 1'",
+            (pmc.pmc_id, as_of),
+        ).fetchone()
+
+    # January 31: INV-1 is owed and not yet set aside; INV-2 isn't dated yet.
+    assert owner_1(JAN_31) == (
+        Decimal("1000.00"),
+        Decimal("100.00"),
+        Decimal("300.00"),
+        Decimal("600.00"),
+    )
+    # February 1: INV-1's money left at its first moment; INV-2 is owed now.
+    assert owner_1(FEB_1) == (
+        Decimal("700.00"),
+        Decimal("100.00"),
+        Decimal("50.00"),
+        Decimal("550.00"),
+    )

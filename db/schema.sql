@@ -455,6 +455,8 @@ CREATE TABLE public.trust_management_agreements (
     leasing_fee_percent numeric DEFAULT 0 NOT NULL,
     reserve numeric DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    approval_limit numeric DEFAULT 0 NOT NULL,
+    CONSTRAINT trust_management_agreements_approval_limit_check CHECK ((approval_limit >= (0)::numeric)),
     CONSTRAINT trust_management_agreements_fee_percent_check CHECK (((fee_percent >= (0)::numeric) AND (fee_percent <= (100)::numeric))),
     CONSTRAINT trust_management_agreements_flat_fee_check CHECK ((flat_fee >= (0)::numeric)),
     CONSTRAINT trust_management_agreements_leasing_fee_percent_check CHECK (((leasing_fee_percent >= (0)::numeric) AND (leasing_fee_percent <= (100)::numeric))),
@@ -753,6 +755,29 @@ $$;
 
 
 --
+-- Name: trust_check_bill_account(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_bill_account() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT t.ledger_account_id FROM trust_ledger_accounts AS t
+        WHERE t.ledger_account_id = NEW.ledger_account_id AND t.pmc_id = NEW.pmc_id
+          AND t.kind = 'owner_property'
+    ) THEN
+        RAISE EXCEPTION 'trust: a bill is paid from an owner''s property account in its own '
+            'PMC; % is not one in PMC %', NEW.ledger_account_id, NEW.pmc_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_transfer_scope(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -794,8 +819,11 @@ CREATE FUNCTION public.trust_draw_owner(p_pmc_id uuid, p_account text, p_request
     AS $$
 DECLARE
     v_account trust_ledger_accounts := trust_lock_owner_account(p_pmc_id, p_account);
+    -- pgledger dates a transfer with no date now; the reserve and bills are that day's.
+    v_day date := (coalesce(p_event_at, now()) AT TIME ZONE 'UTC')::date;
     v_taken trust_owner_draws;
     v_reserve numeric;
+    v_bills numeric;
     v_available numeric;
     v_cash text;
     v_transfer_id text;
@@ -823,16 +851,14 @@ BEGIN
         RETURN v_taken.amount;  -- a retry: the original draw
     END IF;
 
-    -- pgledger dates a transfer with no date now, so the reserve is today's.
-    v_reserve := coalesce((
-        trust_agreement_on(p_account, (coalesce(p_event_at, now()) AT TIME ZONE 'UTC')::date)
-    ).reserve, 0);
-    SELECT a.balance - v_reserve INTO v_available
+    v_reserve := coalesce((trust_agreement_on(p_account, v_day)).reserve, 0);
+    v_bills := trust_unpaid_bills(p_account, v_day);
+    SELECT a.balance - v_reserve - v_bills INTO v_available
     FROM pgledger_accounts AS a WHERE a.id = p_account;
     IF coalesce(p_amount, v_available) > v_available OR v_available <= 0 THEN
-        RAISE EXCEPTION 'trust: % is available to draw from % (its balance less a reserve of %); '
-            '% is too much', greatest(v_available, 0), p_account, v_reserve,
-            coalesce(p_amount, v_available)
+        RAISE EXCEPTION 'trust: % is available to draw from % (its balance less a reserve of % '
+            'and unpaid bills of %); % is too much', greatest(v_available, 0), p_account,
+            v_reserve, v_bills, coalesce(p_amount, v_available)
             USING ERRCODE = 'check_violation';
     END IF;
 
@@ -874,6 +900,50 @@ $$;
 
 
 --
+-- Name: trust_bills; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_bills (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    vendor_id uuid NOT NULL,
+    ledger_account_id text NOT NULL,
+    reference text NOT NULL,
+    bill_date date NOT NULL,
+    due_on date NOT NULL,
+    amount numeric NOT NULL,
+    memo text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_bills_amount_check CHECK ((amount > (0)::numeric)),
+    CONSTRAINT trust_bills_check CHECK ((due_on >= bill_date)),
+    CONSTRAINT trust_bills_memo_check CHECK ((memo <> ''::text)),
+    CONSTRAINT trust_bills_reference_check CHECK ((reference <> ''::text))
+);
+
+
+--
+-- Name: trust_lock_bill(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_lock_bill(p_pmc_id uuid, p_bill_id uuid) RETURNS public.trust_bills
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bill trust_bills;
+BEGIN
+    SELECT b.* INTO v_bill FROM trust_bills AS b WHERE b.id = p_bill_id AND b.pmc_id = p_pmc_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no bill % in PMC %', p_bill_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    PERFORM trust_lock_owner_account(p_pmc_id, v_bill.ledger_account_id);
+    RETURN v_bill;
+END;
+$$;
+
+
+--
 -- Name: trust_ledger_accounts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -903,8 +973,8 @@ DECLARE
     v_account trust_ledger_accounts;
 BEGIN
     IF current_setting('transaction_isolation') <> 'read committed' THEN
-        RAISE EXCEPTION 'trust: take fees and draws at READ COMMITTED, not %',
-            current_setting('transaction_isolation')
+        RAISE EXCEPTION 'trust: move an owner''s money (fees, draws, bills) at READ COMMITTED, '
+            'not %', current_setting('transaction_isolation')
             USING ERRCODE = 'invalid_transaction_state';
     END IF;
     SELECT t.* INTO v_account
@@ -1014,6 +1084,60 @@ BEGIN
     );
 
     RETURN v_ledger_account_id;
+END;
+$$;
+
+
+--
+-- Name: trust_pay_bill(uuid, uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_pay_bill(p_pmc_id uuid, p_bill_id uuid, p_event_at timestamp with time zone) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bill trust_bills := trust_lock_bill(p_pmc_id, p_bill_id);
+    v_set_aside pgledger_transfers;
+    v_cash text;
+    v_transfer_id text;
+BEGIN
+    SELECT p.transfer_id INTO v_transfer_id
+    FROM trust_bill_payments AS p
+    WHERE p.bill_id = p_bill_id AND p.step = 'paid';
+    IF FOUND THEN
+        RETURN v_transfer_id;  -- a retry: the bill is paid already
+    END IF;
+
+    SELECT t.* INTO v_set_aside
+    FROM trust_bill_payments AS p
+    JOIN pgledger_transfers AS t ON t.id = p.transfer_id
+    WHERE p.bill_id = p_bill_id AND p.step = 'set_aside';
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: bill % is not set aside yet; set it aside, then pay it',
+            v_bill.reference
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- pgledger dates a transfer with no date now.
+    IF coalesce(p_event_at, now()) < v_set_aside.event_at THEN
+        RAISE EXCEPTION 'trust: bill % was set aside at %; it can''t be paid before that',
+            v_bill.reference, v_set_aside.event_at
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    SELECT c.ledger_account_id INTO v_cash
+    FROM trust_ledger_accounts AS v
+    JOIN trust_ledger_accounts AS c ON c.bank_account_id = v.bank_account_id
+    WHERE v.ledger_account_id = v_set_aside.to_account_id AND c.kind = 'bank_cash';
+    SELECT t.id INTO v_transfer_id
+    FROM pgledger_create_transfers(
+        ARRAY[(v_set_aside.to_account_id, v_cash, v_set_aside.amount)::transfer_request],
+        p_event_at,
+        jsonb_build_object('memo', format('Bill %s paid', v_bill.reference))
+    ) AS t;
+    INSERT INTO trust_bill_payments (bill_id, step, pmc_id, transfer_id)
+    VALUES (p_bill_id, 'paid', p_pmc_id, v_transfer_id);
+    RETURN v_transfer_id;
 END;
 $$;
 
@@ -1407,7 +1531,7 @@ $$;
 -- Name: trust_report_owner_balances(uuid, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.trust_report_owner_balances(p_pmc_id uuid, p_as_of date) RETURNS TABLE(line integer, item text, owner text, property text, detail text, balance numeric, reserve numeric, available numeric)
+CREATE FUNCTION public.trust_report_owner_balances(p_pmc_id uuid, p_as_of date) RETURNS TABLE(line integer, item text, owner text, property text, detail text, balance numeric, reserve numeric, bills numeric, available numeric)
     LANGUAGE plpgsql STABLE
     SET search_path TO 'public', 'pg_temp'
     AS $$
@@ -1434,7 +1558,22 @@ BEGIN
                    JOIN pgledger_transfers AS tr ON tr.id = e.transfer_id
                    WHERE e.account_id = t.ledger_account_id AND tr.event_at < v_cutoff
                ), 0.00) AS held,
-               ag.id, ag.fee_percent, ag.minimum_fee, ag.flat_fee, ag.reserve
+               coalesce(ag.reserve, 0.00) AS kept,
+               -- trust_unpaid_bills, written out: a report runs with the caller's grants, and
+               -- the app and the AI may call reports, not helpers.
+               coalesce((
+                   SELECT sum(b.amount)
+                   FROM trust_bills AS b
+                   WHERE b.ledger_account_id = t.ledger_account_id AND b.bill_date <= p_as_of
+                     AND NOT EXISTS (
+                         SELECT p.bill_id
+                         FROM trust_bill_payments AS p
+                         JOIN pgledger_transfers AS tr ON tr.id = p.transfer_id
+                         WHERE p.bill_id = b.id AND p.step = 'set_aside'
+                           AND tr.event_at < v_cutoff
+                     )
+               ), 0.00) AS owed,
+               ag.id, ag.fee_percent, ag.minimum_fee, ag.flat_fee
         FROM trust_ledger_accounts AS t
         JOIN trust_owners AS o ON o.id = t.owner_id
         JOIN trust_properties AS pr ON pr.id = t.property_id
@@ -1451,11 +1590,12 @@ BEGIN
     lines AS (
         SELECT 0 AS section, NULL::text AS owner_name, NULL::text AS property_name,
                NULL::text AS account, 1 AS step, 'PMC' AS item, pmc.display_name AS detail,
-               NULL::numeric AS held, NULL::numeric AS kept
+               NULL::numeric AS held, NULL::numeric AS kept, NULL::numeric AS owed,
+               NULL::numeric AS free
         FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
         UNION ALL
         SELECT 0, NULL, NULL, NULL, 2, 'as of',
-               to_char(p_as_of, 'YYYY-MM-DD') || ', end of day UTC', NULL, NULL
+               to_char(p_as_of, 'YYYY-MM-DD') || ', end of day UTC', NULL, NULL, NULL, NULL
         UNION ALL
         SELECT 1, a.owner_name, a.property_name, a.account, 0, 'owner property',
                CASE
@@ -1464,12 +1604,14 @@ BEGIN
                         || ', minimum ' || to_char(a.minimum_fee, 'FM999999990.00')
                         || ', flat ' || to_char(a.flat_fee, 'FM999999990.00')
                END,
-               a.held, coalesce(a.reserve, 0.00)
+               a.held, a.kept, a.owed, greatest(a.held - a.kept - a.owed, 0.00)
         FROM accounts AS a
         UNION ALL
         SELECT 2, NULL, NULL, NULL, 0, 'total', NULL,
-               coalesce((SELECT sum(a.held) FROM accounts AS a), 0.00),
-               coalesce((SELECT sum(coalesce(a.reserve, 0.00)) FROM accounts AS a), 0.00)
+               coalesce(sum(a.held), 0.00), coalesce(sum(a.kept), 0.00),
+               coalesce(sum(a.owed), 0.00),
+               coalesce(sum(greatest(a.held - a.kept - a.owed, 0.00)), 0.00)
+        FROM accounts AS a
     )
     SELECT row_number() OVER (
                ORDER BY l.section, l.owner_name COLLATE "C", l.property_name COLLATE "C",
@@ -1481,13 +1623,8 @@ BEGIN
            l.detail,
            round(l.held, 2),
            round(l.kept, 2),
-           round(CASE
-               WHEN l.section = 1 THEN greatest(l.held - l.kept, 0.00)
-               WHEN l.section = 2 THEN coalesce((
-                   SELECT sum(greatest(a.held - coalesce(a.reserve, 0.00), 0.00))
-                   FROM accounts AS a
-               ), 0.00)
-           END, 2)
+           round(l.owed, 2),
+           round(l.free, 2)
     FROM lines AS l
     ORDER BY 1;
 END;
@@ -1987,6 +2124,85 @@ $$;
 
 
 --
+-- Name: trust_set_aside_bill(uuid, uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_set_aside_bill(p_pmc_id uuid, p_bill_id uuid, p_event_at timestamp with time zone) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bill trust_bills := trust_lock_bill(p_pmc_id, p_bill_id);
+    v_bank uuid;
+    v_limit numeric;
+    v_payable text;
+    v_transfer_id text;
+BEGIN
+    SELECT p.transfer_id INTO v_transfer_id
+    FROM trust_bill_payments AS p
+    WHERE p.bill_id = p_bill_id AND p.step = 'set_aside';
+    IF FOUND THEN
+        RETURN v_transfer_id;  -- a retry: the bill is set aside already
+    END IF;
+
+    v_limit := coalesce((
+        trust_agreement_on(v_bill.ledger_account_id, v_bill.bill_date)
+    ).approval_limit, 0);
+    IF v_bill.amount > v_limit AND NOT EXISTS (
+        SELECT a.bill_id FROM trust_bill_approvals AS a WHERE a.bill_id = p_bill_id
+    ) THEN
+        RAISE EXCEPTION 'trust: bill % is %, over the owner''s approval limit of %; record the '
+            'owner''s approval first', v_bill.reference, v_bill.amount, v_limit
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    SELECT t.bank_account_id INTO v_bank
+    FROM trust_ledger_accounts AS t WHERE t.ledger_account_id = v_bill.ledger_account_id;
+    SELECT t.ledger_account_id INTO v_payable
+    FROM trust_ledger_accounts AS t
+    WHERE t.bank_account_id = v_bank AND t.kind = 'vendor_payable'
+      AND t.vendor_id = v_bill.vendor_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: open the vendor''s account (vendor_payable) in trust bank '
+            'account % before setting its bill aside', v_bank
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    SELECT t.id INTO v_transfer_id
+    FROM pgledger_create_transfers(
+        ARRAY[(v_bill.ledger_account_id, v_payable, v_bill.amount)::transfer_request],
+        p_event_at,
+        jsonb_build_object('memo', format('Bill %s set aside', v_bill.reference))
+    ) AS t;
+    INSERT INTO trust_bill_payments (bill_id, step, pmc_id, transfer_id)
+    VALUES (p_bill_id, 'set_aside', p_pmc_id, v_transfer_id);
+    RETURN v_transfer_id;
+END;
+$$;
+
+
+--
+-- Name: trust_unpaid_bills(text, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_unpaid_bills(p_account text, p_day date) RETURNS numeric
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT coalesce(sum(b.amount), 0)
+    FROM trust_bills AS b
+    WHERE b.ledger_account_id = p_account AND b.bill_date <= p_day
+      AND NOT EXISTS (
+          SELECT p.bill_id
+          FROM trust_bill_payments AS p
+          JOIN pgledger_transfers AS t ON t.id = p.transfer_id
+          WHERE p.bill_id = b.id AND p.step = 'set_aside'
+            AND t.event_at < (p_day + 1)::timestamp AT TIME ZONE 'UTC'
+      )
+$$;
+
+
+--
 -- Name: ulid_to_uuid(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2069,6 +2285,34 @@ CREATE TABLE public.trust_bank_accounts (
     closed_through timestamp with time zone,
     CONSTRAINT trust_bank_accounts_display_name_check CHECK ((display_name <> ''::text)),
     CONSTRAINT trust_bank_accounts_kind_check CHECK ((kind = ANY (ARRAY['operating'::text, 'security_deposit'::text])))
+);
+
+
+--
+-- Name: trust_bill_approvals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_bill_approvals (
+    bill_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    approved_on date NOT NULL,
+    approved_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_bill_approvals_approved_by_check CHECK ((approved_by <> ''::text))
+);
+
+
+--
+-- Name: trust_bill_payments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_bill_payments (
+    bill_id uuid NOT NULL,
+    step text NOT NULL,
+    pmc_id uuid NOT NULL,
+    transfer_id text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_bill_payments_step_check CHECK ((step = ANY (ARRAY['set_aside'::text, 'paid'::text])))
 );
 
 
@@ -2364,6 +2608,46 @@ ALTER TABLE ONLY public.trust_bank_accounts
 
 
 --
+-- Name: trust_bill_approvals trust_bill_approvals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_approvals
+    ADD CONSTRAINT trust_bill_approvals_pkey PRIMARY KEY (bill_id);
+
+
+--
+-- Name: trust_bill_payments trust_bill_payments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_payments
+    ADD CONSTRAINT trust_bill_payments_pkey PRIMARY KEY (bill_id, step);
+
+
+--
+-- Name: trust_bills trust_bills_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bills
+    ADD CONSTRAINT trust_bills_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_bills trust_bills_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bills
+    ADD CONSTRAINT trust_bills_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_bills trust_bills_vendor_id_reference_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bills
+    ADD CONSTRAINT trust_bills_vendor_id_reference_key UNIQUE (vendor_id, reference);
+
+
+--
 -- Name: trust_charge_payments trust_charge_payments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2607,6 +2891,20 @@ CREATE INDEX pgledger_transfers_to_account_id_idx ON public.pgledger_transfers U
 
 
 --
+-- Name: trust_bill_payments_transfer_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bill_payments_transfer_id ON public.trust_bill_payments USING btree (transfer_id);
+
+
+--
+-- Name: trust_bills_ledger_account_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bills_ledger_account_id ON public.trust_bills USING btree (ledger_account_id);
+
+
+--
 -- Name: trust_charge_payments_transfer_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2796,6 +3094,27 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.p
 
 
 --
+-- Name: trust_bill_approvals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bill_approvals FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_bill_payments trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bill_payments FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_bills trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bills FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_charge_payments trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -2887,6 +3206,13 @@ CREATE CONSTRAINT TRIGGER trust_bank_tie_out AFTER INSERT ON public.pgledger_tra
 
 
 --
+-- Name: trust_bills trust_bill_account; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_bill_account BEFORE INSERT ON public.trust_bills FOR EACH ROW EXECUTE FUNCTION public.trust_check_bill_account();
+
+
+--
 -- Name: pgledger_transfers trust_closed_period; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -2959,6 +3285,70 @@ ALTER TABLE ONLY public.pgledger_transfers
 
 ALTER TABLE ONLY public.trust_bank_accounts
     ADD CONSTRAINT trust_bank_accounts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bill_approvals trust_bill_approvals_pmc_id_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_approvals
+    ADD CONSTRAINT trust_bill_approvals_pmc_id_bill_id_fkey FOREIGN KEY (pmc_id, bill_id) REFERENCES public.trust_bills(pmc_id, id);
+
+
+--
+-- Name: trust_bill_approvals trust_bill_approvals_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_approvals
+    ADD CONSTRAINT trust_bill_approvals_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bill_payments trust_bill_payments_pmc_id_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_payments
+    ADD CONSTRAINT trust_bill_payments_pmc_id_bill_id_fkey FOREIGN KEY (pmc_id, bill_id) REFERENCES public.trust_bills(pmc_id, id);
+
+
+--
+-- Name: trust_bill_payments trust_bill_payments_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_payments
+    ADD CONSTRAINT trust_bill_payments_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bill_payments trust_bill_payments_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_payments
+    ADD CONSTRAINT trust_bill_payments_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
+-- Name: trust_bills trust_bills_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bills
+    ADD CONSTRAINT trust_bills_ledger_account_id_fkey FOREIGN KEY (ledger_account_id) REFERENCES public.trust_ledger_accounts(ledger_account_id);
+
+
+--
+-- Name: trust_bills trust_bills_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bills
+    ADD CONSTRAINT trust_bills_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bills trust_bills_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bills
+    ADD CONSTRAINT trust_bills_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
 
 
 --
@@ -3348,4 +3738,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261010000013'),
     ('20261010000014'),
     ('20261010000015'),
-    ('20261010000016');
+    ('20261010000016'),
+    ('20261010000017');

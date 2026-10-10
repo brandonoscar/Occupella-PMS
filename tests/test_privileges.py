@@ -42,6 +42,9 @@ TABLES = {
     "trust_management_fees": {"SELECT"},  # written only by trust_post_management_fee
     "trust_leasing_fees": {"SELECT"},  # written only by trust_post_leasing_fee
     "trust_owner_draws": {"SELECT"},  # written only by trust_draw_owner
+    "trust_bills": {"SELECT", "INSERT"},
+    "trust_bill_approvals": {"SELECT", "INSERT"},
+    "trust_bill_payments": {"SELECT"},  # written only by trust_set_aside_bill, trust_pay_bill
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
@@ -71,10 +74,14 @@ FUNCTIONS = {
     "trust_post_management_fee(uuid,text,date,date,timestamptz)": {"trust_app"},
     "trust_post_leasing_fee(uuid,uuid,text,timestamptz)": {"trust_app"},
     "trust_draw_owner(uuid,text,text,numeric,timestamptz)": {"trust_app"},
-    # Helpers the fee and draw functions call as the owner: nobody else.
+    "trust_set_aside_bill(uuid,uuid,timestamptz)": {"trust_app"},
+    "trust_pay_bill(uuid,uuid,timestamptz)": {"trust_app"},
+    # Helpers the fee, draw and bill functions call as the owner: nobody else.
     "trust_lock_owner_account(uuid,text)": set(),
     "trust_agreement_on(text,date)": set(),
     "trust_post_fee(trust_ledger_accounts,numeric,timestamptz,text)": set(),
+    "trust_lock_bill(uuid,uuid)": set(),
+    "trust_unpaid_bills(text,date)": set(),
     # Reports read trust records, so only the app and the AI; they run with the caller's own
     # read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app", "trust_ai_agent"},
@@ -112,6 +119,7 @@ FUNCTIONS = {
     "trust_refuse_changing_bank_kind()": {"PUBLIC"},
     "trust_refuse_overlapping_leases()": {"PUBLIC"},
     "trust_check_agreement_account()": {"PUBLIC"},
+    "trust_check_bill_account()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.
@@ -127,6 +135,8 @@ SECURITY_DEFINER = {
     "trust_post_management_fee(uuid,text,date,date,timestamptz)",
     "trust_post_leasing_fee(uuid,uuid,text,timestamptz)",
     "trust_draw_owner(uuid,text,text,numeric,timestamptz)",
+    "trust_set_aside_bill(uuid,uuid,timestamptz)",
+    "trust_pay_bill(uuid,uuid,timestamptz)",
 }
 
 
