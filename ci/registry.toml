@@ -372,3 +372,21 @@ tests = [
   "tests/test_tenant_ledger.py::test_the_closing_balance_is_the_rent_rolls_balance_due",
   "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
 ]
+
+[[report]]
+id = "trial-balance"
+statement = "Trial balance as of the end of a day (UTC): per trust bank account, its book cash on the debit side and every account holding money for someone on the credit side, a total per bank account and in all; debits equal credits. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_accounting_reports.py::test_each_bank_lists_its_cash_against_what_it_holds_and_they_agree",
+  "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+]
+
+[[report]]
+id = "security-deposit-register"
+statement = "Security deposit register as of the end of a day (UTC): each tenant's deposit held, by security-deposit trust bank account, against that account's book cash. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_accounting_reports.py::test_each_deposit_is_listed_against_the_deposit_accounts_cash",
+  "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+]

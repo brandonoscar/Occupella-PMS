@@ -30,6 +30,8 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     order, and its only difference is the statement's;
   - an owner statement for any period agrees with the model: the opening balance, each posting
     in date order with the balance after it, the closing balance and the totals;
+  - the trial balance and the security deposit register as of any day agree with the model:
+    each bank's book cash against the balances it holds, the totals, and each deposit held;
   - the AI's role (trust_ai_agent) reads the same statement, and every posting it tries is
     refused with nothing written: the AI never moves money.
 
@@ -108,6 +110,11 @@ SELECT * FROM (
 ) checked
 WHERE book_balance <> books_now
 """
+
+
+def sides(balance):
+    """(debit, credit) of a trial balance line: money held is a credit, a shortfall a debit."""
+    return (max(-balance, Decimal(0)), max(balance, Decimal(0)))
 
 
 class LedgerMachine(RuleBasedStateMachine):
@@ -447,6 +454,74 @@ class LedgerMachine(RuleBasedStateMachine):
             (None, "all properties: closing balance", None, running),
         ]
         assert rows[3:] == expected
+
+    @rule(
+        role=st.sampled_from(["owner", "app", "ai"]),
+        back=st.timedeltas(min_value=timedelta(days=-2), max_value=timedelta(days=120)),
+    )
+    def check_the_trial_balance_and_deposit_register(self, role, back):
+        """As of a day, each trust bank account's book cash against the balances it holds, as
+        the model has them, and the deposit register against the deposit account's."""
+        as_of = (self.now - back).date()
+        cutoff = datetime.combine(as_of + timedelta(days=1), datetime.min.time(), tzinfo=UTC)
+        held = dict.fromkeys(self.accounts, Decimal(0))
+        for _, (source, target, amount), when in self.posted:
+            if when < cutoff:
+                held[source] -= amount
+                held[target] += amount
+        rows = (
+            self.conns[role]
+            .execute(
+                "SELECT item, bank, account, debit, credit"
+                " FROM trust_report_trial_balance(%s, %s) WHERE item <> 'as of'",
+                (self.pmc_id, as_of),
+            )
+            .fetchall()
+        )
+        # Banks list by name: "Synthetic operating ..." before "Synthetic security_deposit ...".
+        for cash, name in [
+            (self.pmc.operating_cash, "Synthetic operating trust account (operating)"),
+            (self.pmc.deposit_cash, "Synthetic security_deposit trust account (security_deposit)"),
+        ]:
+            mine = [r for r in rows if r[1] == name]
+            # A balance sits on the side its sign puts it. Cash the bank holds is a debit, and
+            # so is an account overdrawn as of the day (a posting backdated past the one that
+            # funded it).
+            others = sorted(
+                sides(held[a])
+                for a in self.accounts
+                if self.bank[a] == cash and a != cash and held[a] != 0
+            )
+            assert mine[0][2:] == ("book cash", *sides(held[cash]))
+            assert sorted(r[3:] for r in mine if r[0] == "account" and r[2] != "book cash") == (
+                others
+            )
+            lines = [sides(held[cash]), *others]
+            assert mine[-1][3:] == tuple(sum(side, Decimal(0)) for side in zip(*lines, strict=True))
+            assert mine[-1][3] == mine[-1][4]  # the trust bank account ties out
+        assert rows[-1][:3] == ("total", None, None)
+        assert (
+            rows[-1][3]
+            == rows[-1][4]
+            == sum((r[3] for r in rows if r[0] == "bank total"), Decimal(0))
+        )
+
+        register = (
+            self.conns[role]
+            .execute(
+                "SELECT item, held FROM trust_report_security_deposits(%s, %s)"
+                " WHERE item NOT IN ('PMC', 'as of')",
+                (self.pmc_id, as_of),
+            )
+            .fetchall()
+        )
+        deposit = held[self.pmc.tenant_deposit]
+        assert register == [
+            *([("deposit", deposit)] if deposit else []),
+            ("deposits held", deposit),
+            ("book cash", -held[self.pmc.deposit_cash]),
+            ("total held", deposit),
+        ]
 
     @rule(data=st.data(), path=st.sampled_from(["with a key", "through pgledger"]), back=BACK)
     def the_ai_role_cannot_post(self, data, path, back):
