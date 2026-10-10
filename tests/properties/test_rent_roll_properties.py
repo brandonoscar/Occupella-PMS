@@ -2,7 +2,8 @@
 
 Hypothesis opens and ends leases, charges rent, fees and credits, posts payments (from cash, a
 tenant's prepaid rent, or a deposit kept with its cash), matches them to charges and bounces
-some of them back, in random order and through both the owner role and trust_app. A Python
+some of them back. It also records management agreements, takes management and leasing fees,
+and pays owners. All in random order, through both the owner role and trust_app. A Python
 model predicts every step: the database must accept exactly what the model accepts and refuse
 the rest with the model's reason.
 
@@ -13,32 +14,42 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     matches and reversals are the model's, so a retry never adds one;
   - the rent roll for all time ties to the trust ledger: what it shows held for all tenants is
     every tenant's deposit and prepaid rent balance, current and not-current leases add up to
-    all of them, and every lease's balance is its charges less its payments, net of reversals.
+    all of them, and every lease's balance is its charges less its payments, net of reversals;
+  - fees and draws are the model's: a management fee is the agreement's percent of rent
+    collected in its period (net of bounces), or its minimum, plus its flat fee, taken once per
+    period with no two periods of an account overlapping; a leasing fee is taken once per
+    lease; a draw never pays out more than the balance above the reserve, and its request key
+    pays once.
 
-The rule check_the_rent_roll reads the roll as of a random day, as any role including the AI's
-(trust_ai_agent), and compares every line with the model's: which lease each unit is in, its
-tenants in byte order, the money held for them, what was charged and paid by then, and the
-totals. The AI's role is refused every write it tries, and nothing changes.
+The rule check_owner_balances reads the owner balances report as of a random day and compares
+it with the model. The rule check_the_rent_roll reads the roll as of a random day, as any role
+including the AI's (trust_ai_agent), and compares every line with the model's: which lease
+each unit is in, its tenants in byte order, the money held for them, what was charged and paid
+by then, and the totals. The AI's role is refused every write it tries, and nothing changes.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
 
 import psycopg
 import pytest
 from helpers import (
+    add_agreement,
     add_tenant,
     add_unit,
     apply_payment,
     charge,
+    draw_owner,
     end_lease,
     make_pmc,
     open_account,
     open_lease,
+    post_leasing_fee,
+    post_management_fee,
     reverse_payment,
     transfer_batch,
 )
@@ -106,6 +117,25 @@ class Transfer:
     event_at: datetime
 
 
+@dataclass(frozen=True)
+class Terms:
+    percent: Decimal
+    minimum: Decimal
+    flat: Decimal
+    leasing: Decimal
+    reserve: Decimal
+
+
+def month_start(n):
+    """The first day of the n-th month after BASE."""
+    return date(BASE.year + n // 12, n % 12 + 1, 1)
+
+
+def to_cents(amount):
+    """Round to cents, halves away from zero, as Postgres's round(numeric, 2) does."""
+    return amount.quantize(CENT, ROUND_HALF_UP)
+
+
 def overlaps(a_start, a_end, b_start, b_end):
     return a_start <= (b_end or LAST_DAY) and b_start <= (a_end or LAST_DAY)
 
@@ -146,17 +176,71 @@ class RentRollMachine(RuleBasedStateMachine):
         # (charge, payment transfer, reversing transfer) -> amount undone
         self.reversals: dict[tuple[UUID, str, str], Decimal] = {}
         self.balance: dict[str, Decimal] = {}  # current balances of the accounts used
+        self.owner_names = ["Owner 1", "Owner 2"]
+        # The owner money loop: (account, first day) -> terms; (account, period start) ->
+        # (period end, collected, fee); lease -> (account, fee); request key -> (account,
+        # amount); and the transfers that paid owners.
+        self.agreements: dict[tuple[str, date], Terms] = {}
+        self.fees: dict[tuple[str, date], tuple[date, Decimal, Decimal]] = {}
+        self.leasing: dict[UUID, tuple[str, Decimal]] = {}
+        self.draws: dict[str, tuple[str, Decimal]] = {}
+        self.draw_transfers: set[str] = set()
 
     # --- helpers -------------------------------------------------------------------------
 
     def post(self, requests, event_at):
         """Post a batch as the owner, dated event_at; the model records each transfer."""
         ids = transfer_batch(self.conn, requests, event_at=event_at)
-        for transfer_id, (source, target, amount) in zip(ids, requests, strict=True):
-            self.transfers[transfer_id] = Transfer(source, target, amount, event_at)
-            self.balance[source] = self.balance.get(source, Decimal(0)) - amount
-            self.balance[target] = self.balance.get(target, Decimal(0)) + amount
+        for transfer_id, request in zip(ids, requests, strict=True):
+            self.record(transfer_id, *request, event_at)
         return ids
+
+    def record(self, transfer_id, source, target, amount, event_at):
+        """A transfer the database posted: the model's copy."""
+        self.transfers[transfer_id] = Transfer(source, target, amount, event_at)
+        self.balance[source] = self.balance.get(source, Decimal(0)) - amount
+        self.balance[target] = self.balance.get(target, Decimal(0)) + amount
+
+    def agreement_on(self, account, day):
+        """The terms in force for an account on a day: the latest agreement starting by it."""
+        starts = [start for (held, start) in self.agreements if held == account and start <= day]
+        return self.agreements[(account, max(starts))] if starts else None
+
+    def collected(self, account, start, end):
+        """Rent matched to payments into the account in [start, end), less rent bounced back
+        out of it in that time."""
+        rent = {c for c, bill in self.charges.items() if bill.kind == "rent"}
+        got = sum(
+            (
+                a
+                for (c, t), a in self.matches.items()
+                if c in rent
+                and self.transfers[t].target == account
+                and start <= self.transfers[t].event_at < end
+            ),
+            Decimal(0),
+        )
+        back = sum(
+            (
+                a
+                for (c, _, r), a in self.reversals.items()
+                if c in rent
+                and self.transfers[r].source == account
+                and start <= self.transfers[r].event_at < end
+            ),
+            Decimal(0),
+        )
+        return got - back
+
+    def held_on(self, account, cutoff):
+        return sum(
+            (
+                (t.amount if t.target == account else -t.amount)
+                for t in self.transfers.values()
+                if account in (t.source, t.target) and t.event_at < cutoff
+            ),
+            Decimal(0),
+        )
 
     @staticmethod
     def moment(day, second):
@@ -599,6 +683,8 @@ class RentRollMachine(RuleBasedStateMachine):
         refusal = None
         if amount <= 0:
             refusal = (psycopg.errors.InvalidParameterValue, "positive amount")
+        elif reversal_id in self.draw_transfers:
+            refusal = (psycopg.errors.InvalidParameterValue, "paid the owner")
         elif (reversal.source, reversal.target) != (payment.target, payment.source):
             refusal = (psycopg.errors.InvalidParameterValue, "back the way")
         elif reversal.event_at < payment.event_at:
@@ -620,7 +706,280 @@ class RentRollMachine(RuleBasedStateMachine):
             assert send() == amount
             self.reversals[key] = amount
 
-    # --- rules: the report ---------------------------------------------------------------
+    # --- rules: the owner money loop ------------------------------------------------------
+
+    @rule(
+        data=st.data(),
+        role=ROLES,
+        start=DAYS,
+        percent=st.sampled_from(["0", "8", "10.5", "100"]),
+        minimum=st.sampled_from(["0", "50.00"]),
+        flat=st.sampled_from(["0", "10.00"]),
+        leasing=st.sampled_from(["0", "50", "100"]),
+        reserve=st.sampled_from(["0", "200.00", "1000.00"]),
+    )
+    def record_an_agreement(self, data, role, start, percent, minimum, flat, leasing, reserve):
+        account = data.draw(st.sampled_from(self.owner_account))
+        starts_on = BASE + timedelta(days=start)
+        terms = Terms(*(Decimal(v) for v in (percent, minimum, flat, leasing, reserve)))
+
+        def send():
+            add_agreement(
+                self.conns[role],
+                self.pmc_id,
+                account,
+                starts_on,
+                percent,
+                minimum,
+                flat,
+                leasing,
+                reserve,
+            )
+
+        if (account, starts_on) in self.agreements:  # new terms need a new day
+            with pytest.raises(psycopg.errors.UniqueViolation):
+                send()
+        else:
+            send()
+            self.agreements[(account, starts_on)] = terms
+
+    @rule(data=st.data(), role=ROLES, month=st.integers(0, 13), shifted=st.booleans())
+    def take_a_management_fee(self, data, role, month, shifted):
+        """A month's fee, or now and then one for the 15th to the 15th, which overlaps the
+        months on either side."""
+        account = data.draw(st.sampled_from(self.owner_account))
+        shift = timedelta(days=14 if shifted else 0)
+        self.attempt_fee(role, account, month_start(month) + shift, month_start(month + 1) + shift)
+
+    @rule(
+        data=st.data(),
+        role=ROLES,
+        day=st.integers(0, 27),
+        percent=st.sampled_from(["8", "10.5", "100"]),
+        rent_cents=st.integers(min_value=50_000, max_value=300_000),
+    )
+    def collect_rent_then_take_the_fee(self, data, role, day, percent, rent_cents):
+        """A month in one go: an agreement in force (recorded if none is), the month's rent on
+        a lease of the property charged, paid in cash and matched, then the month's fee. The
+        month is one with no fee taken yet, when there is one."""
+        i = data.draw(st.integers(0, len(self.owner_account) - 1))
+        account = self.owner_account[i]
+        free = [
+            k
+            for k in range(14)
+            if not any(
+                a == account and s < month_start(k + 1) and month_start(k) < held[0]
+                for (a, s), held in self.fees.items()
+            )
+        ]
+        month = data.draw(st.sampled_from(free or list(range(14))))
+        start = month_start(month)
+        if self.agreement_on(account, start) is None:
+            add_agreement(self.conn, self.pmc_id, account, start, percent, "25.00", "5.00", "50")
+            self.agreements[(account, start)] = Terms(
+                Decimal(percent), Decimal("25.00"), Decimal("5.00"), Decimal(50), Decimal(0)
+            )
+        leases = [i_ for i_, lease in self.leases.items() if lease.unit.property_index == i]
+        if leases:
+            lease_id = data.draw(st.sampled_from(leases))
+            rent = next(
+                (
+                    c
+                    for c, bill in self.charges.items()
+                    if bill.lease_id == lease_id and bill.kind == "rent" and bill.due_on == start
+                ),
+                None,
+            )
+            if rent is None:
+                amount = Decimal(rent_cents) / 100
+                rent = charge(self.conn, self.pmc_id, lease_id, start, amount)
+                self.charges[rent] = Charge(lease_id, start, "rent", amount)
+            owed = self.charges[rent].amount - self.paid_on(rent)
+            if owed > 0:
+                when = datetime.combine(start + timedelta(days=day), time(12), tzinfo=UTC)
+                paid = self.pay_in("cash", self.tenants[0], account, owed, when)
+                self.attempt_match(role, rent, paid, owed)
+        self.attempt_fee(role, account, start, month_start(month + 1))
+
+    def attempt_fee(self, role, account, start, end):
+        """Take the fee for [start, end) as the model predicts: taken, the fee already taken
+        returned for a retry, or refused with the model's reason."""
+        posted_at = datetime.combine(end, time(0), tzinfo=UTC) - timedelta(hours=1)
+
+        def send():
+            return post_management_fee(
+                self.conns[role], self.pmc_id, account, start, end, posted_at
+            )
+
+        taken = [
+            (s, held[0])
+            for (a, s), held in self.fees.items()
+            if a == account and s < end and start < held[0]
+        ]
+        terms = self.agreement_on(account, start)
+        if taken and taken[0] == (start, end):
+            assert send() == self.fees[(account, start)][2]  # a retry: the fee already taken
+            return
+        if taken:
+            with pytest.raises(psycopg.errors.ExclusionViolation, match="overlaps"):
+                send()
+            return
+        if terms is None:
+            with pytest.raises(psycopg.errors.InvalidParameterValue, match="no management"):
+                send()
+            return
+        utc = {d: datetime.combine(d, time(0), tzinfo=UTC) for d in (start, end)}
+        collected = self.collected(account, utc[start], utc[end])
+        fee = max(to_cents(terms.percent / 100 * collected), terms.minimum) + terms.flat
+        if fee > self.balance.get(account, Decimal(0)):
+            with pytest.raises(psycopg.errors.CheckViolation, match="below zero"):
+                send()
+            return
+        assert send() == fee
+        self.fees[(account, start)] = (end, collected, fee)
+        if fee > 0:
+            (transfer_id,) = self.conn.execute(
+                "SELECT transfer_id FROM trust_management_fees"
+                " WHERE ledger_account_id = %s AND period_start = %s",
+                (account, start),
+            ).fetchone()
+            self.record(transfer_id, account, self.pmc.pmc_income, fee, posted_at)
+
+    @precondition(lambda self: self.leases)
+    @rule(data=st.data(), role=ROLES, day=DAYS, second=TIMES, its_owner=st.booleans())
+    def take_a_leasing_fee(self, data, role, day, second, its_owner):
+        """From the owner of the lease's property, or now and then another owner's account."""
+        lease_id = data.draw(st.sampled_from(list(self.leases)))
+        lease, when = self.leases[lease_id], self.moment(day, second)
+        account = (
+            self.owner_account[lease.unit.property_index]
+            if its_owner
+            else data.draw(st.sampled_from(self.owner_account))
+        )
+
+        def send():
+            return post_leasing_fee(self.conns[role], self.pmc_id, lease_id, account, when)
+
+        taken = self.leasing.get(lease_id)
+        terms = self.agreement_on(account, lease.starts_on)
+        if self.owner_account[lease.unit.property_index] != account:
+            refusal = (psycopg.errors.InvalidParameterValue, "lease's property")
+        elif taken is not None:
+            if taken[0] == account:
+                assert send() == taken[1]  # a retry: the fee already taken
+                return
+            refusal = (psycopg.errors.UniqueViolation, "was taken from")
+        elif terms is None:
+            refusal = (psycopg.errors.InvalidParameterValue, "no management")
+        else:
+            fee = to_cents(terms.leasing / 100 * lease.rent)
+            if fee > self.balance.get(account, Decimal(0)):
+                refusal = (psycopg.errors.CheckViolation, "below zero")
+            else:
+                assert send() == fee
+                self.leasing[lease_id] = (account, fee)
+                if fee > 0:
+                    (transfer_id,) = self.conn.execute(
+                        "SELECT transfer_id FROM trust_leasing_fees WHERE lease_id = %s",
+                        (lease_id,),
+                    ).fetchone()
+                    self.record(transfer_id, account, self.pmc.pmc_income, fee, when)
+                return
+        with pytest.raises(refusal[0], match=refusal[1]):
+            send()
+
+    @rule(
+        data=st.data(),
+        role=ROLES,
+        key=st.sampled_from(["draw-1", "draw-2", "draw-3"]),
+        choice=st.sampled_from(["all", "what is available", "a cent too much", "half"]),
+        day=DAYS,
+        second=TIMES,
+    )
+    def pay_the_owner(self, data, role, key, choice, day, second):
+        account = data.draw(st.sampled_from(self.owner_account))
+        when = self.moment(day, second)
+        terms = self.agreement_on(account, when.date())
+        available = self.balance.get(account, Decimal(0)) - (terms.reserve if terms else 0)
+        amount = {
+            "all": None,
+            "what is available": available,
+            "a cent too much": available + CENT,
+            "half": to_cents(available / 2),
+        }[choice]
+
+        def send():
+            return draw_owner(self.conns[role], self.pmc_id, account, key, amount, when)
+
+        paid = self.draws.get(key)
+        if amount is not None and amount <= 0:
+            refusal = (psycopg.errors.InvalidParameterValue, "positive amount")
+        elif paid is not None:
+            if paid[0] == account and amount in (None, paid[1]):
+                assert send() == paid[1]  # a retry: the original draw, nothing more paid
+                return
+            refusal = (psycopg.errors.UniqueViolation, "already paid")
+        elif available <= 0 or (amount if amount is not None else available) > available:
+            refusal = (psycopg.errors.CheckViolation, "available")
+        else:
+            paying = amount if amount is not None else available
+            assert send() == paying
+            self.draws[key] = (account, paying)
+            (transfer_id,) = self.conn.execute(
+                "SELECT transfer_id FROM trust_owner_draws WHERE pmc_id = %s AND request_key = %s",
+                (self.pmc_id, key),
+            ).fetchone()
+            self.record(transfer_id, account, self.pmc.operating_cash, paying, when)
+            self.draw_transfers.add(transfer_id)
+            return
+        with pytest.raises(refusal[0], match=refusal[1]):
+            send()
+
+    # --- rules: the reports --------------------------------------------------------------
+
+    @rule(
+        role=st.sampled_from(["owner", "app", "ai"]), day=st.integers(min_value=-5, max_value=640)
+    )
+    def check_owner_balances(self, role, day):
+        as_of = BASE + timedelta(days=day)
+        cutoff = datetime.combine(as_of + timedelta(days=1), time(0), tzinfo=UTC)
+        rows = (
+            self.conns[role]
+            .execute(
+                "SELECT line, item, owner, property, detail, balance, reserve, available"
+                " FROM trust_report_owner_balances(%s, %s)",
+                (self.pmc_id, as_of),
+            )
+            .fetchall()
+        )
+        expected = []
+        for i, account in enumerate(self.owner_account):
+            terms = self.agreement_on(account, as_of)
+            held = self.held_on(account, cutoff)
+            reserve = terms.reserve if terms else Decimal(0)
+            detail = (
+                f"{format(terms.percent.normalize(), 'f')}% of collected rent,"
+                f" minimum {terms.minimum:.2f}, flat {terms.flat:.2f}"
+                if terms
+                else "no management agreement"
+            )
+            names = (self.owner_names[i], self.property_names[i])
+            expected.append(
+                ("owner property", *names, detail, held, reserve, max(held - reserve, Decimal(0)))
+            )
+        expected.append(
+            (
+                "total",
+                None,
+                None,
+                None,
+                sum((line[4] for line in expected), Decimal(0)),
+                sum((line[5] for line in expected), Decimal(0)),
+                sum((line[6] for line in expected), Decimal(0)),
+            )
+        )
+        assert [row[0] for row in rows] == list(range(1, len(rows) + 1))
+        assert [tuple(row[1:]) for row in rows[2:]] == expected
 
     @precondition(lambda self: self.leases)
     @rule(
@@ -732,6 +1091,33 @@ class RentRollMachine(RuleBasedStateMachine):
             (self.pmc_id,),
         ).fetchall()
         assert {(c, t, r): a for c, t, r, a in stored} == self.reversals
+
+    @invariant()
+    def fees_and_draws_are_the_models(self):
+        fees = self.conn.execute(
+            "SELECT ledger_account_id, period_start, period_end, collected, fee"
+            " FROM trust_management_fees WHERE pmc_id = %s",
+            (self.pmc_id,),
+        ).fetchall()
+        assert {(a, s): (e, c, f) for a, s, e, c, f in fees} == self.fees
+        overlapping = self.conn.execute(
+            "SELECT 1 FROM trust_management_fees a JOIN trust_management_fees b"
+            " ON a.ledger_account_id = b.ledger_account_id AND a.period_start < b.period_start"
+            " AND b.period_start < a.period_end WHERE a.pmc_id = %s",
+            (self.pmc_id,),
+        ).fetchall()
+        assert overlapping == []
+        leasing = self.conn.execute(
+            "SELECT lease_id, ledger_account_id, fee FROM trust_leasing_fees WHERE pmc_id = %s",
+            (self.pmc_id,),
+        ).fetchall()
+        assert {lease: (a, f) for lease, a, f in leasing} == self.leasing
+        draws = self.conn.execute(
+            "SELECT request_key, ledger_account_id, amount FROM trust_owner_draws"
+            " WHERE pmc_id = %s",
+            (self.pmc_id,),
+        ).fetchall()
+        assert {k: (a, amount) for k, a, amount in draws} == self.draws
 
     @invariant()
     def the_rent_roll_ties_to_the_ledger(self):

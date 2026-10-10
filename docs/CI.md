@@ -82,12 +82,15 @@ posting or record change it tries is refused with nothing written.
 
 A second machine opens and ends leases, charges rent, fees and credits, and posts and matches
 payments (from cash, prepaid rent, or a deposit kept with its cash), bounces some of them back,
-and checks:
+records management agreements, takes fees and pays owners, and checks:
 - two leases of one unit never overlap;
 - no charge is paid past its amount (net of bounced payments) and no transfer pays more than
   it moved; a reversal undoes no more than its match; a retried match or reversal adds nothing;
 - the rent roll for all time ties to every tenant's deposits and prepaid rent in the ledger, and
-  the roll as of any day matches the model line by line.
+  the roll as of any day matches the model line by line;
+- each management fee matches its agreement and the rent collected, once per period; a leasing
+  fee once per lease; a draw never pays out more than the balance above the reserve, and the
+  owner balances report as of any day matches the model.
 
 `ci/registry.toml` maps every required invariant to its test or to the open issue for what isn't
 built yet. PRs run 200 examples per property. Nightly runs 16 jobs, each with its own seed and
@@ -109,7 +112,9 @@ one approved reconciliation, with every difference listed) and `trust_report_own
 (per property an opening balance, each posting in date order with the balance after it and a
 closing balance, then the owner's totals) and `trust_report_rent_roll` (per unit as of the end
 of a day: the lease, its tenants, deposits and prepaid rent held, charged, paid and balance due,
-then totals that tie back to the ledger). Run it with
+then totals that tie back to the ledger) and `trust_report_owner_balances` (per owner's
+property the balance, the reserve kept back and what is available to pay the owner). Run it
+with
 `pytest tests/golden`, and update deliberately with `pytest tests/golden --update-goldens`.
 
 **coverage.yml** (PRs and main): Python coverage (coverage.py) and coverage of the PL/pgSQL

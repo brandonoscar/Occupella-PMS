@@ -38,6 +38,10 @@ TABLES = {
     "trust_charges": {"SELECT", "INSERT"},
     "trust_charge_payments": {"SELECT"},  # written only by trust_apply_payment
     "trust_payment_reversals": {"SELECT"},  # written only by trust_reverse_payment
+    "trust_management_agreements": {"SELECT", "INSERT"},
+    "trust_management_fees": {"SELECT"},  # written only by trust_post_management_fee
+    "trust_leasing_fees": {"SELECT"},  # written only by trust_post_leasing_fee
+    "trust_owner_draws": {"SELECT"},  # written only by trust_draw_owner
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
@@ -64,6 +68,13 @@ FUNCTIONS = {
     "trust_end_lease(uuid,uuid,date)": {"trust_app"},
     "trust_apply_payment(uuid,uuid,text,numeric)": {"trust_app"},
     "trust_reverse_payment(uuid,uuid,text,text,numeric)": {"trust_app"},
+    "trust_post_management_fee(uuid,text,date,date,timestamptz)": {"trust_app"},
+    "trust_post_leasing_fee(uuid,uuid,text,timestamptz)": {"trust_app"},
+    "trust_draw_owner(uuid,text,text,numeric,timestamptz)": {"trust_app"},
+    # Helpers the fee and draw functions call as the owner: nobody else.
+    "trust_lock_owner_account(uuid,text)": set(),
+    "trust_agreement_on(text,date)": set(),
+    "trust_post_fee(trust_ledger_accounts,numeric,timestamptz,text)": set(),
     # Reports read trust records, so only the app and the AI; they run with the caller's own
     # read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app", "trust_ai_agent"},
@@ -72,6 +83,7 @@ FUNCTIONS = {
         "trust_ai_agent",
     },
     "trust_report_rent_roll(uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_owner_balances(uuid,date)": {"trust_app", "trust_ai_agent"},
     # pgledger's posting functions take no idempotency key, so a retried request could post
     # twice: only the owner calls them (trust_post_transfers does, as the owner).
     "pgledger_create_transfer(text,text,numeric,timestamptz,jsonb)": set(),
@@ -99,6 +111,7 @@ FUNCTIONS = {
     "trust_check_account_bank_kind()": {"PUBLIC"},
     "trust_refuse_changing_bank_kind()": {"PUBLIC"},
     "trust_refuse_overlapping_leases()": {"PUBLIC"},
+    "trust_check_agreement_account()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.
@@ -111,6 +124,9 @@ SECURITY_DEFINER = {
     "trust_end_lease(uuid,uuid,date)",
     "trust_apply_payment(uuid,uuid,text,numeric)",
     "trust_reverse_payment(uuid,uuid,text,text,numeric)",
+    "trust_post_management_fee(uuid,text,date,date,timestamptz)",
+    "trust_post_leasing_fee(uuid,uuid,text,timestamptz)",
+    "trust_draw_owner(uuid,text,text,numeric,timestamptz)",
 }
 
 

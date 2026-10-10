@@ -290,6 +290,61 @@ def reverse_payment(connection, pmc_id, charge_id, transfer_id, reversal_id, amo
     )
 
 
+def add_agreement(
+    connection,
+    pmc_id,
+    account,
+    starts_on,
+    fee_percent="0",
+    minimum_fee="0",
+    flat_fee="0",
+    leasing_fee_percent="0",
+    reserve="0",
+) -> UUID:
+    """A management agreement for one owner's property account, in force from starts_on."""
+    return _one(
+        connection,
+        "INSERT INTO trust_management_agreements (pmc_id, ledger_account_id, starts_on,"
+        " fee_percent, minimum_fee, flat_fee, leasing_fee_percent, reserve)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        (
+            pmc_id,
+            account,
+            starts_on,
+            Decimal(fee_percent),
+            Decimal(minimum_fee),
+            Decimal(flat_fee),
+            Decimal(leasing_fee_percent),
+            Decimal(reserve),
+        ),
+    )
+
+
+def post_management_fee(connection, pmc_id, account, period_start, period_end, event_at):
+    return _one(
+        connection,
+        "SELECT trust_post_management_fee(%s, %s, %s, %s, %s)",
+        (pmc_id, account, period_start, period_end, event_at),
+    )
+
+
+def post_leasing_fee(connection, pmc_id, lease_id, account, event_at):
+    return _one(
+        connection,
+        "SELECT trust_post_leasing_fee(%s, %s, %s, %s)",
+        (pmc_id, lease_id, account, event_at),
+    )
+
+
+def draw_owner(connection, pmc_id, account, request_key, amount, event_at):
+    """Pay the owner `amount` (None: everything available) from one property's account."""
+    return _one(
+        connection,
+        "SELECT trust_draw_owner(%s, %s, %s, %s, %s)",
+        (pmc_id, account, request_key, None if amount is None else Decimal(amount), event_at),
+    )
+
+
 def balance(connection, account) -> Decimal:
     return _one(connection, "SELECT balance FROM pgledger_accounts WHERE id = %s", (account,))
 

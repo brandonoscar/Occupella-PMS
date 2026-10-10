@@ -112,6 +112,23 @@ WRITES = {
     "reverse a payment": lambda c, pmc, lease, rent, paid: c.execute(
         "SELECT trust_reverse_payment(%s, %s, %s, %s, 1)", (pmc.pmc_id, rent, paid, paid)
     ),
+    "record a management agreement": lambda c, pmc, *_: c.execute(
+        "INSERT INTO trust_management_agreements (pmc_id, ledger_account_id, starts_on)"
+        " VALUES (%s, %s, '2026-01-01')",
+        (pmc.pmc_id, pmc.owners[0].account),
+    ),
+    "take a management fee": lambda c, pmc, *_: c.execute(
+        "SELECT trust_post_management_fee(%s, %s, '2026-01-01', '2026-02-01', now())",
+        (pmc.pmc_id, pmc.owners[0].account),
+    ),
+    "take a leasing fee": lambda c, pmc, lease, *_: c.execute(
+        "SELECT trust_post_leasing_fee(%s, %s, %s, now())",
+        (pmc.pmc_id, lease, pmc.owners[0].account),
+    ),
+    "pay the owner": lambda c, pmc, *_: c.execute(
+        "SELECT trust_draw_owner(%s, %s, 'ai-draw', NULL, now())",
+        (pmc.pmc_id, pmc.owners[0].account),
+    ),
 }
 
 
