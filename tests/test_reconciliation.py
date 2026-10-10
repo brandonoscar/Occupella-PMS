@@ -4,15 +4,21 @@ closed through the period's end, so no transfer dated inside the period can be p
 Migration 20261009000006. A late correction is dated in the next open period.
 """
 
-import threading
-import time
 import uuid
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import psycopg
 import pytest
-from helpers import approve, make_pmc, post, snapshot, transfer_batch
+from helpers import (
+    approve,
+    in_background,
+    make_pmc,
+    post,
+    snapshot,
+    transfer_batch,
+    wait_until_blocked,
+)
 
 JAN = datetime(2026, 1, 1, tzinfo=UTC)
 JAN_15 = datetime(2026, 1, 15, tzinfo=UTC)
@@ -335,40 +341,6 @@ def test_a_closed_trust_bank_account_can_still_be_renamed(conn, app_conn):
 
 
 # --- approval and posting at the same time ----------------------------------------------------
-
-
-def wait_until_blocked(conn, pid):
-    for _ in range(1000):
-        row = conn.execute(
-            "SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s", (pid,)
-        ).fetchone()
-        if row and row[0] == "Lock":
-            return
-        time.sleep(0.01)
-    raise AssertionError("the second transaction never waited for the first")
-
-
-def in_background(database_url, work):
-    """Run work(connection) on a new autocommit connection in a thread; return the thread,
-    the connection's backend pid and a dict that receives the result or the error."""
-    outcome: dict = {}
-    ready = threading.Event()
-    pid: list[int] = []
-
-    def run():
-        with psycopg.connect(database_url, autocommit=True) as worker:
-            worker.execute("SET lock_timeout = '20s'")
-            pid.append(worker.execute("SELECT pg_backend_pid()").fetchone()[0])
-            ready.set()
-            try:
-                outcome["result"] = work(worker)
-            except Exception as exc:  # asserted by the caller
-                outcome["error"] = exc
-
-    thread = threading.Thread(target=run)
-    thread.start()
-    assert ready.wait(timeout=30)
-    return thread, pid[0], outcome
 
 
 @pytest.mark.timing

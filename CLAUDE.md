@@ -71,8 +71,8 @@ required invariant, report and self-host step.
   and `trust_reconciliations` are append-only, enforced by triggers. Fix a mistake with a new
   reversing transfer.
 - The app role `trust_app` only reads ledger tables. It writes through `trust_post_transfers`,
-  `trust_open_ledger_account`, `trust_open_vendor_account` and `trust_approve_reconciliation`,
-  which run as the table owner. It can't call pgledger's posting functions: every posting it
+  `trust_open_ledger_account`, `trust_open_vendor_account`, `trust_approve_reconciliation`,
+  `trust_open_lease`, `trust_end_lease` and `trust_apply_payment`, which run as the table owner. It can't call pgledger's posting functions: every posting it
   makes goes through `trust_post_transfers`, which takes an idempotency key, unique per PMC, so
   it is safe to retry: the same key returns the original transfers, and a different posting
   under it is refused.
@@ -93,6 +93,11 @@ required invariant, report and self-host step.
   (`trust_bank_accounts.closed_through`): a transfer dated before it is refused, whoever posts
   it, so a late correction is dated in the next open period. Periods follow one another with no
   gap or overlap, and only `trust_approve_reconciliation` moves the closing date.
+- What tenants owe stays out of the trust ledger. A unit has one lease at a time (a trigger
+  checks every write); a lease has one or more of the property's tenants. Charges (rent, fees,
+  credits) are append-only, and rent is charged at most once per lease and due date. A payment
+  posted to the ledger is matched to charges with `trust_apply_payment`: never past a charge's
+  amount or the transfer's, and safe to retry. Leases and matches are written at READ COMMITTED.
 
 ## Run the checks
 

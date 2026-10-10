@@ -5,6 +5,8 @@ Every fixture is synthetic: no real names, addresses, bank numbers or tax IDs.
 
 import os
 import shutil
+import threading
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -227,6 +229,53 @@ def approve(
     )
 
 
+def add_unit(connection, pmc_id, property_id, name="Unit 1") -> UUID:
+    return _one(
+        connection,
+        "INSERT INTO trust_units (pmc_id, property_id, display_name) VALUES (%s, %s, %s)"
+        " RETURNING id",
+        (pmc_id, property_id, name),
+    )
+
+
+def add_tenant(connection, pmc_id, property_id, name) -> UUID:
+    return _one(
+        connection,
+        "INSERT INTO trust_tenants (pmc_id, property_id, display_name) VALUES (%s, %s, %s)"
+        " RETURNING id",
+        (pmc_id, property_id, name),
+    )
+
+
+def open_lease(connection, pmc_id, unit_id, starts_on, ends_on, rent, tenant_ids) -> UUID:
+    return _one(
+        connection,
+        "SELECT trust_open_lease(%s, %s, %s, %s, %s, %s::uuid[])",
+        (pmc_id, unit_id, starts_on, ends_on, Decimal(rent), list(tenant_ids)),
+    )
+
+
+def end_lease(connection, pmc_id, lease_id, ends_on) -> None:
+    connection.execute("SELECT trust_end_lease(%s, %s, %s)", (pmc_id, lease_id, ends_on))
+
+
+def charge(connection, pmc_id, lease_id, due_on, amount, kind="rent", memo=None) -> UUID:
+    return _one(
+        connection,
+        "INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)"
+        " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, lease_id, due_on, kind, Decimal(amount), memo),
+    )
+
+
+def apply_payment(connection, pmc_id, charge_id, transfer_id, amount) -> Decimal:
+    return _one(
+        connection,
+        "SELECT trust_apply_payment(%s, %s, %s, %s)",
+        (pmc_id, charge_id, transfer_id, None if amount is None else Decimal(amount)),
+    )
+
+
 def balance(connection, account) -> Decimal:
     return _one(connection, "SELECT balance FROM pgledger_accounts WHERE id = %s", (account,))
 
@@ -291,3 +340,37 @@ def language_sorted_database(database_url) -> Iterator[psycopg.Connection]:
         with psycopg.connect(url, autocommit=True) as conn:
             assert conn.execute("SELECT 'owner a' < 'Owner b'").fetchone() == (True,)
             yield conn
+
+
+def wait_until_blocked(conn, pid):
+    for _ in range(1000):
+        row = conn.execute(
+            "SELECT wait_event_type FROM pg_stat_activity WHERE pid = %s", (pid,)
+        ).fetchone()
+        if row and row[0] == "Lock":
+            return
+        time.sleep(0.01)
+    raise AssertionError("the second transaction never waited for the first")
+
+
+def in_background(database_url, work):
+    """Run work(connection) on a new autocommit connection in a thread; return the thread,
+    the connection's backend pid and a dict that receives the result or the error."""
+    outcome: dict = {}
+    ready = threading.Event()
+    pid: list[int] = []
+
+    def run():
+        with psycopg.connect(database_url, autocommit=True) as worker:
+            worker.execute("SET lock_timeout = '20s'")
+            pid.append(worker.execute("SELECT pg_backend_pid()").fetchone()[0])
+            ready.set()
+            try:
+                outcome["result"] = work(worker)
+            except Exception as exc:  # asserted by the caller
+                outcome["error"] = exc
+
+    thread = threading.Thread(target=run)
+    thread.start()
+    assert ready.wait(timeout=30)
+    return thread, pid[0], outcome

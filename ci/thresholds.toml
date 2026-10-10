@@ -27,6 +27,7 @@ functions = [
   "trust_refuse_posting_into_closed_period",
   "trust_check_account_bank_kind",
   "trust_refuse_changing_bank_kind",
+  "trust_apply_payment",
 ]
 # Python money modules (none yet). Each needs the same line and branch floors.
 python_paths = []

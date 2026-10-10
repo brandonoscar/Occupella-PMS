@@ -77,6 +77,14 @@ periods, and check the money invariants after every step:
   and periods follow one another;
 - every security deposit sits in the security-deposit trust account, which holds nothing else.
 
+A second machine opens and ends leases, charges rent, fees and credits, and posts and matches
+payments (from cash, prepaid rent, or a deposit kept with its cash), and checks:
+- two leases of one unit never overlap;
+- no charge is paid past its amount and no transfer pays more than it moved; a retried match
+  adds nothing;
+- the rent roll for all time ties to every tenant's deposits and prepaid rent in the ledger, and
+  the roll as of any day matches the model line by line.
+
 `ci/registry.toml` maps every required invariant to its test or to the open issue for what isn't
 built yet. PRs run 200 examples per property. Nightly runs 16 jobs, each with its own seed and
 3,000 examples. A failing case is uploaded as an artifact with the seed and the shortest failing
@@ -95,7 +103,9 @@ reports, so a change to one has to be on purpose. Reports so far:
 `trust_report_three_way_reconciliation` (bank statement, trust journal and beneficiary ledgers of
 one approved reconciliation, with every difference listed) and `trust_report_owner_statement`
 (per property an opening balance, each posting in date order with the balance after it and a
-closing balance, then the owner's totals). The rent roll is tracked in issue #10. Run it with
+closing balance, then the owner's totals) and `trust_report_rent_roll` (per unit as of the end
+of a day: the lease, its tenants, deposits and prepaid rent held, charged, paid and balance due,
+then totals that tie back to the ledger). Run it with
 `pytest tests/golden`, and update deliberately with `pytest tests/golden --update-goldens`.
 
 **coverage.yml** (PRs and main): Python coverage (coverage.py) and coverage of the PL/pgSQL
