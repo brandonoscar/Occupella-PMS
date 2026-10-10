@@ -93,6 +93,14 @@ REPORTS = {
         " (SELECT id FROM trust_leases WHERE pmc_id = %s), %s)",
         lambda pmc, _: (pmc.pmc_id, pmc.pmc_id, date(2026, 2, 28)),
     ),
+    "trial balance": (
+        "SELECT * FROM trust_report_trial_balance(%s, %s)",
+        lambda pmc, _: (pmc.pmc_id, date(2026, 2, 28)),
+    ),
+    "security deposits": (
+        "SELECT * FROM trust_report_security_deposits(%s, %s)",
+        lambda pmc, _: (pmc.pmc_id, date(2026, 2, 28)),
+    ),
 }
 
 

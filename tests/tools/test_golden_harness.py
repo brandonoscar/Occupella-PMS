@@ -60,8 +60,10 @@ def test_report_discovery_and_missing_cases(conn, tmp_path):
         "trust_report_owner_balances",
         "trust_report_owner_statement",
         "trust_report_rent_roll",
+        "trust_report_security_deposits",
         "trust_report_tenant_ledger",
         "trust_report_three_way_reconciliation",
+        "trust_report_trial_balance",
         "trust_report_unpaid_bills",
     ]
     (tmp_path / "trust_report_a").mkdir()

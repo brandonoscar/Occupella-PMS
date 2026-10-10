@@ -75,7 +75,8 @@ periods, and check the money invariants after every step:
 - an idempotency key posts once, and is refused for a different posting;
 - an approved reconciliation never changes, nothing dated inside its period lands after it,
   and periods follow one another;
-- every security deposit sits in the security-deposit trust account, which holds nothing else.
+- every security deposit sits in the security-deposit trust account, which holds nothing else;
+- the trial balance and the deposit register as of any day match the model.
 
 Both machines also act as the AI's role (`trust_ai_agent`): it reads the same reports, and every
 posting or record change it tries is refused with nothing written.
@@ -131,7 +132,9 @@ property the balance, the reserve kept back, unpaid bills and what is available 
 owner) and `trust_report_unpaid_bills` (every bill not yet paid, by vendor, with what was set
 aside for it and how far past due it is) and `trust_report_delinquency` (each lease that owes
 money, by how long it is past due) and `trust_report_tenant_ledger` (one lease's charges,
-payments and bounces with a running balance). Run it
+payments and bounces with a running balance) and `trust_report_trial_balance` (per trust bank
+account, its book cash against everything it holds) and `trust_report_security_deposits` (each
+tenant's deposit against the deposit account's cash). Run it
 with
 `pytest tests/golden`, and update deliberately with `pytest tests/golden --update-goldens`.
 
