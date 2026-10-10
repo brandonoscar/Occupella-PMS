@@ -11,6 +11,7 @@ import pytest
 from helpers import (
     add_agreement,
     add_unit,
+    add_work_order,
     apply_payment,
     approve,
     charge,
@@ -55,6 +56,7 @@ def books(conn):
         conn, pmc.pmc_id, pmc.vendor_id, pmc.owners[0].account, "INV-1", FEB, FEB, "10.00"
     )
     set_aside_bill(conn, pmc.pmc_id, bill, FEB_2)
+    add_work_order(conn, pmc.pmc_id, pmc.owners[0].property_id, None, "Broken heater", FEB)
     return pmc, lease, rent, paid, reconciliation
 
 
@@ -70,6 +72,14 @@ REPORTS = {
     "rent roll": (
         "SELECT * FROM trust_report_rent_roll(%s, %s)",
         lambda pmc, _: (pmc.pmc_id, date(2026, 1, 31)),
+    ),
+    "owner balances": (
+        "SELECT * FROM trust_report_owner_balances(%s, %s)",
+        lambda pmc, _: (pmc.pmc_id, date(2026, 2, 28)),
+    ),
+    "unpaid bills": (
+        "SELECT * FROM trust_report_unpaid_bills(%s, %s)",
+        lambda pmc, _: (pmc.pmc_id, date(2026, 2, 28)),
     ),
 }
 
@@ -156,6 +166,14 @@ WRITES = {
     ),
     "pay a bill": lambda c, pmc, *_: c.execute(
         f"SELECT trust_pay_bill(%s, {THE_BILL}, now())", (pmc.pmc_id, pmc.pmc_id)
+    ),
+    "open a work order": lambda c, pmc, *_: add_work_order(
+        c, pmc.pmc_id, pmc.owners[0].property_id, None, "Leaking tap", FEB
+    ),
+    "record a work order step": lambda c, pmc, *_: c.execute(
+        "INSERT INTO trust_work_order_steps (pmc_id, work_order_id, step, taken_at)"
+        " SELECT %s, id, 'cancelled', now() FROM trust_work_orders WHERE pmc_id = %s",
+        (pmc.pmc_id, pmc.pmc_id),
     ),
 }
 

@@ -357,13 +357,44 @@ def enter_bill(
     due_on,
     amount,
     memo="Repair",
+    work_order_id=None,
 ) -> UUID:
-    """A vendor's bill against one owner's property account."""
+    """A vendor's bill against one owner's property account, maybe for a work order."""
     return _one(
         connection,
         "INSERT INTO trust_bills (pmc_id, vendor_id, ledger_account_id, reference, bill_date,"
-        " due_on, amount, memo) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
-        (pmc_id, vendor_id, account, reference, bill_date, due_on, Decimal(amount), memo),
+        " due_on, amount, memo, work_order_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)"
+        " RETURNING id",
+        (
+            pmc_id,
+            vendor_id,
+            account,
+            reference,
+            bill_date,
+            due_on,
+            Decimal(amount),
+            memo,
+            work_order_id,
+        ),
+    )
+
+
+def add_work_order(connection, pmc_id, property_id, unit_id, summary, opened_at) -> UUID:
+    """A work order at a property, maybe at one of its units."""
+    return _one(
+        connection,
+        "INSERT INTO trust_work_orders (pmc_id, property_id, unit_id, summary, opened_at)"
+        " VALUES (%s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, property_id, unit_id, summary, opened_at),
+    )
+
+
+def step_work_order(connection, pmc_id, work_order_id, step, taken_at, vendor_id=None) -> None:
+    """Record what happened to a work order: assigned (to vendor_id), completed or cancelled."""
+    connection.execute(
+        "INSERT INTO trust_work_order_steps (pmc_id, work_order_id, step, vendor_id, taken_at)"
+        " VALUES (%s, %s, %s, %s, %s)",
+        (pmc_id, work_order_id, step, vendor_id, taken_at),
     )
 
 

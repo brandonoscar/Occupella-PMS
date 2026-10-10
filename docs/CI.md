@@ -99,7 +99,7 @@ approvals, sets bills aside, pays them and pays owners, and checks:
   set aside and never dated before that;
 - each vendor's account holds exactly what was set aside for its bills and not yet paid;
 - a draw never pays out more than the balance above the reserve and the unpaid bills, and the
-  owner balances report, unpaid bills included, matches the model as of any day.
+  owner balances and unpaid bills reports match the model as of any day.
 
 `ci/registry.toml` maps every required invariant to its test or to the open issue for what isn't
 built yet. PRs run 200 examples per property. Nightly runs 16 jobs, each with its own seed and
@@ -123,7 +123,8 @@ closing balance, then the owner's totals) and `trust_report_rent_roll` (per unit
 of a day: the lease, its tenants, deposits and prepaid rent held, charged, paid and balance due,
 then totals that tie back to the ledger) and `trust_report_owner_balances` (per owner's
 property the balance, the reserve kept back, unpaid bills and what is available to pay the
-owner). Run it
+owner) and `trust_report_unpaid_bills` (every bill not yet paid, by vendor, with what was set
+aside for it and how far past due it is). Run it
 with
 `pytest tests/golden`, and update deliberately with `pytest tests/golden --update-goldens`.
 

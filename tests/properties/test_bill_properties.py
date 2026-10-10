@@ -16,8 +16,9 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
   - a draw never pays out more than the balance above the reserve and the unpaid bills, and
     its request key pays once.
 
-The rule check_owner_balances reads the owner balances report as of a random day, as any role
-including the AI's, and compares every line, unpaid bills included, with the model. The AI's
+The rules check_owner_balances and check_unpaid_bills read the owner balances and unpaid bills
+reports as of a random day, as any role including the AI's, and compare every line with the
+model. The AI's
 role is refused every write it tries.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
@@ -390,6 +391,46 @@ class BillMachine(RuleBasedStateMachine):
             ("total", *(sum((line[i] for line in expected), Decimal(0)) for i in range(1, 5)))
         )
         assert rows[1:] == expected
+
+    @rule(role=st.sampled_from(["owner", "app", "ai"]), day=st.integers(-5, 160))
+    def check_unpaid_bills(self, role, day):
+        """Every bill dated by the day and not paid by its end, by vendor, due date and
+        reference (byte order), with what was set aside by then and its bucket."""
+        as_of = BASE + timedelta(days=day)
+        rows = (
+            self.conns[role]
+            .execute(
+                "SELECT item, vendor, due_on, reference, days_past_due, bucket, amount, set_aside"
+                " FROM trust_report_unpaid_bills(%s, %s) WHERE item IN ('bill', 'total')",
+                (self.pmc_id, as_of),
+            )
+            .fetchall()
+        )
+        expected = []
+        for i, b in self.bills.items():
+            if b.bill_date > as_of or (i in self.paid and self.paid[i][1] < end_of(as_of)):
+                continue
+            due = b.bill_date + timedelta(days=30)  # as enter_a_bill sets it
+            late = max((as_of - due).days, 0)
+            bucket = next(
+                name
+                for limit, name in [(0, "current"), (30, "1-30"), (60, "31-60"), (90, "61-90")]
+                + [(late, "over 90")]
+                if late <= limit
+            )
+            held = b.amount if i in self.set_aside and self.set_aside[i][1] < end_of(as_of) else 0
+            vendor = f"Vendor {b.vendor + 1}"
+            expected.append(("bill", vendor, due, b.reference, late, bucket, b.amount, held))
+        expected.sort(key=lambda e: (e[1].encode(), e[2], e[3].encode()))
+        expected.append(
+            (
+                "total",
+                *([None] * 5),
+                sum((e[6] for e in expected), Decimal(0)),
+                sum((e[7] for e in expected), Decimal(0)),
+            )
+        )
+        assert rows == expected
 
     @precondition(lambda self: self.bills)
     @rule(data=st.data(), write=st.sampled_from(["enter", "approve", "set aside", "pay"]))
