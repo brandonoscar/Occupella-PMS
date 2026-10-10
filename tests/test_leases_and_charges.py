@@ -30,6 +30,7 @@ JAN_31 = date(2026, 1, 31)
 FEB_1 = date(2026, 2, 1)
 DEC_31 = date(2026, 12, 31)
 RENT = Decimal("1500.00")
+CENT = Decimal("0.01")
 PAID_ON = datetime(2026, 1, 3, tzinfo=UTC)
 
 
@@ -358,6 +359,12 @@ def test_a_charge_is_never_paid_past_its_amount(conn, pmc, lease):
     with pytest.raises(psycopg.errors.CheckViolation, match="too much"):
         apply_payment(conn, pmc.pmc_id, rent, last, "100.01")
     assert apply_payment(conn, pmc.pmc_id, rent, last, "100.00") == Decimal("100.00")
+
+
+def test_the_smallest_payment_a_cent_is_matched(conn, pmc, lease):
+    fee = charge(conn, pmc.pmc_id, lease, JAN_1, "0.01", "fee")
+
+    assert apply_payment(conn, pmc.pmc_id, fee, pay_rent(conn, pmc, "0.01"), "0.01") == CENT
 
 
 def test_a_transfer_never_pays_more_than_it_moved(conn, pmc, lease):

@@ -52,7 +52,7 @@ BEGIN
         RAISE EXCEPTION 'trust: a rent roll is as of a day; none was given'
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id) THEN
+    IF NOT EXISTS (SELECT pmc.pmc_id FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id) THEN
         RAISE EXCEPTION 'trust: no PMC %', p_pmc_id
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
@@ -151,13 +151,15 @@ BEGIN
                coalesce((
                    SELECT sum(h.deposits) FROM held AS h
                    WHERE g.on_current IS NULL OR g.on_current = EXISTS (
-                       SELECT 1 FROM current_tenants AS ct WHERE ct.tenant_id = h.tenant_id
+                       SELECT ct.tenant_id FROM current_tenants AS ct
+                       WHERE ct.tenant_id = h.tenant_id
                    )
                ), 0.00),
                coalesce((
                    SELECT sum(h.prepaid) FROM held AS h
                    WHERE g.on_current IS NULL OR g.on_current = EXISTS (
-                       SELECT 1 FROM current_tenants AS ct WHERE ct.tenant_id = h.tenant_id
+                       SELECT ct.tenant_id FROM current_tenants AS ct
+                       WHERE ct.tenant_id = h.tenant_id
                    )
                ), 0.00),
                coalesce((

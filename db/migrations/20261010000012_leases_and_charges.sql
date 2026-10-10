@@ -171,7 +171,7 @@ BEGIN
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     IF EXISTS (
-        SELECT 1 FROM unnest(p_tenant_ids) AS r (tenant_id)
+        SELECT r.tenant_id FROM unnest(p_tenant_ids) AS r (tenant_id)
         LEFT JOIN trust_tenants AS t ON t.id = r.tenant_id AND t.pmc_id = p_pmc_id
         WHERE t.property_id IS DISTINCT FROM v_property_id
     ) THEN
@@ -275,11 +275,11 @@ BEGIN
     FROM trust_leases AS l JOIN trust_units AS u ON u.id = l.unit_id
     WHERE l.id = v_charge.lease_id;
     IF NOT EXISTS (
-        SELECT 1 FROM trust_ledger_accounts AS t
+        SELECT t.ledger_account_id FROM trust_ledger_accounts AS t
         WHERE t.ledger_account_id = v_transfer.to_account_id AND t.pmc_id = p_pmc_id
           AND t.kind = 'owner_property' AND t.property_id = v_property_id
     ) OR NOT EXISTS (
-        SELECT 1 FROM trust_ledger_accounts AS f
+        SELECT f.ledger_account_id FROM trust_ledger_accounts AS f
         WHERE f.ledger_account_id = v_transfer.from_account_id AND f.pmc_id = p_pmc_id
           AND (
               f.kind = 'bank_cash'
