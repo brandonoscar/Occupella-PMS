@@ -410,8 +410,9 @@ BEGIN
         RETURN v_taken.amount;  -- a retry: the original draw
     END IF;
 
+    -- pgledger dates a transfer with no date now, so the reserve is today's.
     v_reserve := coalesce((
-        trust_agreement_on(p_account, (p_event_at AT TIME ZONE 'UTC')::date)
+        trust_agreement_on(p_account, (coalesce(p_event_at, now()) AT TIME ZONE 'UTC')::date)
     ).reserve, 0);
     SELECT a.balance - v_reserve INTO v_available
     FROM pgledger_accounts AS a WHERE a.id = p_account;

@@ -184,6 +184,22 @@ def test_a_bounce_in_the_period_counts_against_it(conn, pmc, owner, lease):
     assert fee_rows(conn, owner) == [(JAN_1, FEB_1, Decimal("-500.00"), Decimal("0.00"), False)]
 
 
+def test_a_bounce_at_midnight_utc_counts_in_the_period_that_starts_then(conn, pmc, owner, lease):
+    add_agreement(conn, pmc.pmc_id, owner, JAN_1, fee_percent="10")
+    january = collect(conn, pmc, lease, RENT, at(date(2026, 1, 3)))
+    february = collect(conn, pmc, lease, RENT, at(date(2026, 2, 3)), due=FEB_1)
+    for (rent, check), amount, when in [
+        (january, "500.00", at(FEB_1, 0, 0)),  # February's first moment
+        (february, "300.00", at(MAR_1, 0, 0)),  # March's first moment
+    ]:
+        (returned,) = transfer_batch(conn, [(owner, pmc.operating_cash, amount)], when)
+        reverse_payment(conn, pmc.pmc_id, rent, check, returned, amount)
+
+    # February: 1500.00 collected less the 500.00 that bounced at its first moment. The 300.00
+    # that bounced at March's first moment is March's.
+    assert post_management_fee(conn, pmc.pmc_id, owner, FEB_1, MAR_1, at(MAR_1)) == 100
+
+
 def test_taking_the_fee_again_returns_it_and_posts_once(conn, pmc, owner, lease):
     add_agreement(conn, pmc.pmc_id, owner, JAN_1, fee_percent="8")
     collect(conn, pmc, lease, RENT, at(date(2026, 1, 3)))
@@ -200,7 +216,9 @@ def test_a_period_overlapping_one_taken_is_refused(conn, pmc, owner, lease):
 
     with pytest.raises(psycopg.errors.ExclusionViolation, match="overlaps"):
         post_management_fee(conn, pmc.pmc_id, owner, date(2026, 1, 15), date(2026, 2, 15), JAN_31)
-    assert post_management_fee(conn, pmc.pmc_id, owner, FEB_1, MAR_1, at(FEB_1)) == 10
+    # Periods that only touch don't overlap, whichever is taken first.
+    assert post_management_fee(conn, pmc.pmc_id, owner, MAR_1, date(2026, 4, 1), at(MAR_1)) == 10
+    assert post_management_fee(conn, pmc.pmc_id, owner, FEB_1, MAR_1, at(MAR_1)) == 10
 
 
 def test_the_agreement_in_force_on_the_periods_first_day_sets_the_terms(conn, pmc, owner, lease):
@@ -219,6 +237,19 @@ def test_a_zero_fee_is_recorded_without_a_transfer(conn, pmc, owner):
     assert post_management_fee(conn, pmc.pmc_id, owner, JAN_1, FEB_1, JAN_31) == 0
     assert fee_rows(conn, owner) == [(JAN_1, FEB_1, 0, 0, False)]
     assert transfers_between(conn, owner, pmc.pmc_income) == []
+
+
+def test_fees_of_a_cent_are_taken(conn, pmc, owner, lease):
+    # Only a fee of 0.00 is recorded without a transfer; the smallest fees still move money.
+    add_agreement(conn, pmc.pmc_id, owner, JAN_1, flat_fee="0.01", leasing_fee_percent="0.01")
+    transfer_batch(conn, [(pmc.operating_cash, owner, "1.00")], at(JAN_1))
+
+    assert post_management_fee(conn, pmc.pmc_id, owner, JAN_1, FEB_1, JAN_31) == Decimal("0.01")
+    assert post_leasing_fee(conn, pmc.pmc_id, lease, owner, JAN_31) == Decimal("0.15")
+    assert transfers_between(conn, owner, pmc.pmc_income) == [
+        (Decimal("0.01"), "Management fee 2026-01-01 to 2026-01-31"),
+        (Decimal("0.15"), "Leasing fee, lease from 2026-01-01"),  # 0.01% of 1500.00
+    ]
 
 
 def test_a_fee_the_owner_cannot_cover_is_refused_and_nothing_written(conn, pmc, owner):
@@ -410,6 +441,30 @@ def test_a_draw_with_nothing_available_is_refused(conn, pmc, owner):
 
     with pytest.raises(psycopg.errors.CheckViolation, match="0 is available"):
         draw_owner(conn, pmc.pmc_id, owner, "draw-1", None, JAN_31)
+
+
+def test_a_draw_pays_the_last_cent_above_the_reserve(conn, pmc, owner):
+    add_agreement(conn, pmc.pmc_id, owner, JAN_1, reserve="200")
+    transfer_batch(conn, [(pmc.operating_cash, owner, "200.01")], at(date(2026, 1, 3)))
+
+    assert draw_owner(conn, pmc.pmc_id, owner, "draw-1", None, JAN_31) == Decimal("0.01")
+
+
+def test_a_draw_with_no_date_is_dated_now_and_keeps_todays_reserve(conn, pmc, owner):
+    # pgledger dates a transfer with no date now; the reserve must be the one in force now, not
+    # none at all.
+    add_agreement(conn, pmc.pmc_id, owner, JAN_1, reserve="200")
+    transfer_batch(conn, [(pmc.operating_cash, owner, RENT)], at(date(2026, 1, 3)))
+
+    assert draw_owner(conn, pmc.pmc_id, owner, "draw-1", None, None) == 1300
+    assert balance(conn, owner) == 200
+    (dated,) = conn.execute(
+        "SELECT t.event_at BETWEEN now() - interval '1 minute' AND now() FROM trust_owner_draws d"
+        " JOIN pgledger_transfers t ON t.id = d.transfer_id"
+        " WHERE d.pmc_id = %s AND d.request_key = 'draw-1'",
+        (pmc.pmc_id,),
+    ).fetchone()
+    assert dated
 
 
 def test_the_reserve_in_force_on_the_draws_day_applies(conn, pmc, owner):
