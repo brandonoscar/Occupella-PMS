@@ -54,7 +54,7 @@ python_paths = []
 # Measured overall coverage, rounded down to 0.1. It only goes up: coverage.yml fails when
 # coverage drops below it, and also when coverage rose and this wasn't raised to match.
 python_lines = 99.4
-sql_statements = 99.5
+sql_statements = 99.6
 sql_branches = 99.5
 
 [mutation]
