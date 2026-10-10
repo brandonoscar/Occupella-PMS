@@ -258,6 +258,27 @@ tests = [
   "tests/test_work_orders.py::test_a_cancelled_work_order_takes_no_bills",
 ]
 
+[[invariant]]
+id = "rent-run-once-per-lease-and-date"
+statement = "The rent run charges every lease in effect on the due date (from its first day through its last) its monthly rent, once per lease and due date, however often it runs or how many run at once; leases of other PMCs are never charged."
+tests = [
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+  "tests/test_rent_automation.py::test_only_leases_in_effect_on_the_due_date_are_charged",
+  "tests/test_rent_automation.py::test_running_again_charges_nothing_more",
+  "tests/test_rent_automation.py::test_two_runs_at_once_charge_each_lease_once",
+]
+
+[[invariant]]
+id = "late-fee-once-per-late-rent"
+statement = "A rent charge still unpaid at the end of its last day of grace (UTC), counting payments dated before then net of bounces dated before then, is charged one late fee: the flat fee plus the percent of what was unpaid, rounded to the cent and capped, under the property's terms in force on the rent's due date. Never more than one per rent, and none for a fee of 0.00."
+tests = [
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+  "tests/test_rent_automation.py::test_a_payment_counts_only_if_dated_before_the_grace_runs_out",
+  "tests/test_rent_automation.py::test_each_rent_is_charged_one_late_fee",
+  "tests/test_rent_automation.py::test_the_terms_in_force_on_the_rents_due_date_apply",
+  "tests/test_rent_automation.py::test_two_runs_at_once_charge_one_late_fee",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]

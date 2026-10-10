@@ -91,6 +91,9 @@ records management agreements, takes fees and pays owners, and checks:
 - each management fee matches its agreement and the rent collected, once per period; a leasing
   fee once per lease; a draw never pays out more than the balance above the reserve, and the
   owner balances report as of any day matches the model.
+- the rent run charges every lease in effect on its due date once; each late rent is charged one
+  late fee, worked from what was unpaid when its grace ran out under the terms in force on its
+  due date.
 
 A third machine enters vendor bills (one vendor has no account to pay from), records owners'
 approvals, sets bills aside, pays them and pays owners, and checks:

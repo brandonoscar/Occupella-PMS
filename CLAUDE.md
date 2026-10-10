@@ -74,10 +74,11 @@ required invariant, report and self-host step.
   `trust_open_ledger_account`, `trust_open_vendor_account`, `trust_approve_reconciliation`,
   `trust_open_lease`, `trust_end_lease`, `trust_apply_payment`, `trust_reverse_payment`,
   `trust_post_management_fee`, `trust_post_leasing_fee`, `trust_draw_owner`,
-  `trust_set_aside_bill` and `trust_pay_bill`, which run as the table owner. It can't call pgledger's posting functions: every posting it
-  makes goes through `trust_post_transfers`, which takes an idempotency key, unique per PMC, so
-  it is safe to retry: the same key returns the original transfers, and a different posting
-  under it is refused.
+  `trust_set_aside_bill`, `trust_pay_bill` and `trust_assess_late_fees`, which run as the
+  table owner (`trust_charge_rent_due` runs with the app's own grants). It can't call
+  pgledger's posting functions: every posting it makes goes through `trust_post_transfers`,
+  which takes an idempotency key, unique per PMC, so it is safe to retry: the same key returns
+  the original transfers, and a different posting under it is refused.
 - `trust_ai_agent`, the role behind Occupella's API key, reads what `trust_app` reads and runs
   the reports. It holds no other grant: no write on any table, no function that writes. Grant
   it a new table's SELECT only if `trust_app` has it, and never a write path.
@@ -120,6 +121,11 @@ required invariant, report and self-host step.
 - Work orders: a job at a property (maybe one of its units). Its steps (assigned to a vendor,
   completed, cancelled) are append-only and in order, and nothing follows a close. A bill may
   name a work order of its property, never a cancelled one.
+- Rent automation: `trust_charge_rent_due` charges every lease in effect on a due date its rent,
+  once per lease and date. A property's late fee terms (grace days, flat, percent of unpaid,
+  cap) are in force from a date; `trust_assess_late_fees` charges a rent still unpaid at the
+  end of its last grace day (UTC) one late fee under the terms in force on its due date. READ
+  COMMITTED.
 
 ## Run the checks
 

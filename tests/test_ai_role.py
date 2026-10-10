@@ -10,11 +10,14 @@ import psycopg
 import pytest
 from helpers import (
     add_agreement,
+    add_late_fee_policy,
     add_unit,
     add_work_order,
     apply_payment,
     approve,
+    assess_late_fees,
     charge,
+    charge_rent_due,
     enter_bill,
     make_pmc,
     open_lease,
@@ -175,6 +178,11 @@ WRITES = {
         " SELECT %s, id, 'cancelled', now() FROM trust_work_orders WHERE pmc_id = %s",
         (pmc.pmc_id, pmc.pmc_id),
     ),
+    "run the rent": lambda c, pmc, *_: charge_rent_due(c, pmc.pmc_id, FEB.date()),
+    "record late fee terms": lambda c, pmc, *_: add_late_fee_policy(
+        c, pmc.pmc_id, pmc.owners[0].property_id, FEB.date(), 5, "50"
+    ),
+    "assess late fees": lambda c, pmc, *_: assess_late_fees(c, pmc.pmc_id, FEB.date()),
 }
 
 

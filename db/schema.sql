@@ -661,6 +661,124 @@ $$;
 
 
 --
+-- Name: trust_assess_late_fees(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_assess_late_fees(p_pmc_id uuid, p_as_of date) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_rent record;
+    v_cutoff timestamptz;
+    v_unpaid numeric;
+    v_fee numeric;
+    v_fee_id uuid;
+    v_charged integer := 0;
+BEGIN
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'trust: assess late fees at READ COMMITTED, not %',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
+    IF p_as_of IS NULL THEN
+        RAISE EXCEPTION 'trust: late fees are assessed as of a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    FOR v_rent IN
+        SELECT c.id, c.lease_id, c.due_on, c.amount, p.id AS policy_id, p.grace_days,
+               p.flat_fee, p.percent, p.maximum
+        FROM trust_charges AS c
+        JOIN trust_leases AS l ON l.id = c.lease_id
+        JOIN trust_units AS u ON u.id = l.unit_id
+        -- The terms in force on the rent's due date: the latest starting on or before it.
+        JOIN LATERAL (
+            SELECT t.id, t.grace_days, t.flat_fee, t.percent, t.maximum
+            FROM trust_late_fee_policies AS t
+            WHERE t.property_id = u.property_id AND t.starts_on <= c.due_on
+            ORDER BY t.starts_on DESC
+            LIMIT 1
+        ) AS p ON true
+        WHERE c.pmc_id = p_pmc_id AND c.kind = 'rent'
+          AND c.due_on + p.grace_days < p_as_of
+          AND NOT EXISTS (
+              SELECT f.rent_charge_id FROM trust_late_fees AS f WHERE f.rent_charge_id = c.id
+          )
+        ORDER BY c.id  -- one lock order for every run, so two at once can't deadlock
+    LOOP
+        PERFORM c.id FROM trust_charges AS c WHERE c.id = v_rent.id FOR NO KEY UPDATE;
+        CONTINUE WHEN EXISTS (
+            SELECT f.rent_charge_id FROM trust_late_fees AS f WHERE f.rent_charge_id = v_rent.id
+        );
+
+        v_cutoff := (v_rent.due_on + v_rent.grace_days + 1)::timestamp AT TIME ZONE 'UTC';
+        v_unpaid := v_rent.amount
+            - coalesce((
+                SELECT sum(cp.amount)
+                FROM trust_charge_payments AS cp
+                JOIN pgledger_transfers AS t ON t.id = cp.transfer_id
+                WHERE cp.charge_id = v_rent.id AND t.event_at < v_cutoff
+            ), 0)
+            + coalesce((
+                SELECT sum(r.amount)
+                FROM trust_payment_reversals AS r
+                JOIN pgledger_transfers AS t ON t.id = r.reversal_id
+                WHERE r.charge_id = v_rent.id AND t.event_at < v_cutoff
+            ), 0);
+        CONTINUE WHEN v_unpaid <= 0;
+        v_fee := least(
+            round(v_rent.flat_fee + v_rent.percent / 100 * v_unpaid, 2),
+            v_rent.maximum
+        );
+        CONTINUE WHEN v_fee <= 0;
+
+        INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)
+        VALUES (
+            p_pmc_id, v_rent.lease_id, v_rent.due_on + v_rent.grace_days + 1, 'fee', v_fee,
+            'Late fee, rent due ' || to_char(v_rent.due_on, 'YYYY-MM-DD')
+        )
+        RETURNING id INTO v_fee_id;
+        INSERT INTO trust_late_fees (rent_charge_id, pmc_id, policy_id, unpaid, fee, fee_charge_id)
+        VALUES (v_rent.id, p_pmc_id, v_rent.policy_id, v_unpaid, v_fee, v_fee_id);
+        v_charged := v_charged + 1;
+    END LOOP;
+    RETURN v_charged;
+END;
+$$;
+
+
+--
+-- Name: trust_charge_rent_due(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_charge_rent_due(p_pmc_id uuid, p_due_on date) RETURNS integer
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_charged integer;
+BEGIN
+    IF p_due_on IS NULL THEN
+        RAISE EXCEPTION 'trust: rent is charged for a due date; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)
+    SELECT l.pmc_id, l.id, p_due_on, 'rent', l.monthly_rent,
+           'Rent due ' || to_char(p_due_on, 'YYYY-MM-DD')
+    FROM trust_leases AS l
+    WHERE l.pmc_id = p_pmc_id AND l.starts_on <= p_due_on
+      AND (l.ends_on IS NULL OR p_due_on <= l.ends_on)
+    ORDER BY l.id
+    ON CONFLICT (lease_id, due_on) WHERE kind = 'rent' DO NOTHING;
+    GET DIAGNOSTICS v_charged = ROW_COUNT;
+    RETURN v_charged;
+END;
+$$;
+
+
+--
 -- Name: trust_check_account_bank_kind(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2541,6 +2659,44 @@ CREATE TABLE public.trust_idempotency_keys (
 
 
 --
+-- Name: trust_late_fee_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_late_fee_policies (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    property_id uuid NOT NULL,
+    starts_on date NOT NULL,
+    grace_days integer NOT NULL,
+    flat_fee numeric DEFAULT 0 NOT NULL,
+    percent numeric DEFAULT 0 NOT NULL,
+    maximum numeric,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_late_fee_policies_flat_fee_check CHECK ((flat_fee >= (0)::numeric)),
+    CONSTRAINT trust_late_fee_policies_grace_days_check CHECK (((grace_days >= 0) AND (grace_days <= 365))),
+    CONSTRAINT trust_late_fee_policies_maximum_check CHECK ((maximum >= (0)::numeric)),
+    CONSTRAINT trust_late_fee_policies_percent_check CHECK (((percent >= (0)::numeric) AND (percent <= (100)::numeric)))
+);
+
+
+--
+-- Name: trust_late_fees; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_late_fees (
+    rent_charge_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    policy_id uuid NOT NULL,
+    unpaid numeric NOT NULL,
+    fee numeric NOT NULL,
+    fee_charge_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_late_fees_fee_check CHECK ((fee > (0)::numeric)),
+    CONSTRAINT trust_late_fees_unpaid_check CHECK ((unpaid > (0)::numeric))
+);
+
+
+--
 -- Name: trust_lease_tenants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2891,6 +3047,38 @@ ALTER TABLE ONLY public.trust_idempotency_keys
 
 
 --
+-- Name: trust_late_fee_policies trust_late_fee_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_late_fee_policies
+    ADD CONSTRAINT trust_late_fee_policies_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_late_fee_policies trust_late_fee_policies_property_id_starts_on_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_late_fee_policies
+    ADD CONSTRAINT trust_late_fee_policies_property_id_starts_on_key UNIQUE (property_id, starts_on);
+
+
+--
+-- Name: trust_late_fees trust_late_fees_fee_charge_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_late_fees
+    ADD CONSTRAINT trust_late_fees_fee_charge_id_key UNIQUE (fee_charge_id);
+
+
+--
+-- Name: trust_late_fees trust_late_fees_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_late_fees
+    ADD CONSTRAINT trust_late_fees_pkey PRIMARY KEY (rent_charge_id);
+
+
+--
 -- Name: trust_lease_tenants trust_lease_tenants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3168,6 +3356,13 @@ CREATE UNIQUE INDEX trust_charges_one_rent_per_due_date ON public.trust_charges 
 
 
 --
+-- Name: trust_late_fees_policy_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_late_fees_policy_id ON public.trust_late_fees USING btree (policy_id);
+
+
+--
 -- Name: trust_lease_tenants_tenant_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3389,6 +3584,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_idempotency_keys FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_late_fee_policies trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_late_fee_policies FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_late_fees trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_late_fees FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -3689,6 +3898,54 @@ ALTER TABLE ONLY public.trust_charges
 
 ALTER TABLE ONLY public.trust_idempotency_keys
     ADD CONSTRAINT trust_idempotency_keys_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_late_fee_policies trust_late_fee_policies_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_late_fee_policies
+    ADD CONSTRAINT trust_late_fee_policies_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_late_fee_policies trust_late_fee_policies_pmc_id_property_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_late_fee_policies
+    ADD CONSTRAINT trust_late_fee_policies_pmc_id_property_id_fkey FOREIGN KEY (pmc_id, property_id) REFERENCES public.trust_properties(pmc_id, id);
+
+
+--
+-- Name: trust_late_fees trust_late_fees_pmc_id_fee_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_late_fees
+    ADD CONSTRAINT trust_late_fees_pmc_id_fee_charge_id_fkey FOREIGN KEY (pmc_id, fee_charge_id) REFERENCES public.trust_charges(pmc_id, id);
+
+
+--
+-- Name: trust_late_fees trust_late_fees_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_late_fees
+    ADD CONSTRAINT trust_late_fees_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_late_fees trust_late_fees_pmc_id_rent_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_late_fees
+    ADD CONSTRAINT trust_late_fees_pmc_id_rent_charge_id_fkey FOREIGN KEY (pmc_id, rent_charge_id) REFERENCES public.trust_charges(pmc_id, id);
+
+
+--
+-- Name: trust_late_fees trust_late_fees_policy_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_late_fees
+    ADD CONSTRAINT trust_late_fees_policy_id_fkey FOREIGN KEY (policy_id) REFERENCES public.trust_late_fee_policies(id);
 
 
 --
@@ -4080,4 +4337,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261010000015'),
     ('20261010000016'),
     ('20261010000017'),
-    ('20261010000018');
+    ('20261010000018'),
+    ('20261010000019');

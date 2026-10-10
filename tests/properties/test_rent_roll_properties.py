@@ -19,7 +19,10 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     collected in its period (net of bounces), or its minimum, plus its flat fee, taken once per
     period with no two periods of an account overlapping; a leasing fee is taken once per
     lease; a draw never pays out more than the balance above the reserve, and its request key
-    pays once.
+    pays once;
+  - late fees are the model's: the rent run (run_the_rent) charges each lease in effect on the
+    due date once, and each rent still unpaid when its grace ran out is charged one late fee,
+    worked from what was unpaid then under the terms in force on its due date.
 
 The rule check_owner_balances reads the owner balances report as of a random day and compares
 it with the model. The rule check_the_rent_roll reads the roll as of a random day, as any role
@@ -39,10 +42,13 @@ import psycopg
 import pytest
 from helpers import (
     add_agreement,
+    add_late_fee_policy,
     add_tenant,
     add_unit,
     apply_payment,
+    assess_late_fees,
     charge,
+    charge_rent_due,
     draw_owner,
     end_lease,
     make_pmc,
@@ -126,6 +132,14 @@ class Terms:
     reserve: Decimal
 
 
+@dataclass(frozen=True)
+class LateTerms:
+    grace: int
+    flat: Decimal
+    percent: Decimal
+    maximum: Decimal | None
+
+
 def month_start(n):
     """The first day of the n-th month after BASE."""
     return date(BASE.year + n // 12, n % 12 + 1, 1)
@@ -185,6 +199,10 @@ class RentRollMachine(RuleBasedStateMachine):
         self.leasing: dict[UUID, tuple[str, Decimal]] = {}
         self.draws: dict[str, tuple[str, Decimal]] = {}
         self.draw_transfers: set[str] = set()
+        # Rent automation: (property index, first day) -> late fee terms; rent charge ->
+        # (unpaid when its grace ran out, fee, the fee's charge).
+        self.late_terms: dict[tuple[int, date], LateTerms] = {}
+        self.late_fees: dict[UUID, tuple[Decimal, Decimal, UUID]] = {}
 
     # --- helpers -------------------------------------------------------------------------
 
@@ -935,6 +953,169 @@ class RentRollMachine(RuleBasedStateMachine):
         with pytest.raises(refusal[0], match=refusal[1]):
             send()
 
+    # --- rules: rent automation ----------------------------------------------------------
+
+    @rule(
+        role=ROLES,
+        property_index=st.integers(0, 1),
+        start=DAYS,
+        grace=st.sampled_from([0, 3, 10]),
+        flat=st.sampled_from(["0", "25.00"]),
+        percent=st.sampled_from(["0", "5", "10"]),
+        maximum=st.sampled_from([None, "0", "40.00"]),
+    )
+    def record_late_fee_terms(self, role, property_index, start, grace, flat, percent, maximum):
+        starts_on = BASE + timedelta(days=start)
+
+        def send():
+            add_late_fee_policy(
+                self.conns[role],
+                self.pmc_id,
+                self.properties[property_index],
+                starts_on,
+                grace,
+                flat,
+                percent,
+                maximum,
+            )
+
+        if (property_index, starts_on) in self.late_terms:  # new terms need a new day
+            with pytest.raises(psycopg.errors.UniqueViolation):
+                send()
+            return
+        send()
+        self.late_terms[(property_index, starts_on)] = LateTerms(
+            grace, Decimal(flat), Decimal(percent), None if maximum is None else Decimal(maximum)
+        )
+
+    def late_terms_on(self, property_index, day):
+        starts = [s for (p, s) in self.late_terms if p == property_index and s <= day]
+        return self.late_terms[(property_index, max(starts))] if starts else None
+
+    @precondition(lambda self: self.leases)
+    @rule(data=st.data(), role=ROLES, day=DAYS)
+    def run_the_rent(self, data, role, day):
+        """Usually on a day some lease is in effect, so the run charges something."""
+        covered = sorted(
+            {d for lease in self.leases.values() for d in (lease.starts_on, lease.ends_on) if d}
+        )
+        self.charge_rent_on(
+            role, data.draw(st.sampled_from([*covered, BASE + timedelta(days=day)]))
+        )
+
+    def charge_rent_on(self, role, due_on):
+        due = [
+            lease_id
+            for lease_id, lease in self.leases.items()
+            if lease.covers(due_on)
+            and not any(
+                c.lease_id == lease_id and c.due_on == due_on and c.kind == "rent"
+                for c in self.charges.values()
+            )
+        ]
+
+        assert charge_rent_due(self.conns[role], self.pmc_id, due_on) == len(due)
+
+        for lease_id in due:
+            (charge_id,) = self.conn.execute(
+                "SELECT id FROM trust_charges WHERE lease_id = %s AND due_on = %s"
+                " AND kind = 'rent'",
+                (lease_id, due_on),
+            ).fetchone()
+            self.charges[charge_id] = Charge(lease_id, due_on, "rent", self.leases[lease_id].rent)
+
+    def unpaid_by(self, charge_id, cutoff):
+        """A charge less its matches dated before cutoff, plus what of them bounced back
+        before it."""
+        paid = sum(
+            (
+                a
+                for (c, t), a in self.matches.items()
+                if c == charge_id and self.transfers[t].event_at < cutoff
+            ),
+            Decimal(0),
+        )
+        back = sum(
+            (
+                a
+                for (c, _, r), a in self.reversals.items()
+                if c == charge_id and self.transfers[r].event_at < cutoff
+            ),
+            Decimal(0),
+        )
+        return self.charges[charge_id].amount - paid + back
+
+    @rule(role=ROLES, day=st.integers(min_value=0, max_value=640))
+    def assess_late_fees_as_of(self, role, day):
+        self.assess(role, BASE + timedelta(days=day))
+
+    @precondition(lambda self: self.leases)
+    @rule(
+        data=st.data(),
+        role=ROLES,
+        after=st.integers(min_value=0, max_value=60),
+        grace=st.sampled_from([0, 3]),
+        paid=st.sampled_from(["nothing", "half", "all", "all, a second late"]),
+    )
+    def let_a_rent_go_late(self, data, role, after, grace, paid):
+        """The usual late month: late fee terms in force (recorded if none are), the rent run
+        on a day the lease is in effect, a payment dated just before the grace runs out or
+        just after, then the late fee run."""
+        lease_id = data.draw(st.sampled_from(list(self.leases)))
+        lease = self.leases[lease_id]
+        due_on = lease.starts_on + timedelta(days=after)
+        if not lease.covers(due_on):
+            due_on = lease.starts_on
+        place = lease.unit.property_index
+        if self.late_terms_on(place, due_on) is None:
+            add_late_fee_policy(
+                self.conn, self.pmc_id, self.properties[place], due_on, grace, "25.00", "10"
+            )
+            self.late_terms[(place, due_on)] = LateTerms(grace, Decimal(25), Decimal(10), None)
+        self.charge_rent_on(role, due_on)
+        rent = next(
+            c
+            for c, bill in self.charges.items()
+            if bill.lease_id == lease_id and bill.due_on == due_on and bill.kind == "rent"
+        )
+        terms = self.late_terms_on(place, due_on)
+        late_day = due_on + timedelta(days=terms.grace + 1)
+        cutoff = datetime.combine(late_day, time(0), tzinfo=UTC)
+        owed = self.charges[rent].amount - self.paid_on(rent)
+        amount = {"nothing": 0, "half": to_cents(owed / 2)}.get(paid, owed)
+        if amount > 0:
+            when = cutoff if paid.endswith("late") else cutoff - timedelta(seconds=1)
+            payment = self.pay_in("cash", self.tenants[0], self.owner_account[place], amount, when)
+            self.attempt_match(role, rent, payment, amount)
+        self.assess(role, late_day + timedelta(days=data.draw(st.integers(0, 5))))
+
+    def assess(self, role, as_of):
+        expected = {}
+        for charge_id, rent in self.charges.items():
+            if rent.kind != "rent" or charge_id in self.late_fees:
+                continue
+            terms = self.late_terms_on(self.leases[rent.lease_id].unit.property_index, rent.due_on)
+            if terms is None or rent.due_on + timedelta(days=terms.grace) >= as_of:
+                continue
+            late_day = rent.due_on + timedelta(days=terms.grace + 1)
+            unpaid = self.unpaid_by(charge_id, datetime.combine(late_day, time(0), tzinfo=UTC))
+            if unpaid <= 0:
+                continue
+            fee = to_cents(terms.flat + terms.percent / 100 * unpaid)
+            if terms.maximum is not None:
+                fee = min(fee, terms.maximum)
+            if fee > 0:
+                expected[charge_id] = (unpaid, fee, late_day)
+
+        assert assess_late_fees(self.conns[role], self.pmc_id, as_of) == len(expected)
+
+        for rent_id, (unpaid, fee, late_day) in expected.items():
+            (fee_id,) = self.conn.execute(
+                "SELECT fee_charge_id FROM trust_late_fees WHERE rent_charge_id = %s", (rent_id,)
+            ).fetchone()
+            self.late_fees[rent_id] = (unpaid, fee, fee_id)
+            self.charges[fee_id] = Charge(self.charges[rent_id].lease_id, late_day, "fee", fee)
+
     # --- rules: the reports --------------------------------------------------------------
 
     @rule(
@@ -985,7 +1166,16 @@ class RentRollMachine(RuleBasedStateMachine):
     @rule(
         data=st.data(),
         write=st.sampled_from(
-            ["open a lease", "end a lease", "charge", "match a payment", "reverse a payment"]
+            [
+                "open a lease",
+                "end a lease",
+                "charge",
+                "match a payment",
+                "reverse a payment",
+                "run the rent",
+                "assess late fees",
+                "record late fee terms",
+            ]
         ),
     )
     def the_ai_role_cannot_write(self, data, write):
@@ -1006,6 +1196,12 @@ class RentRollMachine(RuleBasedStateMachine):
                 charge(ai, self.pmc_id, lease_id, lease.starts_on, "1.00", "fee")
             elif write == "match a payment":
                 apply_payment(ai, self.pmc_id, charge_id, transfer_id, "0.01")
+            elif write == "run the rent":
+                charge_rent_due(ai, self.pmc_id, lease.starts_on)
+            elif write == "assess late fees":
+                assess_late_fees(ai, self.pmc_id, LAST_DAY)
+            elif write == "record late fee terms":
+                add_late_fee_policy(ai, self.pmc_id, self.properties[0], LAST_DAY, 0, "1")
             else:
                 reverse_payment(ai, self.pmc_id, charge_id, transfer_id, transfer_id, "0.01")
 
@@ -1118,6 +1314,20 @@ class RentRollMachine(RuleBasedStateMachine):
             (self.pmc_id,),
         ).fetchall()
         assert {k: (a, amount) for k, a, amount in draws} == self.draws
+
+    @invariant()
+    def late_fees_are_the_models(self):
+        stored = self.conn.execute(
+            "SELECT f.rent_charge_id, f.unpaid, f.fee, f.fee_charge_id, c.lease_id, c.due_on,"
+            " c.kind, c.amount FROM trust_late_fees f JOIN trust_charges c"
+            " ON c.id = f.fee_charge_id WHERE f.pmc_id = %s",
+            (self.pmc_id,),
+        ).fetchall()
+        assert {r: (u, f, i) for r, u, f, i, *_ in stored} == self.late_fees
+        assert all(
+            Charge(lease, due, kind, amount) == self.charges[fee_id]
+            for _, _, _, fee_id, lease, due, kind, amount in stored
+        )
 
     @invariant()
     def the_rent_roll_ties_to_the_ledger(self):
