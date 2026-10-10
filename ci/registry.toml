@@ -352,3 +352,23 @@ tests = [
   "tests/test_unpaid_bills.py::test_a_bill_shows_from_its_date_until_it_is_paid",
   "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
 ]
+
+[[report]]
+id = "delinquency"
+statement = "Delinquency as of the end of a day (UTC): each lease that owes money, by property and unit, with its tenants and what it owes current, 1-30, 31-60, 61-90 and over 90 days past due; credits and payments toward charges not yet due come off the oldest charges first, so each lease's total is its balance due on the rent roll. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_delinquency.py::test_credits_and_money_paid_ahead_come_off_the_oldest_charges_first",
+  "tests/test_delinquency.py::test_each_leases_total_is_its_balance_due_on_the_rent_roll",
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+]
+
+[[report]]
+id = "tenant-ledger"
+statement = "Tenant ledger of one lease through the end of a day (UTC): its charges, payments and bounced payments in date order with the balance after each, closing at its balance due on the rent roll. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_tenant_ledger.py::test_charges_payments_and_bounces_run_in_date_order_with_a_balance",
+  "tests/test_tenant_ledger.py::test_the_closing_balance_is_the_rent_rolls_balance_due",
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+]

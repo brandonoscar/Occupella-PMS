@@ -84,6 +84,15 @@ REPORTS = {
         "SELECT * FROM trust_report_unpaid_bills(%s, %s)",
         lambda pmc, _: (pmc.pmc_id, date(2026, 2, 28)),
     ),
+    "delinquency": (
+        "SELECT * FROM trust_report_delinquency(%s, %s)",
+        lambda pmc, _: (pmc.pmc_id, date(2026, 2, 28)),
+    ),
+    "tenant ledger": (
+        "SELECT * FROM trust_report_tenant_ledger(%s,"
+        " (SELECT id FROM trust_leases WHERE pmc_id = %s), %s)",
+        lambda pmc, _: (pmc.pmc_id, pmc.pmc_id, date(2026, 2, 28)),
+    ),
 }
 
 

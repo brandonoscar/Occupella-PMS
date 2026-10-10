@@ -24,11 +24,14 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     due date once, and each rent still unpaid when its grace ran out is charged one late fee,
     worked from what was unpaid then under the terms in force on its due date.
 
-The rule check_owner_balances reads the owner balances report as of a random day and compares
-it with the model. The rule check_the_rent_roll reads the roll as of a random day, as any role
-including the AI's (trust_ai_agent), and compares every line with the model's: which lease
-each unit is in, its tenants in byte order, the money held for them, what was charged and paid
-by then, and the totals. The AI's role is refused every write it tries, and nothing changes.
+The rule check_the_tenant_reports reads the delinquency report as of a random day and compares
+every lease line with the model's aging, and checks a lease's tenant ledger closes at its
+balance due. The rule check_owner_balances reads the owner balances report as of a random day
+and compares it with the model. The rule check_the_rent_roll reads the roll as of a random day,
+as any role including the AI's (trust_ai_agent), and compares every line with the model's: which
+lease each unit is in, its tenants in byte order, the money held for them, what was charged and
+paid by then, and the totals. The AI's role is refused every write it tries, and nothing
+changes.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
@@ -1161,6 +1164,113 @@ class RentRollMachine(RuleBasedStateMachine):
         )
         assert [row[0] for row in rows] == list(range(1, len(rows) + 1))
         assert [tuple(row[1:]) for row in rows[2:]] == expected
+
+    def paid_by(self, charge_id, cutoff):
+        """What of a charge was paid before cutoff, net of what bounced back before it."""
+        paid = sum(
+            (
+                a
+                for (c, t), a in self.matches.items()
+                if c == charge_id and self.transfers[t].event_at < cutoff
+            ),
+            Decimal(0),
+        )
+        back = sum(
+            (
+                a
+                for (c, _, r), a in self.reversals.items()
+                if c == charge_id and self.transfers[r].event_at < cutoff
+            ),
+            Decimal(0),
+        )
+        return paid - back
+
+    def aging(self, lease_id, as_of):
+        """(current, 1-30, 31-60, 61-90, over 90, total) a lease owes at the end of a day:
+        credits due by then and payments toward charges not yet due come off the oldest
+        charges first."""
+        cutoff = datetime.combine(as_of + timedelta(days=1), time(0), tzinfo=UTC)
+        mine = {c: bill for c, bill in self.charges.items() if bill.lease_id == lease_id}
+        offsets = sum(
+            (b.amount for b in mine.values() if b.kind == "credit" and b.due_on <= as_of),
+            Decimal(0),
+        ) + sum(
+            (
+                self.paid_by(c, cutoff)
+                for c, b in mine.items()
+                if b.kind != "credit" and b.due_on > as_of
+            ),
+            Decimal(0),
+        )
+        out = [Decimal(0)] * 5
+        for c, bill in sorted(
+            ((c, b) for c, b in mine.items() if b.kind != "credit" and b.due_on <= as_of),
+            key=lambda pair: (pair[1].due_on, pair[0]),
+        ):
+            left = bill.amount - self.paid_by(c, cutoff)
+            take = min(left, max(offsets, Decimal(0)))
+            offsets -= take
+            late = (as_of - bill.due_on).days
+            out[next(i for i, top in enumerate((0, 30, 60, 90, late)) if late <= top)] += (
+                left - take
+            )
+        return (*out, sum(out, Decimal(0)))
+
+    @precondition(lambda self: self.leases)
+    @rule(
+        role=st.sampled_from(["owner", "app", "ai"]), day=st.integers(min_value=-5, max_value=640)
+    )
+    def check_the_tenant_reports(self, role, day):
+        """The delinquency report line by line, and each lease's tenant ledger closing at its
+        balance due."""
+        as_of = BASE + timedelta(days=day)
+        conn = self.conns[role]
+        names = {t.tenant_id: t.name for t in self.tenants}
+        expected = []
+        for lease_id, lease in self.leases.items():
+            aged = self.aging(lease_id, as_of)
+            if aged[-1] > 0:
+                tenants = ", ".join(
+                    names[t] for t in sorted(lease.tenants, key=lambda t: (names[t].encode(), t))
+                )
+                expected.append(
+                    (
+                        self.property_names[lease.unit.property_index].encode(),
+                        lease.unit.name.encode(),
+                        lease.starts_on,
+                        (
+                            self.property_names[lease.unit.property_index],
+                            lease.unit.name,
+                            tenants,
+                            *aged,
+                        ),
+                    )
+                )
+        rows = conn.execute(
+            "SELECT property, unit, tenants, current_due, days_1_30, days_31_60, days_61_90,"
+            " over_90, total FROM trust_report_delinquency(%s, %s) WHERE item = 'lease'",
+            (self.pmc_id, as_of),
+        ).fetchall()
+        assert rows == [line for *_, line in sorted(expected, key=lambda e: e[:3])]
+
+        lease_id = min(self.leases)
+        cutoff = datetime.combine(as_of + timedelta(days=1), time(0), tzinfo=UTC)
+        balance = sum(
+            (
+                (-b.amount if b.kind == "credit" else b.amount)
+                for b in self.charges.values()
+                if b.lease_id == lease_id and b.due_on <= as_of
+            ),
+            Decimal(0),
+        ) - sum(
+            (self.paid_by(c, cutoff) for c, b in self.charges.items() if b.lease_id == lease_id),
+            Decimal(0),
+        )
+        closing = conn.execute(
+            "SELECT balance FROM trust_report_tenant_ledger(%s, %s, %s) WHERE item = 'balance'",
+            (self.pmc_id, lease_id, as_of),
+        ).fetchone()[0]
+        assert closing == balance
 
     @precondition(lambda self: self.leases)
     @rule(
