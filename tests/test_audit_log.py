@@ -330,6 +330,21 @@ def test_the_report_holds_the_period_and_no_other_pmcs_changes(conn, pmc):
     )
 
 
+def test_a_change_falls_in_the_period_of_its_own_day_in_utc(conn, pmc):
+    add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id)
+    (day,) = conn.execute(
+        "SELECT (max(at) AT TIME ZONE 'UTC')::date FROM trust_audit_log WHERE pmc_id = %s",
+        (pmc.pmc_id,),
+    ).fetchone()
+
+    def changes(start, end):
+        return [r for r in report(conn, pmc, start, end) if r[1] == "change"]
+
+    assert changes(day, day)[-1][6] == "units"  # the period's last day holds it
+    assert changes(day - timedelta(days=3), day - timedelta(days=1)) == []  # ended before it
+    assert changes(day + timedelta(days=1), day + timedelta(days=2)) == []  # starts after it
+
+
 def test_the_report_reads_the_same_in_any_time_zone_and_for_every_role(
     conn, app_conn, ai_conn, database_url, pmc
 ):
