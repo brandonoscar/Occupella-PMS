@@ -10,7 +10,7 @@ from decimal import Decimal
 
 import psycopg
 import pytest
-from helpers import make_pmc, transfer_batch
+from helpers import language_sorted_database, make_pmc, open_account, transfer_batch
 
 JAN = datetime(2026, 1, 1, tzinfo=UTC)
 FEB = datetime(2026, 2, 1, tzinfo=UTC)
@@ -128,3 +128,32 @@ def test_the_app_role_can_run_the_statement(conn, app_conn):
     transfer_batch(conn, [(pmc.operating_cash, owner.account, RENT)], event_at=JAN)
 
     assert statement(app_conn, pmc, owner.owner_id) == statement(conn, pmc, owner.owner_id)
+
+
+def test_properties_list_in_the_same_order_on_any_server(database_url):
+    # Language rules put "property a" before "Property b"; byte order puts "Property b" first.
+    # The statement must use byte order on every server.
+    with language_sorted_database(database_url) as conn:
+        pmc = make_pmc(conn)
+        owner = pmc.owners[0]
+        second = conn.execute(
+            "INSERT INTO trust_properties (pmc_id, display_name) VALUES (%s, 'Property b')"
+            " RETURNING id",
+            (pmc.pmc_id,),
+        ).fetchone()[0]
+        conn.execute(
+            "UPDATE trust_properties SET display_name = 'property a' WHERE id = %s",
+            (owner.property_id,),
+        )
+        accounts = [
+            owner.account,
+            open_account(
+                conn, pmc.pmc_id, pmc.operating_bank_id, "owner_property", owner.owner_id, second
+            ),
+        ]
+        for account in accounts:
+            transfer_batch(conn, [(pmc.operating_cash, account, RENT)], event_at=JAN)
+        rows = statement(conn, pmc, owner.owner_id)
+
+    properties = [prop for _, prop, _, item, *_ in rows if item == "opening balance"]
+    assert properties == ["Property b", "property a"]

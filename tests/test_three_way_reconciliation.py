@@ -1,5 +1,6 @@
 """trust_report_three_way_reconciliation: bank statement, trust journal and beneficiary ledgers
-for one approved reconciliation, with every difference listed (migration 20261009000009).
+for one approved reconciliation, with every difference listed (migration 20261009000009; ledger
+lines in byte order since 20261009000011).
 
 The golden case under tests/golden/cases/ pins the full layout; these check the rules behind it.
 """
@@ -8,7 +9,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 import psycopg
-from helpers import approve, make_pmc, transfer_batch
+from helpers import approve, language_sorted_database, make_pmc, transfer_batch
 
 JAN = datetime(2026, 1, 1, tzinfo=UTC)
 JAN_3 = datetime(2026, 1, 3, tzinfo=UTC)
@@ -112,3 +113,22 @@ def test_the_app_role_can_run_the_report(conn, app_conn):
     reconciliation = approve(conn, pmc.pmc_id, pmc.operating_bank_id, JAN, FEB)
 
     assert report(app_conn, pmc.pmc_id, reconciliation) == report(conn, pmc.pmc_id, reconciliation)
+
+
+def test_ledger_lines_list_in_the_same_order_on_any_server(database_url):
+    # Servers that sort text by language rules put "owner a" before "Owner b"; byte order puts
+    # "Owner b" first ("O" is 0x4F, "o" is 0x6F). The report must use byte order on both.
+    with language_sorted_database(database_url) as conn:
+        pmc = make_pmc(conn)
+        for owner, name in zip(pmc.owners, ["owner a", "Owner b"], strict=True):
+            conn.execute(
+                "UPDATE trust_owners SET display_name = %s WHERE id = %s", (name, owner.owner_id)
+            )
+            transfer_batch(conn, [(pmc.operating_cash, owner.account, "10.00")], JAN_3)
+        reconciliation = approve(conn, pmc.pmc_id, pmc.operating_bank_id, JAN, FEB)
+        rows = report(conn, pmc.pmc_id, reconciliation)
+
+    assert [detail for detail, _ in ledger_lines(rows)] == [
+        "owner_property: Owner b / Property 2",
+        "owner_property: owner a / Property 1",
+    ]

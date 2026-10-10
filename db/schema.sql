@@ -1059,7 +1059,7 @@ UNION ALL
 SELECT 10, 'difference: trust journal - beneficiary ledgers', NULL, l.journal - l.ledgers
 FROM legs AS l
 UNION ALL
-SELECT 10 + row_number() OVER (ORDER BY ld.holder, ld.ledger_account_id)::integer,
+SELECT 10 + row_number() OVER (ORDER BY ld.holder COLLATE "C", ld.ledger_account_id)::integer,
        'ledger', ld.holder, ld.balance
 FROM ledgers AS ld
 ORDER BY 1
@@ -1778,4 +1778,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261009000007'),
     ('20261009000008'),
     ('20261009000009'),
-    ('20261009000010');
+    ('20261009000010'),
+    ('20261009000011');

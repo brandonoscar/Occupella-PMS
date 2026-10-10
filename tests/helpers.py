@@ -3,13 +3,26 @@
 Every fixture is synthetic: no real names, addresses, bank numbers or tax IDs.
 """
 
+import os
+import shutil
 import uuid
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from decimal import Decimal
+from pathlib import Path
 from uuid import UUID
 
+import psycopg
 from psycopg import sql
 from psycopg.types.json import Jsonb
+
+from tools.check_rollback import Dbmate
+from tools.scratch_db import scratch_database
+
+MIGRATIONS = Path(
+    os.environ.get("PMS_MIGRATIONS_DIR", Path(__file__).resolve().parents[1] / "db/migrations")
+)
 
 # A WHERE clause for catalog queries: leave out objects that belong to an extension, such as
 # plpgsql_check, which only the coverage job's test database loads. Format in the catalog
@@ -265,3 +278,16 @@ def running_balance_breaks(connection, accounts) -> list[tuple]:
     its amount, and carry the account's version: 1, 2, 3... A ledger an auditor can walk line
     by line (Cal. Reg. 2831's running balance)."""
     return connection.execute(RUNNING_BALANCE_BREAKS, {"ids": list(accounts)}).fetchall()
+
+
+@contextmanager
+def language_sorted_database(database_url) -> Iterator[psycopg.Connection]:
+    """A connection to a fresh, fully migrated database that sorts text by English rules (ICU
+    en-US), as most servers do: "owner a" sorts before "Owner b" there, and after it in byte
+    order. The test database itself may sort either way, so a report's ordering is checked here."""
+    with scratch_database(database_url, "pms_icu", icu_locale="en-US") as url:
+        migrated = Dbmate(shutil.which("dbmate"), MIGRATIONS, url).run("--no-dump-schema", "up")
+        assert migrated.returncode == 0, migrated.stderr
+        with psycopg.connect(url, autocommit=True) as conn:
+            assert conn.execute("SELECT 'owner a' < 'Owner b'").fetchone() == (True,)
+            yield conn
