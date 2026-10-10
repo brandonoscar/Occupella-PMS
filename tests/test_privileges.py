@@ -268,6 +268,18 @@ def test_ai_role_calls_only_the_reports(conn, signature):
     assert allowed is (signature.startswith("trust_report_") or "PUBLIC" in FUNCTIONS[signature])
 
 
+def test_the_function_that_writes_the_ledger_keeps_its_search_path_pinned(conn):
+    # pgledger_create_transfers does every ledger write (trust_post_transfers calls it). It runs
+    # as its caller since 20261009000007 and keeps the search_path 20261009000002 pinned, so
+    # whoever calls it, the tables it writes are the schema's own, never look-alikes earlier on
+    # a session's search_path.
+    config = conn.execute(
+        "SELECT proconfig FROM pg_proc WHERE oid = %s::regprocedure",
+        ("pgledger_create_transfers(transfer_request[],timestamptz,jsonb)",),
+    ).fetchone()[0]
+    assert "search_path=public, pg_temp" in (config or [])
+
+
 def test_ai_role_has_no_powers_beyond_its_grants(conn):
     attributes = conn.execute(
         "SELECT rolsuper, rolcreaterole, rolcreatedb, rolcanlogin, rolreplication, rolbypassrls"

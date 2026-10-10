@@ -65,6 +65,9 @@ equivalent = [
   "20261009000005_trust_account_tie_out.sql: = to <>",
   # trust_app was never granted INSERT/UPDATE/DELETE/TRUNCATE on these tables.
   "20261009000002_ledger_append_only.sql: delete `REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON`",
+  # 20261009000007 revokes this grant of pgledger's posting functions from trust_app, so the
+  # database ends up the same with it or without it.
+  "20261009000002_ledger_append_only.sql: delete `GRANT EXECUTE ON FUNCTION`",
 ]
 
 [properties]
