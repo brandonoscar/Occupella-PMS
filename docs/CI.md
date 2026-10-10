@@ -98,6 +98,8 @@ records management agreements, takes fees and pays owners, and checks:
   due date.
 - the delinquency report matches the model line by line as of any day, and each lease's tenant
   ledger closes at its balance due.
+- a payment hold refuses every match of a payment dated inside it unless the transfer was
+  allowed on each hold in force; holds start on random days and on days the lease was paid.
 
 A third machine enters vendor bills (one vendor has no account to pay from), records owners'
 approvals, sets bills aside, pays them and pays owners, and checks:

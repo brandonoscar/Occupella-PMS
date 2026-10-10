@@ -466,6 +466,34 @@ def open_with_balances(
     )
 
 
+def hold_payments(connection, pmc_id, lease_id, starts_on, reason="Eviction filed") -> UUID:
+    """Stop payments dated on or after starts_on (UTC) being matched to the lease's charges."""
+    return _one(
+        connection,
+        "INSERT INTO trust_payment_holds (pmc_id, lease_id, starts_on, reason)"
+        " VALUES (%s, %s, %s, %s) RETURNING id",
+        (pmc_id, lease_id, starts_on, reason),
+    )
+
+
+def release_hold(connection, pmc_id, hold_id, ends_on, released_by="Manager 1") -> None:
+    """End a payment hold: payments dated on or after ends_on are matched again."""
+    connection.execute(
+        "INSERT INTO trust_payment_hold_releases (pmc_id, hold_id, ends_on, released_by)"
+        " VALUES (%s, %s, %s, %s)",
+        (pmc_id, hold_id, ends_on, released_by),
+    )
+
+
+def allow_payment(connection, pmc_id, hold_id, transfer_id, allowed_by="Manager 1") -> None:
+    """Accept one payment despite a hold."""
+    connection.execute(
+        "INSERT INTO trust_payment_hold_allowances (pmc_id, hold_id, transfer_id, allowed_by)"
+        " VALUES (%s, %s, %s, %s)",
+        (pmc_id, hold_id, transfer_id, allowed_by),
+    )
+
+
 def add_staff(connection, pmc_id, name="Staff 1") -> UUID:
     """A member of the PMC's staff, whom the application names on the writes they make."""
     return _one(
