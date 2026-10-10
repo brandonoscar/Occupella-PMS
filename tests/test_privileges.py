@@ -4,6 +4,9 @@ Money can only move through the ledger functions, so trust_app's grants are a mo
 pins them down completely: any grant added, dropped or widened by a migration fails here.
 `pms_nobody` stands in for any other role on the server (PUBLIC), such as a Supabase `anon`.
 
+trust_ai_agent, the role behind the API key Occupella will hold, reads what trust_app reads and
+runs the reports: it can't write a row or call a function that writes (the AI never moves money).
+
 Every table, view and function in the schema is pinned, not just the ones that exist today:
 test_every_relation_and_function_is_pinned fails on a new one until it is listed here, so no
 migration adds one without deciding who may use it. That matters most for functions, because
@@ -61,10 +64,14 @@ FUNCTIONS = {
     "trust_end_lease(uuid,uuid,date)": {"trust_app"},
     "trust_apply_payment(uuid,uuid,text,numeric)": {"trust_app"},
     "trust_reverse_payment(uuid,uuid,text,text,numeric)": {"trust_app"},
-    # Reports read trust records, so only the app; they run with the caller's own read grants.
-    "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app"},
-    "trust_report_owner_statement(uuid,uuid,timestamptz,timestamptz)": {"trust_app"},
-    "trust_report_rent_roll(uuid,date)": {"trust_app"},
+    # Reports read trust records, so only the app and the AI; they run with the caller's own
+    # read grants.
+    "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app", "trust_ai_agent"},
+    "trust_report_owner_statement(uuid,uuid,timestamptz,timestamptz)": {
+        "trust_app",
+        "trust_ai_agent",
+    },
+    "trust_report_rent_roll(uuid,date)": {"trust_app", "trust_ai_agent"},
     # pgledger's posting functions take no idempotency key, so a retried request could post
     # twice: only the owner calls them (trust_post_transfers does, as the owner).
     "pgledger_create_transfer(text,text,numeric,timestamptz,jsonb)": set(),
@@ -229,6 +236,49 @@ def test_no_role_but_the_owner_may_delete_or_truncate(conn):
         """
     ).fetchall()
     assert grants == []
+
+
+@pytest.mark.parametrize("table", TABLES)
+def test_ai_role_reads_only_what_the_app_reads(conn, table):
+    assert granted(conn, "trust_ai_agent", table) == TABLES[table] & {"SELECT"}
+
+
+def test_ai_role_holds_no_column_grant(conn):
+    # trust_app renames records through column grants; the AI role must hold none, since a
+    # column-level UPDATE or INSERT is a write the table-level pins above don't show.
+    grants = conn.execute(
+        """
+        SELECT c.relname, a.attname, x.privilege_type
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid, aclexplode(a.attacl) x
+        WHERE c.relnamespace = 'public'::regnamespace
+          AND x.grantee = 'trust_ai_agent'::regrole
+        """
+    ).fetchall()
+    assert grants == []
+
+
+@pytest.mark.parametrize("signature", FUNCTIONS)
+def test_ai_role_calls_only_the_reports(conn, signature):
+    # PUBLIC's functions are the id helpers, a balance check and trigger functions, none of
+    # which writes; everything else it may call is a report.
+    allowed = conn.execute(
+        "SELECT has_function_privilege('trust_ai_agent', %s, 'EXECUTE')", (signature,)
+    ).fetchone()[0]
+    assert allowed is (signature.startswith("trust_report_") or "PUBLIC" in FUNCTIONS[signature])
+
+
+def test_ai_role_has_no_powers_beyond_its_grants(conn):
+    attributes = conn.execute(
+        "SELECT rolsuper, rolcreaterole, rolcreatedb, rolcanlogin, rolreplication, rolbypassrls"
+        " FROM pg_roles WHERE rolname = 'trust_ai_agent'"
+    ).fetchone()
+    assert attributes == (False,) * 6
+    # Not a member of trust_app or any other role whose grants it would inherit.
+    memberships = conn.execute(
+        "SELECT roleid::regrole::text FROM pg_auth_members WHERE member = 'trust_ai_agent'::regrole"
+    ).fetchall()
+    assert memberships == []
 
 
 @pytest.mark.parametrize("table", TABLES)

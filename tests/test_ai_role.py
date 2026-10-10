@@ -1,0 +1,166 @@
+"""trust_ai_agent, the role behind the API key Occupella will hold (migration 20261010000015).
+
+The AI never moves money: it reads the books and runs the reports, and the database refuses
+every write it tries. tests/test_privileges.py pins the grants; these act as the role.
+"""
+
+from datetime import UTC, date, datetime
+
+import psycopg
+import pytest
+from helpers import (
+    add_unit,
+    apply_payment,
+    approve,
+    charge,
+    make_pmc,
+    open_lease,
+    post,
+    snapshot,
+    transfer_batch,
+)
+from psycopg import sql
+from test_privileges import TABLES
+
+JAN = datetime(2026, 1, 1, tzinfo=UTC)
+JAN_3 = datetime(2026, 1, 3, tzinfo=UTC)
+FEB = datetime(2026, 2, 1, tzinfo=UTC)
+
+
+@pytest.fixture
+def books(conn):
+    """A PMC with a month of activity: rent received and matched to its charge, a reconciled
+    January. (pmc, lease id, charge id, rent transfer id, reconciliation id)."""
+    pmc = make_pmc(conn)
+    tenant = conn.execute(
+        "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
+        (pmc.tenant_deposit,),
+    ).fetchone()[0]
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id)
+    lease = open_lease(conn, pmc.pmc_id, unit, date(2026, 1, 1), None, "1500.00", [tenant])
+    rent = charge(conn, pmc.pmc_id, lease, date(2026, 1, 1), "1500.00")
+    (paid,) = transfer_batch(conn, [(pmc.operating_cash, pmc.owners[0].account, "1500.00")], JAN_3)
+    apply_payment(conn, pmc.pmc_id, rent, paid, "1500.00")
+    reconciliation = approve(conn, pmc.pmc_id, pmc.operating_bank_id, JAN, FEB)
+    return pmc, lease, rent, paid, reconciliation
+
+
+REPORTS = {
+    "three-way reconciliation": (
+        "SELECT * FROM trust_report_three_way_reconciliation(%s, %s)",
+        lambda pmc, reconciliation: (pmc.pmc_id, reconciliation),
+    ),
+    "owner statement": (
+        "SELECT * FROM trust_report_owner_statement(%s, %s, %s, %s)",
+        lambda pmc, _: (pmc.pmc_id, pmc.owners[0].owner_id, JAN, FEB),
+    ),
+    "rent roll": (
+        "SELECT * FROM trust_report_rent_roll(%s, %s)",
+        lambda pmc, _: (pmc.pmc_id, date(2026, 1, 31)),
+    ),
+}
+
+
+@pytest.mark.parametrize("report", REPORTS)
+def test_the_ai_role_runs_every_report_and_sees_what_the_owner_sees(conn, ai_conn, books, report):
+    pmc, *_, reconciliation = books
+    query, params = REPORTS[report]
+
+    rows = ai_conn.execute(query, params(pmc, reconciliation)).fetchall()
+
+    assert rows == conn.execute(query, params(pmc, reconciliation)).fetchall()
+    assert rows  # not empty: the role reads the records the report is built from
+
+
+def test_the_ai_role_reads_balances_live(conn, ai_conn, books):
+    pmc, *_ = books
+    query = "SELECT balance FROM pgledger_accounts WHERE id = %s"
+
+    assert ai_conn.execute(query, (pmc.owners[0].account,)).fetchone()[0] == 1500
+
+
+WRITES = {
+    "post with a key": lambda c, pmc, *_: post(
+        c, pmc.pmc_id, "ai-1", [(pmc.operating_cash, pmc.owners[0].account, "1.00")]
+    ),
+    "post through pgledger": lambda c, pmc, *_: transfer_batch(
+        c, [(pmc.operating_cash, pmc.owners[0].account, "1.00")]
+    ),
+    "open a ledger account": lambda c, pmc, *_: c.execute(
+        "SELECT trust_open_ledger_account(%s, %s, 'pmc_income', NULL, NULL, NULL)",
+        (pmc.pmc_id, pmc.operating_bank_id),
+    ),
+    "open a vendor account": lambda c, pmc, *_: c.execute(
+        "SELECT trust_open_vendor_account(%s, %s, %s)",
+        (pmc.pmc_id, pmc.operating_bank_id, pmc.vendor_id),
+    ),
+    "approve a reconciliation": lambda c, pmc, *_: approve(
+        c, pmc.pmc_id, pmc.deposit_bank_id, JAN, FEB
+    ),
+    "open a lease": lambda c, pmc, lease, *_: c.execute(
+        "SELECT trust_open_lease(%s, (SELECT unit_id FROM trust_leases WHERE id = %s),"
+        " '2030-01-01', NULL, 1, ARRAY[]::uuid[])",
+        (pmc.pmc_id, lease),
+    ),
+    "end a lease": lambda c, pmc, lease, *_: c.execute(
+        "SELECT trust_end_lease(%s, %s, '2026-06-30')", (pmc.pmc_id, lease)
+    ),
+    "charge a lease": lambda c, pmc, lease, *_: charge(c, pmc.pmc_id, lease, FEB, "35.00", "fee"),
+    "match a payment": lambda c, pmc, lease, rent, paid: apply_payment(
+        c, pmc.pmc_id, rent, paid, "1.00"
+    ),
+    "reverse a payment": lambda c, pmc, lease, rent, paid: c.execute(
+        "SELECT trust_reverse_payment(%s, %s, %s, %s, 1)", (pmc.pmc_id, rent, paid, paid)
+    ),
+}
+
+
+@pytest.mark.parametrize("write", WRITES)
+def test_the_ai_role_cannot_move_money_or_change_a_record(conn, ai_conn, books, write):
+    pmc, lease, rent, paid, _ = books
+    before = snapshot(conn, pmc.accounts())
+
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        WRITES[write](ai_conn, pmc, lease, rent, paid)
+
+    assert snapshot(conn, pmc.accounts()) == before
+
+
+def kind_of(conn, table):
+    """'table', 'updatable view', or 'read-only view': a view that joins tables (pgledger's
+    entries view) refuses every write, from any role, before grants are looked at."""
+    relkind, updatable = conn.execute(
+        "SELECT relkind, pg_relation_is_updatable(oid, false) FROM pg_class"
+        " WHERE relnamespace = 'public'::regnamespace AND relname = %s",
+        (table,),
+    ).fetchone()
+    if relkind in ("r", "p"):
+        return "table"
+    return "updatable view" if updatable else "read-only view"
+
+
+@pytest.mark.parametrize("table", TABLES)
+@pytest.mark.parametrize("statement", ["INSERT", "UPDATE", "DELETE", "TRUNCATE"])
+def test_the_ai_role_writes_no_table(conn, ai_conn, table, statement):
+    kind = kind_of(conn, table)
+    if statement == "TRUNCATE" and kind != "table":
+        statement = "DELETE"  # a view can't be truncated, by anyone
+    column = conn.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = %s"
+        " ORDER BY ordinal_position LIMIT 1",
+        (table,),
+    ).fetchone()[0]
+    query = {
+        "INSERT": "INSERT INTO {t} DEFAULT VALUES",
+        "UPDATE": "UPDATE {t} SET {c} = {c} WHERE false",
+        "DELETE": "DELETE FROM {t} WHERE false",
+        "TRUNCATE": "TRUNCATE {t}",
+    }[statement]
+    refused = (
+        psycopg.errors.ObjectNotInPrerequisiteState
+        if kind == "read-only view"
+        else psycopg.errors.InsufficientPrivilege
+    )
+
+    with pytest.raises(refused):
+        ai_conn.execute(sql.SQL(query).format(t=sql.Identifier(table), c=sql.Identifier(column)))

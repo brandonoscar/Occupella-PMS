@@ -15,9 +15,10 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     every tenant's deposit and prepaid rent balance, current and not-current leases add up to
     all of them, and every lease's balance is its charges less its payments, net of reversals.
 
-The rule check_the_rent_roll reads the roll as of a random day and compares every line with the
-model's: which lease each unit is in, its tenants in byte order, the money held for them, what
-was charged and paid by then, and the totals.
+The rule check_the_rent_roll reads the roll as of a random day, as any role including the AI's
+(trust_ai_agent), and compares every line with the model's: which lease each unit is in, its
+tenants in byte order, the money held for them, what was charged and paid by then, and the
+totals. The AI's role is refused every write it tries, and nothing changes.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
@@ -110,9 +111,9 @@ def overlaps(a_start, a_end, b_start, b_end):
 
 
 class RentRollMachine(RuleBasedStateMachine):
-    def __init__(self, owner_conn, app_conn):
+    def __init__(self, owner_conn, app_conn, ai_conn):
         super().__init__()
-        self.conns = {"owner": owner_conn, "app": app_conn}
+        self.conns = {"owner": owner_conn, "app": app_conn, "ai": ai_conn}
         self.conn = owner_conn
         pmc = make_pmc(owner_conn, owners=2)
         self.pmc, self.pmc_id = pmc, pmc.pmc_id
@@ -621,7 +622,37 @@ class RentRollMachine(RuleBasedStateMachine):
 
     # --- rules: the report ---------------------------------------------------------------
 
-    @rule(role=ROLES, day=st.integers(min_value=-5, max_value=640))
+    @precondition(lambda self: self.leases)
+    @rule(
+        data=st.data(),
+        write=st.sampled_from(
+            ["open a lease", "end a lease", "charge", "match a payment", "reverse a payment"]
+        ),
+    )
+    def the_ai_role_cannot_write(self, data, write):
+        """Whatever the AI tries, valid or not, is refused for lack of a grant, and nothing
+        changes (the invariants below compare every table with the model)."""
+        ai, lease_id = self.conns["ai"], data.draw(st.sampled_from(list(self.leases)))
+        lease = self.leases[lease_id]
+        transfer_id = data.draw(st.sampled_from(list(self.transfers) or ["pglt_none"]))
+        charge_id = data.draw(st.sampled_from(list(self.charges) or [lease_id]))
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            if write == "open a lease":
+                open_lease(
+                    ai, self.pmc_id, lease.unit.unit_id, LAST_DAY, None, "1.00", lease.tenants
+                )
+            elif write == "end a lease":
+                end_lease(ai, self.pmc_id, lease_id, None)
+            elif write == "charge":
+                charge(ai, self.pmc_id, lease_id, lease.starts_on, "1.00", "fee")
+            elif write == "match a payment":
+                apply_payment(ai, self.pmc_id, charge_id, transfer_id, "0.01")
+            else:
+                reverse_payment(ai, self.pmc_id, charge_id, transfer_id, transfer_id, "0.01")
+
+    @rule(
+        role=st.sampled_from(["owner", "app", "ai"]), day=st.integers(min_value=-5, max_value=640)
+    )
     def check_the_rent_roll(self, role, day):
         as_of = BASE + timedelta(days=day)
         rows = self.roll(role, as_of)
@@ -733,6 +764,8 @@ def test_rent_roll_invariants_hold_under_random_leases_charges_and_payments(data
     with (
         psycopg.connect(database_url, autocommit=True) as owner_conn,
         psycopg.connect(database_url, autocommit=True) as app_conn,
+        psycopg.connect(database_url, autocommit=True) as ai_conn,
     ):
         app_conn.execute("SET ROLE trust_app")
-        run_state_machine_as_test(lambda: RentRollMachine(owner_conn, app_conn))
+        ai_conn.execute("SET ROLE trust_ai_agent")
+        run_state_machine_as_test(lambda: RentRollMachine(owner_conn, app_conn, ai_conn))

@@ -77,6 +77,9 @@ periods, and check the money invariants after every step:
   and periods follow one another;
 - every security deposit sits in the security-deposit trust account, which holds nothing else.
 
+Both machines also act as the AI's role (`trust_ai_agent`): it reads the same reports, and every
+posting or record change it tries is refused with nothing written.
+
 A second machine opens and ends leases, charges rent, fees and credits, and posts and matches
 payments (from cash, prepaid rent, or a deposit kept with its cash), bounces some of them back,
 and checks:
