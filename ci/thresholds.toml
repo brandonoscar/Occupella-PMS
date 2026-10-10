@@ -56,7 +56,7 @@ python_paths = []
 # coverage drops below it, and also when coverage rose and this wasn't raised to match.
 python_lines = 99.4
 sql_statements = 99.6
-sql_branches = 99.5
+sql_branches = 99.6
 
 [mutation]
 # Share of valid SQL mutants of the money functions that the tests kill (mutation.yml, nightly).
