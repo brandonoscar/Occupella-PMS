@@ -524,14 +524,18 @@ BEGIN
         RETURN v_existing;  -- a retry: the original match
     END IF;
 
+    -- Paid so far: matched, less what bounced back (trust_reverse_payment).
     SELECT coalesce(sum(p.amount), 0) INTO v_paid
     FROM trust_charge_payments AS p WHERE p.charge_id = p_charge_id;
+    SELECT v_paid - coalesce(sum(r.amount), 0) INTO v_paid
+    FROM trust_payment_reversals AS r WHERE r.charge_id = p_charge_id;
     IF v_paid + p_amount > v_charge.amount THEN
         RAISE EXCEPTION 'trust: charge % is % and already paid %; % more is too much',
             p_charge_id, v_charge.amount, v_paid, p_amount
             USING ERRCODE = 'check_violation';
     END IF;
 
+    -- A transfer pays only once, even after a reversal: its money left the owner's account.
     SELECT coalesce(sum(p.amount), 0) INTO v_paid
     FROM trust_charge_payments AS p WHERE p.transfer_id = p_transfer_id;
     IF v_paid + p_amount > v_transfer.amount THEN
@@ -1233,6 +1237,12 @@ BEGIN
                    JOIN trust_charge_payments AS cp ON cp.charge_id = c.id
                    JOIN pgledger_transfers AS tr ON tr.id = cp.transfer_id
                    WHERE c.lease_id = l.id AND tr.event_at < v_cutoff
+               ), 0.00) - coalesce((
+                   SELECT sum(r.amount)
+                   FROM trust_charges AS c
+                   JOIN trust_payment_reversals AS r ON r.charge_id = c.id
+                   JOIN pgledger_transfers AS tr ON tr.id = r.reversal_id
+                   WHERE c.lease_id = l.id AND tr.event_at < v_cutoff
                ), 0.00) AS paid
         FROM trust_leases AS l
         WHERE l.pmc_id = p_pmc_id
@@ -1434,6 +1444,107 @@ $$;
 
 
 --
+-- Name: trust_reverse_payment(uuid, uuid, text, text, numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_reverse_payment(p_pmc_id uuid, p_charge_id uuid, p_transfer_id text, p_reversal_id text, p_amount numeric) RETURNS numeric
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_matched numeric;
+    v_payment pgledger_transfers;
+    v_reversal pgledger_transfers;
+    v_existing numeric;
+    v_used numeric;
+BEGIN
+    -- The sums below must count every reversal that committed while this waited for the locks.
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'trust: reverse a payment at READ COMMITTED, not %',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
+    IF p_amount IS NULL OR p_amount <= 0 THEN
+        RAISE EXCEPTION 'trust: a reversal undoes a positive amount, not %', p_amount
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    -- Waits for matches and reversals in progress on the charge (trust_apply_payment takes the
+    -- same lock), then for those on the reversing transfer.
+    PERFORM c.id FROM trust_charges AS c
+    WHERE c.id = p_charge_id AND c.pmc_id = p_pmc_id
+    FOR NO KEY UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no charge % in PMC %', p_charge_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    SELECT p.amount INTO v_matched
+    FROM trust_charge_payments AS p
+    WHERE p.charge_id = p_charge_id AND p.transfer_id = p_transfer_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: transfer % pays nothing of charge %', p_transfer_id, p_charge_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT t.* INTO v_payment FROM pgledger_transfers AS t WHERE t.id = p_transfer_id;
+
+    SELECT t.* INTO v_reversal
+    FROM pgledger_transfers AS t
+    WHERE t.id = p_reversal_id
+    FOR NO KEY UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no transfer %', p_reversal_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF v_reversal.from_account_id <> v_payment.to_account_id
+        OR v_reversal.to_account_id <> v_payment.from_account_id THEN
+        RAISE EXCEPTION 'trust: transfer % does not move money back the way transfer % came',
+            p_reversal_id, p_transfer_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF v_reversal.event_at < v_payment.event_at THEN
+        RAISE EXCEPTION 'trust: transfer % is dated before the payment it reverses', p_reversal_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    SELECT r.amount INTO v_existing
+    FROM trust_payment_reversals AS r
+    WHERE r.charge_id = p_charge_id AND r.transfer_id = p_transfer_id
+      AND r.reversal_id = p_reversal_id;
+    IF FOUND THEN
+        IF v_existing <> p_amount THEN
+            RAISE EXCEPTION 'trust: transfer % already reverses % of that payment, not %',
+                p_reversal_id, v_existing, p_amount
+                USING ERRCODE = 'unique_violation';
+        END IF;
+        RETURN v_existing;  -- a retry: the original reversal
+    END IF;
+
+    SELECT coalesce(sum(r.amount), 0) INTO v_used
+    FROM trust_payment_reversals AS r
+    WHERE r.charge_id = p_charge_id AND r.transfer_id = p_transfer_id;
+    IF v_used + p_amount > v_matched THEN
+        RAISE EXCEPTION 'trust: transfer % pays % of charge % and % of it is reversed already; '
+            '% more is too much', p_transfer_id, v_matched, p_charge_id, v_used, p_amount
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    SELECT coalesce(sum(r.amount), 0) INTO v_used
+    FROM trust_payment_reversals AS r WHERE r.reversal_id = p_reversal_id;
+    IF v_used + p_amount > v_reversal.amount THEN
+        RAISE EXCEPTION 'trust: transfer % moved % and already reverses %; % more is too much',
+            p_reversal_id, v_reversal.amount, v_used, p_amount
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    INSERT INTO trust_payment_reversals (pmc_id, charge_id, transfer_id, reversal_id, amount)
+    VALUES (p_pmc_id, p_charge_id, p_transfer_id, p_reversal_id, p_amount);
+    RETURN p_amount;
+END;
+$$;
+
+
+--
 -- Name: ulid_to_uuid(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1622,6 +1733,21 @@ CREATE TABLE public.trust_owners (
     display_name text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_owners_display_name_check CHECK ((display_name <> ''::text))
+);
+
+
+--
+-- Name: trust_payment_reversals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payment_reversals (
+    pmc_id uuid NOT NULL,
+    charge_id uuid NOT NULL,
+    transfer_id text NOT NULL,
+    reversal_id text NOT NULL,
+    amount numeric NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_payment_reversals_amount_check CHECK ((amount > (0)::numeric))
 );
 
 
@@ -1841,6 +1967,14 @@ ALTER TABLE ONLY public.trust_owners
 
 
 --
+-- Name: trust_payment_reversals trust_payment_reversals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_reversals
+    ADD CONSTRAINT trust_payment_reversals_pkey PRIMARY KEY (charge_id, transfer_id, reversal_id);
+
+
+--
 -- Name: trust_pmcs trust_pmcs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2047,6 +2181,13 @@ CREATE INDEX trust_ledger_accounts_pmc_id ON public.trust_ledger_accounts USING 
 
 
 --
+-- Name: trust_payment_reversals_reversal_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payment_reversals_reversal_id ON public.trust_payment_reversals USING btree (reversal_id);
+
+
+--
 -- Name: trust_reconciliations_bank_account_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2114,6 +2255,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_ledger_accounts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_payment_reversals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_reversals FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -2365,6 +2513,38 @@ ALTER TABLE ONLY public.trust_owners
 
 
 --
+-- Name: trust_payment_reversals trust_payment_reversals_charge_id_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_reversals
+    ADD CONSTRAINT trust_payment_reversals_charge_id_transfer_id_fkey FOREIGN KEY (charge_id, transfer_id) REFERENCES public.trust_charge_payments(charge_id, transfer_id);
+
+
+--
+-- Name: trust_payment_reversals trust_payment_reversals_pmc_id_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_reversals
+    ADD CONSTRAINT trust_payment_reversals_pmc_id_charge_id_fkey FOREIGN KEY (pmc_id, charge_id) REFERENCES public.trust_charges(pmc_id, id);
+
+
+--
+-- Name: trust_payment_reversals trust_payment_reversals_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_reversals
+    ADD CONSTRAINT trust_payment_reversals_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_payment_reversals trust_payment_reversals_reversal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_reversals
+    ADD CONSTRAINT trust_payment_reversals_reversal_id_fkey FOREIGN KEY (reversal_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
 -- Name: trust_properties trust_properties_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2452,4 +2632,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261009000010'),
     ('20261009000011'),
     ('20261010000012'),
-    ('20261010000013');
+    ('20261010000013'),
+    ('20261010000014');

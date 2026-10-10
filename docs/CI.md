@@ -78,10 +78,11 @@ periods, and check the money invariants after every step:
 - every security deposit sits in the security-deposit trust account, which holds nothing else.
 
 A second machine opens and ends leases, charges rent, fees and credits, and posts and matches
-payments (from cash, prepaid rent, or a deposit kept with its cash), and checks:
+payments (from cash, prepaid rent, or a deposit kept with its cash), bounces some of them back,
+and checks:
 - two leases of one unit never overlap;
-- no charge is paid past its amount and no transfer pays more than it moved; a retried match
-  adds nothing;
+- no charge is paid past its amount (net of bounced payments) and no transfer pays more than
+  it moved; a reversal undoes no more than its match; a retried match or reversal adds nothing;
 - the rent roll for all time ties to every tenant's deposits and prepaid rent in the ledger, and
   the roll as of any day matches the model line by line.
 

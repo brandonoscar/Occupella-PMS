@@ -276,6 +276,20 @@ def apply_payment(connection, pmc_id, charge_id, transfer_id, amount) -> Decimal
     )
 
 
+def reverse_payment(connection, pmc_id, charge_id, transfer_id, reversal_id, amount) -> Decimal:
+    return _one(
+        connection,
+        "SELECT trust_reverse_payment(%s, %s, %s, %s, %s)",
+        (
+            pmc_id,
+            charge_id,
+            transfer_id,
+            reversal_id,
+            None if amount is None else Decimal(amount),
+        ),
+    )
+
+
 def balance(connection, account) -> Decimal:
     return _one(connection, "SELECT balance FROM pgledger_accounts WHERE id = %s", (account,))
 

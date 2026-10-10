@@ -34,6 +34,7 @@ TABLES = {
     "trust_lease_tenants": {"SELECT"},  # written only by trust_open_lease
     "trust_charges": {"SELECT", "INSERT"},
     "trust_charge_payments": {"SELECT"},  # written only by trust_apply_payment
+    "trust_payment_reversals": {"SELECT"},  # written only by trust_reverse_payment
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
@@ -59,6 +60,7 @@ FUNCTIONS = {
     "trust_open_lease(uuid,uuid,date,date,numeric,uuid[])": {"trust_app"},
     "trust_end_lease(uuid,uuid,date)": {"trust_app"},
     "trust_apply_payment(uuid,uuid,text,numeric)": {"trust_app"},
+    "trust_reverse_payment(uuid,uuid,text,text,numeric)": {"trust_app"},
     # Reports read trust records, so only the app; they run with the caller's own read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app"},
     "trust_report_owner_statement(uuid,uuid,timestamptz,timestamptz)": {"trust_app"},
@@ -101,6 +103,7 @@ SECURITY_DEFINER = {
     "trust_open_lease(uuid,uuid,date,date,numeric,uuid[])",
     "trust_end_lease(uuid,uuid,date)",
     "trust_apply_payment(uuid,uuid,text,numeric)",
+    "trust_reverse_payment(uuid,uuid,text,text,numeric)",
 }
 
 

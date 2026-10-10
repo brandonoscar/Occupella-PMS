@@ -31,6 +31,7 @@ functions = [
   "trust_open_lease",
   "trust_end_lease",
   "trust_apply_payment",
+  "trust_reverse_payment",
 ]
 # Python money modules (none yet). Each needs the same line and branch floors.
 python_paths = []

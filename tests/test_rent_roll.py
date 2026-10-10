@@ -20,6 +20,7 @@ from helpers import (
     make_pmc,
     open_account,
     open_lease,
+    reverse_payment,
     transfer_batch,
 )
 
@@ -143,6 +144,31 @@ def test_charges_count_by_due_date_and_payments_by_their_transfers_date(conn):
     assert money(JAN_1) == (RENT, Decimal("0.00"), RENT)
     assert money(JAN_31) == (Decimal("1525.00"), Decimal("1300.00"), Decimal("225.00"))
     assert money(FEB_1) == (Decimal("3025.00"), Decimal("1800.00"), Decimal("1225.00"))
+
+
+def test_a_bounced_payment_counts_as_unpaid_from_its_reversals_date(conn):
+    pmc = make_pmc(conn)
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id)
+    lease = open_lease(conn, pmc.pmc_id, unit, JAN_1, None, RENT, [tenant_of(conn, pmc)])
+    rent = charge(conn, pmc.pmc_id, lease, JAN_1, RENT)
+    owner = pmc.owners[0].account
+    check = transfer_batch(conn, [(pmc.operating_cash, owner, RENT)], at(date(2026, 1, 3)))[0]
+    apply_payment(conn, pmc.pmc_id, rent, check, RENT)
+    returned = transfer_batch(conn, [(owner, pmc.operating_cash, RENT)], at(date(2026, 1, 8)))[0]
+    reverse_payment(conn, pmc.pmc_id, rent, check, returned, RENT)
+
+    def money(as_of):
+        (row,) = units(roll(conn, pmc, as_of))
+        return row[6:]
+
+    # (charged, paid, balance due): paid on the 3rd, returned on the 8th.
+    assert money(date(2026, 1, 7)) == (RENT, RENT, Decimal("0.00"))
+    assert money(date(2026, 1, 8)) == (RENT, Decimal("0.00"), RENT)
+    assert totals(roll(conn, pmc, JAN_31))["total: all tenants"][4:] == (
+        RENT,
+        Decimal("0.00"),
+        RENT,
+    )
 
 
 def test_paid_ahead_reads_as_a_negative_balance(conn):

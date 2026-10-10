@@ -1,17 +1,19 @@
 """Property-based tests for leases, charges, payment matching and the rent roll.
 
 Hypothesis opens and ends leases, charges rent, fees and credits, posts payments (from cash, a
-tenant's prepaid rent, or a deposit kept with its cash) and matches them to charges, in random
-order and through both the owner role and trust_app. A Python model predicts every step: the
-database must accept exactly what the model accepts and refuse the rest with the model's reason.
+tenant's prepaid rent, or a deposit kept with its cash), matches them to charges and bounces
+some of them back, in random order and through both the owner role and trust_app. A Python
+model predicts every step: the database must accept exactly what the model accepts and refuse
+the rest with the model's reason.
 
 Invariants checked after every step (ci/registry.toml maps each to this test):
   - two leases of one unit never overlap, and the leases are the model's;
-  - no charge is paid past its amount, no transfer pays more than it moved, and the matches
-    are the model's, so a retried match never adds one;
+  - no charge is paid past its amount (net of reversals), no transfer pays more than it moved,
+    no reversal undoes more than its match or spends its transfer past its amount, and the
+    matches and reversals are the model's, so a retry never adds one;
   - the rent roll for all time ties to the trust ledger: what it shows held for all tenants is
     every tenant's deposit and prepaid rent balance, current and not-current leases add up to
-    all of them, and every lease's balance is its charges less its matched payments.
+    all of them, and every lease's balance is its charges less its payments, net of reversals.
 
 The rule check_the_rent_roll reads the roll as of a random day and compares every line with the
 model's: which lease each unit is in, its tenants in byte order, the money held for them, what
@@ -36,6 +38,7 @@ from helpers import (
     make_pmc,
     open_account,
     open_lease,
+    reverse_payment,
     transfer_batch,
 )
 from hypothesis import strategies as st
@@ -139,6 +142,8 @@ class RentRollMachine(RuleBasedStateMachine):
         self.charges: dict[UUID, Charge] = {}
         self.transfers: dict[str, Transfer] = {}
         self.matches: dict[tuple[UUID, str], Decimal] = {}
+        # (charge, payment transfer, reversing transfer) -> amount undone
+        self.reversals: dict[tuple[UUID, str, str], Decimal] = {}
         self.balance: dict[str, Decimal] = {}  # current balances of the accounts used
 
     # --- helpers -------------------------------------------------------------------------
@@ -165,7 +170,19 @@ class RentRollMachine(RuleBasedStateMachine):
         )
 
     def paid_on(self, charge_id):
-        return sum((a for (c, _), a in self.matches.items() if c == charge_id), Decimal(0))
+        """What is paid of a charge: matched, less what bounced back."""
+        matched = sum((a for (c, _), a in self.matches.items() if c == charge_id), Decimal(0))
+        undone = sum((a for (c, _, _), a in self.reversals.items() if c == charge_id), Decimal(0))
+        return matched - undone
+
+    def reversed_of(self, charge_id, transfer_id):
+        return sum(
+            (a for (c, t, _), a in self.reversals.items() if (c, t) == (charge_id, transfer_id)),
+            Decimal(0),
+        )
+
+    def spent_of(self, reversal_id):
+        return sum((a for (_, _, r), a in self.reversals.items() if r == reversal_id), Decimal(0))
 
     def used_of(self, transfer_id):
         return sum((a for (_, t), a in self.matches.items() if t == transfer_id), Decimal(0))
@@ -214,7 +231,7 @@ class RentRollMachine(RuleBasedStateMachine):
             )
 
         def paid(lease_id):
-            return sum(
+            matched = sum(
                 (
                     amount
                     for (charge_id, transfer_id), amount in self.matches.items()
@@ -223,6 +240,16 @@ class RentRollMachine(RuleBasedStateMachine):
                 ),
                 Decimal(0),
             )
+            undone = sum(
+                (
+                    amount
+                    for (charge_id, _, reversal_id), amount in self.reversals.items()
+                    if self.charges[charge_id].lease_id == lease_id
+                    and self.transfers[reversal_id].event_at < cutoff
+                ),
+                Decimal(0),
+            )
+            return matched - undone
 
         current = {
             lease.unit: (lease_id, lease)
@@ -513,6 +540,85 @@ class RentRollMachine(RuleBasedStateMachine):
             assert send() == amount
             self.matches[(charge_id, transfer_id)] = amount
 
+    # --- rules: bounced payments --------------------------------------------------------
+
+    @precondition(lambda self: self.matches)
+    @rule(
+        data=st.data(),
+        role=ROLES,
+        share=st.sampled_from(["what is left", "half", "a cent too much"]),
+        delay=st.timedeltas(min_value=timedelta(0), max_value=timedelta(days=30)),
+        retry=st.booleans(),
+    )
+    def bounce_a_payment(self, data, role, share, delay, retry):
+        """A matched payment comes back: the money moves back where it came from (a kept
+        deposit with its cash), and the reversal is recorded against the match."""
+        charge_id, transfer_id = data.draw(st.sampled_from(list(self.matches)))
+        payment = self.transfers[transfer_id]
+        left = self.matches[(charge_id, transfer_id)] - self.reversed_of(charge_id, transfer_id)
+        if left <= 0 or self.balance.get(payment.target, Decimal(0)) < left:
+            return
+        back = [(payment.target, payment.source, left)]
+        if payment.source in {t.deposit for t in self.tenants}:
+            back.append((self.pmc.deposit_cash, self.pmc.operating_cash, left))
+        reversal_id = self.post(back, payment.event_at + delay)[0]
+        amount = {
+            "what is left": left,
+            "half": (left / 2).quantize(CENT),
+            "a cent too much": left + CENT,
+        }[share]
+        self.attempt_reversal(role, charge_id, transfer_id, reversal_id, amount)
+        if retry:
+            self.attempt_reversal(role, charge_id, transfer_id, reversal_id, amount)
+
+    @precondition(lambda self: self.matches)
+    @rule(data=st.data(), role=ROLES, nudge=st.sampled_from([Decimal(0), CENT]))
+    def reverse_with_any_transfer(self, data, role, nudge):
+        """Any match with any transfer as its reversal: mostly refused (the wrong direction, or
+        dated before the payment), now and then a second reversal or a retry."""
+        charge_id, transfer_id = data.draw(st.sampled_from(list(self.matches)))
+        reversal_id = data.draw(st.sampled_from(list(self.transfers)))
+        existing = self.reversals.get((charge_id, transfer_id, reversal_id))
+        left = self.matches[(charge_id, transfer_id)] - self.reversed_of(charge_id, transfer_id)
+        base = data.draw(st.sampled_from([left, existing if existing is not None else left]))
+        self.attempt_reversal(role, charge_id, transfer_id, reversal_id, base + nudge)
+
+    def attempt_reversal(self, role, charge_id, transfer_id, reversal_id, amount):
+        """Reverse a payment as the model predicts: recorded, the original returned for a
+        retry, or refused with the model's reason."""
+        payment, reversal = self.transfers[transfer_id], self.transfers[reversal_id]
+        key = (charge_id, transfer_id, reversal_id)
+        existing = self.reversals.get(key)
+
+        def send():
+            return reverse_payment(
+                self.conns[role], self.pmc_id, charge_id, transfer_id, reversal_id, amount
+            )
+
+        refusal = None
+        if amount <= 0:
+            refusal = (psycopg.errors.InvalidParameterValue, "positive amount")
+        elif (reversal.source, reversal.target) != (payment.target, payment.source):
+            refusal = (psycopg.errors.InvalidParameterValue, "back the way")
+        elif reversal.event_at < payment.event_at:
+            refusal = (psycopg.errors.InvalidParameterValue, "dated before")
+        elif existing is not None:
+            if existing != amount:
+                refusal = (psycopg.errors.UniqueViolation, "already reverses")
+        elif self.reversed_of(charge_id, transfer_id) + amount > self.matches[key[:2]]:
+            refusal = (psycopg.errors.CheckViolation, "reversed already")
+        elif self.spent_of(reversal_id) + amount > reversal.amount:
+            refusal = (psycopg.errors.CheckViolation, "and already reverses")
+
+        if refusal is not None:
+            with pytest.raises(refusal[0], match=refusal[1]):
+                send()
+        elif existing is not None:
+            assert send() == existing  # a retry: the original reversal, nothing added
+        else:
+            assert send() == amount
+            self.reversals[key] = amount
+
     # --- rules: the report ---------------------------------------------------------------
 
     @rule(role=ROLES, day=st.integers(min_value=-5, max_value=640))
@@ -548,11 +654,16 @@ class RentRollMachine(RuleBasedStateMachine):
 
     @invariant()
     def matches_never_overpay_a_charge_or_overspend_a_transfer(self):
+        # A charge is paid net of what bounced back: matched, less reversed.
         over = self.conn.execute(
             """
             SELECT 'charge', c.id::text FROM trust_charges c
-            JOIN trust_charge_payments p ON p.charge_id = c.id
-            WHERE c.pmc_id = %(pmc)s GROUP BY c.id, c.amount HAVING sum(p.amount) > c.amount
+            WHERE c.pmc_id = %(pmc)s AND (
+                coalesce((SELECT sum(p.amount) FROM trust_charge_payments p
+                          WHERE p.charge_id = c.id), 0)
+                - coalesce((SELECT sum(r.amount) FROM trust_payment_reversals r
+                            WHERE r.charge_id = c.id), 0)
+            ) NOT BETWEEN 0 AND c.amount
             UNION ALL
             SELECT 'transfer', t.id FROM pgledger_transfers t
             JOIN trust_charge_payments p ON p.transfer_id = t.id
@@ -566,6 +677,30 @@ class RentRollMachine(RuleBasedStateMachine):
             (self.pmc_id,),
         ).fetchall()
         assert {(c, t): a for c, t, a in stored} == self.matches
+
+    @invariant()
+    def reversals_stay_inside_their_match_and_transfer(self):
+        over = self.conn.execute(
+            """
+            SELECT 'match', p.transfer_id FROM trust_charge_payments p
+            JOIN trust_payment_reversals r
+              ON (r.charge_id, r.transfer_id) = (p.charge_id, p.transfer_id)
+            WHERE p.pmc_id = %(pmc)s
+            GROUP BY p.charge_id, p.transfer_id, p.amount HAVING sum(r.amount) > p.amount
+            UNION ALL
+            SELECT 'reversal', t.id FROM pgledger_transfers t
+            JOIN trust_payment_reversals r ON r.reversal_id = t.id
+            WHERE r.pmc_id = %(pmc)s GROUP BY t.id, t.amount HAVING sum(r.amount) > t.amount
+            """,
+            {"pmc": self.pmc_id},
+        ).fetchall()
+        assert over == []
+        stored = self.conn.execute(
+            "SELECT charge_id, transfer_id, reversal_id, amount FROM trust_payment_reversals"
+            " WHERE pmc_id = %s",
+            (self.pmc_id,),
+        ).fetchall()
+        assert {(c, t, r): a for c, t, r, a in stored} == self.reversals
 
     @invariant()
     def the_rent_roll_ties_to_the_ledger(self):
@@ -590,7 +725,7 @@ class RentRollMachine(RuleBasedStateMachine):
             (-c.amount if c.kind == "credit" else c.amount for c in self.charges.values()),
             Decimal(0),
         )
-        paid = sum(self.matches.values(), Decimal(0))
+        paid = sum(self.matches.values(), Decimal(0)) - sum(self.reversals.values(), Decimal(0))
         assert every[2:] == (charged, paid, charged - paid)
 
 
