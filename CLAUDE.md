@@ -117,6 +117,9 @@ required invariant, report and self-host step.
   account to the vendor's (`vendor_payable`); `trust_pay_bill` then sends it out through the
   trust bank account's cash, no earlier than it was set aside. Each step once per bill, at READ
   COMMITTED.
+- Work orders: a job at a property (maybe one of its units). Its steps (assigned to a vendor,
+  completed, cancelled) are append-only and in order, and nothing follows a close. A bill may
+  name a work order of its property, never a cancelled one.
 
 ## Run the checks
 

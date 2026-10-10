@@ -1,0 +1,12 @@
+line	item	vendor	reference	property	bill_date	due_on	days_past_due	bucket	amount	set_aside
+1	PMC	NULL	NULL	Golden PMC	NULL	NULL	NULL	NULL	NULL	NULL
+2	as of	NULL	NULL	2026-04-30, end of day UTC	NULL	NULL	NULL	NULL	NULL	NULL
+3	bill	Vendor 1	INV-A2	Property 1	2026-03-15	2026-04-14	16	1-30	200.00	200.00
+4	bill	Vendor 1	INV-A1	Property 1	2026-04-20	2026-05-20	0	current	100.00	0.00
+5	vendor total	Vendor 1	NULL	NULL	NULL	NULL	NULL	NULL	300.00	200.00
+6	bill	Vendor 2	INV-B3	Property 2	2025-12-01	2025-12-31	120	over 90	500.00	0.00
+7	bill	Vendor 2	INV-B2	Property 1	2026-01-05	2026-01-31	89	61-90	400.00	0.00
+8	bill	Vendor 2	INV-B1	Property 1	2026-02-01	2026-03-01	60	31-60	300.00	0.00
+9	bill	Vendor 2	INV-B4	Property 1	2026-04-01	2026-04-30	0	current	50.00	50.00
+10	vendor total	Vendor 2	NULL	NULL	NULL	NULL	NULL	NULL	1250.00	50.00
+11	total	NULL	NULL	NULL	NULL	NULL	NULL	NULL	1550.00	250.00

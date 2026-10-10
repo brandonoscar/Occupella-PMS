@@ -246,6 +246,18 @@ tests = [
   "tests/test_vendor_bills.py::test_paying_a_bill_sends_the_money_set_aside_out_through_cash",
 ]
 
+[[invariant]]
+id = "work-order-steps-in-order"
+statement = "A work order's unit is one of its property's; its steps are never dated before it was opened or before the step they follow, nothing follows a completed or cancelled work order, even from two transactions at once, and a bill for a work order is for that property and never for a cancelled one."
+tests = [
+  "tests/test_work_orders.py::test_a_work_orders_unit_is_one_of_its_propertys",
+  "tests/test_work_orders.py::test_nothing_follows_a_closed_work_order",
+  "tests/test_work_orders.py::test_steps_are_not_dated_before_the_work_order_or_the_step_before",
+  "tests/test_work_orders.py::test_a_step_waits_for_a_close_in_progress_and_is_then_refused",
+  "tests/test_work_orders.py::test_a_bill_is_for_a_work_order_of_its_property",
+  "tests/test_work_orders.py::test_a_cancelled_work_order_takes_no_bills",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]
@@ -309,3 +321,13 @@ tests = [
 id = "app-health"
 statement = "The self-hosted app answers its health endpoint."
 pending = "https://github.com/brandonoscar/Occupella-PMS/issues/11"
+
+[[report]]
+id = "unpaid-bills"
+statement = "Unpaid bills as of the end of a day (UTC): every bill dated by then and not paid by then, by vendor, with what was set aside for it, its days past due and aging bucket (current, 1-30, 31-60, 61-90, over 90); a total per vendor and a grand total. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_unpaid_bills.py::test_each_bill_falls_in_the_bucket_of_its_days_past_due",
+  "tests/test_unpaid_bills.py::test_a_bill_shows_from_its_date_until_it_is_paid",
+  "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
+]

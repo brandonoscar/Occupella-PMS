@@ -45,6 +45,8 @@ TABLES = {
     "trust_bills": {"SELECT", "INSERT"},
     "trust_bill_approvals": {"SELECT", "INSERT"},
     "trust_bill_payments": {"SELECT"},  # written only by trust_set_aside_bill, trust_pay_bill
+    "trust_work_orders": {"SELECT", "INSERT"},
+    "trust_work_order_steps": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
@@ -91,6 +93,7 @@ FUNCTIONS = {
     },
     "trust_report_rent_roll(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_owner_balances(uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_unpaid_bills(uuid,date)": {"trust_app", "trust_ai_agent"},
     # pgledger's posting functions take no idempotency key, so a retried request could post
     # twice: only the owner calls them (trust_post_transfers does, as the owner).
     "pgledger_create_transfer(text,text,numeric,timestamptz,jsonb)": set(),
@@ -120,6 +123,8 @@ FUNCTIONS = {
     "trust_refuse_overlapping_leases()": {"PUBLIC"},
     "trust_check_agreement_account()": {"PUBLIC"},
     "trust_check_bill_account()": {"PUBLIC"},
+    "trust_check_work_order()": {"PUBLIC"},
+    "trust_check_work_order_step()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.
