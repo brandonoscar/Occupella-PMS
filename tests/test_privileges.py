@@ -53,6 +53,9 @@ TABLES = {
     "trust_staff": {"SELECT", "INSERT"},
     "trust_audit_log": {"SELECT"},  # written only by the trust_audit trigger
     "trust_audit_log_id_seq": set(),  # the log's ids; only the trigger draws them
+    "trust_payment_holds": {"SELECT", "INSERT"},
+    "trust_payment_hold_releases": {"SELECT", "INSERT"},
+    "trust_payment_hold_allowances": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
@@ -96,6 +99,8 @@ FUNCTIONS = {
     "trust_unpaid_bills(text,date)": set(),
     # Records every write as the owner: no role may call it, or write the log, on its own.
     "trust_audit()": set(),
+    # Checks a payment hold as the owner, to take its lease's lock: no role calls it on its own.
+    "trust_check_payment_hold()": set(),
     # Reports read trust records, so only the app and the AI; they run with the caller's own
     # read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app", "trust_ai_agent"},
@@ -143,6 +148,8 @@ FUNCTIONS = {
     "trust_check_bill_account()": {"PUBLIC"},
     "trust_check_work_order()": {"PUBLIC"},
     "trust_check_work_order_step()": {"PUBLIC"},
+    "trust_check_hold_release()": {"PUBLIC"},
+    "trust_check_hold_allowance()": {"PUBLIC"},
     "trust_refuse_moving_opened_at()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
@@ -164,6 +171,7 @@ SECURITY_DEFINER = {
     "trust_assess_late_fees(uuid,date)",
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)",
     "trust_audit()",  # writes the audit log, which no other role may write
+    "trust_check_payment_hold()",  # locks the hold's lease, which the app can't
 }
 
 

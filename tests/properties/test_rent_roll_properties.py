@@ -20,6 +20,9 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     period with no two periods of an account overlapping; a leasing fee is taken once per
     lease; a draw never pays out more than the balance above the reserve, and its request key
     pays once;
+  - payment holds are the model's: a match of a payment dated on or after a hold's first day
+    and before its release is refused unless that hold allowed the transfer, and a retry of a
+    match made before still returns it; a release ends a hold once, after it starts;
   - late fees are the model's: the rent run (run_the_rent) charges each lease in effect on the
     due date once, and each rent still unpaid when its grace ran out is charged one late fee,
     worked from what was unpaid then under the terms in force on its due date.
@@ -36,7 +39,7 @@ changes.
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
@@ -48,17 +51,20 @@ from helpers import (
     add_late_fee_policy,
     add_tenant,
     add_unit,
+    allow_payment,
     apply_payment,
     assess_late_fees,
     charge,
     charge_rent_due,
     draw_owner,
     end_lease,
+    hold_payments,
     make_pmc,
     open_account,
     open_lease,
     post_leasing_fee,
     post_management_fee,
+    release_hold,
     reverse_payment,
     transfer_batch,
 )
@@ -116,6 +122,14 @@ class Charge:
     due_on: date
     kind: str
     amount: Decimal
+
+
+@dataclass(frozen=True)
+class Hold:
+    lease_id: UUID
+    starts_on: date
+    ends_on: date | None
+    reason: str
 
 
 @dataclass(frozen=True)
@@ -206,6 +220,9 @@ class RentRollMachine(RuleBasedStateMachine):
         # (unpaid when its grace ran out, fee, the fee's charge).
         self.late_terms: dict[tuple[int, date], LateTerms] = {}
         self.late_fees: dict[UUID, tuple[Decimal, Decimal, UUID]] = {}
+        # Payment holds, and the (hold, transfer) pairs allowed despite one.
+        self.holds: dict[UUID, Hold] = {}
+        self.allowed: set[tuple[UUID, str]] = set()
 
     # --- helpers -------------------------------------------------------------------------
 
@@ -292,6 +309,17 @@ class RentRollMachine(RuleBasedStateMachine):
 
     def used_of(self, transfer_id):
         return sum((a for (_, t), a in self.matches.items() if t == transfer_id), Decimal(0))
+
+    def held_back(self, lease_id, transfer_id):
+        """Is a hold on the lease in force on the transfer's day (UTC), not allowing it?"""
+        day = self.transfers[transfer_id].event_at.astimezone(UTC).date()
+        return any(
+            hold.lease_id == lease_id
+            and hold.starts_on <= day
+            and (hold.ends_on is None or day < hold.ends_on)
+            and (hold_id, transfer_id) not in self.allowed
+            for hold_id, hold in self.holds.items()
+        )
 
     def pays_for(self, transfer, lease):
         """Would this transfer pay a charge of this lease: into the owner's account for its
@@ -632,6 +660,8 @@ class RentRollMachine(RuleBasedStateMachine):
         elif existing is not None:
             if existing != amount:
                 refusal = (psycopg.errors.UniqueViolation, "already pays")
+        elif self.held_back(bill.lease_id, transfer_id):
+            refusal = (psycopg.errors.CheckViolation, "is on a payment hold")
         elif self.paid_on(charge_id) + amount > bill.amount:
             refusal = (psycopg.errors.CheckViolation, "and already paid")
         elif self.used_of(transfer_id) + amount > paid.amount:
@@ -645,6 +675,95 @@ class RentRollMachine(RuleBasedStateMachine):
         else:
             assert send() == amount
             self.matches[(charge_id, transfer_id)] = amount
+
+    # --- rules: payment holds ----------------------------------------------------------
+
+    @precondition(lambda self: self.leases)
+    @rule(data=st.data(), role=ROLES, day=DAYS)
+    def place_a_payment_hold(self, data, role, day):
+        """A hold from a random day or, half the time, from on or just before a day the lease
+        was paid, so it catches payments still to be matched."""
+        lease_id = data.draw(st.sampled_from(list(self.leases)))
+        paid_on = [
+            paid.event_at.astimezone(UTC).date()
+            for paid in self.transfers.values()
+            if self.pays_for(paid, self.leases[lease_id])
+        ]
+        starts_on = BASE + timedelta(days=day)
+        if paid_on and data.draw(st.booleans()):
+            starts_on = data.draw(st.sampled_from(paid_on)) - timedelta(
+                days=data.draw(st.integers(0, 3))
+            )
+        reason = f"Filing {len(self.holds) + 1}"
+        hold_id = hold_payments(self.conns[role], self.pmc_id, lease_id, starts_on, reason)
+        self.holds[hold_id] = Hold(lease_id, starts_on, None, reason)
+
+    @precondition(lambda self: self.holds)
+    @rule(data=st.data(), role=ROLES, days=st.integers(min_value=-2, max_value=120))
+    def release_a_payment_hold(self, data, role, days):
+        hold_id = data.draw(st.sampled_from(list(self.holds)))
+        hold = self.holds[hold_id]
+        ends_on = hold.starts_on + timedelta(days=days)
+
+        def send():
+            release_hold(self.conns[role], self.pmc_id, hold_id, ends_on)
+
+        if ends_on <= hold.starts_on:
+            with pytest.raises(psycopg.errors.CheckViolation, match="must end it later"):
+                send()
+        elif hold.ends_on is not None:
+            with pytest.raises(psycopg.errors.UniqueViolation):
+                send()
+        else:
+            send()
+            self.holds[hold_id] = replace(hold, ends_on=ends_on)
+
+    @precondition(lambda self: self.holds and self.transfers)
+    @rule(data=st.data(), role=ROLES)
+    def allow_a_held_payment(self, data, role):
+        hold_id = data.draw(st.sampled_from(list(self.holds)))
+        transfer_id = data.draw(st.sampled_from(list(self.transfers)))
+
+        def send():
+            allow_payment(self.conns[role], self.pmc_id, hold_id, transfer_id)
+
+        if (hold_id, transfer_id) in self.allowed:
+            with pytest.raises(psycopg.errors.UniqueViolation):
+                send()
+        else:
+            send()
+            self.allowed.add((hold_id, transfer_id))
+
+    @precondition(lambda self: self.holds and self.charges and self.transfers)
+    @rule(data=st.data(), role=ROLES)
+    def allow_a_held_payment_and_match_it(self, data, role):
+        """A payment a hold refuses, allowed on every hold in force, then matched."""
+        blocked = [
+            (charge_id, transfer_id)
+            for charge_id, bill in self.charges.items()
+            if bill.kind != "credit"
+            for transfer_id, paid in self.transfers.items()
+            if self.pays_for(paid, self.leases[bill.lease_id])
+            and (charge_id, transfer_id) not in self.matches
+            and self.held_back(bill.lease_id, transfer_id)
+        ]
+        if not blocked:
+            return
+        charge_id, transfer_id = data.draw(st.sampled_from(blocked))
+        lease_id = self.charges[charge_id].lease_id
+        day = self.transfers[transfer_id].event_at.astimezone(UTC).date()
+        for hold_id, hold in self.holds.items():
+            in_force = hold.starts_on <= day and (hold.ends_on is None or day < hold.ends_on)
+            if (
+                hold.lease_id == lease_id
+                and in_force
+                and (hold_id, transfer_id) not in self.allowed
+            ):
+                allow_payment(self.conns[role], self.pmc_id, hold_id, transfer_id)
+                self.allowed.add((hold_id, transfer_id))
+        owed = self.charges[charge_id].amount - self.paid_on(charge_id)
+        room = self.transfers[transfer_id].amount - self.used_of(transfer_id)
+        self.attempt_match(role, charge_id, transfer_id, min(owed, room) or CENT)
 
     # --- rules: bounced payments --------------------------------------------------------
 
@@ -1326,6 +1445,21 @@ class RentRollMachine(RuleBasedStateMachine):
         assert [tuple(row[1:]) for row in rows[2:]] == self.expected_roll(as_of)
 
     # --- invariants: checked after every step --------------------------------------------
+
+    @invariant()
+    def holds_are_the_models(self):
+        holds = self.conn.execute(
+            "SELECT h.id, h.lease_id, h.starts_on, r.ends_on, h.reason"
+            " FROM trust_payment_holds h"
+            " LEFT JOIN trust_payment_hold_releases r ON r.hold_id = h.id WHERE h.pmc_id = %s",
+            (self.pmc_id,),
+        ).fetchall()
+        assert {h[0]: Hold(*h[1:]) for h in holds} == self.holds
+        allowed = self.conn.execute(
+            "SELECT hold_id, transfer_id FROM trust_payment_hold_allowances WHERE pmc_id = %s",
+            (self.pmc_id,),
+        ).fetchall()
+        assert set(allowed) == self.allowed
 
     @invariant()
     def leases_never_overlap(self):

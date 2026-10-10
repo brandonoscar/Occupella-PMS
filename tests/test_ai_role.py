@@ -19,6 +19,7 @@ from helpers import (
     charge,
     charge_rent_due,
     enter_bill,
+    hold_payments,
     make_pmc,
     open_lease,
     open_with_balances,
@@ -209,6 +210,19 @@ WRITES = {
         c, pmc.pmc_id, pmc.owners[0].property_id, FEB.date(), 5, "50"
     ),
     "assess late fees": lambda c, pmc, *_: assess_late_fees(c, pmc.pmc_id, FEB.date()),
+    "hold a lease's payments": lambda c, pmc, lease, *_: hold_payments(
+        c, pmc.pmc_id, lease, FEB.date()
+    ),
+    "release a hold": lambda c, pmc, *_: c.execute(
+        "INSERT INTO trust_payment_hold_releases (pmc_id, hold_id, ends_on, released_by)"
+        " SELECT pmc_id, id, '2030-01-01', 'The AI' FROM trust_payment_holds WHERE pmc_id = %s",
+        (pmc.pmc_id,),
+    ),
+    "allow a held payment": lambda c, pmc, lease, rent, paid: c.execute(
+        "INSERT INTO trust_payment_hold_allowances (pmc_id, hold_id, transfer_id, allowed_by)"
+        " SELECT pmc_id, id, %s, 'The AI' FROM trust_payment_holds WHERE pmc_id = %s",
+        (paid, pmc.pmc_id),
+    ),
     "open with balances carried over": lambda c, pmc, *_: open_with_balances(
         c, pmc.pmc_id, pmc.deposit_bank_id, JAN.date(), {pmc.tenant_deposit: "1.00"}, "1.00"
     ),

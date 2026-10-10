@@ -310,6 +310,21 @@ tests = [
   "tests/test_audit_log.py::test_every_transfer_has_exactly_one_audit_row",
 ]
 
+[[invariant]]
+id = "payment-hold-refuses-matches"
+statement = "While a payment hold on a lease is in force (from its first day until its release, by the transfer's UTC date), a payment is not matched to the lease's charges unless the PMC allowed that transfer on every hold in force; a match made before stands, and its retry still returns it. Holds, releases and allowances are append-only records; a release ends its hold once, after it starts."
+tests = [
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+  "tests/test_payment_holds.py::test_a_payment_dated_from_the_holds_first_day_is_refused",
+  "tests/test_payment_holds.py::test_a_payment_dated_before_the_hold_is_matched",
+  "tests/test_payment_holds.py::test_a_match_made_before_the_hold_stands_and_retries",
+  "tests/test_payment_holds.py::test_a_release_ends_the_hold_from_its_day",
+  "tests/test_payment_holds.py::test_an_allowed_payment_is_matched_and_only_that_one",
+  "tests/test_payment_holds.py::test_every_hold_in_force_must_allow_the_payment",
+  "tests/test_payment_holds.py::test_a_match_waits_for_a_hold_being_placed_and_is_then_refused",
+  "tests/test_payment_holds.py::test_a_hold_waits_for_a_match_in_flight_which_stands",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]

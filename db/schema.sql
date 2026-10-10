@@ -495,6 +495,7 @@ DECLARE
     v_transfer pgledger_transfers;
     v_existing numeric;
     v_paid numeric;
+    v_hold trust_payment_holds;
 BEGIN
     -- The sums below must count every match that committed while this waited for the locks.
     IF current_setting('transaction_isolation') <> 'read committed' THEN
@@ -563,6 +564,30 @@ BEGIN
                 USING ERRCODE = 'unique_violation';
         END IF;
         RETURN v_existing;  -- a retry: the original match
+    END IF;
+
+    -- A payment hold on the lease (an eviction, say) in force on the transfer's day (UTC)
+    -- refuses it, unless the transfer was allowed for that hold. The lease's row lock orders
+    -- this against a hold being placed: one waits for the other, then sees it.
+    PERFORM l.id FROM trust_leases AS l WHERE l.id = v_charge.lease_id FOR SHARE;
+    SELECT h.* INTO v_hold
+    FROM trust_payment_holds AS h
+    LEFT JOIN trust_payment_hold_releases AS r ON r.hold_id = h.id
+    WHERE h.lease_id = v_charge.lease_id
+      AND h.starts_on <= (v_transfer.event_at AT TIME ZONE 'UTC')::date
+      AND (r.ends_on IS NULL OR (v_transfer.event_at AT TIME ZONE 'UTC')::date < r.ends_on)
+      AND NOT EXISTS (
+          SELECT a.hold_id FROM trust_payment_hold_allowances AS a
+          WHERE a.hold_id = h.id AND a.transfer_id = p_transfer_id
+      )
+    ORDER BY h.starts_on, h.id
+    LIMIT 1;
+    IF FOUND THEN
+        RAISE EXCEPTION 'trust: lease % is on a payment hold from % (%); transfer % is not '
+            'allowed for it', v_charge.lease_id, v_hold.starts_on, v_hold.reason, p_transfer_id
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Record an allowance for this transfer (trust_payment_hold_allowances) '
+                         'to accept it.';
     END IF;
 
     -- Paid so far: matched, less what bounced back (trust_reverse_payment).
@@ -950,6 +975,68 @@ BEGIN
         RAISE EXCEPTION 'trust: work order % was cancelled; it takes no bills', NEW.work_order_id
             USING ERRCODE = 'check_violation';
     END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_hold_allowance(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_hold_allowance() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT t.ledger_account_id
+        FROM pgledger_transfers AS tr
+        JOIN trust_ledger_accounts AS t ON t.ledger_account_id = tr.from_account_id
+        WHERE tr.id = NEW.transfer_id AND t.pmc_id = NEW.pmc_id
+    ) THEN
+        RAISE EXCEPTION 'trust: transfer % is not in PMC %', NEW.transfer_id, NEW.pmc_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_hold_release(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_hold_release() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_starts_on date;
+BEGIN
+    SELECT h.starts_on INTO v_starts_on FROM trust_payment_holds AS h WHERE h.id = NEW.hold_id;
+    IF NEW.ends_on <= v_starts_on THEN
+        RAISE EXCEPTION 'trust: hold % starts on %; its release must end it later, not on %',
+            NEW.hold_id, v_starts_on, NEW.ends_on
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_payment_hold(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_payment_hold() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    -- Waits for matches in flight on the lease (they hold its row FOR SHARE), and holds new
+    -- ones off until this commits.
+    PERFORM l.id FROM trust_leases AS l WHERE l.id = NEW.lease_id FOR NO KEY UPDATE;
     RETURN NEW;
 END;
 $$;
@@ -3721,6 +3808,49 @@ CREATE TABLE public.trust_owners (
 
 
 --
+-- Name: trust_payment_hold_allowances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payment_hold_allowances (
+    hold_id uuid NOT NULL,
+    transfer_id text NOT NULL,
+    pmc_id uuid NOT NULL,
+    allowed_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_payment_hold_allowances_allowed_by_check CHECK ((allowed_by <> ''::text))
+);
+
+
+--
+-- Name: trust_payment_hold_releases; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payment_hold_releases (
+    hold_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    ends_on date NOT NULL,
+    released_by text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_payment_hold_releases_released_by_check CHECK ((released_by <> ''::text))
+);
+
+
+--
+-- Name: trust_payment_holds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payment_holds (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    starts_on date NOT NULL,
+    reason text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_payment_holds_reason_check CHECK ((reason <> ''::text))
+);
+
+
+--
 -- Name: trust_payment_reversals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4126,6 +4256,38 @@ ALTER TABLE ONLY public.trust_owners
 
 
 --
+-- Name: trust_payment_hold_allowances trust_payment_hold_allowances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_hold_allowances
+    ADD CONSTRAINT trust_payment_hold_allowances_pkey PRIMARY KEY (hold_id, transfer_id);
+
+
+--
+-- Name: trust_payment_hold_releases trust_payment_hold_releases_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_hold_releases
+    ADD CONSTRAINT trust_payment_hold_releases_pkey PRIMARY KEY (hold_id);
+
+
+--
+-- Name: trust_payment_holds trust_payment_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_holds
+    ADD CONSTRAINT trust_payment_holds_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_payment_holds trust_payment_holds_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_holds
+    ADD CONSTRAINT trust_payment_holds_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_payment_reversals trust_payment_reversals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4464,6 +4626,13 @@ CREATE INDEX trust_owner_draws_transfer_id ON public.trust_owner_draws USING btr
 
 
 --
+-- Name: trust_payment_holds_lease_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payment_holds_lease_id ON public.trust_payment_holds USING btree (lease_id);
+
+
+--
 -- Name: trust_payment_reversals_reversal_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4639,6 +4808,27 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_payment_hold_allowances trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_hold_allowances FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_payment_hold_releases trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_hold_releases FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_payment_holds trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_holds FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_payment_reversals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -4793,6 +4983,27 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owne
 
 
 --
+-- Name: trust_payment_hold_allowances trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_hold_allowances FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_payment_hold_releases trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_hold_releases FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_payment_holds trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_holds FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_payment_reversals trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -4881,6 +5092,27 @@ CREATE CONSTRAINT TRIGGER trust_bank_tie_out AFTER INSERT ON public.pgledger_tra
 --
 
 CREATE TRIGGER trust_bill_account BEFORE INSERT ON public.trust_bills FOR EACH ROW EXECUTE FUNCTION public.trust_check_bill_account();
+
+
+--
+-- Name: trust_payment_hold_allowances trust_check_hold_allowance; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_hold_allowance BEFORE INSERT ON public.trust_payment_hold_allowances FOR EACH ROW EXECUTE FUNCTION public.trust_check_hold_allowance();
+
+
+--
+-- Name: trust_payment_hold_releases trust_check_hold_release; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_hold_release BEFORE INSERT ON public.trust_payment_hold_releases FOR EACH ROW EXECUTE FUNCTION public.trust_check_hold_release();
+
+
+--
+-- Name: trust_payment_holds trust_check_payment_hold; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_payment_hold BEFORE INSERT ON public.trust_payment_holds FOR EACH ROW EXECUTE FUNCTION public.trust_check_payment_hold();
 
 
 --
@@ -5396,6 +5628,62 @@ ALTER TABLE ONLY public.trust_owners
 
 
 --
+-- Name: trust_payment_hold_allowances trust_payment_hold_allowances_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_hold_allowances
+    ADD CONSTRAINT trust_payment_hold_allowances_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_payment_hold_allowances trust_payment_hold_allowances_pmc_id_hold_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_hold_allowances
+    ADD CONSTRAINT trust_payment_hold_allowances_pmc_id_hold_id_fkey FOREIGN KEY (pmc_id, hold_id) REFERENCES public.trust_payment_holds(pmc_id, id);
+
+
+--
+-- Name: trust_payment_hold_allowances trust_payment_hold_allowances_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_hold_allowances
+    ADD CONSTRAINT trust_payment_hold_allowances_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
+-- Name: trust_payment_hold_releases trust_payment_hold_releases_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_hold_releases
+    ADD CONSTRAINT trust_payment_hold_releases_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_payment_hold_releases trust_payment_hold_releases_pmc_id_hold_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_hold_releases
+    ADD CONSTRAINT trust_payment_hold_releases_pmc_id_hold_id_fkey FOREIGN KEY (pmc_id, hold_id) REFERENCES public.trust_payment_holds(pmc_id, id);
+
+
+--
+-- Name: trust_payment_holds trust_payment_holds_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_holds
+    ADD CONSTRAINT trust_payment_holds_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_payment_holds trust_payment_holds_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_holds
+    ADD CONSTRAINT trust_payment_holds_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
 -- Name: trust_payment_reversals trust_payment_reversals_charge_id_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5582,4 +5870,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261010000021'),
     ('20261010000022'),
     ('20261010000023'),
-    ('20261010000024');
+    ('20261010000024'),
+    ('20261010000025');
