@@ -32,6 +32,9 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     in date order with the balance after it, the closing balance and the totals;
   - the trial balance and the security deposit register as of any day agree with the model:
     each bank's book cash against the balances it holds, the totals, and each deposit held;
+  - the general ledger over any period agrees with the model: each account's opening balance,
+    its entries in date order with the balance after each, its closing balance, and debits
+    equal to credits;
   - the AI's role (trust_ai_agent) reads the same statement, and every posting it tries is
     refused with nothing written: the AI never moves money.
 
@@ -454,6 +457,76 @@ class LedgerMachine(RuleBasedStateMachine):
             (None, "all properties: closing balance", None, running),
         ]
         assert rows[3:] == expected
+
+    @precondition(lambda self: self.posted)
+    @rule(
+        data=st.data(),
+        role=st.sampled_from(["owner", "app", "ai"]),
+        before=st.integers(min_value=0, max_value=30),
+        after=st.integers(min_value=0, max_value=30),
+    )
+    def check_the_general_ledger(self, data, role, before, after):
+        """Over a period of whole days (UTC) around a day something was posted, each account's
+        opening balance, its entries in date order with the balance after each, and its closing
+        balance, as the model has them; the period's debits equal its credits."""
+        posted_on = data.draw(st.sampled_from([when for _, _, when in self.posted])).date()
+        first = posted_on - timedelta(days=before)
+        last = posted_on + timedelta(days=after)
+        start = datetime.combine(first, datetime.min.time(), tzinfo=UTC)
+        end = datetime.combine(last + timedelta(days=1), datetime.min.time(), tzinfo=UTC)
+        rows = (
+            self.conns[role]
+            .execute(
+                "SELECT item, bank, account, debit, credit, balance"
+                " FROM trust_report_general_ledger(%s, %s, %s) WHERE item NOT IN ('PMC', 'period')",
+                (self.pmc_id, first, last),
+            )
+            .fetchall()
+        )
+        names = {
+            self.pmc.operating_cash: "Synthetic operating trust account (operating)",
+            self.pmc.deposit_cash: "Synthetic security_deposit trust account (security_deposit)",
+        }
+
+        # The model's blocks: per account, its lines on its own side (cash as money the bank
+        # holds, every other account as money held for someone).
+        expected: dict[str, list[tuple]] = {name: [] for name in names.values()}
+        in_period = sorted(  # stable: one instant keeps the order of posting
+            (p for p in self.posted if start <= p[2] < end), key=lambda p: p[2]
+        )
+        total = Decimal(0)
+        for account in self.accounts:
+            sign = -1 if self.kinds[account] == "bank_cash" else 1
+            balance = sign * sum(
+                (
+                    (amount if target == account else -amount)
+                    for _, (source, target, amount), when in self.posted
+                    if account in (source, target) and when < start
+                ),
+                Decimal(0),
+            )
+            block = [("opening balance", None, None, balance)]
+            debits = credits = Decimal(0)
+            for _, (source, target, amount), _when in in_period:
+                if account not in (source, target):
+                    continue
+                dr, cr = (amount, Decimal(0)) if source == account else (Decimal(0), amount)
+                balance += sign * (cr - dr)
+                debits, credits = debits + dr, credits + cr
+                block.append(("entry", dr, cr, balance))
+            if len(block) == 1 and block[0][3] == 0 and self.kinds[account] != "bank_cash":
+                continue
+            block.append(("closing balance", debits, credits, balance))
+            expected[names[self.bank[account]]].append(tuple(block))
+            total += debits
+
+        blocks: dict[tuple[str, str], list[tuple]] = {}
+        for item, bank, account, debit, credit, balance in rows[:-1]:
+            blocks.setdefault((bank, account), []).append((item, debit, credit, balance))
+        for name, mine in expected.items():
+            got = [tuple(lines) for (bank, _), lines in blocks.items() if bank == name]
+            assert sorted(got) == sorted(mine)
+        assert rows[-1] == ("total", None, None, total, total, None)
 
     @rule(
         role=st.sampled_from(["owner", "app", "ai"]),

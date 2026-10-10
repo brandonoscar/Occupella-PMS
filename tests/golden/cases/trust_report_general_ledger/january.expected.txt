@@ -1,0 +1,34 @@
+line	item	bank	account	posted_at	description	debit	credit	balance
+1	PMC	NULL	Golden PMC	NULL	NULL	NULL	NULL	NULL
+2	period	NULL	2026-01-03 to 2026-01-31, whole days UTC	NULL	NULL	NULL	NULL	NULL
+3	opening balance	Golden operating trust account (operating)	book cash	NULL	NULL	NULL	NULL	0.00
+4	entry	Golden operating trust account (operating)	book cash	2026-01-03 15:00:00	owner_property: Owner 1 / Property 1 - Golden	2000.00	0.00	2000.00
+5	entry	Golden operating trust account (operating)	book cash	2026-01-05 15:00:00	owner_property: Owner 2 / Property 2 - Golden	500.00	0.00	2500.00
+6	entry	Golden operating trust account (operating)	book cash	2026-01-20 15:00:00	prepaid_rent: Tenant 1 - Golden	300.00	0.00	2800.00
+7	closing balance	Golden operating trust account (operating)	book cash	NULL	NULL	2800.00	0.00	2800.00
+8	opening balance	Golden operating trust account (operating)	owner_property: Owner 1 / Property 1	NULL	NULL	NULL	NULL	0.00
+9	entry	Golden operating trust account (operating)	owner_property: Owner 1 / Property 1	2026-01-03 15:00:00	bank_cash: Golden operating trust account - Golden	0.00	2000.00	2000.00
+10	entry	Golden operating trust account (operating)	owner_property: Owner 1 / Property 1	2026-01-25 15:00:00	vendor_payable: Vendor 1 - Golden	250.00	0.00	1750.00
+11	entry	Golden operating trust account (operating)	owner_property: Owner 1 / Property 1	2026-01-31 18:00:00	pmc_income: Golden PMC - Golden	160.00	0.00	1590.00
+12	closing balance	Golden operating trust account (operating)	owner_property: Owner 1 / Property 1	NULL	NULL	410.00	2000.00	1590.00
+13	opening balance	Golden operating trust account (operating)	owner_property: Owner 2 / Property 2	NULL	NULL	NULL	NULL	0.00
+14	entry	Golden operating trust account (operating)	owner_property: Owner 2 / Property 2	2026-01-05 15:00:00	bank_cash: Golden operating trust account - Golden	0.00	500.00	500.00
+15	closing balance	Golden operating trust account (operating)	owner_property: Owner 2 / Property 2	NULL	NULL	0.00	500.00	500.00
+16	opening balance	Golden operating trust account (operating)	pmc_income: Golden PMC	NULL	NULL	NULL	NULL	0.00
+17	entry	Golden operating trust account (operating)	pmc_income: Golden PMC	2026-01-31 18:00:00	owner_property: Owner 1 / Property 1 - Golden	0.00	160.00	160.00
+18	closing balance	Golden operating trust account (operating)	pmc_income: Golden PMC	NULL	NULL	0.00	160.00	160.00
+19	opening balance	Golden operating trust account (operating)	prepaid_rent: Tenant 1	NULL	NULL	NULL	NULL	0.00
+20	entry	Golden operating trust account (operating)	prepaid_rent: Tenant 1	2026-01-20 15:00:00	bank_cash: Golden operating trust account - Golden	0.00	300.00	300.00
+21	closing balance	Golden operating trust account (operating)	prepaid_rent: Tenant 1	NULL	NULL	0.00	300.00	300.00
+22	opening balance	Golden operating trust account (operating)	vendor_payable: Vendor 1	NULL	NULL	NULL	NULL	0.00
+23	entry	Golden operating trust account (operating)	vendor_payable: Vendor 1	2026-01-25 15:00:00	owner_property: Owner 1 / Property 1 - Golden	0.00	250.00	250.00
+24	closing balance	Golden operating trust account (operating)	vendor_payable: Vendor 1	NULL	NULL	0.00	250.00	250.00
+25	opening balance	Golden security deposit account (security_deposit)	book cash	NULL	NULL	NULL	NULL	1500.00
+26	entry	Golden security deposit account (security_deposit)	book cash	2026-01-10 15:00:00	tenant_deposit: Tenant 2 - Golden	900.00	0.00	2400.00
+27	closing balance	Golden security deposit account (security_deposit)	book cash	NULL	NULL	900.00	0.00	2400.00
+28	opening balance	Golden security deposit account (security_deposit)	tenant_deposit: Tenant 1	NULL	NULL	NULL	NULL	1500.00
+29	closing balance	Golden security deposit account (security_deposit)	tenant_deposit: Tenant 1	NULL	NULL	0.00	0.00	1500.00
+30	opening balance	Golden security deposit account (security_deposit)	tenant_deposit: Tenant 2	NULL	NULL	NULL	NULL	0.00
+31	entry	Golden security deposit account (security_deposit)	tenant_deposit: Tenant 2	2026-01-10 15:00:00	bank_cash: Golden security deposit account - Golden	0.00	900.00	900.00
+32	closing balance	Golden security deposit account (security_deposit)	tenant_deposit: Tenant 2	NULL	NULL	0.00	900.00	900.00
+33	total	NULL	NULL	NULL	NULL	4110.00	4110.00	NULL

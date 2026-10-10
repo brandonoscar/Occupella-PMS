@@ -400,6 +400,16 @@ tests = [
 ]
 
 [[report]]
+id = "general-ledger"
+statement = "General ledger for a period of whole days (UTC): per ledger account, by trust bank account, its balance at the start, every entry dated inside the period in date order with the account on its other side and the balance after it, and its debits, credits and balance at the end, which is its balance on the trial balance; the period's debits equal its credits. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_general_ledger.py::test_each_account_runs_from_its_opening_to_its_closing_balance",
+  "tests/test_general_ledger.py::test_each_closing_balance_is_the_trial_balances",
+  "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+]
+
+[[report]]
 id = "security-deposit-register"
 statement = "Security deposit register as of the end of a day (UTC): each tenant's deposit held, by security-deposit trust bank account, against that account's book cash. Compared to a checked-in golden file."
 tests = [

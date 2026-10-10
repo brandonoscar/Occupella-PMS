@@ -76,7 +76,8 @@ periods, and check the money invariants after every step:
 - an approved reconciliation never changes, nothing dated inside its period lands after it,
   and periods follow one another;
 - every security deposit sits in the security-deposit trust account, which holds nothing else;
-- the trial balance and the deposit register as of any day match the model.
+- the trial balance and the deposit register as of any day match the model, and so does the
+  general ledger over any period: each account's opening, entries and closing balance.
 
 Both machines also act as the AI's role (`trust_ai_agent`): it reads the same reports, and every
 posting or record change it tries is refused with nothing written.
@@ -143,7 +144,9 @@ aside for it and how far past due it is) and `trust_report_delinquency` (each le
 money, by how long it is past due) and `trust_report_tenant_ledger` (one lease's charges,
 payments and bounces with a running balance) and `trust_report_trial_balance` (per trust bank
 account, its book cash against everything it holds) and `trust_report_security_deposits` (each
-tenant's deposit against the deposit account's cash). Run it
+tenant's deposit against the deposit account's cash) and `trust_report_general_ledger` (per
+ledger account over a period: its opening balance, every entry with the balance after it, and
+its closing balance). Run it
 with
 `pytest tests/golden`, and update deliberately with `pytest tests/golden --update-goldens`.
 

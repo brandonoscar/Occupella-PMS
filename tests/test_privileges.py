@@ -104,6 +104,7 @@ FUNCTIONS = {
     "trust_report_tenant_ledger(uuid,uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_trial_balance(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_security_deposits(uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_general_ledger(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     # pgledger's posting functions take no idempotency key, so a retried request could post
     # twice: only the owner calls them (trust_post_transfers does, as the owner).
     "pgledger_create_transfer(text,text,numeric,timestamptz,jsonb)": set(),
