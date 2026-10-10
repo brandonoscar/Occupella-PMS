@@ -121,6 +121,39 @@ tests = [
   "tests/test_ledger_core.py::test_every_entry_carries_the_running_balance_and_account_version",
 ]
 
+[[invariant]]
+id = "one-lease-per-unit"
+statement = "Two leases of one unit never overlap, whoever writes them: each lease write waits for the others on its unit and reads every committed lease."
+tests = [
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+  "tests/test_leases_and_charges.py::test_two_leases_of_one_unit_never_overlap",
+  "tests/test_leases_and_charges.py::test_the_owner_writing_leases_directly_is_held_to_the_same_rule",
+  "tests/test_leases_and_charges.py::test_a_lease_waits_for_one_in_progress_on_the_unit_and_is_then_refused",
+  "tests/test_leases_and_charges.py::test_leases_of_different_units_do_not_wait_for_each_other",
+  "tests/test_leases_and_charges.py::test_leases_are_written_at_read_committed",
+]
+
+[[invariant]]
+id = "rent-charged-once"
+statement = "A lease is charged rent at most once per due date, so a retried billing run can't bill twice; charges are append-only and corrected with a credit."
+tests = [
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+  "tests/test_leases_and_charges.py::test_rent_is_charged_once_per_due_date_so_a_retried_run_cannot_bill_twice",
+  "tests/test_leases_and_charges.py::test_charges_and_matches_are_kept_for_good",
+]
+
+[[invariant]]
+id = "payments-never-overpay"
+statement = "A payment is matched to a charge only within both amounts: no charge is paid past its amount, no transfer pays more than it moved, only a payment into the owner's account for the charge's property from cash or a lease tenant's held money counts, and the same match retried returns the original."
+tests = [
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+  "tests/test_leases_and_charges.py::test_a_charge_is_never_paid_past_its_amount",
+  "tests/test_leases_and_charges.py::test_a_transfer_never_pays_more_than_it_moved",
+  "tests/test_leases_and_charges.py::test_the_same_match_retried_returns_the_original",
+  "tests/test_leases_and_charges.py::test_a_transfer_that_did_not_pay_the_leases_rent_is_refused",
+  "tests/test_leases_and_charges.py::test_two_payments_at_once_cannot_overpay_a_charge",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]
@@ -143,8 +176,13 @@ tests = [
 
 [[report]]
 id = "rent-roll"
-statement = "Rent roll, compared to a checked-in golden file."
-pending = "https://github.com/brandonoscar/Occupella-PMS/issues/10"
+statement = "Rent roll as of the end of a day (UTC): per unit the lease in effect, its tenants, the deposits and prepaid rent held for them, what was charged and paid, and the balance due; then totals that tie back to every tenant's money in the trust ledger. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_rent_roll.py::test_charges_count_by_due_date_and_payments_by_their_transfers_date",
+  "tests/test_rent_roll.py::test_money_for_tenants_off_the_roll_still_adds_up_to_the_ledger",
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+]
 
 # --- Self-host (selfhost.yml) --------------------------------------------------------------
 

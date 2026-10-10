@@ -29,6 +29,11 @@ TABLES = {
     "trust_ledger_accounts": {"SELECT"},
     "trust_idempotency_keys": set(),  # only trust_post_transfers reads and writes it
     "trust_reconciliations": {"SELECT"},  # written only by trust_approve_reconciliation
+    "trust_units": {"SELECT", "INSERT"},
+    "trust_leases": {"SELECT"},  # written only by trust_open_lease and trust_end_lease
+    "trust_lease_tenants": {"SELECT"},  # written only by trust_open_lease
+    "trust_charges": {"SELECT", "INSERT"},
+    "trust_charge_payments": {"SELECT"},  # written only by trust_apply_payment
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
@@ -39,6 +44,7 @@ RENAMEABLE = [
     "trust_properties",
     "trust_tenants",
     "trust_vendors",
+    "trust_units",
 ]
 
 # Who may call each function, besides the role that owns it.
@@ -50,9 +56,13 @@ FUNCTIONS = {
     "trust_approve_reconciliation(uuid,uuid,timestamptz,timestamptz,numeric,text,text)": {
         "trust_app"
     },
+    "trust_open_lease(uuid,uuid,date,date,numeric,uuid[])": {"trust_app"},
+    "trust_end_lease(uuid,uuid,date)": {"trust_app"},
+    "trust_apply_payment(uuid,uuid,text,numeric)": {"trust_app"},
     # Reports read trust records, so only the app; they run with the caller's own read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app"},
     "trust_report_owner_statement(uuid,uuid,timestamptz,timestamptz)": {"trust_app"},
+    "trust_report_rent_roll(uuid,date)": {"trust_app"},
     # pgledger's posting functions take no idempotency key, so a retried request could post
     # twice: only the owner calls them (trust_post_transfers does, as the owner).
     "pgledger_create_transfer(text,text,numeric,timestamptz,jsonb)": set(),
@@ -79,6 +89,7 @@ FUNCTIONS = {
     "trust_refuse_moving_closed_through()": {"PUBLIC"},
     "trust_check_account_bank_kind()": {"PUBLIC"},
     "trust_refuse_changing_bank_kind()": {"PUBLIC"},
+    "trust_refuse_overlapping_leases()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.
@@ -87,6 +98,9 @@ SECURITY_DEFINER = {
     "trust_post_transfers(uuid,text,transfer_request[],timestamptz,jsonb)",
     "trust_open_vendor_account(uuid,uuid,uuid)",
     "trust_approve_reconciliation(uuid,uuid,timestamptz,timestamptz,numeric,text,text)",
+    "trust_open_lease(uuid,uuid,date,date,numeric,uuid[])",
+    "trust_end_lease(uuid,uuid,date)",
+    "trust_apply_payment(uuid,uuid,text,numeric)",
 }
 
 
