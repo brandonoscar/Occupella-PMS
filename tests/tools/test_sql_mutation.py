@@ -94,6 +94,28 @@ CREATE FUNCTION money(x numeric) RETURNS numeric AS $$ BEGIN RETURN x - 1; END; 
     ]
 
 
+def test_only_the_definition_the_database_ends_up_with_is_mutated():
+    # 002 replaces the one-argument money(); its first body never runs, so mutating it would
+    # make survivors no test can kill. The two-argument overload is never replaced.
+    first = """-- migrate:up
+CREATE FUNCTION money(x numeric) RETURNS numeric AS $$ BEGIN RETURN x + 1; END; $$;
+CREATE FUNCTION money(x numeric, y numeric) RETURNS numeric AS $$ BEGIN RETURN x - y; END; $$;
+"""
+    later = """-- migrate:up
+CREATE OR REPLACE FUNCTION money(
+    X  NUMERIC
+) RETURNS numeric AS $$ BEGIN RETURN x + 2; END; $$;
+"""
+    files = {"db/migrations/001_a.sql": first, "db/migrations/002_b.sql": later}
+
+    mutants = sql_mutation.generate(files, {"money"})
+
+    assert [(m.file.split("/")[-1], m.line, m.description) for m in mutants] == [
+        ("001_a.sql", 3, "- to +"),
+        ("002_b.sql", 4, "+ to -"),
+    ]
+
+
 def test_apply_changes_one_place(files):
     mutant = next(m for m in sql_mutation.generate(files, {"money"}) if m.description == "< to <=")
     changed = sql_mutation.apply(files, mutant)[mutant.file]
