@@ -107,6 +107,16 @@ def test_a_release_must_end_the_hold_after_it_starts(conn, app_conn, pmc, lease,
         release_hold(app_conn, pmc.pmc_id, hold, ends_on)
 
 
+def test_each_release_is_checked_against_its_own_hold(conn, app_conn, pmc, lease):
+    later = hold_payments(app_conn, pmc.pmc_id, lease, date(2030, 6, 1), "Later filing")
+    earlier = hold_payments(app_conn, pmc.pmc_id, lease, date(2026, 1, 1), "Earlier filing")
+
+    # Ends after the earlier hold starts, but before its own: refused.
+    with pytest.raises(psycopg.errors.CheckViolation, match="its release must end it later"):
+        release_hold(app_conn, pmc.pmc_id, later, date(2030, 1, 1))
+    release_hold(app_conn, pmc.pmc_id, earlier, date(2026, 2, 1))
+
+
 def test_a_hold_is_released_once(conn, app_conn, pmc, lease):
     hold = hold_payments(app_conn, pmc.pmc_id, lease, MAR_1)
     release_hold(app_conn, pmc.pmc_id, hold, APR_1)
