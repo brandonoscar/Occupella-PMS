@@ -415,6 +415,37 @@ def pay_bill(connection, pmc_id, bill_id, event_at) -> str:
     return _one(connection, "SELECT trust_pay_bill(%s, %s, %s)", (pmc_id, bill_id, event_at))
 
 
+def charge_rent_due(connection, pmc_id, due_on) -> int:
+    """Charge every lease in effect on due_on its monthly rent; the number charged."""
+    return _one(connection, "SELECT trust_charge_rent_due(%s, %s)", (pmc_id, due_on))
+
+
+def add_late_fee_policy(
+    connection, pmc_id, property_id, starts_on, grace_days, flat_fee="0", percent="0", maximum=None
+) -> UUID:
+    """A property's late fee terms, in force from starts_on."""
+    return _one(
+        connection,
+        "INSERT INTO trust_late_fee_policies"
+        " (pmc_id, property_id, starts_on, grace_days, flat_fee, percent, maximum)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        (
+            pmc_id,
+            property_id,
+            starts_on,
+            grace_days,
+            Decimal(flat_fee),
+            Decimal(percent),
+            None if maximum is None else Decimal(maximum),
+        ),
+    )
+
+
+def assess_late_fees(connection, pmc_id, as_of) -> int:
+    """Charge the late fee of each rent unpaid when its grace ran out before as_of."""
+    return _one(connection, "SELECT trust_assess_late_fees(%s, %s)", (pmc_id, as_of))
+
+
 def balance(connection, account) -> Decimal:
     return _one(connection, "SELECT balance FROM pgledger_accounts WHERE id = %s", (account,))
 
