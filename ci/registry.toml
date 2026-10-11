@@ -347,6 +347,19 @@ tests = [
   "tests/test_recurring_bills.py::test_two_runs_at_once_enter_each_month_once",
 ]
 
+[[invariant]]
+id = "exports-hold-the-report"
+statement = "Every report exports as CSV, Excel and PDF holding what the report holds: CSV cell for cell, Excel value for value with its types, and no exported cell is ever a spreadsheet formula. Only a trust_report_* function can be exported, under the caller's own role. A PMC's ledger exports whole: every account, transfer and entry, and nothing of another PMC."
+tests = [
+  "tests/properties/test_export_properties.py::test_csv_holds_every_cell",
+  "tests/properties/test_export_properties.py::test_excel_holds_every_value_and_no_formula",
+  "tests/properties/test_export_properties.py::test_the_pdf_always_builds",
+  "tests/test_exports.py::test_every_report_exports_in_every_format",
+  "tests/test_exports.py::test_only_a_report_can_be_named",
+  "tests/test_exports.py::test_a_role_without_the_report_is_refused",
+  "tests/test_exports.py::test_the_ledger_export_holds_every_account_transfer_and_entry_of_the_pmc",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]
@@ -403,6 +416,15 @@ id = "owner-statement"
 statement = "The self-host smoke run produces one owner statement, and it matches that owner's ledgers."
 tests = [
   "tests/test_selfhost_smoke.py::test_smoke_produces_an_owner_statement",
+  "tests/test_selfhost_smoke.py::test_main_runs_against_database_url",
+]
+
+[[selfhost]]
+id = "exports"
+statement = "The self-host image exports an owner statement as a PDF and a spreadsheet, and the PMC's whole ledger as a zip holding every transfer."
+tests = [
+  "tests/test_selfhost_smoke.py::test_the_statement_and_the_ledger_export",
+  "tests/test_selfhost_smoke.py::test_a_broken_export_is_reported",
   "tests/test_selfhost_smoke.py::test_main_runs_against_database_url",
 ]
 

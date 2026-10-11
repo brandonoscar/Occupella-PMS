@@ -1,6 +1,7 @@
 # The self-hosted build: what a PMC runs next to its own plain Postgres 16.
-# Phase 0 has no app server yet, so the image applies the migrations (dbmate) and runs the
-# smoke check (selfhost/smoke.py). The app joins this image when it exists.
+# There is no app server yet, so the image applies the migrations (dbmate), runs the smoke
+# check (selfhost/smoke.py) and exports reports (python -m pms.exports). The app joins this
+# image when it exists.
 FROM mirror.gcr.io/library/python:3.11-slim@sha256:e88e9763f943ec1834f992a4b51e0f24500486803e8bc534e5767af9ea65f6ce
 
 # dbmate v2.36.0, checked against the sha256 recorded when it was pinned (dbmate publishes none).
@@ -15,9 +16,11 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY db/migrations db/migrations
 COPY selfhost selfhost
+COPY src src
 
 USER pms
 ENV DBMATE_MIGRATIONS_DIR=/app/db/migrations \
     DBMATE_NO_DUMP_SCHEMA=true \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONPATH=/app/src
 CMD ["dbmate", "--wait", "up"]

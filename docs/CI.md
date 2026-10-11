@@ -16,7 +16,7 @@ fails on an image pulled from anywhere else.
 ## The workflows
 
 **ci.yml** (PRs and main): lint (ruff), format check (ruff), typecheck (mypy, strict on `tools/`,
-`selfhost/` and `scripts/`), shellcheck on `scripts/*.sh`, the synthetic-data scan, the
+`selfhost/`, `scripts/` and the app in `src/`), shellcheck on `scripts/*.sh`, the synthetic-data scan, the
 standing-rule checks, and every example test against a fresh database.
 
 The synthetic-data scan (`tools/check_synthetic_data.py`) reads every tracked file for values
@@ -132,6 +132,13 @@ member of the PMC's staff, nobody, another PMC's staff member or someone on no s
 - a write naming someone not on the PMC's staff is refused and nothing of it is logged;
 - every transfer has exactly one audit row, and the log only grows.
 
+The export properties (`tests/properties/test_export_properties.py`) need no database. Hypothesis
+builds tables of any shape and any values (text in any script, quotes, line breaks, formula
+starts and control characters, money, days, times in random zones, NULLs), and checks:
+- CSV reads back cell for cell, and no text starts like a formula;
+- Excel reads back the same values and types, and never holds a formula;
+- the PDF always builds.
+
 `ci/registry.toml` maps every required invariant to its test or to the open issue for what isn't
 built yet. PRs run 200 examples per property. Nightly runs 16 jobs, each with its own seed and
 3,000 examples. A failing case is uploaded as an artifact with the seed and the shortest failing
@@ -201,12 +208,14 @@ Run it with `python -m tools.sql_mutation --list`, then
 `python -m tools.sql_mutation --out mutation/all.json` and
 `python -m tools.sql_mutation --score mutation/all.json`.
 
-**selfhost.yml** (nightly, by hand, and on PRs touching the Dockerfile, compose file or
-migrations): builds the image and runs `compose.yaml` with plain Postgres 16 and nothing from
+**selfhost.yml** (nightly, by hand, and on PRs touching the Dockerfile, compose file,
+requirements, migrations or `src/`): builds the image and runs `compose.yaml` with plain Postgres 16 and nothing from
 Supabase. It applies every migration, then runs the smoke check:
 - seeds a synthetic 50-door PMC;
 - posts one month of rent;
 - runs one owner statement for that month and checks it against the owner's ledgers;
+- exports that statement as a PDF and a spreadsheet, and the whole ledger as a zip that must
+  hold every transfer;
 - checks database health and every ledger invariant.
 
 An app health endpoint isn't built yet (issue #11). This proves

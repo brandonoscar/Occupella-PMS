@@ -6,15 +6,21 @@ cannot move money.
 
 Apache License 2.0 (see `LICENSE`). Third-party code and its licenses: `THIRD_PARTY_NOTICES.md`.
 
-## Status: Phase 0
+## Status
 
-The ledger schema and the tests that prove it works. Nothing else:
+Built: the trust ledger (schema and the tests that prove it), its reports, and exports of
+every report as CSV, Excel or PDF plus the whole ledger as CSV
+(`PYTHONPATH=src python -m pms.exports --help`).
 
-- no server, no API, no UI, no login;
+Being built, in this order (`docs/adr/0002-portals-and-exports.md`): the API with logins, the
+owner portal, the tenant portal, and leasing basics.
+
+Still true:
+
 - no hosted database and no deploy (CI uses a throwaway Postgres 16 container);
 - no real data. Every fixture is synthetic.
 
-The decision and the Phase 0 plan live in AgenticHelixis:
+The placement decision and the Phase 0 plan live in AgenticHelixis:
 `docs/decisions/ADR-free-pms-placement.md` (section "Phase 0 plan"), with the research in
 `docs/research/free-pms-gaps.md`.
 

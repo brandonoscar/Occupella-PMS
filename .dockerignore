@@ -2,4 +2,6 @@
 !requirements.txt
 !db/migrations
 !selfhost
+!src
 selfhost/__pycache__
+src/**/__pycache__

@@ -68,6 +68,7 @@ def test_main_runs_against_database_url(database_url, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "50 doors" in out and "healthy" in out
     assert "owner statement: Owner 01, 2026-02, 5 properties, closing" in out
+    assert "exported: the statement as PDF and Excel, the ledger as accounts" in out
 
 
 def test_main_fails_when_the_statement_disagrees_with_the_ledgers(
@@ -87,6 +88,36 @@ def test_main_fails_when_the_statement_disagrees_with_the_ledgers(
     out = capsys.readouterr().out
     assert "FAIL: Owner 01's statement closes at" in out and "but their ledgers hold" in out
     assert "healthy" not in out
+
+
+def test_the_statement_and_the_ledger_export(conn):
+    seeded = smoke.seed(conn, doors=4, owners=2)
+    smoke.post_month_of_rent(conn, seeded, date(2026, 2, 1))
+
+    assert smoke.check_exports(conn, seeded, date(2026, 2, 1)) == []
+
+
+def test_a_broken_export_is_reported(conn, monkeypatch):
+    seeded = smoke.seed(conn, doors=2, owners=1)  # a deposit each, and no rent posted yet
+    monkeypatch.setattr(smoke.exports, "export", lambda table, fmt: b"not a file")
+
+    problems = smoke.check_exports(conn, seeded, date(2026, 2, 1))
+
+    assert problems == [
+        "the owner statement did not export as a PDF",
+        "the owner statement did not export as a spreadsheet",
+        "the ledger export holds 2 transfers, not 4",
+    ]
+
+
+def test_main_fails_when_an_export_fails(database_url, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    monkeypatch.setattr(smoke, "check_exports", lambda conn, seeded, month: ["no PDF"])
+
+    assert smoke.main() == 1
+    out = capsys.readouterr().out
+    assert "FAIL: no PDF" in out
+    assert "exported:" not in out and "healthy" not in out
 
 
 def test_main_needs_database_url(monkeypatch, capsys):
