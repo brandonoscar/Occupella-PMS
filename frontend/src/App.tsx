@@ -4,6 +4,7 @@ import { ApiError, api } from "./api";
 import { Notice } from "./components/Notice";
 import { ApplicationStatusPage } from "./pages/ApplicationStatusPage";
 import { ApplyPage } from "./pages/ApplyPage";
+import { ESignPage } from "./pages/ESignPage";
 import { InvitePage } from "./pages/InvitePage";
 import { OwnerHome } from "./pages/OwnerHome";
 import { PMC_KEY, SignInPage } from "./pages/SignInPage";
@@ -17,6 +18,8 @@ export function App() {
   // Applicants have no login: their links carry what lets them in.
   if (path === "/apply") return <ApplyPage />;
   if (path === "/application") return <ApplicationStatusPage />;
+  // The fake e-sign partner's page; a signer's link carries what lets them in.
+  if (path === "/esign") return <ESignPage />;
   if (path === "/sign-in") return <SignInPage />;
   return <Home />;
 }

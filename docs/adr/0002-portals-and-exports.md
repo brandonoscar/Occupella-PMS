@@ -142,3 +142,31 @@ and renewals are part two.
   the right to dispute); it is not legal advice, and a PMC should have its own counsel check it
   before relying on it.
 - `trust_ai_agent` reads none of it. No application fee: payments stay out.
+
+## Leasing basics, part two, as built
+
+Lease offers, e-sign and renewals: `src/pms/api/offers.py`, `src/pms/leasing/esign.py`,
+migration 0031. With it, the four things this ADR moved into scope are built.
+
+- Staff offer a lease to an application they approved (outright or on conditions), at the unit
+  it applied for, or the renewal of a lease that hasn't ended, starting after it does. An offer
+  has its terms (start, end or month to month, rent) and the PMC's own lease document, a PDF of
+  at most 5 MB uploaded with it: the PMS writes no lease text, so what a lease says stays the
+  PMC's (and its counsel's) to decide.
+- Who signs: for a new lease, the applicants unless staff name others; for a renewal, the
+  people staff name (prefilled with the lease's tenants and their login emails). Up to six,
+  each with their own email.
+- The offer goes to the e-sign partner once. Staff send each signer their link (the PMS sends
+  no email yet) and check the signatures, which are recorded as the partner reports them. A
+  tenant signs a renewal of their own lease from the portal, matched by their login's email,
+  and sees their signature as soon as the partner has it.
+- When everyone has signed, staff make it the lease (`trust_complete_lease_offer`): a new
+  lease's signers become its tenants, and a renewal keeps the old lease's tenants and ends it
+  the day before. An application or a lease takes one completed offer, and the unit's one
+  lease at a time still holds.
+- The founder picks the real e-sign partner at deploy time. Until then the only partner is a
+  fake, on only where `PMS_ESIGN_PARTNER=fake` (development and CI): its envelopes live in the
+  server process's memory, its signing page (`/esign#<token>`) is part of the portal, and
+  typing your name there is not a signature, which the page says. Without a partner no offer
+  can be sent.
+- `trust_ai_agent` reads none of it.

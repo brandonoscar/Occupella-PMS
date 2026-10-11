@@ -474,6 +474,49 @@ tests = [
   "tests/test_screening.py::test_a_partner_is_chosen_by_name",
 ]
 
+[[invariant]]
+id = "lease-offers-become-leases-once-signed"
+statement = "A lease offer is for an approved (or conditionally approved) application at the unit it applied for, or renews a lease at its unit, starting after it. It becomes a lease only through trust_complete_lease_offer, once every signer has signed, and an application or a lease takes at most one completed offer; completing again returns the same lease. A new lease's tenants are its signers; a renewal keeps the tenants of the lease it renews, which ends the day before."
+tests = [
+  "tests/test_lease_offers.py::test_a_signed_offer_for_an_application_opens_a_lease_for_its_signers",
+  "tests/test_lease_offers.py::test_completing_again_returns_the_same_lease",
+  "tests/test_lease_offers.py::test_a_renewal_ends_the_lease_the_day_before_and_keeps_its_tenants",
+  "tests/test_lease_offers.py::test_an_offer_completes_only_once_everyone_has_signed",
+  "tests/test_lease_offers.py::test_an_application_or_a_lease_takes_one_completed_offer",
+  "tests/test_lease_offers.py::test_two_offers_for_one_application_completing_at_once_make_one_lease",
+  "tests/test_lease_offers.py::test_an_offer_is_for_an_approved_application_at_its_unit",
+  "tests/test_lease_offers.py::test_a_renewal_is_at_its_leases_unit_and_starts_after_it",
+  "tests/test_lease_offers.py::test_only_the_function_completes_an_offer",
+  "tests/properties/test_lease_offer_properties.py::test_lease_offer_invariants_hold_under_random_offers_signatures_and_completions",
+  "tests/api/test_offers.py::test_signers_sign_and_staff_complete_the_offer_into_a_lease",
+]
+
+[[invariant]]
+id = "lease-documents-and-signatures"
+statement = "A lease offer carries the PMC's own lease document, a PDF of at most 5 MB: the PMS writes no lease text. A signature is recorded only for a sent offer and one of its signers, as the e-sign partner reports it. Offers, signers, signature requests, signatures and completions are never rewritten."
+tests = [
+  "tests/test_lease_offers.py::test_the_lease_document_is_a_pdf_of_at_most_5_mb",
+  "tests/test_lease_offers.py::test_a_lease_document_of_5_mb_is_kept",
+  "tests/test_lease_offers.py::test_a_signature_is_for_a_sent_offer_and_one_of_its_signers",
+  "tests/test_lease_offers.py::test_offers_and_signatures_are_never_rewritten",
+  "tests/api/test_offers.py::test_staff_download_the_lease_they_offered",
+  "tests/api/test_offers.py::test_a_bad_offer_is_refused_and_nothing_is_kept",
+]
+
+[[invariant]]
+id = "signing-through-the-partner"
+statement = "Offers are signed only through the e-sign partner the server is set up with (none by default; the fake only for trying it out). A tenant reaches only the renewals of their own leases, and gets a signing link only as a signer with their login's email. A tenant sees what the partner reports at once; only staff record it. trust_ai_agent reads no offer, signer, signature request, signature or completion."
+tests = [
+  "tests/api/test_offers.py::test_without_a_partner_there_is_no_signing",
+  "tests/api/test_offers.py::test_a_tenant_reaches_only_their_own_renewals",
+  "tests/api/test_offers.py::test_a_tenant_on_the_lease_who_isnt_a_signer_gets_no_link",
+  "tests/api/test_offers.py::test_a_tenant_sees_their_signature_at_once_and_only_staff_record_it",
+  "tests/api/test_offers.py::test_the_fake_partner_takes_only_the_signers_name_on_a_real_link",
+  "tests/test_esign.py::test_a_partner_is_chosen_by_name",
+  "tests/test_lease_offers.py::test_the_ai_role_reads_none_of_it",
+  "tests/test_privileges.py::test_ai_role_reads_only_what_the_app_reads",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]

@@ -490,6 +490,72 @@ def record_adverse_action(
     )
 
 
+LEASE_PDF = b"%PDF-1.4 a synthetic lease"
+
+
+def offer_lease(
+    connection,
+    pmc_id,
+    unit_id,
+    staff_id,
+    starts_on,
+    ends_on=None,
+    rent="1500.00",
+    application_id=None,
+    renews_lease_id=None,
+    signers=(("Signer 1", "signer1@example.com"),),
+) -> UUID:
+    """A lease offer (for an application or renewing a lease) and its signers."""
+    offer = _one(
+        connection,
+        "INSERT INTO trust_lease_offers (pmc_id, application_id, renews_lease_id, unit_id,"
+        " starts_on, ends_on, monthly_rent, document_title, document, offered_by)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, 'Lease', %s, %s) RETURNING id",
+        (
+            pmc_id,
+            application_id,
+            renews_lease_id,
+            unit_id,
+            starts_on,
+            ends_on,
+            Decimal(rent),
+            LEASE_PDF,
+            staff_id,
+        ),
+    )
+    for n, (name, email) in enumerate(signers, 1):
+        connection.execute(
+            "INSERT INTO trust_lease_offer_signers (pmc_id, offer_id, position, display_name,"
+            " email) VALUES (%s, %s, %s, %s, %s)",
+            (pmc_id, offer, n, name, email),
+        )
+    return offer
+
+
+def send_offer(connection, pmc_id, offer_id, staff_id) -> None:
+    connection.execute(
+        "INSERT INTO trust_signature_requests (pmc_id, offer_id, partner, partner_reference,"
+        " sent_by) VALUES (%s, %s, 'Test partner', %s, %s)",
+        (pmc_id, offer_id, f"ref-{offer_id}", staff_id),
+    )
+
+
+def sign_offer(connection, pmc_id, offer_id, position, signed_at=None) -> None:
+    connection.execute(
+        "INSERT INTO trust_signatures (pmc_id, offer_id, position, signed_at)"
+        " VALUES (%s, %s, %s, coalesce(%s, now()))",
+        (pmc_id, offer_id, position, signed_at),
+    )
+
+
+def complete_offer(connection, pmc_id, offer_id, staff_id) -> UUID:
+    return _one(
+        connection,
+        "SELECT trust_complete_lease_offer(%s, %s, %s)",
+        (pmc_id, offer_id, staff_id),
+    )
+
+
 def approve_bill(connection, pmc_id, bill_id, approved_on, approved_by) -> None:
     """Record the owner's approval of a bill over the approval limit."""
     connection.execute(

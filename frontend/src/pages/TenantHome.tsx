@@ -10,6 +10,7 @@ import type { MaintenanceRequest } from "../maintenance";
 import { statusLabel, when } from "../maintenance";
 import { money } from "../money";
 import type { StatementData } from "../statement";
+import { RenewalsCard } from "./RenewalsCard";
 
 export type Lease = {
   lease_id: string;
@@ -144,6 +145,8 @@ export function TenantHome({ me }: { me: Me }) {
               </p>
             </div>
           </Card>
+
+          <RenewalsCard me={me} />
 
           <Card title="Charges and payments">
             <div className="mb-4 flex flex-wrap gap-2">

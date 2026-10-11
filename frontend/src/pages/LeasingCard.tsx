@@ -32,7 +32,7 @@ const SELECT = "h-9 rounded-sm border border-line-strong bg-sunken px-2 text-sm 
 // Staff's leasing: application links for units, and the applications that come through them,
 // screened through the server's partner and decided. A decline or conditional approval that
 // rests on a screening records its adverse action notice with it.
-export function LeasingCard() {
+export function LeasingCard({ onChange }: { onChange?: () => void }) {
   const [units, setUnits] = useState<Unit[]>([]);
   const [links, setLinks] = useState<Link[]>([]);
   // Every application, decided or not: the open ones to decide, the decided ones' notices.
@@ -62,6 +62,7 @@ export function LeasingCard() {
     try {
       await work();
       refresh();
+      onChange?.();
     } catch (failed) {
       show(failed);
     }

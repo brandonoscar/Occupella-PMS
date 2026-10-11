@@ -234,7 +234,9 @@ Playwright, in its pinned image, drives Chromium (`frontend/e2e/portal.spec.ts`)
 reads a statement, the tenant reads what is due and asks for a repair, staff enroll an
 authenticator, invite someone and take a request through to done, and an applicant applies
 through a link that staff screen (with the fake partner, `PMS_SCREENING_PARTNER=fake`) and
-decline with a notice. On failure it keeps the Playwright
+decline with a notice, and staff offer a lease and a renewal that the applicant and the tenant
+sign on the fake e-sign partner's page (`PMS_ESIGN_PARTNER=fake`) before staff make each the
+lease. On failure it keeps the Playwright
 report and the API's log for 7 days. Run it locally with `cd frontend && npm ci && npm test &&
 npm run build`, then the same steps as the workflow (`PW_CHROMIUM` points Playwright at a
 Chromium already installed).

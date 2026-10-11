@@ -87,7 +87,12 @@ required invariant, report and self-host step.
   both tokens travel in JSON bodies and are kept only as SHA-256. Screening goes through
   `pms.leasing.screening.Partner`; the server's `PMS_SCREENING_PARTNER` picks one ("fake" for
   development and CI, none by default). The PMS keeps only applicants' names and emails; the
-  partner collects anything else on its own side.
+  partner collects anything else on its own side. Lease offers (`src/pms/api/offers.py`) carry
+  the PMC's own lease PDF (the PMS writes no lease text) and are signed through
+  `pms.leasing.esign.Partner`, picked by `PMS_ESIGN_PARTNER` ("fake" for development and CI,
+  none by default; the fake's signing page, `/esign#<token>`, is served only while it is on).
+  A tenant signs a renewal of their own lease from the portal, as the signer with their
+  login's email.
 - Every table we add carries `pmc_id uuid`. It maps to Occupella's `companies.id` at merge time.
 - Table names: `pgledger_*` from upstream, `trust_*` for ours. Our functions and triggers are
   `trust_*` too. A report function is `trust_report_<name>`. `tests/test_schema_conventions.py`
@@ -112,8 +117,8 @@ required invariant, report and self-host step.
   `trust_open_lease`, `trust_end_lease`, `trust_apply_payment`, `trust_reverse_payment`,
   `trust_post_management_fee`, `trust_post_leasing_fee`, `trust_draw_owner`,
   `trust_set_aside_bill`, `trust_pay_bill`, `trust_assess_late_fees`,
-  `trust_post_opening_balances` and `trust_record_owner_contribution`, which run as the table
-  owner (`trust_charge_rent_due` and `trust_enter_recurring_bills` run with the app's own
+  `trust_post_opening_balances`, `trust_record_owner_contribution` and
+  `trust_complete_lease_offer`, which run as the table owner (`trust_charge_rent_due` and `trust_enter_recurring_bills` run with the app's own
   grants). It can't call pgledger's posting functions: every posting it makes goes through
   `trust_post_transfers`, which takes an idempotency key, unique per PMC, so it is safe to
   retry: the same key returns the original transfers, and a different posting under it is
@@ -122,7 +127,7 @@ required invariant, report and self-host step.
   the reports. It holds no other grant: no write on any table, no function that writes. Grant
   it a new table's SELECT only if `trust_app` has it, and never a write path. It never reads
   logins, invites, sessions or credentials, nor rental applications, applicants and their
-  screenings (`AI_NEVER_READS` in `tests/test_privileges.py`).
+  screenings, nor lease offers and signatures (`AI_NEVER_READS` in `tests/test_privileges.py`).
 - A new table starts with `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it
   needs, never DELETE. `tests/test_privileges.py` pins the exact grants of every table and
   function: a new one fails until it is listed there, with who may use it. Postgres lets PUBLIC
@@ -201,6 +206,14 @@ required invariant, report and self-host step.
   decision, resting only on a screening of its own; a declined or conditional decision that
   rests on a screening has its adverse action notice (reasons, reporting agency, day given),
   checked at commit, and no other decision has one. All append-only.
+- Lease offers: a new lease for an approved (or conditionally approved) application at the unit
+  it applied for, or the renewal of a lease at its unit, starting after it; the terms, the
+  PMC's PDF (at most 5 MB) and its signers (names and emails). It is sent to the e-sign
+  partner once; a signature is recorded only for a sent offer's signer, as the partner reports
+  it. `trust_complete_lease_offer` makes it the lease once everyone has signed, once per offer
+  and safe to retry, and an application or a lease takes one completed offer: a new lease's
+  signers become its tenants; a renewal keeps the lease's tenants and ends it the day before.
+  READ COMMITTED; all append-only.
 - Vendor payments: `trust_report_vendor_payments` lists what each vendor was paid through
   `trust_pay_bill` in a calendar year (UTC), for 1099 preparation. It files nothing, holds no
   tax IDs and applies no threshold.

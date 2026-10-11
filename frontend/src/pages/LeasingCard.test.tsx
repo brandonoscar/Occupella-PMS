@@ -80,7 +80,8 @@ describe("LeasingCard", () => {
 
   it("declines on the screening with its notice, prefilled from the screening's reasons", async () => {
     const fetch = server();
-    render(<LeasingCard />);
+    const changed = vi.fn();
+    render(<LeasingCard onChange={changed} />);
 
     const open = await screen.findByRole("listitem", { name: "Application from Applicant A" });
     expect(within(open).getByText(/0.6x the rent/)).toBeTruthy();
@@ -99,6 +100,8 @@ describe("LeasingCard", () => {
       screening_id: "s1",
       adverse_action: { reasons: ["Household income is less than twice the rent"] },
     });
+    // The offers card hears of the decision.
+    await vi.waitFor(() => expect(changed).toHaveBeenCalledTimes(1));
   });
 
   it("asks for no notice for an approval, and offers the notices already given", async () => {
