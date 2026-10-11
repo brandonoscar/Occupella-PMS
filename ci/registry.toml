@@ -336,6 +336,17 @@ tests = [
   "tests/test_owner_contributions.py::test_a_contribution_is_never_matched_to_a_tenants_charge",
 ]
 
+[[invariant]]
+id = "recurring-bill-enters-each-month-once"
+statement = "A recurring bill enters each month's bill from its first day until its end, due on its day of the month, once: running again, or two runs at once, enter no month twice, and a month whose reference the vendor already has is left as it is. Entered bills follow every bill rule (approval limit, set aside, paid)."
+tests = [
+  "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
+  "tests/test_recurring_bills.py::test_each_months_bill_is_entered_from_the_first_day_through_the_day_asked",
+  "tests/test_recurring_bills.py::test_running_again_enters_only_the_months_not_yet_entered",
+  "tests/test_recurring_bills.py::test_a_month_already_entered_by_hand_is_left_as_it_is",
+  "tests/test_recurring_bills.py::test_two_runs_at_once_enter_each_month_once",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]
@@ -465,4 +476,13 @@ tests = [
   "tests/golden/test_golden.py::test_every_golden_case_matches",
   "tests/test_accounting_reports.py::test_each_deposit_is_listed_against_the_deposit_accounts_cash",
   "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+]
+
+[[report]]
+id = "vendor-payments"
+statement = "Vendor payments for a calendar year (UTC): what each vendor was paid through trust_pay_bill, by payment date, with the number of payments and the total, for 1099 preparation (nothing is filed and no threshold applied). Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_recurring_bills.py::test_each_vendor_shows_what_it_was_paid_in_the_year",
+  "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
 ]

@@ -16,6 +16,10 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
   - a draw never pays out more than the balance above the reserve and the unpaid bills, and
     its request key pays once.
 
+Recurring bills are added on random days of the month, ended and entered through random days:
+each month's bill is entered once, never under a reference the vendor already has. The rule
+check_vendor_payments reads what each vendor was paid in a year and compares it with the model.
+
 The rules check_owner_balances and check_unpaid_bills read the owner balances and unpaid bills
 reports as of a random day, as any role including the AI's, and compare every line with the
 model. The AI's
@@ -24,7 +28,7 @@ role is refused every write it tries.
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
@@ -33,9 +37,12 @@ import psycopg
 import pytest
 from helpers import (
     add_agreement,
+    add_recurring_bill,
     approve_bill,
     draw_owner,
+    end_recurring_bill,
     enter_bill,
+    enter_recurring_bills,
     make_pmc,
     pay_bill,
     set_aside_bill,
@@ -66,12 +73,28 @@ class Terms:
 
 
 @dataclass(frozen=True)
+class Recurring:
+    vendor: int
+    account: str
+    prefix: str
+    amount: Decimal
+    day_of_month: int
+    starts_on: date
+    ends_on: date | None = None
+
+
+@dataclass(frozen=True)
 class Bill:
     account: str
     vendor: int
     reference: str
     bill_date: date
     amount: Decimal
+    due_on: date | None = None  # None: 30 days after the bill date, as enter_a_bill sets it
+
+    @property
+    def due(self):
+        return self.due_on or self.bill_date + timedelta(days=30)
 
 
 def to_cents(amount):
@@ -122,6 +145,7 @@ class BillMachine(RuleBasedStateMachine):
         self.set_aside: dict[UUID, tuple[str, datetime]] = {}  # bill -> (transfer, when)
         self.paid: dict[UUID, tuple[str, datetime]] = {}
         self.draws: dict[str, tuple[str, Decimal]] = {}
+        self.recurring: dict[UUID, Recurring] = {}
 
     # --- the model -----------------------------------------------------------------------
 
@@ -252,6 +276,9 @@ class BillMachine(RuleBasedStateMachine):
         """The usual path for a bill not yet set aside: the owner's account gets what it lacks
         and the owner approves the bill if it isn't approved, then it is set aside."""
         bill_id = data.draw(st.sampled_from([i for i in self.bills if i not in self.set_aside]))
+        self.fund_and_set_aside(role, bill_id, day, second)
+
+    def fund_and_set_aside(self, role, bill_id, day, second):
         bill, when = self.bills[bill_id], moment(day, second)
         short = bill.amount - self.balance.get(bill.account, Decimal(0))
         if short > 0:
@@ -291,16 +318,37 @@ class BillMachine(RuleBasedStateMachine):
         data=st.data(),
         role=ROLES,
         any_bill=st.booleans(),
-        delay=st.sampled_from([-1, 0, 1, 3_600, 20 * 86_400]),
+        delay=st.sampled_from([-1, 0, 1, 3_600, 20 * 86_400, 366 * 86_400]),
     )
     def pay_a_bill(self, data, role, any_bill, delay):
         """Mostly a bill set aside and not yet paid, dated a second before it was set aside,
-        at the same moment, or later; now and then any bill."""
+        at the same moment, or later (as late as the next year); now and then any bill."""
         ready = [i for i in self.set_aside if i not in self.paid]
         bill_id = data.draw(st.sampled_from(list(self.bills) if any_bill or not ready else ready))
-        bill = self.bills[bill_id]
         start = self.set_aside[bill_id][1] if bill_id in self.set_aside else moment(0, 0)
-        when = start + timedelta(seconds=delay)
+        self.attempt_payment(role, bill_id, start + timedelta(seconds=delay))
+
+    @precondition(lambda self: any(i not in self.paid for i in self.bills))
+    @rule(
+        data=st.data(),
+        role=ROLES,
+        day=DAYS,
+        second=TIMES,
+        delay=st.sampled_from([0, 86_400, 366 * 86_400]),
+    )
+    def settle_a_bill(self, data, role, day, second, delay):
+        """A bill not yet paid taken the whole way, as most are: funded, approved and set aside
+        if it isn't, then paid, so the vendor payments report has payments to read."""
+        bill_id = data.draw(st.sampled_from([i for i in self.bills if i not in self.paid]))
+        if bill_id not in self.set_aside:
+            self.fund_and_set_aside(role, bill_id, day, second)
+        if bill_id in self.set_aside:
+            self.attempt_payment(
+                role, bill_id, self.set_aside[bill_id][1] + timedelta(seconds=delay)
+            )
+
+    def attempt_payment(self, role, bill_id, when):
+        bill = self.bills[bill_id]
 
         def send():
             return pay_bill(self.conns[role], self.pmc_id, bill_id, when)
@@ -410,7 +458,7 @@ class BillMachine(RuleBasedStateMachine):
         for i, b in self.bills.items():
             if b.bill_date > as_of or (i in self.paid and self.paid[i][1] < end_of(as_of)):
                 continue
-            due = b.bill_date + timedelta(days=30)  # as enter_a_bill sets it
+            due = b.due
             late = max((as_of - due).days, 0)
             bucket = next(
                 name
@@ -459,6 +507,133 @@ class BillMachine(RuleBasedStateMachine):
                 pay_bill(ai, self.pmc_id, bill_id, moment(0, 0))
 
     # --- invariants: checked after every step --------------------------------------------
+
+    # --- rules: recurring bills and vendor payments ------------------------------------
+
+    @rule(
+        data=st.data(),
+        role=ROLES,
+        vendor=st.sampled_from([0, 1, 2]),
+        prefix=st.sampled_from(["LAWN", "POOL"]),
+        amount=AMOUNTS,
+        day_of_month=st.integers(min_value=1, max_value=28),
+        start=DAYS,
+        on_its_day=st.booleans(),
+    )
+    def add_a_recurring_bill(
+        self, data, role, vendor, prefix, amount, day_of_month, start, on_its_day
+    ):
+        """Starting on a random day, or now and then on its own day of the month, whose bill
+        is then the first one."""
+        account = data.draw(st.sampled_from(self.owner_account))
+        starts_on = BASE + timedelta(days=start)
+        if on_its_day:
+            starts_on = starts_on.replace(day=day_of_month)
+
+        def send():
+            return add_recurring_bill(
+                self.conns[role],
+                self.pmc_id,
+                self.vendors[vendor][0],
+                account,
+                prefix,
+                amount,
+                day_of_month,
+                starts_on,
+            )
+
+        if any((r.vendor, r.prefix) == (vendor, prefix) for r in self.recurring.values()):
+            with pytest.raises(psycopg.errors.UniqueViolation):
+                send()
+            return
+        self.recurring[send()] = Recurring(vendor, account, prefix, amount, day_of_month, starts_on)
+
+    @precondition(lambda self: self.recurring)
+    @rule(data=st.data(), role=ROLES, days=st.integers(min_value=0, max_value=120))
+    def end_a_recurring_bill(self, data, role, days):
+        recurring_id = data.draw(st.sampled_from(list(self.recurring)))
+        recurring = self.recurring[recurring_id]
+        ends_on = recurring.starts_on + timedelta(days=days)
+
+        def send():
+            end_recurring_bill(self.conns[role], self.pmc_id, recurring_id, ends_on)
+
+        if recurring.ends_on is not None:
+            with pytest.raises(psycopg.errors.UniqueViolation):
+                send()
+            return
+        send()
+        self.recurring[recurring_id] = replace(recurring, ends_on=ends_on)
+
+    @precondition(lambda self: self.recurring)
+    @rule(role=ROLES, through=st.integers(min_value=0, max_value=200))
+    def enter_the_recurring_bills(self, role, through):
+        """Each month's bill of every recurring bill due by `through`, once: none twice, none
+        under a reference a bill of the vendor already has."""
+        through_on = BASE + timedelta(days=through)
+        new: dict[tuple[int, str], tuple[Recurring, date]] = {}
+        for recurring in self.recurring.values():
+            month = recurring.starts_on.replace(day=1)
+            while month <= through_on:
+                due = month + timedelta(days=recurring.day_of_month - 1)
+                reference = f"{recurring.prefix}-{due:%Y-%m}"
+                key = (recurring.vendor, reference)
+                if (
+                    recurring.starts_on <= due <= through_on
+                    and (recurring.ends_on is None or due < recurring.ends_on)
+                    and not any((b.vendor, b.reference) == key for b in self.bills.values())
+                ):
+                    new[key] = (recurring, due)
+                month = (month + timedelta(days=32)).replace(day=1)
+
+        assert enter_recurring_bills(self.conns[role], self.pmc_id, through_on) == len(new)
+        vendor_of = {vendor_id: i for i, (vendor_id, _) in enumerate(self.vendors)}
+        stored = {
+            (vendor_of[vendor_id], reference): bill_id
+            for bill_id, vendor_id, reference in self.conn.execute(
+                "SELECT id, vendor_id, reference FROM trust_bills WHERE pmc_id = %s",
+                (self.pmc_id,),
+            )
+        }
+        # In a fixed order: the rules draw bills by their place in self.bills, and the
+        # database's order follows random ids, which Hypothesis can't replay.
+        for (vendor, reference), (recurring, due) in sorted(new.items()):
+            self.bills[stored[(vendor, reference)]] = Bill(
+                recurring.account, vendor, reference, due, recurring.amount, due
+            )
+
+    @rule(data=st.data(), role=st.sampled_from(["owner", "app", "ai"]))
+    def check_vendor_payments(self, data, role):
+        """What each vendor was paid in a year (UTC), by payment date, as the model has it:
+        mostly a year with payments, now and then one either side."""
+        years = sorted({when.year for _, when in self.paid.values()}) or [2000]
+        if not self.paid or data.draw(st.integers(0, 3)) == 0:
+            years = [*range(years[0] - 1, years[-1] + 2)]
+        year = data.draw(st.sampled_from(years))
+        rows = (
+            self.conns[role]
+            .execute(
+                "SELECT item, vendor, payments, paid FROM trust_report_vendor_payments(%s, %s)"
+                " WHERE item IN ('vendor', 'total')",
+                (self.pmc_id, year),
+            )
+            .fetchall()
+        )
+        paid: dict[str, tuple[int, Decimal]] = {}
+        for bill_id, (_, when) in self.paid.items():
+            if when.astimezone(UTC).year == year:
+                name = f"Vendor {self.bills[bill_id].vendor + 1}"
+                count, total = paid.get(name, (0, Decimal(0)))
+                paid[name] = (count + 1, total + self.bills[bill_id].amount)
+        assert rows == [
+            *(("vendor", name, *paid[name]) for name in sorted(paid)),
+            (
+                "total",
+                None,
+                sum(c for c, _ in paid.values()),
+                sum((t for _, t in paid.values()), Decimal(0)),
+            ),
+        ]
 
     @invariant()
     def bills_and_their_steps_are_the_models(self):

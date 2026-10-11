@@ -108,7 +108,12 @@ approvals, sets bills aside, pays them and pays owners, and checks:
   set aside and never dated before that;
 - each vendor's account holds exactly what was set aside for its bills and not yet paid;
 - a draw never pays out more than the balance above the reserve and the unpaid bills, and the
-  owner balances and unpaid bills reports match the model as of any day.
+  owner balances and unpaid bills reports match the model as of any day;
+- recurring bills, added on random days of the month and ended on random days, enter each
+  month's bill once through any day asked, never under a reference the vendor already has, and
+  the entered bills follow every rule above;
+- the vendor payments report for a year matches the model, vendor by vendor; bills are now and
+  then paid in the next year, and the years read are mostly years with payments.
 
 A fourth machine opens the PMC's two trust bank accounts with balances carried over from another
 system (now and then a cent off, or with an account of the other trust bank account), sends
@@ -157,8 +162,8 @@ account, its book cash against everything it holds) and `trust_report_security_d
 tenant's deposit against the deposit account's cash) and `trust_report_general_ledger` (per
 ledger account over a period: its opening balance, every entry with the balance after it, and
 its closing balance) and `trust_report_audit_log` (each change to the PMC's records and ledger
-over a period, with who made it). Run it
-with
+over a period, with who made it) and `trust_report_vendor_payments` (what each vendor was paid in
+a calendar year, for 1099 preparation; it files nothing). Run it with
 `pytest tests/golden`, and update deliberately with `pytest tests/golden --update-goldens`.
 
 **coverage.yml** (PRs and main): Python coverage (coverage.py) and coverage of the PL/pgSQL

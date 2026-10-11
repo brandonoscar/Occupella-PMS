@@ -466,6 +466,41 @@ def open_with_balances(
     )
 
 
+def add_recurring_bill(
+    connection,
+    pmc_id,
+    vendor_id,
+    account,
+    prefix,
+    amount,
+    day_of_month,
+    starts_on,
+    memo="Landscaping",
+) -> UUID:
+    """A bill that comes every month on day_of_month, from starts_on, paid from `account`."""
+    return _one(
+        connection,
+        "INSERT INTO trust_recurring_bills (pmc_id, vendor_id, ledger_account_id,"
+        " reference_prefix, amount, memo, day_of_month, starts_on)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, vendor_id, account, prefix, Decimal(amount), memo, day_of_month, starts_on),
+    )
+
+
+def end_recurring_bill(connection, pmc_id, recurring_bill_id, ends_on) -> None:
+    """Stop a recurring bill: no bill due on or after ends_on."""
+    connection.execute(
+        "INSERT INTO trust_recurring_bill_ends (pmc_id, recurring_bill_id, ends_on)"
+        " VALUES (%s, %s, %s)",
+        (pmc_id, recurring_bill_id, ends_on),
+    )
+
+
+def enter_recurring_bills(connection, pmc_id, through) -> int:
+    """Enter every recurring bill's monthly bills due on or before `through`; how many."""
+    return _one(connection, "SELECT trust_enter_recurring_bills(%s, %s)", (pmc_id, through))
+
+
 def contribute(connection, pmc_id, account, request_key, amount, event_at=None, memo=None) -> str:
     """An owner's money into their property account, as its own kind; the transfer id."""
     return _one(
