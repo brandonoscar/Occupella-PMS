@@ -6,6 +6,8 @@ import uuid
 import psycopg
 import pytest
 from helpers import add_staff, make_pmc
+from hypothesis import HealthCheck, example, given, settings
+from hypothesis import strategies as st
 
 from pms import accounts, admin
 
@@ -30,6 +32,25 @@ def add_login(conn, pmc, kind="owner", email="o@example.com", person=None):
 def test_an_email_is_lowercase_and_shaped_like_one(conn, pmc, email):
     with pytest.raises(psycopg.errors.CheckViolation):
         add_login(conn, pmc, email=email)
+
+
+@settings(suppress_health_check=[HealthCheck.function_scoped_fixture])
+@given(st.text(alphabet="ab.@ \t", max_size=12))
+@example("a@" + "." * 5000 + " ")
+@example("a@.b.")
+@example("a@b..")
+@example("a@.b")
+def test_the_app_and_the_database_accept_the_same_emails(conn, pmc, email):
+    """accounts.EMAIL is the database's check rewritten so it can't backtrack (CodeQL
+    py/polynomial-redos); both must still accept the same addresses. (Python's \\s also counts
+    a few characters Postgres doesn't, such as U+00A0, so the app refuses those first.)"""
+    try:
+        with conn.transaction(force_rollback=True):
+            add_login(conn, pmc, email=email)
+        database_accepts = True
+    except psycopg.errors.CheckViolation:
+        database_accepts = False
+    assert bool(accounts.EMAIL.fullmatch(email)) == database_accepts
 
 
 def test_a_login_is_for_one_kind_of_person(conn, pmc):

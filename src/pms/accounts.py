@@ -53,7 +53,11 @@ KINDS = {
         ("tenant", "trust_tenants"),
     )
 }
-EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")  # the same shape trust_logins checks
+# The shape trust_logins checks ('^[^@\s]+@[^@\s]+\.[^@\s]+$'), written so a string can match it in
+# only one way: from the start (fullmatch anchors it too, but CodeQL reads the "^"), the
+# domain's first character, then up to its next dot. The database's own form backtracks for a
+# time that grows with the square of the length on a crafted address.
+EMAIL = re.compile(r"^[^@\s]+@[^@\s][^@\s.]*\.[^@\s]+")
 ISSUER = "Occupella PMS"
 
 HASHER = PasswordHasher()
