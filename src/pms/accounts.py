@@ -32,7 +32,6 @@ import psycopg
 import pyotp
 from argon2 import PasswordHasher
 from argon2.exceptions import InvalidHashError, VerificationError
-from psycopg import sql
 
 INVITE_DAYS = 7
 SESSION_HOURS = 12
@@ -40,7 +39,20 @@ MAX_FAILURES = 10
 LOCK_MINUTES = 15
 MIN_PASSWORD = 12
 MAX_PASSWORD = 1024
-KINDS = {"staff": "trust_staff", "owner": "trust_owners", "tenant": "trust_tenants"}
+# Each kind of person's queries, written out in full: no part of a query comes from a request.
+KINDS = {
+    kind: {
+        "person": f"SELECT display_name FROM {table} WHERE pmc_id = %s AND id = %s",
+        "login": f"SELECT id, email FROM trust_logins WHERE pmc_id = %s AND {kind}_id = %s",
+        "new login": f"INSERT INTO trust_logins (pmc_id, kind, {kind}_id, email)"
+        f" VALUES (%s, '{kind}', %s, %s) RETURNING id",
+    }
+    for kind, table in (
+        ("staff", "trust_staff"),
+        ("owner", "trust_owners"),
+        ("tenant", "trust_tenants"),
+    )
+}
 EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")  # the same shape trust_logins checks
 ISSUER = "Occupella PMS"
 
@@ -148,32 +160,17 @@ def create_invite(
     email = normalize_email(email)
     if not EMAIL.fullmatch(email):
         raise Refused(f"{email!r} isn't an email address")
-    person = _one(
-        conn,
-        sql.SQL("SELECT display_name FROM {} WHERE pmc_id = %s AND id = %s")
-        .format(sql.Identifier(KINDS[kind]))
-        .as_string(conn),
-        (pmc_id, person_id),
-    )
-    if person is None:
+    queries = KINDS[kind]
+    if _one(conn, queries["person"], (pmc_id, person_id)) is None:
         raise NotFound(f"no {kind} {person_id} in this PMC")
-    login = _one(
-        conn,
-        f"SELECT id, email FROM trust_logins WHERE pmc_id = %s AND {kind}_id = %s",
-        (pmc_id, person_id),
-    )
+    login = _one(conn, queries["login"], (pmc_id, person_id))
     if login is None:
         clash = _one(
             conn, "SELECT 1 FROM trust_logins WHERE pmc_id = %s AND email = %s", (pmc_id, email)
         )
         if clash is not None:
             raise Conflict(f"{email} already signs in to this PMC as someone else")
-        login_id = _one(
-            conn,
-            f"INSERT INTO trust_logins (pmc_id, kind, {kind}_id, email)"
-            " VALUES (%s, %s, %s, %s) RETURNING id",
-            (pmc_id, kind, person_id, email),
-        )[0]
+        login_id = _one(conn, queries["new login"], (pmc_id, person_id, email))[0]
     elif login[1] != email:
         raise Conflict(f"this {kind} signs in as {login[1]}")
     else:

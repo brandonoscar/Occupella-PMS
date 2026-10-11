@@ -72,7 +72,7 @@ def run_report(conn: psycopg.Connection[Any], report: str, args: Sequence[Any]) 
     if not REPORT_NAME.fullmatch(report):
         raise UnknownReport(f"{report!r} is not a report: reports are named trust_report_<name>")
     found = conn.execute(
-        "SELECT array(SELECT format_type(a.type, NULL)"
+        "SELECT p.proname, array(SELECT format_type(a.type, NULL)"
         " FROM unnest(p.proargtypes::oid[]) WITH ORDINALITY AS a (type, n) ORDER BY a.n)"
         " FROM pg_proc AS p WHERE p.pronamespace = 'public'::regnamespace"
         " AND p.proname = %s AND p.proretset",
@@ -80,14 +80,15 @@ def run_report(conn: psycopg.Connection[Any], report: str, args: Sequence[Any]) 
     ).fetchall()
     if len(found) != 1:
         raise UnknownReport(f"no report named {report}")
-    types: list[str] = found[0][0]
+    # The function's name and argument types come from the catalog, never from the caller.
+    function: str = found[0][0]
+    types: list[str] = found[0][1]
     if len(args) != len(types):
         raise ExportError(
             f"{report} takes {len(types)} arguments ({', '.join(types)}), not {len(args)}"
         )
-    # The types come from the catalog, never from the caller.
     query = sql.SQL("SELECT * FROM {}({})").format(
-        sql.Identifier(report),
+        sql.Identifier(function),
         sql.SQL(", ").join(sql.SQL("%s::" + kind) for kind in types),
     )
     with conn.cursor() as cursor:
