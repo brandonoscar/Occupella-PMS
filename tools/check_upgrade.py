@@ -7,7 +7,8 @@ constraint that existing rows break. This check:
   1. refuses an edit to, or the deletion of, a migration the base branch already has. A
      database that applied it never re-runs it, so the edit would never reach it;
   2. builds the base branch's schema in a throwaway database and fills it with the base
-     branch's own self-host seed: a synthetic 50-door PMC, its deposits and a month of rent;
+     branch's own self-host seed (with the base branch's own app code from src/): a synthetic
+     50-door PMC, its deposits and a month of rent;
   3. applies this branch's migrations on top;
   4. checks the money already posted is untouched: ledger history, and every account's
      balance and version, compared in the columns the base schema had;
@@ -37,6 +38,7 @@ from tools.scratch_db import scratch_database
 ROOT = Path(__file__).resolve().parent.parent
 MIGRATIONS = "db/migrations"
 SEED = "selfhost/smoke.py"
+APP = "src"  # the app code the seed may import (the pms package)
 # Money already posted, which no migration may change. None means every column the table had.
 UNTOUCHED: dict[str, list[str] | None] = {
     "pgledger_transfers": None,
@@ -105,11 +107,19 @@ def fingerprint(
     return prints
 
 
-def run(command: list[str], url: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+def base_app(root: Path, base: str, target: Path) -> None:
+    """Write the base branch's app code (src/) under `target`, for its own seed to import."""
+    for name in git(root, "ls-tree", "-r", "--name-only", base, f"{APP}/").split():
+        path = target / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(git(root, "show", f"{base}:{name}"))
+
+
+def run(command: list[str], url: str, cwd: Path, app: Path) -> subprocess.CompletedProcess[str]:
     # The URL goes through the environment, never the command line.
-    return subprocess.run(
-        command, cwd=cwd, env={**os.environ, "DATABASE_URL": url}, capture_output=True, text=True
-    )
+    path = os.pathsep.join(p for p in (str(app), os.environ.get("PYTHONPATH", "")) if p)
+    env = {**os.environ, "DATABASE_URL": url, "PYTHONPATH": path}
+    return subprocess.run(command, cwd=cwd, env=env, capture_output=True, text=True)
 
 
 def check(root: Path, base: str, server_url: str, dbmate: str) -> list[str]:
@@ -127,11 +137,12 @@ def check(root: Path, base: str, server_url: str, dbmate: str) -> list[str]:
         for name, text in base_migrations(root, base).items():
             (base_dir / name).write_text(text)
         (Path(tmp) / "base_smoke.py").write_text(seed)
+        base_app(root, base, Path(tmp))
 
         built = Dbmate(dbmate, base_dir, url).run("--no-dump-schema", "up")
         if built.returncode != 0:
             return [f"the base branch's migrations did not apply: {built.stderr.strip()}"]
-        seeded = run([sys.executable, str(Path(tmp) / "base_smoke.py")], url, root)
+        seeded = run([sys.executable, str(Path(tmp) / "base_smoke.py")], url, root, Path(tmp) / APP)
         print(seeded.stdout, end="")
         if seeded.returncode != 0:
             return [f"the base branch's seed failed on its own schema:\n{seeded.stderr.strip()}"]
@@ -159,7 +170,7 @@ def check(root: Path, base: str, server_url: str, dbmate: str) -> list[str]:
         if problems:
             return problems
 
-        smoke = run([sys.executable, "-m", "selfhost.smoke"], url, root)
+        smoke = run([sys.executable, "-m", "selfhost.smoke"], url, root, root / APP)
         print(smoke.stdout, end="")
         if smoke.returncode != 0:
             problems.append(

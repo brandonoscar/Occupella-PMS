@@ -14,8 +14,13 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @pytest.fixture
 def base(repo):
-    """A repo whose base commit has this repo's migrations and self-host seed."""
-    for path in [*ROOT.glob("db/migrations/*.sql"), ROOT / "selfhost/__init__.py"]:
+    """A repo whose base commit has this repo's migrations, self-host seed and the app code it
+    imports (src/)."""
+    for path in [
+        *ROOT.glob("db/migrations/*.sql"),
+        ROOT / "selfhost/__init__.py",
+        *ROOT.glob("src/**/*.py"),
+    ]:
         repo.write(str(path.relative_to(ROOT)), path.read_text())
     repo.write("selfhost/smoke.py", (ROOT / "selfhost/smoke.py").read_text())
     return repo.commit("base")
