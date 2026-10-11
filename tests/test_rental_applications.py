@@ -141,6 +141,16 @@ def test_each_applicant_of_an_application_has_their_own_email(conn, place, appli
         submit_application(conn, place.pmc_id, place.link, applicants=applicants)
 
 
+def test_each_applicant_has_their_own_place_on_the_application(conn, place):
+    application = submit_application(conn, place.pmc_id, place.link)  # Applicant 1 at place 1
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        conn.execute(
+            "INSERT INTO trust_applicants (pmc_id, application_id, position, display_name, email)"
+            " VALUES (%s, %s, 1, 'Applicant 2', 'second@example.com')",
+            (place.pmc_id, application),
+        )
+
+
 @pytest.mark.parametrize(
     ("recommendation", "reasons"),
     [("approve", ["a reason"]), ("decline", []), ("conditional", []), ("maybe", ["a reason"])],
