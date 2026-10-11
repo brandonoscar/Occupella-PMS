@@ -94,3 +94,26 @@ serve the pages and the API. The self-host image builds it in a Node stage.
 - Tests: vitest for the pages and helpers, including one that fails on a raw colour or a size
   off DESIGN.md's scale; API tests for each endpoint; and Playwright in Chromium against the
   served build on a seeded database (`e2e.yml`), which fails on anything the policy blocks.
+
+## The tenant portal, as built
+
+`src/pms/api/tenant.py` and `src/pms/api/maintenance.py` on migration 0029, and the tenant's
+and staff's pages in `frontend/`.
+
+- A tenant sees every lease they are on (the one in effect first), with its rent, who else is
+  on it and the balance due at the end of today (UTC), and each lease's ledger
+  (`trust_report_tenant_ledger`) on screen or as PDF, Excel or CSV. A lease they aren't on
+  reads as not found, whoever's it is.
+- No payments: the page says to pay the PMC as before (online payment needs Stripe keys,
+  which hard rule 5 doesn't allow).
+- Maintenance requests: a tenant on a lease in effect says what needs fixing and whether
+  someone may come in while they're out, at most 10 a day per lease. Their co-tenants see the
+  request too. The database refuses a request from anyone not on the lease, and never changes
+  one.
+- Staff see open requests, open a work order for one (at the lease's unit, at most one per
+  request), assign it to a vendor, and mark it done or closed without work. The tenant sees
+  each step as the request's status, never the work order or the vendor.
+- Tests: migration tests (`tests/test_maintenance_requests.py`), API tests for each endpoint,
+  the audit property machine (requests filed, refused and given work orders), vitest for the
+  pages, and Playwright: a tenant joins, sees what is due and asks for a repair; staff take a
+  request through to done.

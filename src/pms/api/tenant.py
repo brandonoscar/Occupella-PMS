@@ -1,0 +1,175 @@
+"""The tenant portal's endpoints: a tenant's leases with what they owe, each lease's ledger, and
+maintenance requests. No payments: online payment is out of scope
+(docs/adr/0002-portals-and-exports.md).
+
+The tenant and the PMC always come from the session. A lease named in the path is answered only
+if the tenant is on it; any other reads as not found, whoever's it is.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, date, datetime, timedelta
+from typing import Annotated, Any, Literal
+from uuid import UUID
+
+import psycopg
+from fastapi import APIRouter, HTTPException, Query, Response
+from pydantic import BaseModel, Field
+
+from pms import accounts, exports
+from pms.api import maintenance
+from pms.api.deps import Conn, Rows, Tenant, download
+
+router = APIRouter(prefix="/api/tenant")
+# A tenant files at most this many requests under one lease in a day: enough for a bad day,
+# and a ceiling on what a stolen session can pile on staff.
+REQUESTS_PER_DAY = 10
+
+
+def today() -> date:
+    return datetime.now(UTC).date()
+
+
+class Lease(BaseModel):
+    lease_id: UUID
+    property: str
+    unit: str
+    starts_on: date
+    ends_on: date | None
+    # Money as text, so no float ever rounds a cent.
+    monthly_rent: str
+    tenants: list[str]
+    balance_due: str
+    in_effect: bool
+
+
+class NewRequest(BaseModel):
+    lease_id: UUID
+    summary: str = Field(min_length=1, max_length=2000)
+    entry_allowed: bool
+
+
+def lease_of(conn: psycopg.Connection[Any], session: accounts.Session, lease_id: UUID) -> None:
+    """Refuses, as not found, a lease the tenant isn't on."""
+    if (
+        conn.execute(
+            "SELECT 1 FROM trust_lease_tenants"
+            " WHERE pmc_id = %s AND lease_id = %s AND tenant_id = %s",
+            (session.pmc_id, lease_id, session.person_id),
+        ).fetchone()
+        is None
+    ):
+        raise HTTPException(404, "no such lease of yours")
+
+
+@router.get("/leases")
+def leases(session: Tenant, conn: Conn) -> list[Lease]:
+    """Every lease the tenant is on, newest first, with its balance due at the end of today."""
+    on = today()
+    rows = conn.execute(
+        "SELECT l.id, p.display_name, u.display_name, l.starts_on, l.ends_on, l.monthly_rent,"
+        " array(SELECT t.display_name FROM trust_lease_tenants AS everyone"
+        "       JOIN trust_tenants AS t ON t.id = everyone.tenant_id"
+        '       WHERE everyone.lease_id = l.id ORDER BY t.display_name COLLATE "C", t.id),'
+        " (SELECT b.balance FROM trust_report_tenant_ledger(l.pmc_id, l.id, %s) AS b"
+        "  WHERE b.item = 'balance')"
+        " FROM trust_lease_tenants AS mine"
+        " JOIN trust_leases AS l ON l.id = mine.lease_id"
+        " JOIN trust_units AS u ON u.id = l.unit_id"
+        " JOIN trust_properties AS p ON p.id = u.property_id"
+        " WHERE mine.pmc_id = %s AND mine.tenant_id = %s"
+        " ORDER BY l.starts_on DESC, l.id",
+        (on, session.pmc_id, session.person_id),
+    ).fetchall()
+    return [
+        Lease(
+            lease_id=lease,
+            property=prop,
+            unit=unit,
+            starts_on=starts,
+            ends_on=ends,
+            monthly_rent=exports.text(rent),
+            tenants=list(names),
+            balance_due=exports.text(balance),
+            in_effect=starts <= on and (ends is None or on <= ends),
+        )
+        for lease, prop, unit, starts, ends, rent, names, balance in rows
+    ]
+
+
+def ledger_table(
+    conn: psycopg.Connection[Any], session: accounts.Session, lease_id: UUID, as_of: date | None
+) -> exports.Table:
+    lease_of(conn, session, lease_id)
+    through = as_of or today()
+    table = exports.run_report(
+        conn, "trust_report_tenant_ledger", [session.pmc_id, lease_id, through]
+    )
+    return exports.Table(f"Tenant ledger through {through.isoformat()}", table.columns, table.rows)
+
+
+@router.get("/leases/{lease_id}/ledger")
+def ledger(
+    session: Tenant,
+    conn: Conn,
+    lease_id: UUID,
+    as_of: Annotated[date | None, Query()] = None,
+) -> Rows:
+    """The lease's charges and payments through the end of a day (UTC), today by default."""
+    return Rows.of(ledger_table(conn, session, lease_id, as_of))
+
+
+@router.get("/leases/{lease_id}/ledger/download")
+def ledger_download(
+    session: Tenant,
+    conn: Conn,
+    lease_id: UUID,
+    as_of: Annotated[date | None, Query()] = None,
+    fmt: Annotated[Literal["csv", "xlsx", "pdf"], Query(alias="format")] = "pdf",
+) -> Response:
+    table = ledger_table(conn, session, lease_id, as_of)
+    name = f"tenant-ledger-{(as_of or today()).isoformat()}"
+    return download(exports.export(table, fmt), name, fmt)
+
+
+@router.get("/requests")
+def requests(session: Tenant, conn: Conn) -> list[maintenance.Request]:
+    """The maintenance requests filed under any of the tenant's leases, by them or a co-tenant."""
+    found = maintenance.requests(
+        conn, maintenance.FOR_TENANT, pmc=session.pmc_id, person=session.person_id
+    )
+    return [maintenance.for_tenant(r) for r in found]
+
+
+@router.post("/requests", status_code=201)
+def file_request(session: Tenant, conn: Conn, new: NewRequest) -> maintenance.Request:
+    """A request under one of the tenant's leases that is in effect today."""
+    summary = new.summary.strip()
+    if not summary:
+        raise HTTPException(422, "say what needs fixing")
+    lease_of(conn, session, new.lease_id)
+    on = today()
+    row = conn.execute(
+        "SELECT starts_on <= %s AND (ends_on IS NULL OR %s <= ends_on) FROM trust_leases"
+        " WHERE id = %s",
+        (on, on, new.lease_id),
+    ).fetchone()
+    if row is None or not row[0]:
+        raise HTTPException(409, "requests are filed under a lease in effect today")
+    recent = conn.execute(
+        "SELECT count(*) FROM trust_maintenance_requests"
+        " WHERE pmc_id = %s AND lease_id = %s AND submitted_at > %s",
+        (session.pmc_id, new.lease_id, datetime.now(UTC) - timedelta(days=1)),
+    ).fetchone()
+    if recent is not None and recent[0] >= REQUESTS_PER_DAY:
+        raise HTTPException(
+            429, f"at most {REQUESTS_PER_DAY} requests a day per lease; call the office"
+        )
+    created = conn.execute(
+        "INSERT INTO trust_maintenance_requests"
+        " (pmc_id, lease_id, tenant_id, summary, entry_allowed)"
+        " VALUES (%s, %s, %s, %s, %s) RETURNING id",
+        (session.pmc_id, new.lease_id, session.person_id, summary, new.entry_allowed),
+    ).fetchone()
+    assert created is not None
+    return maintenance.for_tenant(maintenance.one(conn, session.pmc_id, created[0]))

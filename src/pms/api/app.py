@@ -37,7 +37,7 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
 from pms import accounts, exports
-from pms.api import owner, people
+from pms.api import maintenance, owner, people, tenant
 from pms.api.deps import COOKIE, Conn, Current, Staff, download
 
 HEALTH_TIMEOUT = 2.0  # seconds to wait for a database connection before answering 503
@@ -288,6 +288,8 @@ def create_app(settings: Settings) -> FastAPI:
         return download(exports.ledger_zip(conn, session.pmc_id), "ledger", "zip")
 
     app.include_router(owner.router)
+    app.include_router(tenant.router)
+    app.include_router(maintenance.router)
     app.include_router(people.router)
     if settings.static_dir is not None:
         serve_portal(app, settings.static_dir)

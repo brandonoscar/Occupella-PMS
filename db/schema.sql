@@ -1074,6 +1074,32 @@ $$;
 
 
 --
+-- Name: trust_check_request_work_order(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_request_work_order() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT w.id
+        FROM trust_maintenance_requests AS r
+        JOIN trust_leases AS l ON l.id = r.lease_id
+        JOIN trust_units AS u ON u.id = l.unit_id
+        JOIN trust_work_orders AS w ON w.id = NEW.work_order_id AND w.unit_id = u.id
+        WHERE r.id = NEW.request_id
+    ) THEN
+        RAISE EXCEPTION 'trust: work order % is not for the unit of request %''s lease',
+            NEW.work_order_id, NEW.request_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_transfer_scope(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3992,6 +4018,35 @@ CREATE TABLE public.trust_logins (
 
 
 --
+-- Name: trust_maintenance_request_work_orders; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_maintenance_request_work_orders (
+    request_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    work_order_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: trust_maintenance_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_maintenance_requests (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    summary text NOT NULL,
+    entry_allowed boolean NOT NULL,
+    submitted_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_maintenance_requests_summary_check CHECK (((summary ~ '\S'::text) AND (length(summary) <= 2000)))
+);
+
+
+--
 -- Name: trust_management_fees; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4591,6 +4646,38 @@ ALTER TABLE ONLY public.trust_logins
 
 
 --
+-- Name: trust_maintenance_request_work_orders trust_maintenance_request_work_orders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_work_orders
+    ADD CONSTRAINT trust_maintenance_request_work_orders_pkey PRIMARY KEY (request_id);
+
+
+--
+-- Name: trust_maintenance_request_work_orders trust_maintenance_request_work_orders_work_order_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_work_orders
+    ADD CONSTRAINT trust_maintenance_request_work_orders_work_order_id_key UNIQUE (work_order_id);
+
+
+--
+-- Name: trust_maintenance_requests trust_maintenance_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_requests
+    ADD CONSTRAINT trust_maintenance_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_maintenance_requests trust_maintenance_requests_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_requests
+    ADD CONSTRAINT trust_maintenance_requests_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_management_agreements trust_management_agreements_ledger_account_id_starts_on_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5053,6 +5140,20 @@ CREATE INDEX trust_ledger_accounts_pmc_id ON public.trust_ledger_accounts USING 
 
 
 --
+-- Name: trust_maintenance_requests_lease_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_maintenance_requests_lease_id ON public.trust_maintenance_requests USING btree (lease_id);
+
+
+--
+-- Name: trust_maintenance_requests_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_maintenance_requests_tenant_id ON public.trust_maintenance_requests USING btree (tenant_id);
+
+
+--
 -- Name: trust_management_fees_agreement_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5239,6 +5340,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_ledger_accounts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_maintenance_request_work_orders trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_maintenance_request_work_orders FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_maintenance_requests trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_maintenance_requests FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -5442,6 +5557,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_ledg
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_logins FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_maintenance_request_work_orders trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_maintenance_request_work_orders FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_maintenance_requests trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_maintenance_requests FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -5680,6 +5809,13 @@ CREATE TRIGGER trust_one_lease_at_a_time BEFORE INSERT OR UPDATE ON public.trust
 --
 
 CREATE TRIGGER trust_opened_at BEFORE INSERT OR UPDATE OF opened_at ON public.trust_bank_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_moving_opened_at();
+
+
+--
+-- Name: trust_maintenance_request_work_orders trust_request_work_order_unit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_request_work_order_unit BEFORE INSERT ON public.trust_maintenance_request_work_orders FOR EACH ROW EXECUTE FUNCTION public.trust_check_request_work_order();
 
 
 --
@@ -6136,6 +6272,62 @@ ALTER TABLE ONLY public.trust_logins
 
 
 --
+-- Name: trust_maintenance_request_work_orders trust_maintenance_request_work_orders_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_work_orders
+    ADD CONSTRAINT trust_maintenance_request_work_orders_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_maintenance_request_work_orders trust_maintenance_request_work_orders_pmc_id_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_work_orders
+    ADD CONSTRAINT trust_maintenance_request_work_orders_pmc_id_request_id_fkey FOREIGN KEY (pmc_id, request_id) REFERENCES public.trust_maintenance_requests(pmc_id, id);
+
+
+--
+-- Name: trust_maintenance_request_work_orders trust_maintenance_request_work_orders_pmc_id_work_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_work_orders
+    ADD CONSTRAINT trust_maintenance_request_work_orders_pmc_id_work_order_id_fkey FOREIGN KEY (pmc_id, work_order_id) REFERENCES public.trust_work_orders(pmc_id, id);
+
+
+--
+-- Name: trust_maintenance_requests trust_maintenance_requests_lease_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_requests
+    ADD CONSTRAINT trust_maintenance_requests_lease_id_tenant_id_fkey FOREIGN KEY (lease_id, tenant_id) REFERENCES public.trust_lease_tenants(lease_id, tenant_id);
+
+
+--
+-- Name: trust_maintenance_requests trust_maintenance_requests_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_requests
+    ADD CONSTRAINT trust_maintenance_requests_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_maintenance_requests trust_maintenance_requests_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_requests
+    ADD CONSTRAINT trust_maintenance_requests_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_maintenance_requests trust_maintenance_requests_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_requests
+    ADD CONSTRAINT trust_maintenance_requests_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
+
+
+--
 -- Name: trust_management_agreements trust_management_agreements_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6558,4 +6750,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261010000025'),
     ('20261010000026'),
     ('20261010000027'),
-    ('20261011000028');
+    ('20261011000028'),
+    ('20261011000029');

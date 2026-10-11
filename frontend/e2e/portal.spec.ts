@@ -9,6 +9,8 @@ type Seed = {
   owner_invite: string;
   staff_email: string;
   staff_invite: string;
+  renter_email: string;
+  renter_invite: string;
 };
 const seed: Seed = JSON.parse(readFileSync(new URL("./.seed.json", import.meta.url), "utf8"));
 const PASSWORD = "a long synthetic passphrase";
@@ -69,7 +71,28 @@ test("a wrong password is refused without saying which part was wrong", async ({
   await expect(page.getByRole("alert")).toHaveText("the email or password is wrong");
 });
 
-test("staff enroll an authenticator, then invite a tenant", async ({ page }) => {
+test("a tenant joins, sees what is due and asks for a repair", async ({ page }) => {
+  await page.goto(`/invite#${seed.renter_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+
+  await expect(page.getByRole("heading", { name: "Welcome, Tenant Two E2E" })).toBeVisible();
+  await expect(page.getByTestId("balance-due")).toHaveText("$950.00");
+  const ledger = page.locator("section", { hasText: "Charges and payments" });
+  await expect(ledger.getByRole("row", { name: /Check 101/ })).toContainText("$950.00");
+  await expect(ledger.getByRole("row", { name: /Balance at the end of/ })).toContainText("$950.00");
+
+  await page.getByLabel("What needs fixing?").fill("The hallway light is out");
+  await page.getByLabel("Someone may come in while I'm out").check();
+  await page.getByRole("button", { name: "Send request" }).click();
+  const requests = page.locator("section", { hasText: "Maintenance requests" });
+  await expect(requests.getByRole("listitem").filter({ hasText: "The hallway light is out" }))
+    .toContainText("Received");
+  await expect(requests.getByText("The back door sticks")).toBeVisible();
+});
+
+test("staff enroll an authenticator, invite a tenant and see a repair through", async ({ page }) => {
   await page.goto(`/invite#${seed.staff_invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
   await page.getByLabel("The same password again").fill(PASSWORD);
@@ -87,4 +110,14 @@ test("staff enroll an authenticator, then invite a tenant", async ({ page }) => 
   await tenant.getByRole("button", { name: "Invite" }).click();
   await expect(tenant).toContainText("/invite#");
   await expect(tenant).toContainText("invited");
+
+  // The seeded request: a work order, a vendor, then done.
+  const request = page.getByRole("listitem", { name: "The back door sticks" });
+  await request.getByRole("button", { name: "Open work order" }).click();
+  await expect(request).toContainText("Work order opened");
+  await request.getByLabel("Vendor for The back door sticks").selectOption({ label: "Vendor E2E" });
+  await request.getByRole("button", { name: "Assign" }).click();
+  await expect(request).toContainText("Someone is assigned (Vendor E2E)");
+  await request.getByRole("button", { name: "Done" }).click();
+  await expect(request).toHaveCount(0);
 });

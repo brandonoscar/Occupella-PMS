@@ -65,6 +65,9 @@ TABLES = {
     "trust_invites": {"SELECT", "INSERT"},
     "trust_sessions": {"SELECT", "INSERT"},
     "trust_login_secrets": {"SELECT", "INSERT"},
+    # Maintenance requests: tenants file them through the API, staff link a work order.
+    "trust_maintenance_requests": {"SELECT", "INSERT"},
+    "trust_maintenance_request_work_orders": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -182,6 +185,7 @@ FUNCTIONS = {
     "trust_check_hold_allowance()": {"PUBLIC"},
     "trust_check_recurring_bill()": {"PUBLIC"},
     "trust_refuse_moving_opened_at()": {"PUBLIC"},
+    "trust_check_request_work_order()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.

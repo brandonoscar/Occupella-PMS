@@ -409,6 +409,34 @@ tests = [
   "tests/api/test_people.py::test_only_staff_see_the_people",
 ]
 
+[[invariant]]
+id = "tenant-sees-only-their-own"
+statement = "A tenant's portal shows the session's tenant only: the leases they are on with what is due, each lease's ledger (trust_report_tenant_ledger) and the maintenance requests filed under them. A lease they aren't on reads as not found, whoever's it is; the work order and vendor behind a request stay with staff; only a tenant's session reaches these endpoints."
+tests = [
+  "tests/api/test_tenant.py::test_a_tenant_sees_their_leases_with_what_they_owe",
+  "tests/api/test_tenant.py::test_the_ledger_is_the_tenant_ledger_report",
+  "tests/api/test_tenant.py::test_a_lease_that_isnt_theirs_reads_as_not_found",
+  "tests/api/test_tenant.py::test_a_neighbours_requests_are_never_shown",
+  "tests/api/test_tenant.py::test_the_tenant_follows_the_work_order_but_never_sees_its_vendor",
+  "tests/api/test_tenant.py::test_only_a_tenant_reaches_the_tenant_endpoints",
+]
+
+[[invariant]]
+id = "maintenance-requests"
+statement = "A maintenance request is filed by a tenant on its lease (a lease in effect today, at most 10 a day through the portal) and never changed. Staff open at most one work order for it, at the lease's unit, and a work order serves one request; the request's status is that work order's latest step."
+tests = [
+  "tests/test_maintenance_requests.py::test_only_a_tenant_on_the_lease_files_under_it",
+  "tests/test_maintenance_requests.py::test_requests_and_their_work_orders_are_never_rewritten",
+  "tests/test_maintenance_requests.py::test_a_requests_work_order_is_for_the_leases_unit",
+  "tests/test_maintenance_requests.py::test_a_request_has_one_work_order_and_a_work_order_one_request",
+  "tests/properties/test_audit_properties.py::test_audit_invariants_hold_under_random_writes_by_random_staff",
+  "tests/api/test_tenant.py::test_a_request_is_filed_only_under_a_lease_in_effect",
+  "tests/api/test_tenant.py::test_ten_requests_a_day_per_lease",
+  "tests/api/test_maintenance.py::test_a_request_gets_one_work_order",
+  "tests/api/test_maintenance.py::test_staff_assign_and_complete_and_the_request_closes",
+  "tests/api/test_maintenance.py::test_nothing_follows_a_closed_work_order",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]
