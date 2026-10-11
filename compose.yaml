@@ -3,6 +3,7 @@
 #   docker compose build
 #   docker compose run --rm migrate
 #   docker compose run --rm smoke
+#   docker compose up -d --wait app    (the API; healthy once /health answers)
 #
 # Not a production setup: the database trusts every connection inside this compose network,
 # publishes no port, and has no TLS and no backups.
@@ -31,6 +32,28 @@ services:
     command: ["python", "-m", "selfhost.smoke"]
     environment:
       DATABASE_URL: postgres://postgres@db:5432/pms?sslmode=disable
+    depends_on:
+      db:
+        condition: service_healthy
+
+  app:
+    image: occupella-pms:local
+    command: ["python", "-m", "pms.api"]
+    environment:
+      DATABASE_URL: postgres://postgres@db:5432/pms?sslmode=disable
+      PMS_HOST: 0.0.0.0
+      PMS_PUBLIC_URL: http://localhost:8000
+      # Plain http inside this network; behind TLS in a real setup, leave it at "true".
+      PMS_COOKIE_SECURE: "false"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
+      interval: 2s
+      timeout: 5s
+      retries: 30
     depends_on:
       db:
         condition: service_healthy

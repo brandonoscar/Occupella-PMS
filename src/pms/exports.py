@@ -56,6 +56,10 @@ class ExportError(ValueError):
     """The export was refused before anything ran: not a report, or the wrong arguments."""
 
 
+class UnknownReport(ExportError):
+    """No report by that name: not a trust_report_* function, or none that exists."""
+
+
 @dataclass(frozen=True)
 class Table:
     title: str
@@ -66,24 +70,25 @@ class Table:
 def run_report(conn: psycopg.Connection[Any], report: str, args: Sequence[Any]) -> Table:
     """Run one report with its arguments and keep its rows as Postgres returned them."""
     if not REPORT_NAME.fullmatch(report):
-        raise ExportError(f"{report!r} is not a report: reports are named trust_report_<name>")
+        raise UnknownReport(f"{report!r} is not a report: reports are named trust_report_<name>")
     found = conn.execute(
-        "SELECT array(SELECT format_type(a.type, NULL)"
+        "SELECT p.proname, array(SELECT format_type(a.type, NULL)"
         " FROM unnest(p.proargtypes::oid[]) WITH ORDINALITY AS a (type, n) ORDER BY a.n)"
         " FROM pg_proc AS p WHERE p.pronamespace = 'public'::regnamespace"
         " AND p.proname = %s AND p.proretset",
         (report,),
     ).fetchall()
     if len(found) != 1:
-        raise ExportError(f"no report named {report}")
-    types: list[str] = found[0][0]
+        raise UnknownReport(f"no report named {report}")
+    # The function's name and argument types come from the catalog, never from the caller.
+    function: str = found[0][0]
+    types: list[str] = found[0][1]
     if len(args) != len(types):
         raise ExportError(
             f"{report} takes {len(types)} arguments ({', '.join(types)}), not {len(args)}"
         )
-    # The types come from the catalog, never from the caller.
     query = sql.SQL("SELECT * FROM {}({})").format(
-        sql.Identifier(report),
+        sql.Identifier(function),
         sql.SQL(", ").join(sql.SQL("%s::" + kind) for kind in types),
     )
     with conn.cursor() as cursor:

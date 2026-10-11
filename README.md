@@ -8,12 +8,13 @@ Apache License 2.0 (see `LICENSE`). Third-party code and its licenses: `THIRD_PA
 
 ## Status
 
-Built: the trust ledger (schema and the tests that prove it), its reports, and exports of
-every report as CSV, Excel or PDF plus the whole ledger as CSV
-(`PYTHONPATH=src python -m pms.exports --help`).
+Built: the trust ledger (schema and the tests that prove it), its reports, exports of every
+report as CSV, Excel or PDF plus the whole ledger as CSV
+(`PYTHONPATH=src python -m pms.exports --help`), and the API with logins
+(`python -m pms.api`; the first staff invite comes from `python -m pms.admin`).
 
-Being built, in this order (`docs/adr/0002-portals-and-exports.md`): the API with logins, the
-owner portal, the tenant portal, and leasing basics.
+Being built, in this order (`docs/adr/0002-portals-and-exports.md`): the owner portal, the
+tenant portal, and leasing basics.
 
 Still true:
 

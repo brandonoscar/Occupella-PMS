@@ -3851,6 +3851,24 @@ CREATE TABLE public.trust_idempotency_keys (
 
 
 --
+-- Name: trust_invites; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_invites (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    login_id uuid NOT NULL,
+    token_hash bytea NOT NULL,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    accepted_at timestamp with time zone,
+    CONSTRAINT trust_invites_check CHECK ((expires_at > created_at)),
+    CONSTRAINT trust_invites_token_hash_check CHECK ((length(token_hash) = 32))
+);
+
+
+--
 -- Name: trust_late_fee_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3930,6 +3948,46 @@ CREATE TABLE public.trust_leasing_fees (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_leasing_fees_check CHECK (((fee = (0)::numeric) = (transfer_id IS NULL))),
     CONSTRAINT trust_leasing_fees_fee_check CHECK ((fee >= (0)::numeric))
+);
+
+
+--
+-- Name: trust_login_secrets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_login_secrets (
+    login_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    password_hash text NOT NULL,
+    totp_secret text,
+    totp_confirmed_at timestamp with time zone,
+    totp_last_step bigint,
+    failed_sign_ins bigint DEFAULT 0 NOT NULL,
+    locked_until timestamp with time zone,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_login_secrets_check CHECK (((totp_confirmed_at IS NULL) OR (totp_secret IS NOT NULL))),
+    CONSTRAINT trust_login_secrets_failed_sign_ins_check CHECK ((failed_sign_ins >= 0)),
+    CONSTRAINT trust_login_secrets_password_hash_check CHECK ((password_hash ~~ '$argon2id$%'::text))
+);
+
+
+--
+-- Name: trust_logins; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_logins (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    kind text NOT NULL,
+    staff_id uuid,
+    owner_id uuid,
+    tenant_id uuid,
+    email text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    disabled_at timestamp with time zone,
+    CONSTRAINT trust_logins_check CHECK ((((kind = 'staff'::text) AND (staff_id IS NOT NULL) AND (owner_id IS NULL) AND (tenant_id IS NULL)) OR ((kind = 'owner'::text) AND (owner_id IS NOT NULL) AND (staff_id IS NULL) AND (tenant_id IS NULL)) OR ((kind = 'tenant'::text) AND (tenant_id IS NOT NULL) AND (staff_id IS NULL) AND (owner_id IS NULL)))),
+    CONSTRAINT trust_logins_email_check CHECK (((email = lower(email)) AND (email ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'::text))),
+    CONSTRAINT trust_logins_kind_check CHECK ((kind = ANY (ARRAY['staff'::text, 'owner'::text, 'tenant'::text])))
 );
 
 
@@ -4156,6 +4214,23 @@ CREATE TABLE public.trust_recurring_bills (
 
 
 --
+-- Name: trust_sessions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_sessions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    login_id uuid NOT NULL,
+    token_hash bytea NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    ended_at timestamp with time zone,
+    CONSTRAINT trust_sessions_check CHECK ((expires_at > created_at)),
+    CONSTRAINT trust_sessions_token_hash_check CHECK ((length(token_hash) = 32))
+);
+
+
+--
 -- Name: trust_staff; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4372,6 +4447,22 @@ ALTER TABLE ONLY public.trust_idempotency_keys
 
 
 --
+-- Name: trust_invites trust_invites_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_invites
+    ADD CONSTRAINT trust_invites_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_invites trust_invites_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_invites
+    ADD CONSTRAINT trust_invites_token_hash_key UNIQUE (token_hash);
+
+
+--
 -- Name: trust_late_fee_policies trust_late_fee_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4441,6 +4532,62 @@ ALTER TABLE ONLY public.trust_leasing_fees
 
 ALTER TABLE ONLY public.trust_ledger_accounts
     ADD CONSTRAINT trust_ledger_accounts_pkey PRIMARY KEY (ledger_account_id);
+
+
+--
+-- Name: trust_login_secrets trust_login_secrets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_login_secrets
+    ADD CONSTRAINT trust_login_secrets_pkey PRIMARY KEY (login_id);
+
+
+--
+-- Name: trust_logins trust_logins_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_logins
+    ADD CONSTRAINT trust_logins_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_logins trust_logins_pmc_id_email_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_logins
+    ADD CONSTRAINT trust_logins_pmc_id_email_key UNIQUE (pmc_id, email);
+
+
+--
+-- Name: trust_logins trust_logins_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_logins
+    ADD CONSTRAINT trust_logins_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_logins trust_logins_pmc_id_owner_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_logins
+    ADD CONSTRAINT trust_logins_pmc_id_owner_id_key UNIQUE (pmc_id, owner_id);
+
+
+--
+-- Name: trust_logins trust_logins_pmc_id_staff_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_logins
+    ADD CONSTRAINT trust_logins_pmc_id_staff_id_key UNIQUE (pmc_id, staff_id);
+
+
+--
+-- Name: trust_logins trust_logins_pmc_id_tenant_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_logins
+    ADD CONSTRAINT trust_logins_pmc_id_tenant_id_key UNIQUE (pmc_id, tenant_id);
 
 
 --
@@ -4617,6 +4764,22 @@ ALTER TABLE ONLY public.trust_recurring_bills
 
 ALTER TABLE ONLY public.trust_recurring_bills
     ADD CONSTRAINT trust_recurring_bills_vendor_id_reference_prefix_key UNIQUE (vendor_id, reference_prefix);
+
+
+--
+-- Name: trust_sessions trust_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_sessions
+    ADD CONSTRAINT trust_sessions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_sessions trust_sessions_token_hash_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_sessions
+    ADD CONSTRAINT trust_sessions_token_hash_key UNIQUE (token_hash);
 
 
 --
@@ -4939,6 +5102,13 @@ CREATE INDEX trust_reconciliations_bank_account_id ON public.trust_reconciliatio
 
 
 --
+-- Name: trust_sessions_login; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_sessions_login ON public.trust_sessions USING btree (login_id);
+
+
+--
 -- Name: trust_units_property_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5219,6 +5389,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_char
 
 
 --
+-- Name: trust_invites trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_invites FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_late_fee_policies trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5258,6 +5435,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_leas
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_ledger_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_logins trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_logins FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -5363,6 +5547,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_recu
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_recurring_bills FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_sessions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_sessions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -5689,6 +5880,30 @@ ALTER TABLE ONLY public.trust_idempotency_keys
 
 
 --
+-- Name: trust_invites trust_invites_pmc_id_created_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_invites
+    ADD CONSTRAINT trust_invites_pmc_id_created_by_fkey FOREIGN KEY (pmc_id, created_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_invites trust_invites_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_invites
+    ADD CONSTRAINT trust_invites_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_invites trust_invites_pmc_id_login_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_invites
+    ADD CONSTRAINT trust_invites_pmc_id_login_id_fkey FOREIGN KEY (pmc_id, login_id) REFERENCES public.trust_logins(pmc_id, id);
+
+
+--
 -- Name: trust_late_fee_policies trust_late_fee_policies_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5870,6 +6085,54 @@ ALTER TABLE ONLY public.trust_ledger_accounts
 
 ALTER TABLE ONLY public.trust_ledger_accounts
     ADD CONSTRAINT trust_ledger_accounts_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
+-- Name: trust_login_secrets trust_login_secrets_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_login_secrets
+    ADD CONSTRAINT trust_login_secrets_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_login_secrets trust_login_secrets_pmc_id_login_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_login_secrets
+    ADD CONSTRAINT trust_login_secrets_pmc_id_login_id_fkey FOREIGN KEY (pmc_id, login_id) REFERENCES public.trust_logins(pmc_id, id);
+
+
+--
+-- Name: trust_logins trust_logins_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_logins
+    ADD CONSTRAINT trust_logins_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_logins trust_logins_pmc_id_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_logins
+    ADD CONSTRAINT trust_logins_pmc_id_owner_id_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id);
+
+
+--
+-- Name: trust_logins trust_logins_pmc_id_staff_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_logins
+    ADD CONSTRAINT trust_logins_pmc_id_staff_id_fkey FOREIGN KEY (pmc_id, staff_id) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_logins trust_logins_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_logins
+    ADD CONSTRAINT trust_logins_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
 
 
 --
@@ -6145,6 +6408,22 @@ ALTER TABLE ONLY public.trust_recurring_bills
 
 
 --
+-- Name: trust_sessions trust_sessions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_sessions
+    ADD CONSTRAINT trust_sessions_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_sessions trust_sessions_pmc_id_login_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_sessions
+    ADD CONSTRAINT trust_sessions_pmc_id_login_id_fkey FOREIGN KEY (pmc_id, login_id) REFERENCES public.trust_logins(pmc_id, id);
+
+
+--
 -- Name: trust_staff trust_staff_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6278,4 +6557,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261010000024'),
     ('20261010000025'),
     ('20261010000026'),
-    ('20261010000027');
+    ('20261010000027'),
+    ('20261011000028');

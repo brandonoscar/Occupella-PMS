@@ -59,3 +59,21 @@ it.
 
 Exports, then the API with logins (it also closes issue #11, the self-hosted app server), then
 the owner portal, the tenant portal, and leasing.
+
+## The API and logins, as built
+
+`src/pms/api` (FastAPI, `python -m pms.api`) and `src/pms/accounts.py`, on migration 0028.
+
+- Staff invite a person by email: the link is `<PMS_PUBLIC_URL>/invite#<token>`. The token sits
+  in the fragment, so it never reaches a server log or a referrer. It expires after 7 days and
+  is accepted once. A new invite is how a forgotten password is reset, and it ends the old
+  sessions.
+- Passwords are 12 to 1024 characters, hashed with argon2id. Staff enroll an authenticator
+  (TOTP) from their invite, and every staff sign-in needs a code that works once.
+- A refused sign-in reads the same whatever the reason. Ten failures in a row lock the login
+  for 15 minutes.
+- Sessions last 12 hours, in an HttpOnly, SameSite=Strict cookie (Secure unless
+  `PMS_COOKIE_SECURE=false`). Changes must be JSON from `PMS_PUBLIC_URL`'s origin.
+- Staff download any report or the ledger for their own PMC. Owners and tenants can sign in
+  and see who they are; their own pages come with their portals.
+- `python -m pms.admin add-staff` and `invite` make the first staff member's link on the server.
