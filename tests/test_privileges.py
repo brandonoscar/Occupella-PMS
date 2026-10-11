@@ -56,6 +56,7 @@ TABLES = {
     "trust_payment_holds": {"SELECT", "INSERT"},
     "trust_payment_hold_releases": {"SELECT", "INSERT"},
     "trust_payment_hold_allowances": {"SELECT", "INSERT"},
+    "trust_owner_contributions": {"SELECT"},  # written only by trust_record_owner_contribution
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
@@ -91,6 +92,7 @@ FUNCTIONS = {
     "trust_charge_rent_due(uuid,date)": {"trust_app"},
     "trust_assess_late_fees(uuid,date)": {"trust_app"},
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)": {"trust_app"},
+    "trust_record_owner_contribution(uuid,text,text,numeric,timestamptz,text)": {"trust_app"},
     # Helpers the fee, draw and bill functions call as the owner: nobody else.
     "trust_lock_owner_account(uuid,text)": set(),
     "trust_agreement_on(text,date)": set(),
@@ -170,6 +172,7 @@ SECURITY_DEFINER = {
     "trust_pay_bill(uuid,uuid,timestamptz)",
     "trust_assess_late_fees(uuid,date)",
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)",
+    "trust_record_owner_contribution(uuid,text,text,numeric,timestamptz,text)",
     "trust_audit()",  # writes the audit log, which no other role may write
     "trust_check_payment_hold()",  # locks the hold's lease, which the app can't
 }

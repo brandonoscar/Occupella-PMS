@@ -18,6 +18,7 @@ from helpers import (
     assess_late_fees,
     charge,
     charge_rent_due,
+    contribute,
     enter_bill,
     hold_payments,
     make_pmc,
@@ -222,6 +223,9 @@ WRITES = {
         "INSERT INTO trust_payment_hold_allowances (pmc_id, hold_id, transfer_id, allowed_by)"
         " SELECT pmc_id, id, %s, 'The AI' FROM trust_payment_holds WHERE pmc_id = %s",
         (paid, pmc.pmc_id),
+    ),
+    "record an owner's contribution": lambda c, pmc, *_: contribute(
+        c, pmc.pmc_id, pmc.owners[0].account, "ai-1", "1.00"
     ),
     "open with balances carried over": lambda c, pmc, *_: open_with_balances(
         c, pmc.pmc_id, pmc.deposit_bank_id, JAN.date(), {pmc.tenant_deposit: "1.00"}, "1.00"

@@ -20,6 +20,7 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     period with no two periods of an account overlapping; a leasing fee is taken once per
     lease; a draw never pays out more than the balance above the reserve, and its request key
     pays once;
+  - an owner's contribution is recorded once per request key and never matched to a charge;
   - payment holds are the model's: a match of a payment dated on or after a hold's first day
     and before its release is refused unless that hold allowed the transfer, and a retry of a
     match made before still returns it; a release ends a hold once, after it starts;
@@ -56,6 +57,7 @@ from helpers import (
     assess_late_fees,
     charge,
     charge_rent_due,
+    contribute,
     draw_owner,
     end_lease,
     hold_payments,
@@ -223,6 +225,8 @@ class RentRollMachine(RuleBasedStateMachine):
         # Payment holds, and the (hold, transfer) pairs allowed despite one.
         self.holds: dict[UUID, Hold] = {}
         self.allowed: set[tuple[UUID, str]] = set()
+        # Owners' contributions: request key -> (account, amount, transfer).
+        self.contributions: dict[str, tuple[str, Decimal, str]] = {}
 
     # --- helpers -------------------------------------------------------------------------
 
@@ -655,6 +659,8 @@ class RentRollMachine(RuleBasedStateMachine):
             refusal = (psycopg.errors.InvalidParameterValue, "positive amount")
         elif bill.kind == "credit":
             refusal = (psycopg.errors.InvalidParameterValue, "credit is not paid")
+        elif any(t == transfer_id for _, _, t in self.contributions.values()):
+            refusal = (psycopg.errors.InvalidParameterValue, "an owner's contribution")
         elif not self.pays_for(paid, self.leases[bill.lease_id]):
             refusal = (psycopg.errors.InvalidParameterValue, "did not pay into")
         elif existing is not None:
@@ -675,6 +681,45 @@ class RentRollMachine(RuleBasedStateMachine):
         else:
             assert send() == amount
             self.matches[(charge_id, transfer_id)] = amount
+
+    # --- rules: owners' contributions ----------------------------------------------------
+
+    @rule(
+        role=ROLES,
+        key=st.sampled_from([f"contribution-{n}" for n in range(4)]),
+        owner=st.integers(min_value=0, max_value=1),
+        amount=AMOUNTS,
+        day=DAYS,
+        second=TIMES,
+    )
+    def record_an_owners_contribution(self, role, key, owner, amount, day, second):
+        """Money from an owner, under a small pool of request keys so retries come often."""
+        account = self.owner_account[owner]
+        when = self.moment(day, second)
+
+        def send():
+            return contribute(self.conns[role], self.pmc_id, account, key, amount, when)
+
+        taken = self.contributions.get(key)
+        if taken is None:
+            transfer_id = send()
+            self.record(transfer_id, self.pmc.operating_cash, account, amount, when)
+            self.contributions[key] = (account, amount, transfer_id)
+        elif taken[:2] == (account, amount):
+            assert send() == taken[2]  # a retry: the original, nothing added
+        else:
+            with pytest.raises(psycopg.errors.UniqueViolation, match="already recorded"):
+                send()
+
+    @precondition(lambda self: self.contributions and self.charges)
+    @rule(data=st.data(), role=ROLES)
+    def try_to_match_a_contribution(self, data, role):
+        """An owner's money is never a tenant's payment."""
+        charge_id = data.draw(st.sampled_from(list(self.charges)))
+        _, amount, transfer_id = data.draw(st.sampled_from(list(self.contributions.values())))
+        self.attempt_match(
+            role, charge_id, transfer_id, min(amount, self.charges[charge_id].amount)
+        )
 
     # --- rules: payment holds ----------------------------------------------------------
 

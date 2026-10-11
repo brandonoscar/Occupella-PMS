@@ -466,6 +466,15 @@ def open_with_balances(
     )
 
 
+def contribute(connection, pmc_id, account, request_key, amount, event_at=None, memo=None) -> str:
+    """An owner's money into their property account, as its own kind; the transfer id."""
+    return _one(
+        connection,
+        "SELECT trust_record_owner_contribution(%s, %s, %s, %s, %s, %s)",
+        (pmc_id, account, request_key, None if amount is None else Decimal(amount), event_at, memo),
+    )
+
+
 def hold_payments(connection, pmc_id, lease_id, starts_on, reason="Eviction filed") -> UUID:
     """Stop payments dated on or after starts_on (UTC) being matched to the lease's charges."""
     return _one(
