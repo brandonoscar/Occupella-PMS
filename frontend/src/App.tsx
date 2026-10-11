@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import type { Me } from "./api";
 import { ApiError, api } from "./api";
 import { Notice } from "./components/Notice";
+import { ApplicationStatusPage } from "./pages/ApplicationStatusPage";
+import { ApplyPage } from "./pages/ApplyPage";
 import { InvitePage } from "./pages/InvitePage";
 import { OwnerHome } from "./pages/OwnerHome";
 import { PMC_KEY, SignInPage } from "./pages/SignInPage";
@@ -12,6 +14,9 @@ import { navigate, usePath } from "./router";
 export function App() {
   const path = usePath();
   if (path === "/invite") return <InvitePage />;
+  // Applicants have no login: their links carry what lets them in.
+  if (path === "/apply") return <ApplyPage />;
+  if (path === "/application") return <ApplicationStatusPage />;
   if (path === "/sign-in") return <SignInPage />;
   return <Home />;
 }

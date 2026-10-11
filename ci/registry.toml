@@ -437,6 +437,43 @@ tests = [
   "tests/api/test_maintenance.py::test_nothing_follows_a_closed_work_order",
 ]
 
+[[invariant]]
+id = "applications-through-open-links"
+statement = "A rental application comes only through an open application link, one staff opened for a unit of their PMC. A closed link takes none, and closing a link waits for an application on its way. Applicants have no login: their link and status tokens are kept only as SHA-256, a closed or made-up link reads the same, and a link takes at most 50 applications a day."
+tests = [
+  "tests/test_rental_applications.py::test_a_closed_link_takes_no_application_and_closes_once",
+  "tests/test_rental_applications.py::test_closing_a_link_waits_for_an_application_on_its_way",
+  "tests/test_rental_applications.py::test_everything_stays_in_its_pmc",
+  "tests/properties/test_leasing_properties.py::test_leasing_invariants_hold_under_random_links_applications_and_decisions",
+  "tests/api/test_apply.py::test_a_closed_or_made_up_link_reads_the_same",
+  "tests/api/test_apply.py::test_an_application_waits_for_a_closing_on_its_way_and_is_refused",
+  "tests/api/test_apply.py::test_a_link_takes_fifty_applications_a_day",
+]
+
+[[invariant]]
+id = "adverse-action-records"
+statement = "Each application has at most one decision, resting only on a screening of its own. A declined or conditional decision that rests on a screening has its adverse action notice recorded with it (the reasons, the reporting agency, the day it was given), checked at commit, and no other decision has one."
+tests = [
+  "tests/test_rental_applications.py::test_a_decision_rests_only_on_a_screening_of_its_own_application",
+  "tests/test_rental_applications.py::test_an_application_has_one_decision",
+  "tests/test_rental_applications.py::test_a_decision_against_the_applicant_on_a_screening_needs_its_notice_at_commit",
+  "tests/test_rental_applications.py::test_an_adverse_action_belongs_only_to_such_a_decision",
+  "tests/properties/test_leasing_properties.py::test_leasing_invariants_hold_under_random_links_applications_and_decisions",
+  "tests/api/test_leasing.py::test_a_decline_on_a_screening_records_its_notice_and_the_notice_downloads",
+  "tests/api/test_leasing.py::test_an_approval_needs_no_notice_and_takes_none",
+]
+
+[[invariant]]
+id = "applicants-stay-with-the-pmc"
+statement = "trust_ai_agent reads no application link, application, applicant, screening, decision or adverse action. An applicant's status shows the PMC's decision and its conditions, never the screening. Screening runs only through the partner the server is set up with (none by default), and the PMS keeps only applicants' names and emails."
+tests = [
+  "tests/test_rental_applications.py::test_the_ai_role_reads_none_of_it",
+  "tests/test_privileges.py::test_ai_role_reads_only_what_the_app_reads",
+  "tests/api/test_apply.py::test_an_applicant_applies_and_follows_the_application",
+  "tests/api/test_leasing.py::test_without_a_partner_screening_is_refused",
+  "tests/test_screening.py::test_a_partner_is_chosen_by_name",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]

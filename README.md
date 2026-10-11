@@ -19,7 +19,11 @@ report as CSV, Excel or PDF plus the whole ledger as CSV
   staff turn into work orders and follow to done. Rent is still paid the usual way: the portal
   takes no payments.
 
-Being built next (`docs/adr/0002-portals-and-exports.md`): leasing basics.
+Leasing basics, part one: staff open an application link for a unit, applicants apply
+through it and follow their application, and staff screen (through a partner; a fake one for
+now), decide, and record the adverse action notice a decline or conditional approval needs.
+
+Being built next (`docs/adr/0002-portals-and-exports.md`): e-sign and renewals.
 
 Still true:
 

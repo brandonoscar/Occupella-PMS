@@ -5,6 +5,7 @@ import { Button, LinkButton } from "../components/Button";
 import { Notice } from "../components/Notice";
 import { Card, Shell } from "../components/Shell";
 import { day } from "../money";
+import { LeasingCard } from "./LeasingCard";
 import { MaintenanceCard } from "./MaintenanceCard";
 
 type Person = {
@@ -114,6 +115,7 @@ export function StaffHome({ me }: { me: Me }) {
         )}
       </Card>
       <MaintenanceCard />
+      <LeasingCard />
     </Shell>
   );
 }

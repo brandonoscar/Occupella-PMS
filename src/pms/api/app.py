@@ -37,8 +37,9 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
 from pms import accounts, exports
-from pms.api import maintenance, owner, people, tenant
+from pms.api import leasing, maintenance, owner, people, tenant
 from pms.api.deps import COOKIE, Conn, Current, Staff, download
+from pms.leasing import screening
 
 HEALTH_TIMEOUT = 2.0  # seconds to wait for a database connection before answering 503
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -52,6 +53,8 @@ class Settings:
     db_role: str = "trust_app"
     # The built portal (frontend/dist), served at / when set.
     static_dir: Path | None = None
+    # The tenant screening partner (pms.leasing.screening): "fake", or empty for none.
+    screening_partner: str = ""
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -63,6 +66,7 @@ class Settings:
             static_dir=Path(os.environ["PMS_STATIC_DIR"])
             if "PMS_STATIC_DIR" in os.environ
             else None,
+            screening_partner=os.environ.get("PMS_SCREENING_PARTNER", ""),
         )
 
     @property
@@ -154,6 +158,7 @@ def create_app(settings: Settings) -> FastAPI:
     app = FastAPI(title="Occupella PMS", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.settings = settings
     app.state.pool = pool
+    app.state.screening = screening.partner_named(settings.screening_partner)
 
     @app.middleware("http")
     async def guard(
@@ -290,6 +295,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(owner.router)
     app.include_router(tenant.router)
     app.include_router(maintenance.router)
+    app.include_router(leasing.router)
     app.include_router(people.router)
     if settings.static_dir is not None:
         serve_portal(app, settings.static_dir)

@@ -6,7 +6,8 @@ pins them down completely: any grant added, dropped or widened by a migration fa
 
 trust_ai_agent, the role behind the API key Occupella will hold, reads what trust_app reads and
 runs the reports: it can't write a row or call a function that writes (the AI never moves money).
-The one exception is AI_NEVER_READS: who can sign in, sessions and credentials.
+The one exception is AI_NEVER_READS: who can sign in, sessions and credentials, and rental
+applicants with their screenings.
 
 Every table, view and function in the schema is pinned, not just the ones that exist today:
 test_every_relation_and_function_is_pinned fails on a new one until it is listed here, so no
@@ -68,6 +69,14 @@ TABLES = {
     # Maintenance requests: tenants file them through the API, staff link a work order.
     "trust_maintenance_requests": {"SELECT", "INSERT"},
     "trust_maintenance_request_work_orders": {"SELECT", "INSERT"},
+    # Rental applications: applicants apply through the API, staff screen and decide.
+    "trust_application_links": {"SELECT", "INSERT"},
+    "trust_application_link_closings": {"SELECT", "INSERT"},
+    "trust_applications": {"SELECT", "INSERT"},
+    "trust_applicants": {"SELECT", "INSERT"},
+    "trust_screenings": {"SELECT", "INSERT"},
+    "trust_application_decisions": {"SELECT", "INSERT"},
+    "trust_adverse_actions": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -86,8 +95,21 @@ COLUMN_UPDATES = {
     },
 }
 # trust_app reads these, and trust_ai_agent never does: who can sign in, their sessions and
-# their credentials are no business of the role behind Occupella's key.
-AI_NEVER_READS = {"trust_logins", "trust_invites", "trust_sessions", "trust_login_secrets"}
+# their credentials, and rental applicants with their consumer report results, are no business
+# of the role behind Occupella's key.
+AI_NEVER_READS = {
+    "trust_logins",
+    "trust_invites",
+    "trust_sessions",
+    "trust_login_secrets",
+    "trust_application_links",
+    "trust_application_link_closings",
+    "trust_applications",
+    "trust_applicants",
+    "trust_screenings",
+    "trust_application_decisions",
+    "trust_adverse_actions",
+}
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
 RENAMEABLE = [
     "trust_pmcs",
@@ -186,6 +208,10 @@ FUNCTIONS = {
     "trust_check_recurring_bill()": {"PUBLIC"},
     "trust_refuse_moving_opened_at()": {"PUBLIC"},
     "trust_check_request_work_order()": {"PUBLIC"},
+    "trust_check_application()": {"PUBLIC"},
+    "trust_lock_application_link()": {"PUBLIC"},
+    "trust_check_application_decision()": {"PUBLIC"},
+    "trust_check_adverse_action()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.
