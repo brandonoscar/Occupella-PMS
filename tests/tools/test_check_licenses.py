@@ -1,5 +1,7 @@
 """tools/check_licenses.py: only allowlisted licenses, never non-commercial or source-available."""
 
+import json
+
 import pytest
 
 from tools import check_licenses
@@ -72,3 +74,48 @@ def test_main_reports_each_problem(tmp_path, capsys):
 def test_installed_packages_pass_the_real_policy(capsys):
     assert check_licenses.main([]) == 0
     assert "every license allowed" in capsys.readouterr().out
+
+
+def test_npm_packages_come_from_the_lockfile_with_their_licenses(tmp_path):
+    lockfile = tmp_path / "package-lock.json"
+    lockfile.write_text(
+        json.dumps(
+            {
+                "lockfileVersion": 3,
+                "packages": {
+                    "": {"name": "portal", "license": "Apache-2.0"},
+                    "node_modules/react": {"version": "19.3.0", "license": "MIT"},
+                    "node_modules/vite/node_modules/lightningcss": {
+                        "version": "1.0.0",
+                        "license": "MPL-2.0",
+                    },
+                    "node_modules/mystery": {"version": "0.1.0"},
+                },
+            }
+        )
+    )
+
+    assert check_licenses.locked_npm(lockfile) == [
+        {"Name": "npm:mystery", "Version": "0.1.0", "License": "UNKNOWN"},
+        {"Name": "npm:react", "Version": "19.3.0", "License": "MIT"},
+        {"Name": "npm:lightningcss", "Version": "1.0.0", "License": "MPL-2.0"},
+    ]
+    assert check_licenses.locked_npm(tmp_path / "missing.json") == []
+
+
+def test_an_npm_package_without_a_license_fails(tmp_path, capsys):
+    policy = tmp_path / "licenses.toml"
+    policy.write_text('allowed = ["MIT"]\n')
+    lockfile = tmp_path / "package-lock.json"
+    lockfile.write_text(json.dumps({"packages": {"node_modules/mystery": {"version": "1"}}}))
+    found = check_licenses.locked_npm(lockfile)
+
+    assert check_licenses.main(["--policy", str(policy)], found) == 1
+    assert "npm:mystery: license 'UNKNOWN' is not on the allowlist" in capsys.readouterr().out
+
+
+def test_the_portals_npm_packages_pass_the_real_policy(capsys):
+    found = check_licenses.locked_npm(check_licenses.ROOT / "frontend/package-lock.json")
+
+    assert found, "the portal locks its npm packages"
+    assert check_licenses.main([], found) == 0

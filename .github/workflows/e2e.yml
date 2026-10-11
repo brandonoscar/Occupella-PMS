@@ -1,38 +1,86 @@
 name: e2e
 
-# Placeholder: browser tests (Playwright) against the seeded self-host app. There is no UI yet,
-# so this only runs when UI paths change, and it fails if a UI exists while the Playwright
-# steps are still off. Enable it in the first PR that adds screens:
-#   1. add e2e/ with playwright.config.ts and tests that run against `docker compose up`;
-#   2. replace the "Placeholder" step below with: setup-node (pinned by SHA), `npm ci`,
-#      `npx playwright install --with-deps`, `docker compose up -d --wait`, and
-#      `npx playwright test`, uploading the report on failure;
-#   3. add `e2e` to the required checks (docs/CI.md).
+# The portal (frontend/), end to end. Typecheck, unit-test (vitest) and build the React app
+# inside the pinned Node image, so the runner's own Node never matters. Then serve the build
+# from the API (python -m pms.api) on a fresh Postgres 16, seed a synthetic PMC
+# (frontend/e2e/seed.py) and drive it in Chromium with Playwright, inside the pinned Playwright
+# image (its browsers match @playwright/test in frontend/package.json).
+#
+# licenses.yml calls it after its own short job on every PR and push to main, so PR CI never
+# runs more than 8 jobs at once (docs/CI.md, "Job budget").
 on:
-  pull_request:
-    paths:
-      - "frontend/**"
-      - "web/**"
-      - "ui/**"
-      - "e2e/**"
+  workflow_call:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+env:
+  DBMATE_VERSION: v2.36.0
+  DBMATE_SHA256: 47e284b3d8cbad1ba5f090495aa05afd1bbd5f35e2ed5577aad06da74ce780ce
+  DATABASE_URL: postgres://postgres@localhost:5432/pms?sslmode=disable
+  NODE_IMAGE: mirror.gcr.io/library/node:22.22.0-slim@sha256:dd9d21971ec4395903fa6143c2b9267d048ae01ca6d3ea96f16cb30df6187d94
+  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
+
 jobs:
   e2e:
     name: e2e
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Placeholder
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dbmate
         run: |
-          if [ -d frontend ] || [ -d web ] || [ -d ui ] || [ -d e2e ]; then
-            echo "::error::A UI exists now. Enable the Playwright steps in .github/workflows/e2e.yml in this PR."
-            exit 1
-          fi
-          echo "## e2e: not running yet, there is no UI. See the header of e2e.yml." >> "$GITHUB_STEP_SUMMARY"
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+            "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
+          echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/bin/dbmate"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: pip install -r requirements.txt
+      - name: Typecheck, unit-test and build the portal (Node 22)
+        run: |
+          docker run --rm -v "$PWD/frontend:/w" -w /w "$NODE_IMAGE" \
+            sh -c "npm ci --no-audit --no-fund && npm run typecheck && npm test && npm run build"
+      - name: Apply every migration
+        run: dbmate --no-dump-schema up
+      - name: Serve the portal and seed a synthetic PMC
+        run: |
+          PYTHONPATH=src PMS_STATIC_DIR=frontend/dist PMS_PORT=8123 \
+            PMS_PUBLIC_URL=http://127.0.0.1:8123 PMS_COOKIE_SECURE=false \
+            nohup python -m pms.api > "$RUNNER_TEMP/api.log" 2>&1 &
+          for _ in $(seq 30); do curl -fsS http://127.0.0.1:8123/health && break; sleep 1; done
+          PYTHONPATH=src python frontend/e2e/seed.py > frontend/e2e/.seed.json
+      - name: Drive it in Chromium (Playwright)
+        run: |
+          docker run --rm --network host --ipc host -v "$PWD/frontend:/w" -w /w -e CI=1 \
+            "$PLAYWRIGHT_IMAGE" npx playwright test
+      - name: Keep the report and the API's log
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: e2e-report
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+            ${{ runner.temp }}/api.log
+          retention-days: 7

@@ -398,6 +398,17 @@ tests = [
   "tests/api/test_invites.py::test_disabling_a_login_ends_its_sessions_and_sign_ins",
 ]
 
+[[invariant]]
+id = "owner-sees-only-their-own"
+statement = "An owner's portal shows the session's owner only: their properties with what each holds now, and their statement (trust_report_owner_statement over whole UTC days). No request names an owner, a property or a PMC, only an owner's session reaches these endpoints, and only staff list the PMC's people."
+tests = [
+  "tests/api/test_owner.py::test_an_owner_sees_each_of_their_properties_and_what_it_holds",
+  "tests/api/test_owner.py::test_the_statement_is_the_owners_report_over_whole_days",
+  "tests/api/test_owner.py::test_another_owners_statement_is_never_reachable",
+  "tests/api/test_owner.py::test_only_an_owner_reaches_the_owner_endpoints",
+  "tests/api/test_people.py::test_only_staff_see_the_people",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]
@@ -473,6 +484,16 @@ tests = [
   "tests/api/test_sign_in.py::test_health_answers_when_the_database_does",
   "tests/api/test_sign_in.py::test_health_says_when_the_database_is_unavailable",
   "tests/api/test_server.py::test_the_server_reads_its_settings_from_the_environment",
+]
+
+[[selfhost]]
+id = "portal-served"
+statement = "The self-hosted app serves the portal's build: every page is index.html under a strict Content-Security-Policy that forbids framing, its files are served, and no API path falls through to a page."
+tests = [
+  "tests/api/test_portal_pages.py::test_every_page_is_the_portal_with_a_strict_policy",
+  "tests/api/test_portal_pages.py::test_the_portals_files_are_served",
+  "tests/api/test_portal_pages.py::test_the_api_and_health_are_not_pages",
+  "tests/api/test_portal_pages.py::test_without_a_portal_there_are_no_pages",
 ]
 
 [[report]]

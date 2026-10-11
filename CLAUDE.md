@@ -37,7 +37,8 @@ no-negative rule. If one of these looks needed, stop and ask the founder.
 3. A new migration is covered by db.yml (squawk, apply from empty, down/up, drift, and an
    upgrade of a database that already holds money).
 4. A new report or statement gets a golden case (`tests/golden/cases/<function>/`).
-5. A new API endpoint gets API tests for the success path, auth failure and bad input.
+5. A new API endpoint gets API tests for the success path, auth failure and bad input. Portal
+   code (`frontend/src`) gets a vitest test next to it or a browser test in `frontend/e2e/`.
 6. A new feature area that no workflow covers gets a workflow added or extended in the same PR.
 7. Never weaken a check, lower a threshold or skip a test to get green. If something can't pass
    yet, open an issue and link it: in `ci/registry.toml` (`pending`), or as a strict xfail whose
@@ -72,6 +73,13 @@ required invariant, report and self-host step.
   password. `trust_login_secrets` is never audited. The first staff invite comes from
   `python -m pms.admin`. Payments, email sending and the real screening and e-sign partners
   are still out (`docs/adr/0002-portals-and-exports.md`).
+- The portal (`frontend/`): React 19, Vite and Tailwind v4, following Occupella's `DESIGN.md`.
+  Its build is served by the API (`PMS_STATIC_DIR`) under a strict Content-Security-Policy.
+  Colours, sizes and fonts come only from the tokens in `frontend/src/styles/globals.css`
+  (`designTokens.test.ts` fails on a raw colour or a size off the scale). Money stays text from
+  the database to the screen, never a float. npm packages are pinned exactly and their
+  licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
+  owner only: no request names an owner, a property or a PMC.
 - Every table we add carries `pmc_id uuid`. It maps to Occupella's `companies.id` at merge time.
 - Table names: `pgledger_*` from upstream, `trust_*` for ours. Our functions and triggers are
   `trust_*` too. A report function is `trust_report_<name>`. `tests/test_schema_conventions.py`
@@ -200,6 +208,7 @@ pytest                                          # every test; fresh database, no
 HYPOTHESIS_PROFILE=nightly pytest tests/properties   # property tests, nightly depth
 python -m tools.check_upgrade --base origin/main     # migrations upgrade a database with money
 python -m tools.check_synthetic_data                 # no real-looking personal or bank data
+(cd frontend && npm ci && npm run typecheck && npm test && npm run build)   # the portal
 ```
 
 Mutation testing and the rest: `docs/CI.md`.

@@ -19,31 +19,29 @@ they can sign in and read who they are, and nothing else.
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 from uuid import UUID
 
 import psycopg
-from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from psycopg import sql
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
 from pms import accounts, exports
+from pms.api import owner, people
+from pms.api.deps import COOKIE, Conn, Current, Staff, download
 
-COOKIE = "pms_session"
 HEALTH_TIMEOUT = 2.0  # seconds to wait for a database connection before answering 503
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
-MEDIA = {
-    "csv": "text/csv; charset=utf-8",
-    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    "pdf": "application/pdf",
-}
 
 
 @dataclass(frozen=True)
@@ -52,6 +50,8 @@ class Settings:
     public_url: str = "http://localhost:8000"
     cookie_secure: bool = True
     db_role: str = "trust_app"
+    # The built portal (frontend/dist), served at / when set.
+    static_dir: Path | None = None
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -60,6 +60,9 @@ class Settings:
             public_url=os.environ.get("PMS_PUBLIC_URL", cls.public_url),
             cookie_secure=os.environ.get("PMS_COOKIE_SECURE", "true").lower() != "false",
             db_role=os.environ.get("PMS_DB_ROLE", cls.db_role),
+            static_dir=Path(os.environ["PMS_STATIC_DIR"])
+            if "PMS_STATIC_DIR" in os.environ
+            else None,
         )
 
     @property
@@ -126,44 +129,6 @@ class InviteDetails(BaseModel):
 
 class Enroll(BaseModel):
     totp_uri: str
-
-
-# --- who is asking ------------------------------------------------------------------------
-
-
-def connection(request: Request) -> Iterator[psycopg.Connection[Any]]:
-    # Committed when the request succeeds, rolled back when it raises.
-    pool: ConnectionPool[Any] = request.app.state.pool
-    with pool.connection() as conn:
-        yield conn
-
-
-# scope="function": the commit happens before the answer is sent, so a client never acts on a
-# write that isn't committed yet.
-Conn = Annotated[psycopg.Connection[Any], Depends(connection, scope="function")]
-
-
-def current(request: Request, conn: Conn) -> accounts.Session:
-    token = request.cookies.get(COOKIE)
-    session = accounts.session_for(conn, token) if token else None
-    if session is None:
-        raise HTTPException(401, "sign in first")
-    if session.kind == "staff":
-        # The audit log records this staff member for every write the request causes.
-        conn.execute("SELECT set_config('trust.staff_id', %s, true)", (str(session.person_id),))
-    return session
-
-
-Current = Annotated[accounts.Session, Depends(current)]
-
-
-def staff(session: Current) -> accounts.Session:
-    if session.kind != "staff":
-        raise HTTPException(403, "only the PMC's staff may do this")
-    return session
-
-
-Staff = Annotated[accounts.Session, Depends(staff)]
 
 
 # --- the app ------------------------------------------------------------------------------
@@ -322,13 +287,35 @@ def create_app(settings: Settings) -> FastAPI:
     def ledger(session: Staff, conn: Conn) -> Response:
         return download(exports.ledger_zip(conn, session.pmc_id), "ledger", "zip")
 
+    app.include_router(owner.router)
+    app.include_router(people.router)
+    if settings.static_dir is not None:
+        serve_portal(app, settings.static_dir)
     return app
 
 
-def download(data: bytes, name: str, ext: str) -> Response:
-    disposition = f'attachment; filename="{name}.{ext}"'
-    return Response(
-        data,
-        media_type=MEDIA.get(ext, "application/zip"),
-        headers={"Content-Disposition": disposition},
-    )
+# The portal's own pages: a built React app (frontend/dist). Its scripts and styles are files
+# of its own, so the policy allows nothing inline and nothing from another origin.
+CONTENT_SECURITY_POLICY = (
+    "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self';"
+    " font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none';"
+    " form-action 'self'"
+)
+
+
+def serve_portal(app: FastAPI, static_dir: Path) -> None:
+    index = static_dir / "index.html"
+    app.mount("/assets", StaticFiles(directory=static_dir / "assets"), name="assets")
+
+    @app.get("/{path:path}", include_in_schema=False)
+    def page(path: str) -> Response:
+        if path.startswith("api/") or path == "api":
+            raise HTTPException(404, "no such endpoint")
+        return FileResponse(
+            index,
+            headers={
+                "Content-Security-Policy": CONTENT_SECURITY_POLICY,
+                "Cache-Control": "no-cache",
+                "X-Frame-Options": "DENY",
+            },
+        )

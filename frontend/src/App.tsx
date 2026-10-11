@@ -1,0 +1,41 @@
+import { useEffect, useState } from "react";
+import type { Me } from "./api";
+import { ApiError, api } from "./api";
+import { Notice } from "./components/Notice";
+import { InvitePage } from "./pages/InvitePage";
+import { OwnerHome } from "./pages/OwnerHome";
+import { PMC_KEY, SignInPage } from "./pages/SignInPage";
+import { StaffHome } from "./pages/StaffHome";
+import { TenantHome } from "./pages/TenantHome";
+import { navigate, usePath } from "./router";
+
+export function App() {
+  const path = usePath();
+  if (path === "/invite") return <InvitePage />;
+  if (path === "/sign-in") return <SignInPage />;
+  return <Home />;
+}
+
+// Who is signed in decides the page; nobody signed in goes to sign in.
+function Home() {
+  const [me, setMe] = useState<Me | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    api
+      .get<Me>("/api/me")
+      .then(setMe)
+      .catch((failed) => {
+        if (failed instanceof ApiError && failed.status === 401) {
+          const pmc = localStorage.getItem(PMC_KEY);
+          navigate(pmc ? `/sign-in?pmc=${pmc}` : "/sign-in");
+        } else {
+          setError(failed instanceof ApiError ? failed.detail : "the server can't be reached");
+        }
+      });
+  }, []);
+  if (error) return <Notice tone="error">{error}</Notice>;
+  if (!me) return null;
+  if (me.kind === "owner") return <OwnerHome me={me} />;
+  if (me.kind === "staff") return <StaffHome me={me} />;
+  return <TenantHome me={me} />;
+}

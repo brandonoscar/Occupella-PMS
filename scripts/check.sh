@@ -129,6 +129,18 @@ else
   step "every test" pytest -q -p no:cacheprovider
   skip "coverage gates" "needs plpgsql_check in shared_preload_libraries; CI's coverage job runs them"
 fi
+# e2e.yml: the portal's typecheck, unit tests and build (the browser tests need a running
+# API and a seeded database; frontend/playwright.config.ts says how to run them by hand)
+portal() {
+  (cd frontend && npm ci --no-audit --no-fund --silent && npm run --silent typecheck \
+    && npm test --silent && npm run --silent build)
+}
+if command -v npm >/dev/null; then
+  step "portal: typecheck, unit tests, build" portal
+else
+  skip "portal" "npm is not installed; CI's e2e job runs it"
+fi
+skip "portal in a browser" "needs the API serving a build on a seeded database; CI's e2e job runs it"
 # security.yml
 if command -v gitleaks >/dev/null; then
   step "gitleaks on this branch" gitleaks git --config .gitleaks.toml --redact --no-banner \
