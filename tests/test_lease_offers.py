@@ -132,15 +132,27 @@ def test_a_renewal_ends_the_lease_the_day_before_and_keeps_its_tenants(conn, pla
     ]
 
 
-def test_a_renewal_after_a_lease_has_ended_leaves_it_as_it_ended(conn, place):
-    conn.execute("SELECT trust_end_lease(%s, %s, %s)", (place.pmc_id, place.lease, DEC_1))
+@pytest.mark.parametrize(
+    ("ends_on", "then_ends_on"),
+    [
+        (DEC_1, DEC_1),
+        (date(2026, 12, 31), date(2026, 12, 31)),
+        (JAN_1, date(2026, 12, 31)),
+        (JUN_30, date(2026, 12, 31)),
+    ],
+    ids=["ended a month before", "ends the day before", "ends on the start day", "runs on"],
+)
+def test_a_renewal_ends_a_lease_only_if_it_runs_into_the_renewal(
+    conn, place, ends_on, then_ends_on
+):
+    conn.execute("SELECT trust_end_lease(%s, %s, %s)", (place.pmc_id, place.lease, ends_on))
     offer = place.renewal(conn, starts_on=JAN_1, signers=(("Tenant 1", "t1@example.com"),))
     place.sign_all(conn, offer, signers=1)
 
     complete_offer(conn, place.pmc_id, offer, place.staff)
 
     assert [row[:2] for row in leases_of_unit(conn, place.leased_unit)] == [
-        (date(2026, 1, 1), DEC_1),
+        (date(2026, 1, 1), then_ends_on),
         (JAN_1, None),
     ]
 
@@ -287,6 +299,18 @@ def test_a_signature_is_for_a_sent_offer_and_one_of_its_signers(conn, place):
         send_offer(conn, place.pmc_id, offer, place.staff)
 
 
+@pytest.mark.parametrize("column", ["partner", "partner_reference"])
+def test_a_signature_request_names_its_partner_and_reference(conn, place, column):
+    offer = place.new_lease_offer(conn)
+    names = {"partner": "Test partner", "partner_reference": "ref-1"} | {column: "  "}
+    with pytest.raises(psycopg.errors.CheckViolation):
+        conn.execute(
+            "INSERT INTO trust_signature_requests (pmc_id, offer_id, partner, partner_reference,"
+            " sent_by) VALUES (%s, %s, %s, %s, %s)",
+            (place.pmc_id, offer, names["partner"], names["partner_reference"], place.staff),
+        )
+
+
 @pytest.mark.parametrize("title", ["  ", "T" * 201])
 def test_a_document_title_says_something_in_at_most_200_characters(conn, place, title):
     with pytest.raises(psycopg.errors.CheckViolation):
@@ -350,13 +374,26 @@ def test_a_lease_is_the_completion_of_one_offer(conn, place):
     lease = complete_offer(conn, place.pmc_id, offer, place.staff)
     other = place.new_lease_offer(conn, starts_on=date(2028, 1, 1), ends_on=None)
 
-    # Even the table's owner can't write a second offer's completion onto the same lease.
+    another_lease = open_lease(
+        conn,
+        place.pmc_id,
+        add_unit(conn, place.pmc_id, place.pmc.owners[0].property_id, "U3"),
+        JAN_1,
+        None,
+        "900",
+        [place.tenant],
+    )
+    complete = (
+        "INSERT INTO trust_lease_offer_completions (pmc_id, offer_id, lease_id, completed_by)"
+        " VALUES (%s, %s, %s, %s)"
+    )
+
+    # Even the table's owner can't write a second offer's completion onto the same lease, or a
+    # second completion of the same offer.
     with pytest.raises(psycopg.errors.UniqueViolation):
-        conn.execute(
-            "INSERT INTO trust_lease_offer_completions (pmc_id, offer_id, lease_id, completed_by)"
-            " VALUES (%s, %s, %s, %s)",
-            (place.pmc_id, other, lease, place.staff),
-        )
+        conn.execute(complete, (place.pmc_id, other, lease, place.staff))
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        conn.execute(complete, (place.pmc_id, offer, another_lease, place.staff))
 
 
 def test_only_the_function_completes_an_offer(conn, app_conn, place):
@@ -374,7 +411,11 @@ def test_offers_complete_at_read_committed(database_url, place, conn):
     place.sign_all(conn, offer)
     with psycopg.connect(database_url) as repeatable:
         repeatable.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
-        with pytest.raises(psycopg.errors.InvalidTransactionState, match="READ COMMITTED"):
+        # Its own check, before it waits on another offer for the same application.
+        with pytest.raises(
+            psycopg.errors.InvalidTransactionState,
+            match="complete lease offers at READ COMMITTED, not repeatable read",
+        ):
             complete_offer(repeatable, place.pmc_id, offer, place.staff)
 
 
