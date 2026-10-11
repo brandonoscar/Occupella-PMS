@@ -229,8 +229,10 @@ compose up -d --wait db && docker compose run --rm migrate && docker compose run
 **e2e.yml** (every PR and push to main, called by licenses.yml): the portal (`frontend/`), end
 to end. Inside the pinned Node image it typechecks, unit-tests (vitest) and builds the React app.
 Then the API serves that build on a fresh Postgres, `frontend/e2e/seed.py` makes a synthetic PMC
-with an owner who has statements, and Playwright, in its pinned image, signs in as the owner
-and as staff in Chromium (`frontend/e2e/portal.spec.ts`). On failure it keeps the Playwright
+with an owner who has statements and a tenant with rent due and a maintenance request, and
+Playwright, in its pinned image, drives Chromium (`frontend/e2e/portal.spec.ts`): the owner
+reads a statement, the tenant reads what is due and asks for a repair, and staff enroll an
+authenticator, invite someone and take a request through to done. On failure it keeps the Playwright
 report and the API's log for 7 days. Run it locally with `cd frontend && npm ci && npm test &&
 npm run build`, then the same steps as the workflow (`PW_CHROMIUM` points Playwright at a
 Chromium already installed).

@@ -79,7 +79,9 @@ required invariant, report and self-host step.
   (`designTokens.test.ts` fails on a raw colour or a size off the scale). Money stays text from
   the database to the screen, never a float. npm packages are pinned exactly and their
   licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
-  owner only: no request names an owner, a property or a PMC.
+  owner only: no request names an owner, a property or a PMC. A tenant's pages
+  (`src/pms/api/tenant.py`) show the session's tenant only: a lease named in a path is answered
+  only if they are on it, and reads as not found otherwise. The portal takes no payments.
 - Every table we add carries `pmc_id uuid`. It maps to Occupella's `companies.id` at merge time.
 - Table names: `pgledger_*` from upstream, `trust_*` for ours. Our functions and triggers are
   `trust_*` too. A report function is `trust_report_<name>`. `tests/test_schema_conventions.py`
@@ -181,6 +183,11 @@ required invariant, report and self-host step.
   `trust_enter_recurring_bills` enters each month's bill through a day, under the vendor
   reference `<prefix>-YYYY-MM`, so each month once and safe to retry; a month already entered
   under that reference is left as it is. Entered bills follow the bill rules above.
+- Maintenance requests: a tenant on a lease files one (`trust_maintenance_requests`, append-only;
+  a key to `trust_lease_tenants` refuses anyone else). Staff open at most one work order for it,
+  at the lease's unit (`trust_maintenance_request_work_orders`, one each way), and its status is
+  that work order's latest step. The portal files them only under a lease in effect, at most
+  10 a day per lease.
 - Vendor payments: `trust_report_vendor_payments` lists what each vendor was paid through
   `trust_pay_bill` in a calendar year (UTC), for 1099 preparation. It files nothing, holds no
   tax IDs and applies no threshold.

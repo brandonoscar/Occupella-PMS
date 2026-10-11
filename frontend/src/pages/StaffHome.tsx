@@ -5,6 +5,7 @@ import { Button, LinkButton } from "../components/Button";
 import { Notice } from "../components/Notice";
 import { Card, Shell } from "../components/Shell";
 import { day } from "../money";
+import { MaintenanceCard } from "./MaintenanceCard";
 
 type Person = {
   kind: "staff" | "owner" | "tenant";
@@ -112,6 +113,7 @@ export function StaffHome({ me }: { me: Me }) {
           </table>
         )}
       </Card>
+      <MaintenanceCard />
     </Shell>
   );
 }

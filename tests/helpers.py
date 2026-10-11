@@ -398,6 +398,26 @@ def step_work_order(connection, pmc_id, work_order_id, step, taken_at, vendor_id
     )
 
 
+def file_request(connection, pmc_id, lease_id, tenant_id, summary, entry_allowed=False) -> UUID:
+    """A maintenance request a tenant files under one of their leases."""
+    return _one(
+        connection,
+        "INSERT INTO trust_maintenance_requests"
+        " (pmc_id, lease_id, tenant_id, summary, entry_allowed)"
+        " VALUES (%s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, lease_id, tenant_id, summary, entry_allowed),
+    )
+
+
+def link_work_order(connection, pmc_id, request_id, work_order_id) -> None:
+    """The work order staff opened for a maintenance request."""
+    connection.execute(
+        "INSERT INTO trust_maintenance_request_work_orders (pmc_id, request_id, work_order_id)"
+        " VALUES (%s, %s, %s)",
+        (pmc_id, request_id, work_order_id),
+    )
+
+
 def approve_bill(connection, pmc_id, bill_id, approved_on, approved_by) -> None:
     """Record the owner's approval of a bill over the approval limit."""
     connection.execute(

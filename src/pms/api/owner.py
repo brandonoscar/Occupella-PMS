@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from pms import accounts, exports
-from pms.api.deps import Conn, Owner, download
+from pms.api.deps import Conn, Owner, Rows, download
 
 router = APIRouter(prefix="/api/owner")
 MAX_DAYS = 3660  # about ten years
@@ -28,12 +28,6 @@ class Property(BaseModel):
     bank: str
     # Money as text, so no float ever rounds a cent.
     balance: str
-
-
-class Statement(BaseModel):
-    title: str
-    columns: list[str]
-    rows: list[list[str | None]]
 
 
 @router.get("/properties")
@@ -76,12 +70,12 @@ def statement_table(
 @router.get("/statement")
 def statement(
     session: Owner, conn: Conn, start: Annotated[date, Query()], end: Annotated[date, Query()]
-) -> Statement:
+) -> Rows:
     table = statement_table(conn, session, start, end)
-    return Statement(
-        title=f"Owner statement, {start.isoformat()} to {end.isoformat()}",
-        columns=list(table.columns),
-        rows=[[None if v is None else exports.text(v) for v in row] for row in table.rows],
+    return Rows.of(
+        exports.Table(
+            f"Owner statement, {start.isoformat()} to {end.isoformat()}", table.columns, table.rows
+        )
     )
 
 

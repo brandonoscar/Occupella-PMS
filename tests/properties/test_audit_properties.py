@@ -2,10 +2,11 @@
 
 Hypothesis makes random writes to one PMC's records and ledger (postings, a batch of two,
 units added and renamed, charges, staff added, reconciliations approved, owners invited,
-invites accepted, sessions signed out), through the owner role and trust_app, each naming a
-random member of the PMC's staff, nobody, a member of another PMC's staff, or someone on no
-PMC's staff. A Python model predicts every step: the database
-must accept exactly what the model accepts and refuse the rest, writing nothing.
+invites accepted, sessions signed out, maintenance requests filed and given work orders),
+through the owner role and trust_app, each naming a random member of the PMC's staff, nobody,
+a member of another PMC's staff, or someone on no PMC's staff. A Python model predicts every
+step: the database must accept exactly what the model accepts and refuse the rest, writing
+nothing.
 
 Invariants checked after every step (ci/registry.toml maps each to this test):
   - the PMC's audit log is the model's, row for row and in order: each write's table, action,
@@ -13,7 +14,10 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
   - a write naming someone not on the PMC's staff is refused and nothing of it is logged;
   - every transfer of the PMC has exactly one audit row;
   - the log only grows: rows once written never change;
-  - no password hash, and nothing of trust_login_secrets, is ever in the log.
+  - no password hash, and nothing of trust_login_secrets, is ever in the log;
+  - the PMC's maintenance requests are the model's, each filed by a tenant on its lease and
+    never changed, each with at most the one work order the model gave it, at the lease's unit.
+    A tenant who isn't on the lease is refused, and so is a second work order for a request.
 
 The rule check_the_audit_report reads the report for the day, as any role, and compares each
 line's staff name, role, action and record with the model.
@@ -27,7 +31,20 @@ from datetime import UTC, datetime, timedelta
 import psycopg
 import pytest
 from argon2 import PasswordHasher
-from helpers import acting_as, add_staff, add_unit, approve, make_pmc, post, transfer_batch
+from helpers import (
+    acting_as,
+    add_staff,
+    add_tenant,
+    add_unit,
+    add_work_order,
+    approve,
+    file_request,
+    link_work_order,
+    make_pmc,
+    open_lease,
+    post,
+    transfer_batch,
+)
 from hypothesis import strategies as st
 from hypothesis.stateful import (
     RuleBasedStateMachine,
@@ -60,6 +77,14 @@ class AuditMachine(RuleBasedStateMachine):
         self.outsider = add_staff(owner_conn, make_pmc(owner_conn).pmc_id, "Outsider")
         self.staff = [add_staff(owner_conn, self.pmc_id, "Staff 1")]
         self.names = {self.staff[0]: "Staff 1"}
+        # A home with a lease: its tenant files maintenance requests; a neighbour can't.
+        self.property_id = self.pmc.owners[0].property_id
+        self.home = add_unit(owner_conn, self.pmc_id, self.property_id, "Home")
+        self.renter = add_tenant(owner_conn, self.pmc_id, self.property_id, "Renter")
+        self.neighbour = add_tenant(owner_conn, self.pmc_id, self.property_id, "Neighbour")
+        self.lease = open_lease(
+            owner_conn, self.pmc_id, self.home, CLOCK_START.date(), None, "1000", [self.renter]
+        )
         self.start = self.last_id()  # the setup's rows are the fixtures', not the model's
         self.expected: list[tuple] = []
         self.units: list[uuid.UUID] = []
@@ -68,6 +93,8 @@ class AuditMachine(RuleBasedStateMachine):
         self.logins: dict[int, uuid.UUID] = {}  # owner index -> login
         self.pending: list[tuple[str, int]] = []  # (invite token, owner index), not accepted
         self.live: dict[uuid.UUID, list[str]] = {}  # login -> its live sessions' tokens
+        self.requests: dict[uuid.UUID, tuple[str, bool]] = {}  # request -> (summary, entry)
+        self.orders: dict[uuid.UUID, uuid.UUID] = {}  # request -> its work order
 
     def last_id(self):
         return self.conn.execute("SELECT coalesce(max(id), 0) FROM trust_audit_log").fetchone()[0]
@@ -237,6 +264,58 @@ class AuditMachine(RuleBasedStateMachine):
         if self.write("app", whom, do, [("trust_sessions", "update")]) is not None:
             self.live[login].remove(token)
 
+    # --- maintenance requests (migration 20261011000029) ----------------------------------
+
+    @rule(role=ROLES, whom=WHOM, entry=st.booleans())
+    def file_a_request(self, role, whom, entry):
+        summary = f"Request {len(self.requests) + 1}"
+        request = self.write(
+            role,
+            whom,
+            lambda conn: file_request(conn, self.pmc_id, self.lease, self.renter, summary, entry),
+            [("trust_maintenance_requests", "insert")],
+        )
+        if request is not None:
+            self.requests[request] = (summary, entry)
+
+    @rule(role=ROLES)
+    def file_under_someone_elses_lease(self, role):
+        before = self.last_id()
+        with pytest.raises(psycopg.errors.ForeignKeyViolation):
+            file_request(self.conns[role], self.pmc_id, self.lease, self.neighbour, "Not mine")
+        assert self.last_id() == before
+
+    def order_for(self, conn, request):
+        with conn.transaction():
+            order = add_work_order(
+                conn, self.pmc_id, self.property_id, self.home, "From a request", CLOCK_START
+            )
+            link_work_order(conn, self.pmc_id, request, order)
+        return order
+
+    @precondition(lambda self: any(r not in self.orders for r in self.requests))
+    @rule(data=st.data(), role=ROLES, whom=WHOM)
+    def open_a_work_order_for_a_request(self, data, role, whom):
+        # Requests in the order they were filed, so a replayed example picks the same one.
+        request = data.draw(st.sampled_from([r for r in self.requests if r not in self.orders]))
+        order = self.write(
+            role,
+            whom,
+            lambda conn: self.order_for(conn, request),
+            [("trust_work_orders", "insert"), ("trust_maintenance_request_work_orders", "insert")],
+        )
+        if order is not None:
+            self.orders[request] = order
+
+    @precondition(lambda self: self.orders)
+    @rule(data=st.data(), role=ROLES)
+    def open_a_second_work_order(self, data, role):
+        request = data.draw(st.sampled_from(list(self.orders)))
+        before = self.last_id()
+        with pytest.raises(psycopg.errors.UniqueViolation):
+            self.order_for(self.conns[role], request)
+        assert self.last_id() == before
+
     @rule(role=st.sampled_from(["owner", "app", "ai"]))
     def check_the_audit_report(self, role):
         today = datetime.now(UTC).date()
@@ -291,6 +370,25 @@ class AuditMachine(RuleBasedStateMachine):
             (self.pmc_id, self.start),
         ).fetchone()
         assert found == 0
+
+    @invariant()
+    def requests_are_the_models_on_their_lease(self):
+        rows = self.conn.execute(
+            "SELECT r.id, r.summary, r.entry_allowed, w.work_order_id, wo.unit_id,"
+            " EXISTS (SELECT 1 FROM trust_lease_tenants AS lt"
+            "         WHERE lt.lease_id = r.lease_id AND lt.tenant_id = r.tenant_id)"
+            " FROM trust_maintenance_requests AS r"
+            " LEFT JOIN trust_maintenance_request_work_orders AS w ON w.request_id = r.id"
+            " LEFT JOIN trust_work_orders AS wo ON wo.id = w.work_order_id"
+            " WHERE r.pmc_id = %s",
+            (self.pmc_id,),
+        ).fetchall()
+        assert {row[0]: (row[1], row[2], row[3]) for row in rows} == {
+            request: (summary, entry, self.orders.get(request))
+            for request, (summary, entry) in self.requests.items()
+        }
+        assert all(on_lease and unit in (None, self.home) for *_, unit, on_lease in rows)
+        assert all(unit == self.home for _, _, _, order, unit, _ in rows if order is not None)
 
     @invariant()
     def the_log_only_grows(self):
