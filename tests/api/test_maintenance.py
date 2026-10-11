@@ -1,12 +1,18 @@
 """Staff's side of maintenance requests (src/pms/api/maintenance.py): see the PMC's requests,
 open a work order for one at its lease's unit, and record what happens to it."""
 
+import threading
+import time
 import uuid
+from datetime import UTC, datetime
 
+import psycopg
 import pytest
-from helpers import make_pmc
+from helpers import add_work_order, link_work_order, make_pmc
 from people import join_as_owner, join_as_staff, join_as_tenant
 from test_tenant import Home, new_request
+
+from pms.api import maintenance
 
 
 @pytest.fixture
@@ -62,6 +68,41 @@ def test_a_request_gets_one_work_order(client, filed):
 
     assert again.status_code == 409
     assert again.json()["detail"] == "this request already has a work order"
+
+
+@pytest.mark.timing
+def test_of_two_staff_opening_a_work_order_at_once_one_is_refused(
+    client, conn, database_url, filed, home
+):
+    pmc_id = home.pmc.pmc_id
+    with psycopg.connect(database_url) as first:
+        theirs = add_work_order(
+            first, pmc_id, home.pmc.owners[0].property_id, home.unit, "Theirs", datetime.now(UTC)
+        )
+        link_work_order(first, pmc_id, filed["id"], theirs)  # not committed yet
+        answer: dict = {}
+        thread = threading.Thread(target=lambda: answer.update(it=open_order(client, filed)))
+        thread.start()
+        for _ in range(1000):  # until the API's insert waits for this transaction
+            if conn.execute(
+                "SELECT 1 FROM pg_stat_activity WHERE wait_event_type = 'Lock'"
+                " AND query LIKE 'INSERT INTO trust_maintenance_request_work_orders%%'"
+            ).fetchone():
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError("the API never waited for the first work order")
+        first.commit()
+    thread.join(timeout=30)
+
+    assert answer["it"].status_code == 409
+    assert answer["it"].json()["detail"] == "this request already has a work order"
+    assert client.get("/api/maintenance/requests").json()[0]["work_order_id"] == str(theirs)
+
+
+def test_requests_are_narrowed_only_by_the_fixed_conditions(conn, home):
+    with pytest.raises(ValueError, match="fixed conditions only"):
+        maintenance.requests(conn, "true OR true", pmc=home.pmc.pmc_id)
 
 
 def test_staff_assign_and_complete_and_the_request_closes(client, filed, home):
