@@ -25,7 +25,7 @@ def add_login(conn, pmc, kind="owner", email="o@example.com", person=None):
 
 
 @pytest.mark.parametrize(
-    "email", ["Owner@Example.com", "no-at-sign.example.com", "a@b", "a b@c.de"]
+    "email", ["Owner@Example.com", "no-at-sign.example.com", "a@b", "a b@example.com"]
 )
 def test_an_email_is_lowercase_and_shaped_like_one(conn, pmc, email):
     with pytest.raises(psycopg.errors.CheckViolation):

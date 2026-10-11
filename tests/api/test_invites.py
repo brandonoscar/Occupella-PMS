@@ -88,7 +88,11 @@ def test_staff_can_invite_only_their_own_pmcs_people(client, conn, app_conn, pmc
 
     answer = client.post(
         "/api/invites",
-        json={"kind": "owner", "person_id": str(other.owners[0].owner_id), "email": "x@ex.com"},
+        json={
+            "kind": "owner",
+            "person_id": str(other.owners[0].owner_id),
+            "email": "x@example.com",
+        },
     )
 
     assert answer.status_code == 404

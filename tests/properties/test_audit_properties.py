@@ -1,9 +1,10 @@
 """Property-based tests for the audit log: every write is recorded, with who made it.
 
 Hypothesis makes random writes to one PMC's records and ledger (postings, a batch of two,
-units added and renamed, charges, staff added, reconciliations approved), through the owner role
-and trust_app, each naming a random member of the PMC's staff, nobody, a member of another
-PMC's staff, or someone on no PMC's staff. A Python model predicts every step: the database
+units added and renamed, charges, staff added, reconciliations approved, owners invited,
+invites accepted, sessions signed out), through the owner role and trust_app, each naming a
+random member of the PMC's staff, nobody, a member of another PMC's staff, or someone on no
+PMC's staff. A Python model predicts every step: the database
 must accept exactly what the model accepts and refuse the rest, writing nothing.
 
 Invariants checked after every step (ci/registry.toml maps each to this test):
@@ -11,7 +12,8 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     the staff member it named (or none) and the role it was made through;
   - a write naming someone not on the PMC's staff is refused and nothing of it is logged;
   - every transfer of the PMC has exactly one audit row;
-  - the log only grows: rows once written never change.
+  - the log only grows: rows once written never change;
+  - no password hash, and nothing of trust_login_secrets, is ever in the log.
 
 The rule check_the_audit_report reads the report for the day, as any role, and compares each
 line's staff name, role, action and record with the model.
@@ -24,6 +26,7 @@ from datetime import UTC, datetime, timedelta
 
 import psycopg
 import pytest
+from argon2 import PasswordHasher
 from helpers import acting_as, add_staff, add_unit, approve, make_pmc, post, transfer_batch
 from hypothesis import strategies as st
 from hypothesis.stateful import (
@@ -33,6 +36,8 @@ from hypothesis.stateful import (
     rule,
     run_state_machine_as_test,
 )
+
+from pms import accounts
 
 ROLES = st.sampled_from(["owner", "app"])
 # Who a write names: an index into the PMC's staff, or one of these.
@@ -60,6 +65,9 @@ class AuditMachine(RuleBasedStateMachine):
         self.units: list[uuid.UUID] = []
         self.closed = {self.pmc.operating_bank_id: CLOCK_START}
         self.snapshot: list[tuple] = []
+        self.logins: dict[int, uuid.UUID] = {}  # owner index -> login
+        self.pending: list[tuple[str, int]] = []  # (invite token, owner index), not accepted
+        self.live: dict[uuid.UUID, list[str]] = {}  # login -> its live sessions' tokens
 
     def last_id(self):
         return self.conn.execute("SELECT coalesce(max(id), 0) FROM trust_audit_log").fetchone()[0]
@@ -170,6 +178,65 @@ class AuditMachine(RuleBasedStateMachine):
         if done is not None:
             self.closed[bank] = end
 
+    # --- logins: invites, accepting one, signing out (always as trust_app, like the API) ---
+
+    @rule(whom=WHOM, n=st.integers(min_value=0, max_value=1))
+    def invite_an_owner(self, whom, n):
+        owner_id = self.pmc.owners[n].owner_id
+        rows = [("trust_invites", "insert")]
+        if n not in self.logins:
+            rows.insert(0, ("trust_logins", "insert"))
+
+        def do(conn):
+            with conn.transaction():
+                return accounts.create_invite(
+                    conn, self.pmc_id, "owner", owner_id, f"owner{n}@example.com", None
+                )
+
+        made = self.write("app", whom, do, rows)
+        if made is not None:
+            self.logins[n] = made.login_id
+            self.pending.append((made.token, n))
+
+    @precondition(lambda self: self.pending)
+    @rule(data=st.data(), whom=WHOM)
+    def accept_an_invite(self, data, whom):
+        """Sets the password (never logged), uses the invite, ends the login's live sessions
+        and opens a new one."""
+        token, n = data.draw(st.sampled_from(self.pending))
+        login = self.logins[n]
+        live = self.live.get(login, [])
+
+        def do(conn):
+            with conn.transaction():
+                return accounts.accept_invite(conn, token, "a long enough password")
+
+        signed = self.write(
+            "app",
+            whom,
+            do,
+            [("trust_invites", "update")]
+            + [("trust_sessions", "update")] * len(live)
+            + [("trust_sessions", "insert")],
+        )
+        if signed is not None:
+            self.pending.remove((token, n))
+            self.live[login] = [signed.token]
+
+    @precondition(lambda self: any(self.live.values()))
+    @rule(data=st.data(), whom=WHOM)
+    def sign_a_session_out(self, data, whom):
+        login = data.draw(st.sampled_from([key for key, tokens in self.live.items() if tokens]))
+        token = self.live[login][0]
+
+        def do(conn):
+            with conn.transaction():
+                accounts.sign_out(conn, token)
+            return True
+
+        if self.write("app", whom, do, [("trust_sessions", "update")]) is not None:
+            self.live[login].remove(token)
+
     @rule(role=st.sampled_from(["owner", "app", "ai"]))
     def check_the_audit_report(self, role):
         today = datetime.now(UTC).date()
@@ -216,6 +283,16 @@ class AuditMachine(RuleBasedStateMachine):
         assert off == 0
 
     @invariant()
+    def no_secret_is_logged(self):
+        (found,) = self.conn.execute(
+            "SELECT count(*) FROM trust_audit_log WHERE pmc_id = %s AND id > %s"
+            " AND (table_name = 'trust_login_secrets' OR row_data::text LIKE '%%$argon2%%'"
+            " OR before::text LIKE '%%$argon2%%')",
+            (self.pmc_id, self.start),
+        ).fetchone()
+        assert found == 0
+
+    @invariant()
     def the_log_only_grows(self):
         rows = self.conn.execute(
             "SELECT id, at, staff_id, db_role, action, table_name, row_data, before"
@@ -226,7 +303,11 @@ class AuditMachine(RuleBasedStateMachine):
         self.snapshot = rows
 
 
-def test_audit_invariants_hold_under_random_writes_by_random_staff(database_url):
+def test_audit_invariants_hold_under_random_writes_by_random_staff(database_url, monkeypatch):
+    # The hash's strength isn't what this checks; a cheap one keeps each example fast.
+    monkeypatch.setattr(
+        accounts, "HASHER", PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
+    )
     with (
         psycopg.connect(database_url, autocommit=True) as owner_conn,
         psycopg.connect(database_url, autocommit=True) as app_conn,

@@ -85,7 +85,7 @@ CREATE TABLE trust_login_secrets (
     totp_confirmed_at timestamptz,
     -- The last authenticator time step used, so a code works once.
     totp_last_step bigint,
-    failed_sign_ins integer NOT NULL DEFAULT 0 CHECK (failed_sign_ins >= 0),
+    failed_sign_ins bigint NOT NULL DEFAULT 0 CHECK (failed_sign_ins >= 0),
     locked_until timestamptz,
     updated_at timestamptz NOT NULL DEFAULT now(),
     CHECK (totp_confirmed_at IS NULL OR totp_secret IS NOT NULL),

@@ -3962,7 +3962,7 @@ CREATE TABLE public.trust_login_secrets (
     totp_secret text,
     totp_confirmed_at timestamp with time zone,
     totp_last_step bigint,
-    failed_sign_ins integer DEFAULT 0 NOT NULL,
+    failed_sign_ins bigint DEFAULT 0 NOT NULL,
     locked_until timestamp with time zone,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_login_secrets_check CHECK (((totp_confirmed_at IS NULL) OR (totp_secret IS NOT NULL))),
