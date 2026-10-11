@@ -87,7 +87,9 @@ export function TenantHome({ me }: { me: Me }) {
   }
 
   const lease = leases?.find((l) => l.lease_id === chosen) ?? null;
-  const download = (format: string) => `/api/tenant/leases/${chosen}/ledger/download?format=${format}`;
+  // Built from the lease the API sent, not from the page's own select.
+  const download = (format: string) =>
+    lease ? `/api/tenant/leases/${encodeURIComponent(lease.lease_id)}/ledger/download?format=${format}` : "";
 
   return (
     <Shell me={me}>
