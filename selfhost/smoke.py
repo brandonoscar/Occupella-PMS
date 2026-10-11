@@ -5,7 +5,9 @@ Against the database in $DATABASE_URL (already migrated by `dbmate up`), it:
      deposit held for each tenant;
   2. posts one month of rent for every door;
   3. runs the first owner's statement for that month, which must match the owner's ledgers;
-  4. checks health: the database answers and every ledger invariant holds.
+  4. exports that statement as a PDF and a spreadsheet, and the whole ledger as a zip, which
+     must hold every transfer (src/pms/exports.py);
+  5. checks health: the database answers and every ledger invariant holds.
 
 Every name and amount is synthetic. Exit code 0 means healthy.
 
@@ -14,15 +16,19 @@ usage: python -m selfhost.smoke
 
 from __future__ import annotations
 
+import io
 import os
 import sys
 import time
+import zipfile
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
 
 import psycopg
+
+from pms import exports
 
 DOORS = 50
 OWNERS = 10
@@ -165,10 +171,15 @@ class Statement:
     held: Decimal  # the same owner's ledger balances, read directly
 
 
-def owner_statement(conn: psycopg.Connection[Any], seeded: Seeded, month: date) -> Statement:
-    """The first owner's statement for the month, and what their ledgers hold, to compare."""
+def month_bounds(month: date) -> tuple[datetime, datetime]:
     start = datetime(month.year, month.month, 1, tzinfo=UTC)
     end = datetime(month.year + month.month // 12, month.month % 12 + 1, 1, tzinfo=UTC)
+    return start, end
+
+
+def owner_statement(conn: psycopg.Connection[Any], seeded: Seeded, month: date) -> Statement:
+    """The first owner's statement for the month, and what their ledgers hold, to compare."""
+    start, end = month_bounds(month)
     owner_id = seeded.owners[0]
     rows = conn.execute(
         "SELECT item, detail, balance FROM trust_report_owner_statement(%s, %s, %s, %s)",
@@ -187,6 +198,28 @@ def owner_statement(conn: psycopg.Connection[Any], seeded: Seeded, month: date) 
         closing=next(b for item, _, b in rows if item == "all properties: closing balance"),
         held=held,
     )
+
+
+def check_exports(conn: psycopg.Connection[Any], seeded: Seeded, month: date) -> list[str]:
+    """What a PMC downloads: the first owner's statement as a PDF and a spreadsheet, and the
+    whole ledger as a zip, which must hold every transfer posted (a deposit and a month of rent
+    per door)."""
+    start, end = month_bounds(month)
+    statement = exports.run_report(
+        conn, "trust_report_owner_statement", [seeded.pmc_id, seeded.owners[0], start, end]
+    )
+    problems = []
+    if not exports.export(statement, "pdf").startswith(b"%PDF-"):
+        problems.append("the owner statement did not export as a PDF")
+    if not exports.export(statement, "xlsx").startswith(b"PK"):
+        problems.append("the owner statement did not export as a spreadsheet")
+    ledger = zipfile.ZipFile(io.BytesIO(exports.ledger_zip(conn, seeded.pmc_id)))
+    transfers = len(ledger.read("transfers.csv").decode().splitlines()) - 1
+    if transfers != 2 * len(seeded.doors):
+        problems.append(
+            f"the ledger export holds {transfers} transfers, not {2 * len(seeded.doors)}"
+        )
+    return problems
 
 
 def health(conn: psycopg.Connection[Any]) -> list[str]:
@@ -217,7 +250,13 @@ def main() -> int:
             f"owner statement: {statement.owner}, 2026-02, {statement.properties} properties,"
             f" closing {statement.closing}"
         )
-        problems = health(conn)
+        export_problems = check_exports(conn, seeded, date(2026, 2, 1))
+        if not export_problems:
+            print(
+                "exported: the statement as PDF and Excel, the ledger as accounts, transfers"
+                " and entries"
+            )
+        problems = export_problems + health(conn)
         if statement.closing != statement.held:
             problems.append(
                 f"{statement.owner}'s statement closes at {statement.closing}"

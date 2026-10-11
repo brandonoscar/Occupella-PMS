@@ -1,3 +1,6 @@
 # Runtime dependencies (the self-host image installs only these). Pinned; dependabot proposes
 # updates weekly. scripts/check_licenses.py fails CI on a license outside ci/licenses.toml.
 psycopg[binary]==3.3.6
+# Exports (src/pms/exports.py): Excel files, and PDFs (fpdf2 brings Pillow, MIT-CMU).
+fpdf2==2.8.9
+openpyxl==3.1.5

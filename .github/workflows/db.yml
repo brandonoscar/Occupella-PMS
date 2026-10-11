@@ -75,7 +75,7 @@ jobs:
             git diff --name-only --diff-filter=AM "$BASE_SHA...HEAD" -- 'db/migrations/*.sql' \
               > "$RUNNER_TEMP/new-migrations.txt"
             if git diff --name-only "$BASE_SHA...HEAD" | grep -qE \
-              '^(Dockerfile|\.dockerignore|compose\.yaml|requirements\.txt|db/migrations/|selfhost/)'; then
+              '^(Dockerfile|\.dockerignore|compose\.yaml|requirements\.txt|db/migrations/|selfhost/|src/)'; then
               echo "changed=true" >> "$GITHUB_OUTPUT"
             fi
           else

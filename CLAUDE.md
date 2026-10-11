@@ -1,9 +1,10 @@
 # CLAUDE.md
 
 Free trust-accounting PMS for property management companies (PMCs). Built standalone now and
-merged into Occupella later, so it follows Occupella's conventions from day one. Phase 0 is the
-ledger schema and its tests only. Background: AgenticHelixis
-`docs/decisions/ADR-free-pms-placement.md` and `docs/research/free-pms-gaps.md`. CI: `docs/CI.md`.
+merged into Occupella later, so it follows Occupella's conventions from day one. Phase 0 built
+the ledger schema and its tests; the app (exports, portals, leasing) now grows on top of it.
+Background: AgenticHelixis `docs/decisions/ADR-free-pms-placement.md` and
+`docs/research/free-pms-gaps.md`. CI: `docs/CI.md`.
 
 ## Hard rules
 
@@ -23,8 +24,10 @@ ledger schema and its tests only. Background: AgenticHelixis
 Carried over from Occupella: the AI never moves money. The API key Occupella will hold must not
 be able to move money in this system either: its role, `trust_ai_agent`, can't (see below).
 
-Out of scope for Phase 0: any API, UI, login, Stripe, bank files, 1099s, and state rules beyond
-the no-negative rule. If one of these looks needed, stop and ask the founder.
+In scope since 2026-10-11 (founder, `docs/adr/0002-portals-and-exports.md`): exports, the owner
+portal, the tenant portal and leasing basics, with the API and logins they need. Still out of
+scope: Stripe and online payments, bank files, 1099 filing, and state rules beyond the
+no-negative rule. If one of these looks needed, stop and ask the founder.
 
 ## The standing rule: tests come with the code
 
@@ -51,6 +54,12 @@ required invariant, report and self-host step.
 - Python 3.11, Postgres 16, plain SQL and functions. `pgcrypto` is the only extension the schema
   may use; nothing a Supabase project couldn't run. (plpgsql_check is loaded only in CI's
   coverage database, never by a migration.)
+- App code is the `pms` package in `src/pms/` (Occupella keeps `src/helixis`); pytest and mypy
+  find it, and a shell needs `PYTHONPATH=src`. It reads the ledger and never moves money
+  except through the `trust_*` write paths.
+- Exports: `src/pms/exports.py` turns any `trust_report_*` (named through the catalog, run
+  under the caller's role) into CSV, Excel or PDF, and a PMC's ledger into a zip of CSV.
+  Text a spreadsheet would run as a formula is never a formula.
 - Every table we add carries `pmc_id uuid`. It maps to Occupella's `companies.id` at merge time.
 - Table names: `pgledger_*` from upstream, `trust_*` for ours. Our functions and triggers are
   `trust_*` too. A report function is `trust_report_<name>`. `tests/test_schema_conventions.py`
