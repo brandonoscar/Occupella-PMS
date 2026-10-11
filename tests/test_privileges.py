@@ -57,6 +57,8 @@ TABLES = {
     "trust_payment_hold_releases": {"SELECT", "INSERT"},
     "trust_payment_hold_allowances": {"SELECT", "INSERT"},
     "trust_owner_contributions": {"SELECT"},  # written only by trust_record_owner_contribution
+    "trust_recurring_bills": {"SELECT", "INSERT"},
+    "trust_recurring_bill_ends": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
@@ -93,6 +95,7 @@ FUNCTIONS = {
     "trust_assess_late_fees(uuid,date)": {"trust_app"},
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)": {"trust_app"},
     "trust_record_owner_contribution(uuid,text,text,numeric,timestamptz,text)": {"trust_app"},
+    "trust_enter_recurring_bills(uuid,date)": {"trust_app"},
     # Helpers the fee, draw and bill functions call as the owner: nobody else.
     "trust_lock_owner_account(uuid,text)": set(),
     "trust_agreement_on(text,date)": set(),
@@ -119,6 +122,7 @@ FUNCTIONS = {
     "trust_report_security_deposits(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_general_ledger(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_audit_log(uuid,date,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_vendor_payments(uuid,integer)": {"trust_app", "trust_ai_agent"},
     # pgledger's posting functions take no idempotency key, so a retried request could post
     # twice: only the owner calls them (trust_post_transfers does, as the owner).
     "pgledger_create_transfer(text,text,numeric,timestamptz,jsonb)": set(),
@@ -152,6 +156,7 @@ FUNCTIONS = {
     "trust_check_work_order_step()": {"PUBLIC"},
     "trust_check_hold_release()": {"PUBLIC"},
     "trust_check_hold_allowance()": {"PUBLIC"},
+    "trust_check_recurring_bill()": {"PUBLIC"},
     "trust_refuse_moving_opened_at()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]

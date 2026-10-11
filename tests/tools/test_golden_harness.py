@@ -67,6 +67,7 @@ def test_report_discovery_and_missing_cases(conn, tmp_path):
         "trust_report_three_way_reconciliation",
         "trust_report_trial_balance",
         "trust_report_unpaid_bills",
+        "trust_report_vendor_payments",
     ]
     (tmp_path / "trust_report_a").mkdir()
     (tmp_path / "trust_report_a/basic.sql").write_text("SELECT 1;\n")

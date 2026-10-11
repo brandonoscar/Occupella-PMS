@@ -11,6 +11,7 @@ import pytest
 from helpers import (
     add_agreement,
     add_late_fee_policy,
+    add_recurring_bill,
     add_unit,
     add_work_order,
     apply_payment,
@@ -20,6 +21,7 @@ from helpers import (
     charge_rent_due,
     contribute,
     enter_bill,
+    enter_recurring_bills,
     hold_payments,
     make_pmc,
     open_lease,
@@ -111,6 +113,10 @@ REPORTS = {
     "audit log": (
         "SELECT * FROM trust_report_audit_log(%s, %s, %s)",
         lambda pmc, _: (pmc.pmc_id, date(2000, 1, 1), date(2100, 1, 1)),
+    ),
+    "vendor payments": (
+        "SELECT * FROM trust_report_vendor_payments(%s, %s)",
+        lambda pmc, _: (pmc.pmc_id, 2026),
     ),
 }
 
@@ -224,6 +230,15 @@ WRITES = {
         " SELECT pmc_id, id, %s, 'The AI' FROM trust_payment_holds WHERE pmc_id = %s",
         (paid, pmc.pmc_id),
     ),
+    "record a recurring bill": lambda c, pmc, *_: add_recurring_bill(
+        c, pmc.pmc_id, pmc.vendor_id, pmc.owners[0].account, "AI", "1.00", 1, FEB.date()
+    ),
+    "end a recurring bill": lambda c, pmc, *_: c.execute(
+        "INSERT INTO trust_recurring_bill_ends (pmc_id, recurring_bill_id, ends_on)"
+        " SELECT pmc_id, id, '2030-01-01' FROM trust_recurring_bills WHERE pmc_id = %s",
+        (pmc.pmc_id,),
+    ),
+    "enter recurring bills": lambda c, pmc, *_: enter_recurring_bills(c, pmc.pmc_id, FEB.date()),
     "record an owner's contribution": lambda c, pmc, *_: contribute(
         c, pmc.pmc_id, pmc.owners[0].account, "ai-1", "1.00"
     ),

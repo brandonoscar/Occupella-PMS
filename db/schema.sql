@@ -1051,6 +1051,29 @@ $$;
 
 
 --
+-- Name: trust_check_recurring_bill(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_recurring_bill() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT t.ledger_account_id FROM trust_ledger_accounts AS t
+        WHERE t.ledger_account_id = NEW.ledger_account_id AND t.pmc_id = NEW.pmc_id
+          AND t.kind = 'owner_property'
+    ) THEN
+        RAISE EXCEPTION 'trust: a recurring bill is paid from an owner''s property account in '
+            'its own PMC; % is not one in PMC %', NEW.ledger_account_id, NEW.pmc_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_transfer_scope(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1233,6 +1256,46 @@ BEGIN
         RAISE EXCEPTION 'trust: no lease % in PMC %', p_lease_id, p_pmc_id
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+END;
+$$;
+
+
+--
+-- Name: trust_enter_recurring_bills(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_enter_recurring_bills(p_pmc_id uuid, p_through date) RETURNS integer
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_entered integer;
+BEGIN
+    IF p_through IS NULL THEN
+        RAISE EXCEPTION 'trust: enter recurring bills through a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    INSERT INTO trust_bills (
+        pmc_id, vendor_id, ledger_account_id, reference, bill_date, due_on, amount, memo
+    )
+    SELECT r.pmc_id, r.vendor_id, r.ledger_account_id,
+           r.reference_prefix || '-' || to_char(d.due_on, 'YYYY-MM'),
+           d.due_on, d.due_on, r.amount, r.memo
+    FROM trust_recurring_bills AS r
+    LEFT JOIN trust_recurring_bill_ends AS e ON e.recurring_bill_id = r.id
+    CROSS JOIN LATERAL generate_series(
+        date_trunc('month', r.starts_on), p_through::timestamp, interval '1 month'
+    ) AS m (month)
+    CROSS JOIN LATERAL (SELECT (m.month::date + r.day_of_month - 1) AS due_on) AS d
+    WHERE r.pmc_id = p_pmc_id
+      AND d.due_on >= r.starts_on
+      AND d.due_on <= p_through
+      AND (e.ends_on IS NULL OR d.due_on < e.ends_on)
+    ORDER BY r.id, d.due_on
+    ON CONFLICT (vendor_id, reference) DO NOTHING;
+    GET DIAGNOSTICS v_entered = ROW_COUNT;
+    RETURN v_entered;
 END;
 $$;
 
@@ -3341,6 +3404,70 @@ $$;
 
 
 --
+-- Name: trust_report_vendor_payments(uuid, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_vendor_payments(p_pmc_id uuid, p_year integer) RETURNS TABLE(line integer, item text, vendor text, payments bigint, paid numeric)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+#variable_conflict use_column
+DECLARE
+    v_start timestamptz;
+    v_end timestamptz;
+BEGIN
+    IF p_year IS NULL OR p_year NOT BETWEEN 1900 AND 9998 THEN
+        RAISE EXCEPTION 'trust: vendor payments are for a calendar year, not %', p_year
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF NOT EXISTS (SELECT pmc.pmc_id FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id) THEN
+        RAISE EXCEPTION 'trust: no PMC %', p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_start := make_date(p_year, 1, 1)::timestamp AT TIME ZONE 'UTC';
+    v_end := make_date(p_year + 1, 1, 1)::timestamp AT TIME ZONE 'UTC';
+
+    RETURN QUERY
+    WITH paid AS (
+        SELECT v.id AS vendor_id, v.display_name, count(*) AS payments, sum(tr.amount) AS total
+        FROM trust_bill_payments AS p
+        JOIN trust_bills AS b ON b.id = p.bill_id
+        JOIN trust_vendors AS v ON v.id = b.vendor_id
+        JOIN pgledger_transfers AS tr ON tr.id = p.transfer_id
+        WHERE p.pmc_id = p_pmc_id AND p.step = 'paid'
+          AND tr.event_at >= v_start AND tr.event_at < v_end
+        GROUP BY v.id, v.display_name
+    ),
+    lines AS (
+        SELECT 0 AS section, NULL::text AS name, NULL::uuid AS id, 'PMC' AS item,
+               pmc.display_name AS label, NULL::bigint AS payments, NULL::numeric AS total
+        FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
+        UNION ALL
+        SELECT 0, NULL, NULL, 'year', p_year::text || ', paid January 1 to December 31 UTC',
+               NULL, NULL
+        UNION ALL
+        SELECT 1, p.display_name, p.vendor_id, 'vendor', p.display_name, p.payments, p.total
+        FROM paid AS p
+        UNION ALL
+        SELECT 2, NULL, NULL, 'total', NULL, coalesce(sum(p.payments), 0)::bigint,
+               coalesce(sum(p.total), 0)
+        FROM paid AS p
+    )
+    SELECT row_number() OVER (
+               ORDER BY l.section, l.name COLLATE "C", l.id, l.item COLLATE "C"
+           )::integer,
+           l.item,
+           -- The PMC's name and the year sit in the vendor column of the first two lines.
+           l.label,
+           l.payments,
+           round(l.total, 2)
+    FROM lines AS l
+    ORDER BY 1;
+END;
+$$;
+
+
+--
 -- Name: trust_reverse_payment(uuid, uuid, text, text, numeric); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3995,6 +4122,40 @@ CREATE TABLE public.trust_reconciliations (
 
 
 --
+-- Name: trust_recurring_bill_ends; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_recurring_bill_ends (
+    recurring_bill_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    ends_on date NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: trust_recurring_bills; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_recurring_bills (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    vendor_id uuid NOT NULL,
+    ledger_account_id text NOT NULL,
+    reference_prefix text NOT NULL,
+    amount numeric NOT NULL,
+    memo text NOT NULL,
+    day_of_month integer NOT NULL,
+    starts_on date NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_recurring_bills_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_recurring_bills_day_of_month_check CHECK (((day_of_month >= 1) AND (day_of_month <= 28))),
+    CONSTRAINT trust_recurring_bills_memo_check CHECK ((memo <> ''::text)),
+    CONSTRAINT trust_recurring_bills_reference_prefix_check CHECK ((reference_prefix <> ''::text))
+);
+
+
+--
 -- Name: trust_staff; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4424,6 +4585,38 @@ ALTER TABLE ONLY public.trust_properties
 
 ALTER TABLE ONLY public.trust_reconciliations
     ADD CONSTRAINT trust_reconciliations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_recurring_bill_ends trust_recurring_bill_ends_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_bill_ends
+    ADD CONSTRAINT trust_recurring_bill_ends_pkey PRIMARY KEY (recurring_bill_id);
+
+
+--
+-- Name: trust_recurring_bills trust_recurring_bills_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_bills
+    ADD CONSTRAINT trust_recurring_bills_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_recurring_bills trust_recurring_bills_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_bills
+    ADD CONSTRAINT trust_recurring_bills_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_recurring_bills trust_recurring_bills_vendor_id_reference_prefix_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_bills
+    ADD CONSTRAINT trust_recurring_bills_vendor_id_reference_prefix_key UNIQUE (vendor_id, reference_prefix);
 
 
 --
@@ -4949,6 +5142,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_recurring_bill_ends trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_recurring_bill_ends FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_recurring_bills trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_recurring_bills FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_work_order_steps trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5145,6 +5352,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_reco
 
 
 --
+-- Name: trust_recurring_bill_ends trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_recurring_bill_ends FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_recurring_bills trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_recurring_bills FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_staff trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5226,6 +5447,13 @@ CREATE TRIGGER trust_check_hold_release BEFORE INSERT ON public.trust_payment_ho
 --
 
 CREATE TRIGGER trust_check_payment_hold BEFORE INSERT ON public.trust_payment_holds FOR EACH ROW EXECUTE FUNCTION public.trust_check_payment_hold();
+
+
+--
+-- Name: trust_recurring_bills trust_check_recurring_bill; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_recurring_bill BEFORE INSERT ON public.trust_recurring_bills FOR EACH ROW EXECUTE FUNCTION public.trust_check_recurring_bill();
 
 
 --
@@ -5877,6 +6105,46 @@ ALTER TABLE ONLY public.trust_reconciliations
 
 
 --
+-- Name: trust_recurring_bill_ends trust_recurring_bill_ends_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_bill_ends
+    ADD CONSTRAINT trust_recurring_bill_ends_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_recurring_bill_ends trust_recurring_bill_ends_pmc_id_recurring_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_bill_ends
+    ADD CONSTRAINT trust_recurring_bill_ends_pmc_id_recurring_bill_id_fkey FOREIGN KEY (pmc_id, recurring_bill_id) REFERENCES public.trust_recurring_bills(pmc_id, id);
+
+
+--
+-- Name: trust_recurring_bills trust_recurring_bills_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_bills
+    ADD CONSTRAINT trust_recurring_bills_ledger_account_id_fkey FOREIGN KEY (ledger_account_id) REFERENCES public.trust_ledger_accounts(ledger_account_id);
+
+
+--
+-- Name: trust_recurring_bills trust_recurring_bills_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_bills
+    ADD CONSTRAINT trust_recurring_bills_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_recurring_bills trust_recurring_bills_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_bills
+    ADD CONSTRAINT trust_recurring_bills_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
 -- Name: trust_staff trust_staff_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6009,4 +6277,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261010000023'),
     ('20261010000024'),
     ('20261010000025'),
-    ('20261010000026');
+    ('20261010000026'),
+    ('20261010000027');

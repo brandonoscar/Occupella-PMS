@@ -76,10 +76,11 @@ required invariant, report and self-host step.
   `trust_post_management_fee`, `trust_post_leasing_fee`, `trust_draw_owner`,
   `trust_set_aside_bill`, `trust_pay_bill`, `trust_assess_late_fees`,
   `trust_post_opening_balances` and `trust_record_owner_contribution`, which run as the table
-  owner (`trust_charge_rent_due` runs with the app's own grants). It can't call pgledger's
-  posting functions: every posting it makes goes through `trust_post_transfers`, which takes an
-  idempotency key, unique per PMC, so it is safe to retry: the same key returns the original
-  transfers, and a different posting under it is refused.
+  owner (`trust_charge_rent_due` and `trust_enter_recurring_bills` run with the app's own
+  grants). It can't call pgledger's posting functions: every posting it makes goes through
+  `trust_post_transfers`, which takes an idempotency key, unique per PMC, so it is safe to
+  retry: the same key returns the original transfers, and a different posting under it is
+  refused.
 - `trust_ai_agent`, the role behind Occupella's API key, reads what `trust_app` reads and runs
   the reports. It holds no other grant: no write on any table, no function that writes. Grant
   it a new table's SELECT only if `trust_app` has it, and never a write path.
@@ -145,6 +146,14 @@ required invariant, report and self-host step.
 - Owner contributions: `trust_record_owner_contribution` moves cash into an owner's property
   account as its own kind (`trust_owner_contributions`), once per request key, and
   `trust_apply_payment` never matches one to a tenant's charge.
+- Recurring bills: a bill that comes every month (`trust_recurring_bills`: vendor, owner's
+  property account, amount, day of the month 1 to 28, first day; an end row stops it).
+  `trust_enter_recurring_bills` enters each month's bill through a day, under the vendor
+  reference `<prefix>-YYYY-MM`, so each month once and safe to retry; a month already entered
+  under that reference is left as it is. Entered bills follow the bill rules above.
+- Vendor payments: `trust_report_vendor_payments` lists what each vendor was paid through
+  `trust_pay_bill` in a calendar year (UTC), for 1099 preparation. It files nothing, holds no
+  tax IDs and applies no threshold.
 
 ## Run the checks
 
