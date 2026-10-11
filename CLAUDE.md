@@ -82,6 +82,12 @@ required invariant, report and self-host step.
   owner only: no request names an owner, a property or a PMC. A tenant's pages
   (`src/pms/api/tenant.py`) show the session's tenant only: a lease named in a path is answered
   only if they are on it, and reads as not found otherwise. The portal takes no payments.
+- Leasing (`src/pms/api/leasing.py`, `src/pms/leasing/`): applicants have no login. They apply
+  through a link staff open for a unit (`/apply#<token>`) and follow it with a status link;
+  both tokens travel in JSON bodies and are kept only as SHA-256. Screening goes through
+  `pms.leasing.screening.Partner`; the server's `PMS_SCREENING_PARTNER` picks one ("fake" for
+  development and CI, none by default). The PMS keeps only applicants' names and emails; the
+  partner collects anything else on its own side.
 - Every table we add carries `pmc_id uuid`. It maps to Occupella's `companies.id` at merge time.
 - Table names: `pgledger_*` from upstream, `trust_*` for ours. Our functions and triggers are
   `trust_*` too. A report function is `trust_report_<name>`. `tests/test_schema_conventions.py`
@@ -115,7 +121,8 @@ required invariant, report and self-host step.
 - `trust_ai_agent`, the role behind Occupella's API key, reads what `trust_app` reads and runs
   the reports. It holds no other grant: no write on any table, no function that writes. Grant
   it a new table's SELECT only if `trust_app` has it, and never a write path. It never reads
-  logins, invites, sessions or credentials (`AI_NEVER_READS` in `tests/test_privileges.py`).
+  logins, invites, sessions or credentials, nor rental applications, applicants and their
+  screenings (`AI_NEVER_READS` in `tests/test_privileges.py`).
 - A new table starts with `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it
   needs, never DELETE. `tests/test_privileges.py` pins the exact grants of every table and
   function: a new one fails until it is listed there, with who may use it. Postgres lets PUBLIC
@@ -188,6 +195,12 @@ required invariant, report and self-host step.
   at the lease's unit (`trust_maintenance_request_work_orders`, one each way), and its status is
   that work order's latest step. The portal files them only under a lease in effect, at most
   10 a day per lease.
+- Rental applications: an application comes through an open application link of a unit
+  (closing a link and an application wait for each other); its applicants are names and
+  emails. Screenings record a partner's recommendation and reasons. Each application has one
+  decision, resting only on a screening of its own; a declined or conditional decision that
+  rests on a screening has its adverse action notice (reasons, reporting agency, day given),
+  checked at commit, and no other decision has one. All append-only.
 - Vendor payments: `trust_report_vendor_payments` lists what each vendor was paid through
   `trust_pay_bill` in a calendar year (UTC), for 1099 preparation. It files nothing, holds no
   tax IDs and applies no threshold.

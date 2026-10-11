@@ -891,6 +891,43 @@ $$;
 
 
 --
+-- Name: trust_check_adverse_action(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_adverse_action() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_needed boolean;
+    v_given boolean;
+BEGIN
+    SELECT d.decision IN ('declined', 'conditional') AND d.screening_id IS NOT NULL
+    INTO v_needed
+    FROM trust_application_decisions AS d
+    WHERE d.application_id = NEW.application_id;
+    v_given := EXISTS (
+        SELECT a.application_id FROM trust_adverse_actions AS a
+        WHERE a.application_id = NEW.application_id
+    );
+    IF v_needed AND NOT v_given THEN
+        RAISE EXCEPTION 'trust: application % was % on a screening; record the adverse action '
+            'notice with the decision', NEW.application_id,
+            (SELECT d.decision FROM trust_application_decisions AS d
+             WHERE d.application_id = NEW.application_id)
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF v_given AND NOT v_needed THEN
+        RAISE EXCEPTION 'trust: an adverse action belongs to a declined or conditional decision '
+            'that rests on a screening; application % has none', NEW.application_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: trust_check_agreement_account(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -906,6 +943,54 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'trust: a management agreement is for an owner''s property account in '
             'its own PMC; % is not one in PMC %', NEW.ledger_account_id, NEW.pmc_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_application(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_application() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'trust: take applications at READ COMMITTED, not %',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended('application link ' || NEW.link_id, 0));
+    IF EXISTS (
+        SELECT c.link_id FROM trust_application_link_closings AS c WHERE c.link_id = NEW.link_id
+    ) THEN
+        RAISE EXCEPTION 'trust: application link % is closed', NEW.link_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_application_decision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_application_decision() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NEW.screening_id IS NOT NULL AND NOT EXISTS (
+        SELECT s.id FROM trust_screenings AS s
+        WHERE s.id = NEW.screening_id AND s.application_id = NEW.application_id
+    ) THEN
+        RAISE EXCEPTION 'trust: screening % is not of application %',
+            NEW.screening_id, NEW.application_id
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
@@ -1322,6 +1407,21 @@ BEGIN
     ON CONFLICT (vendor_id, reference) DO NOTHING;
     GET DIAGNOSTICS v_entered = ROW_COUNT;
     RETURN v_entered;
+END;
+$$;
+
+
+--
+-- Name: trust_lock_application_link(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_lock_application_link() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('application link ' || NEW.link_id, 0));
+    RETURN NEW;
 END;
 $$;
 
@@ -3752,6 +3852,104 @@ CREATE TABLE public.schema_migrations (
 
 
 --
+-- Name: trust_adverse_actions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_adverse_actions (
+    application_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    reasons text[] NOT NULL,
+    agency text NOT NULL,
+    notice_given_on date NOT NULL,
+    recorded_by uuid NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_adverse_actions_agency_check CHECK ((agency ~ '\S'::text)),
+    CONSTRAINT trust_adverse_actions_reasons_check CHECK (((cardinality(reasons) >= 1) AND (cardinality(reasons) <= 20)))
+);
+
+
+--
+-- Name: trust_applicants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_applicants (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    application_id uuid NOT NULL,
+    "position" bigint NOT NULL,
+    display_name text NOT NULL,
+    email text NOT NULL,
+    CONSTRAINT trust_applicants_display_name_check CHECK (((display_name ~ '\S'::text) AND (length(display_name) <= 200))),
+    CONSTRAINT trust_applicants_email_check CHECK (((email = lower(email)) AND (email ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'::text) AND (length(email) <= 254))),
+    CONSTRAINT trust_applicants_position_check CHECK ((("position" >= 1) AND ("position" <= 6)))
+);
+
+
+--
+-- Name: trust_application_decisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_application_decisions (
+    application_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    decision text NOT NULL,
+    conditions text,
+    screening_id uuid,
+    decided_by uuid NOT NULL,
+    decided_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_application_decisions_check CHECK (((decision = 'conditional'::text) = (conditions IS NOT NULL))),
+    CONSTRAINT trust_application_decisions_conditions_check CHECK (((conditions ~ '\S'::text) AND (length(conditions) <= 2000))),
+    CONSTRAINT trust_application_decisions_decision_check CHECK ((decision = ANY (ARRAY['approved'::text, 'conditional'::text, 'declined'::text])))
+);
+
+
+--
+-- Name: trust_application_link_closings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_application_link_closings (
+    link_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    closed_by uuid NOT NULL,
+    closed_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: trust_application_links; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_application_links (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    unit_id uuid NOT NULL,
+    token_sha256 bytea NOT NULL,
+    monthly_rent numeric NOT NULL,
+    opened_by uuid NOT NULL,
+    opened_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_application_links_monthly_rent_check CHECK ((monthly_rent > (0)::numeric)),
+    CONSTRAINT trust_application_links_token_sha256_check CHECK ((length(token_sha256) = 32))
+);
+
+
+--
+-- Name: trust_applications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_applications (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    link_id uuid NOT NULL,
+    status_token_sha256 bytea NOT NULL,
+    move_in_on date NOT NULL,
+    monthly_income numeric NOT NULL,
+    submitted_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_applications_monthly_income_check CHECK ((monthly_income >= (0)::numeric)),
+    CONSTRAINT trust_applications_status_token_sha256_check CHECK ((length(status_token_sha256) = 32))
+);
+
+
+--
 -- Name: trust_audit_log; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4269,6 +4467,29 @@ CREATE TABLE public.trust_recurring_bills (
 
 
 --
+-- Name: trust_screenings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_screenings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    application_id uuid NOT NULL,
+    partner text NOT NULL,
+    partner_reference text NOT NULL,
+    agency text NOT NULL,
+    recommendation text NOT NULL,
+    reasons text[] NOT NULL,
+    requested_by uuid NOT NULL,
+    reported_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_screenings_agency_check CHECK ((agency ~ '\S'::text)),
+    CONSTRAINT trust_screenings_check CHECK (((recommendation = 'approve'::text) = (cardinality(reasons) = 0))),
+    CONSTRAINT trust_screenings_partner_check CHECK ((partner ~ '\S'::text)),
+    CONSTRAINT trust_screenings_partner_reference_check CHECK ((partner_reference ~ '\S'::text)),
+    CONSTRAINT trust_screenings_recommendation_check CHECK ((recommendation = ANY (ARRAY['approve'::text, 'conditional'::text, 'decline'::text])))
+);
+
+
+--
 -- Name: trust_sessions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4403,6 +4624,110 @@ ALTER TABLE ONLY public.pgledger_transfers
 
 ALTER TABLE ONLY public.schema_migrations
     ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (version);
+
+
+--
+-- Name: trust_adverse_actions trust_adverse_actions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_adverse_actions
+    ADD CONSTRAINT trust_adverse_actions_pkey PRIMARY KEY (application_id);
+
+
+--
+-- Name: trust_applicants trust_applicants_application_id_email_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applicants
+    ADD CONSTRAINT trust_applicants_application_id_email_key UNIQUE (application_id, email);
+
+
+--
+-- Name: trust_applicants trust_applicants_application_id_position_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applicants
+    ADD CONSTRAINT trust_applicants_application_id_position_key UNIQUE (application_id, "position");
+
+
+--
+-- Name: trust_applicants trust_applicants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applicants
+    ADD CONSTRAINT trust_applicants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_application_decisions trust_application_decisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_decisions
+    ADD CONSTRAINT trust_application_decisions_pkey PRIMARY KEY (application_id);
+
+
+--
+-- Name: trust_application_decisions trust_application_decisions_pmc_id_application_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_decisions
+    ADD CONSTRAINT trust_application_decisions_pmc_id_application_id_key UNIQUE (pmc_id, application_id);
+
+
+--
+-- Name: trust_application_link_closings trust_application_link_closings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_link_closings
+    ADD CONSTRAINT trust_application_link_closings_pkey PRIMARY KEY (link_id);
+
+
+--
+-- Name: trust_application_links trust_application_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_links
+    ADD CONSTRAINT trust_application_links_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_application_links trust_application_links_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_links
+    ADD CONSTRAINT trust_application_links_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_application_links trust_application_links_token_sha256_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_links
+    ADD CONSTRAINT trust_application_links_token_sha256_key UNIQUE (token_sha256);
+
+
+--
+-- Name: trust_applications trust_applications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applications
+    ADD CONSTRAINT trust_applications_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_applications trust_applications_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applications
+    ADD CONSTRAINT trust_applications_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_applications trust_applications_status_token_sha256_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applications
+    ADD CONSTRAINT trust_applications_status_token_sha256_key UNIQUE (status_token_sha256);
 
 
 --
@@ -4854,6 +5179,22 @@ ALTER TABLE ONLY public.trust_recurring_bills
 
 
 --
+-- Name: trust_screenings trust_screenings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_screenings
+    ADD CONSTRAINT trust_screenings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_screenings trust_screenings_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_screenings
+    ADD CONSTRAINT trust_screenings_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_sessions trust_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4990,6 +5331,20 @@ CREATE INDEX pgledger_transfers_from_account_id_idx ON public.pgledger_transfers
 --
 
 CREATE INDEX pgledger_transfers_to_account_id_idx ON public.pgledger_transfers USING btree (to_account_id);
+
+
+--
+-- Name: trust_application_links_unit_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_application_links_unit_id ON public.trust_application_links USING btree (unit_id);
+
+
+--
+-- Name: trust_applications_link_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_applications_link_id ON public.trust_applications USING btree (link_id);
 
 
 --
@@ -5203,6 +5558,13 @@ CREATE INDEX trust_reconciliations_bank_account_id ON public.trust_reconciliatio
 
 
 --
+-- Name: trust_screenings_application_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_screenings_application_id ON public.trust_screenings USING btree (application_id);
+
+
+--
 -- Name: trust_sessions_login; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5238,6 +5600,20 @@ CREATE TRIGGER trust_account_in_its_bank BEFORE INSERT ON public.trust_ledger_ac
 
 
 --
+-- Name: trust_adverse_actions trust_adverse_action_belongs; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_adverse_action_belongs AFTER INSERT ON public.trust_adverse_actions DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_adverse_action();
+
+
+--
+-- Name: trust_application_decisions trust_adverse_action_given; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_adverse_action_given AFTER INSERT ON public.trust_application_decisions DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_adverse_action();
+
+
+--
 -- Name: trust_management_agreements trust_agreement_account; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5256,6 +5632,48 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.p
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.pgledger_transfers FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_adverse_actions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_adverse_actions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_applicants trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_applicants FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_application_decisions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_application_decisions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_application_link_closings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_application_link_closings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_application_links trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_application_links FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_applications trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_applications FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -5441,6 +5859,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_screenings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_screenings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_work_order_steps trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5455,10 +5880,73 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_application_decisions trust_application_decision_screening; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_application_decision_screening BEFORE INSERT ON public.trust_application_decisions FOR EACH ROW EXECUTE FUNCTION public.trust_check_application_decision();
+
+
+--
+-- Name: trust_application_link_closings trust_application_link_lock; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_application_link_lock BEFORE INSERT ON public.trust_application_link_closings FOR EACH ROW EXECUTE FUNCTION public.trust_lock_application_link();
+
+
+--
+-- Name: trust_applications trust_application_link_open; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_application_link_open BEFORE INSERT ON public.trust_applications FOR EACH ROW EXECUTE FUNCTION public.trust_check_application();
+
+
+--
 -- Name: pgledger_transfers trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.pgledger_transfers FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_adverse_actions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_adverse_actions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_applicants trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_applicants FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_application_decisions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_application_decisions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_application_link_closings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_application_link_closings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_application_links trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_application_links FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_applications trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_applications FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -5679,6 +6167,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_recu
 
 
 --
+-- Name: trust_screenings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_screenings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_sessions trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5869,6 +6364,142 @@ ALTER TABLE ONLY public.pgledger_transfers
 
 ALTER TABLE ONLY public.pgledger_transfers
     ADD CONSTRAINT pgledger_transfers_to_account_id_fkey FOREIGN KEY (to_account_id) REFERENCES public.pgledger_accounts(id);
+
+
+--
+-- Name: trust_adverse_actions trust_adverse_actions_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_adverse_actions
+    ADD CONSTRAINT trust_adverse_actions_pmc_id_application_id_fkey FOREIGN KEY (pmc_id, application_id) REFERENCES public.trust_application_decisions(pmc_id, application_id);
+
+
+--
+-- Name: trust_adverse_actions trust_adverse_actions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_adverse_actions
+    ADD CONSTRAINT trust_adverse_actions_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_adverse_actions trust_adverse_actions_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_adverse_actions
+    ADD CONSTRAINT trust_adverse_actions_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_applicants trust_applicants_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applicants
+    ADD CONSTRAINT trust_applicants_pmc_id_application_id_fkey FOREIGN KEY (pmc_id, application_id) REFERENCES public.trust_applications(pmc_id, id);
+
+
+--
+-- Name: trust_applicants trust_applicants_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applicants
+    ADD CONSTRAINT trust_applicants_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_application_decisions trust_application_decisions_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_decisions
+    ADD CONSTRAINT trust_application_decisions_pmc_id_application_id_fkey FOREIGN KEY (pmc_id, application_id) REFERENCES public.trust_applications(pmc_id, id);
+
+
+--
+-- Name: trust_application_decisions trust_application_decisions_pmc_id_decided_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_decisions
+    ADD CONSTRAINT trust_application_decisions_pmc_id_decided_by_fkey FOREIGN KEY (pmc_id, decided_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_application_decisions trust_application_decisions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_decisions
+    ADD CONSTRAINT trust_application_decisions_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_application_decisions trust_application_decisions_pmc_id_screening_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_decisions
+    ADD CONSTRAINT trust_application_decisions_pmc_id_screening_id_fkey FOREIGN KEY (pmc_id, screening_id) REFERENCES public.trust_screenings(pmc_id, id);
+
+
+--
+-- Name: trust_application_link_closings trust_application_link_closings_pmc_id_closed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_link_closings
+    ADD CONSTRAINT trust_application_link_closings_pmc_id_closed_by_fkey FOREIGN KEY (pmc_id, closed_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_application_link_closings trust_application_link_closings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_link_closings
+    ADD CONSTRAINT trust_application_link_closings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_application_link_closings trust_application_link_closings_pmc_id_link_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_link_closings
+    ADD CONSTRAINT trust_application_link_closings_pmc_id_link_id_fkey FOREIGN KEY (pmc_id, link_id) REFERENCES public.trust_application_links(pmc_id, id);
+
+
+--
+-- Name: trust_application_links trust_application_links_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_links
+    ADD CONSTRAINT trust_application_links_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_application_links trust_application_links_pmc_id_opened_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_links
+    ADD CONSTRAINT trust_application_links_pmc_id_opened_by_fkey FOREIGN KEY (pmc_id, opened_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_application_links trust_application_links_pmc_id_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_links
+    ADD CONSTRAINT trust_application_links_pmc_id_unit_id_fkey FOREIGN KEY (pmc_id, unit_id) REFERENCES public.trust_units(pmc_id, id);
+
+
+--
+-- Name: trust_applications trust_applications_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applications
+    ADD CONSTRAINT trust_applications_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_applications trust_applications_pmc_id_link_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applications
+    ADD CONSTRAINT trust_applications_pmc_id_link_id_fkey FOREIGN KEY (pmc_id, link_id) REFERENCES public.trust_application_links(pmc_id, id);
 
 
 --
@@ -6600,6 +7231,30 @@ ALTER TABLE ONLY public.trust_recurring_bills
 
 
 --
+-- Name: trust_screenings trust_screenings_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_screenings
+    ADD CONSTRAINT trust_screenings_pmc_id_application_id_fkey FOREIGN KEY (pmc_id, application_id) REFERENCES public.trust_applications(pmc_id, id);
+
+
+--
+-- Name: trust_screenings trust_screenings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_screenings
+    ADD CONSTRAINT trust_screenings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_screenings trust_screenings_pmc_id_requested_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_screenings
+    ADD CONSTRAINT trust_screenings_pmc_id_requested_by_fkey FOREIGN KEY (pmc_id, requested_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_sessions trust_sessions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6751,4 +7406,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261010000026'),
     ('20261010000027'),
     ('20261011000028'),
-    ('20261011000029');
+    ('20261011000029'),
+    ('20261011000030');

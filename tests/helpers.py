@@ -418,6 +418,78 @@ def link_work_order(connection, pmc_id, request_id, work_order_id) -> None:
     )
 
 
+def open_application_link(connection, pmc_id, unit_id, staff_id, rent="1500.00") -> UUID:
+    """An application link for a unit; its token is random bytes no test needs back."""
+    return _one(
+        connection,
+        "INSERT INTO trust_application_links"
+        " (pmc_id, unit_id, token_sha256, monthly_rent, opened_by)"
+        " VALUES (%s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, unit_id, os.urandom(32), Decimal(rent), staff_id),
+    )
+
+
+def submit_application(
+    connection, pmc_id, link_id, income="4500.00", applicants=(("Applicant 1", None),)
+) -> UUID:
+    """An application through a link, with its applicants (name, email or a made-up one)."""
+    application = _one(
+        connection,
+        "INSERT INTO trust_applications"
+        " (pmc_id, link_id, status_token_sha256, move_in_on, monthly_income)"
+        " VALUES (%s, %s, %s, DATE '2026-11-01', %s) RETURNING id",
+        (pmc_id, link_id, os.urandom(32), Decimal(income)),
+    )
+    for n, (name, email) in enumerate(applicants, 1):
+        connection.execute(
+            "INSERT INTO trust_applicants (pmc_id, application_id, position, display_name, email)"
+            " VALUES (%s, %s, %s, %s, %s)",
+            (
+                pmc_id,
+                application,
+                n,
+                name,
+                email or f"applicant{n}.{application.hex[:8]}@example.com",
+            ),
+        )
+    return application
+
+
+def record_screening(
+    connection, pmc_id, application_id, staff_id, recommendation="approve", reasons=()
+) -> UUID:
+    return _one(
+        connection,
+        "INSERT INTO trust_screenings (pmc_id, application_id, partner, partner_reference,"
+        " agency, recommendation, reasons, requested_by)"
+        " VALUES (%s, %s, 'Test partner', 'ref-1', 'Test agency (synthetic)', %s, %s, %s)"
+        " RETURNING id",
+        (pmc_id, application_id, recommendation, list(reasons), staff_id),
+    )
+
+
+def record_decision(
+    connection, pmc_id, application_id, staff_id, decision, screening_id=None, conditions=None
+) -> None:
+    connection.execute(
+        "INSERT INTO trust_application_decisions"
+        " (pmc_id, application_id, decision, conditions, screening_id, decided_by)"
+        " VALUES (%s, %s, %s, %s, %s, %s)",
+        (pmc_id, application_id, decision, conditions, screening_id, staff_id),
+    )
+
+
+def record_adverse_action(
+    connection, pmc_id, application_id, staff_id, reasons=("Income too low",)
+) -> None:
+    connection.execute(
+        "INSERT INTO trust_adverse_actions"
+        " (pmc_id, application_id, reasons, agency, notice_given_on, recorded_by)"
+        " VALUES (%s, %s, %s, 'Test agency (synthetic)', DATE '2026-10-11', %s)",
+        (pmc_id, application_id, list(reasons), staff_id),
+    )
+
+
 def approve_bill(connection, pmc_id, bill_id, approved_on, approved_by) -> None:
     """Record the owner's approval of a bill over the approval limit."""
     connection.execute(

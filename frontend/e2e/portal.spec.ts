@@ -11,6 +11,9 @@ type Seed = {
   staff_invite: string;
   renter_email: string;
   renter_invite: string;
+  apply_token: string;
+  leasing_email: string;
+  leasing_invite: string;
 };
 const seed: Seed = JSON.parse(readFileSync(new URL("./.seed.json", import.meta.url), "utf8"));
 const PASSWORD = "a long synthetic passphrase";
@@ -120,4 +123,47 @@ test("staff enroll an authenticator, invite a tenant and see a repair through", 
   await expect(request).toContainText("Someone is assigned (Vendor E2E)");
   await request.getByRole("button", { name: "Done" }).click();
   await expect(request).toHaveCount(0);
+});
+
+test("an applicant applies; staff screen, decline with a notice, and the applicant sees it", async ({
+  page,
+  browser,
+}) => {
+  await page.goto(`/apply#${seed.apply_token}`);
+  await expect(page.getByRole("heading", { name: "Apply for E2E Property 3, E2E Unit 2" })).toBeVisible();
+  const moveIn = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+  await page.getByLabel("Move-in day").fill(moveIn);
+  await page.getByLabel("Monthly income of everyone applying, together").fill("1500");
+  await page.getByLabel("Full name").fill("Applicant E2E");
+  await page.getByLabel("Email").fill("applicant.e2e@example.com");
+  await page.getByRole("button", { name: "Send application" }).click();
+  const statusUrl = (await page.getByTestId("status-url").textContent()) ?? "";
+  expect(statusUrl).toContain("/application#");
+
+  // Staff, in their own browser.
+  const staff = await (await browser.newContext()).newPage();
+  await staff.goto(`/invite#${seed.leasing_invite}`);
+  await staff.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await staff.getByLabel("The same password again").fill(PASSWORD);
+  await staff.getByRole("button", { name: "Set password" }).click();
+  await staff.getByLabel("Code").fill(totp((await staff.locator("code").textContent()) ?? ""));
+  await staff.getByRole("button", { name: "Finish" }).click();
+
+  const application = staff.getByRole("listitem", { name: "Application from Applicant E2E" });
+  await application.getByRole("button", { name: "Screen" }).click();
+  await expect(application).toContainText("Fake Screening Partner: Recommends declining");
+  await application.getByLabel("Decision").selectOption({ label: "Decline" });
+  await expect(application.getByLabel("Reasons, one a line")).toHaveValue(
+    "Household income is less than twice the rent",
+  );
+  await application.getByRole("button", { name: "Record decision" }).click();
+  await expect(application).toHaveCount(0);
+  const notice = await staff.request.get(
+    (await staff.getByRole("link", { name: "Notice (PDF)" }).getAttribute("href")) ?? "",
+  );
+  expect(notice.headers()["content-type"]).toBe("application/pdf");
+
+  const path = new URL(statusUrl).pathname + new URL(statusUrl).hash;
+  await page.goto(path);
+  await expect(page.getByTestId("application-status")).toContainText("Declined");
 });

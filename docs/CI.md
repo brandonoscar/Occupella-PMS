@@ -231,8 +231,10 @@ to end. Inside the pinned Node image it typechecks, unit-tests (vitest) and buil
 Then the API serves that build on a fresh Postgres, `frontend/e2e/seed.py` makes a synthetic PMC
 with an owner who has statements and a tenant with rent due and a maintenance request, and
 Playwright, in its pinned image, drives Chromium (`frontend/e2e/portal.spec.ts`): the owner
-reads a statement, the tenant reads what is due and asks for a repair, and staff enroll an
-authenticator, invite someone and take a request through to done. On failure it keeps the Playwright
+reads a statement, the tenant reads what is due and asks for a repair, staff enroll an
+authenticator, invite someone and take a request through to done, and an applicant applies
+through a link that staff screen (with the fake partner, `PMS_SCREENING_PARTNER=fake`) and
+decline with a notice. On failure it keeps the Playwright
 report and the API's log for 7 days. Run it locally with `cd frontend && npm ci && npm test &&
 npm run build`, then the same steps as the workflow (`PW_CHROMIUM` points Playwright at a
 Chromium already installed).

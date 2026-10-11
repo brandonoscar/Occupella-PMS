@@ -117,3 +117,28 @@ and staff's pages in `frontend/`.
   the audit property machine (requests filed, refused and given work orders), vitest for the
   pages, and Playwright: a tenant joins, sees what is due and asks for a repair; staff take a
   request through to done.
+
+## Leasing basics, part one, as built
+
+Applications through a link per unit (the founder's choice, 2026-10-11), screening and adverse
+action records: `src/pms/api/leasing.py`, `src/pms/leasing/screening.py`, migration 0030. E-sign
+and renewals are part two.
+
+- Staff open an application link for a unit at a rent and post it anywhere; it is shown once
+  and kept as its token's SHA-256. Anyone with it applies, with no login: a move-in day, the
+  household's monthly income, and up to six applicants' names and emails. A link takes at most
+  50 applications a day. The applicant keeps a status link to see where it stands: received,
+  in review, then the decision (with any conditions). The screening itself is never shown to
+  them.
+- Screening goes through a partner interface. The founder picks the real partner at deploy
+  time; until then the only one is a fake that pulls no report and answers from income against
+  rent (3x or more approve, 2x to 3x conditions, less decline). It is on only where
+  `PMS_SCREENING_PARTNER=fake` (development and CI); otherwise screening is refused.
+- A decision is approve, approve on conditions, or decline, maybe resting on a screening. A
+  decline or a conditional approval that rests on a screening records its adverse action notice
+  with it: the reasons, the reporting agency the partner names, and the day it was given. Staff
+  download the notice as a PDF to give the applicants. Its wording lists what such a notice
+  usually carries (the agency, that it didn't make the decision, a free copy within 60 days,
+  the right to dispute); it is not legal advice, and a PMC should have its own counsel check it
+  before relying on it.
+- `trust_ai_agent` reads none of it. No application fee: payments stay out.

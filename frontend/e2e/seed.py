@@ -5,11 +5,13 @@ usage: PYTHONPATH=src python frontend/e2e/seed.py > frontend/e2e/.seed.json
 
 Last month's rent goes to the owner's two properties, so the statement the owner portal shows
 first (last month) has postings. A second owner's property has a tenant on a lease, with last
-month's rent paid, this month's due and a maintenance request. Every name is synthetic.
+month's rent paid, this month's due and a maintenance request; a vacant unit there has an open
+application link. Every name is synthetic.
 """
 
 import json
 import os
+import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -112,6 +114,25 @@ def main() -> None:
         conn.execute(
             "INSERT INTO trust_vendors (pmc_id, display_name) VALUES (%s, 'Vendor E2E')", (pmc,)
         )
+        # Leasing: a vacant unit with an open application link, and a second staff member to
+        # take its applications (the first one's invite is used by another test).
+        vacant = one(
+            "INSERT INTO trust_units (pmc_id, property_id, display_name)"
+            " VALUES (%s, %s, 'E2E Unit 2') RETURNING id",
+            (pmc, prop_three),
+        )
+        leasing_staff = one(
+            "INSERT INTO trust_staff (pmc_id, display_name) VALUES (%s, 'Leasing E2E')"
+            " RETURNING id",
+            (pmc,),
+        )
+        apply_token = secrets.token_urlsafe(32)
+        conn.execute(
+            "INSERT INTO trust_application_links"
+            " (pmc_id, unit_id, token_sha256, monthly_rent, opened_by)"
+            " VALUES (%s, %s, %s, 1200.00, %s)",
+            (pmc, vacant, accounts.digest(apply_token), leasing_staff),
+        )
         conn.execute(
             "INSERT INTO trust_maintenance_requests"
             " (pmc_id, lease_id, tenant_id, summary, entry_allowed)"
@@ -130,6 +151,11 @@ def main() -> None:
                 conn, pmc, "staff", staff, staff_email, None
             ).token,
             "tenant_id": str(tenant),
+            "apply_token": apply_token,
+            "leasing_email": f"leasing.{tag}@example.com",
+            "leasing_invite": accounts.create_invite(
+                conn, pmc, "staff", leasing_staff, f"leasing.{tag}@example.com", None
+            ).token,
             "renter_email": f"renter.{tag}@example.com",
             "renter_invite": accounts.create_invite(
                 conn, pmc, "tenant", renter, f"renter.{tag}@example.com", None
