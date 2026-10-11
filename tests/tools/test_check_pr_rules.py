@@ -1,5 +1,7 @@
 """tools/check_pr_rules.py: the standing rule, checked on a PR's diff."""
 
+import pytest
+
 from tools import check_pr_rules
 
 FUNCTION = "CREATE OR REPLACE FUNCTION trust_x() RETURNS trigger AS $$ BEGIN RETURN NEW; END $$;"
@@ -64,6 +66,29 @@ def test_api_change_needs_api_tests():
     assert len(problems) == 1 and "tests/api/" in problems[0]
 
     files["tests/api/test_routes.py"] = "A"
+    assert check_pr_rules.check(files, {}) == []
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "frontend/src/pages/OwnerHome.tsx",
+        "frontend/src/money.ts",
+        "frontend/src/styles/globals.css",
+        "frontend/index.html",
+        "frontend/vite.config.ts",
+    ],
+)
+def test_portal_code_needs_a_portal_test(path):
+    problems = check_pr_rules.check({path: "M"}, {})
+    assert len(problems) == 1 and "portal test" in problems[0] and path in problems[0]
+
+    assert check_pr_rules.check({path: "M", "frontend/src/money.test.ts": "M"}, {}) == []
+    assert check_pr_rules.check({path: "M", "frontend/e2e/portal.spec.ts": "A"}, {}) == []
+
+
+def test_portal_tests_and_packages_need_nothing_more():
+    files = {"frontend/src/money.test.ts": "A", "frontend/package.json": "M"}
     assert check_pr_rules.check(files, {}) == []
 
 

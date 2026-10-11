@@ -1,8 +1,9 @@
 name: licenses
 
-# Every installed dependency, direct or transitive, must carry a license on the allowlist in
-# ci/licenses.toml: compatible with this repo's Apache-2.0, never non-commercial or
-# source-available.
+# Every dependency, direct or transitive (Python and the portal's npm packages), must carry a
+# license on the allowlist in ci/licenses.toml: compatible with this repo's Apache-2.0, never
+# non-commercial or source-available. Then the portal's end-to-end check (e2e.yml) runs,
+# chained here so PR CI stays within 8 jobs at a time.
 on:
   pull_request:
   push:
@@ -32,3 +33,12 @@ jobs:
       - run: pip install -r requirements-dev.txt
       - name: Check every dependency's license
         run: python -m tools.check_licenses
+
+  e2e:
+    name: e2e
+    needs: licenses
+    # The portal is checked whatever the licenses said; only a cancelled run skips it.
+    if: ${{ !cancelled() }}
+    permissions:
+      contents: read
+    uses: ./.github/workflows/e2e.yml

@@ -11,6 +11,8 @@ allowed = [
   "BSD",
   "BSD-2-Clause",
   "BSD-3-Clause",
+  # lru-cache (npm, through the portal's build tools): a permissive, OSI-approved license.
+  "BlueOak-1.0.0",
   "CC0-1.0",
   "ISC",
   # Weak copyleft, fine for a library we import unmodified (psycopg is LGPL-3.0).
@@ -24,6 +26,9 @@ allowed = [
   # Pillow (fpdf2 needs it for PDFs): the historical permission notice, MIT-like (OSI approved).
   "MIT-CMU",
   "MPL-2.0",
+  # The portal's fonts (IBM Plex, Fraunces), self-hosted: the SIL Open Font License lets any
+  # software bundle a font, as long as the font itself isn't sold alone.
+  "OFL-1.1",
   "PostgreSQL",
   "PSF-2.0",
   "Unlicense",

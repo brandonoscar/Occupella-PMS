@@ -1,0 +1,90 @@
+// The portal in a real browser, against the API and a database seeded by e2e/seed.py.
+import { readFileSync } from "node:fs";
+import { expect, test } from "@playwright/test";
+import { totp } from "./totp";
+
+type Seed = {
+  pmc_id: string;
+  owner_email: string;
+  owner_invite: string;
+  staff_email: string;
+  staff_invite: string;
+};
+const seed: Seed = JSON.parse(readFileSync(new URL("./.seed.json", import.meta.url), "utf8"));
+const PASSWORD = "a long synthetic passphrase";
+
+// The pages are served under a strict Content-Security-Policy (src/pms/api/app.py). Anything it
+// blocks, such as a script or an image from another origin, fails the test that loaded it.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    const seen: string[] = [];
+    (window as unknown as { cspViolations: string[] }).cspViolations = seen;
+    document.addEventListener("securitypolicyviolation", (e) =>
+      seen.push(`${e.violatedDirective} ${e.blockedURI}`),
+    );
+  });
+});
+
+test.afterEach(async ({ page }) => {
+  const seen = await page.evaluate(
+    () => (window as unknown as { cspViolations: string[] }).cspViolations,
+  );
+  expect(seen).toEqual([]);
+});
+
+test("an owner joins from the invite, reads their statement and signs back in", async ({ page }) => {
+  await page.goto(`/invite#${seed.owner_invite}`);
+  await expect(page.getByRole("heading", { name: "Welcome, Owner E2E" })).toBeVisible();
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+
+  await expect(page.getByRole("heading", { name: "Your properties" })).toBeVisible();
+  const holdings = page.locator("section", { hasText: "What each property holds today" });
+  await expect(holdings.getByRole("row", { name: /E2E Property 1/ })).toContainText("$1,500.00");
+  await expect(holdings.getByRole("row", { name: /E2E Property 2/ })).toContainText("$1,250.00");
+
+  const statement = page.locator("section", { hasText: "Statement" });
+  await expect(statement.getByText("Closing, all properties")).toBeVisible();
+  await expect(statement.locator("dd").last()).toHaveText("$2,750.00");
+  const pdf = await page.request.get(
+    (await statement.getByRole("link", { name: "PDF" }).getAttribute("href")) ?? "",
+  );
+  expect(pdf.status()).toBe(200);
+  expect(pdf.headers()["content-type"]).toBe("application/pdf");
+
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  await page.getByLabel("Email").fill(seed.owner_email);
+  await page.getByLabel("Password").fill(PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("heading", { name: "Your properties" })).toBeVisible();
+});
+
+test("a wrong password is refused without saying which part was wrong", async ({ page }) => {
+  await page.goto(`/sign-in?pmc=${seed.pmc_id}`);
+  await page.getByLabel("Email").fill(seed.owner_email);
+  await page.getByLabel("Password").fill("not the password at all");
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("alert")).toHaveText("the email or password is wrong");
+});
+
+test("staff enroll an authenticator, then invite a tenant", async ({ page }) => {
+  await page.goto(`/invite#${seed.staff_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+
+  const secret = (await page.locator("code").textContent()) ?? "";
+  expect(secret).toMatch(/^[A-Z2-7]{16,}$/);
+  await page.getByLabel("Code").fill(totp(secret));
+  await page.getByRole("button", { name: "Finish" }).click();
+
+  const people = page.locator("section", { hasText: "People who can sign in" });
+  const tenant = people.getByRole("row", { name: /Tenant E2E/ });
+  await expect(tenant).toContainText("no login");
+  await tenant.getByLabel("Email for Tenant E2E").fill("tenant.e2e@example.com");
+  await tenant.getByRole("button", { name: "Invite" }).click();
+  await expect(tenant).toContainText("/invite#");
+  await expect(tenant).toContainText("invited");
+});

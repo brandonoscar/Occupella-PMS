@@ -1,7 +1,8 @@
-"""Fail if an installed dependency's license is not on the allowlist in ci/licenses.toml.
+"""Fail if a dependency's license is not on the allowlist in ci/licenses.toml.
 
-Reads every installed package (runtime and dev) through pip-licenses, so transitive
-dependencies are checked too, not only the ones a PR names.
+Reads every installed Python package (runtime and dev) through pip-licenses, and every npm
+package the portal locks (frontend/package-lock.json, which records each one's license), so
+transitive dependencies are checked too, not only the ones a PR names.
 
 usage: python -m tools.check_licenses
 """
@@ -67,13 +68,30 @@ def installed() -> list[dict[str, str]]:
     return packages
 
 
+def locked_npm(lockfile: Path) -> list[dict[str, str]]:
+    """Every package in an npm lockfile (v2 or v3), with the license it records."""
+    if not lockfile.exists():
+        return []
+    locked: dict[str, dict[str, Any]] = json.loads(lockfile.read_text())["packages"]
+    return [
+        {
+            "Name": f"npm:{path.rsplit('node_modules/', 1)[-1]}",
+            "Version": str(entry.get("version", "")),
+            "License": str(entry.get("license") or "UNKNOWN"),
+        }
+        for path, entry in sorted(locked.items())
+        if path  # "" is the portal itself
+    ]
+
+
 def main(argv: list[str] | None = None, packages: list[dict[str, str]] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--policy", type=Path, default=ROOT / "ci/licenses.toml")
+    parser.add_argument("--npm-lockfile", type=Path, default=ROOT / "frontend/package-lock.json")
     args = parser.parse_args(argv)
     policy = tomllib.loads(args.policy.read_text())
 
-    found = installed() if packages is None else packages
+    found = installed() + locked_npm(args.npm_lockfile) if packages is None else packages
     problems = [
         problem
         for package in found

@@ -226,13 +226,17 @@ This proves
 a PMC could run its books on its own Postgres. Run it with `docker compose build && docker
 compose up -d --wait db && docker compose run --rm migrate && docker compose run --rm smoke`.
 
-**e2e.yml** (PRs touching UI paths): a placeholder for Playwright tests against the seeded app.
-There is no UI yet, so it only runs when UI paths change, and it fails if a UI exists while the
-Playwright steps are still off. Its header lists the steps to enable it in the first PR that
-adds screens.
+**e2e.yml** (every PR and push to main, called by licenses.yml): the portal (`frontend/`), end
+to end. Inside the pinned Node image it typechecks, unit-tests (vitest) and builds the React app.
+Then the API serves that build on a fresh Postgres, `frontend/e2e/seed.py` makes a synthetic PMC
+with an owner who has statements, and Playwright, in its pinned image, signs in as the owner
+and as staff in Chromium (`frontend/e2e/portal.spec.ts`). On failure it keeps the Playwright
+report and the API's log for 7 days. Run it locally with `cd frontend && npm ci && npm test &&
+npm run build`, then the same steps as the workflow (`PW_CHROMIUM` points Playwright at a
+Chromium already installed).
 
 **security.yml** (PRs, main and weekly):
-- CodeQL on the Python and on the workflows themselves.
+- CodeQL (security-extended) on the Python, the portal's TypeScript and the workflows themselves.
 - Dependency review, which fails a PR that adds a dependency with a high-severity advisory.
 - gitleaks: the PR's commits on PRs, full history on main and weekly. Besides the default rules,
   `.gitleaks.toml` adds SSN- and EIN-shaped patterns. They let through only the never-issued
@@ -245,10 +249,11 @@ money. Run gitleaks locally with `gitleaks git --config .gitleaks.toml --redact 
 **licenses.yml** (PRs and main): every installed dependency, direct or transitive, must carry a
 license on the allowlist in `ci/licenses.toml`: compatible with this repo's Apache-2.0, and never
 non-commercial or source-available. A PMC that self-hosts needs to be able to use every piece
-freely. Run it with `python -m tools.check_licenses`.
+freely. It reads the Python packages installed and, from `frontend/package-lock.json`, every
+npm package the portal ships or builds with. Run it with `python -m tools.check_licenses`.
 
-**dependabot** (`.github/dependabot.yml`): weekly updates for GitHub Actions, pip, the Dockerfiles
-and the compose file. pip and Actions updates come as one grouped pull request each, because
+**dependabot** (`.github/dependabot.yml`): weekly updates for GitHub Actions, pip, npm (the
+portal, one grouped pull request), the Dockerfiles and the compose file. pip and Actions updates come as one grouped pull request each, because
 separate pull requests for neighbouring lines of `requirements-dev.txt` conflicted with each other
 as soon as one merged.
 
@@ -256,6 +261,7 @@ as soon as one merged.
 
 One command for every PR check that can run locally, in CI's order:
 - the ci, licenses and db checks, with the database ones on a throwaway database;
+- the portal's typecheck, unit tests and build, if `npm` is installed;
 - the upgrade check;
 - the PL/pgSQL lint, if the server has plpgsql_check;
 - every test, with the coverage gates and diff-cover if plpgsql_check is preloaded;
@@ -280,15 +286,16 @@ These run on every PR, so they can all be required:
 | `codeql` | security.yml |
 | `deps-and-secrets` | security.yml |
 | `licenses` | licenses.yml |
+| `e2e / e2e` | e2e.yml, called by licenses.yml |
 
-Not required, because they don't run on every PR: `selfhost (PR)` (path-dependent) and `e2e`
-(placeholder until there is a UI). Add `e2e` when it is enabled.
+Not required, because it doesn't run on every PR: `selfhost (PR)` (path-dependent).
 
 ## Job budget
 
 Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20.
-- A PR runs the 8 required checks above. The self-host check is chained after `migrations`, so a
-  PR never has more than 8 jobs running at once.
+- A PR runs the 9 required checks above. `e2e` is chained after `licenses` (a job of seconds)
+  and the self-host check after `migrations`, so a PR never has more than 8 jobs running at
+  once.
 - Nightly runs are staggered so they don't overlap:
   - 03:17 UTC ledger-invariants (16 property jobs and 1 timing job);
   - 04:17 mutation (4 shards, then 1 scoring job);
@@ -296,4 +303,4 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
   - Mondays 06:17 security (codeql, gitleaks history, scorecard: 3).
 - A push to main runs the same checks (minus `deps-and-secrets`), plus gitleaks over full
   history and Scorecard: 9 jobs.
-- A UI PR will add `e2e`. Chain it after another job then, to stay within 8.
+- A new PR job is chained after another one, as `e2e` is, to stay within 8.

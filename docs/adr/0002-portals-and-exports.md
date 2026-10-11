@@ -77,3 +77,20 @@ the owner portal, the tenant portal, and leasing.
 - Staff download any report or the ledger for their own PMC. Owners and tenants can sign in
   and see who they are; their own pages come with their portals.
 - `python -m pms.admin add-staff` and `invite` make the first staff member's link on the server.
+
+## The owner portal, as built
+
+`frontend/` (React 19, Vite, Tailwind v4, Occupella's DESIGN.md tokens), built into
+`frontend/dist` and served by the API from `PMS_STATIC_DIR`, so one process and one origin
+serve the pages and the API. The self-host image builds it in a Node stage.
+
+- Sign-in, the invite page (password, and for staff the authenticator's QR code) and a home
+  page for each kind of login. Staff see their PMC's people and whether each has a login.
+- An owner sees each property they hold money in with its balance now, and their statement
+  (`trust_report_owner_statement`) for whole UTC days, at most 3660, on screen or as PDF, Excel
+  or CSV. The owner and the PMC come from the session only.
+- Pages are served with a Content-Security-Policy that allows only the app's own scripts,
+  styles, fonts and data: images (the QR code), and no framing.
+- Tests: vitest for the pages and helpers, including one that fails on a raw colour or a size
+  off DESIGN.md's scale; API tests for each endpoint; and Playwright in Chromium against the
+  served build on a seeded database (`e2e.yml`), which fails on anything the policy blocks.

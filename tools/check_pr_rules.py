@@ -6,6 +6,9 @@
   3. A migration that adds a report function (trust_report_*) also adds a golden file under
      tests/golden/.
   4. A change under an API package also changes tests under tests/api/.
+  5. A change to the portal's code (frontend/src, its page and build config) also changes a
+     portal test: a unit test next to the code (*.test.ts, *.test.tsx) or a browser test
+     under frontend/e2e/.
 Skips and unlinked xfails are refused at run time by tests/conftest.py, for every test.
 
 usage: python -m tools.check_pr_rules --base <sha> --head <sha>
@@ -27,6 +30,8 @@ LEDGER_SQL = re.compile(
 )
 REPORT_SQL = re.compile(r"\bFUNCTION\s+(public\.)?trust_report_", re.IGNORECASE)
 API_CODE = re.compile(r"^src/.*/api/|(^|/)openapi\.(json|ya?ml)$")
+PORTAL_CODE = re.compile(r"^frontend/(src/.*\.(ts|tsx|css)|index\.html|vite\.config\.ts)$")
+PORTAL_TEST = re.compile(r"^frontend/(src/.*\.test\.tsx?|e2e/.+)$")
 
 
 def git(root: Path, *args: str) -> str:
@@ -81,6 +86,12 @@ def check(files: dict[str, str], added: dict[str, list[str]]) -> list[str]:
         problems.append(
             "API code changed (" + ", ".join(api) + ") without API tests under tests/api/ "
             "(success path, auth failure, bad input)."
+        )
+    portal = sorted(p for p in live if PORTAL_CODE.search(p) and not PORTAL_TEST.search(p))
+    if portal and not any(PORTAL_TEST.search(p) for p in files):
+        problems.append(
+            "Portal code changed (" + ", ".join(portal) + ") without a portal test: a unit test "
+            "next to it (*.test.ts, *.test.tsx) or a browser test under frontend/e2e/."
         )
     return problems
 

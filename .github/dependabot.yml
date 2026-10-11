@@ -16,6 +16,13 @@ updates:
     groups:
       python:
         patterns: ["*"]
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+    groups:
+      portal:
+        patterns: ["*"]
   - package-ecosystem: docker
     directories:
       - /

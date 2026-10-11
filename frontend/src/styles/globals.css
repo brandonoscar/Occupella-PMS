@@ -1,0 +1,74 @@
+/* The portal's design tokens, following Occupella's DESIGN.md: a dark neutral canvas with a
+   faint blue bias, one accent (iris, the occupella.com blue) used sparingly, muted status
+   colours only for real states, borders rather than shadows on static cards, and a type scale
+   of 12/13/14/16/20/28px. The accent and radii are DESIGN.md's values; the neutral and status
+   values are a first pass, to be synced with Occupella's frontend/src/styles/globals.css when
+   the two merge (docs/adr/0002-portals-and-exports.md). Components use these tokens, never a
+   raw colour. */
+@import "tailwindcss";
+
+@theme {
+  --color-canvas: #0f1217;
+  --color-raised: #151a21;
+  --color-sunken: #0b0e12;
+  --color-ink: #e6eaf0;
+  --color-ink-muted: #aeb6c2;
+  --color-ink-subtle: #8b95a2;
+  --color-ink-faint: #6b7480;
+  --color-line: #252c36;
+  --color-line-strong: #343d49;
+  --color-card-edge: #2a313b;
+  --color-iris: #1957a0;
+  --color-iris-hover: #144a88;
+  --color-iris-press: #0f3a6b;
+  --color-iris-soft: rgb(25 87 160 / 0.18);
+  --color-iris-ring: rgb(25 87 160 / 0.6);
+  --color-positive: #5a9e74;
+  --color-caution: #b8933f;
+  --color-danger: #c2645a;
+  --color-info: #5a8bbd;
+  --color-disabled-bg: #20262e;
+  --color-disabled-ink: #6b7480;
+
+  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
+  --font-display: "Fraunces", Georgia, serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 16px;
+  --text-lg: 20px;
+  --text-xl: 28px;
+
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 8px;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  font-weight: 400;
+  /* Digits line up in every table and don't shift when they change. */
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-iris-ring);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+  }
+}
