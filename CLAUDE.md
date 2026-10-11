@@ -60,6 +60,18 @@ required invariant, report and self-host step.
 - Exports: `src/pms/exports.py` turns any `trust_report_*` (named through the catalog, run
   under the caller's role) into CSV, Excel or PDF, and a PMC's ledger into a zip of CSV.
   Text a spreadsheet would run as a formula is never a formula.
+- The API (`src/pms/api`, `python -m pms.api`, FastAPI) runs every request in one transaction
+  as `trust_app`, committed before the answer is sent; a staff member's request names them to
+  the audit log. Every endpoint gets tests in `tests/api/` for success, a caller who isn't
+  allowed and bad input. A report's PMC always comes from the session (every report takes
+  `p_pmc_id` first; a test pins it). Changes must be JSON from the app's own origin, and the
+  session cookie is HttpOnly and SameSite=Strict.
+- Logins (`src/pms/accounts.py`, migration 0028): staff invite a staff member, owner or tenant
+  by email; the link carries a token kept only as its SHA-256, in the URL fragment. Accepting
+  sets an argon2id password (and for staff an authenticator, TOTP); a new invite resets a
+  password. `trust_login_secrets` is never audited. The first staff invite comes from
+  `python -m pms.admin`. Payments, email sending and the real screening and e-sign partners
+  are still out (`docs/adr/0002-portals-and-exports.md`).
 - Every table we add carries `pmc_id uuid`. It maps to Occupella's `companies.id` at merge time.
 - Table names: `pgledger_*` from upstream, `trust_*` for ours. Our functions and triggers are
   `trust_*` too. A report function is `trust_report_<name>`. `tests/test_schema_conventions.py`
@@ -92,7 +104,8 @@ required invariant, report and self-host step.
   refused.
 - `trust_ai_agent`, the role behind Occupella's API key, reads what `trust_app` reads and runs
   the reports. It holds no other grant: no write on any table, no function that writes. Grant
-  it a new table's SELECT only if `trust_app` has it, and never a write path.
+  it a new table's SELECT only if `trust_app` has it, and never a write path. It never reads
+  logins, invites, sessions or credentials (`AI_NEVER_READS` in `tests/test_privileges.py`).
 - A new table starts with `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it
   needs, never DELETE. `tests/test_privileges.py` pins the exact grants of every table and
   function: a new one fails until it is listed there, with who may use it. Postgres lets PUBLIC

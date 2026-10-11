@@ -360,6 +360,44 @@ tests = [
   "tests/test_exports.py::test_the_ledger_export_holds_every_account_transfer_and_entry_of_the_pmc",
 ]
 
+[[invariant]]
+id = "api-access-is-scoped"
+statement = "Only a live session reaches the API, and it acts for its own PMC only: the PMC of every report and of the ledger comes from the session, never the request. Only staff invite, disable logins and download; an owner or a tenant sees only who they are. A request that changes something must be JSON and from the app's own origin."
+tests = [
+  "tests/api/test_downloads.py::test_every_report_takes_the_pmc_first",
+  "tests/api/test_downloads.py::test_the_report_is_always_the_sessions_pmc",
+  "tests/api/test_downloads.py::test_only_staff_download",
+  "tests/api/test_invites.py::test_only_staff_invite",
+  "tests/api/test_invites.py::test_staff_can_invite_only_their_own_pmcs_people",
+  "tests/api/test_invites.py::test_staff_cant_disable_themselves_or_another_pmcs_login",
+  "tests/api/test_sign_in.py::test_no_session_and_a_made_up_cookie_are_refused",
+  "tests/api/test_sign_in.py::test_a_request_from_another_site_is_refused",
+  "tests/api/test_sign_in.py::test_a_change_must_be_sent_as_json",
+]
+
+[[invariant]]
+id = "credentials-out-of-reach"
+statement = "Passwords are kept only as argon2id hashes, and invite and session tokens only as SHA-256 hashes. No hash or secret reaches the audit log, and trust_ai_agent reads no login, invite, session or credential."
+tests = [
+  "tests/api/test_invites.py::test_staff_invite_an_owner_with_a_link_whose_token_is_kept_only_as_a_hash",
+  "tests/api/test_invites.py::test_an_owner_accepts_with_a_password_and_is_signed_in",
+  "tests/test_logins.py::test_no_password_hash_reaches_the_audit_log",
+  "tests/test_logins.py::test_the_ai_role_reads_no_login_or_credential",
+  "tests/test_privileges.py::test_ai_role_reads_only_what_the_app_reads",
+]
+
+[[invariant]]
+id = "sign-in-refusals"
+statement = "A refused sign-in reads the same whatever the reason. Ten failures in a row lock a login for 15 minutes, even against the right password. Staff need an authenticator code, and each code works once. Signing out, a new password or a disabled login ends every session it covers."
+tests = [
+  "tests/api/test_sign_in.py::test_every_refused_sign_in_reads_the_same",
+  "tests/api/test_sign_in.py::test_ten_failures_lock_the_login_even_for_the_right_password",
+  "tests/api/test_sign_in.py::test_staff_sign_in_with_a_code_and_each_code_works_once",
+  "tests/api/test_sign_in.py::test_signing_out_ends_the_session",
+  "tests/api/test_invites.py::test_a_new_invite_resets_the_password_and_ends_old_sessions",
+  "tests/api/test_invites.py::test_disabling_a_login_ends_its_sessions_and_sign_ins",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]
@@ -430,8 +468,12 @@ tests = [
 
 [[selfhost]]
 id = "app-health"
-statement = "The self-hosted app answers its health endpoint."
-pending = "https://github.com/brandonoscar/Occupella-PMS/issues/11"
+statement = "The self-hosted app answers its health endpoint, and says when the database is unavailable."
+tests = [
+  "tests/api/test_sign_in.py::test_health_answers_when_the_database_does",
+  "tests/api/test_sign_in.py::test_health_says_when_the_database_is_unavailable",
+  "tests/api/test_server.py::test_the_server_reads_its_settings_from_the_environment",
+]
 
 [[report]]
 id = "unpaid-bills"

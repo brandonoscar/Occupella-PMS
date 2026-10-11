@@ -17,7 +17,10 @@ fails on an image pulled from anywhere else.
 
 **ci.yml** (PRs and main): lint (ruff), format check (ruff), typecheck (mypy, strict on `tools/`,
 `selfhost/`, `scripts/` and the app in `src/`), shellcheck on `scripts/*.sh`, the synthetic-data scan, the
-standing-rule checks, and every example test against a fresh database.
+standing-rule checks, and every example test against a fresh database. That includes the API
+tests in `tests/api/`, which drive the app through FastAPI's test client: every endpoint for
+success, for a caller who isn't allowed (no session, the wrong kind of login, another PMC) and
+for bad input.
 
 The synthetic-data scan (`tools/check_synthetic_data.py`) reads every tracked file for values
 shaped like real records: routing numbers that pass the ABA checksum with a real Fed prefix,
@@ -216,9 +219,10 @@ Supabase. It applies every migration, then runs the smoke check:
 - runs one owner statement for that month and checks it against the owner's ledgers;
 - exports that statement as a PDF and a spreadsheet, and the whole ledger as a zip that must
   hold every transfer;
-- checks database health and every ledger invariant.
+- checks database health and every ledger invariant;
+- starts the API (`python -m pms.api`) and asks its health endpoint.
 
-An app health endpoint isn't built yet (issue #11). This proves
+This proves
 a PMC could run its books on its own Postgres. Run it with `docker compose build && docker
 compose up -d --wait db && docker compose run --rm migrate && docker compose run --rm smoke`.
 

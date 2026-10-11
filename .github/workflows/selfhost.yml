@@ -2,7 +2,7 @@ name: selfhost
 
 # The self-hosted build on plain Postgres 16, no Supabase-only features: build the image, apply
 # every migration, seed a synthetic 50-door PMC, post one month of rent, export a statement and
-# the ledger, check health. Runs nightly, by hand, and on PRs that touch the Dockerfile, compose
+# the ledger, check health, then start the API and ask its health endpoint. Runs nightly, by hand, and on PRs that touch the Dockerfile, compose
 # file, requirements, migrations or the app code in src/ (db.yml calls it after its own job, so
 # PR CI stays within 8 jobs at a time).
 on:
@@ -31,6 +31,11 @@ jobs:
         run: docker compose run --rm migrate
       - name: Seed 50 doors, post a month of rent, export, check health
         run: docker compose run --rm smoke
+      - name: Start the API and ask its health endpoint
+        run: |
+          docker compose up -d --wait app
+          docker compose exec -T app python -c \
+            "import json, urllib.request as u; print(json.load(u.urlopen('http://127.0.0.1:8000/health')))"
       - name: Logs
         if: failure()
         run: docker compose logs

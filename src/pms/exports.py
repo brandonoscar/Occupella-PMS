@@ -56,6 +56,10 @@ class ExportError(ValueError):
     """The export was refused before anything ran: not a report, or the wrong arguments."""
 
 
+class UnknownReport(ExportError):
+    """No report by that name: not a trust_report_* function, or none that exists."""
+
+
 @dataclass(frozen=True)
 class Table:
     title: str
@@ -66,7 +70,7 @@ class Table:
 def run_report(conn: psycopg.Connection[Any], report: str, args: Sequence[Any]) -> Table:
     """Run one report with its arguments and keep its rows as Postgres returned them."""
     if not REPORT_NAME.fullmatch(report):
-        raise ExportError(f"{report!r} is not a report: reports are named trust_report_<name>")
+        raise UnknownReport(f"{report!r} is not a report: reports are named trust_report_<name>")
     found = conn.execute(
         "SELECT array(SELECT format_type(a.type, NULL)"
         " FROM unnest(p.proargtypes::oid[]) WITH ORDINALITY AS a (type, n) ORDER BY a.n)"
@@ -75,7 +79,7 @@ def run_report(conn: psycopg.Connection[Any], report: str, args: Sequence[Any]) 
         (report,),
     ).fetchall()
     if len(found) != 1:
-        raise ExportError(f"no report named {report}")
+        raise UnknownReport(f"no report named {report}")
     types: list[str] = found[0][0]
     if len(args) != len(types):
         raise ExportError(

@@ -87,6 +87,7 @@ equivalent = [
   "20261010000025_payment_holds.sql: delete `REVOKE ALL ON trust_payment_holds, trust_payment_hold_releas`",
   "20261010000026_owner_contributions.sql: delete `REVOKE ALL ON trust_owner_contributions FROM PUBLIC;`",
   "20261010000027_recurring_bills_and_vendor_payments.sql: delete `REVOKE ALL ON trust_recurring_bills, trust_recurring_bill_en`",
+  "20261011000028_logins.sql: delete `REVOKE ALL ON trust_logins, trust_invites, trust_sessions, t`",
   # trust_check_bank_tie_out sums one trust bank account. With `<>` in the join or the filter,
   # it sums (1 or n) x every balance in the database, minus this bank's: double entry keeps
   # every balance in the database summing to zero, so the result is zero exactly when the

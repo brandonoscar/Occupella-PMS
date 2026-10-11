@@ -19,6 +19,8 @@ allowed = [
   "LGPL-3.0-only",
   "LGPL-3.0-or-later",
   "MIT",
+  # cffi (argon2-cffi needs it): MIT without the attribution clause.
+  "MIT-0",
   # Pillow (fpdf2 needs it for PDFs): the historical permission notice, MIT-like (OSI approved).
   "MIT-CMU",
   "MPL-2.0",

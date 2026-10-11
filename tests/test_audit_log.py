@@ -27,9 +27,11 @@ JAN = datetime(2026, 1, 1, tzinfo=UTC)
 FEB = datetime(2026, 2, 1, tzinfo=UTC)
 # Not audited, each for a reason: the log itself; idempotency keys, written only with the
 # transfers they record (which are); a balance and two entries change with every transfer, and
-# the transfer row says it all.
+# the transfer row says it all; password hashes and authenticator secrets must never be copied
+# into a log (the login, its invites and sessions are audited).
 NOT_AUDITED = {
     "trust_audit_log",
+    "trust_login_secrets",
     "trust_idempotency_keys",
     "pgledger_accounts",
     "pgledger_entries",

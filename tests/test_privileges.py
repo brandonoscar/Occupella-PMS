@@ -6,6 +6,7 @@ pins them down completely: any grant added, dropped or widened by a migration fa
 
 trust_ai_agent, the role behind the API key Occupella will hold, reads what trust_app reads and
 runs the reports: it can't write a row or call a function that writes (the AI never moves money).
+The one exception is AI_NEVER_READS: who can sign in, sessions and credentials.
 
 Every table, view and function in the schema is pinned, not just the ones that exist today:
 test_every_relation_and_function_is_pinned fails on a new one until it is listed here, so no
@@ -59,8 +60,31 @@ TABLES = {
     "trust_owner_contributions": {"SELECT"},  # written only by trust_record_owner_contribution
     "trust_recurring_bills": {"SELECT", "INSERT"},
     "trust_recurring_bill_ends": {"SELECT", "INSERT"},
+    # Logins (the API writes them; UPDATE only on the columns in COLUMN_UPDATES).
+    "trust_logins": {"SELECT", "INSERT"},
+    "trust_invites": {"SELECT", "INSERT"},
+    "trust_sessions": {"SELECT", "INSERT"},
+    "trust_login_secrets": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
+# Tables trust_app updates column by column, and the only columns it may update.
+COLUMN_UPDATES = {
+    "trust_logins": {"disabled_at"},
+    "trust_invites": {"accepted_at"},
+    "trust_sessions": {"ended_at"},
+    "trust_login_secrets": {
+        "password_hash",
+        "totp_secret",
+        "totp_confirmed_at",
+        "totp_last_step",
+        "failed_sign_ins",
+        "locked_until",
+        "updated_at",
+    },
+}
+# trust_app reads these, and trust_ai_agent never does: who can sign in, their sessions and
+# their credentials are no business of the role behind Occupella's key.
+AI_NEVER_READS = {"trust_logins", "trust_invites", "trust_sessions", "trust_login_secrets"}
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
 RENAMEABLE = [
     "trust_pmcs",
@@ -236,22 +260,42 @@ def test_app_role_table_privileges_are_exact(conn, table):
     assert granted(conn, "trust_app", table) == TABLES[table]
 
 
-@pytest.mark.parametrize("table", RENAMEABLE)
-def test_app_role_may_update_only_display_names(conn, table):
+def updatable_columns(conn, table):
     columns = [
         row[0]
         for row in conn.execute(
             "SELECT column_name FROM information_schema.columns WHERE table_name = %s", (table,)
         )
     ]
-    updatable = {
+    return {
         column
         for column in columns
         if conn.execute(
             "SELECT has_column_privilege('trust_app', %s, %s, 'UPDATE')", (table, column)
         ).fetchone()[0]
     }
-    assert updatable == {"display_name"}
+
+
+@pytest.mark.parametrize("table", RENAMEABLE)
+def test_app_role_may_update_only_display_names(conn, table):
+    assert updatable_columns(conn, table) == {"display_name"}
+
+
+@pytest.mark.parametrize("table", COLUMN_UPDATES)
+def test_app_role_may_update_only_these_columns(conn, table):
+    assert updatable_columns(conn, table) == COLUMN_UPDATES[table]
+
+
+def test_no_other_table_has_a_column_the_app_may_update(conn):
+    tables = {
+        row[0]
+        for row in conn.execute(
+            "SELECT DISTINCT c.relname FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid,"
+            " aclexplode(a.attacl) x WHERE c.relnamespace = 'public'::regnamespace"
+            " AND x.grantee = 'trust_app'::regrole AND x.privilege_type = 'UPDATE'"
+        )
+    }
+    assert tables == set(RENAMEABLE) | set(COLUMN_UPDATES)
 
 
 def test_every_relation_and_function_is_pinned(conn):
@@ -309,7 +353,8 @@ def test_no_role_but_the_owner_may_delete_or_truncate(conn):
 
 @pytest.mark.parametrize("table", TABLES)
 def test_ai_role_reads_only_what_the_app_reads(conn, table):
-    assert granted(conn, "trust_ai_agent", table) == TABLES[table] & {"SELECT"}
+    expected = set() if table in AI_NEVER_READS else TABLES[table] & {"SELECT"}
+    assert granted(conn, "trust_ai_agent", table) == expected
 
 
 def test_ai_role_holds_no_column_grant(conn):
