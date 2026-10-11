@@ -145,3 +145,8 @@ def test_the_command_line_says_why_it_refused(conn, database_url, monkeypatch, c
     assert conn.execute(
         "SELECT count(*) FROM trust_logins WHERE staff_id = %s", (staff_id,)
     ).fetchone() == (0,)
+
+
+def test_a_login_is_only_for_staff_owners_and_tenants(app_conn, pmc):
+    with pytest.raises(accounts.Refused, match="a login is for staff, owner, tenant, not 'vendor'"):
+        accounts.create_invite(app_conn, pmc.pmc_id, "vendor", pmc.vendor_id, "v@example.com", None)
