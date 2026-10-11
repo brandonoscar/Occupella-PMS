@@ -283,6 +283,11 @@ def test_without_a_partner_there_is_no_signing(conn, app_conn, database_url, pmc
             422,
             "the document is a PDF",
         ),
+        (
+            {"document_base64": base64.b64encode(LEASE_PDF + b"x" * 5_000_000).decode()},
+            422,
+            "the document is at most 5 MB",
+        ),
         ({"ends_on": "2026-12-31"}, 422, "a lease ends on or after the day it starts"),
         ({"monthly_rent": "0"}, 422, None),
         ({"document_title": ""}, 422, None),
@@ -448,6 +453,64 @@ def test_staff_download_the_lease_they_offered(client, staff, place):
 
     assert answer.content == LEASE_PDF
     assert answer.headers["content-type"] == "application/pdf"
+
+
+def test_an_application_with_no_applicants_needs_signers_named(client, conn, staff, place):
+    pmc_id = place.pmc.pmc_id
+    staff_id = add_staff(conn, pmc_id, "Deciding staff")
+    link = open_application_link(conn, pmc_id, place.unit, staff_id)
+    nobody = submit_application(conn, pmc_id, link, applicants=())
+    record_decision(conn, pmc_id, nobody, staff_id, "approved")
+
+    answer = client.post(f"/api/leasing/applications/{nobody}/offer", json=terms())
+
+    assert (answer.status_code, answer.json()["detail"]) == (422, "name who signs")
+
+
+def test_an_offer_never_sent_has_no_links(client, other_client, conn, app_conn, staff, place):
+    pmc_id = place.pmc.pmc_id
+    tenant = join_as(other_client, app_conn, pmc_id, "tenant", place.tenant)
+    staff_id = add_staff(conn, pmc_id, "Offering staff")
+    unsent = offer_lease(
+        conn,
+        pmc_id,
+        place.leased_unit,
+        staff_id,
+        JUN_30,
+        renews_lease_id=place.lease,
+        signers=(("Tenant 1", tenant.email),),
+    )
+
+    links = client.get(f"/api/leasing/offers/{unsent}/links")
+    signing = other_client.post(f"/api/tenant/renewals/{unsent}/signing-link", json={})
+
+    for answer in (links, signing):
+        assert (answer.status_code, answer.json()["detail"]) == (
+            409,
+            "this offer was never sent for signing",
+        )
+
+
+def test_a_renewal_that_is_a_lease_already_gives_no_signing_link(
+    client, other_client, app_conn, staff, place
+):
+    tenant = join_as(other_client, app_conn, place.pmc.pmc_id, "tenant", place.tenant)
+    renewal = client.post(
+        f"/api/leasing/leases/{place.lease}/renewal",
+        json=terms(
+            starts_on="2027-07-01",
+            ends_on=None,
+            signers=[{"name": "Tenant 1", "email": tenant.email}],
+        ),
+    ).json()
+    sign(other_client, renewal["links"][0], "Tenant 1")
+    client.post(f"/api/leasing/offers/{renewal['offer']['id']}/complete", json={})
+
+    answer = other_client.post(
+        f"/api/tenant/renewals/{renewal['offer']['id']}/signing-link", json={}
+    )
+
+    assert (answer.status_code, answer.json()["detail"]) == (409, "this renewal is a lease already")
 
 
 @pytest.mark.parametrize(
