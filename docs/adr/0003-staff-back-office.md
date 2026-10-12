@@ -107,8 +107,8 @@ migration 0032):
   a line the books lack (a bank fee, interest) is recorded in the books and matched first. The
   approval records the bank balance the statements give and closes the account through the
   day, as `trust_approve_reconciliation` always has; the three-way report shows the period.
-- For now one staff member both prepares and approves a period: who may approve is item 4
-  (staff roles).
+- One staff member prepares a period and another, who holds the approve role, approves it
+  (staff roles, below).
 - A cutover's checks and deposits the bank had not cleared are carried over by the switching
   tool (below), so a migrated account reconciles from its first period.
 
@@ -135,3 +135,38 @@ A PMC moving from another system uses `/switching` (`src/pms/api/switching.py`, 
   balances less the items (`trust_match_cutover_opening`); each item then clears when a later
   bank line does, and until then it is outstanding in the reconciliation. So the account's first
   periods approve like any other.
+
+## Staff roles, as built
+
+Who may do what (`/staff`, `src/pms/api/staff.py`, migration 0034). Each staff member holds any
+of three roles:
+
+- **admin** changes roles, adds staff members, and invites or disables a staff login. A new
+  invite sets a password, so an admin is the only one who can send one to staff: otherwise anyone
+  could take over an approver's login.
+- **approve** approves a month-end period and signs off a cutover's tie-out.
+- **disburse** pays out money: records that a bill was paid and pays an owner draw.
+
+Everything else (entering bills, setting them aside, rent work, matching, preparing a period) is
+any staff member's.
+
+How it holds:
+
+- The database keeps the rules for whoever the app names (`trust.staff_id`, set on every staff
+  request): a payment of a bill, an owner draw or an approved reconciliation is refused unless
+  that staff member holds the role, and the refusal is answered 403. A write that names nobody,
+  as the server's command line does, is not held to them, as the audit log records it with no
+  staff member.
+- Roles are append-only grants and revocations (`trust_staff_roles`): only an admin changes one,
+  a change has to change something, and a PMC keeps one admin. The trigger records who made the
+  change and when; the audit log has it too.
+- Month-end is prepared by one staff member (`trust_prepare_bank_reconciliation` records the
+  bank balance and book cash through a day once the books lack no line) and approved by another
+  who holds approve (`trust_approve_bank_reconciliation` takes the preparation). The approval
+  stands on the latest preparation, and only while its figures still stand: a posting in the
+  open period since then means preparing it again. `trust_app` no longer calls
+  `trust_approve_reconciliation` itself.
+- A PMC's first admin is made on the server: `python -m pms.admin make-admin <pmc> <staff>`,
+  which works only while the PMC has none. On upgrade every existing staff member holds every
+  role, as each could do everything before; an admin then takes away what they shouldn't hold.
+

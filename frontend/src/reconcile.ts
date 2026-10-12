@@ -1,4 +1,5 @@
 // Staff's month-end as the API sends it (src/pms/api/reconcile.py), and how it reads.
+import type { Me } from "./api";
 import { day, money } from "./money";
 
 export type StatementRow = {
@@ -21,6 +22,16 @@ export type Approved = {
   approved_by: string;
   approved_at: string;
 };
+// A period one staff member prepared and another has yet to approve.
+export type Prepared = {
+  id: string;
+  through: string;
+  bank_balance: string;
+  book_cash: string;
+  prepared_by: string;
+  preparer_id: string;
+  prepared_at: string;
+};
 export type BankBooks = {
   id: string;
   name: string;
@@ -29,6 +40,7 @@ export type BankBooks = {
   next_start: string | null;
   statements: StatementRow[];
   reconciliations: Approved[];
+  prepared: Prepared | null;
 };
 export type ReportRow = { line: number; item: string; detail: string | null; amount: string | null };
 export type OpenLine = {
@@ -128,4 +140,10 @@ export function lastDayOf(periodEnd: string): string {
 export function itemLabel(item: OpenItem): string {
   const ref = item.reference ? ` (${item.reference})` : "";
   return `${item.issued_on} ${item.description}${ref}, from before the cutover: ${money(item.amount)}`;
+}
+
+// Who may approve a prepared period: anyone but its preparer, holding the approve role.
+export function approver(me: Me, prepared: Prepared): "preparer" | "may" | "may not" {
+  if (me.person_id === prepared.preparer_id) return "preparer";
+  return me.roles?.includes("approve") ? "may" : "may not";
 }

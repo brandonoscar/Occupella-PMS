@@ -9,6 +9,7 @@ import { Card, Shell } from "../components/Shell";
 import { money } from "../money";
 import type { BankBooks, OpenItem, OpenLine, OpenTransfer, Worksheet } from "../reconcile";
 import {
+  approver,
   difference,
   figures,
   formatOf,
@@ -23,8 +24,9 @@ import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 
 // Staff's month-end: import a trust bank account's statements, match their lines to the
-// transfers in the books, and approve the period once the books lack no line. The PMS compares
-// what the bank says with the books; it moves no money.
+// transfers in the books, and once the books lack no line one staff member prepares the period
+// and another, who may approve, approves it. The PMS compares what the bank says with the
+// books; it moves no money.
 export function ReconcilePage({ me }: { me: Me }) {
   const [banks, setBanks] = useState<BankBooks[] | null>(null);
   const [chosen, setChosen] = useState("");
@@ -74,8 +76,8 @@ export function ReconcilePage({ me }: { me: Me }) {
           {sheet.opening && !sheet.opening.matched && (
             <OpeningCard bank={bank} sheet={sheet} refresh={refresh} />
           )}
-          <WorksheetCard bank={bank} sheet={sheet} through={through} setThrough={setThrough}
-            refresh={refresh} />
+          <WorksheetCard me={me} bank={bank} sheet={sheet} through={through}
+            setThrough={setThrough} refresh={refresh} />
           <MatchCard bank={bank} sheet={sheet} refresh={refresh} />
           <ApprovedCard bank={bank} />
         </>
@@ -163,16 +165,24 @@ function StatementsCard({ bank, refresh }: BankProps) {
 }
 
 function WorksheetCard({
+  me,
   bank,
   sheet,
   through,
   setThrough,
   refresh,
-}: BankProps & { sheet: Worksheet; through: string; setThrough: (day: string) => void }) {
+}: BankProps & {
+  me: Me;
+  sheet: Worksheet;
+  through: string;
+  setThrough: (day: string) => void;
+}) {
   const { said, error, record } = useRecord(refresh);
   const shown = figures(sheet.rows);
   const gap = difference(sheet.rows);
   const day = through || sheet.through || "";
+  const prepared = bank.prepared;
+  const who = prepared && approver(me, prepared);
   return (
     <Card title="Reconciliation">
       {sheet.through === null ? (
@@ -200,15 +210,41 @@ function WorksheetCard({
               ))}
             </ul>
           )}
+          {prepared && (
+            <div className="mt-4 flex flex-wrap items-center gap-3" aria-label="Prepared">
+              <span className="text-sm">
+                Prepared through {prepared.through} by {prepared.prepared_by}: bank{" "}
+                {money(prepared.bank_balance)}, books {money(prepared.book_cash)}.
+              </span>
+              {who === "may" ? (
+                <Button
+                  onClick={() =>
+                    record<{ id: string }>(`/api/reconcile/${bank.id}/approve`,
+                      { preparation_id: prepared.id },
+                      () => `Approved through ${prepared.through}; the account is closed through it.`)
+                  }
+                >
+                  Approve through {prepared.through}
+                </Button>
+              ) : (
+                <span className="text-sm text-ink-subtle">
+                  {who === "preparer"
+                    ? "Another staff member who may approve approves it."
+                    : "A staff member who may approve approves it."}
+                </span>
+              )}
+            </div>
+          )}
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <Button
+              variant={prepared ? "secondary" : "primary"}
               disabled={gap !== "0.00"}
               onClick={() =>
-                record<{ id: string }>(`/api/reconcile/${bank.id}/approve`, { through: day },
-                  () => `Approved through ${day}; the account is closed through it.`)
+                record<{ id: string }>(`/api/reconcile/${bank.id}/prepare`, { through: day },
+                  () => `Prepared through ${day}; another staff member who may approve approves it.`)
               }
             >
-              Approve through {day}
+              Prepare through {day}
             </Button>
             {gap !== "0.00" && (
               <span className="text-sm text-ink-subtle">

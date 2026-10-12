@@ -30,6 +30,13 @@ INSERT INTO trust_vendors (id, pmc_id, display_name) VALUES
 INSERT INTO trust_staff (id, pmc_id, display_name) VALUES
 ('00000000-0000-4000-8000-000000000061', '00000000-0000-4000-8000-000000000001', 'Staff 1');
 
+-- Staff 1 is the PMC's first admin, and may approve: signing off the tie-out takes that.
+INSERT INTO trust_staff_roles (pmc_id, staff_id, role, granted) VALUES
+('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000061', 'admin', true);
+SELECT set_config('trust.staff_id', '00000000-0000-4000-8000-000000000061', true);
+INSERT INTO trust_staff_roles (pmc_id, staff_id, role, granted) VALUES
+('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000061', 'approve', true);
+
 SELECT trust_open_ledger_account(
     '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000011',
     'bank_cash', NULL, NULL, NULL

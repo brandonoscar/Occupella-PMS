@@ -274,9 +274,13 @@ def test_approval_needs_a_period_and_both_names(conn, change, constraint):
     assert closed_through(conn, pmc.operating_bank_id) is None
 
 
-def test_the_app_approves_through_the_function_and_cannot_reopen_a_period(conn, app_conn):
+def test_the_app_approves_only_through_month_end_and_cannot_reopen_a_period(conn, app_conn):
+    # The app approves a month-end preparation (trust_approve_bank_reconciliation), which another
+    # staff member made: tests/test_staff_roles.py.
     pmc = make_pmc(conn)
-    approve(app_conn, pmc.pmc_id, pmc.operating_bank_id, JAN, FEB)
+    approve(conn, pmc.pmc_id, pmc.operating_bank_id, JAN, FEB)
+    with pytest.raises(psycopg.errors.InsufficientPrivilege):
+        approve(app_conn, pmc.pmc_id, pmc.operating_bank_id, FEB, MAR)
 
     for query in [
         "UPDATE trust_bank_accounts SET closed_through = NULL WHERE id = %(bank)s",

@@ -1,10 +1,13 @@
 """Staff's month-end: import a trust bank account's statements (CSV or OFX), match their lines
-to the ledger transfers that moved its cash, and approve the period once the books lack no line.
+to the ledger transfers that moved its cash, and once the books lack no line, one staff member
+prepares the period and another approves it.
 
 Statements go in with plain inserts that the database keeps whole (migration 0032); matches go
-through trust_match_bank_lines and trust_unmatch_bank_lines, and approval through
-trust_approve_bank_reconciliation, which refuses while any line up to the day is missing from
-the books. The worksheet is trust_report_bank_reconciliation, the same report staff download.
+through trust_match_bank_lines and trust_unmatch_bank_lines. trust_prepare_bank_reconciliation
+records the figures through a day, refusing while any line up to it is missing from the books,
+and trust_approve_bank_reconciliation approves them for a staff member who holds the approve role
+and didn't prepare them, while they still stand (migration 0034). The worksheet is
+trust_report_bank_reconciliation, the same report staff download.
 
 Nothing here moves money: it records what the bank says and compares it with the books.
 """
@@ -83,6 +86,19 @@ class Approved(BaseModel):
     approved_at: datetime
 
 
+class Prepared(BaseModel):
+    """A period prepared and not approved yet: the account's latest preparation, if it is of a
+    day after the account's closing."""
+
+    id: UUID
+    through: date
+    bank_balance: str
+    book_cash: str
+    prepared_by: str
+    preparer_id: UUID
+    prepared_at: datetime
+
+
 class BankBooks(BaseModel):
     id: UUID
     name: str
@@ -93,6 +109,32 @@ class BankBooks(BaseModel):
     next_start: date | None
     statements: list[StatementOut]
     reconciliations: list[Approved]
+    prepared: Prepared | None
+
+
+def prepared(conn: psycopg.Connection[Any], bank: UUID) -> Prepared | None:
+    row = conn.execute(
+        "SELECT p.id, p.through, p.bank_balance, p.book_cash, s.display_name, p.prepared_by,"
+        " p.created_at FROM trust_reconciliation_preparations AS p"
+        " JOIN trust_staff AS s ON s.id = p.prepared_by"
+        " JOIN trust_bank_accounts AS b ON b.id = p.bank_account_id"
+        " WHERE p.bank_account_id = %s AND (b.closed_through IS NULL"
+        "   OR b.closed_through < (p.through + 1)::timestamp AT TIME ZONE 'UTC')"
+        " ORDER BY p.created_at DESC LIMIT 1",
+        (bank,),
+    ).fetchone()
+    if row is None:
+        return None
+    i, through, bank_balance, book_cash, name, preparer, at = row
+    return Prepared(
+        id=i,
+        through=through,
+        bank_balance=cents(bank_balance),
+        book_cash=cents(book_cash),
+        prepared_by=name,
+        preparer_id=preparer,
+        prepared_at=at,
+    )
 
 
 def next_start(conn: psycopg.Connection[Any], bank: UUID) -> date | None:
@@ -157,6 +199,7 @@ def books(session: Staff, conn: Conn) -> list[BankBooks]:
                         (bank,),
                     ).fetchall()
                 ],
+                prepared=prepared(conn, bank),
             )
         )
     return found
@@ -646,34 +689,63 @@ def auto_match(session: Staff, conn: Conn, bank_account_id: UUID) -> Counted:
     return Counted(matched=matched)
 
 
-# --- approving -------------------------------------------------------------------------------
+# --- preparing and approving --------------------------------------------------------------
 
 
-class Approval(BaseModel):
+class Preparation(BaseModel):
     through: date
 
 
-@router.post("/{bank_account_id}/approve", status_code=201)
-def approve(session: Staff, conn: Conn, bank_account_id: UUID, approval: Approval) -> Created:
-    """Approves the next period up to the end of a day, once the books lack no line of the
-    statements up to it; the account is then closed through that day."""
+@router.post("/{bank_account_id}/prepare", status_code=201)
+def prepare(session: Staff, conn: Conn, bank_account_id: UUID, preparation: Preparation) -> Created:
+    """Prepares the next period up to the end of a day, once the books lack no line of the
+    statements up to it: another staff member who may approve then approves it."""
     bank_of(conn, session.pmc_id, bank_account_id)
     start = next_start(conn, bank_account_id)
     if start is None:
         raise HTTPException(422, "import a statement first")
-    if approval.through < start:
+    if preparation.through < start:
         raise HTTPException(422, f"the next period starts on {start}")
-    if approval.through >= datetime.now(UTC).date():
-        raise HTTPException(422, "approve a period once its last day has ended")
-    name = one(conn, "SELECT display_name FROM trust_staff WHERE id = %s", (session.person_id,))
+    if preparation.through >= datetime.now(UTC).date():
+        raise HTTPException(422, "prepare a period once its last day has ended")
     try:
-        reconciliation = one(
+        made = one(
             conn,
-            "SELECT trust_approve_bank_reconciliation(%s, %s, %s, %s, %s)",
-            (session.pmc_id, bank_account_id, approval.through, name, name),
+            "SELECT trust_prepare_bank_reconciliation(%s, %s, %s)",
+            (session.pmc_id, bank_account_id, preparation.through),
         )
     except psycopg.errors.InvalidParameterValue as bad:  # no statement covers the day
         raise HTTPException(422, reason(bad)) from None
     except psycopg.errors.CheckViolation as refused:  # lines the books lack
+        raise HTTPException(409, reason(refused)) from None
+    return Created(id=made)
+
+
+class Approval(BaseModel):
+    preparation_id: UUID
+
+
+@router.post("/{bank_account_id}/approve", status_code=201)
+def approve(session: Staff, conn: Conn, bank_account_id: UUID, approval: Approval) -> Created:
+    """Approves the account's period as another staff member prepared it, if the figures still
+    stand; the account is then closed through its last day. Approving takes the approve role,
+    and nobody approves what they prepared (the database refuses both: 403)."""
+    bank_of(conn, session.pmc_id, bank_account_id)
+    if (
+        conn.execute(
+            "SELECT 1 FROM trust_reconciliation_preparations WHERE id = %s"
+            " AND bank_account_id = %s",
+            (approval.preparation_id, bank_account_id),
+        ).fetchone()
+        is None
+    ):
+        raise HTTPException(404, "no such preparation of this trust bank account")
+    try:
+        reconciliation = one(
+            conn,
+            "SELECT trust_approve_bank_reconciliation(%s, %s)",
+            (session.pmc_id, approval.preparation_id),
+        )
+    except psycopg.errors.CheckViolation as refused:  # prepared again, approved, changed
         raise HTTPException(409, reason(refused)) from None
     return Created(id=reconciliation)

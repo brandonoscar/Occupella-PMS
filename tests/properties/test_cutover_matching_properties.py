@@ -25,7 +25,6 @@ from decimal import Decimal
 import psycopg
 import pytest
 from helpers import (
-    add_staff,
     approve_bank,
     bank_reconciliation,
     carry_over,
@@ -36,6 +35,7 @@ from helpers import (
     open_with_balances,
     post,
     sign_off,
+    staff_named,
     unmatch_lines,
 )
 from hypothesis import assume, event
@@ -96,7 +96,8 @@ class CutoverMachine(RuleBasedStateMachine):
         self.conn = conn
         self.pmc = make_pmc(conn, owners=1)
         self.bank = self.pmc.operating_bank_id
-        self.staff = add_staff(conn, self.pmc.pmc_id)
+        # Signing off a cutover and approving take the approve role.
+        self.staff = staff_named(conn, self.pmc.pmc_id, "Staff 1", ("admin", "approve"))
         self.moved: list[Moved] = []
         self.items: list[Item] = []
         self.lines: list[Line] = []

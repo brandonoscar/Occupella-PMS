@@ -94,6 +94,10 @@ TABLES = {
     "trust_cutover_items": {"SELECT", "INSERT"},
     "trust_cutover_signoffs": {"SELECT", "INSERT"},
     "trust_bank_match_cutover_items": {"SELECT"},
+    # Staff roles: an admin changes them with inserts (the trigger refuses anyone else);
+    # month-end preparations are written only by trust_prepare_bank_reconciliation.
+    "trust_staff_roles": {"SELECT", "INSERT"},
+    "trust_reconciliation_preparations": {"SELECT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -150,9 +154,6 @@ FUNCTIONS = {
     "trust_open_ledger_account(uuid,uuid,text,uuid,uuid,uuid)": {"trust_app"},
     "trust_post_transfers(uuid,text,transfer_request[],timestamptz,jsonb)": {"trust_app"},
     "trust_open_vendor_account(uuid,uuid,uuid)": {"trust_app"},
-    "trust_approve_reconciliation(uuid,uuid,timestamptz,timestamptz,numeric,text,text)": {
-        "trust_app"
-    },
     "trust_open_lease(uuid,uuid,date,date,numeric,uuid[])": {"trust_app"},
     "trust_end_lease(uuid,uuid,date)": {"trust_app"},
     "trust_apply_payment(uuid,uuid,text,numeric)": {"trust_app"},
@@ -171,7 +172,15 @@ FUNCTIONS = {
     "trust_match_bank_lines(uuid,uuid,uuid[],text[],uuid[],uuid)": {"trust_app"},
     "trust_match_cutover_opening(uuid,uuid,uuid,uuid)": {"trust_app"},
     "trust_unmatch_bank_lines(uuid,uuid,uuid)": {"trust_app"},
-    "trust_approve_bank_reconciliation(uuid,uuid,date,text,text)": {"trust_app"},
+    "trust_prepare_bank_reconciliation(uuid,uuid,date)": {"trust_app"},
+    "trust_approve_bank_reconciliation(uuid,uuid)": {"trust_app"},
+    # The app approves only month-end preparations, which another staff member made: this one
+    # is the owner's, called by trust_approve_bank_reconciliation.
+    "trust_approve_reconciliation(uuid,uuid,timestamptz,timestamptz,numeric,text,text)": set(),
+    # Whether a staff member holds a role, and the refusal when they don't: the app's, as the
+    # role triggers run with its rights when it writes. They read and write nothing else.
+    "trust_staff_holds(uuid,uuid,text)": {"trust_app"},
+    "trust_require_role(uuid,uuid,text,text)": {"trust_app"},
     # Helpers the fee, draw and bill functions call as the owner: nobody else.
     "trust_lock_owner_account(uuid,text)": set(),
     "trust_agreement_on(text,date)": set(),
@@ -250,6 +259,10 @@ FUNCTIONS = {
     "trust_check_bank_statement_line()": {"PUBLIC"},
     "trust_check_cutover_entry()": {"PUBLIC"},
     "trust_check_bank_statement_total()": {"PUBLIC"},
+    "trust_check_staff_role()": {"PUBLIC"},
+    "trust_check_staff_invite()": {"PUBLIC"},
+    "trust_check_cutover_signer()": {"PUBLIC"},
+    "trust_check_staff_role_change()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.
@@ -274,7 +287,8 @@ SECURITY_DEFINER = {
     "trust_match_bank_lines(uuid,uuid,uuid[],text[],uuid[],uuid)",
     "trust_match_cutover_opening(uuid,uuid,uuid,uuid)",
     "trust_unmatch_bank_lines(uuid,uuid,uuid)",
-    "trust_approve_bank_reconciliation(uuid,uuid,date,text,text)",
+    "trust_prepare_bank_reconciliation(uuid,uuid,date)",
+    "trust_approve_bank_reconciliation(uuid,uuid)",
     "trust_audit()",  # writes the audit log, which no other role may write
     "trust_check_payment_hold()",  # locks the hold's lease, which the app can't
 }

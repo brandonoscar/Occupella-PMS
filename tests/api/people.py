@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
 
 import pyotp
-from helpers import add_staff
+from helpers import ROLES, add_staff, give_roles
 
 from pms import accounts
 
@@ -71,9 +71,11 @@ def totp_from(uri: str) -> pyotp.TOTP:
     return pyotp.TOTP(parse_qs(urlsplit(uri).query)["secret"][0])
 
 
-def join_as_staff(client, conn, app_conn, pmc, name="Staff 1") -> Person:
-    """A staff member who accepted an invite, enrolled an authenticator and is signed in."""
+def join_as_staff(client, conn, app_conn, pmc, name="Staff 1", roles=ROLES) -> Person:
+    """A staff member who accepted an invite, enrolled an authenticator and is signed in, holding
+    these roles (every one, unless a test says otherwise)."""
     staff_id = add_staff(conn, pmc.pmc_id, name)
+    give_roles(conn, pmc.pmc_id, staff_id, roles)
     email = f"staff.{staff_id.hex[:8]}@example.com"
     token = invite_token(app_conn, pmc.pmc_id, "staff", staff_id, email)
     enrolled = client.post("/api/invites/accept", json={"token": token, "password": PASSWORD})
