@@ -719,6 +719,83 @@ def acting_as(connection, staff_id) -> Iterator[None]:
         connection.execute("SELECT set_config('trust.staff_id', '', false)")
 
 
+def import_statement(
+    connection,
+    pmc_id,
+    bank_id,
+    staff_id,
+    first_day,
+    last_day,
+    lines,
+    opening="0.00",
+    source="csv",
+    file_sha256=None,
+) -> tuple[UUID, list[UUID]]:
+    """Import a bank statement of `lines` ((posted_on, amount, description, reference) each),
+    whole, in one transaction: its id and its lines' ids, in order."""
+    total = sum((Decimal(line[1]) for line in lines), Decimal(opening))
+    with connection.transaction():
+        statement = _one(
+            connection,
+            "INSERT INTO trust_bank_statements (pmc_id, bank_account_id, first_day, last_day,"
+            " opening_balance, closing_balance, line_count, source, file_sha256, imported_by)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (
+                pmc_id,
+                bank_id,
+                first_day,
+                last_day,
+                Decimal(opening),
+                total,
+                len(lines),
+                source,
+                file_sha256 or uuid.uuid4().hex * 2,
+                staff_id,
+            ),
+        )
+        ids = [
+            _one(
+                connection,
+                "INSERT INTO trust_bank_statement_lines (pmc_id, statement_id, line_no,"
+                " posted_on, amount, description, bank_reference)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (pmc_id, statement, n, posted_on, Decimal(amount), description, reference),
+            )
+            for n, (posted_on, amount, description, reference) in enumerate(lines, start=1)
+        ]
+    return statement, ids
+
+
+def match_lines(connection, pmc_id, bank_id, line_ids, transfer_ids, staff_id) -> UUID:
+    return _one(
+        connection,
+        "SELECT trust_match_bank_lines(%s, %s, %s::uuid[], %s::text[], %s)",
+        (pmc_id, bank_id, list(line_ids), list(transfer_ids), staff_id),
+    )
+
+
+def unmatch_lines(connection, pmc_id, match_id, staff_id) -> None:
+    connection.execute("SELECT trust_unmatch_bank_lines(%s, %s, %s)", (pmc_id, match_id, staff_id))
+
+
+def bank_reconciliation(connection, pmc_id, bank_id, through) -> list[tuple]:
+    """trust_report_bank_reconciliation's rows: (line, item, detail, amount)."""
+    return connection.execute(
+        "SELECT line, item, detail, amount FROM trust_report_bank_reconciliation(%s, %s, %s)",
+        (pmc_id, bank_id, through),
+    ).fetchall()
+
+
+def approve_bank(
+    connection, pmc_id, bank_id, through, prepared_by="Preparer 1", approved_by="Approver 1"
+) -> UUID:
+    return _one(
+        connection,
+        "SELECT trust_approve_bank_reconciliation(%s, %s, %s, %s, %s)",
+        (pmc_id, bank_id, through, prepared_by, approved_by),
+    )
+
+
 def balance(connection, account) -> Decimal:
     return _one(connection, "SELECT balance FROM pgledger_accounts WHERE id = %s", (account,))
 

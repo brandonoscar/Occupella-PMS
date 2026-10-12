@@ -82,3 +82,34 @@ Staff pay vendors' bills at `/bills` and handle owners' money at `/owners`
   property (`trust_post_leasing_fee`).
 - Records are dated on or before today; a closed period refuses them. The PMS records what the
   bank did; it sends no money.
+
+## Month-end, as built
+
+Staff reconcile each trust bank account at `/reconcile` (`src/pms/api/reconcile.py`,
+migration 0032):
+
+- A statement is imported from the bank's CSV or OFX file (`src/pms/statements.py` reads both;
+  OFX by plain text matching, never an XML parser). Statements of an account follow one
+  another, day after day and balance after balance, each with all its lines; a file is
+  imported once. The record starts from 0: a first statement's opening balance comes in as a
+  line of its own, "Balance brought forward", so every dollar the bank holds is on a line.
+- Lines are matched to the ledger transfers that moved the account's cash by the same total:
+  one line to one transfer, a deposit to the several payments in it, or a payment and its bounce
+  the bank never saw with no line at all. "Match the sure ones" pairs a line with the one open
+  transfer of its amount within a week, when neither has another such partner. A match can be
+  undone. A line or a transfer is in at most one match that stands, and no match or undo
+  changes a period already approved.
+- The worksheet is `trust_report_bank_reconciliation` for the end of a day: the bank balance
+  the statements give, deposits in transit and outstanding withdrawals (transfers no cleared
+  match holds), the adjusted bank balance, book cash, and the difference, listed as the bank
+  lines the books lack. A match clears only when everything in it happened by that day.
+- A period is approved (`trust_approve_bank_reconciliation`) only when that difference is 0:
+  a line the books lack (a bank fee, interest) is recorded in the books and matched first. The
+  approval records the bank balance the statements give and closes the account through the
+  day, as `trust_approve_reconciliation` always has; the three-way report shows the period.
+- For now one staff member both prepares and approves a period: who may approve is item 4
+  (staff roles).
+- Not handled yet: a cutover's checks from the old system that were still outstanding. Until
+  they clear, the "Balance brought forward" line can't be matched to the cutover's opening
+  balances, so such an account's first periods can't be approved here. The switching tool
+  (item 3) is to carry them.

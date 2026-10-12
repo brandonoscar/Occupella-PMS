@@ -83,6 +83,13 @@ TABLES = {
     "trust_signature_requests": {"SELECT", "INSERT"},
     "trust_signatures": {"SELECT", "INSERT"},
     "trust_lease_offer_completions": {"SELECT"},  # written only by trust_complete_lease_offer
+    # Bank statements: staff import them; matches are written only by their functions.
+    "trust_bank_statements": {"SELECT", "INSERT"},
+    "trust_bank_statement_lines": {"SELECT", "INSERT"},
+    "trust_bank_matches": {"SELECT"},
+    "trust_bank_match_lines": {"SELECT"},
+    "trust_bank_match_transfers": {"SELECT"},
+    "trust_bank_unmatches": {"SELECT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -157,12 +164,19 @@ FUNCTIONS = {
     "trust_record_owner_contribution(uuid,text,text,numeric,timestamptz,text)": {"trust_app"},
     "trust_complete_lease_offer(uuid,uuid,uuid)": {"trust_app"},
     "trust_enter_recurring_bills(uuid,date)": {"trust_app"},
+    "trust_match_bank_lines(uuid,uuid,uuid[],text[],uuid)": {"trust_app"},
+    "trust_unmatch_bank_lines(uuid,uuid,uuid)": {"trust_app"},
+    "trust_approve_bank_reconciliation(uuid,uuid,date,text,text)": {"trust_app"},
     # Helpers the fee, draw and bill functions call as the owner: nobody else.
     "trust_lock_owner_account(uuid,text)": set(),
     "trust_agreement_on(text,date)": set(),
     "trust_post_fee(trust_ledger_accounts,numeric,timestamptz,text)": set(),
     "trust_lock_bill(uuid,uuid)": set(),
     "trust_unpaid_bills(text,date)": set(),
+    # Helpers the bank matching functions call as the owner: nobody else.
+    "trust_bank_cash_moved(uuid,text)": set(),
+    "trust_lock_bank_matches(uuid,uuid)": set(),
+    "trust_bank_match_closed(timestamptz,uuid[],text[])": set(),
     # Records every write as the owner: no role may call it, or write the log, on its own.
     "trust_audit()": set(),
     # Checks a payment hold as the owner, to take its lease's lock: no role calls it on its own.
@@ -184,6 +198,7 @@ FUNCTIONS = {
     "trust_report_general_ledger(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_audit_log(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_vendor_payments(uuid,integer)": {"trust_app", "trust_ai_agent"},
+    "trust_report_bank_reconciliation(uuid,uuid,date)": {"trust_app", "trust_ai_agent"},
     # pgledger's posting functions take no idempotency key, so a retried request could post
     # twice: only the owner calls them (trust_post_transfers does, as the owner).
     "pgledger_create_transfer(text,text,numeric,timestamptz,jsonb)": set(),
@@ -225,6 +240,9 @@ FUNCTIONS = {
     "trust_check_application_decision()": {"PUBLIC"},
     "trust_check_adverse_action()": {"PUBLIC"},
     "trust_check_lease_offer()": {"PUBLIC"},
+    "trust_check_bank_statement()": {"PUBLIC"},
+    "trust_check_bank_statement_line()": {"PUBLIC"},
+    "trust_check_bank_statement_total()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.
@@ -246,6 +264,9 @@ SECURITY_DEFINER = {
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)",
     "trust_record_owner_contribution(uuid,text,text,numeric,timestamptz,text)",
     "trust_complete_lease_offer(uuid,uuid,uuid)",
+    "trust_match_bank_lines(uuid,uuid,uuid[],text[],uuid)",
+    "trust_unmatch_bank_lines(uuid,uuid,uuid)",
+    "trust_approve_bank_reconciliation(uuid,uuid,date,text,text)",
     "trust_audit()",  # writes the audit log, which no other role may write
     "trust_check_payment_hold()",  # locks the hold's lease, which the app can't
 }

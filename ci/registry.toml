@@ -539,6 +539,19 @@ tests = [
   "tests/api/test_payables.py::test_a_bill_is_paid_only_once_set_aside_and_never_into_the_negative",
 ]
 
+[[invariant]]
+id = "bank-matches-balance-and-stand-alone"
+statement = "A trust bank account's statements follow one another from 0, each with all its lines. A statement line or a ledger transfer is in at most one match not undone, every such match comes to the same on both sides, and no match or undo changes a period already approved. A period is approved from its statements only when the books lack no line, at the bank balance they give."
+tests = [
+  "tests/properties/test_bank_matching_properties.py::test_bank_matching_invariants_hold_under_random_statements_matches_and_approvals",
+  "tests/test_bank_statements.py::test_statements_follow_one_another_from_zero",
+  "tests/test_bank_statements.py::test_a_statement_has_all_its_lines_and_they_come_to_its_closing",
+  "tests/test_bank_statements.py::test_a_line_or_transfer_is_in_one_match_until_it_is_undone",
+  "tests/test_bank_statements.py::test_a_match_comes_to_the_same_on_both_sides",
+  "tests/test_bank_statements.py::test_matches_never_change_a_period_already_approved",
+  "tests/test_bank_statements.py::test_a_period_whose_lines_the_books_lack_is_not_approved",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]
@@ -700,4 +713,13 @@ tests = [
   "tests/golden/test_golden.py::test_every_golden_case_matches",
   "tests/test_recurring_bills.py::test_each_vendor_shows_what_it_was_paid_in_the_year",
   "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
+]
+
+[[report]]
+id = "bank-reconciliation"
+statement = "Bank reconciliation of a trust bank account at the end of a day (UTC), from its imported statements: the bank balance, deposits in transit and outstanding withdrawals (transfers no cleared match holds), the adjusted bank balance, book cash, and the difference, listed line by line as the bank lines the books lack. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_bank_statements.py::test_a_days_end_shows_what_the_bank_had_not_cleared_and_the_lines_the_books_lack",
+  "tests/properties/test_bank_matching_properties.py::test_bank_matching_invariants_hold_under_random_statements_matches_and_approvals",
 ]
