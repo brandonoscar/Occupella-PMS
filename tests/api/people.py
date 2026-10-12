@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlsplit
 from uuid import UUID
 
 import pyotp
-from helpers import add_staff
+from helpers import ROLES, add_staff, give_roles
 
 from pms import accounts
 
@@ -42,6 +42,15 @@ def join_as_owner(client, app_conn, pmc, n=0) -> Person:
     return Person("owner", owner_id, email, login_of(app_conn, "owner", owner_id))
 
 
+def join_as(client, app_conn, pmc_id, kind, person_id) -> Person:
+    """An owner or tenant of the PMC, invited and signed in on `client`."""
+    email = f"{kind}.{person_id.hex[:8]}@example.com"
+    token = invite_token(app_conn, pmc_id, kind, person_id, email)
+    accepted = client.post("/api/invites/accept", json={"token": token, "password": PASSWORD})
+    assert accepted.status_code == 200, accepted.text
+    return Person(kind, person_id, email, login_of(app_conn, kind, person_id))
+
+
 def tenant_of(conn, pmc) -> UUID:
     return conn.execute(
         "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
@@ -62,9 +71,11 @@ def totp_from(uri: str) -> pyotp.TOTP:
     return pyotp.TOTP(parse_qs(urlsplit(uri).query)["secret"][0])
 
 
-def join_as_staff(client, conn, app_conn, pmc, name="Staff 1") -> Person:
-    """A staff member who accepted an invite, enrolled an authenticator and is signed in."""
+def join_as_staff(client, conn, app_conn, pmc, name="Staff 1", roles=ROLES) -> Person:
+    """A staff member who accepted an invite, enrolled an authenticator and is signed in, holding
+    these roles (every one, unless a test says otherwise)."""
     staff_id = add_staff(conn, pmc.pmc_id, name)
+    give_roles(conn, pmc.pmc_id, staff_id, roles)
     email = f"staff.{staff_id.hex[:8]}@example.com"
     token = invite_token(app_conn, pmc.pmc_id, "staff", staff_id, email)
     enrolled = client.post("/api/invites/accept", json={"token": token, "password": PASSWORD})

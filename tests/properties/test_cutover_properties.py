@@ -278,7 +278,12 @@ class CutoverMachine(RuleBasedStateMachine):
                 (self.pmc_id, bank.bank_id, period_start, period_end),
             )
 
-        if expected is not None and period_start != expected:
+        if role == "app":
+            # The app approves only a month-end preparation (trust_approve_bank_reconciliation),
+            # never the core function (tests/test_staff_roles.py).
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                send()
+        elif expected is not None and period_start != expected:
             with pytest.raises(psycopg.errors.InvalidParameterValue, match="next period"):
                 send()
         else:

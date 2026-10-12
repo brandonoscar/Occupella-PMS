@@ -65,8 +65,11 @@ jobs:
         run: dbmate --no-dump-schema up
       - name: Serve the portal and seed a synthetic PMC
         run: |
+          # The fake screening partner pulls no report: it answers from the application's numbers.
+          # The fake e-sign partner keeps its envelopes in this server's memory.
           PYTHONPATH=src PMS_STATIC_DIR=frontend/dist PMS_PORT=8123 \
             PMS_PUBLIC_URL=http://127.0.0.1:8123 PMS_COOKIE_SECURE=false \
+            PMS_SCREENING_PARTNER=fake PMS_ESIGN_PARTNER=fake \
             nohup python -m pms.api > "$RUNNER_TEMP/api.log" 2>&1 &
           for _ in $(seq 30); do curl -fsS http://127.0.0.1:8123/health && break; sleep 1; done
           PYTHONPATH=src python frontend/e2e/seed.py > frontend/e2e/.seed.json

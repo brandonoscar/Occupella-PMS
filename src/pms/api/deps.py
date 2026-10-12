@@ -8,8 +8,9 @@ from typing import Annotated, Any
 import psycopg
 from fastapi import Depends, HTTPException, Request, Response
 from psycopg_pool import ConnectionPool
+from pydantic import BaseModel
 
-from pms import accounts
+from pms import accounts, exports
 
 COOKIE = "pms_session"
 MEDIA = {
@@ -66,3 +67,19 @@ def download(data: bytes, name: str, ext: str) -> Response:
         media_type=MEDIA.get(ext, "application/zip"),
         headers={"Content-Disposition": disposition},
     )
+
+
+class Rows(BaseModel):
+    """A report as a portal page shows it. Values are text, so no float ever rounds a cent."""
+
+    title: str
+    columns: list[str]
+    rows: list[list[str | None]]
+
+    @classmethod
+    def of(cls, table: exports.Table) -> Rows:
+        return cls(
+            title=table.title,
+            columns=list(table.columns),
+            rows=[[None if v is None else exports.text(v) for v in row] for row in table.rows],
+        )

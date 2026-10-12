@@ -1,14 +1,26 @@
 import type { Me } from "../api";
 import { api } from "../api";
-import { navigate } from "../router";
+import { navigate, usePath } from "../router";
 import { Button } from "./Button";
 
 export function Wordmark() {
   return <span className="font-display text-lg font-medium lowercase text-ink">occupella</span>;
 }
 
-// The frame around a signed-in page: who and which PMC, and a way to sign out.
-export function Shell({ me, children }: { me: Me; children: React.ReactNode }) {
+export type NavItem = { href: string; label: string };
+
+// The frame around a signed-in page: who and which PMC, the page's sections if it has more than
+// one, and a way to sign out.
+export function Shell({
+  me,
+  nav = [],
+  children,
+}: {
+  me: Me;
+  nav?: NavItem[];
+  children: React.ReactNode;
+}) {
+  const path = usePath();
   async function signOut() {
     await api.post("/api/sign-out");
     navigate(`/sign-in?pmc=${me.pmc_id}`);
@@ -19,6 +31,24 @@ export function Shell({ me, children }: { me: Me; children: React.ReactNode }) {
         <div className="flex items-baseline gap-3">
           <Wordmark />
           <span className="text-sm text-ink-subtle">{me.pmc_name}</span>
+          {nav.length > 0 && (
+            <nav aria-label="Sections" className="ml-4 flex gap-4 text-sm">
+              {nav.map((item) => (
+                <a
+                  key={item.href}
+                  href={item.href}
+                  aria-current={path === item.href ? "page" : undefined}
+                  className={path === item.href ? "text-ink" : "text-ink-muted hover:text-ink"}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    navigate(item.href);
+                  }}
+                >
+                  {item.label}
+                </a>
+              ))}
+            </nav>
+          )}
         </div>
         <div className="flex items-center gap-4 text-sm text-ink-muted">
           <span>{me.name}</span>

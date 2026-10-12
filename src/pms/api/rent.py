@@ -1,0 +1,782 @@
+"""Staff's rent work: charge the month's rent and late fees, add a fee or a credit, record a
+tenant's payment or security deposit, use prepaid rent, and undo a payment that bounced.
+
+What a lease owes (its rent and fees, less its credits, less what payments matched, plus what
+bounced back) stays out of the trust ledger. Money is recorded as it reached the trust bank
+account, and only through the database's write paths: trust_post_transfers (with a key built
+from the request's id, so a retry posts nothing twice), trust_apply_payment and
+trust_reverse_payment. A payment pays the owner's account for what the lease owes, matched to
+its open charges oldest first; anything more is held for the tenant as prepaid rent.
+
+Nothing here sends money anywhere: the PMS records what the bank already did.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import UTC, date, datetime, time
+from decimal import Decimal
+from typing import Annotated, Any, Literal
+from uuid import UUID
+
+import psycopg
+from fastapi import APIRouter, HTTPException, Query
+from psycopg import sql
+from psycopg.types.json import Jsonb
+from pydantic import BaseModel, Field, StringConstraints
+
+from pms import exports
+from pms.api.deps import Conn, Staff
+
+router = APIRouter(prefix="/api/rent")
+
+Amount = Annotated[Decimal, Field(gt=0, le=Decimal("1000000"), decimal_places=2)]
+Memo = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+ZERO = Decimal(0)
+CENT = Decimal("0.01")
+
+
+def cents(value: Decimal) -> str:
+    """Money as text, always to the cent ("0.00", never "0")."""
+    return exports.text(Decimal(value).quantize(CENT))
+
+
+def today() -> date:
+    return datetime.now(UTC).date()
+
+
+def at(day: date) -> datetime:
+    """A day's postings are dated at its start, UTC, as every report reads them."""
+    return datetime.combine(day, time(0), UTC)
+
+
+def reason(refused: psycopg.Error) -> str:
+    return str(refused).splitlines()[0].removeprefix("trust: ")
+
+
+# --- reading a lease ------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class LeaseRow:
+    id: UUID
+    property_id: UUID
+    tenants: list[UUID]
+
+
+def lease_of(conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID) -> LeaseRow:
+    row = conn.execute(
+        "SELECT u.property_id, array(SELECT lt.tenant_id FROM trust_lease_tenants AS lt"
+        "  JOIN trust_tenants AS t ON t.id = lt.tenant_id WHERE lt.lease_id = l.id"
+        '  ORDER BY t.display_name COLLATE "C", t.id)'
+        " FROM trust_leases AS l JOIN trust_units AS u ON u.id = l.unit_id"
+        " WHERE l.pmc_id = %s AND l.id = %s",
+        (pmc_id, lease_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, "no such lease")
+    return LeaseRow(lease_id, row[0], row[1])
+
+
+# What lease l owes: its rent and fees, less its credits, less what payments matched, plus
+# what bounced back.
+OWED = """
+coalesce((SELECT sum(CASE WHEN c.kind = 'credit' THEN -c.amount ELSE c.amount END)
+          FROM trust_charges AS c WHERE c.lease_id = l.id), 0)
+- coalesce((SELECT sum(p.amount) FROM trust_charge_payments AS p
+            JOIN trust_charges AS x ON x.id = p.charge_id WHERE x.lease_id = l.id), 0)
++ coalesce((SELECT sum(r.amount) FROM trust_payment_reversals AS r
+            JOIN trust_charges AS x ON x.id = r.charge_id WHERE x.lease_id = l.id), 0)
+"""
+
+
+def owed(conn: psycopg.Connection[Any], lease_id: UUID) -> Decimal:
+    row = conn.execute(f"SELECT {OWED} FROM trust_leases AS l WHERE l.id = %s", (lease_id,))
+    found = row.fetchone()
+    assert found is not None
+    return Decimal(found[0])
+
+
+# Rent and fees not fully paid, oldest first, with what is still open of each. {where} is one
+# of the two fixed conditions below.
+OPEN_CHARGES = """
+SELECT c.lease_id, c.id, c.due_on, c.kind, c.memo, c.amount, o.open
+FROM trust_charges AS c
+CROSS JOIN LATERAL (
+    SELECT c.amount
+           - coalesce((SELECT sum(p.amount) FROM trust_charge_payments AS p
+                       WHERE p.charge_id = c.id), 0)
+           + coalesce((SELECT sum(r.amount) FROM trust_payment_reversals AS r
+                       WHERE r.charge_id = c.id), 0) AS open
+) AS o
+WHERE {where} AND c.kind <> 'credit' AND o.open > 0
+ORDER BY c.due_on, c.created_at, c.id
+"""
+OF_LEASE = "c.lease_id = %s"
+OF_PMC = "c.pmc_id = %s"
+
+
+def charges_open(conn: psycopg.Connection[Any], where: str, value: UUID) -> list[tuple[Any, ...]]:
+    if where not in (OF_LEASE, OF_PMC):
+        raise ValueError("open charges are narrowed by one of the fixed conditions only")
+    query = sql.SQL(OPEN_CHARGES).format(where=sql.SQL(where))
+    return conn.execute(query, (value,)).fetchall()
+
+
+def open_charges(conn: psycopg.Connection[Any], lease_id: UUID) -> list[tuple[UUID, Decimal]]:
+    return [(row[1], Decimal(row[6])) for row in charges_open(conn, OF_LEASE, lease_id)]
+
+
+def allocate(charges: list[tuple[UUID, Decimal]], amount: Decimal) -> list[tuple[UUID, Decimal]]:
+    """`amount` spread over open charges oldest first, each up to what is open of it."""
+    matches = []
+    for charge, left in charges:
+        if amount <= 0:
+            break
+        part = min(left, amount)
+        matches.append((charge, part))
+        amount -= part
+    return matches
+
+
+# --- ledger accounts --------------------------------------------------------------------------
+
+
+def owner_account(
+    conn: psycopg.Connection[Any], pmc_id: UUID, property_id: UUID, chosen: str | None
+) -> tuple[str, UUID]:
+    """The owner's account a property's rent goes to, and its trust bank account: the only one,
+    or the one staff chose when the property has more than one owner account."""
+    rows = conn.execute(
+        "SELECT ledger_account_id, bank_account_id FROM trust_ledger_accounts"
+        " WHERE pmc_id = %s AND kind = 'owner_property' AND property_id = %s"
+        " ORDER BY ledger_account_id",
+        (pmc_id, property_id),
+    ).fetchall()
+    if chosen is not None:
+        rows = [row for row in rows if row[0] == chosen]
+        if not rows:
+            raise HTTPException(404, "no such owner account for this lease's property")
+    if not rows:
+        raise HTTPException(409, "the lease's property has no owner account to pay rent into")
+    if len(rows) > 1:
+        raise HTTPException(422, "the property has more than one owner account; choose one")
+    return rows[0][0], rows[0][1]
+
+
+def cash_of(conn: psycopg.Connection[Any], bank_id: UUID) -> str:
+    row = conn.execute(
+        "SELECT ledger_account_id FROM trust_ledger_accounts"
+        " WHERE bank_account_id = %s AND kind = 'bank_cash'",
+        (bank_id,),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(409, "the trust bank account has no cash account; set it up again")
+    return str(row[0])
+
+
+def tenant_account(
+    conn: psycopg.Connection[Any], pmc_id: UUID, bank_id: UUID, kind: str, tenant_id: UUID
+) -> str:
+    """The tenant's prepaid rent or deposit account in a trust bank account, opened if new."""
+    row = conn.execute(
+        "SELECT ledger_account_id FROM trust_ledger_accounts"
+        " WHERE bank_account_id = %s AND kind = %s AND tenant_id = %s",
+        (bank_id, kind, tenant_id),
+    ).fetchone()
+    if row is not None:
+        return str(row[0])
+    opened = conn.execute(
+        "SELECT trust_open_ledger_account(%s, %s, %s, NULL, NULL, %s)",
+        (pmc_id, bank_id, kind, tenant_id),
+    ).fetchone()
+    assert opened is not None
+    return str(opened[0])
+
+
+def balances(conn: psycopg.Connection[Any], accounts: list[str]) -> dict[str, Decimal]:
+    return {
+        account: Decimal(balance)
+        for account, balance in conn.execute(
+            "SELECT id, balance FROM pgledger_accounts WHERE id = ANY(%s)", (accounts,)
+        ).fetchall()
+    }
+
+
+# --- posting ----------------------------------------------------------------------------------
+
+
+class Conflict(Exception):
+    """The request id was used for a different posting."""
+
+
+def post(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    key: str,
+    transfers: list[tuple[str, str, Decimal]],
+    day: date,
+    metadata: dict[str, Any],
+) -> list[str] | None:
+    """Posts the transfers under `key`; their ids, or None when the key was used before for
+    something else (a retry after the books moved on, or another request)."""
+    rows = sql.SQL(", ").join(sql.SQL("(%s, %s, %s::numeric)::transfer_request") for _ in transfers)
+    query = sql.SQL(
+        "SELECT id FROM trust_post_transfers(%s, %s, ARRAY[{}]::transfer_request[], %s, %s)"
+    ).format(rows)
+    params = [pmc_id, key, *(value for transfer in transfers for value in transfer)]
+    try:
+        with conn.transaction():  # a savepoint: a refused key leaves the request usable
+            return [
+                str(row[0])
+                for row in conn.execute(query, [*params, at(day), Jsonb(metadata)]).fetchall()
+            ]
+    except psycopg.errors.UniqueViolation:
+        return None
+
+
+def earlier(
+    conn: psycopg.Connection[Any], pmc_id: UUID, key: str, metadata: dict[str, Any]
+) -> list[str]:
+    """The transfers an earlier request with this key posted, if it asked for the same thing
+    (a retry); Conflict if it asked for something else."""
+    rows = conn.execute(
+        "SELECT t.id, t.metadata FROM pgledger_transfers AS t"
+        " JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id"
+        " WHERE a.pmc_id = %s AND t.metadata ->> 'key' = %s ORDER BY t.created_at, t.id",
+        (pmc_id, key),
+    ).fetchall()
+    asked = {k: v for k, v in metadata.items() if k != "reference"}
+    if not rows or any({k: v for k, v in m.items() if k != "reference"} != asked for _, m in rows):
+        raise Conflict
+    return [str(row[0]) for row in rows]
+
+
+def lock_lease(conn: psycopg.Connection[Any], lease_id: UUID) -> None:
+    """Rent work on one lease waits for the rest (so what it owes is read once at a time)."""
+    conn.execute(
+        "SELECT pg_advisory_xact_lock(hashtextextended('rent of lease ' || %s, 0))",
+        (str(lease_id),),
+    )
+
+
+def match(
+    conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID, transfer: str, amount: Decimal
+) -> list[tuple[UUID, Decimal]]:
+    """Matches a transfer to the lease's open charges, oldest first. A transfer matched before
+    (posted again by a retry that asked for the very same thing) is left as it was."""
+    if conn.execute(
+        "SELECT 1 FROM trust_charge_payments WHERE transfer_id = %s LIMIT 1", (transfer,)
+    ).fetchone():
+        return []
+    matched = allocate(open_charges(conn, lease_id), amount)
+    for charge, part in matched:
+        conn.execute("SELECT trust_apply_payment(%s, %s, %s, %s)", (pmc_id, charge, transfer, part))
+    return matched
+
+
+@dataclass(frozen=True)
+class Recorded:
+    transfers: list[str]
+    to_owner: Decimal
+    to_prepaid: Decimal
+
+
+def record_payment(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    lease_id: UUID,
+    request_id: UUID,
+    amount: Decimal,
+    received_on: date,
+    reference: str | None = None,
+    account: str | None = None,
+) -> Recorded:
+    """A tenant's payment into the operating trust bank account: the owner's account takes
+    what the lease owes, matched to its charges oldest first; the rest is the first tenant's
+    prepaid rent. The same request id again returns the payment as it was recorded."""
+    lease = lease_of(conn, pmc_id, lease_id)
+    owner, bank = owner_account(conn, pmc_id, lease.property_id, account)
+    lock_lease(conn, lease_id)
+    key = f"payment/{request_id}"
+    metadata = {
+        "key": key,
+        "kind": "tenant payment",
+        "lease_id": str(lease_id),
+        "amount": cents(amount),
+        "received_on": received_on.isoformat(),
+        "reference": reference,
+    }
+    to_owner = min(amount, max(owed(conn, lease_id), ZERO))
+    to_prepaid = amount - to_owner
+    cash = cash_of(conn, bank)
+    transfers = []
+    if to_owner > 0:
+        transfers.append((cash, owner, to_owner))
+    if to_prepaid > 0:
+        prepaid = tenant_account(conn, pmc_id, bank, "prepaid_rent", lease.tenants[0])
+        transfers.append((cash, prepaid, to_prepaid))
+    posted = post(conn, pmc_id, key, transfers, received_on, metadata)
+    if posted is None:
+        return replay(conn, pmc_id, key, metadata, owner)
+    if to_owner > 0:
+        match(conn, pmc_id, lease_id, posted[0], to_owner)
+    return Recorded(posted, to_owner, to_prepaid)
+
+
+def replay(
+    conn: psycopg.Connection[Any], pmc_id: UUID, key: str, metadata: dict[str, Any], owner: str
+) -> Recorded:
+    try:
+        posted = earlier(conn, pmc_id, key, metadata)
+    except Conflict:
+        raise HTTPException(409, "this request id was used for a different payment") from None
+    rows = conn.execute(
+        "SELECT to_account_id, amount FROM pgledger_transfers WHERE id = ANY(%s)", (posted,)
+    ).fetchall()
+    to_owner = sum((Decimal(a) for to, a in rows if to == owner), ZERO)
+    return Recorded(posted, to_owner, sum((Decimal(a) for _, a in rows), ZERO) - to_owner)
+
+
+def use_prepaid(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    lease_id: UUID,
+    request_id: UUID,
+    on: date,
+    account: str | None = None,
+) -> Recorded:
+    """The lease's tenants' prepaid rent paid to the owner's account for what the lease owes,
+    matched to its charges oldest first."""
+    lease = lease_of(conn, pmc_id, lease_id)
+    owner, bank = owner_account(conn, pmc_id, lease.property_id, account)
+    lock_lease(conn, lease_id)
+    key = f"prepaid/{request_id}"
+    metadata = {
+        "key": key,
+        "kind": "prepaid rent used",
+        "lease_id": str(lease_id),
+        "on": on.isoformat(),
+        "reference": None,
+    }
+    prepaid = {
+        tenant: tenant_account(conn, pmc_id, bank, "prepaid_rent", tenant)
+        for tenant in lease.tenants
+    }
+    held = balances(conn, list(prepaid.values()))
+    left = max(owed(conn, lease_id), ZERO)
+    transfers = []
+    for account_id in prepaid.values():
+        part = min(held.get(account_id, ZERO), left)
+        if part > 0:
+            transfers.append((account_id, owner, part))
+            left -= part
+    if not transfers:
+        try:  # a retry finds nothing left to use: what it used the first time
+            earlier(conn, pmc_id, key, metadata)
+        except Conflict:
+            raise HTTPException(
+                409, "there is no prepaid rent to use, or nothing is owed"
+            ) from None
+        return replay(conn, pmc_id, key, metadata, owner)
+    posted = post(conn, pmc_id, key, transfers, on, metadata)
+    if posted is None:
+        return replay(conn, pmc_id, key, metadata, owner)
+    for transfer, (_, _, part) in zip(posted, transfers, strict=True):
+        match(conn, pmc_id, lease_id, transfer, part)
+    return Recorded(posted, sum((t[2] for t in transfers), ZERO), ZERO)
+
+
+def bounce(conn: psycopg.Connection[Any], pmc_id: UUID, transfer_id: str, on: date) -> list[str]:
+    """A payment the bank returned: its transfers move back to cash, and their matches to
+    charges are reversed (trust_reverse_payment). Once per payment."""
+    rows = conn.execute(
+        "SELECT t.id, t.from_account_id, t.to_account_id, t.amount, t.metadata, t.event_at"
+        " FROM pgledger_transfers AS t"
+        " JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id"
+        " WHERE a.pmc_id = %s AND t.metadata ->> 'key' = ("
+        "   SELECT p.metadata ->> 'key' FROM pgledger_transfers AS p WHERE p.id = %s"
+        "     AND p.metadata ->> 'kind' = 'tenant payment')"
+        " ORDER BY t.created_at, t.id",
+        (pmc_id, transfer_id),
+    ).fetchall()
+    if not rows:
+        raise HTTPException(404, "no such tenant payment")
+    payment_key = rows[0][4]["key"]
+    lease_id = UUID(rows[0][4]["lease_id"])
+    lock_lease(conn, lease_id)
+    if on < rows[0][5].astimezone(UTC).date():
+        raise HTTPException(422, "a payment bounces on or after the day it was received")
+    key = f"bounce/{payment_key}"
+    metadata = {"key": key, "kind": "bounced payment", "lease_id": str(lease_id), "reference": None}
+    transfers = [(to, frm, Decimal(amount)) for _, frm, to, amount, _, _ in rows]
+    posted = post(conn, pmc_id, key, transfers, on, metadata)
+    if posted is None:
+        raise HTTPException(409, "this payment bounced already")
+    for (payment, *_), reversal in zip(rows, posted, strict=True):
+        for charge, matched in conn.execute(
+            "SELECT charge_id, amount FROM trust_charge_payments WHERE transfer_id = %s",
+            (payment,),
+        ).fetchall():
+            conn.execute(
+                "SELECT trust_reverse_payment(%s, %s, %s, %s, %s)",
+                (pmc_id, charge, payment, reversal, matched),
+            )
+    return posted
+
+
+def record_deposit(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    tenant_id: UUID,
+    request_id: UUID,
+    amount: Decimal,
+    received_on: date,
+    bank_id: UUID | None = None,
+    reference: str | None = None,
+) -> list[str]:
+    """A tenant's security deposit into a security-deposit trust bank account: the only one,
+    or the one staff chose."""
+    banks = [
+        row[0]
+        for row in conn.execute(
+            "SELECT id FROM trust_bank_accounts WHERE pmc_id = %s AND kind = 'security_deposit'"
+            " AND (%s::uuid IS NULL OR id = %s::uuid) ORDER BY id",
+            (pmc_id, bank_id, bank_id),
+        ).fetchall()
+    ]
+    if not banks:
+        raise HTTPException(409, "set up a security deposit trust bank account first")
+    if len(banks) > 1:
+        raise HTTPException(422, "the PMC has more than one security deposit account; choose one")
+    key = f"deposit/{request_id}"
+    metadata = {
+        "key": key,
+        "kind": "security deposit",
+        "tenant_id": str(tenant_id),
+        "amount": cents(amount),
+        "received_on": received_on.isoformat(),
+        "reference": reference,
+    }
+    deposit = tenant_account(conn, pmc_id, banks[0], "tenant_deposit", tenant_id)
+    posted = post(
+        conn, pmc_id, key, [(cash_of(conn, banks[0]), deposit, amount)], received_on, metadata
+    )
+    if posted is None:
+        try:
+            return earlier(conn, pmc_id, key, metadata)
+        except Conflict:
+            raise HTTPException(409, "this request id was used for a different deposit") from None
+    return posted
+
+
+# --- the API ------------------------------------------------------------------------------------
+
+
+class OpenCharge(BaseModel):
+    id: UUID
+    due_on: date
+    kind: Literal["rent", "fee"]
+    memo: str | None
+    amount: str
+    open: str
+
+
+class Paid(BaseModel):
+    transfer_id: str
+    received_on: date
+    amount: str
+    reference: str | None
+    bounced: bool
+
+
+class LeaseTenant(BaseModel):
+    id: UUID
+    name: str
+    prepaid: str
+    deposit: str
+
+
+class RentLease(BaseModel):
+    id: UUID
+    property: str
+    unit: str
+    starts_on: date
+    ends_on: date | None
+    monthly_rent: str
+    tenants: list[LeaseTenant]
+    owed: str
+    on_hold: bool
+    open_charges: list[OpenCharge]
+    payments: list[Paid]
+
+
+LEASES = f"""
+SELECT l.id, p.display_name, u.display_name, l.starts_on, l.ends_on, l.monthly_rent, {OWED},
+       EXISTS (SELECT 1 FROM trust_payment_holds AS h
+               LEFT JOIN trust_payment_hold_releases AS r ON r.hold_id = h.id
+               WHERE h.lease_id = l.id AND h.starts_on <= %(as_of)s
+                 AND (r.ends_on IS NULL OR %(as_of)s < r.ends_on))
+FROM trust_leases AS l
+JOIN trust_units AS u ON u.id = l.unit_id
+JOIN trust_properties AS p ON p.id = u.property_id
+WHERE l.pmc_id = %(pmc)s
+ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", l.starts_on, l.id
+"""
+
+TENANTS = """
+SELECT lt.lease_id, t.id, t.display_name,
+       coalesce((SELECT sum(b.balance) FROM trust_ledger_accounts AS a
+                 JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
+                 WHERE a.tenant_id = t.id AND a.kind = 'prepaid_rent'), 0),
+       coalesce((SELECT sum(b.balance) FROM trust_ledger_accounts AS a
+                 JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
+                 WHERE a.tenant_id = t.id AND a.kind = 'tenant_deposit'), 0)
+FROM trust_lease_tenants AS lt JOIN trust_tenants AS t ON t.id = lt.tenant_id
+WHERE lt.pmc_id = %s
+ORDER BY t.display_name COLLATE "C", t.id
+"""
+
+PAYMENTS = """
+SELECT x.lease_id, t.id, t.event_at, sum(p.amount), t.metadata ->> 'reference',
+       EXISTS (SELECT 1 FROM trust_payment_reversals AS r WHERE r.transfer_id = t.id)
+FROM trust_charge_payments AS p
+JOIN trust_charges AS x ON x.id = p.charge_id
+JOIN pgledger_transfers AS t ON t.id = p.transfer_id
+WHERE p.pmc_id = %s AND t.metadata ->> 'kind' = 'tenant payment'
+GROUP BY x.lease_id, t.id, t.event_at, t.created_at, t.metadata
+ORDER BY t.event_at DESC, t.created_at DESC, t.id
+"""
+
+
+@router.get("")
+def leases(
+    session: Staff, conn: Conn, as_of: Annotated[date | None, Query()] = None
+) -> list[RentLease]:
+    """Leases in effect on `as_of` (today, UTC, by default) and any other lease that owes
+    something or is owed, with their open charges and tenant payments."""
+    day = as_of or today()
+    pmc = session.pmc_id
+    tenants: dict[UUID, list[LeaseTenant]] = {}
+    for lease, i, name, prepaid, deposit in conn.execute(TENANTS, (pmc,)).fetchall():
+        tenants.setdefault(lease, []).append(
+            LeaseTenant(id=i, name=name, prepaid=cents(prepaid), deposit=cents(deposit))
+        )
+    payments: dict[UUID, list[Paid]] = {}
+    for lease, transfer, event_at, amount, reference, bounced in conn.execute(
+        PAYMENTS, (pmc,)
+    ).fetchall():
+        payments.setdefault(lease, []).append(
+            Paid(
+                transfer_id=transfer,
+                received_on=event_at.astimezone(UTC).date(),
+                amount=cents(amount),
+                reference=reference,
+                bounced=bounced,
+            )
+        )
+    charges: dict[UUID, list[OpenCharge]] = {}
+    for lease, c, due_on, kind, memo, amount, left in charges_open(conn, OF_PMC, pmc):
+        charges.setdefault(lease, []).append(
+            OpenCharge(
+                id=c,
+                due_on=due_on,
+                kind=kind,
+                memo=memo,
+                amount=cents(amount),
+                open=cents(left),
+            )
+        )
+    found = []
+    for i, prop, unit, starts, ends, rent, due, on_hold in conn.execute(
+        LEASES, {"pmc": pmc, "as_of": day}
+    ).fetchall():
+        in_effect = starts <= day and (ends is None or day <= ends)
+        if not in_effect and due == 0:
+            continue
+        found.append(
+            RentLease(
+                id=i,
+                property=prop,
+                unit=unit,
+                starts_on=starts,
+                ends_on=ends,
+                monthly_rent=cents(rent),
+                tenants=tenants.get(i, []),
+                owed=cents(due),
+                on_hold=on_hold,
+                open_charges=charges.get(i, []),
+                payments=payments.get(i, [])[:12],
+            )
+        )
+    return found
+
+
+class Day(BaseModel):
+    on: date
+
+
+class Counted(BaseModel):
+    charged: int
+
+
+@router.post("/charge-rent")
+def charge_rent(session: Staff, conn: Conn, run: Day) -> Counted:
+    """Charges every lease in effect on the day its monthly rent, once per lease and day."""
+    row = conn.execute("SELECT trust_charge_rent_due(%s, %s)", (session.pmc_id, run.on)).fetchone()
+    assert row is not None
+    return Counted(charged=row[0])
+
+
+@router.post("/late-fees")
+def late_fees(session: Staff, conn: Conn, run: Day) -> Counted:
+    """Charges a late fee for each rent still unpaid after its grace days, under the terms in
+    force on its due date; once per rent."""
+    if run.on > today():
+        raise HTTPException(422, "late fees are assessed as of today or an earlier day")
+    row = conn.execute("SELECT trust_assess_late_fees(%s, %s)", (session.pmc_id, run.on)).fetchone()
+    assert row is not None
+    return Counted(charged=row[0])
+
+
+class NewCharge(BaseModel):
+    kind: Literal["fee", "credit"]
+    amount: Amount
+    due_on: date
+    memo: Memo
+
+
+class Created(BaseModel):
+    id: UUID
+
+
+@router.post("/leases/{lease_id}/charges", status_code=201)
+def add_charge(session: Staff, conn: Conn, lease_id: UUID, new: NewCharge) -> Created:
+    """A one-off fee the lease owes, or a credit that takes its amount off what it owes."""
+    lease_of(conn, session.pmc_id, lease_id)
+    row = conn.execute(
+        "INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)"
+        " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+        (session.pmc_id, lease_id, new.due_on, new.kind, new.amount, new.memo),
+    ).fetchone()
+    assert row is not None
+    return Created(id=row[0])
+
+
+class NewPayment(BaseModel):
+    # Made by the page once per payment it records, so sending it again records nothing new.
+    request_id: UUID
+    amount: Amount
+    received_on: date
+    reference: Memo | None = None
+    # The owner's account it pays, when the property has more than one.
+    account: Annotated[str, Field(min_length=1, max_length=100)] | None = None
+
+
+class Payment(BaseModel):
+    transfers: list[str]
+    to_owner: str
+    to_prepaid: str
+
+
+def answer(recorded: Recorded) -> Payment:
+    return Payment(
+        transfers=recorded.transfers,
+        to_owner=cents(recorded.to_owner),
+        to_prepaid=cents(recorded.to_prepaid),
+    )
+
+
+def not_after_today(day: date) -> None:
+    if day > today():
+        raise HTTPException(422, "money is recorded on the day it arrived, not a later one")
+
+
+@router.post("/leases/{lease_id}/payments", status_code=201)
+def pay(session: Staff, conn: Conn, lease_id: UUID, new: NewPayment) -> Payment:
+    not_after_today(new.received_on)
+    try:
+        return answer(
+            record_payment(
+                conn,
+                session.pmc_id,
+                lease_id,
+                new.request_id,
+                new.amount,
+                new.received_on,
+                new.reference,
+                new.account,
+            )
+        )
+    except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
+        # a payment hold, a closed period, or a match made differently before
+        raise HTTPException(409, reason(refused)) from None
+
+
+class UsePrepaid(BaseModel):
+    request_id: UUID
+    on: date
+    account: Annotated[str, Field(min_length=1, max_length=100)] | None = None
+
+
+@router.post("/leases/{lease_id}/use-prepaid", status_code=201)
+def prepaid(session: Staff, conn: Conn, lease_id: UUID, use: UsePrepaid) -> Payment:
+    not_after_today(use.on)
+    try:
+        return answer(
+            use_prepaid(conn, session.pmc_id, lease_id, use.request_id, use.on, use.account)
+        )
+    except psycopg.errors.CheckViolation as refused:
+        raise HTTPException(409, reason(refused)) from None
+
+
+class NewDeposit(BaseModel):
+    request_id: UUID
+    tenant_id: UUID
+    amount: Amount
+    received_on: date
+    reference: Memo | None = None
+    bank_account_id: UUID | None = None
+
+
+class Posted(BaseModel):
+    transfers: list[str]
+
+
+@router.post("/deposits", status_code=201)
+def deposit(session: Staff, conn: Conn, new: NewDeposit) -> Posted:
+    not_after_today(new.received_on)
+    if (
+        conn.execute(
+            "SELECT 1 FROM trust_tenants WHERE pmc_id = %s AND id = %s",
+            (session.pmc_id, new.tenant_id),
+        ).fetchone()
+        is None
+    ):
+        raise HTTPException(404, "no such tenant")
+    try:
+        return Posted(
+            transfers=record_deposit(
+                conn,
+                session.pmc_id,
+                new.tenant_id,
+                new.request_id,
+                new.amount,
+                new.received_on,
+                new.bank_account_id,
+                new.reference,
+            )
+        )
+    except psycopg.errors.CheckViolation as refused:
+        raise HTTPException(409, reason(refused)) from None
+
+
+@router.post("/payments/{transfer_id}/bounce", status_code=201)
+def bounced(session: Staff, conn: Conn, transfer_id: str, returned: Day) -> Posted:
+    """Records a returned payment: its money leaves the owner's account (and prepaid rent)
+    back to cash, and what it paid of each charge is owed again."""
+    not_after_today(returned.on)
+    try:
+        return Posted(transfers=bounce(conn, session.pmc_id, transfer_id, returned.on))
+    except psycopg.errors.CheckViolation as refused:  # the owner's account would go negative
+        raise HTTPException(409, reason(refused)) from None
