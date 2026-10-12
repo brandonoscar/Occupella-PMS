@@ -28,6 +28,11 @@ lease, with the PMC's own lease document (a PDF); the signers sign through an e-
 fake one for now), a tenant from their portal; and once everyone has signed, staff make it the
 lease. That completes the founder's list in `docs/adr/0002-portals-and-exports.md`.
 
+The staff back office (`docs/adr/0003-staff-back-office.md`) is being built: staff set up
+their books in the portal (trust bank accounts, owners, properties, units, tenants, vendors,
+management and late fee terms, leases in place). Recording payments, bills, owner draws and
+the monthly reconciliation in the portal come next.
+
 Still true:
 
 - no hosted database and no deploy (CI uses a throwaway Postgres 16 container);

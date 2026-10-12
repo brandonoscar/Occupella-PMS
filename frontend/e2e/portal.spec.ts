@@ -16,6 +16,7 @@ type Seed = {
   leasing_invite: string;
   offers_invite: string;
   renewer_invite: string;
+  setup_invite: string;
 };
 const seed: Seed = JSON.parse(readFileSync(new URL("./.seed.json", import.meta.url), "utf8"));
 const PASSWORD = "a long synthetic passphrase";
@@ -243,4 +244,53 @@ test("staff offer a lease and a renewal; the signers sign on the partner's page;
   await tenant.reload();
   await expect(tenant.getByRole("heading", { name: "Welcome, Renewer E2E" })).toBeVisible();
   await expect(tenant.getByRole("heading", { name: "Lease renewal" })).toHaveCount(0);
+});
+
+test("staff set up a property from nothing, lease a unit and see it on the rent roll", async ({ page }) => {
+  await page.goto(`/invite#${seed.setup_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
+  await page.getByRole("button", { name: "Finish" }).click();
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Setup" }).click();
+  await expect(page.getByRole("heading", { name: "Setup", level: 1 })).toBeVisible();
+
+  const owners = page.getByRole("region", { name: "Owners" });
+  await owners.getByLabel("Owner's name").fill("Owner Setup E2E");
+  await owners.getByRole("button", { name: "Add" }).click();
+  await expect(owners.getByText("Owner Setup E2E")).toBeVisible();
+
+  // The seeded PMC has one operating trust account, so it is chosen already.
+  await page.getByLabel("Property name").fill("E2E Property 9");
+  await page.locator("#property-owner").selectOption({ label: "Owner Setup E2E" });
+  await page.getByRole("button", { name: "Add property" }).click();
+  const property = page.getByRole("listitem", { name: "E2E Property 9" });
+  await expect(property).toContainText("Owned by Owner Setup E2E.");
+  await property.getByText("Add to E2E Property 9").click();
+  await property.getByLabel("Unit name").fill("Unit 9A");
+  await property.getByRole("button", { name: "Add unit" }).click();
+  await expect(property).toContainText("Unit 9A: vacant");
+
+  await page.getByLabel("Tenant of").selectOption({ label: "E2E Property 9" });
+  await page.getByLabel("Tenant's name").fill("Tenant Setup E2E");
+  await page.getByRole("button", { name: "Add tenant" }).click();
+  await page
+    .getByRole("combobox", { name: "Unit", exact: true })
+    .selectOption({ label: "E2E Property 9, Unit 9A" });
+  const today = day(0);
+  await page.getByLabel("Starts").fill(today);
+  await page.getByLabel("Rent a month").fill("1100.00");
+  await page.getByLabel("Tenant Setup E2E").check();
+  await page.getByRole("button", { name: "Add lease" }).click();
+  await expect(property).toContainText(
+    `Unit 9A: Tenant Setup E2E: from ${today}, month to month, $1,100.00 a month`,
+  );
+
+  const rentRoll = await page.request.get(
+    `/api/reports/trust_report_rent_roll?arg=${today}&format=csv`,
+  );
+  const csv = await rentRoll.text();
+  expect(csv).toContain("E2E Property 9");
+  expect(csv).toContain("Tenant Setup E2E");
 });
