@@ -18,6 +18,7 @@ type Seed = {
   renewer_invite: string;
   setup_invite: string;
   rent_invite: string;
+  bills_invite: string;
 };
 const seed: Seed = JSON.parse(readFileSync(new URL("./.seed.json", import.meta.url), "utf8"));
 const PASSWORD = "a long synthetic passphrase";
@@ -323,4 +324,48 @@ test("staff record a tenant's payment, the rest held as prepaid rent, and then i
   await expect(lease.getByTestId("owed")).toHaveText("Owes $800.00");
   await expect(lease).toContainText("Payer E2E: prepaid $0.00");
   await expect(lease.getByText("Bounced")).toBeVisible();
+});
+
+test("staff enter a vendor's bill, record the owner's approval, set it aside and pay it, then draw the rest", async ({
+  page,
+}) => {
+  await page.goto(`/invite#${seed.bills_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
+  await page.getByRole("button", { name: "Finish" }).click();
+  const sections = page.getByRole("navigation", { name: "Sections" });
+  await sections.getByRole("link", { name: "Bills" }).click();
+
+  await page.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Vendor E2E" });
+  await page
+    .getByRole("combobox", { name: "Owner and property", exact: true })
+    .selectOption({ label: "Payee E2E, E2E Property 7" });
+  await page.getByLabel("Vendor's reference").fill("E2E-INV-1");
+  await page.getByLabel("Amount", { exact: true }).fill("300.00");
+  await page.getByLabel("What for").fill("Gutter repair");
+  await page.getByRole("button", { name: "Enter bill" }).click();
+  await expect(page.getByText("Bill E2E-INV-1 entered.")).toBeVisible();
+
+  // No agreement: every bill needs the owner's approval first.
+  const bill = page.getByRole("listitem", { name: "Vendor E2E E2E-INV-1" });
+  await expect(bill.getByTestId("status")).toHaveText("needs approval");
+  await bill.getByLabel("Approved by").fill("Payee E2E");
+  await bill.getByRole("button", { name: "Record approval" }).click();
+  await expect(bill.getByTestId("status")).toHaveText("to set aside");
+  await bill.getByRole("button", { name: "Set aside" }).click();
+  await expect(bill.getByTestId("status")).toHaveText("set aside");
+  await bill.getByRole("button", { name: "Pay" }).click();
+  await expect(bill).toHaveCount(0);
+  await page.getByRole("combobox", { name: "Show", exact: true }).selectOption("all");
+  await expect(bill.getByTestId("status")).toHaveText("paid");
+
+  await sections.getByRole("link", { name: "Owners" }).click();
+  const payee = page.getByRole("listitem", { name: "Payee E2E, E2E Property 7" });
+  await expect(payee.getByTestId("available")).toHaveText("$700.00 available");
+  await payee.getByText("Record for Payee E2E, E2E Property 7").click();
+  await payee.getByRole("button", { name: "Record draw" }).click();
+  await expect(payee).toContainText("$700.00 paid out to Payee E2E.");
+  await expect(payee.getByTestId("available")).toHaveText("$0.00 available");
 });
