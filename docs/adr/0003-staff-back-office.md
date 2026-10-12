@@ -109,7 +109,29 @@ migration 0032):
   day, as `trust_approve_reconciliation` always has; the three-way report shows the period.
 - For now one staff member both prepares and approves a period: who may approve is item 4
   (staff roles).
-- Not handled yet: a cutover's checks from the old system that were still outstanding. Until
-  they clear, the "Balance brought forward" line can't be matched to the cutover's opening
-  balances, so such an account's first periods can't be approved here. The switching tool
-  (item 3) is to carry them.
+- A cutover's checks and deposits the bank had not cleared are carried over by the switching
+  tool (below), so a migrated account reconciles from its first period.
+
+## Switching, as built
+
+A PMC moving from another system uses `/switching` (`src/pms/api/switching.py`, migration
+0033):
+
+- The roster comes in from CSV files, one kind at a time and in order: owners, vendors,
+  properties with their owners (each owner's property account in an operating trust account),
+  units, tenants, leases in place, and tenants' unpaid charges. Names are matched exactly within
+  the PMC, so a file sent again adds nothing twice; a file goes in whole or not at all, and a
+  row that can't go in names its line.
+- Each trust bank account opens with what each account in it held in the old system at the
+  start of the cutover date, from a CSV of balances by name (owner and property, a tenant's
+  prepaid rent or deposit, a vendor, the PMC's fees), checked against the old book cash by
+  `trust_post_opening_balances`.
+- The checks and deposits the bank had not cleared at the cutover are entered as items carried
+  over (`trust_cutover_items`): the cash each had already moved in the old books.
+- Staff sign off the tie-out (`trust_report_cutover`: the opening balances against the old
+  book cash, the items, the bank balance to expect, who signed it and when). The sign-off
+  freezes the items.
+- At month-end, the first statement's balance brought forward is matched to the opening
+  balances less the items (`trust_match_cutover_opening`); each item then clears when a later
+  bank line does, and until then it is outstanding in the reconciliation. So the account's first
+  periods approve like any other.

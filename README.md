@@ -35,8 +35,9 @@ fees, fees and credits, tenants' payments and deposits as they reached the bank,
 bounced payments), vendors' bills (entry, the owner's approval, setting aside and payment,
 recurring bills), owners' money (draws, contributions, management and leasing fees) and the
 month-end: bank statements imported from CSV or OFX, matched to the books, and the
-reconciliation approved once the books lack no line. The switching tool, staff roles,
-move-out and documents come next.
+reconciliation approved once the books lack no line; and a switching tool that brings a PMC's
+roster, opening balances and uncleared checks over from its old system, with a tie-out staff
+sign off. Staff roles, move-out and documents come next.
 
 Still true:
 

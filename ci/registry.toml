@@ -552,6 +552,17 @@ tests = [
   "tests/test_bank_statements.py::test_a_period_whose_lines_the_books_lack_is_not_approved",
 ]
 
+[[invariant]]
+id = "a-migrated-account-reconciles-from-its-cutover"
+statement = "A trust bank account carried over from another system reconciles from its first period: its first statement's balance brought forward is matched to the opening balances less the checks and deposits the bank had not cleared (frozen by a staff sign-off); each such item clears once, only after that opening match, which is never undone while an item it carries is cleared; an item carried and not cleared is outstanding; and the adjusted bank balance less book cash is exactly the bank lines the books lack."
+tests = [
+  "tests/properties/test_cutover_matching_properties.py::test_cutover_invariants_hold_under_random_items_statements_matches_and_approvals",
+  "tests/test_switching.py::test_a_migrated_account_reconciles_from_its_first_period",
+  "tests/test_switching.py::test_the_balance_brought_forward_is_book_cash_less_the_items_not_cleared",
+  "tests/test_switching.py::test_an_item_clears_once_and_only_in_its_own_account",
+  "tests/test_switching.py::test_an_item_was_issued_by_the_cutover_and_none_comes_after_the_sign_off",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]
@@ -722,4 +733,13 @@ tests = [
   "tests/golden/test_golden.py::test_every_golden_case_matches",
   "tests/test_bank_statements.py::test_a_days_end_shows_what_the_bank_had_not_cleared_and_the_lines_the_books_lack",
   "tests/properties/test_bank_matching_properties.py::test_bank_matching_invariants_hold_under_random_statements_matches_and_approvals",
+]
+
+[[report]]
+id = "cutover-tie-out"
+statement = "Cutover tie-out of a trust bank account, as staff sign it: the cutover date, who entered the opening balances and the old system's book cash; each account's opening balance and their total against it; the checks and deposits the bank had not cleared and the bank balance to expect; and who signed it off. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_switching.py::test_the_tie_out_shows_the_opening_the_items_and_the_sign_off",
+  "tests/properties/test_cutover_matching_properties.py::test_cutover_invariants_hold_under_random_items_statements_matches_and_approvals",
 ]

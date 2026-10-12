@@ -256,7 +256,7 @@ def test_lines_are_matched_to_transfers_and_undone(client, conn, staff, pmc):
     refused(
         call(client, path, line_ids=[line["id"]], transfer_ids=[one]),
         409,
-        "the lines come to 2200.00 and the transfers to 1500.00",
+        "the lines come to 2200.00 and the transfers and items to 1500.00",
     )
     made = ok(call(client, path, line_ids=[line["id"]], transfer_ids=[one, two]))
     shown = sheet(client, pmc)
@@ -441,6 +441,7 @@ ENDPOINTS = [
     ("post", f"/api/reconcile/matches/{uuid.uuid4()}/undo"),
     ("post", f"/api/reconcile/{uuid.uuid4()}/auto-match"),
     ("post", f"/api/reconcile/{uuid.uuid4()}/approve"),
+    ("post", f"/api/reconcile/{uuid.uuid4()}/opening-match"),
 ]
 
 
@@ -473,9 +474,127 @@ def test_only_staff_reconcile(client, conn, app_conn, pmc, caller, method, path)
         ),
         (f"{uuid.uuid4()}/matches", {"line_ids": ["x"]}),
         (f"{uuid.uuid4()}/matches", {"transfer_ids": ["t"] * 101}),
+        (f"{uuid.uuid4()}/matches", {"cutover_item_ids": ["x"]}),
+        (f"{uuid.uuid4()}/opening-match", {"line_id": "x"}),
         (f"{uuid.uuid4()}/approve", {"through": "January"}),
         ("x/auto-match", {}),
     ],
 )
 def test_bad_input_is_refused(client, staff, path, body):
     refused(client.post(f"/api/reconcile/{path}", json=body), 422)
+
+
+# --- a migrated account ----------------------------------------------------------------------
+
+
+def migrated(conn, pmc, staff, signed=True):
+    """The operating account cut over on Jan 1 with 1000.00, a check of 200.00 not cleared."""
+    from helpers import carry_over, open_with_balances, sign_off
+
+    open_with_balances(
+        conn,
+        pmc.pmc_id,
+        pmc.operating_bank_id,
+        JAN_1,
+        {pmc.owners[0].account: "1000.00"},
+        "1000.00",
+    )
+    item = carry_over(
+        conn,
+        pmc.pmc_id,
+        pmc.operating_bank_id,
+        staff.person_id,
+        date(2025, 12, 30),
+        "-200.00",
+        "Check to Vendor 1",
+        "1041",
+    )
+    if signed:
+        sign_off(conn, pmc.pmc_id, pmc.operating_bank_id, staff.person_id)
+    return item
+
+
+def test_a_migrated_accounts_opening_and_its_items_are_matched(client, conn, staff, pmc):
+    item = migrated(conn, pmc, staff)
+    ok(
+        statement(
+            client,
+            pmc,
+            csv(("2026-01-09", "Check 1041", "-200.00", "1041")),
+            first_day=JAN_1,
+            last_day=JAN_31,
+            opening_balance="1200.00",
+        )
+    )
+    before = sheet(client, pmc)
+    (forward, cleared) = before["open_lines"]
+    path = f"{pmc.operating_bank_id}/opening-match"
+
+    refused(
+        call(client, path, line_id=cleared["id"]), 409, "the balance brought forward is -200.00"
+    )
+    made = ok(call(client, path, line_id=forward["id"]))
+    refused(call(client, path, line_id=forward["id"]), 409, "matched already")
+    after = sheet(client, pmc)
+    cleared_by = ok(
+        call(
+            client,
+            f"{pmc.operating_bank_id}/matches",
+            line_ids=[cleared["id"]],
+            cutover_item_ids=[str(item)],
+        )
+    )
+    done = sheet(client, pmc)
+
+    assert before["opening"] == {
+        "book_cash": "1000.00",
+        "carried": "-200.00",
+        "brought_forward": "1200.00",
+        "signed_off": True,
+        "matched": False,
+    }
+    assert (forward["description"], forward["amount"]) == ("Balance brought forward", "1200.00")
+    assert before["open_items"] == []
+    assert after["opening"]["matched"] is True
+    assert after["open_items"] == [
+        {
+            "id": str(item),
+            "issued_on": "2025-12-30",
+            "amount": "-200.00",
+            "description": "Check to Vendor 1",
+            "reference": "1041",
+        }
+    ]
+    assert done["open_items"] == []
+    assert {m["id"]: len(m["items"]) for m in done["matches"]} == {
+        made["id"]: 1,
+        cleared_by["id"]: 1,
+    }
+    assert {r["item"]: r["amount"] for r in done["rows"]}[
+        "difference: adjusted bank balance - trust journal"
+    ] == "0.00"
+    ok(call(client, f"{pmc.operating_bank_id}/approve", through=JAN_31))
+
+
+def test_an_opening_match_needs_the_sign_off_and_the_accounts_own_line(client, conn, staff, pmc):
+    migrated(conn, pmc, staff, signed=False)
+    ok(statement(client, pmc, csv(), first_day=JAN_1, last_day=JAN_31, opening_balance="1200.00"))
+    (forward,) = sheet(client, pmc)["open_lines"]
+    path = f"{pmc.operating_bank_id}/opening-match"
+
+    refused(call(client, path, line_id=forward["id"]), 409, "no signed-off cutover")
+    refused(call(client, path, line_id=str(uuid.uuid4())), 409, "no signed-off cutover")
+    from helpers import sign_off
+
+    sign_off(conn, pmc.pmc_id, pmc.operating_bank_id, staff.person_id)
+    refused(call(client, path, line_id=str(uuid.uuid4())), 422, "not on a statement")
+    refused(
+        call(client, f"{make_pmc(conn).operating_bank_id}/opening-match", line_id=forward["id"]),
+        404,
+        "no such trust bank account",
+    )
+    assert sheet(client, pmc)["opening"]["signed_off"] is True
+
+
+def test_an_account_that_did_not_cut_over_has_no_opening(client, staff, pmc):
+    assert sheet(client, pmc)["opening"] is None

@@ -83,7 +83,8 @@ required invariant, report and self-host step.
   they set up the books at `/setup` (`src/pms/api/setup.py`: plain inserts and the database's
   own write paths, nothing that moves money), do the rent work at `/rent`
   (`src/pms/api/rent.py`), pay bills and handle owners' money at `/bills` and `/owners`
-  (`src/pms/api/payables.py`), and reconcile at `/reconcile` (`src/pms/api/reconcile.py`).
+  (`src/pms/api/payables.py`), reconcile at `/reconcile` (`src/pms/api/reconcile.py`), and
+  bring a PMC over from another system at `/switching` (`src/pms/api/switching.py`).
   npm packages are pinned exactly and their
   licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
   owner only: no request names an owner, a property or a PMC. A tenant's pages
@@ -125,8 +126,9 @@ required invariant, report and self-host step.
   `trust_post_management_fee`, `trust_post_leasing_fee`, `trust_draw_owner`,
   `trust_set_aside_bill`, `trust_pay_bill`, `trust_assess_late_fees`,
   `trust_post_opening_balances`, `trust_record_owner_contribution`,
-  `trust_complete_lease_offer`, `trust_match_bank_lines`, `trust_unmatch_bank_lines` and
-  `trust_approve_bank_reconciliation`, which run as the table owner (`trust_charge_rent_due` and `trust_enter_recurring_bills` run with the app's own
+  `trust_complete_lease_offer`, `trust_match_bank_lines`, `trust_unmatch_bank_lines`,
+  `trust_approve_bank_reconciliation` and `trust_match_cutover_opening`, which run as the table
+  owner (`trust_charge_rent_due` and `trust_enter_recurring_bills` run with the app's own
   grants). It can't call pgledger's posting functions: every posting it makes goes through
   `trust_post_transfers`, which takes an idempotency key, unique per PMC, so it is safe to
   retry: the same key returns the original transfers, and a different posting under it is
@@ -243,6 +245,13 @@ required invariant, report and self-host step.
   and neither changes a period already approved. `trust_report_bank_reconciliation` shows a
   day's end; `trust_approve_bank_reconciliation` approves only when no line up to it is missing
   from the books. All append-only.
+- Switching (migration 0033): after a trust bank account's opening balances, the checks and
+  deposits the bank had not cleared at the cutover are carried over (`trust_cutover_items`, the
+  cash each moved in the old books, issued by the cutover) until a staff member signs off the
+  tie-out (`trust_report_cutover`), which freezes them. `trust_match_cutover_opening` then
+  matches the first statement's balance brought forward to the opening balances less those
+  items; each item clears once, by a later bank line, only after that, and the opening match is
+  not undone while one is cleared. A statement starts no earlier than its account's cutover.
 - Vendor payments: `trust_report_vendor_payments` lists what each vendor was paid through
   `trust_pay_bill` in a calendar year (UTC), for 1099 preparation. It files nothing, holds no
   tax IDs and applies no threshold.

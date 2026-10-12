@@ -67,8 +67,11 @@ const SHEET: Worksheet = {
       id: "m1",
       lines: [{ id: "l0", posted_on: "2026-01-23", amount: "-240.00", description: "Check 101", reference: "101" }],
       transfers: [{ id: "t0", on: "2026-01-20", amount: "-240.00", memo: "Check 101, Vendor 1" }],
+      items: [],
     },
   ],
+  open_items: [],
+  opening: null,
 };
 
 const TIED: Worksheet = {
@@ -166,7 +169,7 @@ describe("ReconcilePage", () => {
     expect(await screen.findByText("Match undone.")).toBeTruthy();
 
     expect(posted(fetch)).toEqual([
-      ["/api/reconcile/b1/matches", { line_ids: ["l1"], transfer_ids: ["t1", "t2"] }],
+      ["/api/reconcile/b1/matches", { line_ids: ["l1"], transfer_ids: ["t1", "t2"], cutover_item_ids: [] }],
       ["/api/reconcile/b1/auto-match", {}],
       ["/api/reconcile/matches/m1/undo", {}],
     ]);
@@ -222,5 +225,57 @@ describe("ReconcilePage", () => {
     );
     render(<ReconcilePage me={ME} />);
     expect((await screen.findAllByRole("alert"))[0]?.textContent).toBe("sign in first");
+  });
+
+  it("matches a migrated account's opening, then clears an item carried over", async () => {
+    const migrated: Worksheet = {
+      ...SHEET,
+      open_lines: [
+        { id: "f1", posted_on: "2026-01-01", amount: "1200.00", description: "Balance brought forward", reference: null },
+        { id: "c1", posted_on: "2026-01-09", amount: "-200.00", description: "Check 1041", reference: "1041" },
+      ],
+      open_transfers: [],
+      open_items: [
+        { id: "i1", issued_on: "2025-12-30", amount: "-200.00", description: "Check to Vendor 1", reference: "1041" },
+      ],
+      opening: { book_cash: "1000.00", carried: "-200.00", brought_forward: "1200.00", signed_off: true, matched: false },
+      matches: [{ ...SHEET.matches[0]!, items: [{ id: "i0", issued_on: "2025-12-29", amount: "-10.00", description: "Old check", reference: null }] }],
+    };
+    const fetch = server(migrated);
+    render(<ReconcilePage me={ME} />);
+
+    expect(await screen.findByText(/the first statement's balance brought forward should be \$1,200.00/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Match the opening" }));
+    expect(await screen.findByText("The opening is matched.")).toBeTruthy();
+    expect(screen.getByRole("list", { name: "Matches" }).textContent).toContain("2025-12-29 Old check, from before the cutover: -$10.00");
+
+    fireEvent.click(screen.getByLabelText("2026-01-09 Check 1041 (1041): -$200.00"));
+    fireEvent.click(screen.getByLabelText("2025-12-30 Check to Vendor 1 (1041), from before the cutover: -$200.00"));
+    expect(screen.getByTestId("picked").textContent).toBe("Lines -$200.00 · Transfers -$200.00");
+    fireEvent.click(screen.getByRole("button", { name: "Match these" }));
+    expect(await screen.findByText("Matched.")).toBeTruthy();
+
+    expect(posted(fetch)).toEqual([
+      ["/api/reconcile/b1/opening-match", { line_id: "f1" }],
+      ["/api/reconcile/b1/matches", { line_ids: ["c1"], transfer_ids: [], cutover_item_ids: ["i1"] }],
+    ]);
+  });
+
+  it("says what the opening needs before it can be matched", async () => {
+    const opening = { book_cash: "1000.00", carried: "0.00", brought_forward: "1000.00", signed_off: false, matched: false };
+    server({ ...SHEET, opening });
+    render(<ReconcilePage me={ME} />);
+    expect(await screen.findByText("Sign off the cutover at Switching first.")).toBeTruthy();
+    cleanup();
+
+    server({ ...SHEET, opening: { ...opening, signed_off: true } });
+    render(<ReconcilePage me={ME} />);
+    expect(await screen.findByText("No open bank line comes to $1,000.00.")).toBeTruthy();
+    cleanup();
+
+    server({ ...SHEET, opening: { ...opening, signed_off: true, matched: true } });
+    render(<ReconcilePage me={ME} />);
+    await screen.findByRole("list", { name: "Statements" });
+    expect(screen.queryByText("Opening from the old system")).toBeNull();
   });
 });
