@@ -292,7 +292,7 @@ def test_opening_balances_come_before_any_posting(conn, app_conn, pmc):
 
 
 def test_opening_balances_come_before_any_reconciliation(conn, app_conn, pmc):
-    approve(app_conn, pmc.pmc_id, pmc.operating_bank_id, OPENED_AT - timedelta(days=31), OPENED_AT)
+    approve(conn, pmc.pmc_id, pmc.operating_bank_id, OPENED_AT - timedelta(days=31), OPENED_AT)
 
     with pytest.raises(psycopg.errors.CheckViolation, match=COMES_FIRST):
         open_operating(app_conn, pmc)
@@ -330,9 +330,9 @@ def test_the_first_reconciliation_starts_at_the_cutover(conn, app_conn, pmc):
     open_operating(app_conn, pmc)
 
     with pytest.raises(psycopg.errors.InvalidParameterValue, match="starts at 2026-01-01"):
-        approve(app_conn, pmc.pmc_id, pmc.operating_bank_id, OPENED_AT - TICK, FEB)
+        approve(conn, pmc.pmc_id, pmc.operating_bank_id, OPENED_AT - TICK, FEB)
 
-    approve(app_conn, pmc.pmc_id, pmc.operating_bank_id, OPENED_AT, FEB, "2525.00")
+    approve(conn, pmc.pmc_id, pmc.operating_bank_id, OPENED_AT, FEB, "2525.00")
     book = conn.execute(
         "SELECT book_balance FROM trust_reconciliations WHERE bank_account_id = %s",
         (pmc.operating_bank_id,),
@@ -340,7 +340,7 @@ def test_the_first_reconciliation_starts_at_the_cutover(conn, app_conn, pmc):
     assert book == Decimal("2525.00")
     # The next follows on from the first, as before.
     with pytest.raises(psycopg.errors.InvalidParameterValue, match="starts at 2026-02-01"):
-        approve(app_conn, pmc.pmc_id, pmc.operating_bank_id, OPENED_AT, FEB + timedelta(days=28))
+        approve(conn, pmc.pmc_id, pmc.operating_bank_id, OPENED_AT, FEB + timedelta(days=28))
 
 
 def test_no_role_sets_or_moves_the_cutover_by_hand(conn, app_conn, pmc):

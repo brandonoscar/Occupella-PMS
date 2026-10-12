@@ -15,7 +15,6 @@ from helpers import (
     acting_as,
     add_staff,
     add_unit,
-    approve,
     charge,
     make_pmc,
     open_lease,
@@ -115,15 +114,19 @@ def test_a_posting_records_the_staff_member_and_the_role_behind_it(conn, app_con
 
 def test_a_write_path_that_runs_as_the_owner_records_its_caller(conn, app_conn, pmc):
     staff = add_staff(conn, pmc.pmc_id)
+    vendor = conn.execute(
+        "INSERT INTO trust_vendors (pmc_id, display_name) VALUES (%s, 'Vendor 2') RETURNING id",
+        (pmc.pmc_id,),
+    ).fetchone()[0]
     before = last_id(conn)
 
     with acting_as(app_conn, staff):
-        approve(app_conn, pmc.pmc_id, pmc.operating_bank_id, JAN, FEB)
+        app_conn.execute(
+            "SELECT trust_open_vendor_account(%s, %s, %s)",
+            (pmc.pmc_id, pmc.operating_bank_id, vendor),
+        )
 
-    assert log(conn, pmc, before) == [
-        ("trust_reconciliations", "insert", staff, "trust_app"),
-        ("trust_bank_accounts", "update", staff, "trust_app"),
-    ]
+    assert log(conn, pmc, before) == [("trust_ledger_accounts", "insert", staff, "trust_app")]
 
 
 def test_a_write_with_no_staff_named_is_recorded_as_not_recorded(conn, app_conn, pmc):

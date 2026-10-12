@@ -398,6 +398,164 @@ def step_work_order(connection, pmc_id, work_order_id, step, taken_at, vendor_id
     )
 
 
+def file_request(connection, pmc_id, lease_id, tenant_id, summary, entry_allowed=False) -> UUID:
+    """A maintenance request a tenant files under one of their leases."""
+    return _one(
+        connection,
+        "INSERT INTO trust_maintenance_requests"
+        " (pmc_id, lease_id, tenant_id, summary, entry_allowed)"
+        " VALUES (%s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, lease_id, tenant_id, summary, entry_allowed),
+    )
+
+
+def link_work_order(connection, pmc_id, request_id, work_order_id) -> None:
+    """The work order staff opened for a maintenance request."""
+    connection.execute(
+        "INSERT INTO trust_maintenance_request_work_orders (pmc_id, request_id, work_order_id)"
+        " VALUES (%s, %s, %s)",
+        (pmc_id, request_id, work_order_id),
+    )
+
+
+def open_application_link(connection, pmc_id, unit_id, staff_id, rent="1500.00") -> UUID:
+    """An application link for a unit; its token is random bytes no test needs back."""
+    return _one(
+        connection,
+        "INSERT INTO trust_application_links"
+        " (pmc_id, unit_id, token_sha256, monthly_rent, opened_by)"
+        " VALUES (%s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, unit_id, os.urandom(32), Decimal(rent), staff_id),
+    )
+
+
+def submit_application(
+    connection, pmc_id, link_id, income="4500.00", applicants=(("Applicant 1", None),)
+) -> UUID:
+    """An application through a link, with its applicants (name, email or a made-up one)."""
+    application = _one(
+        connection,
+        "INSERT INTO trust_applications"
+        " (pmc_id, link_id, status_token_sha256, move_in_on, monthly_income)"
+        " VALUES (%s, %s, %s, DATE '2026-11-01', %s) RETURNING id",
+        (pmc_id, link_id, os.urandom(32), Decimal(income)),
+    )
+    for n, (name, email) in enumerate(applicants, 1):
+        connection.execute(
+            "INSERT INTO trust_applicants (pmc_id, application_id, position, display_name, email)"
+            " VALUES (%s, %s, %s, %s, %s)",
+            (
+                pmc_id,
+                application,
+                n,
+                name,
+                email or f"applicant{n}.{application.hex[:8]}@example.com",
+            ),
+        )
+    return application
+
+
+def record_screening(
+    connection, pmc_id, application_id, staff_id, recommendation="approve", reasons=()
+) -> UUID:
+    return _one(
+        connection,
+        "INSERT INTO trust_screenings (pmc_id, application_id, partner, partner_reference,"
+        " agency, recommendation, reasons, requested_by)"
+        " VALUES (%s, %s, 'Test partner', 'ref-1', 'Test agency (synthetic)', %s, %s, %s)"
+        " RETURNING id",
+        (pmc_id, application_id, recommendation, list(reasons), staff_id),
+    )
+
+
+def record_decision(
+    connection, pmc_id, application_id, staff_id, decision, screening_id=None, conditions=None
+) -> None:
+    connection.execute(
+        "INSERT INTO trust_application_decisions"
+        " (pmc_id, application_id, decision, conditions, screening_id, decided_by)"
+        " VALUES (%s, %s, %s, %s, %s, %s)",
+        (pmc_id, application_id, decision, conditions, screening_id, staff_id),
+    )
+
+
+def record_adverse_action(
+    connection, pmc_id, application_id, staff_id, reasons=("Income too low",)
+) -> None:
+    connection.execute(
+        "INSERT INTO trust_adverse_actions"
+        " (pmc_id, application_id, reasons, agency, notice_given_on, recorded_by)"
+        " VALUES (%s, %s, %s, 'Test agency (synthetic)', DATE '2026-10-11', %s)",
+        (pmc_id, application_id, list(reasons), staff_id),
+    )
+
+
+LEASE_PDF = b"%PDF-1.4 a synthetic lease"
+
+
+def offer_lease(
+    connection,
+    pmc_id,
+    unit_id,
+    staff_id,
+    starts_on,
+    ends_on=None,
+    rent="1500.00",
+    application_id=None,
+    renews_lease_id=None,
+    signers=(("Signer 1", "signer1@example.com"),),
+) -> UUID:
+    """A lease offer (for an application or renewing a lease) and its signers."""
+    offer = _one(
+        connection,
+        "INSERT INTO trust_lease_offers (pmc_id, application_id, renews_lease_id, unit_id,"
+        " starts_on, ends_on, monthly_rent, document_title, document, offered_by)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, 'Lease', %s, %s) RETURNING id",
+        (
+            pmc_id,
+            application_id,
+            renews_lease_id,
+            unit_id,
+            starts_on,
+            ends_on,
+            Decimal(rent),
+            LEASE_PDF,
+            staff_id,
+        ),
+    )
+    for n, (name, email) in enumerate(signers, 1):
+        connection.execute(
+            "INSERT INTO trust_lease_offer_signers (pmc_id, offer_id, position, display_name,"
+            " email) VALUES (%s, %s, %s, %s, %s)",
+            (pmc_id, offer, n, name, email),
+        )
+    return offer
+
+
+def send_offer(connection, pmc_id, offer_id, staff_id) -> None:
+    connection.execute(
+        "INSERT INTO trust_signature_requests (pmc_id, offer_id, partner, partner_reference,"
+        " sent_by) VALUES (%s, %s, 'Test partner', %s, %s)",
+        (pmc_id, offer_id, f"ref-{offer_id}", staff_id),
+    )
+
+
+def sign_offer(connection, pmc_id, offer_id, position, signed_at=None) -> None:
+    connection.execute(
+        "INSERT INTO trust_signatures (pmc_id, offer_id, position, signed_at)"
+        " VALUES (%s, %s, %s, coalesce(%s, now()))",
+        (pmc_id, offer_id, position, signed_at),
+    )
+
+
+def complete_offer(connection, pmc_id, offer_id, staff_id) -> UUID:
+    return _one(
+        connection,
+        "SELECT trust_complete_lease_offer(%s, %s, %s)",
+        (pmc_id, offer_id, staff_id),
+    )
+
+
 def approve_bill(connection, pmc_id, bill_id, approved_on, approved_by) -> None:
     """Record the owner's approval of a bill over the approval limit."""
     connection.execute(
@@ -551,6 +709,9 @@ def add_staff(connection, pmc_id, name="Staff 1") -> UUID:
 def acting_as(connection, staff_id) -> Iterator[None]:
     """Name a staff member (or, with None, nobody) on every write the session makes inside the
     block, as the application will for whoever is signed in."""
+    before = connection.execute(
+        "SELECT coalesce(current_setting('trust.staff_id', true), '')"
+    ).fetchone()[0]
     connection.execute(
         "SELECT set_config('trust.staff_id', %s, false)",
         ("" if staff_id is None else str(staff_id),),
@@ -558,7 +719,190 @@ def acting_as(connection, staff_id) -> Iterator[None]:
     try:
         yield
     finally:
-        connection.execute("SELECT set_config('trust.staff_id', '', false)")
+        connection.execute("SELECT set_config('trust.staff_id', %s, false)", (before,))
+
+
+ROLES = ("admin", "approve", "disburse")
+
+
+def change_role(connection, pmc_id, staff_id, role, granted=True, by=None) -> None:
+    """Grant (or take away) a role as the admin `by`; with None, nobody is named, as for a PMC's
+    first admin."""
+    with acting_as(connection, by):
+        connection.execute(
+            "INSERT INTO trust_staff_roles (pmc_id, staff_id, role, granted)"
+            " VALUES (%s, %s, %s, %s)",
+            (pmc_id, staff_id, role, granted),
+        )
+
+
+def roles_of(connection, pmc_id, staff_id) -> set[str]:
+    return {
+        role
+        for role in ROLES
+        if _one(connection, "SELECT trust_staff_holds(%s, %s, %s)", (pmc_id, staff_id, role))
+    }
+
+
+def admin_of(connection, pmc_id) -> UUID:
+    """The PMC's first admin; with none, an 'Admin 1' made one."""
+    row = connection.execute(
+        "SELECT s.id FROM trust_staff AS s WHERE s.pmc_id = %s"
+        " AND trust_staff_holds(s.pmc_id, s.id, 'admin') ORDER BY s.created_at, s.id LIMIT 1",
+        (pmc_id,),
+    ).fetchone()
+    if row is not None:
+        return row[0]
+    admin = add_staff(connection, pmc_id, "Admin 1")
+    change_role(connection, pmc_id, admin, "admin")
+    return admin
+
+
+def give_roles(connection, pmc_id, staff_id, roles) -> None:
+    for role in roles:
+        first_admin = (
+            role == "admin"
+            and not connection.execute(
+                "SELECT 1 FROM trust_staff_roles WHERE pmc_id = %s AND role = 'admin'", (pmc_id,)
+            ).fetchone()
+        )
+        by = None if first_admin else admin_of(connection, pmc_id)
+        change_role(connection, pmc_id, staff_id, role, by=by)
+
+
+def staff_named(connection, pmc_id, name, roles=()) -> UUID:
+    """The PMC's staff member of that name, added with these roles if there is none."""
+    row = connection.execute(
+        "SELECT id FROM trust_staff WHERE pmc_id = %s AND display_name = %s", (pmc_id, name)
+    ).fetchone()
+    if row is not None:
+        return row[0]
+    staff_id = add_staff(connection, pmc_id, name)
+    give_roles(connection, pmc_id, staff_id, roles)
+    return staff_id
+
+
+def import_statement(
+    connection,
+    pmc_id,
+    bank_id,
+    staff_id,
+    first_day,
+    last_day,
+    lines,
+    opening="0.00",
+    source="csv",
+    file_sha256=None,
+) -> tuple[UUID, list[UUID]]:
+    """Import a bank statement of `lines` ((posted_on, amount, description, reference) each),
+    whole, in one transaction: its id and its lines' ids, in order."""
+    total = sum((Decimal(line[1]) for line in lines), Decimal(opening))
+    with connection.transaction():
+        statement = _one(
+            connection,
+            "INSERT INTO trust_bank_statements (pmc_id, bank_account_id, first_day, last_day,"
+            " opening_balance, closing_balance, line_count, source, file_sha256, imported_by)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (
+                pmc_id,
+                bank_id,
+                first_day,
+                last_day,
+                Decimal(opening),
+                total,
+                len(lines),
+                source,
+                file_sha256 or uuid.uuid4().hex * 2,
+                staff_id,
+            ),
+        )
+        ids = [
+            _one(
+                connection,
+                "INSERT INTO trust_bank_statement_lines (pmc_id, statement_id, line_no,"
+                " posted_on, amount, description, bank_reference)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (pmc_id, statement, n, posted_on, Decimal(amount), description, reference),
+            )
+            for n, (posted_on, amount, description, reference) in enumerate(lines, start=1)
+        ]
+    return statement, ids
+
+
+def match_lines(connection, pmc_id, bank_id, line_ids, transfer_ids, staff_id, item_ids=()) -> UUID:
+    """Match statement lines to transfers (and cutover items the bank cleared)."""
+    return _one(
+        connection,
+        "SELECT trust_match_bank_lines(%s, %s, %s::uuid[], %s::text[], %s::uuid[], %s)",
+        (pmc_id, bank_id, list(line_ids), list(transfer_ids), list(item_ids), staff_id),
+    )
+
+
+def unmatch_lines(connection, pmc_id, match_id, staff_id) -> None:
+    connection.execute("SELECT trust_unmatch_bank_lines(%s, %s, %s)", (pmc_id, match_id, staff_id))
+
+
+def bank_reconciliation(connection, pmc_id, bank_id, through) -> list[tuple]:
+    """trust_report_bank_reconciliation's rows: (line, item, detail, amount)."""
+    return connection.execute(
+        "SELECT line, item, detail, amount FROM trust_report_bank_reconciliation(%s, %s, %s)",
+        (pmc_id, bank_id, through),
+    ).fetchall()
+
+
+def prepare_bank(connection, pmc_id, bank_id, through, staff_id) -> UUID:
+    """Month-end through a day, prepared by a staff member."""
+    with acting_as(connection, staff_id):
+        return _one(
+            connection,
+            "SELECT trust_prepare_bank_reconciliation(%s, %s, %s)",
+            (pmc_id, bank_id, through),
+        )
+
+
+def approve_prepared(connection, pmc_id, preparation_id, staff_id) -> UUID:
+    with acting_as(connection, staff_id):
+        return _one(
+            connection,
+            "SELECT trust_approve_bank_reconciliation(%s, %s)",
+            (pmc_id, preparation_id),
+        )
+
+
+def approve_bank(connection, pmc_id, bank_id, through) -> UUID:
+    """Month-end through a day, prepared by 'Preparer 1' and approved by 'Approver 1'."""
+    preparer = staff_named(connection, pmc_id, "Preparer 1")
+    approver = staff_named(connection, pmc_id, "Approver 1", ["approve"])
+    prepared = prepare_bank(connection, pmc_id, bank_id, through, preparer)
+    return approve_prepared(connection, pmc_id, prepared, approver)
+
+
+def carry_over(
+    connection, pmc_id, bank_id, staff_id, issued_on, amount, description="Check", reference=None
+) -> UUID:
+    """A check (negative) or deposit the bank had not cleared at the account's cutover."""
+    return _one(
+        connection,
+        "INSERT INTO trust_cutover_items (pmc_id, bank_account_id, issued_on, amount,"
+        " description, reference, entered_by) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, bank_id, issued_on, Decimal(amount), description, reference, staff_id),
+    )
+
+
+def sign_off(connection, pmc_id, bank_id, staff_id) -> None:
+    connection.execute(
+        "INSERT INTO trust_cutover_signoffs (pmc_id, bank_account_id, signed_by)"
+        " VALUES (%s, %s, %s)",
+        (pmc_id, bank_id, staff_id),
+    )
+
+
+def match_opening(connection, pmc_id, bank_id, line_id, staff_id) -> UUID:
+    return _one(
+        connection,
+        "SELECT trust_match_cutover_opening(%s, %s, %s, %s)",
+        (pmc_id, bank_id, line_id, staff_id),
+    )
 
 
 def balance(connection, account) -> Decimal:

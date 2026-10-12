@@ -5,6 +5,10 @@ import { Button, LinkButton } from "../components/Button";
 import { Notice } from "../components/Notice";
 import { Card, Shell } from "../components/Shell";
 import { day } from "../money";
+import { LeasingCard } from "./LeasingCard";
+import { MaintenanceCard } from "./MaintenanceCard";
+import { OffersCard } from "./OffersCard";
+import { STAFF_NAV } from "./staffNav";
 
 type Person = {
   kind: "staff" | "owner" | "tenant";
@@ -23,6 +27,8 @@ export function StaffHome({ me }: { me: Me }) {
   const [emails, setEmails] = useState<Record<string, string>>({});
   const [links, setLinks] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
+  // Counts the leasing card's changes, so the offers card sees a new approval.
+  const [decided, setDecided] = useState(0);
   const today = day(new Date());
 
   function refresh() {
@@ -49,7 +55,7 @@ export function StaffHome({ me }: { me: Me }) {
   }
 
   return (
-    <Shell me={me}>
+    <Shell me={me} nav={STAFF_NAV}>
       <h1 className="font-display text-xl font-medium">{me.pmc_name}</h1>
       <Card title="Downloads">
         <div className="flex flex-wrap gap-2">
@@ -112,6 +118,9 @@ export function StaffHome({ me }: { me: Me }) {
           </table>
         )}
       </Card>
+      <MaintenanceCard />
+      <LeasingCard onChange={() => setDecided((n) => n + 1)} />
+      <OffersCard changed={decided} />
     </Shell>
   );
 }

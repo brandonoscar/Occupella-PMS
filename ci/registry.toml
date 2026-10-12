@@ -409,6 +409,160 @@ tests = [
   "tests/api/test_people.py::test_only_staff_see_the_people",
 ]
 
+[[invariant]]
+id = "tenant-sees-only-their-own"
+statement = "A tenant's portal shows the session's tenant only: the leases they are on with what is due, each lease's ledger (trust_report_tenant_ledger) and the maintenance requests filed under them. A lease they aren't on reads as not found, whoever's it is; the work order and vendor behind a request stay with staff; only a tenant's session reaches these endpoints."
+tests = [
+  "tests/api/test_tenant.py::test_a_tenant_sees_their_leases_with_what_they_owe",
+  "tests/api/test_tenant.py::test_the_ledger_is_the_tenant_ledger_report",
+  "tests/api/test_tenant.py::test_a_lease_that_isnt_theirs_reads_as_not_found",
+  "tests/api/test_tenant.py::test_a_neighbours_requests_are_never_shown",
+  "tests/api/test_tenant.py::test_the_tenant_follows_the_work_order_but_never_sees_its_vendor",
+  "tests/api/test_tenant.py::test_only_a_tenant_reaches_the_tenant_endpoints",
+]
+
+[[invariant]]
+id = "maintenance-requests"
+statement = "A maintenance request is filed by a tenant on its lease (a lease in effect today, at most 10 a day through the portal) and never changed. Staff open at most one work order for it, at the lease's unit, and a work order serves one request; the request's status is that work order's latest step."
+tests = [
+  "tests/test_maintenance_requests.py::test_only_a_tenant_on_the_lease_files_under_it",
+  "tests/test_maintenance_requests.py::test_requests_and_their_work_orders_are_never_rewritten",
+  "tests/test_maintenance_requests.py::test_a_requests_work_order_is_for_the_leases_unit",
+  "tests/test_maintenance_requests.py::test_a_request_has_one_work_order_and_a_work_order_one_request",
+  "tests/properties/test_audit_properties.py::test_audit_invariants_hold_under_random_writes_by_random_staff",
+  "tests/api/test_tenant.py::test_a_request_is_filed_only_under_a_lease_in_effect",
+  "tests/api/test_tenant.py::test_ten_requests_a_day_per_lease",
+  "tests/api/test_maintenance.py::test_a_request_gets_one_work_order",
+  "tests/api/test_maintenance.py::test_staff_assign_and_complete_and_the_request_closes",
+  "tests/api/test_maintenance.py::test_nothing_follows_a_closed_work_order",
+]
+
+[[invariant]]
+id = "applications-through-open-links"
+statement = "A rental application comes only through an open application link, one staff opened for a unit of their PMC. A closed link takes none, and closing a link waits for an application on its way. Applicants have no login: their link and status tokens are kept only as SHA-256, a closed or made-up link reads the same, and a link takes at most 50 applications a day."
+tests = [
+  "tests/test_rental_applications.py::test_a_closed_link_takes_no_application_and_closes_once",
+  "tests/test_rental_applications.py::test_closing_a_link_waits_for_an_application_on_its_way",
+  "tests/test_rental_applications.py::test_everything_stays_in_its_pmc",
+  "tests/properties/test_leasing_properties.py::test_leasing_invariants_hold_under_random_links_applications_and_decisions",
+  "tests/api/test_apply.py::test_a_closed_or_made_up_link_reads_the_same",
+  "tests/api/test_apply.py::test_an_application_waits_for_a_closing_on_its_way_and_is_refused",
+  "tests/api/test_apply.py::test_a_link_takes_fifty_applications_a_day",
+]
+
+[[invariant]]
+id = "adverse-action-records"
+statement = "Each application has at most one decision, resting only on a screening of its own. A declined or conditional decision that rests on a screening has its adverse action notice recorded with it (the reasons, the reporting agency, the day it was given), checked at commit, and no other decision has one."
+tests = [
+  "tests/test_rental_applications.py::test_a_decision_rests_only_on_a_screening_of_its_own_application",
+  "tests/test_rental_applications.py::test_an_application_has_one_decision",
+  "tests/test_rental_applications.py::test_a_decision_against_the_applicant_on_a_screening_needs_its_notice_at_commit",
+  "tests/test_rental_applications.py::test_an_adverse_action_belongs_only_to_such_a_decision",
+  "tests/properties/test_leasing_properties.py::test_leasing_invariants_hold_under_random_links_applications_and_decisions",
+  "tests/api/test_leasing.py::test_a_decline_on_a_screening_records_its_notice_and_the_notice_downloads",
+  "tests/api/test_leasing.py::test_an_approval_needs_no_notice_and_takes_none",
+]
+
+[[invariant]]
+id = "applicants-stay-with-the-pmc"
+statement = "trust_ai_agent reads no application link, application, applicant, screening, decision or adverse action. An applicant's status shows the PMC's decision and its conditions, never the screening. Screening runs only through the partner the server is set up with (none by default), and the PMS keeps only applicants' names and emails."
+tests = [
+  "tests/test_rental_applications.py::test_the_ai_role_reads_none_of_it",
+  "tests/test_privileges.py::test_ai_role_reads_only_what_the_app_reads",
+  "tests/api/test_apply.py::test_an_applicant_applies_and_follows_the_application",
+  "tests/api/test_leasing.py::test_without_a_partner_screening_is_refused",
+  "tests/test_screening.py::test_a_partner_is_chosen_by_name",
+]
+
+[[invariant]]
+id = "lease-offers-become-leases-once-signed"
+statement = "A lease offer is for an approved (or conditionally approved) application at the unit it applied for, or renews a lease at its unit, starting after it. It becomes a lease only through trust_complete_lease_offer, once every signer has signed, and an application or a lease takes at most one completed offer; completing again returns the same lease. A new lease's tenants are its signers; a renewal keeps the tenants of the lease it renews, which ends the day before."
+tests = [
+  "tests/test_lease_offers.py::test_a_signed_offer_for_an_application_opens_a_lease_for_its_signers",
+  "tests/test_lease_offers.py::test_completing_again_returns_the_same_lease",
+  "tests/test_lease_offers.py::test_a_renewal_ends_the_lease_the_day_before_and_keeps_its_tenants",
+  "tests/test_lease_offers.py::test_an_offer_completes_only_once_everyone_has_signed",
+  "tests/test_lease_offers.py::test_an_application_or_a_lease_takes_one_completed_offer",
+  "tests/test_lease_offers.py::test_two_offers_for_one_application_completing_at_once_make_one_lease",
+  "tests/test_lease_offers.py::test_an_offer_is_for_an_approved_application_at_its_unit",
+  "tests/test_lease_offers.py::test_a_renewal_is_at_its_leases_unit_and_starts_after_it",
+  "tests/test_lease_offers.py::test_only_the_function_completes_an_offer",
+  "tests/properties/test_lease_offer_properties.py::test_lease_offer_invariants_hold_under_random_offers_signatures_and_completions",
+  "tests/api/test_offers.py::test_signers_sign_and_staff_complete_the_offer_into_a_lease",
+]
+
+[[invariant]]
+id = "lease-documents-and-signatures"
+statement = "A lease offer carries the PMC's own lease document, a PDF of at most 5 MB: the PMS writes no lease text. A signature is recorded only for a sent offer and one of its signers, as the e-sign partner reports it. Offers, signers, signature requests, signatures and completions are never rewritten."
+tests = [
+  "tests/test_lease_offers.py::test_the_lease_document_is_a_pdf_of_at_most_5_mb",
+  "tests/test_lease_offers.py::test_a_lease_document_of_5_mb_is_kept",
+  "tests/test_lease_offers.py::test_a_signature_is_for_a_sent_offer_and_one_of_its_signers",
+  "tests/test_lease_offers.py::test_offers_and_signatures_are_never_rewritten",
+  "tests/api/test_offers.py::test_staff_download_the_lease_they_offered",
+  "tests/api/test_offers.py::test_a_bad_offer_is_refused_and_nothing_is_kept",
+]
+
+[[invariant]]
+id = "signing-through-the-partner"
+statement = "Offers are signed only through the e-sign partner the server is set up with (none by default; the fake only for trying it out). A tenant reaches only the renewals of their own leases, and gets a signing link only as a signer with their login's email. A tenant sees what the partner reports at once; only staff record it. trust_ai_agent reads no offer, signer, signature request, signature or completion."
+tests = [
+  "tests/api/test_offers.py::test_without_a_partner_there_is_no_signing",
+  "tests/api/test_offers.py::test_a_tenant_reaches_only_their_own_renewals",
+  "tests/api/test_offers.py::test_a_tenant_on_the_lease_who_isnt_a_signer_gets_no_link",
+  "tests/api/test_offers.py::test_a_tenant_sees_their_signature_at_once_and_only_staff_record_it",
+  "tests/api/test_offers.py::test_the_fake_partner_takes_only_the_signers_name_on_a_real_link",
+  "tests/test_esign.py::test_a_partner_is_chosen_by_name",
+  "tests/test_lease_offers.py::test_the_ai_role_reads_none_of_it",
+  "tests/test_privileges.py::test_ai_role_reads_only_what_the_app_reads",
+]
+
+[[invariant]]
+id = "rent-payments-pay-what-is-owed"
+statement = "A tenant's payment recorded by staff pays the owner's account no more than the lease owes, matched in full to its open charges oldest first, and holds the rest for the tenant as prepaid rent; prepaid rent pays no more than is owed. Sending the same request again records nothing new. A bounce takes back exactly what the payment moved, once, or is refused with nothing written."
+tests = [
+  "tests/properties/test_rent_properties.py::test_rent_invariants_hold_under_random_charges_payments_and_bounces",
+  "tests/api/test_rent.py::test_a_payment_pays_what_is_owed_oldest_first_and_holds_the_rest_as_prepaid_rent",
+  "tests/api/test_rent.py::test_sending_a_payment_again_records_it_once",
+  "tests/api/test_rent.py::test_a_bounced_payment_is_owed_again_once",
+  "tests/api/test_rent.py::test_a_payment_the_owner_was_paid_out_of_cannot_bounce_into_the_negative",
+  "tests/api/test_rent.py::test_a_payment_hold_refuses_payments_and_records_nothing",
+]
+
+[[invariant]]
+id = "owners-page-shows-what-a-draw-takes"
+statement = "What the staff owners page shows as available to draw is exactly what a draw of everything takes: the balance less the reserve of the agreement in force and the unpaid bills the database itself counts (trust_unpaid_bills); a draw of more is refused with nothing written, and sending a draw again pays nothing twice. A bill is set aside only from money the owner holds, and paid once it was."
+tests = [
+  "tests/properties/test_payables_properties.py::test_payables_invariants_hold_under_random_bills_contributions_and_draws",
+  "tests/api/test_payables.py::test_owners_money_shows_what_a_draw_may_take",
+  "tests/api/test_payables.py::test_a_draw_pays_out_what_is_available_once",
+  "tests/api/test_payables.py::test_a_bill_is_paid_only_once_set_aside_and_never_into_the_negative",
+]
+
+[[invariant]]
+id = "bank-matches-balance-and-stand-alone"
+statement = "A trust bank account's statements follow one another from 0, each with all its lines. A statement line or a ledger transfer is in at most one match not undone, every such match comes to the same on both sides, and no match or undo changes a period already approved. A period is approved from its statements only when the books lack no line, at the bank balance they give."
+tests = [
+  "tests/properties/test_bank_matching_properties.py::test_bank_matching_invariants_hold_under_random_statements_matches_and_approvals",
+  "tests/test_bank_statements.py::test_statements_follow_one_another_from_zero",
+  "tests/test_bank_statements.py::test_a_statement_has_all_its_lines_and_they_come_to_its_closing",
+  "tests/test_bank_statements.py::test_a_line_or_transfer_is_in_one_match_until_it_is_undone",
+  "tests/test_bank_statements.py::test_a_match_comes_to_the_same_on_both_sides",
+  "tests/test_bank_statements.py::test_matches_never_change_a_period_already_approved",
+  "tests/test_bank_statements.py::test_a_period_whose_lines_the_books_lack_is_not_approved",
+]
+
+[[invariant]]
+id = "a-migrated-account-reconciles-from-its-cutover"
+statement = "A trust bank account carried over from another system reconciles from its first period: its first statement's balance brought forward is matched to the opening balances less the checks and deposits the bank had not cleared (frozen by a staff sign-off); each such item clears once, only after that opening match, which is never undone while an item it carries is cleared; an item carried and not cleared is outstanding; and the adjusted bank balance less book cash is exactly the bank lines the books lack."
+tests = [
+  "tests/properties/test_cutover_matching_properties.py::test_cutover_invariants_hold_under_random_items_statements_matches_and_approvals",
+  "tests/test_switching.py::test_a_migrated_account_reconciles_from_its_first_period",
+  "tests/test_switching.py::test_the_balance_brought_forward_is_book_cash_less_the_items_not_cleared",
+  "tests/test_switching.py::test_an_item_clears_once_and_only_in_its_own_account",
+  "tests/test_switching.py::test_an_item_was_issued_by_the_cutover_and_none_comes_after_the_sign_off",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]
@@ -570,4 +724,33 @@ tests = [
   "tests/golden/test_golden.py::test_every_golden_case_matches",
   "tests/test_recurring_bills.py::test_each_vendor_shows_what_it_was_paid_in_the_year",
   "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
+]
+
+[[report]]
+id = "bank-reconciliation"
+statement = "Bank reconciliation of a trust bank account at the end of a day (UTC), from its imported statements: the bank balance, deposits in transit and outstanding withdrawals (transfers no cleared match holds), the adjusted bank balance, book cash, and the difference, listed line by line as the bank lines the books lack. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_bank_statements.py::test_a_days_end_shows_what_the_bank_had_not_cleared_and_the_lines_the_books_lack",
+  "tests/properties/test_bank_matching_properties.py::test_bank_matching_invariants_hold_under_random_statements_matches_and_approvals",
+]
+
+[[report]]
+id = "cutover-tie-out"
+statement = "Cutover tie-out of a trust bank account, as staff sign it: the cutover date, who entered the opening balances and the old system's book cash; each account's opening balance and their total against it; the checks and deposits the bank had not cleared and the bank balance to expect; and who signed it off. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_switching.py::test_the_tie_out_shows_the_opening_the_items_and_the_sign_off",
+  "tests/properties/test_cutover_matching_properties.py::test_cutover_invariants_hold_under_random_items_statements_matches_and_approvals",
+]
+
+[[invariant]]
+id = "roles-decide-who-pays-and-who-approves"
+statement = "A staff member the app names pays out money (a bill, an owner draw) only holding the disburse role, approves a reconciliation or signs off a cutover only holding approve, and invites or disables a staff login only holding admin. Only an admin changes a role, a change changes something, and a PMC keeps one admin. Month-end is approved by a staff member other than the one who prepared it, on the figures prepared."
+tests = [
+  "tests/properties/test_staff_roles_properties.py::test_roles_decide_who_pays_out_and_who_approves",
+  "tests/test_staff_roles.py::test_paying_a_bill_takes_a_staff_member_who_may_disburse",
+  "tests/test_staff_roles.py::test_whoever_prepared_it_does_not_approve_it",
+  "tests/test_staff_roles.py::test_a_pmc_keeps_an_admin",
+  "tests/api/test_staff.py::test_paying_out_money_takes_the_disburse_role",
 ]
