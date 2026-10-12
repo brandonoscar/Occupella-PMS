@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { BankBooks, Worksheet } from "../reconcile";
@@ -306,6 +306,31 @@ describe("ReconcilePage", () => {
     ]);
   });
 
+  it("still says the opening is matched once the page refreshes to the matched opening", async () => {
+    const opening = { book_cash: "1000.00", carried: "0.00", brought_forward: "1000.00", signed_off: true, matched: false };
+    let sheet: Worksheet = {
+      ...SHEET,
+      open_lines: [{ id: "f1", posted_on: "2026-01-01", amount: "1000.00", description: "Balance brought forward", reference: null }],
+      opening,
+    };
+    const fetch = vi.fn(async (path: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        // The server matches it: from now on the worksheet says so.
+        sheet = { ...sheet, open_lines: [], opening: { ...opening, matched: true } };
+        return new Response(JSON.stringify({ id: "m1" }), { status: 201 });
+      }
+      return new Response(JSON.stringify(path === "/api/reconcile" ? BANKS : sheet), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<ReconcilePage me={ME} />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "Match the opening" }));
+    // The refresh brings the matched opening; the confirmation stays, the form goes.
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Match the opening" })).toBeNull());
+    expect(screen.getByText("The opening is matched.")).toBeTruthy();
+    expect(screen.getAllByText("The opening is matched.")).toHaveLength(1);
+  });
+
   it("says what the opening needs before it can be matched", async () => {
     const opening = { book_cash: "1000.00", carried: "0.00", brought_forward: "1000.00", signed_off: false, matched: false };
     server({ ...SHEET, opening });
@@ -318,9 +343,10 @@ describe("ReconcilePage", () => {
     expect(await screen.findByText("No open bank line comes to $1,000.00.")).toBeTruthy();
     cleanup();
 
+    // Matched, the card says so for good, with nothing left to do.
     server({ ...SHEET, opening: { ...opening, signed_off: true, matched: true } });
     render(<ReconcilePage me={ME} />);
-    await screen.findByRole("list", { name: "Statements" });
-    expect(screen.queryByText("Opening from the old system")).toBeNull();
+    expect(await screen.findByText("The opening is matched.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Match the opening" })).toBeNull();
   });
 });
