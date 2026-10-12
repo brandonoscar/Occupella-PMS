@@ -150,10 +150,39 @@ def ofx_date(text: str | None, where: str) -> date | None:
         raise StatementError(f"{where}: {text!r} is not an OFX date") from None
 
 
+def tag(name: str) -> re.Pattern[str]:
+    return re.compile(re.escape(name), re.IGNORECASE)
+
+
+def ofx_blocks(content: str, opening: str, closing: str) -> list[str]:
+    """The text between each opening tag and the next closing one, in order. Each search starts
+    where the last one stopped, so a file of tags that never close takes linear time (a lazy
+    regular expression would take quadratic time over it)."""
+    opened, closed = tag(opening), tag(closing)
+    blocks, at = [], 0
+    while (start := opened.search(content, at)) and (end := closed.search(content, start.end())):
+        blocks.append(content[start.end() : end.start()])
+        at = end.end()
+    return blocks
+
+
+def ledger_balance(content: str) -> str | None:
+    """BALAMT of the LEDGERBAL aggregate, which SGML may leave unclosed before AVAILBAL."""
+    start = tag("<LEDGERBAL>").search(content)
+    if start is None:
+        return None
+    ends = [
+        found.start()
+        for t in ("</LEDGERBAL>", "<AVAILBAL>")
+        if (found := tag(t).search(content, start.end()))
+    ]
+    return ofx_value(content[start.end() : min(ends, default=len(content))], "BALAMT")
+
+
 def read_ofx(content: str) -> Statement:
-    if not re.search(r"<OFX>", content, re.IGNORECASE):
+    if not tag("<OFX>").search(content):
         raise StatementError("no <OFX> in the file: is it an OFX or QFX statement?")
-    blocks = re.findall(r"<STMTTRN>(.*?)</STMTTRN>", content, re.IGNORECASE | re.DOTALL)
+    blocks = ofx_blocks(content, "<STMTTRN>", "</STMTTRN>")
     if len(blocks) > MAX_LINES:
         raise StatementError(f"a statement has at most {MAX_LINES} lines")
     lines = []
@@ -170,10 +199,7 @@ def read_ofx(content: str) -> Statement:
         description = " ".join(part for part in (name, memo) if part)
         reference = ofx_value(block, "FITID") or ofx_value(block, "CHECKNUM")
         lines.append(Line(posted, value, description[:500], reference[:255] if reference else None))
-    ledger = re.search(
-        r"<LEDGERBAL>(.*?)(</LEDGERBAL>|<AVAILBAL>|$)", content, re.IGNORECASE | re.DOTALL
-    )
-    balance = ofx_value(ledger.group(1), "BALAMT") if ledger else None
+    balance = ledger_balance(content)
     return Statement(
         lines,
         first_day=ofx_date(ofx_value(content, "DTSTART"), "DTSTART"),

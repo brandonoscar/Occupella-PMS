@@ -183,3 +183,14 @@ def test_an_ofx_entity_or_doctype_is_never_expanded():
         "<OFX><STMTTRN><DTPOSTED>20260105<TRNAMT>5.00<NAME>&x;</STMTTRN></OFX>"
     )
     assert statements.read(hostile, "ofx").lines[0].description == "&x;"
+
+
+def test_an_ofx_reads_tags_left_open_and_never_slows_on_them():
+    # SGML may leave LEDGERBAL open: its balance runs to AVAILBAL, or to the end of the file.
+    cut_off = "<OFX><LEDGERBAL><BALAMT>12.00<AVAILBAL><BALAMT>9.99</AVAILBAL></OFX>"
+    assert statements.read(cut_off, "ofx").closing_balance == Decimal("12.00")
+    to_the_end = "<OFX><LEDGERBAL><BALAMT>7.50"
+    assert statements.read(to_the_end, "ofx").closing_balance == Decimal("7.50")
+    # A transaction that never closes is no line, and a file of nothing else reads in linear
+    # time (a lazy regular expression took quadratic time over it).
+    assert statements.read("<OFX>" + "<stmttrn>" * 200_000, "ofx").lines == []
