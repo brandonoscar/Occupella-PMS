@@ -6,8 +6,8 @@ pins them down completely: any grant added, dropped or widened by a migration fa
 
 trust_ai_agent, the role behind the API key Occupella will hold, reads what trust_app reads and
 runs the reports: it can't write a row or call a function that writes (the AI never moves money).
-The one exception is AI_NEVER_READS: who can sign in, sessions and credentials, and rental
-applicants with their screenings.
+The one exception is AI_NEVER_READS: who can sign in, sessions and credentials, rental
+applicants with their screenings, and the files of documents.
 
 Every table, view and function in the schema is pinned, not just the ones that exist today:
 test_every_relation_and_function_is_pinned fails on a new one until it is listed here, so no
@@ -101,6 +101,10 @@ TABLES = {
     # Deposits returned at move-out: written only by trust_return_deposit.
     "trust_deposit_returns": {"SELECT"},
     "trust_deposit_return_lines": {"SELECT"},
+    # Documents: staff upload and remove them with inserts; the triggers keep them whole.
+    "trust_documents": {"SELECT", "INSERT"},
+    "trust_document_files": {"SELECT", "INSERT"},
+    "trust_document_removals": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -138,6 +142,8 @@ AI_NEVER_READS = {
     "trust_signature_requests",
     "trust_signatures",
     "trust_lease_offer_completions",
+    # A document's bytes (a W-9 carries a tax ID): the AI may know it exists, never read it.
+    "trust_document_files",
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
 RENAMEABLE = [
@@ -270,6 +276,10 @@ FUNCTIONS = {
     "trust_check_staff_invite()": {"PUBLIC"},
     "trust_check_cutover_signer()": {"PUBLIC"},
     "trust_check_staff_role_change()": {"PUBLIC"},
+    "trust_name_document_uploader()": {"PUBLIC"},
+    "trust_name_document_remover()": {"PUBLIC"},
+    "trust_check_document_file()": {"PUBLIC"},
+    "trust_check_document_has_file()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.

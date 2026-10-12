@@ -85,8 +85,8 @@ required invariant, report and self-host step.
   (`src/pms/api/rent.py`), pay bills and handle owners' money at `/bills` and `/owners`
   (`src/pms/api/payables.py`), reconcile at `/reconcile` (`src/pms/api/reconcile.py`), bring a
   PMC over from another system at `/switching` (`src/pms/api/switching.py`), see and change
-  staff roles at `/staff` (`src/pms/api/staff.py`), and handle move-outs at `/move-out`
-  (`src/pms/api/moveout.py`).
+  staff roles at `/staff` (`src/pms/api/staff.py`), handle move-outs at `/move-out`
+  (`src/pms/api/moveout.py`), and keep documents at `/documents` (`src/pms/api/documents.py`).
   npm packages are pinned exactly and their
   licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
   owner only: no request names an owner, a property or a PMC. A tenant's pages
@@ -138,7 +138,8 @@ required invariant, report and self-host step.
   the reports. It holds no other grant: no write on any table, no function that writes. Grant
   it a new table's SELECT only if `trust_app` has it, and never a write path. It never reads
   logins, invites, sessions or credentials, nor rental applications, applicants and their
-  screenings, nor lease offers and signatures (`AI_NEVER_READS` in `tests/test_privileges.py`).
+  screenings, nor lease offers and signatures, nor documents' files (`AI_NEVER_READS` in
+  `tests/test_privileges.py`).
 - A new table starts with `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it
   needs, never DELETE. `tests/test_privileges.py` pins the exact grants of every table and
   function: a new one fails until it is listed there, with who may use it. Postgres lets PUBLIC
@@ -270,6 +271,13 @@ required invariant, report and self-host step.
   back to each tenant from the security-deposit account. A tenant still on another lease keeps
   their deposit with it. It takes the disburse role. `trust_report_deposit_return` is the
   itemized statement for the tenants. READ COMMITTED; append-only.
+- Documents (migration 0036): a vendor's W-9, a bill's receipt, a lease's move-out photo or an
+  owner's document (`trust_documents`, each kind about its one kind of record of the PMC), a
+  PDF, JPEG or PNG of at most 5 MB. Its bytes sit apart (`trust_document_files`, checked at
+  insert against the type's first bytes, the size and SHA-256 its row says, and there at
+  commit): never audited and never read by `trust_ai_agent`. A removal is a row
+  (`trust_document_removals`); nothing is deleted. The PMS reads nothing out of a file. An
+  owner downloads their own owner documents in the portal.
 - Vendor payments: `trust_report_vendor_payments` lists what each vendor was paid through
   `trust_pay_bill` in a calendar year (UTC), for 1099 preparation. It files nothing, holds no
   tax IDs and applies no threshold.

@@ -766,6 +766,18 @@ tests = [
   "tests/api/test_moveout.py::test_a_move_out_ends_the_lease_charges_damage_and_returns_the_rest",
 ]
 
+[[invariant]]
+id = "a-document-is-its-file-and-its-bytes-stay-out-of-the-log"
+statement = "A document is a PDF, a JPEG or a PNG of at most 5 MB about one record of its own PMC (a vendor's W-9, a bill's receipt, a lease's move-out photo, an owner's document), and has its file at commit: bytes of the type, size and SHA-256 its row says. Documents and removals are append-only; the bytes are never copied into the audit log and trust_ai_agent never reads them. An owner downloads only their own owner documents."
+tests = [
+  "tests/test_documents.py::test_a_file_is_the_type_its_document_says",
+  "tests/test_documents.py::test_a_file_is_the_size_and_digest_its_document_says",
+  "tests/test_documents.py::test_a_document_has_its_file_at_commit",
+  "tests/test_documents.py::test_the_log_records_the_document_and_never_its_bytes",
+  "tests/test_documents.py::test_the_ai_knows_a_document_exists_and_never_reads_it",
+  "tests/api/test_documents_api.py::test_an_owner_reads_their_own_documents_only",
+]
+
 [[report]]
 id = "deposit-return"
 statement = "The itemized statement of a lease's security deposits once returned, as staff send it to the tenants: the property and unit, the tenants and the lease's days, each tenant's deposit, what was kept for each charge, the totals, what went back to each tenant, and who returned it when. Compared to a checked-in golden file."

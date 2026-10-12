@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel
 
 from pms import accounts, exports
+from pms.api import documents
 from pms.api.deps import Conn, Owner, Rows, download
 
 router = APIRouter(prefix="/api/owner")
@@ -93,3 +94,33 @@ def statement_download(
     )
     name = f"owner-statement-{start.isoformat()}-{end.isoformat()}"
     return download(exports.export(titled, fmt), name, fmt)
+
+
+class OwnerDocument(BaseModel):
+    id: UUID
+    title: str
+    content_type: str
+    size: int
+    uploaded_at: datetime
+
+
+@router.get("/documents")
+def owner_documents(session: Owner, conn: Conn) -> list[OwnerDocument]:
+    """The documents staff keep for this owner, newest first."""
+    rows = conn.execute(
+        "SELECT d.id, d.title, d.content_type, d.size, d.created_at FROM trust_documents AS d"
+        " WHERE d.pmc_id = %s AND d.kind = 'owner_document' AND d.owner_id = %s"
+        " AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)"
+        " ORDER BY d.created_at DESC, d.id",
+        (session.pmc_id, session.person_id),
+    ).fetchall()
+    return [
+        OwnerDocument(id=i, title=t, content_type=c, size=n, uploaded_at=at)
+        for i, t, c, n, at in rows
+    ]
+
+
+@router.get("/documents/{document_id}/file")
+def owner_document_file(session: Owner, conn: Conn, document_id: UUID) -> Response:
+    """One of this owner's documents; any other reads as not found."""
+    return documents.served(conn, session.pmc_id, document_id, session.person_id)

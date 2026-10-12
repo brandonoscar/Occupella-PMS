@@ -1,0 +1,40 @@
+import { useEffect, useState } from "react";
+import { ApiError, api } from "../api";
+import { Notice } from "../components/Notice";
+import { Card } from "../components/Shell";
+import type { OwnerDocument } from "../documents";
+import { sizeLabel } from "../documents";
+
+// The documents staff keep for the signed-in owner, to download.
+export function OwnerDocuments() {
+  const [documents, setDocuments] = useState<OwnerDocument[] | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    api
+      .get<OwnerDocument[]>("/api/owner/documents")
+      .then(setDocuments)
+      .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
+  }, []);
+  return (
+    <Card title="Documents">
+      {documents === null ? (
+        <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
+      ) : documents.length === 0 ? (
+        <p className="text-sm text-ink-muted">No documents yet.</p>
+      ) : (
+        <ul className="flex flex-col gap-1 text-sm" aria-label="Your documents">
+          {documents.map((d) => (
+            <li key={d.id}>
+              <a className="text-ink underline underline-offset-2" href={`/api/owner/documents/${d.id}/file`}>
+                {d.title}
+              </a>{" "}
+              <span className="text-ink-muted">
+                ({sizeLabel(d.size)}, {d.uploaded_at.slice(0, 10)})
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}

@@ -267,6 +267,12 @@ def main() -> None:
                 "SELECT trust_open_ledger_account(%s, %s, %s, NULL, NULL, NULL)",
                 (pmc, cutover_bank, kind),
             )
+        # Documents: a staff member who keeps an owner's document for Owner E2E to read.
+        documents_staff = one(
+            "INSERT INTO trust_staff (pmc_id, display_name) VALUES (%s, 'Documents E2E')"
+            " RETURNING id",
+            (pmc,),
+        )
         # Move-out: a lease that ended last month, its tenant's deposit held in a security
         # deposit trust account, and a staff member who may pay it back.
         move_out_staff = one(
@@ -392,6 +398,9 @@ def main() -> None:
             ).token,
             "move_out_invite": accounts.create_invite(
                 conn, pmc, "staff", move_out_staff, f"move-out.{tag}@example.com", None
+            ).token,
+            "documents_invite": accounts.create_invite(
+                conn, pmc, "staff", documents_staff, f"documents.{tag}@example.com", None
             ).token,
             "switch_invite": accounts.create_invite(
                 conn, pmc, "staff", switch_staff, f"switch.{tag}@example.com", None

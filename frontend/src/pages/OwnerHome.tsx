@@ -8,6 +8,7 @@ import { Card, Shell } from "../components/Shell";
 import { lastMonth, money } from "../money";
 import type { StatementData } from "../statement";
 import { group } from "../statement";
+import { OwnerDocuments } from "./OwnerDocuments";
 
 type Property = { account_id: string; property_id: string; name: string; bank: string; balance: string };
 
@@ -143,6 +144,7 @@ export function OwnerHome({ me }: { me: Me }) {
           </div>
         )}
       </Card>
+      <OwnerDocuments />
     </Shell>
   );
 }

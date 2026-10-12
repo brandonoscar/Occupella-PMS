@@ -255,6 +255,37 @@ def open_lease(connection, pmc_id, unit_id, starts_on, ends_on, rent, tenant_ids
     )
 
 
+# Synthetic files of each type a document may be: just their first bytes and a few more.
+PDF = b"%PDF-1.4\n% synthetic\n"
+PNG = b"\x89PNG\r\n\x1a\n synthetic"
+JPEG = b"\xff\xd8\xff\xe0 synthetic"
+
+
+def add_document(
+    connection, pmc_id, kind, about, content=PDF, content_type="application/pdf", title="W-9"
+) -> UUID:
+    """A document of a kind about one thing (a vendor, bill, lease or owner), with its file, in
+    one transaction."""
+    column = {
+        "w9": "vendor_id",
+        "receipt": "bill_id",
+        "move_out_photo": "lease_id",
+        "owner_document": "owner_id",
+    }[kind]
+    with connection.transaction():
+        document = _one(
+            connection,
+            f"INSERT INTO trust_documents (pmc_id, kind, {column}, title, content_type, size,"
+            " sha256) VALUES (%s, %s, %s, %s, %s, %s, sha256(%s)) RETURNING id",
+            (pmc_id, kind, about, title, content_type, len(content), content),
+        )
+        connection.execute(
+            "INSERT INTO trust_document_files (document_id, pmc_id, content) VALUES (%s, %s, %s)",
+            (document, pmc_id, content),
+        )
+    return document
+
+
 def return_deposit(connection, pmc_id, lease_id, request_key, event_at, owner_account=None):
     """Settle an ended lease's deposits: keep what it owes for the owner, return the rest."""
     return _one(

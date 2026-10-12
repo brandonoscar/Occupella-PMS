@@ -1359,6 +1359,64 @@ $$;
 
 
 --
+-- Name: trust_check_document_file(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_document_file() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_document trust_documents;
+    v_typed boolean;
+BEGIN
+    SELECT d.* INTO v_document FROM trust_documents AS d
+    WHERE d.id = NEW.document_id AND d.pmc_id = NEW.pmc_id;
+    IF NOT FOUND THEN
+        -- No such document of this PMC: the foreign key refuses the file.
+        RETURN NEW;
+    END IF;
+    IF length(NEW.content) <> v_document.size OR sha256(NEW.content) <> v_document.sha256 THEN
+        RAISE EXCEPTION 'trust: the file of document % is not the % bytes it says',
+            NEW.document_id, v_document.size
+            USING ERRCODE = 'check_violation';
+    END IF;
+    -- The first bytes of a PDF ("%PDF-"), a PNG and a JPEG.
+    v_typed := CASE v_document.content_type
+        WHEN 'application/pdf' THEN substring(NEW.content FROM 1 FOR 5) = '\x255044462d'::bytea
+        WHEN 'image/png' THEN substring(NEW.content FROM 1 FOR 8) = '\x89504e470d0a1a0a'::bytea
+        ELSE substring(NEW.content FROM 1 FOR 3) = '\xffd8ff'::bytea
+    END;
+    IF NOT v_typed THEN
+        RAISE EXCEPTION 'trust: the file of document % is not a %', NEW.document_id,
+            v_document.content_type
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_document_has_file(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_document_has_file() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (SELECT f.document_id FROM trust_document_files AS f
+                   WHERE f.document_id = NEW.id) THEN
+        RAISE EXCEPTION 'trust: document % has no file', NEW.id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: trust_check_hold_allowance(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2272,6 +2330,36 @@ BEGIN
     INSERT INTO trust_bank_match_cutover_items (match_id, item_id, side, pmc_id)
     SELECT v_id, x, 'carried', p_pmc_id FROM unnest(v_items) AS x;
     RETURN v_id;
+END;
+$$;
+
+
+--
+-- Name: trust_name_document_remover(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_name_document_remover() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    NEW.removed_by := nullif(current_setting('trust.staff_id', true), '')::uuid;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_name_document_uploader(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_name_document_uploader() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    NEW.uploaded_by := nullif(current_setting('trust.staff_id', true), '')::uuid;
+    RETURN NEW;
 END;
 $$;
 
@@ -5659,6 +5747,59 @@ CREATE TABLE public.trust_deposit_returns (
 
 
 --
+-- Name: trust_document_files; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_document_files (
+    document_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    content bytea NOT NULL
+);
+
+
+--
+-- Name: trust_document_removals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_document_removals (
+    document_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    removed_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: trust_documents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_documents (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    kind text NOT NULL,
+    vendor_id uuid,
+    bill_id uuid,
+    lease_id uuid,
+    owner_id uuid,
+    title text NOT NULL,
+    content_type text NOT NULL,
+    size bigint NOT NULL,
+    sha256 bytea NOT NULL,
+    uploaded_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_documents_check CHECK (((kind = 'w9'::text) = (vendor_id IS NOT NULL))),
+    CONSTRAINT trust_documents_check1 CHECK (((kind = 'receipt'::text) = (bill_id IS NOT NULL))),
+    CONSTRAINT trust_documents_check2 CHECK (((kind = 'move_out_photo'::text) = (lease_id IS NOT NULL))),
+    CONSTRAINT trust_documents_check3 CHECK (((kind = 'owner_document'::text) = (owner_id IS NOT NULL))),
+    CONSTRAINT trust_documents_content_type_check CHECK ((content_type = ANY (ARRAY['application/pdf'::text, 'image/jpeg'::text, 'image/png'::text]))),
+    CONSTRAINT trust_documents_kind_check CHECK ((kind = ANY (ARRAY['w9'::text, 'receipt'::text, 'move_out_photo'::text, 'owner_document'::text]))),
+    CONSTRAINT trust_documents_sha256_check CHECK ((length(sha256) = 32)),
+    CONSTRAINT trust_documents_size_check CHECK (((size >= 1) AND (size <= 5242880))),
+    CONSTRAINT trust_documents_title_check CHECK (((title ~ '\S'::text) AND (length(title) <= 200)))
+);
+
+
+--
 -- Name: trust_idempotency_keys; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -6693,6 +6834,38 @@ ALTER TABLE ONLY public.trust_deposit_returns
 
 
 --
+-- Name: trust_document_files trust_document_files_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_document_files
+    ADD CONSTRAINT trust_document_files_pkey PRIMARY KEY (document_id);
+
+
+--
+-- Name: trust_document_removals trust_document_removals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_document_removals
+    ADD CONSTRAINT trust_document_removals_pkey PRIMARY KEY (document_id);
+
+
+--
+-- Name: trust_documents trust_documents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_documents
+    ADD CONSTRAINT trust_documents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_documents trust_documents_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_documents
+    ADD CONSTRAINT trust_documents_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_idempotency_keys trust_idempotency_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7394,6 +7567,13 @@ CREATE INDEX trust_cutover_items_bank_account_id ON public.trust_cutover_items U
 
 
 --
+-- Name: trust_documents_pmc_id_kind; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_documents_pmc_id_kind ON public.trust_documents USING btree (pmc_id, kind);
+
+
+--
 -- Name: trust_late_fees_policy_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7835,6 +8015,27 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_document_files trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_document_files FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_document_removals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_document_removals FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_documents trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_documents FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_idempotency_keys trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -8248,6 +8449,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_depo
 
 
 --
+-- Name: trust_document_removals trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_document_removals FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_documents trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_documents FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_invites trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -8644,6 +8859,34 @@ CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_deposit_returns FOR 
 --
 
 CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_owner_draws FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('disburse', 'pay out money');
+
+
+--
+-- Name: trust_document_files trust_document_file; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_document_file BEFORE INSERT ON public.trust_document_files FOR EACH ROW EXECUTE FUNCTION public.trust_check_document_file();
+
+
+--
+-- Name: trust_documents trust_document_has_file; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_document_has_file AFTER INSERT ON public.trust_documents DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_document_has_file();
+
+
+--
+-- Name: trust_document_removals trust_document_staff; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_document_staff BEFORE INSERT ON public.trust_document_removals FOR EACH ROW EXECUTE FUNCTION public.trust_name_document_remover();
+
+
+--
+-- Name: trust_documents trust_document_staff; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_document_staff BEFORE INSERT ON public.trust_documents FOR EACH ROW EXECUTE FUNCTION public.trust_name_document_uploader();
 
 
 --
@@ -9275,6 +9518,94 @@ ALTER TABLE ONLY public.trust_deposit_returns
 
 ALTER TABLE ONLY public.trust_deposit_returns
     ADD CONSTRAINT trust_deposit_returns_pmc_id_returned_by_fkey FOREIGN KEY (pmc_id, returned_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_document_files trust_document_files_pmc_id_document_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_document_files
+    ADD CONSTRAINT trust_document_files_pmc_id_document_id_fkey FOREIGN KEY (pmc_id, document_id) REFERENCES public.trust_documents(pmc_id, id);
+
+
+--
+-- Name: trust_document_files trust_document_files_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_document_files
+    ADD CONSTRAINT trust_document_files_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_document_removals trust_document_removals_pmc_id_document_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_document_removals
+    ADD CONSTRAINT trust_document_removals_pmc_id_document_id_fkey FOREIGN KEY (pmc_id, document_id) REFERENCES public.trust_documents(pmc_id, id);
+
+
+--
+-- Name: trust_document_removals trust_document_removals_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_document_removals
+    ADD CONSTRAINT trust_document_removals_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_document_removals trust_document_removals_pmc_id_removed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_document_removals
+    ADD CONSTRAINT trust_document_removals_pmc_id_removed_by_fkey FOREIGN KEY (pmc_id, removed_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_documents trust_documents_pmc_id_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_documents
+    ADD CONSTRAINT trust_documents_pmc_id_bill_id_fkey FOREIGN KEY (pmc_id, bill_id) REFERENCES public.trust_bills(pmc_id, id);
+
+
+--
+-- Name: trust_documents trust_documents_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_documents
+    ADD CONSTRAINT trust_documents_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_documents trust_documents_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_documents
+    ADD CONSTRAINT trust_documents_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_documents trust_documents_pmc_id_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_documents
+    ADD CONSTRAINT trust_documents_pmc_id_owner_id_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id);
+
+
+--
+-- Name: trust_documents trust_documents_pmc_id_uploaded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_documents
+    ADD CONSTRAINT trust_documents_pmc_id_uploaded_by_fkey FOREIGN KEY (pmc_id, uploaded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_documents trust_documents_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_documents
+    ADD CONSTRAINT trust_documents_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
 
 
 --
@@ -10243,4 +10574,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261012000032'),
     ('20261012000033'),
     ('20261012000034'),
-    ('20261012000035');
+    ('20261012000035'),
+    ('20261012000036');
