@@ -192,6 +192,11 @@ def main() -> None:
             "SELECT trust_open_lease(%s, %s, %s, NULL, 1000.00, %s::uuid[])",
             (pmc, unit_three, first_of_last_month, [renewer]),
         )
+        # Setup: a staff member of their own, to set up a property from nothing.
+        setup_staff = one(
+            "INSERT INTO trust_staff (pmc_id, display_name) VALUES (%s, 'Setup E2E') RETURNING id",
+            (pmc,),
+        )
         owner_email, staff_email = f"owner.{tag}@example.com", f"staff.{tag}@example.com"
         seeded = {
             "pmc_id": str(pmc),
@@ -214,6 +219,9 @@ def main() -> None:
             ).token,
             "renewer_invite": accounts.create_invite(
                 conn, pmc, "tenant", renewer, f"renewer.{tag}@example.com", None
+            ).token,
+            "setup_invite": accounts.create_invite(
+                conn, pmc, "staff", setup_staff, f"setup.{tag}@example.com", None
             ).token,
             "renter_email": f"renter.{tag}@example.com",
             "renter_invite": accounts.create_invite(

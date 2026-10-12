@@ -25,7 +25,9 @@ Carried over from Occupella: the AI never moves money. The API key Occupella wil
 be able to move money in this system either: its role, `trust_ai_agent`, can't (see below).
 
 In scope since 2026-10-11 (founder, `docs/adr/0002-portals-and-exports.md`): exports, the owner
-portal, the tenant portal and leasing basics, with the API and logins they need. Still out of
+portal, the tenant portal and leasing basics, with the API and logins they need. Since
+2026-10-12 (`docs/adr/0003-staff-back-office.md`): the staff back office for the accounting,
+bank statement import, a switching tool, staff roles, move-out and documents. Still out of
 scope: Stripe and online payments, bank files, 1099 filing, and state rules beyond the
 no-negative rule. If one of these looks needed, stop and ask the founder.
 
@@ -77,7 +79,9 @@ required invariant, report and self-host step.
   Its build is served by the API (`PMS_STATIC_DIR`) under a strict Content-Security-Policy.
   Colours, sizes and fonts come only from the tokens in `frontend/src/styles/globals.css`
   (`designTokens.test.ts` fails on a raw colour or a size off the scale). Money stays text from
-  the database to the screen, never a float. npm packages are pinned exactly and their
+  the database to the screen, never a float. Staff's pages have sections (`pages/staffNav.ts`);
+  they set up the books at `/setup` (`src/pms/api/setup.py`: plain inserts and the database's
+  own write paths, nothing that moves money). npm packages are pinned exactly and their
   licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
   owner only: no request names an owner, a property or a PMC. A tenant's pages
   (`src/pms/api/tenant.py`) show the session's tenant only: a lease named in a path is answered

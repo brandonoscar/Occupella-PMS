@@ -8,6 +8,7 @@ import { ESignPage } from "./pages/ESignPage";
 import { InvitePage } from "./pages/InvitePage";
 import { OwnerHome } from "./pages/OwnerHome";
 import { PMC_KEY, SignInPage } from "./pages/SignInPage";
+import { SetupPage } from "./pages/SetupPage";
 import { StaffHome } from "./pages/StaffHome";
 import { TenantHome } from "./pages/TenantHome";
 import { navigate, usePath } from "./router";
@@ -21,11 +22,11 @@ export function App() {
   // The fake e-sign partner's page; a signer's link carries what lets them in.
   if (path === "/esign") return <ESignPage />;
   if (path === "/sign-in") return <SignInPage />;
-  return <Home />;
+  return <Home path={path} />;
 }
 
-// Who is signed in decides the page; nobody signed in goes to sign in.
-function Home() {
+// Who is signed in decides the page; nobody signed in goes to sign in. Staff have sections.
+function Home({ path }: { path: string }) {
   const [me, setMe] = useState<Me | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -44,6 +45,6 @@ function Home() {
   if (error) return <Notice tone="error">{error}</Notice>;
   if (!me) return null;
   if (me.kind === "owner") return <OwnerHome me={me} />;
-  if (me.kind === "staff") return <StaffHome me={me} />;
+  if (me.kind === "staff") return path === "/setup" ? <SetupPage me={me} /> : <StaffHome me={me} />;
   return <TenantHome me={me} />;
 }

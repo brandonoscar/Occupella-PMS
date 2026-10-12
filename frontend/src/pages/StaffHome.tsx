@@ -8,6 +8,7 @@ import { day } from "../money";
 import { LeasingCard } from "./LeasingCard";
 import { MaintenanceCard } from "./MaintenanceCard";
 import { OffersCard } from "./OffersCard";
+import { STAFF_NAV } from "./staffNav";
 
 type Person = {
   kind: "staff" | "owner" | "tenant";
@@ -54,7 +55,7 @@ export function StaffHome({ me }: { me: Me }) {
   }
 
   return (
-    <Shell me={me}>
+    <Shell me={me} nav={STAFF_NAV}>
       <h1 className="font-display text-xl font-medium">{me.pmc_name}</h1>
       <Card title="Downloads">
         <div className="flex flex-wrap gap-2">
