@@ -39,6 +39,7 @@ from helpers import (
     add_work_order,
     approve,
     file_request,
+    give_roles,
     link_work_order,
     make_pmc,
     open_lease,
@@ -77,6 +78,9 @@ class AuditMachine(RuleBasedStateMachine):
         self.outsider = add_staff(owner_conn, make_pmc(owner_conn).pmc_id, "Outsider")
         self.staff = [add_staff(owner_conn, self.pmc_id, "Staff 1")]
         self.names = {self.staff[0]: "Staff 1"}
+        # Staff 1 is the PMC's admin and may approve; staff added later hold no role.
+        give_roles(owner_conn, self.pmc_id, self.staff[0], ["admin", "approve"])
+        self.approvers = {self.staff[0]}
         # A home with a lease: its tenant files maintenance requests; a neighbour can't.
         self.property_id = self.pmc.owners[0].property_id
         self.home = add_unit(owner_conn, self.pmc_id, self.property_id, "Home")
@@ -196,6 +200,19 @@ class AuditMachine(RuleBasedStateMachine):
         bank = self.pmc.operating_bank_id
         start = self.closed[bank]
         end = start + timedelta(days=days)
+        named, _, _ = self.resolve(whom)
+        if role == "app" or (named is not None and named not in self.approvers):
+            # The app approves only a month-end preparation, never the core function; a named
+            # staff member needs the approve role (another PMC's staff and nobody at all hold
+            # none). Refused before anything is written, so nothing is logged.
+            before = self.last_id()
+            with (
+                acting_as(self.conns[role], named),
+                pytest.raises(psycopg.errors.InsufficientPrivilege),
+            ):
+                approve(self.conns[role], self.pmc_id, bank, start, end)
+            assert self.last_id() == before
+            return
         done = self.write(
             role,
             whom,

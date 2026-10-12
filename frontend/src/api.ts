@@ -18,7 +18,10 @@ export type Me = {
   person_id: string;
   pmc_id: string;
   pmc_name: string;
+  // A staff member's roles (src/pms/api/staff.py); none for an owner or a tenant.
+  roles?: Role[];
 };
+export type Role = "admin" | "approve" | "disburse";
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   const response = await fetch(path, {

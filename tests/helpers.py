@@ -709,6 +709,9 @@ def add_staff(connection, pmc_id, name="Staff 1") -> UUID:
 def acting_as(connection, staff_id) -> Iterator[None]:
     """Name a staff member (or, with None, nobody) on every write the session makes inside the
     block, as the application will for whoever is signed in."""
+    before = connection.execute(
+        "SELECT coalesce(current_setting('trust.staff_id', true), '')"
+    ).fetchone()[0]
     connection.execute(
         "SELECT set_config('trust.staff_id', %s, false)",
         ("" if staff_id is None else str(staff_id),),
@@ -716,7 +719,67 @@ def acting_as(connection, staff_id) -> Iterator[None]:
     try:
         yield
     finally:
-        connection.execute("SELECT set_config('trust.staff_id', '', false)")
+        connection.execute("SELECT set_config('trust.staff_id', %s, false)", (before,))
+
+
+ROLES = ("admin", "approve", "disburse")
+
+
+def change_role(connection, pmc_id, staff_id, role, granted=True, by=None) -> None:
+    """Grant (or take away) a role as the admin `by`; with None, nobody is named, as for a PMC's
+    first admin."""
+    with acting_as(connection, by):
+        connection.execute(
+            "INSERT INTO trust_staff_roles (pmc_id, staff_id, role, granted)"
+            " VALUES (%s, %s, %s, %s)",
+            (pmc_id, staff_id, role, granted),
+        )
+
+
+def roles_of(connection, pmc_id, staff_id) -> set[str]:
+    return {
+        role
+        for role in ROLES
+        if _one(connection, "SELECT trust_staff_holds(%s, %s, %s)", (pmc_id, staff_id, role))
+    }
+
+
+def admin_of(connection, pmc_id) -> UUID:
+    """The PMC's first admin; with none, an 'Admin 1' made one."""
+    row = connection.execute(
+        "SELECT s.id FROM trust_staff AS s WHERE s.pmc_id = %s"
+        " AND trust_staff_holds(s.pmc_id, s.id, 'admin') ORDER BY s.created_at, s.id LIMIT 1",
+        (pmc_id,),
+    ).fetchone()
+    if row is not None:
+        return row[0]
+    admin = add_staff(connection, pmc_id, "Admin 1")
+    change_role(connection, pmc_id, admin, "admin")
+    return admin
+
+
+def give_roles(connection, pmc_id, staff_id, roles) -> None:
+    for role in roles:
+        first_admin = (
+            role == "admin"
+            and not connection.execute(
+                "SELECT 1 FROM trust_staff_roles WHERE pmc_id = %s AND role = 'admin'", (pmc_id,)
+            ).fetchone()
+        )
+        by = None if first_admin else admin_of(connection, pmc_id)
+        change_role(connection, pmc_id, staff_id, role, by=by)
+
+
+def staff_named(connection, pmc_id, name, roles=()) -> UUID:
+    """The PMC's staff member of that name, added with these roles if there is none."""
+    row = connection.execute(
+        "SELECT id FROM trust_staff WHERE pmc_id = %s AND display_name = %s", (pmc_id, name)
+    ).fetchone()
+    if row is not None:
+        return row[0]
+    staff_id = add_staff(connection, pmc_id, name)
+    give_roles(connection, pmc_id, staff_id, roles)
+    return staff_id
 
 
 def import_statement(
@@ -787,14 +850,31 @@ def bank_reconciliation(connection, pmc_id, bank_id, through) -> list[tuple]:
     ).fetchall()
 
 
-def approve_bank(
-    connection, pmc_id, bank_id, through, prepared_by="Preparer 1", approved_by="Approver 1"
-) -> UUID:
-    return _one(
-        connection,
-        "SELECT trust_approve_bank_reconciliation(%s, %s, %s, %s, %s)",
-        (pmc_id, bank_id, through, prepared_by, approved_by),
-    )
+def prepare_bank(connection, pmc_id, bank_id, through, staff_id) -> UUID:
+    """Month-end through a day, prepared by a staff member."""
+    with acting_as(connection, staff_id):
+        return _one(
+            connection,
+            "SELECT trust_prepare_bank_reconciliation(%s, %s, %s)",
+            (pmc_id, bank_id, through),
+        )
+
+
+def approve_prepared(connection, pmc_id, preparation_id, staff_id) -> UUID:
+    with acting_as(connection, staff_id):
+        return _one(
+            connection,
+            "SELECT trust_approve_bank_reconciliation(%s, %s)",
+            (pmc_id, preparation_id),
+        )
+
+
+def approve_bank(connection, pmc_id, bank_id, through) -> UUID:
+    """Month-end through a day, prepared by 'Preparer 1' and approved by 'Approver 1'."""
+    preparer = staff_named(connection, pmc_id, "Preparer 1")
+    approver = staff_named(connection, pmc_id, "Approver 1", ["approve"])
+    prepared = prepare_bank(connection, pmc_id, bank_id, through, preparer)
+    return approve_prepared(connection, pmc_id, prepared, approver)
 
 
 def carry_over(

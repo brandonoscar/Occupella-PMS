@@ -20,6 +20,7 @@ from helpers import (
     open_with_balances,
     post,
     sign_off,
+    staff_named,
     unmatch_lines,
 )
 
@@ -42,7 +43,8 @@ def pmc(conn):
 
 @pytest.fixture
 def staff(conn, pmc):
-    return add_staff(conn, pmc.pmc_id)
+    """A staff member who may sign off a cutover."""
+    return staff_named(conn, pmc.pmc_id, "Staff 1", ["approve"])
 
 
 @pytest.fixture
@@ -128,6 +130,12 @@ def test_an_item_holds_only_sound_values(
         )
 
 
+def test_signing_off_takes_the_approve_role(conn, pmc, opened):
+    clerk = add_staff(conn, pmc.pmc_id, "Clerk 1")
+    with refused("Clerk 1 may not sign off a cutover", psycopg.errors.InsufficientPrivilege):
+        sign_off(conn, pmc.pmc_id, pmc.operating_bank_id, clerk)
+
+
 def test_items_and_sign_offs_are_their_own_pmcs(conn, pmc, staff, opened):
     other = make_pmc(conn)
     theirs = add_staff(conn, other.pmc_id)
@@ -135,7 +143,7 @@ def test_items_and_sign_offs_are_their_own_pmcs(conn, pmc, staff, opened):
         carry_over(conn, pmc.pmc_id, pmc.operating_bank_id, theirs, CUTOVER, "-5.00")
     with refused("foreign key", psycopg.errors.ForeignKeyViolation):
         carry_over(conn, other.pmc_id, pmc.operating_bank_id, theirs, CUTOVER, "-5.00")
-    with refused("foreign key", psycopg.errors.ForeignKeyViolation):
+    with refused("may not sign off a cutover", psycopg.errors.InsufficientPrivilege):
         sign_off(conn, pmc.pmc_id, pmc.operating_bank_id, theirs)
 
 

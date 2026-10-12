@@ -1,5 +1,6 @@
 """Staff's month-end (src/pms/api/reconcile.py): importing statements, matching their lines to
-the books, and approving a period. Every statement here is synthetic."""
+the books, and a period prepared by one staff member and approved by another. Every statement
+here is synthetic."""
 
 import json
 import uuid
@@ -7,7 +8,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from helpers import approve, make_pmc, post
+from helpers import approve, approve_bank, make_pmc, post
 from people import join_as_owner, join_as_staff, join_as_tenant
 
 TODAY = datetime.now(UTC).date()
@@ -17,6 +18,12 @@ JAN_1, JAN_31 = date(2026, 1, 1), date(2026, 1, 31)
 @pytest.fixture
 def staff(client, conn, app_conn, pmc):
     return join_as_staff(client, conn, app_conn, pmc, name="Reconciler 1")
+
+
+@pytest.fixture
+def approver(other_client, conn, app_conn, pmc):
+    """A second staff member, signed in on the other browser, who may approve."""
+    return join_as_staff(other_client, conn, app_conn, pmc, name="Approver 1", roles=["approve"])
 
 
 def call(client, path, **body):
@@ -307,7 +314,7 @@ def test_a_match_or_undo_in_an_approved_period_is_refused(client, conn, staff, p
     made = ok(
         call(client, f"{pmc.operating_bank_id}/matches", line_ids=[line["id"]], transfer_ids=[paid])
     )
-    ok(call(client, f"{pmc.operating_bank_id}/approve", through=JAN_31))
+    approve_bank(conn, pmc.pmc_id, pmc.operating_bank_id, JAN_31)
 
     refused(
         client.post(f"/api/reconcile/matches/{made['id']}/undo", json={}), 409, "closed through"
@@ -365,10 +372,12 @@ def test_auto_match_leaves_an_approved_period_alone(client, conn, staff, pmc):
     }
 
 
-# --- approving ---------------------------------------------------------------------------------
+# --- preparing and approving ------------------------------------------------------------------
 
 
-def test_a_period_is_approved_once_the_books_lack_no_line(client, conn, staff, pmc):
+def test_a_period_is_prepared_once_the_books_lack_no_line_and_approved_by_another(
+    client, other_client, conn, staff, approver, pmc
+):
     paid = rent(conn, pmc, "1500.00", date(2026, 1, 4))
     ok(
         statement(
@@ -388,11 +397,33 @@ def test_a_period_is_approved_once_the_books_lack_no_line(client, conn, staff, p
             transfer_ids=[paid],
         )
     )
-    path = f"{pmc.operating_bank_id}/approve"
+    path = f"{pmc.operating_bank_id}/prepare"
 
     refused(call(client, path, through=JAN_31), 409, "come to -5.00 that the books lack")
     refused(call(client, path, through="2025-12-31"), 422, "the next period starts on 2026-01-01")
-    approved = ok(call(client, path, through="2026-01-20"))
+    prepared = ok(call(client, path, through="2026-01-20"))
+    shown = bank(client, pmc)["prepared"]
+    assert {k: shown[k] for k in ("id", "through", "bank_balance", "book_cash", "prepared_by")} == {
+        "id": prepared["id"],
+        "through": "2026-01-20",
+        "bank_balance": "1500.00",
+        "book_cash": "1500.00",
+        "prepared_by": "Reconciler 1",
+    }
+    assert shown["preparer_id"] == str(staff.person_id)
+
+    approve_path = f"{pmc.operating_bank_id}/approve"
+    refused(
+        call(client, approve_path, preparation_id=prepared["id"]),
+        403,
+        "who prepared a reconciliation does not approve it",
+    )
+    approved = ok(call(other_client, approve_path, preparation_id=prepared["id"]))
+    refused(
+        call(other_client, approve_path, preparation_id=prepared["id"]),
+        409,
+        "is approved through 2026-01-20 already",
+    )
     refused(call(client, path, through="2026-01-20"), 422, "the next period starts on 2026-01-21")
     refused(call(client, path, through=TODAY), 422, "once its last day has ended")
     refused(call(client, path, through=TODAY - timedelta(days=1)), 422, "no statement")
@@ -403,14 +434,58 @@ def test_a_period_is_approved_once_the_books_lack_no_line(client, conn, staff, p
     assert (listed["statement_balance"], listed["prepared_by"], listed["approved_by"]) == (
         "1500.00",
         "Reconciler 1",
-        "Reconciler 1",
+        "Approver 1",
     )
-    assert (shown["closed_through"], shown["next_start"]) == ("2026-01-20", "2026-01-21")
+    assert (shown["closed_through"], shown["next_start"], shown["prepared"]) == (
+        "2026-01-20",
+        "2026-01-21",
+        None,
+    )
 
 
-def test_approving_needs_a_statement(client, staff, pmc):
+def test_approving_takes_the_role_and_the_figures_as_prepared(
+    client, other_client, conn, app_conn, staff, pmc
+):
+    join_as_staff(other_client, conn, app_conn, pmc, name="Clerk 1", roles=[])
+    rent(conn, pmc, "100.00", date(2026, 1, 4))
+    ok(
+        statement(
+            client,
+            pmc,
+            csv(("2026-01-05", "Deposit", "100.00", "")),
+            first_day=JAN_1,
+            last_day=JAN_31,
+        )
+    )
+    ok(client.post(f"/api/reconcile/{pmc.operating_bank_id}/auto-match", json={}), 200)
+    # Preparing takes no role.
+    first = ok(call(other_client, f"{pmc.operating_bank_id}/prepare", through=JAN_31))
+    approve_path = f"{pmc.operating_bank_id}/approve"
+
+    rent(conn, pmc, "25.00", JAN_31)  # in transit: nothing missing, but the books moved
     refused(
-        call(client, f"{pmc.operating_bank_id}/approve", through=JAN_31),
+        call(client, approve_path, preparation_id=first["id"]),
+        409,
+        "changed since they were prepared",
+    )
+    again = ok(call(client, f"{pmc.operating_bank_id}/prepare", through=JAN_31))
+    refused(call(client, approve_path, preparation_id=first["id"]), 409, "prepared again since")
+    refused(
+        call(other_client, approve_path, preparation_id=again["id"]),
+        403,
+        "Clerk 1 may not approve a reconciliation (the approve role)",
+    )
+    assert bank(client, pmc)["prepared"]["id"] == again["id"]
+    refused(
+        call(client, approve_path, preparation_id=str(uuid.uuid4())),
+        404,
+        "no such preparation of this trust bank account",
+    )
+
+
+def test_preparing_needs_a_statement(client, staff, pmc):
+    refused(
+        call(client, f"{pmc.operating_bank_id}/prepare", through=JAN_31),
         422,
         "import a statement first",
     )
@@ -426,7 +501,8 @@ def test_another_pmcs_trust_bank_account_is_not_found(client, conn, staff, pmc):
         client.get(f"/api/reconcile/{bank_id}"),
         call(client, f"{bank_id}/matches", line_ids=[], transfer_ids=[]),
         client.post(f"/api/reconcile/{bank_id}/auto-match", json={}),
-        call(client, f"{bank_id}/approve", through=JAN_31),
+        call(client, f"{bank_id}/prepare", through=JAN_31),
+        call(client, f"{bank_id}/approve", preparation_id=str(uuid.uuid4())),
         call(client, "statements", bank_account_id=bank_id, format="csv", content=csv()),
     ]
     for answer in cases:
@@ -440,6 +516,7 @@ ENDPOINTS = [
     ("post", f"/api/reconcile/{uuid.uuid4()}/matches"),
     ("post", f"/api/reconcile/matches/{uuid.uuid4()}/undo"),
     ("post", f"/api/reconcile/{uuid.uuid4()}/auto-match"),
+    ("post", f"/api/reconcile/{uuid.uuid4()}/prepare"),
     ("post", f"/api/reconcile/{uuid.uuid4()}/approve"),
     ("post", f"/api/reconcile/{uuid.uuid4()}/opening-match"),
 ]
@@ -476,7 +553,8 @@ def test_only_staff_reconcile(client, conn, app_conn, pmc, caller, method, path)
         (f"{uuid.uuid4()}/matches", {"transfer_ids": ["t"] * 101}),
         (f"{uuid.uuid4()}/matches", {"cutover_item_ids": ["x"]}),
         (f"{uuid.uuid4()}/opening-match", {"line_id": "x"}),
-        (f"{uuid.uuid4()}/approve", {"through": "January"}),
+        (f"{uuid.uuid4()}/prepare", {"through": "January"}),
+        (f"{uuid.uuid4()}/approve", {"preparation_id": "x"}),
         ("x/auto-match", {}),
     ],
 )
@@ -573,7 +651,7 @@ def test_a_migrated_accounts_opening_and_its_items_are_matched(client, conn, sta
     assert {r["item"]: r["amount"] for r in done["rows"]}[
         "difference: adjusted bank balance - trust journal"
     ] == "0.00"
-    ok(call(client, f"{pmc.operating_bank_id}/approve", through=JAN_31))
+    ok(call(client, f"{pmc.operating_bank_id}/prepare", through=JAN_31))
 
 
 def test_an_opening_match_needs_the_sign_off_and_the_accounts_own_line(client, conn, staff, pmc):

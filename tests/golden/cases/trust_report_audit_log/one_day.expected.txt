@@ -9,9 +9,11 @@ line	item	staff	db_role	action	record	detail
 8	change	not recorded	postgres	insert	staff	display_name: Manager 1
 9	change	not recorded	postgres	insert	ledger_accounts	kind: bank_cash
 10	change	not recorded	postgres	insert	ledger_accounts	kind: owner_property
-11	change	Bookkeeper 1	trust_app	insert	transfers	1500.00 from bank_cash: Golden operating trust account to owner_property: Owner 1 / Property 1 dated 2026-01-05T15:00:00+00:00 - January rent
-12	change	Bookkeeper 1	trust_app	insert	units	display_name: Unit 1
-13	change	Manager 1	trust_app	update	units	display_name: Unit 1 to Unit 1A
-14	change	Manager 1	trust_app	insert	reconciliations	approved_by: Manager 1, book_balance: 1500.00, period_end: 2026-02-01T00:00:00+00:00, period_start: 2026-01-01T00:00:00+00:00, prepared_by: Bookkeeper 1, statement_balance: 1500.00
-15	change	Manager 1	trust_app	update	bank_accounts	closed_through: null to 2026-02-01T00:00:00+00:00
-16	total	NULL	NULL	NULL	NULL	13 changes
+11	change	not recorded	postgres	insert	staff_roles	granted: true, role: admin
+12	change	Manager 1	trust_app	insert	staff_roles	changed_by: <uuid1>, granted: true, role: approve
+13	change	Bookkeeper 1	trust_app	insert	transfers	1500.00 from bank_cash: Golden operating trust account to owner_property: Owner 1 / Property 1 dated 2026-01-05T15:00:00+00:00 - January rent
+14	change	Bookkeeper 1	trust_app	insert	units	display_name: Unit 1
+15	change	Manager 1	trust_app	update	units	display_name: Unit 1 to Unit 1A
+16	change	Manager 1	postgres	insert	reconciliations	approved_by: Manager 1, book_balance: 1500.00, period_end: 2026-02-01T00:00:00+00:00, period_start: 2026-01-01T00:00:00+00:00, prepared_by: Bookkeeper 1, statement_balance: 1500.00
+17	change	Manager 1	postgres	update	bank_accounts	closed_through: null to 2026-02-01T00:00:00+00:00
+18	total	NULL	NULL	NULL	NULL	15 changes

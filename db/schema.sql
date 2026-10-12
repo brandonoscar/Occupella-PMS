@@ -626,33 +626,47 @@ $$;
 
 
 --
--- Name: trust_approve_bank_reconciliation(uuid, uuid, date, text, text); Type: FUNCTION; Schema: public; Owner: -
+-- Name: trust_approve_bank_reconciliation(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.trust_approve_bank_reconciliation(p_pmc_id uuid, p_bank_account_id uuid, p_through date, p_prepared_by text, p_approved_by text) RETURNS uuid
+CREATE FUNCTION public.trust_approve_bank_reconciliation(p_pmc_id uuid, p_preparation_id uuid) RETURNS uuid
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public', 'pg_temp'
     AS $$
 DECLARE
-    v_bank trust_bank_accounts := trust_lock_bank_matches(p_pmc_id, p_bank_account_id);
+    v_staff uuid := nullif(current_setting('trust.staff_id', true), '')::uuid;
+    v_prepared trust_reconciliation_preparations;
+    v_bank trust_bank_accounts;
     v_start timestamptz;
-    v_balance numeric;
-    v_difference numeric;
+    v_figures numeric[];
 BEGIN
+    SELECT p.* INTO v_prepared FROM trust_reconciliation_preparations AS p
+    WHERE p.id = p_preparation_id AND p.pmc_id = p_pmc_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no reconciliation prepared as % in PMC %', p_preparation_id,
+            p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF v_staff IS NULL THEN
+        RAISE EXCEPTION 'trust: name the staff member who approves the reconciliation'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF v_staff = v_prepared.prepared_by THEN
+        RAISE EXCEPTION 'trust: the staff member who prepared a reconciliation does not approve it'
+            USING ERRCODE = 'insufficient_privilege',
+                  HINT = 'Another staff member who holds the approve role approves it.';
+    END IF;
+    v_bank := trust_lock_bank_matches(p_pmc_id, v_prepared.bank_account_id);
     -- Matches and statements of the account wait for this (trust_approve_reconciliation then
     -- holds postings off).
     PERFORM pg_advisory_xact_lock(hashtextextended('bank statements of ' || v_bank.id, 0));
-    SELECT r.amount INTO v_balance
-    FROM trust_report_bank_reconciliation(p_pmc_id, p_bank_account_id, p_through) AS r
-    WHERE r.line = 4;
-    SELECT r.amount INTO v_difference
-    FROM trust_report_bank_reconciliation(p_pmc_id, p_bank_account_id, p_through) AS r
-    WHERE r.line = 9;
-    IF v_difference <> 0 THEN
-        RAISE EXCEPTION 'trust: lines of trust bank account % come to % that the books lack '
-            'by the end of %', p_bank_account_id, v_difference, p_through
-            USING ERRCODE = 'check_violation',
-                  HINT = 'Record them in the books and match them first.';
+    IF EXISTS (
+        SELECT p.id FROM trust_reconciliation_preparations AS p
+        WHERE p.bank_account_id = v_bank.id AND p.created_at > v_prepared.created_at
+    ) THEN
+        RAISE EXCEPTION 'trust: trust bank account % was prepared again since; approve the '
+            'latest', v_bank.id
+            USING ERRCODE = 'check_violation';
     END IF;
     SELECT coalesce(b.closed_through, b.opened_at, (
                SELECT min(s.first_day)::timestamp AT TIME ZONE 'UTC'
@@ -660,9 +674,33 @@ BEGIN
            ))
     INTO v_start
     FROM trust_bank_accounts AS b WHERE b.id = v_bank.id;
+    IF v_start >= (v_prepared.through + 1)::timestamp AT TIME ZONE 'UTC' THEN
+        RAISE EXCEPTION 'trust: trust bank account % is approved through % already', v_bank.id,
+            v_prepared.through
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT array_agg(r.amount ORDER BY r.line) INTO v_figures
+    FROM trust_report_bank_reconciliation(p_pmc_id, v_bank.id, v_prepared.through) AS r
+    WHERE r.line IN (4, 8, 9);
+    -- (The bank balance through the day can't have changed: its statements are whole and
+    -- append-only.)
+    IF v_figures[2] <> v_prepared.book_cash THEN
+        RAISE EXCEPTION 'trust: the books through % changed since they were prepared: % '
+            '(prepared %)', v_prepared.through, v_figures[2], v_prepared.book_cash
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Prepare it again.';
+    END IF;
+    IF v_figures[3] <> 0 THEN
+        RAISE EXCEPTION 'trust: lines of trust bank account % come to % that the books lack '
+            'by the end of %', v_bank.id, v_figures[3], v_prepared.through
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Record them in the books and match them first.';
+    END IF;
     RETURN trust_approve_reconciliation(
-        p_pmc_id, p_bank_account_id, v_start, (p_through + 1)::timestamp AT TIME ZONE 'UTC',
-        v_balance, p_prepared_by, p_approved_by
+        p_pmc_id, v_bank.id, v_start,
+        (v_prepared.through + 1)::timestamp AT TIME ZONE 'UTC', v_figures[1],
+        (SELECT s.display_name FROM trust_staff AS s WHERE s.id = v_prepared.prepared_by),
+        (SELECT s.display_name FROM trust_staff AS s WHERE s.id = v_staff)
     );
 END;
 $$;
@@ -1306,6 +1344,21 @@ $$;
 
 
 --
+-- Name: trust_check_cutover_signer(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_cutover_signer() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM trust_require_role(NEW.pmc_id, NEW.signed_by, 'approve', 'sign off a cutover');
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_hold_allowance(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1451,6 +1504,90 @@ BEGIN
         RAISE EXCEPTION 'trust: work order % is not for the unit of request %''s lease',
             NEW.work_order_id, NEW.request_id
             USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_staff_invite(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_staff_invite() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF (SELECT l.kind FROM trust_logins AS l WHERE l.id = NEW.login_id) = 'staff' THEN
+        PERFORM trust_require_role(
+            NEW.pmc_id, nullif(current_setting('trust.staff_id', true), '')::uuid,
+            'admin', 'invite a staff member'
+        );
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_staff_role(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_staff_role() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM trust_require_role(
+        NEW.pmc_id, nullif(current_setting('trust.staff_id', true), '')::uuid,
+        TG_ARGV[0], TG_ARGV[1]
+    );
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_staff_role_change(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_staff_role_change() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_has_admin boolean;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('staff roles of ' || NEW.pmc_id, 0));
+    NEW.changed_by := nullif(current_setting('trust.staff_id', true), '')::uuid;
+    NEW.created_at := clock_timestamp();
+    v_has_admin := EXISTS (
+        SELECT s.id FROM trust_staff AS s
+        WHERE s.pmc_id = NEW.pmc_id AND trust_staff_holds(NEW.pmc_id, s.id, 'admin')
+    );
+    IF NEW.changed_by IS NULL THEN
+        IF v_has_admin OR NEW.role <> 'admin' OR NOT NEW.granted THEN
+            RAISE EXCEPTION 'trust: name the admin who changes a role'
+                USING ERRCODE = 'insufficient_privilege',
+                      HINT = 'With nobody named, only a PMC''s first admin is granted.';
+        END IF;
+    ELSE
+        PERFORM trust_require_role(NEW.pmc_id, NEW.changed_by, 'admin', 'change a role');
+    END IF;
+    IF trust_staff_holds(NEW.pmc_id, NEW.staff_id, NEW.role) = NEW.granted THEN
+        RAISE EXCEPTION 'trust: staff member % % the % role already', NEW.staff_id,
+            CASE WHEN NEW.granted THEN 'holds' ELSE 'does not hold' END, NEW.role
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NOT NEW.granted AND NEW.role = 'admin' AND NOT EXISTS (
+        SELECT s.id FROM trust_staff AS s
+        WHERE s.pmc_id = NEW.pmc_id AND s.id <> NEW.staff_id
+          AND trust_staff_holds(NEW.pmc_id, s.id, 'admin')
+    ) THEN
+        RAISE EXCEPTION 'trust: staff member % is the PMC''s last admin', NEW.staff_id
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Make another staff member an admin first.';
     END IF;
     RETURN NEW;
 END;
@@ -2654,6 +2791,62 @@ BEGIN
     FROM unnest(v_transfer_ids) WITH ORDINALITY AS k (id, n)
     JOIN pgledger_transfers_view AS v ON v.id = k.id
     ORDER BY k.n;
+END;
+$$;
+
+
+--
+-- Name: trust_prepare_bank_reconciliation(uuid, uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_prepare_bank_reconciliation(p_pmc_id uuid, p_bank_account_id uuid, p_through date) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_staff uuid := nullif(current_setting('trust.staff_id', true), '')::uuid;
+    v_start timestamptz;
+    v_figures numeric[];
+    v_id uuid;
+BEGIN
+    IF v_staff IS NULL THEN
+        RAISE EXCEPTION 'trust: name the staff member who prepares the reconciliation'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT coalesce(b.closed_through, b.opened_at, (
+               SELECT min(s.first_day)::timestamp AT TIME ZONE 'UTC'
+               FROM trust_bank_statements AS s WHERE s.bank_account_id = b.id
+           ))
+    INTO v_start
+    FROM trust_bank_accounts AS b WHERE b.id = p_bank_account_id AND b.pmc_id = p_pmc_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no trust bank account % in PMC %', p_bank_account_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF (p_through + 1)::timestamp AT TIME ZONE 'UTC' <= v_start THEN
+        RAISE EXCEPTION 'trust: the next period of trust bank account % starts at %',
+            p_bank_account_id, v_start
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF (p_through + 1)::timestamp AT TIME ZONE 'UTC' > now() THEN
+        RAISE EXCEPTION 'trust: % has not ended yet', p_through
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- The bank balance, the book cash and the difference.
+    SELECT array_agg(r.amount ORDER BY r.line) INTO v_figures
+    FROM trust_report_bank_reconciliation(p_pmc_id, p_bank_account_id, p_through) AS r
+    WHERE r.line IN (4, 8, 9);
+    IF v_figures[3] <> 0 THEN
+        RAISE EXCEPTION 'trust: lines of trust bank account % come to % that the books lack '
+            'by the end of %', p_bank_account_id, v_figures[3], p_through
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Record them in the books and match them first.';
+    END IF;
+    INSERT INTO trust_reconciliation_preparations (
+        pmc_id, bank_account_id, through, bank_balance, book_cash, prepared_by
+    ) VALUES (p_pmc_id, p_bank_account_id, p_through, v_figures[1], v_figures[2], v_staff)
+    RETURNING id INTO v_id;
+    RETURN v_id;
 END;
 $$;
 
@@ -4454,6 +4647,27 @@ $$;
 
 
 --
+-- Name: trust_require_role(uuid, uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_require_role(p_pmc_id uuid, p_staff_id uuid, p_role text, p_doing text) RETURNS void
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF p_staff_id IS NOT NULL AND NOT trust_staff_holds(p_pmc_id, p_staff_id, p_role) THEN
+        RAISE EXCEPTION 'trust: % may not % (the % role)',
+            coalesce((SELECT s.display_name FROM trust_staff AS s WHERE s.id = p_staff_id),
+                     p_staff_id::text),
+            p_doing, p_role
+            USING ERRCODE = 'insufficient_privilege',
+                  HINT = 'An admin of the PMC grants the role.';
+    END IF;
+END;
+$$;
+
+
+--
 -- Name: trust_reverse_payment(uuid, uuid, text, text, numeric); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4617,6 +4831,23 @@ BEGIN
     VALUES (p_bill_id, 'set_aside', p_pmc_id, v_transfer_id);
     RETURN v_transfer_id;
 END;
+$$;
+
+
+--
+-- Name: trust_staff_holds(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_staff_holds(p_pmc_id uuid, p_staff_id uuid, p_role text) RETURNS boolean
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT coalesce((
+        SELECT r.granted FROM trust_staff_roles AS r
+        WHERE r.pmc_id = p_pmc_id AND r.staff_id = p_staff_id AND r.role = p_role
+        ORDER BY r.created_at DESC
+        LIMIT 1
+    ), false)
 $$;
 
 
@@ -5501,6 +5732,22 @@ CREATE TABLE public.trust_properties (
 
 
 --
+-- Name: trust_reconciliation_preparations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_reconciliation_preparations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    bank_account_id uuid NOT NULL,
+    through date NOT NULL,
+    bank_balance numeric NOT NULL,
+    book_cash numeric NOT NULL,
+    prepared_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
 -- Name: trust_reconciliations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -5634,6 +5881,22 @@ CREATE TABLE public.trust_staff (
     display_name text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_staff_display_name_check CHECK ((display_name <> ''::text))
+);
+
+
+--
+-- Name: trust_staff_roles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_staff_roles (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    staff_id uuid NOT NULL,
+    role text NOT NULL,
+    granted boolean NOT NULL,
+    changed_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_staff_roles_role_check CHECK ((role = ANY (ARRAY['admin'::text, 'approve'::text, 'disburse'::text])))
 );
 
 
@@ -6433,6 +6696,14 @@ ALTER TABLE ONLY public.trust_properties
 
 
 --
+-- Name: trust_reconciliation_preparations trust_reconciliation_preparations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_reconciliation_preparations
+    ADD CONSTRAINT trust_reconciliation_preparations_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_reconciliations trust_reconciliations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6534,6 +6805,22 @@ ALTER TABLE ONLY public.trust_staff
 
 ALTER TABLE ONLY public.trust_staff
     ADD CONSTRAINT trust_staff_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_staff_roles trust_staff_roles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_staff_roles
+    ADD CONSTRAINT trust_staff_roles_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_staff_roles trust_staff_roles_staff_id_role_created_at_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_staff_roles
+    ADD CONSTRAINT trust_staff_roles_staff_id_role_created_at_key UNIQUE (staff_id, role, created_at);
 
 
 --
@@ -6910,6 +7197,13 @@ CREATE INDEX trust_payment_reversals_reversal_id ON public.trust_payment_reversa
 
 
 --
+-- Name: trust_reconciliation_preparations_bank_account_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_reconciliation_preparations_bank_account_id ON public.trust_reconciliation_preparations USING btree (bank_account_id, created_at);
+
+
+--
 -- Name: trust_reconciliations_bank_account_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6928,6 +7222,13 @@ CREATE INDEX trust_screenings_application_id ON public.trust_screenings USING bt
 --
 
 CREATE INDEX trust_sessions_login ON public.trust_sessions USING btree (login_id);
+
+
+--
+-- Name: trust_staff_roles_pmc_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_staff_roles_pmc_id ON public.trust_staff_roles USING btree (pmc_id);
 
 
 --
@@ -6956,6 +7257,20 @@ CREATE INDEX trust_work_orders_property_id ON public.trust_work_orders USING btr
 --
 
 CREATE TRIGGER trust_account_in_its_bank BEFORE INSERT ON public.trust_ledger_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_check_account_bank_kind();
+
+
+--
+-- Name: trust_invites trust_admin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_admin BEFORE INSERT ON public.trust_invites FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_invite();
+
+
+--
+-- Name: trust_logins trust_admin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_admin BEFORE UPDATE OF disabled_at ON public.trust_logins FOR EACH ROW WHEN ((old.kind = 'staff'::text)) EXECUTE FUNCTION public.trust_check_staff_role('admin', 'disable a staff login');
 
 
 --
@@ -7281,6 +7596,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_reconciliation_preparations trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_reconciliation_preparations FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_reconciliations trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -7323,6 +7645,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_staff_roles trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_staff_roles FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_work_order_steps trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -7355,6 +7684,20 @@ CREATE TRIGGER trust_application_link_lock BEFORE INSERT ON public.trust_applica
 --
 
 CREATE TRIGGER trust_application_link_open BEFORE INSERT ON public.trust_applications FOR EACH ROW EXECUTE FUNCTION public.trust_check_application();
+
+
+--
+-- Name: trust_cutover_signoffs trust_approve; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_approve BEFORE INSERT ON public.trust_cutover_signoffs FOR EACH ROW EXECUTE FUNCTION public.trust_check_cutover_signer();
+
+
+--
+-- Name: trust_reconciliations trust_approve; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_approve BEFORE INSERT ON public.trust_reconciliations FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('approve', 'approve a reconciliation');
 
 
 --
@@ -7687,6 +8030,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_prop
 
 
 --
+-- Name: trust_reconciliation_preparations trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_reconciliation_preparations FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_reconciliations trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -7740,6 +8090,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_sign
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_staff FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_staff_roles trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_staff_roles FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -7876,6 +8233,20 @@ CREATE TRIGGER trust_cutover_entry BEFORE INSERT ON public.trust_cutover_signoff
 
 
 --
+-- Name: trust_bill_payments trust_disburse; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_bill_payments FOR EACH ROW WHEN ((new.step = 'paid'::text)) EXECUTE FUNCTION public.trust_check_staff_role('disburse', 'pay out money');
+
+
+--
+-- Name: trust_owner_draws trust_disburse; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_owner_draws FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('disburse', 'pay out money');
+
+
+--
 -- Name: trust_lease_offers trust_lease_offer_terms; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -7908,6 +8279,13 @@ CREATE TRIGGER trust_opened_at BEFORE INSERT OR UPDATE OF opened_at ON public.tr
 --
 
 CREATE TRIGGER trust_request_work_order_unit BEFORE INSERT ON public.trust_maintenance_request_work_orders FOR EACH ROW EXECUTE FUNCTION public.trust_check_request_work_order();
+
+
+--
+-- Name: trust_staff_roles trust_staff_role_change; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_staff_role_change BEFORE INSERT ON public.trust_staff_roles FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role_change();
 
 
 --
@@ -9068,6 +9446,30 @@ ALTER TABLE ONLY public.trust_properties
 
 
 --
+-- Name: trust_reconciliation_preparations trust_reconciliation_preparations_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_reconciliation_preparations
+    ADD CONSTRAINT trust_reconciliation_preparations_pmc_id_bank_account_id_fkey FOREIGN KEY (pmc_id, bank_account_id) REFERENCES public.trust_bank_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_reconciliation_preparations trust_reconciliation_preparations_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_reconciliation_preparations
+    ADD CONSTRAINT trust_reconciliation_preparations_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_reconciliation_preparations trust_reconciliation_preparations_pmc_id_prepared_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_reconciliation_preparations
+    ADD CONSTRAINT trust_reconciliation_preparations_pmc_id_prepared_by_fkey FOREIGN KEY (pmc_id, prepared_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_reconciliations trust_reconciliations_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9228,6 +9630,30 @@ ALTER TABLE ONLY public.trust_staff
 
 
 --
+-- Name: trust_staff_roles trust_staff_roles_pmc_id_changed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_staff_roles
+    ADD CONSTRAINT trust_staff_roles_pmc_id_changed_by_fkey FOREIGN KEY (pmc_id, changed_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_staff_roles trust_staff_roles_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_staff_roles
+    ADD CONSTRAINT trust_staff_roles_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_staff_roles trust_staff_roles_pmc_id_staff_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_staff_roles
+    ADD CONSTRAINT trust_staff_roles_pmc_id_staff_id_fkey FOREIGN KEY (pmc_id, staff_id) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_tenants trust_tenants_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9359,4 +9785,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261011000030'),
     ('20261011000031'),
     ('20261012000032'),
-    ('20261012000033');
+    ('20261012000033'),
+    ('20261012000034');

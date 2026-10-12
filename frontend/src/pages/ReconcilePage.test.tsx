@@ -38,11 +38,23 @@ const BANKS: BankBooks[] = [
         approved_by: "Staff 1", approved_at: "2026-01-02T10:00:00Z",
       },
     ],
+    prepared: null,
   },
   {
     id: "b2", name: "Deposit trust account", kind: "security_deposit", closed_through: null,
-    next_start: null, statements: [], reconciliations: [],
+    next_start: null, statements: [], reconciliations: [], prepared: null,
   },
+];
+
+const PREPARED: BankBooks[] = [
+  {
+    ...BANKS[0]!,
+    prepared: {
+      id: "pr1", through: "2026-01-31", bank_balance: "4075.00", book_cash: "4075.00",
+      prepared_by: "Staff 2", preparer_id: "s2", prepared_at: "2026-02-03T09:00:00Z",
+    },
+  },
+  BANKS[1]!,
 ];
 
 const SHEET: Worksheet = {
@@ -79,10 +91,15 @@ const TIED: Worksheet = {
   rows: SHEET.rows.map((r) => (r.line === 9 ? { ...r, amount: "0.00" } : r)).filter((r) => r.line <= 9),
 };
 
-function server(sheet: Worksheet = SHEET, answers: Record<string, unknown> = {}, refuse: Record<string, string> = {}) {
+function server(
+  sheet: Worksheet = SHEET,
+  answers: Record<string, unknown> = {},
+  refuse: Record<string, string> = {},
+  banks: BankBooks[] = BANKS,
+) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method !== "POST") {
-      const body = path === "/api/reconcile" ? BANKS : path.startsWith("/api/reconcile/b2") ? { ...sheet, through: null, rows: [], open_lines: [], open_transfers: [], matches: [] } : sheet;
+      const body = path === "/api/reconcile" ? banks : path.startsWith("/api/reconcile/b2") ? { ...sheet, through: null, rows: [], open_lines: [], open_transfers: [], matches: [] } : sheet;
       return new Response(JSON.stringify(body), { status: 200 });
     }
     if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
@@ -113,8 +130,9 @@ describe("ReconcilePage", () => {
       "2025-12-01 to 2025-12-31: bank $0.00, books $0.00, approved by Staff 1",
     );
     expect(screen.getByText(/Closed through 2025-12-31/)).toBeTruthy();
-    const approve = screen.getByRole("button", { name: "Approve through 2026-01-31" });
-    expect((approve as HTMLButtonElement).disabled).toBe(true);
+    const prepare = screen.getByRole("button", { name: "Prepare through 2026-01-31" });
+    expect((prepare as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: /^Approve/ })).toBeNull();
     expect(screen.getByText("Lines the books lack come to $65.00: record them and match them first.")).toBeTruthy();
   });
 
@@ -175,22 +193,49 @@ describe("ReconcilePage", () => {
     ]);
   });
 
-  it("approves a period whose books lack no line, and shows a refusal", async () => {
+  it("prepares a period whose books lack no line, and shows a refusal", async () => {
     const fetch = server(TIED, {}, {});
     render(<ReconcilePage me={ME} />);
-    const approve = await screen.findByRole("button", { name: "Approve through 2026-01-31" });
+    const prepare = await screen.findByRole("button", { name: "Prepare through 2026-01-31" });
     expect(screen.queryByText(/Lines the books lack/)).toBeNull();
 
-    fireEvent.click(approve);
+    fireEvent.click(prepare);
 
-    expect(await screen.findByText("Approved through 2026-01-31; the account is closed through it.")).toBeTruthy();
-    expect(posted(fetch)).toEqual([["/api/reconcile/b1/approve", { through: "2026-01-31" }]]);
+    expect(
+      await screen.findByText("Prepared through 2026-01-31; another staff member who may approve approves it."),
+    ).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/reconcile/b1/prepare", { through: "2026-01-31" }]]);
     cleanup();
 
-    server(TIED, {}, { "/api/reconcile/b1/approve": "the next period starts on 2026-02-01" });
+    server(TIED, {}, { "/api/reconcile/b1/prepare": "the next period starts on 2026-02-01" });
     render(<ReconcilePage me={ME} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Approve through 2026-01-31" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Prepare through 2026-01-31" }));
     expect(await screen.findByText("the next period starts on 2026-02-01")).toBeTruthy();
+  });
+
+  it("approves a period another staff member prepared, if this one may", async () => {
+    const fetch = server(TIED, {}, {}, PREPARED);
+    render(<ReconcilePage me={{ ...ME, roles: ["approve"] }} />);
+    const prepared = await screen.findByLabelText("Prepared");
+    expect(prepared.textContent).toContain("Prepared through 2026-01-31 by Staff 2: bank $4,075.00, books $4,075.00.");
+    fireEvent.click(screen.getByRole("button", { name: "Approve through 2026-01-31" }));
+
+    expect(await screen.findByText("Approved through 2026-01-31; the account is closed through it.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/reconcile/b1/approve", { preparation_id: "pr1" }]]);
+    cleanup();
+
+    server(TIED, {}, {}, PREPARED);
+    render(<ReconcilePage me={ME} />);
+    expect((await screen.findByLabelText("Prepared")).textContent).toContain("A staff member who may approve approves it.");
+    expect(screen.queryByRole("button", { name: /^Approve/ })).toBeNull();
+    cleanup();
+
+    server(TIED, {}, {}, PREPARED);
+    render(<ReconcilePage me={{ ...ME, person_id: "s2", roles: ["approve"] }} />);
+    expect((await screen.findByLabelText("Prepared")).textContent).toContain(
+      "Another staff member who may approve approves it.",
+    );
+    expect(screen.getByRole("button", { name: "Prepare through 2026-01-31" })).toBeTruthy();
   });
 
   it("reads the worksheet at another day, and another account", async () => {

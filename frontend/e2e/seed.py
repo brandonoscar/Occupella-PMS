@@ -267,6 +267,30 @@ def main() -> None:
                 "SELECT trust_open_ledger_account(%s, %s, %s, NULL, NULL, NULL)",
                 (pmc, cutover_bank, kind),
             )
+        # Month-end is approved by someone other than whoever prepared it.
+        approver_staff = one(
+            "INSERT INTO trust_staff (pmc_id, display_name) VALUES (%s, 'Approver E2E')"
+            " RETURNING id",
+            (pmc,),
+        )
+        # Roles: Staff E2E is the PMC's first admin and grants the rest, as an admin would.
+        conn.execute(
+            "INSERT INTO trust_staff_roles (pmc_id, staff_id, role, granted)"
+            " VALUES (%s, %s, 'admin', true)",
+            (pmc, staff),
+        )
+        conn.execute("SELECT set_config('trust.staff_id', %s, false)", (str(staff),))
+        for member, role in (
+            (bills_staff, "disburse"),
+            (switch_staff, "approve"),
+            (approver_staff, "approve"),
+        ):
+            conn.execute(
+                "INSERT INTO trust_staff_roles (pmc_id, staff_id, role, granted)"
+                " VALUES (%s, %s, %s, true)",
+                (pmc, member, role),
+            )
+        conn.execute("SELECT set_config('trust.staff_id', '', false)")
         owner_email, staff_email = f"owner.{tag}@example.com", f"staff.{tag}@example.com"
         seeded = {
             "pmc_id": str(pmc),
@@ -298,6 +322,9 @@ def main() -> None:
             ).token,
             "month_end_invite": accounts.create_invite(
                 conn, pmc, "staff", month_end_staff, f"month-end.{tag}@example.com", None
+            ).token,
+            "approver_invite": accounts.create_invite(
+                conn, pmc, "staff", approver_staff, f"approver.{tag}@example.com", None
             ).token,
             "switch_invite": accounts.create_invite(
                 conn, pmc, "staff", switch_staff, f"switch.{tag}@example.com", None

@@ -72,9 +72,9 @@ required invariant, report and self-host step.
 - Logins (`src/pms/accounts.py`, migration 0028): staff invite a staff member, owner or tenant
   by email; the link carries a token kept only as its SHA-256, in the URL fragment. Accepting
   sets an argon2id password (and for staff an authenticator, TOTP); a new invite resets a
-  password. `trust_login_secrets` is never audited. The first staff invite comes from
-  `python -m pms.admin`. Payments, email sending and the real screening and e-sign partners
-  are still out (`docs/adr/0002-portals-and-exports.md`).
+  password. `trust_login_secrets` is never audited. The first staff member, their first admin
+  role and their invite come from `python -m pms.admin`. Payments, email sending and the real
+  screening and e-sign partners are still out (`docs/adr/0002-portals-and-exports.md`).
 - The portal (`frontend/`): React 19, Vite and Tailwind v4, following Occupella's `DESIGN.md`.
   Its build is served by the API (`PMS_STATIC_DIR`) under a strict Content-Security-Policy.
   Colours, sizes and fonts come only from the tokens in `frontend/src/styles/globals.css`
@@ -83,8 +83,9 @@ required invariant, report and self-host step.
   they set up the books at `/setup` (`src/pms/api/setup.py`: plain inserts and the database's
   own write paths, nothing that moves money), do the rent work at `/rent`
   (`src/pms/api/rent.py`), pay bills and handle owners' money at `/bills` and `/owners`
-  (`src/pms/api/payables.py`), reconcile at `/reconcile` (`src/pms/api/reconcile.py`), and
-  bring a PMC over from another system at `/switching` (`src/pms/api/switching.py`).
+  (`src/pms/api/payables.py`), reconcile at `/reconcile` (`src/pms/api/reconcile.py`), bring a
+  PMC over from another system at `/switching` (`src/pms/api/switching.py`), and see and change
+  staff roles at `/staff` (`src/pms/api/staff.py`).
   npm packages are pinned exactly and their
   licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
   owner only: no request names an owner, a property or a PMC. A tenant's pages
@@ -121,14 +122,13 @@ required invariant, report and self-host step.
   and `trust_reconciliations` are append-only, enforced by triggers. Fix a mistake with a new
   reversing transfer.
 - The app role `trust_app` only reads ledger tables. It writes through `trust_post_transfers`,
-  `trust_open_ledger_account`, `trust_open_vendor_account`, `trust_approve_reconciliation`,
-  `trust_open_lease`, `trust_end_lease`, `trust_apply_payment`, `trust_reverse_payment`,
+  `trust_open_ledger_account`, `trust_open_vendor_account`, `trust_open_lease`, `trust_end_lease`, `trust_apply_payment`, `trust_reverse_payment`,
   `trust_post_management_fee`, `trust_post_leasing_fee`, `trust_draw_owner`,
   `trust_set_aside_bill`, `trust_pay_bill`, `trust_assess_late_fees`,
   `trust_post_opening_balances`, `trust_record_owner_contribution`,
   `trust_complete_lease_offer`, `trust_match_bank_lines`, `trust_unmatch_bank_lines`,
-  `trust_approve_bank_reconciliation` and `trust_match_cutover_opening`, which run as the table
-  owner (`trust_charge_rent_due` and `trust_enter_recurring_bills` run with the app's own
+  `trust_prepare_bank_reconciliation`, `trust_approve_bank_reconciliation` and
+  `trust_match_cutover_opening`, which run as the table owner (`trust_charge_rent_due` and `trust_enter_recurring_bills` run with the app's own
   grants). It can't call pgledger's posting functions: every posting it makes goes through
   `trust_post_transfers`, which takes an idempotency key, unique per PMC, so it is safe to
   retry: the same key returns the original transfers, and a different posting under it is
@@ -190,8 +190,9 @@ required invariant, report and self-host step.
 - Audit: every write to a trust table or `pgledger_transfers` is logged in `trust_audit_log`
   (append-only, written only by the `trust_audit` trigger): when, the row (and the row before an
   update), the database role, and the staff member the app names with
-  `set_config('trust.staff_id', ...)`, who must be on the PMC's `trust_staff`. Naming one is
-  optional until logins exist. A new trust table gets the trigger (`tests/test_audit_log.py`).
+  `set_config('trust.staff_id', ...)`, who must be on the PMC's `trust_staff`. The API names
+  the signed-in staff member on every request; the server's command line names nobody. A new
+  trust table gets the trigger (`tests/test_audit_log.py`).
 - Payment holds (an eviction filed): from a hold's first day until its release, by the
   transfer's UTC date, `trust_apply_payment` refuses to match a payment to the lease's charges
   unless the PMC allowed that transfer on every hold in force. Holds, releases and allowances
@@ -243,8 +244,8 @@ required invariant, report and self-host step.
   `trust_match_bank_lines` matches lines to transfers that moved the account's cash by the same
   total; a line or a transfer is in at most one match not undone (`trust_unmatch_bank_lines`),
   and neither changes a period already approved. `trust_report_bank_reconciliation` shows a
-  day's end; `trust_approve_bank_reconciliation` approves only when no line up to it is missing
-  from the books. All append-only.
+  day's end; `trust_prepare_bank_reconciliation` prepares a period only when no line up to it is
+  missing from the books. All append-only.
 - Switching (migration 0033): after a trust bank account's opening balances, the checks and
   deposits the bank had not cleared at the cutover are carried over (`trust_cutover_items`, the
   cash each moved in the old books, issued by the cutover) until a staff member signs off the
@@ -252,6 +253,15 @@ required invariant, report and self-host step.
   matches the first statement's balance brought forward to the opening balances less those
   items; each item clears once, by a later bank line, only after that, and the opening match is
   not undone while one is cleared. A statement starts no earlier than its account's cutover.
+- Staff roles (migration 0034): admin (changes roles; invites and disables staff logins),
+  approve (approves a reconciliation, signs off a cutover) and disburse (pays a bill, an owner
+  draw). The database refuses those writes to a named staff member without the role; one that
+  names nobody is not held to them. Roles are append-only grants and revocations
+  (`trust_staff_roles`): only an admin changes one, a change changes something, and a PMC keeps
+  an admin. One staff member prepares month-end and another who holds approve approves it
+  (`trust_approve_bank_reconciliation` takes the preparation), on the figures prepared; the app
+  can't call `trust_approve_reconciliation` itself. On upgrade every staff member holds every
+  role.
 - Vendor payments: `trust_report_vendor_payments` lists what each vendor was paid through
   `trust_pay_bill` in a calendar year (UTC), for 1099 preparation. It files nothing, holds no
   tax IDs and applies no threshold.

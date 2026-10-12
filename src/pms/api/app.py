@@ -13,7 +13,9 @@ What a browser may do:
   - API answers are never cached.
 
 Staff see their whole PMC. Owners and tenants get their own endpoints in the portal PRs; here
-they can sign in and read who they are, and nothing else.
+they can sign in and read who they are, and nothing else. What a staff member may do beyond that
+is their roles' (migration 0034, src/pms/api/staff.py): the database refuses the rest, and the
+refusal is answered 403.
 """
 
 from __future__ import annotations
@@ -48,6 +50,7 @@ from pms.api import (
     reconcile,
     rent,
     setup,
+    staff,
     switching,
     tenant,
 )
@@ -131,6 +134,8 @@ class Me(BaseModel):
     person_id: UUID
     pmc_id: UUID
     pmc_name: str
+    # A staff member's roles (staff.ROLES); none for an owner or a tenant.
+    roles: list[str]
 
 
 class InviteLink(BaseModel):
@@ -206,6 +211,12 @@ def create_app(settings: Settings) -> FastAPI:
         }.get(type(error), 422)
         return JSONResponse({"detail": str(error)}, status)
 
+    @app.exception_handler(psycopg.errors.InsufficientPrivilege)
+    async def not_allowed(request: Request, error: psycopg.Error) -> JSONResponse:
+        # A staff member without the role a write takes (the transaction is rolled back).
+        reason = str(error).splitlines()[0].removeprefix("trust: ")
+        return JSONResponse({"detail": reason}, 403)
+
     def signed_in(response: Response, signed: accounts.Signed, conn: Conn) -> Me:
         response.set_cookie(
             COOKIE,
@@ -227,6 +238,7 @@ def create_app(settings: Settings) -> FastAPI:
             person_id=session.person_id,
             pmc_id=session.pmc_id,
             pmc_name=pmc_name,
+            roles=staff.roles_of(conn, session) if session.kind == "staff" else [],
         )
 
     @app.get("/health")
@@ -322,6 +334,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(payables.router)
     app.include_router(reconcile.router)
     app.include_router(switching.router)
+    app.include_router(staff.router)
     if settings.static_dir is not None:
         serve_portal(app, settings.static_dir)
     return app

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { ReportRow } from "./reconcile";
+import type { Me } from "./api";
+import type { Prepared, ReportRow } from "./reconcile";
 import {
+  approver,
   difference,
   figures,
   formatOf,
@@ -65,5 +67,17 @@ describe("reconcile", () => {
       .toBe("2025-12-30 Check (1041), from before the cutover: -$200.00");
     expect(itemLabel({ id: "i", issued_on: "2025-12-31", amount: "75.00", description: "Deposit", reference: null }))
       .toBe("2025-12-31 Deposit, from before the cutover: $75.00");
+  });
+
+  it("lets anyone but the preparer approve, holding the approve role", () => {
+    const me: Me = { kind: "staff", email: "s@example.com", name: "Staff 1", person_id: "s1", pmc_id: "p1", pmc_name: "PMC" };
+    const prepared: Prepared = {
+      id: "pr1", through: "2026-01-31", bank_balance: "1.00", book_cash: "1.00", prepared_by: "Staff 2",
+      preparer_id: "s2", prepared_at: "2026-02-01T00:00:00Z",
+    };
+    expect(approver({ ...me, roles: ["approve"] }, prepared)).toBe("may");
+    expect(approver({ ...me, roles: ["admin", "disburse"] }, prepared)).toBe("may not");
+    expect(approver(me, prepared)).toBe("may not");
+    expect(approver({ ...me, person_id: "s2", roles: ["approve"] }, prepared)).toBe("preparer");
   });
 });

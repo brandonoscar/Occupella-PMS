@@ -20,6 +20,7 @@ type Seed = {
   rent_invite: string;
   bills_invite: string;
   month_end_invite: string;
+  approver_invite: string;
   switch_invite: string;
 };
 const seed: Seed = JSON.parse(readFileSync(new URL("./.seed.json", import.meta.url), "utf8"));
@@ -373,7 +374,7 @@ test("staff enter a vendor's bill, record the owner's approval, set it aside and
 });
 
 // Last, since approving closes the operating trust account through last month.
-test("staff import last month's statement, match it to the books and approve the reconciliation", async ({
+test("staff import last month's statement, match it to the books and prepare it; another approves", async ({
   page,
 }) => {
   const now = new Date();
@@ -412,8 +413,8 @@ test("staff import last month's statement, match it to the books and approve the
 
   await page.getByRole("button", { name: "Match the sure ones" }).click();
   await expect(page.getByText("2 lines matched.")).toBeVisible();
-  const approve = page.getByRole("button", { name: `Approve through ${iso(last)}` });
-  await expect(approve).toBeDisabled();
+  const prepare = page.getByRole("button", { name: `Prepare through ${iso(last)}` });
+  await expect(prepare).toBeDisabled();
 
   await page.getByLabel(`${sixth} Deposit (D-1): $2,750.00`).check();
   await page.getByLabel(`${fifth} Rent: $1,500.00`).check();
@@ -421,10 +422,28 @@ test("staff import last month's statement, match it to the books and approve the
   await page.getByRole("button", { name: "Match these" }).click();
   await expect(page.getByText("Matched.")).toBeVisible();
 
-  await approve.click();
+  await prepare.click();
+  await expect(page.getByLabel("Prepared")).toContainText(
+    `Prepared through ${iso(last)} by Month-end E2E: bank $4,700.00, books $4,700.00.`,
+  );
+  await expect(page.getByLabel("Prepared")).toContainText("Another staff member who may approve approves it.");
+  await page.getByRole("button", { name: "Sign out" }).click();
+
+  // The approver, who may approve, signs in and approves what was prepared.
+  await page.goto(`/invite#${seed.approver_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
+  await page.getByRole("button", { name: "Finish" }).click();
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Month-end" }).click();
+  await page
+    .getByRole("combobox", { name: "Trust bank account", exact: true })
+    .selectOption({ label: "E2E operating trust account" });
+  await page.getByRole("button", { name: `Approve through ${iso(last)}` }).click();
   await expect(page.getByText(`Approved through ${iso(last)}; the account is closed through it.`)).toBeVisible();
   await expect(page.getByRole("list", { name: "Approved" })).toContainText(
-    `${iso(first)} to ${iso(last)}: bank $4,700.00, books $4,700.00, approved by Month-end E2E`,
+    `${iso(first)} to ${iso(last)}: bank $4,700.00, books $4,700.00, approved by Approver E2E`,
   );
 });
 
