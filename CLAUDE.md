@@ -81,7 +81,8 @@ required invariant, report and self-host step.
   (`designTokens.test.ts` fails on a raw colour or a size off the scale). Money stays text from
   the database to the screen, never a float. Staff's pages have sections (`pages/staffNav.ts`);
   they set up the books at `/setup` (`src/pms/api/setup.py`: plain inserts and the database's
-  own write paths, nothing that moves money). npm packages are pinned exactly and their
+  own write paths, nothing that moves money) and do the rent work at `/rent`
+  (`src/pms/api/rent.py`). npm packages are pinned exactly and their
   licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
   owner only: no request names an owner, a property or a PMC. A tenant's pages
   (`src/pms/api/tenant.py`) show the session's tenant only: a lease named in a path is answered
@@ -218,6 +219,13 @@ required invariant, report and self-host step.
   and safe to retry, and an application or a lease takes one completed offer: a new lease's
   signers become its tenants; a renewal keeps the lease's tenants and ends it the day before.
   READ COMMITTED; all append-only.
+- Rent work (`src/pms/api/rent.py`): a tenant's payment recorded by staff pays the owner's
+  account no more than the lease owes, matched to its open charges oldest first, and the rest is
+  the first tenant's prepaid rent; prepaid rent is used the same way. Each record carries a
+  request id the page makes (its key in `trust_post_transfers`), so sending it again records
+  nothing new. A bounce moves back what the payment moved and reverses its matches, once. A
+  lease's rent work takes an advisory lock on the lease. The PMS records what the bank did;
+  it sends no money.
 - Vendor payments: `trust_report_vendor_payments` lists what each vendor was paid through
   `trust_pay_bill` in a calendar year (UTC), for 1099 preparation. It files nothing, holds no
   tax IDs and applies no threshold.

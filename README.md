@@ -30,8 +30,9 @@ lease. That completes the founder's list in `docs/adr/0002-portals-and-exports.m
 
 The staff back office (`docs/adr/0003-staff-back-office.md`) is being built: staff set up
 their books in the portal (trust bank accounts, owners, properties, units, tenants, vendors,
-management and late fee terms, leases in place). Recording payments, bills, owner draws and
-the monthly reconciliation in the portal come next.
+management and late fee terms, leases in place) and do the rent work there (the rent run, late
+fees, fees and credits, tenants' payments and deposits as they reached the bank, prepaid rent,
+bounced payments). Bills, owner draws and the monthly reconciliation in the portal come next.
 
 Still true:
 

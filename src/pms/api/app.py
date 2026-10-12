@@ -37,7 +37,7 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
 from pms import accounts, exports
-from pms.api import fake_esign, leasing, maintenance, offers, owner, people, setup, tenant
+from pms.api import fake_esign, leasing, maintenance, offers, owner, people, rent, setup, tenant
 from pms.api.deps import COOKIE, Conn, Current, Staff, download
 from pms.leasing import esign, screening
 
@@ -305,6 +305,7 @@ def create_app(settings: Settings) -> FastAPI:
         app.include_router(fake_esign.router)
     app.include_router(people.router)
     app.include_router(setup.router)
+    app.include_router(rent.router)
     if settings.static_dir is not None:
         serve_portal(app, settings.static_dir)
     return app

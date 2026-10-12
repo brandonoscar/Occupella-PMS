@@ -7,6 +7,7 @@ import { ApplyPage } from "./pages/ApplyPage";
 import { ESignPage } from "./pages/ESignPage";
 import { InvitePage } from "./pages/InvitePage";
 import { OwnerHome } from "./pages/OwnerHome";
+import { RentPage } from "./pages/RentPage";
 import { PMC_KEY, SignInPage } from "./pages/SignInPage";
 import { SetupPage } from "./pages/SetupPage";
 import { StaffHome } from "./pages/StaffHome";
@@ -45,6 +46,10 @@ function Home({ path }: { path: string }) {
   if (error) return <Notice tone="error">{error}</Notice>;
   if (!me) return null;
   if (me.kind === "owner") return <OwnerHome me={me} />;
-  if (me.kind === "staff") return path === "/setup" ? <SetupPage me={me} /> : <StaffHome me={me} />;
+  if (me.kind === "staff") {
+    if (path === "/setup") return <SetupPage me={me} />;
+    if (path === "/rent") return <RentPage me={me} />;
+    return <StaffHome me={me} />;
+  }
   return <TenantHome me={me} />;
 }
