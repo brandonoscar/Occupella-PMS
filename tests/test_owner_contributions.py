@@ -133,7 +133,7 @@ def test_a_contribution_is_never_matched_to_a_tenants_charge(conn, app_conn, pmc
 
 def test_a_contribution_respects_a_closed_period(conn, app_conn, pmc):
     approve(
-        app_conn,
+        conn,
         pmc.pmc_id,
         pmc.operating_bank_id,
         datetime(2026, 1, 1, tzinfo=UTC),

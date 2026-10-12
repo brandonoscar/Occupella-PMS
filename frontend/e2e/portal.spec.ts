@@ -9,9 +9,23 @@ type Seed = {
   owner_invite: string;
   staff_email: string;
   staff_invite: string;
+  renter_email: string;
+  renter_invite: string;
+  apply_token: string;
+  leasing_email: string;
+  leasing_invite: string;
+  offers_invite: string;
+  renewer_invite: string;
+  setup_invite: string;
+  rent_invite: string;
+  bills_invite: string;
+  month_end_invite: string;
+  approver_invite: string;
+  switch_invite: string;
 };
 const seed: Seed = JSON.parse(readFileSync(new URL("./.seed.json", import.meta.url), "utf8"));
 const PASSWORD = "a long synthetic passphrase";
+const day = (fromNow: number) => new Date(Date.now() + fromNow * 86_400_000).toISOString().slice(0, 10);
 
 // The pages are served under a strict Content-Security-Policy (src/pms/api/app.py). Anything it
 // blocks, such as a script or an image from another origin, fails the test that loaded it.
@@ -69,7 +83,28 @@ test("a wrong password is refused without saying which part was wrong", async ({
   await expect(page.getByRole("alert")).toHaveText("the email or password is wrong");
 });
 
-test("staff enroll an authenticator, then invite a tenant", async ({ page }) => {
+test("a tenant joins, sees what is due and asks for a repair", async ({ page }) => {
+  await page.goto(`/invite#${seed.renter_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+
+  await expect(page.getByRole("heading", { name: "Welcome, Tenant Two E2E" })).toBeVisible();
+  await expect(page.getByTestId("balance-due")).toHaveText("$950.00");
+  const ledger = page.locator("section", { hasText: "Charges and payments" });
+  await expect(ledger.getByRole("row", { name: /Check 101/ })).toContainText("$950.00");
+  await expect(ledger.getByRole("row", { name: /Balance at the end of/ })).toContainText("$950.00");
+
+  await page.getByLabel("What needs fixing?").fill("The hallway light is out");
+  await page.getByLabel("Someone may come in while I'm out").check();
+  await page.getByRole("button", { name: "Send request" }).click();
+  const requests = page.locator("section", { hasText: "Maintenance requests" });
+  await expect(requests.getByRole("listitem").filter({ hasText: "The hallway light is out" }))
+    .toContainText("Received");
+  await expect(requests.getByText("The back door sticks")).toBeVisible();
+});
+
+test("staff enroll an authenticator, invite a tenant and see a repair through", async ({ page }) => {
   await page.goto(`/invite#${seed.staff_invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
   await page.getByLabel("The same password again").fill(PASSWORD);
@@ -87,4 +122,393 @@ test("staff enroll an authenticator, then invite a tenant", async ({ page }) => 
   await tenant.getByRole("button", { name: "Invite" }).click();
   await expect(tenant).toContainText("/invite#");
   await expect(tenant).toContainText("invited");
+
+  // The seeded request: a work order, a vendor, then done.
+  const request = page.getByRole("listitem", { name: "The back door sticks" });
+  await request.getByRole("button", { name: "Open work order" }).click();
+  await expect(request).toContainText("Work order opened");
+  await request.getByLabel("Vendor for The back door sticks").selectOption({ label: "Vendor E2E" });
+  await request.getByRole("button", { name: "Assign" }).click();
+  await expect(request).toContainText("Someone is assigned (Vendor E2E)");
+  await request.getByRole("button", { name: "Done" }).click();
+  await expect(request).toHaveCount(0);
+});
+
+test("an applicant applies; staff screen, decline with a notice, and the applicant sees it", async ({
+  page,
+  browser,
+}) => {
+  await page.goto(`/apply#${seed.apply_token}`);
+  await expect(page.getByRole("heading", { name: "Apply for E2E Property 3, E2E Unit 2" })).toBeVisible();
+  const moveIn = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+  await page.getByLabel("Move-in day").fill(moveIn);
+  await page.getByLabel("Monthly income of everyone applying, together").fill("1500");
+  await page.getByLabel("Full name").fill("Applicant E2E");
+  await page.getByLabel("Email").fill("applicant.e2e@example.com");
+  await page.getByRole("button", { name: "Send application" }).click();
+  const statusUrl = (await page.getByTestId("status-url").textContent()) ?? "";
+  expect(statusUrl).toContain("/application#");
+
+  // Staff, in their own browser.
+  const staff = await (await browser.newContext()).newPage();
+  await staff.goto(`/invite#${seed.leasing_invite}`);
+  await staff.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await staff.getByLabel("The same password again").fill(PASSWORD);
+  await staff.getByRole("button", { name: "Set password" }).click();
+  await staff.getByLabel("Code").fill(totp((await staff.locator("code").textContent()) ?? ""));
+  await staff.getByRole("button", { name: "Finish" }).click();
+
+  const application = staff.getByRole("listitem", { name: "Application from Applicant E2E" });
+  await application.getByRole("button", { name: "Screen" }).click();
+  await expect(application).toContainText("Fake Screening Partner: Recommends declining");
+  await application.getByLabel("Decision").selectOption({ label: "Decline" });
+  await expect(application.getByLabel("Reasons, one a line")).toHaveValue(
+    "Household income is less than twice the rent",
+  );
+  await application.getByRole("button", { name: "Record decision" }).click();
+  await expect(application).toHaveCount(0);
+  const notice = await staff.request.get(
+    (await staff.getByRole("link", { name: "Notice (PDF)" }).getAttribute("href")) ?? "",
+  );
+  expect(notice.headers()["content-type"]).toBe("application/pdf");
+
+  const path = new URL(statusUrl).pathname + new URL(statusUrl).hash;
+  await page.goto(path);
+  await expect(page.getByTestId("application-status")).toContainText("Declined");
+});
+
+test("staff offer a lease and a renewal; the signers sign on the partner's page; both become leases", async ({
+  page,
+  browser,
+}) => {
+  await page.goto(`/invite#${seed.offers_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
+  await page.getByRole("button", { name: "Finish" }).click();
+  const document = {
+    name: "lease.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.4 a synthetic lease for the browser test"),
+  };
+
+  // A lease for the approved application; the applicant signs from the link staff send them.
+  const choose = page.getByRole("combobox", { name: "Offer", exact: true });
+  await choose.selectOption({ label: "Mover E2E for E2E Property 3, E2E Unit 4" });
+  await expect(page.getByLabel("Starts")).toHaveValue(day(30));
+  await page.getByLabel("Lease document (PDF, your own)").setInputFiles(document);
+  await page.getByRole("button", { name: "Send for signing" }).click();
+  const offer = page.getByRole("listitem", { name: "Offer for E2E Unit 4" });
+  const link = new URL((await offer.getByTestId("signing-link").textContent()) ?? "");
+  const pdf = await page.request.get(
+    (await offer.getByRole("link", { name: "Lease (PDF)" }).getAttribute("href")) ?? "",
+  );
+  expect(await pdf.body()).toEqual(document.buffer);
+
+  const mover = await (await browser.newContext()).newPage();
+  await mover.goto(link.pathname + link.hash);
+  await expect(mover.getByText("For Mover E2E")).toBeVisible();
+  await mover.getByLabel("Type your name as it is on the lease").fill("Someone Else");
+  await mover.getByRole("button", { name: "Sign" }).click();
+  await expect(mover.getByRole("alert")).toHaveText("type your name as it is on the lease");
+  await mover.getByLabel("Type your name as it is on the lease").fill("mover e2e");
+  await mover.getByRole("button", { name: "Sign" }).click();
+  await expect(mover.getByTestId("esign-status")).toHaveText("Signed. You can close this page.");
+
+  await offer.getByRole("button", { name: "Make it the lease" }).click();
+  await expect(page.getByText(`E2E Property 3, E2E Unit 4 has its lease from ${day(30)}.`)).toBeVisible();
+  await expect(offer).toHaveCount(0);
+
+  // The renewal of a tenant's lease; the tenant signs it from their portal.
+  await choose.selectOption({ label: "E2E Property 3, E2E Unit 3: Renewer E2E" });
+  await page.getByLabel("Starts").fill(day(60));
+  await page.getByLabel("Lease document (PDF, your own)").setInputFiles(document);
+  await page.getByRole("button", { name: "Send for signing" }).click();
+  const renewal = page.getByRole("listitem", { name: "Offer for E2E Unit 3" });
+  await expect(renewal).toContainText("Signed by 0 of 1.");
+
+  const tenant = await (await browser.newContext()).newPage();
+  await tenant.goto(`/invite#${seed.renewer_invite}`);
+  await tenant.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await tenant.getByLabel("The same password again").fill(PASSWORD);
+  await tenant.getByRole("button", { name: "Set password" }).click();
+  const offered = tenant.getByRole("listitem", { name: "Renewal of E2E Unit 3" });
+  await expect(offered).toContainText(`${day(60)} to month to month, $1,000.00 a month`);
+  await offered.getByRole("button", { name: "Sign" }).click();
+  await tenant.getByLabel("Type your name as it is on the lease").fill("Renewer E2E");
+  await tenant.getByRole("button", { name: "Sign" }).click();
+  await expect(tenant.getByTestId("esign-status")).toBeVisible();
+  await tenant.goto("/");
+  await expect(tenant.getByTestId("renewal-signed")).toContainText("You signed");
+
+  await renewal.getByRole("button", { name: "Check signatures" }).click();
+  await expect(renewal).toContainText("Signed by everyone");
+  await renewal.getByRole("button", { name: "Make it the lease" }).click();
+  await expect(renewal).toHaveCount(0);
+  await tenant.reload();
+  await expect(tenant.getByRole("heading", { name: "Welcome, Renewer E2E" })).toBeVisible();
+  await expect(tenant.getByRole("heading", { name: "Lease renewal" })).toHaveCount(0);
+});
+
+test("staff set up a property from nothing, lease a unit and see it on the rent roll", async ({ page }) => {
+  await page.goto(`/invite#${seed.setup_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
+  await page.getByRole("button", { name: "Finish" }).click();
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Setup" }).click();
+  await expect(page.getByRole("heading", { name: "Setup", level: 1 })).toBeVisible();
+
+  const owners = page.getByRole("region", { name: "Owners" });
+  await owners.getByLabel("Owner's name").fill("Owner Setup E2E");
+  await owners.getByRole("button", { name: "Add" }).click();
+  await expect(owners.getByText("Owner Setup E2E")).toBeVisible();
+
+  await page.getByLabel("Property name").fill("E2E Property 9");
+  await page.locator("#property-owner").selectOption({ label: "Owner Setup E2E" });
+  await page.locator("#property-bank").selectOption({ label: "E2E operating trust account" });
+  await page.getByRole("button", { name: "Add property" }).click();
+  const property = page.getByRole("listitem", { name: "E2E Property 9" });
+  await expect(property).toContainText("Owned by Owner Setup E2E.");
+  await property.getByText("Add to E2E Property 9").click();
+  await property.getByLabel("Unit name").fill("Unit 9A");
+  await property.getByRole("button", { name: "Add unit" }).click();
+  await expect(property).toContainText("Unit 9A: vacant");
+
+  await page.getByLabel("Tenant of").selectOption({ label: "E2E Property 9" });
+  await page.getByLabel("Tenant's name").fill("Tenant Setup E2E");
+  await page.getByRole("button", { name: "Add tenant" }).click();
+  await page
+    .getByRole("combobox", { name: "Unit", exact: true })
+    .selectOption({ label: "E2E Property 9, Unit 9A" });
+  const today = day(0);
+  await page.getByLabel("Starts").fill(today);
+  await page.getByLabel("Rent a month").fill("1100.00");
+  await page.getByLabel("Tenant Setup E2E").check();
+  await page.getByRole("button", { name: "Add lease" }).click();
+  await expect(property).toContainText(
+    `Unit 9A: Tenant Setup E2E: from ${today}, month to month, $1,100.00 a month`,
+  );
+
+  const rentRoll = await page.request.get(
+    `/api/reports/trust_report_rent_roll?arg=${today}&format=csv`,
+  );
+  const csv = await rentRoll.text();
+  expect(csv).toContain("E2E Property 9");
+  expect(csv).toContain("Tenant Setup E2E");
+});
+
+test("staff record a tenant's payment, the rest held as prepaid rent, and then its bounce", async ({
+  page,
+}) => {
+  await page.goto(`/invite#${seed.rent_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
+  await page.getByRole("button", { name: "Finish" }).click();
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Rent" }).click();
+
+  const lease = page.getByRole("listitem", { name: "E2E Property 3, E2E Unit 5" });
+  await expect(lease.getByTestId("owed")).toHaveText("Owes $800.00");
+  await lease.getByText("Record for E2E Unit 5").click();
+  await lease.getByLabel("Payment received").fill("1000.00");
+  await lease.getByLabel("Check or reference").fill("Money order 9");
+  await lease.getByRole("button", { name: "Record payment" }).click();
+  await expect(lease).toContainText("$800.00 paid what is owed; $200.00 held as prepaid rent.");
+  await expect(lease.getByTestId("owed")).toHaveText("Paid up");
+  await expect(lease).toContainText("Payer E2E: prepaid $200.00");
+  await expect(lease).toContainText("(Money order 9)");
+
+  await lease.getByRole("button", { name: "It bounced" }).click();
+  await expect(lease).toContainText("The $800.00 payment is owed again.");
+  await expect(lease.getByTestId("owed")).toHaveText("Owes $800.00");
+  await expect(lease).toContainText("Payer E2E: prepaid $0.00");
+  await expect(lease.getByText("Bounced")).toBeVisible();
+});
+
+test("staff enter a vendor's bill, record the owner's approval, set it aside and pay it, then draw the rest", async ({
+  page,
+}) => {
+  await page.goto(`/invite#${seed.bills_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
+  await page.getByRole("button", { name: "Finish" }).click();
+  const sections = page.getByRole("navigation", { name: "Sections" });
+  await sections.getByRole("link", { name: "Bills" }).click();
+
+  await page.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Vendor E2E" });
+  await page
+    .getByRole("combobox", { name: "Owner and property", exact: true })
+    .selectOption({ label: "Payee E2E, E2E Property 7" });
+  await page.getByLabel("Vendor's reference").fill("E2E-INV-1");
+  await page.getByLabel("Amount", { exact: true }).fill("300.00");
+  await page.getByLabel("What for").fill("Gutter repair");
+  await page.getByRole("button", { name: "Enter bill" }).click();
+  await expect(page.getByText("Bill E2E-INV-1 entered.")).toBeVisible();
+
+  // No agreement: every bill needs the owner's approval first.
+  const bill = page.getByRole("listitem", { name: "Vendor E2E E2E-INV-1" });
+  await expect(bill.getByTestId("status")).toHaveText("needs approval");
+  await bill.getByLabel("Approved by").fill("Payee E2E");
+  await bill.getByRole("button", { name: "Record approval" }).click();
+  await expect(bill.getByTestId("status")).toHaveText("to set aside");
+  await bill.getByRole("button", { name: "Set aside" }).click();
+  await expect(bill.getByTestId("status")).toHaveText("set aside");
+  await bill.getByRole("button", { name: "Pay" }).click();
+  await expect(bill).toHaveCount(0);
+  await page.getByRole("combobox", { name: "Show", exact: true }).selectOption("all");
+  await expect(bill.getByTestId("status")).toHaveText("paid");
+
+  await sections.getByRole("link", { name: "Owners" }).click();
+  const payee = page.getByRole("listitem", { name: "Payee E2E, E2E Property 7" });
+  await expect(payee.getByTestId("available")).toHaveText("$700.00 available");
+  await payee.getByText("Record for Payee E2E, E2E Property 7").click();
+  await payee.getByRole("button", { name: "Record draw" }).click();
+  await expect(payee).toContainText("$700.00 paid out to Payee E2E.");
+  await expect(payee.getByTestId("available")).toHaveText("$0.00 available");
+});
+
+// Last, since approving closes the operating trust account through last month.
+test("staff import last month's statement, match it to the books and prepare it; another approves", async ({
+  page,
+}) => {
+  const now = new Date();
+  const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const fifth = iso(new Date(first.getTime() + 4 * 86_400_000));
+  const sixth = iso(new Date(first.getTime() + 5 * 86_400_000));
+
+  await page.goto(`/invite#${seed.month_end_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
+  await page.getByRole("button", { name: "Finish" }).click();
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Month-end" }).click();
+
+  await page
+    .getByRole("combobox", { name: "Trust bank account", exact: true })
+    .selectOption({ label: "E2E operating trust account" });
+  // The seed's rents of last month: two owners' in one deposit, two more on their own.
+  const csv = [
+    "Date,Description,Amount,Reference",
+    `${sixth},Deposit,"2,750.00",D-1`,
+    `${sixth},Deposit,950.00,D-2`,
+    `${sixth},Deposit,"1,000.00",D-3`,
+  ].join("\n");
+  await page
+    .getByLabel("Statement file (CSV or OFX)")
+    .setInputFiles({ name: "statement.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await expect(page.getByText("Ready: statement.csv.")).toBeVisible();
+  await page.getByLabel("First day").fill(iso(first));
+  await page.getByLabel("Last day").fill(iso(last));
+  await page.getByRole("button", { name: "Import statement" }).click();
+  await expect(page.getByText(`Imported 3 lines, ${iso(first)} to ${iso(last)}.`)).toBeVisible();
+
+  await page.getByRole("button", { name: "Match the sure ones" }).click();
+  await expect(page.getByText("2 lines matched.")).toBeVisible();
+  const prepare = page.getByRole("button", { name: `Prepare through ${iso(last)}` });
+  await expect(prepare).toBeDisabled();
+
+  await page.getByLabel(`${sixth} Deposit (D-1): $2,750.00`).check();
+  await page.getByLabel(`${fifth} Rent: $1,500.00`).check();
+  await page.getByLabel(`${fifth} Rent: $1,250.00`).check();
+  await page.getByRole("button", { name: "Match these" }).click();
+  await expect(page.getByText("Matched.")).toBeVisible();
+
+  await prepare.click();
+  await expect(page.getByLabel("Prepared")).toContainText(
+    `Prepared through ${iso(last)} by Month-end E2E: bank $4,700.00, books $4,700.00.`,
+  );
+  await expect(page.getByLabel("Prepared")).toContainText("Another staff member who may approve approves it.");
+  await page.getByRole("button", { name: "Sign out" }).click();
+
+  // The approver, who may approve, signs in and approves what was prepared.
+  await page.goto(`/invite#${seed.approver_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
+  await page.getByRole("button", { name: "Finish" }).click();
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Month-end" }).click();
+  await page
+    .getByRole("combobox", { name: "Trust bank account", exact: true })
+    .selectOption({ label: "E2E operating trust account" });
+  await page.getByRole("button", { name: `Approve through ${iso(last)}` }).click();
+  await expect(page.getByText(`Approved through ${iso(last)}; the account is closed through it.`)).toBeVisible();
+  await expect(page.getByRole("list", { name: "Approved" })).toContainText(
+    `${iso(first)} to ${iso(last)}: bank $4,700.00, books $4,700.00, approved by Approver E2E`,
+  );
+});
+
+test("staff bring a roster in, open an account with its old balances and a check not cleared, sign off and match the opening", async ({
+  page,
+}) => {
+  const now = new Date();
+  const cutover = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const before = iso(new Date(cutover.getTime() - 86_400_000));
+  const file = (name: string, text: string) => ({ name, mimeType: "text/csv", buffer: Buffer.from(text) });
+
+  await page.goto(`/invite#${seed.switch_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
+  await page.getByRole("button", { name: "Finish" }).click();
+  const sections = page.getByRole("navigation", { name: "Sections" });
+  await sections.getByRole("link", { name: "Switching" }).click();
+
+  await page.getByLabel("CSV file").setInputFiles(file("owners.csv", "Name\nOwner Cutover E2E\n"));
+  await page.getByRole("button", { name: "Import" }).click();
+  await expect(page.getByText("1 added.")).toBeVisible();
+  await page.getByRole("combobox", { name: "File of", exact: true }).selectOption("properties");
+  await page
+    .getByLabel("CSV file")
+    .setInputFiles(file("properties.csv", "Property,Owner,Bank account\nE2E Property 8,Owner Cutover E2E,E2E cutover trust account\n"));
+  await page.getByRole("button", { name: "Import" }).click();
+  await expect(page.getByText("1 added.")).toBeVisible();
+
+  const card = page.locator("section", { hasText: "Cutover: E2E cutover trust account" });
+  await card.getByLabel("Cutover date").fill(iso(cutover));
+  await card.getByLabel("Old system's book cash").fill("900.00");
+  await card
+    .getByLabel("Opening balances (CSV)")
+    .setInputFiles(file("balances.csv", "Kind,Owner,Property,Amount\nowner,Owner Cutover E2E,E2E Property 8,900.00\n"));
+  await card.getByRole("button", { name: "Open with balances" }).click();
+  await expect(card).toContainText("Opened with 1 balance.");
+  await card
+    .getByLabel("Checks and deposits not cleared (CSV)")
+    .setInputFiles(file("items.csv", `Date,Amount,Description,Reference\n${before},-150.00,Check to Vendor E2E,2001\n`));
+  await card.getByRole("button", { name: "Add items" }).click();
+  await expect(card).toContainText("1 item carried over.");
+  await expect(card).toContainText("The bank's statement should open at $1,050.00.");
+  await card.getByRole("button", { name: "Sign off the tie-out" }).click();
+  await expect(card).toContainText("Signed off. The items carried over are frozen.");
+  await expect(card).toContainText("Switch E2E at ");
+
+  await sections.getByRole("link", { name: "Month-end" }).click();
+  await page
+    .getByRole("combobox", { name: "Trust bank account", exact: true })
+    .selectOption({ label: "E2E cutover trust account" });
+  await page.getByLabel("Statement file (CSV or OFX)").setInputFiles(file("statement.csv", "Date,Description,Amount\n"));
+  await page.getByLabel("First day").fill(iso(cutover));
+  await page.getByLabel("Last day").fill(iso(cutover));
+  await page.getByLabel("Opening balance", { exact: true }).fill("1050.00");
+  await page.getByRole("button", { name: "Import statement" }).click();
+  await expect(page.getByText(`Imported 1 line, ${iso(cutover)} to ${iso(cutover)}.`)).toBeVisible();
+  await expect(page.getByText(/balance brought forward should be \$1,050.00/)).toBeVisible();
+  await page.getByRole("button", { name: "Match the opening" }).click();
+  await expect(page.getByText("The opening is matched.")).toBeVisible();
+  // Carried by the opening match, the check waits for the bank line that clears it.
+  await expect(page.getByLabel(`${before} Check to Vendor E2E (2001), from before the cutover: -$150.00`)).toBeVisible();
+  await expect(page.getByLabel("Reconciling items")).toContainText(
+    `outstanding withdrawal: ${before} Check to Vendor E2E (2001), from before the cutover -$150.00`,
+  );
 });

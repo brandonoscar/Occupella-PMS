@@ -37,7 +37,16 @@ SELECT trust_open_ledger_account(
     '00000000-0000-4000-8000-000000000031', NULL
 );
 
+-- Manager 1 is the PMC's first admin, and gives themself the approve role.
+INSERT INTO trust_staff_roles (pmc_id, staff_id, role, granted) VALUES
+('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000072', 'admin', true);
+
 SET LOCAL ROLE trust_app;
+
+SELECT set_config('trust.staff_id', '00000000-0000-4000-8000-000000000072', true);
+
+INSERT INTO trust_staff_roles (pmc_id, staff_id, role, granted) VALUES
+('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000072', 'approve', true);
 
 SELECT set_config('trust.staff_id', '00000000-0000-4000-8000-000000000071', true);
 
@@ -64,12 +73,14 @@ SELECT set_config('trust.staff_id', '00000000-0000-4000-8000-000000000072', true
 UPDATE trust_units SET display_name = 'Unit 1A'
 WHERE id = '00000000-0000-4000-8000-000000000081';
 
+-- The app approves only month-end preparations, which need a statement; this one is approved
+-- as the owner, still naming Manager 1.
+RESET ROLE;
+
 SELECT trust_approve_reconciliation(
     '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000011',
     '2026-01-01 00:00:00+00', '2026-02-01 00:00:00+00', 1500.00, 'Bookkeeper 1', 'Manager 1'
 );
-
-RESET ROLE;
 
 SELECT line, item,
        CASE item WHEN 'period' THEN 'yesterday to tomorrow' ELSE staff END AS staff,

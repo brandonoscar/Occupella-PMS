@@ -6,7 +6,8 @@ pins them down completely: any grant added, dropped or widened by a migration fa
 
 trust_ai_agent, the role behind the API key Occupella will hold, reads what trust_app reads and
 runs the reports: it can't write a row or call a function that writes (the AI never moves money).
-The one exception is AI_NEVER_READS: who can sign in, sessions and credentials.
+The one exception is AI_NEVER_READS: who can sign in, sessions and credentials, and rental
+applicants with their screenings.
 
 Every table, view and function in the schema is pinned, not just the ones that exist today:
 test_every_relation_and_function_is_pinned fails on a new one until it is listed here, so no
@@ -65,6 +66,38 @@ TABLES = {
     "trust_invites": {"SELECT", "INSERT"},
     "trust_sessions": {"SELECT", "INSERT"},
     "trust_login_secrets": {"SELECT", "INSERT"},
+    # Maintenance requests: tenants file them through the API, staff link a work order.
+    "trust_maintenance_requests": {"SELECT", "INSERT"},
+    "trust_maintenance_request_work_orders": {"SELECT", "INSERT"},
+    # Rental applications: applicants apply through the API, staff screen and decide.
+    "trust_application_links": {"SELECT", "INSERT"},
+    "trust_application_link_closings": {"SELECT", "INSERT"},
+    "trust_applications": {"SELECT", "INSERT"},
+    "trust_applicants": {"SELECT", "INSERT"},
+    "trust_screenings": {"SELECT", "INSERT"},
+    "trust_application_decisions": {"SELECT", "INSERT"},
+    "trust_adverse_actions": {"SELECT", "INSERT"},
+    # Lease offers: staff offer and send them, the partner's signatures are recorded.
+    "trust_lease_offers": {"SELECT", "INSERT"},
+    "trust_lease_offer_signers": {"SELECT", "INSERT"},
+    "trust_signature_requests": {"SELECT", "INSERT"},
+    "trust_signatures": {"SELECT", "INSERT"},
+    "trust_lease_offer_completions": {"SELECT"},  # written only by trust_complete_lease_offer
+    # Bank statements: staff import them; matches are written only by their functions.
+    "trust_bank_statements": {"SELECT", "INSERT"},
+    "trust_bank_statement_lines": {"SELECT", "INSERT"},
+    "trust_bank_matches": {"SELECT"},
+    "trust_bank_match_lines": {"SELECT"},
+    "trust_bank_match_transfers": {"SELECT"},
+    "trust_bank_unmatches": {"SELECT"},
+    # The switching tool: items carried over and the sign-off; their matches by function only.
+    "trust_cutover_items": {"SELECT", "INSERT"},
+    "trust_cutover_signoffs": {"SELECT", "INSERT"},
+    "trust_bank_match_cutover_items": {"SELECT"},
+    # Staff roles: an admin changes them with inserts (the trigger refuses anyone else);
+    # month-end preparations are written only by trust_prepare_bank_reconciliation.
+    "trust_staff_roles": {"SELECT", "INSERT"},
+    "trust_reconciliation_preparations": {"SELECT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -83,8 +116,26 @@ COLUMN_UPDATES = {
     },
 }
 # trust_app reads these, and trust_ai_agent never does: who can sign in, their sessions and
-# their credentials are no business of the role behind Occupella's key.
-AI_NEVER_READS = {"trust_logins", "trust_invites", "trust_sessions", "trust_login_secrets"}
+# their credentials, and rental applicants with their consumer report results, are no business
+# of the role behind Occupella's key.
+AI_NEVER_READS = {
+    "trust_logins",
+    "trust_invites",
+    "trust_sessions",
+    "trust_login_secrets",
+    "trust_application_links",
+    "trust_application_link_closings",
+    "trust_applications",
+    "trust_applicants",
+    "trust_screenings",
+    "trust_application_decisions",
+    "trust_adverse_actions",
+    "trust_lease_offers",
+    "trust_lease_offer_signers",
+    "trust_signature_requests",
+    "trust_signatures",
+    "trust_lease_offer_completions",
+}
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
 RENAMEABLE = [
     "trust_pmcs",
@@ -103,9 +154,6 @@ FUNCTIONS = {
     "trust_open_ledger_account(uuid,uuid,text,uuid,uuid,uuid)": {"trust_app"},
     "trust_post_transfers(uuid,text,transfer_request[],timestamptz,jsonb)": {"trust_app"},
     "trust_open_vendor_account(uuid,uuid,uuid)": {"trust_app"},
-    "trust_approve_reconciliation(uuid,uuid,timestamptz,timestamptz,numeric,text,text)": {
-        "trust_app"
-    },
     "trust_open_lease(uuid,uuid,date,date,numeric,uuid[])": {"trust_app"},
     "trust_end_lease(uuid,uuid,date)": {"trust_app"},
     "trust_apply_payment(uuid,uuid,text,numeric)": {"trust_app"},
@@ -119,13 +167,30 @@ FUNCTIONS = {
     "trust_assess_late_fees(uuid,date)": {"trust_app"},
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)": {"trust_app"},
     "trust_record_owner_contribution(uuid,text,text,numeric,timestamptz,text)": {"trust_app"},
+    "trust_complete_lease_offer(uuid,uuid,uuid)": {"trust_app"},
     "trust_enter_recurring_bills(uuid,date)": {"trust_app"},
+    "trust_match_bank_lines(uuid,uuid,uuid[],text[],uuid[],uuid)": {"trust_app"},
+    "trust_match_cutover_opening(uuid,uuid,uuid,uuid)": {"trust_app"},
+    "trust_unmatch_bank_lines(uuid,uuid,uuid)": {"trust_app"},
+    "trust_prepare_bank_reconciliation(uuid,uuid,date)": {"trust_app"},
+    "trust_approve_bank_reconciliation(uuid,uuid)": {"trust_app"},
+    # The app approves only month-end preparations, which another staff member made: this one
+    # is the owner's, called by trust_approve_bank_reconciliation.
+    "trust_approve_reconciliation(uuid,uuid,timestamptz,timestamptz,numeric,text,text)": set(),
+    # Whether a staff member holds a role, and the refusal when they don't: the app's, as the
+    # role triggers run with its rights when it writes. They read and write nothing else.
+    "trust_staff_holds(uuid,uuid,text)": {"trust_app"},
+    "trust_require_role(uuid,uuid,text,text)": {"trust_app"},
     # Helpers the fee, draw and bill functions call as the owner: nobody else.
     "trust_lock_owner_account(uuid,text)": set(),
     "trust_agreement_on(text,date)": set(),
     "trust_post_fee(trust_ledger_accounts,numeric,timestamptz,text)": set(),
     "trust_lock_bill(uuid,uuid)": set(),
     "trust_unpaid_bills(text,date)": set(),
+    # Helpers the bank matching functions call as the owner: nobody else.
+    "trust_bank_cash_moved(uuid,text)": set(),
+    "trust_lock_bank_matches(uuid,uuid)": set(),
+    "trust_bank_match_closed(timestamptz,uuid[],text[],uuid[])": set(),
     # Records every write as the owner: no role may call it, or write the log, on its own.
     "trust_audit()": set(),
     # Checks a payment hold as the owner, to take its lease's lock: no role calls it on its own.
@@ -147,6 +212,8 @@ FUNCTIONS = {
     "trust_report_general_ledger(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_audit_log(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_vendor_payments(uuid,integer)": {"trust_app", "trust_ai_agent"},
+    "trust_report_bank_reconciliation(uuid,uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_cutover(uuid,uuid)": {"trust_app", "trust_ai_agent"},
     # pgledger's posting functions take no idempotency key, so a retried request could post
     # twice: only the owner calls them (trust_post_transfers does, as the owner).
     "pgledger_create_transfer(text,text,numeric,timestamptz,jsonb)": set(),
@@ -182,6 +249,20 @@ FUNCTIONS = {
     "trust_check_hold_allowance()": {"PUBLIC"},
     "trust_check_recurring_bill()": {"PUBLIC"},
     "trust_refuse_moving_opened_at()": {"PUBLIC"},
+    "trust_check_request_work_order()": {"PUBLIC"},
+    "trust_check_application()": {"PUBLIC"},
+    "trust_lock_application_link()": {"PUBLIC"},
+    "trust_check_application_decision()": {"PUBLIC"},
+    "trust_check_adverse_action()": {"PUBLIC"},
+    "trust_check_lease_offer()": {"PUBLIC"},
+    "trust_check_bank_statement()": {"PUBLIC"},
+    "trust_check_bank_statement_line()": {"PUBLIC"},
+    "trust_check_cutover_entry()": {"PUBLIC"},
+    "trust_check_bank_statement_total()": {"PUBLIC"},
+    "trust_check_staff_role()": {"PUBLIC"},
+    "trust_check_staff_invite()": {"PUBLIC"},
+    "trust_check_cutover_signer()": {"PUBLIC"},
+    "trust_check_staff_role_change()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.
@@ -202,6 +283,12 @@ SECURITY_DEFINER = {
     "trust_assess_late_fees(uuid,date)",
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)",
     "trust_record_owner_contribution(uuid,text,text,numeric,timestamptz,text)",
+    "trust_complete_lease_offer(uuid,uuid,uuid)",
+    "trust_match_bank_lines(uuid,uuid,uuid[],text[],uuid[],uuid)",
+    "trust_match_cutover_opening(uuid,uuid,uuid,uuid)",
+    "trust_unmatch_bank_lines(uuid,uuid,uuid)",
+    "trust_prepare_bank_reconciliation(uuid,uuid,date)",
+    "trust_approve_bank_reconciliation(uuid,uuid)",
     "trust_audit()",  # writes the audit log, which no other role may write
     "trust_check_payment_hold()",  # locks the hold's lease, which the app can't
 }

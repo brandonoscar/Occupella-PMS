@@ -626,6 +626,87 @@ $$;
 
 
 --
+-- Name: trust_approve_bank_reconciliation(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_approve_bank_reconciliation(p_pmc_id uuid, p_preparation_id uuid) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_staff uuid := nullif(current_setting('trust.staff_id', true), '')::uuid;
+    v_prepared trust_reconciliation_preparations;
+    v_bank trust_bank_accounts;
+    v_start timestamptz;
+    v_figures numeric[];
+BEGIN
+    SELECT p.* INTO v_prepared FROM trust_reconciliation_preparations AS p
+    WHERE p.id = p_preparation_id AND p.pmc_id = p_pmc_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no reconciliation prepared as % in PMC %', p_preparation_id,
+            p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF v_staff IS NULL THEN
+        RAISE EXCEPTION 'trust: name the staff member who approves the reconciliation'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF v_staff = v_prepared.prepared_by THEN
+        RAISE EXCEPTION 'trust: the staff member who prepared a reconciliation does not approve it'
+            USING ERRCODE = 'insufficient_privilege',
+                  HINT = 'Another staff member who holds the approve role approves it.';
+    END IF;
+    v_bank := trust_lock_bank_matches(p_pmc_id, v_prepared.bank_account_id);
+    -- Matches and statements of the account wait for this (trust_approve_reconciliation then
+    -- holds postings off).
+    PERFORM pg_advisory_xact_lock(hashtextextended('bank statements of ' || v_bank.id, 0));
+    IF EXISTS (
+        SELECT p.id FROM trust_reconciliation_preparations AS p
+        WHERE p.bank_account_id = v_bank.id AND p.created_at > v_prepared.created_at
+    ) THEN
+        RAISE EXCEPTION 'trust: trust bank account % was prepared again since; approve the '
+            'latest', v_bank.id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT coalesce(b.closed_through, b.opened_at, (
+               SELECT min(s.first_day)::timestamp AT TIME ZONE 'UTC'
+               FROM trust_bank_statements AS s WHERE s.bank_account_id = b.id
+           ))
+    INTO v_start
+    FROM trust_bank_accounts AS b WHERE b.id = v_bank.id;
+    IF v_start >= (v_prepared.through + 1)::timestamp AT TIME ZONE 'UTC' THEN
+        RAISE EXCEPTION 'trust: trust bank account % is approved through % already', v_bank.id,
+            v_prepared.through
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT array_agg(r.amount ORDER BY r.line) INTO v_figures
+    FROM trust_report_bank_reconciliation(p_pmc_id, v_bank.id, v_prepared.through) AS r
+    WHERE r.line IN (4, 8, 9);
+    -- (The bank balance through the day can't have changed: its statements are whole and
+    -- append-only.)
+    IF v_figures[2] <> v_prepared.book_cash THEN
+        RAISE EXCEPTION 'trust: the books through % changed since they were prepared: % '
+            '(prepared %)', v_prepared.through, v_figures[2], v_prepared.book_cash
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Prepare it again.';
+    END IF;
+    IF v_figures[3] <> 0 THEN
+        RAISE EXCEPTION 'trust: lines of trust bank account % come to % that the books lack '
+            'by the end of %', v_bank.id, v_figures[3], v_prepared.through
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Record them in the books and match them first.';
+    END IF;
+    RETURN trust_approve_reconciliation(
+        p_pmc_id, v_bank.id, v_start,
+        (v_prepared.through + 1)::timestamp AT TIME ZONE 'UTC', v_figures[1],
+        (SELECT s.display_name FROM trust_staff AS s WHERE s.id = v_prepared.prepared_by),
+        (SELECT s.display_name FROM trust_staff AS s WHERE s.id = v_staff)
+    );
+END;
+$$;
+
+
+--
 -- Name: trust_approve_reconciliation(uuid, uuid, timestamp with time zone, timestamp with time zone, numeric, text, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -825,6 +906,49 @@ $$;
 
 
 --
+-- Name: trust_bank_cash_moved(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_bank_cash_moved(p_bank_account_id uuid, p_transfer_id text) RETURNS numeric
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT coalesce(-sum(e.amount), 0)
+    FROM pgledger_entries AS e
+    JOIN trust_ledger_accounts AS t ON t.ledger_account_id = e.account_id
+    WHERE e.transfer_id = p_transfer_id
+      AND t.bank_account_id = p_bank_account_id AND t.kind = 'bank_cash'
+$$;
+
+
+--
+-- Name: trust_bank_match_closed(timestamp with time zone, uuid[], text[], uuid[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_bank_match_closed(p_closed_through timestamp with time zone, p_line_ids uuid[], p_transfer_ids text[], p_item_ids uuid[]) RETURNS boolean
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT p_closed_through IS NOT NULL
+       AND NOT EXISTS (
+           SELECT l.id FROM trust_bank_statement_lines AS l
+           WHERE l.id = ANY (p_line_ids)
+             AND l.posted_on >= (p_closed_through AT TIME ZONE 'UTC')::date
+       )
+       AND NOT EXISTS (
+           SELECT tr.id FROM pgledger_transfers AS tr
+           WHERE tr.id = ANY (p_transfer_ids) AND tr.event_at >= p_closed_through
+       )
+       AND NOT EXISTS (
+           SELECT i.id FROM trust_cutover_items AS i
+           JOIN trust_opening_balances AS o ON o.bank_account_id = i.bank_account_id
+           WHERE i.id = ANY (p_item_ids)
+             AND o.opened_on >= (p_closed_through AT TIME ZONE 'UTC')::date
+       )
+$$;
+
+
+--
 -- Name: trust_charge_rent_due(uuid, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -891,6 +1015,43 @@ $$;
 
 
 --
+-- Name: trust_check_adverse_action(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_adverse_action() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_needed boolean;
+    v_given boolean;
+BEGIN
+    SELECT d.decision IN ('declined', 'conditional') AND d.screening_id IS NOT NULL
+    INTO v_needed
+    FROM trust_application_decisions AS d
+    WHERE d.application_id = NEW.application_id;
+    v_given := EXISTS (
+        SELECT a.application_id FROM trust_adverse_actions AS a
+        WHERE a.application_id = NEW.application_id
+    );
+    IF v_needed AND NOT v_given THEN
+        RAISE EXCEPTION 'trust: application % was % on a screening; record the adverse action '
+            'notice with the decision', NEW.application_id,
+            (SELECT d.decision FROM trust_application_decisions AS d
+             WHERE d.application_id = NEW.application_id)
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF v_given AND NOT v_needed THEN
+        RAISE EXCEPTION 'trust: an adverse action belongs to a declined or conditional decision '
+            'that rests on a screening; application % has none', NEW.application_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: trust_check_agreement_account(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -909,6 +1070,164 @@ BEGIN
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_application(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_application() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'trust: take applications at READ COMMITTED, not %',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended('application link ' || NEW.link_id, 0));
+    IF EXISTS (
+        SELECT c.link_id FROM trust_application_link_closings AS c WHERE c.link_id = NEW.link_id
+    ) THEN
+        RAISE EXCEPTION 'trust: application link % is closed', NEW.link_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_application_decision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_application_decision() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NEW.screening_id IS NOT NULL AND NOT EXISTS (
+        SELECT s.id FROM trust_screenings AS s
+        WHERE s.id = NEW.screening_id AND s.application_id = NEW.application_id
+    ) THEN
+        RAISE EXCEPTION 'trust: screening % is not of application %',
+            NEW.screening_id, NEW.application_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_bank_statement(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_bank_statement() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_last trust_bank_statements;
+    v_bank trust_bank_accounts;
+BEGIN
+    -- Statements of one bank account wait for each other.
+    PERFORM pg_advisory_xact_lock(hashtextextended('bank statements of ' || NEW.bank_account_id, 0));
+    SELECT s.* INTO v_last FROM trust_bank_statements AS s
+    WHERE s.bank_account_id = NEW.bank_account_id
+    ORDER BY s.last_day DESC LIMIT 1;
+    IF FOUND THEN
+        IF NEW.first_day <> v_last.last_day + 1 THEN
+            RAISE EXCEPTION 'trust: the next statement of trust bank account % starts on %, '
+                'the day after the last one ends', NEW.bank_account_id, v_last.last_day + 1
+                USING ERRCODE = 'check_violation';
+        END IF;
+        IF NEW.opening_balance <> v_last.closing_balance THEN
+            RAISE EXCEPTION 'trust: the next statement of trust bank account % opens at %, '
+                'where the last one closed, not %', NEW.bank_account_id, v_last.closing_balance,
+                NEW.opening_balance
+                USING ERRCODE = 'check_violation';
+        END IF;
+    ELSIF NEW.opening_balance <> 0 THEN
+        RAISE EXCEPTION 'trust: the first statement of trust bank account % opens at 0, not %',
+            NEW.bank_account_id, NEW.opening_balance
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Bring its opening balance in as its first line.';
+    END IF;
+    SELECT b.* INTO v_bank FROM trust_bank_accounts AS b WHERE b.id = NEW.bank_account_id;
+    IF NEW.first_day < (v_bank.closed_through AT TIME ZONE 'UTC')::date THEN
+        RAISE EXCEPTION 'trust: trust bank account % is closed through %; a statement starts '
+            'no earlier', NEW.bank_account_id, v_bank.closed_through
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.first_day < (v_bank.opened_at AT TIME ZONE 'UTC')::date THEN
+        RAISE EXCEPTION 'trust: trust bank account % opened on %; a statement starts no earlier',
+            NEW.bank_account_id, (v_bank.opened_at AT TIME ZONE 'UTC')::date
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.last_day > (now() AT TIME ZONE 'UTC')::date THEN
+        RAISE EXCEPTION 'trust: a statement covers days that have come, not %', NEW.last_day
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_bank_statement_line(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_bank_statement_line() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_statement trust_bank_statements;
+BEGIN
+    SELECT s.* INTO v_statement FROM trust_bank_statements AS s WHERE s.id = NEW.statement_id;
+    IF NEW.line_no > v_statement.line_count THEN
+        RAISE EXCEPTION 'trust: statement % has % lines, not line %', NEW.statement_id,
+            v_statement.line_count, NEW.line_no
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.posted_on NOT BETWEEN v_statement.first_day AND v_statement.last_day THEN
+        RAISE EXCEPTION 'trust: statement % covers % to %, not %', NEW.statement_id,
+            v_statement.first_day, v_statement.last_day, NEW.posted_on
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_bank_statement_total(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_bank_statement_total() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_statement trust_bank_statements;
+    v_lines bigint;
+    v_total numeric;
+BEGIN
+    SELECT s.* INTO v_statement FROM trust_bank_statements AS s WHERE s.id = NEW.id;
+    SELECT count(*), coalesce(sum(l.amount), 0) INTO v_lines, v_total
+    FROM trust_bank_statement_lines AS l WHERE l.statement_id = v_statement.id;
+    IF v_lines <> v_statement.line_count
+        OR v_statement.opening_balance + v_total <> v_statement.closing_balance THEN
+        RAISE EXCEPTION 'trust: statement % has % lines coming to %; it says % lines from % to %',
+            v_statement.id, v_lines, v_total, v_statement.line_count,
+            v_statement.opening_balance, v_statement.closing_balance
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NULL;
 END;
 $$;
 
@@ -989,6 +1308,57 @@ $$;
 
 
 --
+-- Name: trust_check_cutover_entry(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_cutover_entry() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_opened date;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('cutover of ' || NEW.bank_account_id, 0));
+    SELECT o.opened_on INTO v_opened FROM trust_opening_balances AS o
+    WHERE o.bank_account_id = NEW.bank_account_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: trust bank account % has no opening balances to carry over to',
+            NEW.bank_account_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (SELECT s.bank_account_id FROM trust_cutover_signoffs AS s
+               WHERE s.bank_account_id = NEW.bank_account_id) THEN
+        RAISE EXCEPTION 'trust: the cutover of trust bank account % is signed off already',
+            NEW.bank_account_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF TG_TABLE_NAME = 'trust_cutover_items' AND (to_jsonb(NEW) ->> 'issued_on')::date > v_opened
+    THEN
+        RAISE EXCEPTION 'trust: an item carried over was issued by the cutover, %, not %',
+            v_opened, to_jsonb(NEW) ->> 'issued_on'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_cutover_signer(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_cutover_signer() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM trust_require_role(NEW.pmc_id, NEW.signed_by, 'approve', 'sign off a cutover');
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_hold_allowance(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1034,6 +1404,47 @@ $$;
 
 
 --
+-- Name: trust_check_lease_offer(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_lease_offer() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_unit uuid;
+    v_starts date;
+BEGIN
+    IF NEW.application_id IS NOT NULL THEN
+        SELECT l.unit_id INTO v_unit
+        FROM trust_applications AS a
+        JOIN trust_application_links AS l ON l.id = a.link_id
+        JOIN trust_application_decisions AS d ON d.application_id = a.id
+        WHERE a.id = NEW.application_id AND d.decision IN ('approved', 'conditional');
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'trust: application % is not approved; offer it no lease',
+                NEW.application_id
+                USING ERRCODE = 'check_violation';
+        END IF;
+    ELSE
+        SELECT l.unit_id, l.starts_on INTO v_unit, v_starts
+        FROM trust_leases AS l WHERE l.id = NEW.renews_lease_id;
+        IF NEW.starts_on <= v_starts THEN
+            RAISE EXCEPTION 'trust: a renewal of lease % starts after %', NEW.renews_lease_id,
+                v_starts
+                USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+    IF NEW.unit_id IS DISTINCT FROM v_unit THEN
+        RAISE EXCEPTION 'trust: the offer is for unit %, not %', v_unit, NEW.unit_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_payment_hold(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1067,6 +1478,116 @@ BEGIN
         RAISE EXCEPTION 'trust: a recurring bill is paid from an owner''s property account in '
             'its own PMC; % is not one in PMC %', NEW.ledger_account_id, NEW.pmc_id
             USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_request_work_order(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_request_work_order() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT w.id
+        FROM trust_maintenance_requests AS r
+        JOIN trust_leases AS l ON l.id = r.lease_id
+        JOIN trust_units AS u ON u.id = l.unit_id
+        JOIN trust_work_orders AS w ON w.id = NEW.work_order_id AND w.unit_id = u.id
+        WHERE r.id = NEW.request_id
+    ) THEN
+        RAISE EXCEPTION 'trust: work order % is not for the unit of request %''s lease',
+            NEW.work_order_id, NEW.request_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_staff_invite(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_staff_invite() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF (SELECT l.kind FROM trust_logins AS l WHERE l.id = NEW.login_id) = 'staff' THEN
+        PERFORM trust_require_role(
+            NEW.pmc_id, nullif(current_setting('trust.staff_id', true), '')::uuid,
+            'admin', 'invite a staff member'
+        );
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_staff_role(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_staff_role() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM trust_require_role(
+        NEW.pmc_id, nullif(current_setting('trust.staff_id', true), '')::uuid,
+        TG_ARGV[0], TG_ARGV[1]
+    );
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_staff_role_change(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_staff_role_change() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_has_admin boolean;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('staff roles of ' || NEW.pmc_id, 0));
+    NEW.changed_by := nullif(current_setting('trust.staff_id', true), '')::uuid;
+    NEW.created_at := clock_timestamp();
+    v_has_admin := EXISTS (
+        SELECT s.id FROM trust_staff AS s
+        WHERE s.pmc_id = NEW.pmc_id AND trust_staff_holds(NEW.pmc_id, s.id, 'admin')
+    );
+    IF NEW.changed_by IS NULL THEN
+        IF v_has_admin OR NEW.role <> 'admin' OR NOT NEW.granted THEN
+            RAISE EXCEPTION 'trust: name the admin who changes a role'
+                USING ERRCODE = 'insufficient_privilege',
+                      HINT = 'With nobody named, only a PMC''s first admin is granted.';
+        END IF;
+    ELSE
+        PERFORM trust_require_role(NEW.pmc_id, NEW.changed_by, 'admin', 'change a role');
+    END IF;
+    IF trust_staff_holds(NEW.pmc_id, NEW.staff_id, NEW.role) = NEW.granted THEN
+        RAISE EXCEPTION 'trust: staff member % % the % role already', NEW.staff_id,
+            CASE WHEN NEW.granted THEN 'holds' ELSE 'does not hold' END, NEW.role
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NOT NEW.granted AND NEW.role = 'admin' AND NOT EXISTS (
+        SELECT s.id FROM trust_staff AS s
+        WHERE s.pmc_id = NEW.pmc_id AND s.id <> NEW.staff_id
+          AND trust_staff_holds(NEW.pmc_id, s.id, 'admin')
+    ) THEN
+        RAISE EXCEPTION 'trust: staff member % is the PMC''s last admin', NEW.staff_id
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Make another staff member an admin first.';
     END IF;
     RETURN NEW;
 END;
@@ -1166,6 +1687,95 @@ BEGIN
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_complete_lease_offer(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_complete_lease_offer(p_pmc_id uuid, p_offer_id uuid, p_completed_by uuid) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_offer trust_lease_offers;
+    v_lease uuid;
+    v_old trust_leases;
+    v_tenants uuid[];
+BEGIN
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'trust: complete lease offers at READ COMMITTED, not %',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
+    SELECT o.* INTO v_offer FROM trust_lease_offers AS o
+    WHERE o.id = p_offer_id AND o.pmc_id = p_pmc_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no lease offer % in PMC %', p_offer_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Offers for one application or one lease wait for each other.
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+        'lease offer of ' || coalesce(v_offer.application_id, v_offer.renews_lease_id), 0
+    ));
+
+    SELECT c.lease_id INTO v_lease FROM trust_lease_offer_completions AS c
+    WHERE c.offer_id = p_offer_id;
+    IF FOUND THEN
+        RETURN v_lease;
+    END IF;
+    IF EXISTS (
+        SELECT s.position FROM trust_lease_offer_signers AS s
+        WHERE s.offer_id = p_offer_id AND NOT EXISTS (
+            SELECT g.position FROM trust_signatures AS g
+            WHERE g.offer_id = s.offer_id AND g.position = s.position
+        )
+    ) OR NOT EXISTS (
+        SELECT s.position FROM trust_lease_offer_signers AS s WHERE s.offer_id = p_offer_id
+    ) THEN
+        RAISE EXCEPTION 'trust: lease offer % is not signed by everyone yet', p_offer_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (
+        SELECT o.id FROM trust_lease_offers AS o
+        JOIN trust_lease_offer_completions AS c ON c.offer_id = o.id
+        WHERE o.application_id = v_offer.application_id
+           OR o.renews_lease_id = v_offer.renews_lease_id
+    ) THEN
+        RAISE EXCEPTION 'trust: another offer for this % became its lease already',
+            CASE WHEN v_offer.application_id IS NULL THEN 'lease' ELSE 'application' END
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    IF v_offer.application_id IS NOT NULL THEN
+        WITH made AS (
+            INSERT INTO trust_tenants (pmc_id, property_id, display_name)
+            SELECT p_pmc_id, u.property_id, s.display_name
+            FROM trust_lease_offer_signers AS s
+            JOIN trust_units AS u ON u.id = v_offer.unit_id
+            WHERE s.offer_id = p_offer_id
+            ORDER BY s.position
+            RETURNING id
+        )
+        SELECT array_agg(m.id) INTO v_tenants FROM made AS m;
+    ELSE
+        SELECT l.* INTO v_old FROM trust_leases AS l WHERE l.id = v_offer.renews_lease_id;
+        SELECT array_agg(t.tenant_id) INTO v_tenants
+        FROM trust_lease_tenants AS t WHERE t.lease_id = v_old.id;
+        IF v_old.ends_on IS NULL OR v_old.ends_on >= v_offer.starts_on THEN
+            PERFORM trust_end_lease(p_pmc_id, v_old.id, v_offer.starts_on - 1);
+        END IF;
+    END IF;
+
+    v_lease := trust_open_lease(
+        p_pmc_id, v_offer.unit_id, v_offer.starts_on, v_offer.ends_on, v_offer.monthly_rent,
+        v_tenants
+    );
+    INSERT INTO trust_lease_offer_completions (pmc_id, offer_id, lease_id, completed_by)
+    VALUES (p_pmc_id, p_offer_id, v_lease, p_completed_by);
+    RETURN v_lease;
 END;
 $$;
 
@@ -1301,6 +1911,61 @@ $$;
 
 
 --
+-- Name: trust_lock_application_link(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_lock_application_link() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('application link ' || NEW.link_id, 0));
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_bank_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_bank_accounts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    kind text NOT NULL,
+    display_name text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    closed_through timestamp with time zone,
+    opened_at timestamp with time zone,
+    CONSTRAINT trust_bank_accounts_display_name_check CHECK ((display_name <> ''::text)),
+    CONSTRAINT trust_bank_accounts_kind_check CHECK ((kind = ANY (ARRAY['operating'::text, 'security_deposit'::text])))
+);
+
+
+--
+-- Name: trust_lock_bank_matches(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_lock_bank_matches(p_pmc_id uuid, p_bank_account_id uuid) RETURNS public.trust_bank_accounts
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bank trust_bank_accounts;
+BEGIN
+    SELECT b.* INTO v_bank FROM trust_bank_accounts AS b
+    WHERE b.id = p_bank_account_id AND b.pmc_id = p_pmc_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no trust bank account % in PMC %', p_bank_account_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended('bank matches of ' || p_bank_account_id, 0));
+    RETURN v_bank;
+END;
+$$;
+
+
+--
 -- Name: trust_bills; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1388,6 +2053,203 @@ BEGIN
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     RETURN v_account;
+END;
+$$;
+
+
+--
+-- Name: trust_match_bank_lines(uuid, uuid, uuid[], text[], uuid[], uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_match_bank_lines(p_pmc_id uuid, p_bank_account_id uuid, p_line_ids uuid[], p_transfer_ids text[], p_item_ids uuid[], p_matched_by uuid) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bank trust_bank_accounts := trust_lock_bank_matches(p_pmc_id, p_bank_account_id);
+    v_lines uuid[] := coalesce(p_line_ids, '{}');
+    v_transfers text[] := coalesce(p_transfer_ids, '{}');
+    v_items uuid[] := coalesce(p_item_ids, '{}');
+    v_unmoved text;
+    v_line_total numeric;
+    v_book_total numeric;
+    v_id uuid;
+BEGIN
+    IF cardinality(v_lines) + cardinality(v_transfers) + cardinality(v_items) = 0 THEN
+        RAISE EXCEPTION 'trust: a match holds at least one line, transfer or cutover item'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF cardinality(v_lines) <> (SELECT count(DISTINCT x) FROM unnest(v_lines) AS x)
+        OR cardinality(v_transfers) <> (SELECT count(DISTINCT x) FROM unnest(v_transfers) AS x)
+        OR cardinality(v_items) <> (SELECT count(DISTINCT x) FROM unnest(v_items) AS x)
+    THEN
+        RAISE EXCEPTION 'trust: a match names each line, transfer and item once'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF cardinality(v_lines) <> (
+        SELECT count(*) FROM trust_bank_statement_lines AS l
+        JOIN trust_bank_statements AS s ON s.id = l.statement_id
+        WHERE l.id = ANY (v_lines) AND s.bank_account_id = p_bank_account_id
+    ) THEN
+        RAISE EXCEPTION 'trust: a line named is not on a statement of trust bank account %',
+            p_bank_account_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF cardinality(v_items) <> (
+        SELECT count(*) FROM trust_cutover_items AS i
+        WHERE i.id = ANY (v_items) AND i.bank_account_id = p_bank_account_id
+    ) THEN
+        RAISE EXCEPTION 'trust: an item named was not carried over into trust bank account %',
+            p_bank_account_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT min(x) INTO v_unmoved FROM unnest(v_transfers) AS x
+    WHERE trust_bank_cash_moved(p_bank_account_id, x) = 0;
+    IF v_unmoved IS NOT NULL THEN
+        RAISE EXCEPTION 'trust: transfer % moved no cash of trust bank account %', v_unmoved,
+            p_bank_account_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF EXISTS (
+        SELECT ml.line_id FROM trust_bank_match_lines AS ml
+        WHERE ml.line_id = ANY (v_lines)
+          AND NOT EXISTS (SELECT u.match_id FROM trust_bank_unmatches AS u
+                          WHERE u.match_id = ml.match_id)
+    ) OR EXISTS (
+        SELECT mt.transfer_id FROM trust_bank_match_transfers AS mt
+        JOIN trust_bank_matches AS m ON m.id = mt.match_id
+        WHERE mt.transfer_id = ANY (v_transfers) AND m.bank_account_id = p_bank_account_id
+          AND NOT EXISTS (SELECT u.match_id FROM trust_bank_unmatches AS u
+                          WHERE u.match_id = mt.match_id)
+    ) OR EXISTS (
+        SELECT mi.item_id FROM trust_bank_match_cutover_items AS mi
+        WHERE mi.item_id = ANY (v_items) AND mi.side = 'cleared'
+          AND NOT EXISTS (SELECT u.match_id FROM trust_bank_unmatches AS u
+                          WHERE u.match_id = mi.match_id)
+    ) THEN
+        RAISE EXCEPTION 'trust: a line, transfer or item named is matched already'
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Undo that match first.';
+    END IF;
+    IF cardinality(v_items) <> (
+        SELECT count(DISTINCT mi.item_id) FROM trust_bank_match_cutover_items AS mi
+        WHERE mi.item_id = ANY (v_items) AND mi.side = 'carried'
+          AND NOT EXISTS (SELECT u.match_id FROM trust_bank_unmatches AS u
+                          WHERE u.match_id = mi.match_id)
+    ) THEN
+        RAISE EXCEPTION 'trust: an item carried over clears once the opening is matched'
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Match the balance brought forward to the opening first.';
+    END IF;
+    SELECT coalesce(sum(l.amount), 0) INTO v_line_total
+    FROM trust_bank_statement_lines AS l WHERE l.id = ANY (v_lines);
+    SELECT coalesce(sum(trust_bank_cash_moved(p_bank_account_id, x)), 0)
+           + coalesce((SELECT sum(i.amount) FROM trust_cutover_items AS i
+                       WHERE i.id = ANY (v_items)), 0)
+    INTO v_book_total
+    FROM unnest(v_transfers) AS x;
+    IF v_line_total <> v_book_total THEN
+        RAISE EXCEPTION 'trust: the lines come to % and the transfers and items to %; a match '
+            'comes to the same on both sides', v_line_total, v_book_total
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF trust_bank_match_closed(v_bank.closed_through, v_lines, v_transfers, v_items) THEN
+        RAISE EXCEPTION 'trust: trust bank account % is closed through %; this match would '
+            'change a reconciliation already approved', p_bank_account_id, v_bank.closed_through
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    INSERT INTO trust_bank_matches (pmc_id, bank_account_id, matched_by)
+    VALUES (p_pmc_id, p_bank_account_id, p_matched_by)
+    RETURNING id INTO v_id;
+    INSERT INTO trust_bank_match_lines (match_id, line_id, pmc_id)
+    SELECT v_id, x, p_pmc_id FROM unnest(v_lines) AS x;
+    INSERT INTO trust_bank_match_transfers (match_id, transfer_id, pmc_id)
+    SELECT v_id, x, p_pmc_id FROM unnest(v_transfers) AS x;
+    INSERT INTO trust_bank_match_cutover_items (match_id, item_id, side, pmc_id)
+    SELECT v_id, x, 'cleared', p_pmc_id FROM unnest(v_items) AS x;
+    RETURN v_id;
+END;
+$$;
+
+
+--
+-- Name: trust_match_cutover_opening(uuid, uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_match_cutover_opening(p_pmc_id uuid, p_bank_account_id uuid, p_line_id uuid, p_matched_by uuid) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bank trust_bank_accounts := trust_lock_bank_matches(p_pmc_id, p_bank_account_id);
+    v_opening trust_opening_balances;
+    v_items uuid[];
+    v_line numeric;
+    v_carried numeric;
+    v_id uuid;
+BEGIN
+    SELECT o.* INTO v_opening FROM trust_opening_balances AS o
+    WHERE o.bank_account_id = p_bank_account_id;
+    IF NOT FOUND OR NOT EXISTS (
+        SELECT s.bank_account_id FROM trust_cutover_signoffs AS s
+        WHERE s.bank_account_id = p_bank_account_id
+    ) THEN
+        RAISE EXCEPTION 'trust: trust bank account % has no signed-off cutover to match',
+            p_bank_account_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT l.amount INTO v_line FROM trust_bank_statement_lines AS l
+    JOIN trust_bank_statements AS s ON s.id = l.statement_id
+    WHERE l.id = p_line_id AND s.bank_account_id = p_bank_account_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: the line named is not on a statement of trust bank account %',
+            p_bank_account_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT coalesce(array_agg(i.id ORDER BY i.id), '{}'), coalesce(sum(i.amount), 0)
+    INTO v_items, v_carried
+    FROM trust_cutover_items AS i WHERE i.bank_account_id = p_bank_account_id;
+    IF EXISTS (
+        SELECT ml.line_id FROM trust_bank_match_lines AS ml
+        WHERE ml.line_id = p_line_id
+          AND NOT EXISTS (SELECT u.match_id FROM trust_bank_unmatches AS u
+                          WHERE u.match_id = ml.match_id)
+    ) OR EXISTS (
+        SELECT mt.transfer_id FROM trust_bank_match_transfers AS mt
+        JOIN trust_bank_matches AS m ON m.id = mt.match_id
+        WHERE mt.transfer_id = ANY (v_opening.transfer_ids)
+          AND m.bank_account_id = p_bank_account_id
+          AND NOT EXISTS (SELECT u.match_id FROM trust_bank_unmatches AS u
+                          WHERE u.match_id = mt.match_id)
+    ) THEN
+        RAISE EXCEPTION 'trust: the line or the opening is matched already'
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Undo that match first.';
+    END IF;
+    IF v_line <> v_opening.book_cash - v_carried THEN
+        RAISE EXCEPTION 'trust: the balance brought forward is %; the opening balances (%) less '
+            'the items not yet cleared (%) come to %', v_line, v_opening.book_cash, v_carried,
+            v_opening.book_cash - v_carried
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF trust_bank_match_closed(v_bank.closed_through, ARRAY[p_line_id],
+                               v_opening.transfer_ids, v_items) THEN
+        RAISE EXCEPTION 'trust: trust bank account % is closed through %; this match would '
+            'change a reconciliation already approved', p_bank_account_id, v_bank.closed_through
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    INSERT INTO trust_bank_matches (pmc_id, bank_account_id, matched_by)
+    VALUES (p_pmc_id, p_bank_account_id, p_matched_by)
+    RETURNING id INTO v_id;
+    INSERT INTO trust_bank_match_lines (match_id, line_id, pmc_id)
+    VALUES (v_id, p_line_id, p_pmc_id);
+    INSERT INTO trust_bank_match_transfers (match_id, transfer_id, pmc_id)
+    SELECT v_id, x, p_pmc_id FROM unnest(v_opening.transfer_ids) AS x;
+    INSERT INTO trust_bank_match_cutover_items (match_id, item_id, side, pmc_id)
+    SELECT v_id, x, 'carried', p_pmc_id FROM unnest(v_items) AS x;
+    RETURN v_id;
 END;
 $$;
 
@@ -1934,6 +2796,62 @@ $$;
 
 
 --
+-- Name: trust_prepare_bank_reconciliation(uuid, uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_prepare_bank_reconciliation(p_pmc_id uuid, p_bank_account_id uuid, p_through date) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_staff uuid := nullif(current_setting('trust.staff_id', true), '')::uuid;
+    v_start timestamptz;
+    v_figures numeric[];
+    v_id uuid;
+BEGIN
+    IF v_staff IS NULL THEN
+        RAISE EXCEPTION 'trust: name the staff member who prepares the reconciliation'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT coalesce(b.closed_through, b.opened_at, (
+               SELECT min(s.first_day)::timestamp AT TIME ZONE 'UTC'
+               FROM trust_bank_statements AS s WHERE s.bank_account_id = b.id
+           ))
+    INTO v_start
+    FROM trust_bank_accounts AS b WHERE b.id = p_bank_account_id AND b.pmc_id = p_pmc_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no trust bank account % in PMC %', p_bank_account_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF (p_through + 1)::timestamp AT TIME ZONE 'UTC' <= v_start THEN
+        RAISE EXCEPTION 'trust: the next period of trust bank account % starts at %',
+            p_bank_account_id, v_start
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF (p_through + 1)::timestamp AT TIME ZONE 'UTC' > now() THEN
+        RAISE EXCEPTION 'trust: % has not ended yet', p_through
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- The bank balance, the book cash and the difference.
+    SELECT array_agg(r.amount ORDER BY r.line) INTO v_figures
+    FROM trust_report_bank_reconciliation(p_pmc_id, p_bank_account_id, p_through) AS r
+    WHERE r.line IN (4, 8, 9);
+    IF v_figures[3] <> 0 THEN
+        RAISE EXCEPTION 'trust: lines of trust bank account % come to % that the books lack '
+            'by the end of %', p_bank_account_id, v_figures[3], p_through
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Record them in the books and match them first.';
+    END IF;
+    INSERT INTO trust_reconciliation_preparations (
+        pmc_id, bank_account_id, through, bank_balance, book_cash, prepared_by
+    ) VALUES (p_pmc_id, p_bank_account_id, p_through, v_figures[1], v_figures[2], v_staff)
+    RETURNING id INTO v_id;
+    RETURN v_id;
+END;
+$$;
+
+
+--
 -- Name: trust_record_owner_contribution(uuid, text, text, numeric, timestamp with time zone, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2278,6 +3196,267 @@ BEGIN
            l.action,
            l.record,
            l.detail
+    FROM lines AS l
+    ORDER BY 1;
+END;
+$$;
+
+
+--
+-- Name: trust_report_bank_reconciliation(uuid, uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_bank_reconciliation(p_pmc_id uuid, p_bank_account_id uuid, p_through date) RETURNS TABLE(line integer, item text, detail text, amount numeric)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_end timestamptz := (p_through + 1)::timestamp AT TIME ZONE 'UTC';
+BEGIN
+    IF NOT EXISTS (
+        SELECT b.id FROM trust_bank_accounts AS b
+        WHERE b.id = p_bank_account_id AND b.pmc_id = p_pmc_id
+    ) THEN
+        RAISE EXCEPTION 'trust: no trust bank account % in PMC %', p_bank_account_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF NOT EXISTS (
+        SELECT s.id FROM trust_bank_statements AS s
+        WHERE s.bank_account_id = p_bank_account_id
+          AND p_through BETWEEN s.first_day AND s.last_day
+    ) THEN
+        RAISE EXCEPTION 'trust: no statement of trust bank account % covers %',
+            p_bank_account_id, p_through
+            USING ERRCODE = 'invalid_parameter_value',
+                  HINT = 'Import the statement first.';
+    END IF;
+
+    RETURN QUERY
+    WITH moved AS (
+        SELECT tr.id, tr.event_at, tr.metadata ->> 'memo' AS memo, -sum(e.amount) AS cash
+        FROM trust_ledger_accounts AS t
+        JOIN pgledger_entries AS e ON e.account_id = t.ledger_account_id
+        JOIN pgledger_transfers AS tr ON tr.id = e.transfer_id
+        WHERE t.bank_account_id = p_bank_account_id AND t.kind = 'bank_cash'
+          AND tr.event_at < v_end
+        GROUP BY tr.id
+        HAVING sum(e.amount) <> 0
+    ),
+    lines AS (
+        SELECT l.id, l.posted_on, l.amount, l.description, l.bank_reference, l.line_no,
+               s.first_day
+        FROM trust_bank_statement_lines AS l
+        JOIN trust_bank_statements AS s ON s.id = l.statement_id
+        WHERE s.bank_account_id = p_bank_account_id AND l.posted_on <= p_through
+    ),
+    cleared AS (
+        SELECT m.id FROM trust_bank_matches AS m
+        WHERE m.bank_account_id = p_bank_account_id
+          AND NOT EXISTS (SELECT u.match_id FROM trust_bank_unmatches AS u
+                          WHERE u.match_id = m.id)
+          AND NOT EXISTS (
+              SELECT ml.line_id FROM trust_bank_match_lines AS ml
+              JOIN trust_bank_statement_lines AS l ON l.id = ml.line_id
+              WHERE ml.match_id = m.id AND l.posted_on > p_through
+          )
+          AND NOT EXISTS (
+              SELECT mt.transfer_id FROM trust_bank_match_transfers AS mt
+              JOIN pgledger_transfers AS tr ON tr.id = mt.transfer_id
+              WHERE mt.match_id = m.id AND tr.event_at >= v_end
+          )
+    ),
+    -- Items carried over that a cleared opening match carries and no cleared match clears.
+    carried AS (
+        SELECT i.id, i.issued_on, i.amount, i.description, i.reference
+        FROM trust_cutover_items AS i
+        WHERE i.bank_account_id = p_bank_account_id
+          AND EXISTS (SELECT mi.item_id FROM trust_bank_match_cutover_items AS mi
+                      JOIN cleared AS c ON c.id = mi.match_id
+                      WHERE mi.item_id = i.id AND mi.side = 'carried')
+          AND NOT EXISTS (SELECT mi.item_id FROM trust_bank_match_cutover_items AS mi
+                          JOIN cleared AS c ON c.id = mi.match_id
+                          WHERE mi.item_id = i.id AND mi.side = 'cleared')
+    ),
+    outstanding AS (
+        SELECT mv.* FROM moved AS mv
+        WHERE NOT EXISTS (
+            SELECT mt.transfer_id FROM trust_bank_match_transfers AS mt
+            JOIN cleared AS c ON c.id = mt.match_id
+            WHERE mt.transfer_id = mv.id
+        )
+    ),
+    missing AS (
+        SELECT ln.* FROM lines AS ln
+        WHERE NOT EXISTS (
+            SELECT ml.line_id FROM trust_bank_match_lines AS ml
+            JOIN cleared AS c ON c.id = ml.match_id
+            WHERE ml.line_id = ln.id
+        )
+    ),
+    uncleared AS (
+        SELECT o.cash AS amount FROM outstanding AS o
+        UNION ALL
+        SELECT ci.amount FROM carried AS ci
+    ),
+    totals AS (
+        SELECT (SELECT coalesce(sum(ln.amount), 0) FROM lines AS ln) AS bank,
+               (SELECT coalesce(sum(u.amount), 0) FROM uncleared AS u WHERE u.amount > 0)
+                   AS in_transit,
+               (SELECT coalesce(sum(u.amount), 0) FROM uncleared AS u WHERE u.amount < 0)
+                   AS outstanding,
+               (SELECT coalesce(sum(mv.cash), 0) FROM moved AS mv) AS book
+    ),
+    heads AS (
+        SELECT 1 AS n, 'PMC' AS item, p.display_name AS detail, NULL::numeric AS amount
+        FROM trust_pmcs AS p WHERE p.pmc_id = p_pmc_id
+        UNION ALL
+        SELECT 2, 'trust bank account', b.display_name || ' (' || b.kind || ')', NULL
+        FROM trust_bank_accounts AS b WHERE b.id = p_bank_account_id
+        UNION ALL
+        SELECT 3, 'at the end of', to_char(p_through, 'YYYY-MM-DD') || ' (UTC)', NULL
+        UNION ALL
+        SELECT 4, 'bank balance (statements)', NULL, t.bank FROM totals AS t
+        UNION ALL
+        SELECT 5, 'deposits in transit', NULL, t.in_transit FROM totals AS t
+        UNION ALL
+        SELECT 6, 'outstanding withdrawals', NULL, t.outstanding FROM totals AS t
+        UNION ALL
+        SELECT 7, 'adjusted bank balance', NULL, t.bank + t.in_transit + t.outstanding
+        FROM totals AS t
+        UNION ALL
+        SELECT 8, 'trust journal (book cash)', NULL, t.book FROM totals AS t
+        UNION ALL
+        SELECT 9, 'difference: adjusted bank balance - trust journal', NULL,
+               t.bank + t.in_transit + t.outstanding - t.book
+        FROM totals AS t
+    ),
+    items AS (
+        SELECT CASE WHEN o.cash > 0 THEN 1 ELSE 2 END AS section,
+               CASE WHEN o.cash > 0 THEN 'deposit in transit' ELSE 'outstanding withdrawal' END
+                   AS item,
+               to_char(o.event_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') || ' '
+                   || coalesce(o.memo, '') AS detail,
+               o.cash AS amount, o.event_at::text AS happened, o.id::text AS id
+        FROM outstanding AS o
+        UNION ALL
+        SELECT CASE WHEN ci.amount > 0 THEN 1 ELSE 2 END,
+               CASE WHEN ci.amount > 0 THEN 'deposit in transit' ELSE 'outstanding withdrawal'
+               END,
+               to_char(ci.issued_on, 'YYYY-MM-DD') || ' ' || ci.description
+                   || coalesce(' (' || ci.reference || ')', '') || ', from before the cutover',
+               ci.amount, ci.issued_on::text, ci.id::text
+        FROM carried AS ci
+        UNION ALL
+        SELECT 3, 'bank line not in the books',
+               to_char(ms.posted_on, 'YYYY-MM-DD') || ' ' || ms.description
+                   || coalesce(' (' || ms.bank_reference || ')', ''),
+               ms.amount, ms.posted_on::text, ms.first_day::text || lpad(ms.line_no::text, 6, '0')
+        FROM missing AS ms
+    )
+    SELECT h.n, h.item, h.detail, h.amount FROM heads AS h
+    UNION ALL
+    SELECT 9 + row_number() OVER (
+               ORDER BY i.section, i.happened COLLATE "C", i.detail COLLATE "C", i.id COLLATE "C"
+           )::integer,
+           i.item, i.detail, i.amount
+    FROM items AS i
+    ORDER BY 1;
+END;
+$$;
+
+
+--
+-- Name: trust_report_cutover(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_cutover(p_pmc_id uuid, p_bank_account_id uuid) RETURNS TABLE(line integer, item text, detail text, amount numeric)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_opening trust_opening_balances;
+BEGIN
+    SELECT o.* INTO v_opening FROM trust_opening_balances AS o
+    WHERE o.bank_account_id = p_bank_account_id AND o.pmc_id = p_pmc_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: trust bank account % of PMC % has no opening balances',
+            p_bank_account_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    RETURN QUERY
+    WITH balances AS (
+        SELECT b.key AS account, (b.value #>> '{}')::numeric AS amount,
+               t.kind || ': ' || CASE t.kind
+                   WHEN 'owner_property' THEN o.display_name || ' / ' || pr.display_name
+                   WHEN 'vendor_payable' THEN v.display_name
+                   WHEN 'pmc_income' THEN pmc.display_name
+                   ELSE tn.display_name
+               END AS holder
+        FROM jsonb_each(v_opening.balances) AS b
+        JOIN trust_ledger_accounts AS t ON t.ledger_account_id = b.key
+        JOIN trust_pmcs AS pmc ON pmc.pmc_id = t.pmc_id
+        LEFT JOIN trust_owners AS o ON o.id = t.owner_id
+        LEFT JOIN trust_properties AS pr ON pr.id = t.property_id
+        LEFT JOIN trust_tenants AS tn ON tn.id = t.tenant_id
+        LEFT JOIN trust_vendors AS v ON v.id = t.vendor_id
+    ),
+    carried AS (
+        SELECT i.* FROM trust_cutover_items AS i WHERE i.bank_account_id = p_bank_account_id
+    ),
+    lines AS (
+        SELECT 0 AS section, 1 AS n, 'PMC' AS item, p.display_name AS detail,
+               NULL::numeric AS amount, NULL::text AS sort, NULL::text AS id
+        FROM trust_pmcs AS p WHERE p.pmc_id = p_pmc_id
+        UNION ALL
+        SELECT 0, 2, 'trust bank account', b.display_name || ' (' || b.kind || ')', NULL, NULL,
+               NULL
+        FROM trust_bank_accounts AS b WHERE b.id = p_bank_account_id
+        UNION ALL
+        SELECT 0, 3, 'cutover', to_char(v_opening.opened_on, 'YYYY-MM-DD')
+                   || ' (opening balances at the start of the day, UTC)', NULL, NULL, NULL
+        UNION ALL
+        SELECT 0, 4, 'entered by', v_opening.entered_by || ' at '
+                   || to_char(v_opening.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
+                   || ' UTC', NULL, NULL, NULL
+        UNION ALL
+        SELECT 0, 5, 'old system''s book cash', NULL, v_opening.book_cash, NULL, NULL
+        UNION ALL
+        SELECT 1, 0, 'opening balance', b.holder, b.amount, b.holder, b.account
+        FROM balances AS b
+        UNION ALL
+        SELECT 2, 0, 'opening balances, total', NULL,
+               (SELECT coalesce(sum(b.amount), 0) FROM balances AS b), NULL, NULL
+        UNION ALL
+        SELECT 2, 1, 'difference: total - book cash', NULL,
+               (SELECT coalesce(sum(b.amount), 0) FROM balances AS b) - v_opening.book_cash,
+               NULL, NULL
+        UNION ALL
+        SELECT 3, 0, CASE WHEN c.amount < 0 THEN 'outstanding check' ELSE 'deposit in transit'
+                     END,
+               to_char(c.issued_on, 'YYYY-MM-DD') || ' ' || c.description
+                   || coalesce(' (' || c.reference || ')', ''),
+               c.amount, to_char(c.issued_on, 'YYYY-MM-DD') || c.description, c.id::text
+        FROM carried AS c
+        UNION ALL
+        SELECT 4, 0, 'bank balance to expect at the cutover',
+               'book cash less the items the bank had not cleared',
+               v_opening.book_cash - (SELECT coalesce(sum(c.amount), 0) FROM carried AS c),
+               NULL, NULL
+        UNION ALL
+        SELECT 4, 1, 'signed off by', coalesce(
+                   (SELECT st.display_name || ' at '
+                           || to_char(s.signed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
+                           || ' UTC'
+                    FROM trust_cutover_signoffs AS s
+                    JOIN trust_staff AS st ON st.id = s.signed_by
+                    WHERE s.bank_account_id = p_bank_account_id),
+                   'not signed off yet'), NULL, NULL, NULL
+    )
+    SELECT row_number() OVER (
+               ORDER BY l.section, l.n, l.sort COLLATE "C", l.id COLLATE "C"
+           )::integer,
+           l.item, l.detail, l.amount
     FROM lines AS l
     ORDER BY 1;
 END;
@@ -3468,6 +4647,27 @@ $$;
 
 
 --
+-- Name: trust_require_role(uuid, uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_require_role(p_pmc_id uuid, p_staff_id uuid, p_role text, p_doing text) RETURNS void
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF p_staff_id IS NOT NULL AND NOT trust_staff_holds(p_pmc_id, p_staff_id, p_role) THEN
+        RAISE EXCEPTION 'trust: % may not % (the % role)',
+            coalesce((SELECT s.display_name FROM trust_staff AS s WHERE s.id = p_staff_id),
+                     p_staff_id::text),
+            p_doing, p_role
+            USING ERRCODE = 'insufficient_privilege',
+                  HINT = 'An admin of the PMC grants the role.';
+    END IF;
+END;
+$$;
+
+
+--
 -- Name: trust_reverse_payment(uuid, uuid, text, text, numeric); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3635,6 +4835,77 @@ $$;
 
 
 --
+-- Name: trust_staff_holds(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_staff_holds(p_pmc_id uuid, p_staff_id uuid, p_role text) RETURNS boolean
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT coalesce((
+        SELECT r.granted FROM trust_staff_roles AS r
+        WHERE r.pmc_id = p_pmc_id AND r.staff_id = p_staff_id AND r.role = p_role
+        ORDER BY r.created_at DESC
+        LIMIT 1
+    ), false)
+$$;
+
+
+--
+-- Name: trust_unmatch_bank_lines(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_unmatch_bank_lines(p_pmc_id uuid, p_match_id uuid, p_unmatched_by uuid) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bank_account uuid;
+    v_bank trust_bank_accounts;
+BEGIN
+    SELECT m.bank_account_id INTO v_bank_account FROM trust_bank_matches AS m
+    WHERE m.id = p_match_id AND m.pmc_id = p_pmc_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no bank match % in PMC %', p_match_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_bank := trust_lock_bank_matches(p_pmc_id, v_bank_account);
+    IF EXISTS (SELECT u.match_id FROM trust_bank_unmatches AS u WHERE u.match_id = p_match_id)
+    THEN
+        RETURN;
+    END IF;
+    IF trust_bank_match_closed(
+        v_bank.closed_through,
+        ARRAY(SELECT ml.line_id FROM trust_bank_match_lines AS ml
+              WHERE ml.match_id = p_match_id),
+        ARRAY(SELECT mt.transfer_id FROM trust_bank_match_transfers AS mt
+              WHERE mt.match_id = p_match_id),
+        ARRAY(SELECT mi.item_id FROM trust_bank_match_cutover_items AS mi
+              WHERE mi.match_id = p_match_id)
+    ) THEN
+        RAISE EXCEPTION 'trust: trust bank account % is closed through %; undoing this match '
+            'would change a reconciliation already approved', v_bank.id, v_bank.closed_through
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (
+        SELECT carried.item_id FROM trust_bank_match_cutover_items AS carried
+        JOIN trust_bank_match_cutover_items AS cleared
+          ON cleared.item_id = carried.item_id AND cleared.side = 'cleared'
+        WHERE carried.match_id = p_match_id AND carried.side = 'carried'
+          AND NOT EXISTS (SELECT u.match_id FROM trust_bank_unmatches AS u
+                          WHERE u.match_id = cleared.match_id)
+    ) THEN
+        RAISE EXCEPTION 'trust: a later match clears an item this opening carries'
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Undo that match first.';
+    END IF;
+    INSERT INTO trust_bank_unmatches (pmc_id, match_id, unmatched_by)
+    VALUES (p_pmc_id, p_match_id, p_unmatched_by);
+END;
+$$;
+
+
+--
 -- Name: trust_unpaid_bills(text, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3726,6 +4997,104 @@ CREATE TABLE public.schema_migrations (
 
 
 --
+-- Name: trust_adverse_actions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_adverse_actions (
+    application_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    reasons text[] NOT NULL,
+    agency text NOT NULL,
+    notice_given_on date NOT NULL,
+    recorded_by uuid NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_adverse_actions_agency_check CHECK ((agency ~ '\S'::text)),
+    CONSTRAINT trust_adverse_actions_reasons_check CHECK (((cardinality(reasons) >= 1) AND (cardinality(reasons) <= 20)))
+);
+
+
+--
+-- Name: trust_applicants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_applicants (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    application_id uuid NOT NULL,
+    "position" bigint NOT NULL,
+    display_name text NOT NULL,
+    email text NOT NULL,
+    CONSTRAINT trust_applicants_display_name_check CHECK (((display_name ~ '\S'::text) AND (length(display_name) <= 200))),
+    CONSTRAINT trust_applicants_email_check CHECK (((email = lower(email)) AND (email ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'::text) AND (length(email) <= 254))),
+    CONSTRAINT trust_applicants_position_check CHECK ((("position" >= 1) AND ("position" <= 6)))
+);
+
+
+--
+-- Name: trust_application_decisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_application_decisions (
+    application_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    decision text NOT NULL,
+    conditions text,
+    screening_id uuid,
+    decided_by uuid NOT NULL,
+    decided_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_application_decisions_check CHECK (((decision = 'conditional'::text) = (conditions IS NOT NULL))),
+    CONSTRAINT trust_application_decisions_conditions_check CHECK (((conditions ~ '\S'::text) AND (length(conditions) <= 2000))),
+    CONSTRAINT trust_application_decisions_decision_check CHECK ((decision = ANY (ARRAY['approved'::text, 'conditional'::text, 'declined'::text])))
+);
+
+
+--
+-- Name: trust_application_link_closings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_application_link_closings (
+    link_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    closed_by uuid NOT NULL,
+    closed_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: trust_application_links; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_application_links (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    unit_id uuid NOT NULL,
+    token_sha256 bytea NOT NULL,
+    monthly_rent numeric NOT NULL,
+    opened_by uuid NOT NULL,
+    opened_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_application_links_monthly_rent_check CHECK ((monthly_rent > (0)::numeric)),
+    CONSTRAINT trust_application_links_token_sha256_check CHECK ((length(token_sha256) = 32))
+);
+
+
+--
+-- Name: trust_applications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_applications (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    link_id uuid NOT NULL,
+    status_token_sha256 bytea NOT NULL,
+    move_in_on date NOT NULL,
+    monthly_income numeric NOT NULL,
+    submitted_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_applications_monthly_income_check CHECK ((monthly_income >= (0)::numeric)),
+    CONSTRAINT trust_applications_status_token_sha256_check CHECK ((length(status_token_sha256) = 32))
+);
+
+
+--
 -- Name: trust_audit_log; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3759,19 +5128,108 @@ ALTER TABLE public.trust_audit_log ALTER COLUMN id ADD GENERATED BY DEFAULT AS I
 
 
 --
--- Name: trust_bank_accounts; Type: TABLE; Schema: public; Owner: -
+-- Name: trust_bank_match_cutover_items; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.trust_bank_accounts (
+CREATE TABLE public.trust_bank_match_cutover_items (
+    match_id uuid NOT NULL,
+    item_id uuid NOT NULL,
+    side text NOT NULL,
+    pmc_id uuid NOT NULL,
+    CONSTRAINT trust_bank_match_cutover_items_side_check CHECK ((side = ANY (ARRAY['carried'::text, 'cleared'::text])))
+);
+
+
+--
+-- Name: trust_bank_match_lines; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_bank_match_lines (
+    match_id uuid NOT NULL,
+    line_id uuid NOT NULL,
+    pmc_id uuid NOT NULL
+);
+
+
+--
+-- Name: trust_bank_match_transfers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_bank_match_transfers (
+    match_id uuid NOT NULL,
+    transfer_id text NOT NULL,
+    pmc_id uuid NOT NULL
+);
+
+
+--
+-- Name: trust_bank_matches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_bank_matches (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     pmc_id uuid NOT NULL,
-    kind text NOT NULL,
-    display_name text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    closed_through timestamp with time zone,
-    opened_at timestamp with time zone,
-    CONSTRAINT trust_bank_accounts_display_name_check CHECK ((display_name <> ''::text)),
-    CONSTRAINT trust_bank_accounts_kind_check CHECK ((kind = ANY (ARRAY['operating'::text, 'security_deposit'::text])))
+    bank_account_id uuid NOT NULL,
+    matched_by uuid NOT NULL,
+    matched_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: trust_bank_statement_lines; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_bank_statement_lines (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    statement_id uuid NOT NULL,
+    line_no bigint NOT NULL,
+    posted_on date NOT NULL,
+    amount numeric NOT NULL,
+    description text NOT NULL,
+    bank_reference text,
+    CONSTRAINT trust_bank_statement_lines_amount_check CHECK (((amount <> (0)::numeric) AND (amount = round(amount, 2)) AND (abs(amount) < (1000000000)::numeric))),
+    CONSTRAINT trust_bank_statement_lines_bank_reference_check CHECK (((bank_reference ~ '\S'::text) AND (length(bank_reference) <= 255))),
+    CONSTRAINT trust_bank_statement_lines_description_check CHECK ((length(description) <= 500)),
+    CONSTRAINT trust_bank_statement_lines_line_no_check CHECK ((line_no >= 1))
+);
+
+
+--
+-- Name: trust_bank_statements; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_bank_statements (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    bank_account_id uuid NOT NULL,
+    first_day date NOT NULL,
+    last_day date NOT NULL,
+    opening_balance numeric NOT NULL,
+    closing_balance numeric NOT NULL,
+    line_count bigint NOT NULL,
+    source text NOT NULL,
+    file_sha256 text NOT NULL,
+    imported_by uuid NOT NULL,
+    imported_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_bank_statements_check CHECK ((last_day >= first_day)),
+    CONSTRAINT trust_bank_statements_closing_balance_check CHECK ((closing_balance = round(closing_balance, 2))),
+    CONSTRAINT trust_bank_statements_file_sha256_check CHECK ((file_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT trust_bank_statements_line_count_check CHECK (((line_count >= 0) AND (line_count <= 20000))),
+    CONSTRAINT trust_bank_statements_opening_balance_check CHECK ((opening_balance = round(opening_balance, 2))),
+    CONSTRAINT trust_bank_statements_source_check CHECK ((source = ANY (ARRAY['csv'::text, 'ofx'::text])))
+);
+
+
+--
+-- Name: trust_bank_unmatches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_bank_unmatches (
+    match_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    unmatched_by uuid NOT NULL,
+    unmatched_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -3832,6 +5290,38 @@ CREATE TABLE public.trust_charges (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_charges_amount_check CHECK ((amount > (0)::numeric)),
     CONSTRAINT trust_charges_kind_check CHECK ((kind = ANY (ARRAY['rent'::text, 'fee'::text, 'credit'::text])))
+);
+
+
+--
+-- Name: trust_cutover_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_cutover_items (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    bank_account_id uuid NOT NULL,
+    issued_on date NOT NULL,
+    amount numeric NOT NULL,
+    description text NOT NULL,
+    reference text,
+    entered_by uuid NOT NULL,
+    entered_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_cutover_items_amount_check CHECK (((amount <> (0)::numeric) AND (amount = round(amount, 2)) AND (abs(amount) < (1000000000)::numeric))),
+    CONSTRAINT trust_cutover_items_description_check CHECK (((description ~ '\S'::text) AND (length(description) <= 200))),
+    CONSTRAINT trust_cutover_items_reference_check CHECK (((reference ~ '\S'::text) AND (length(reference) <= 100)))
+);
+
+
+--
+-- Name: trust_cutover_signoffs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_cutover_signoffs (
+    bank_account_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    signed_by uuid NOT NULL,
+    signed_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -3903,6 +5393,60 @@ CREATE TABLE public.trust_late_fees (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_late_fees_fee_check CHECK ((fee > (0)::numeric)),
     CONSTRAINT trust_late_fees_unpaid_check CHECK ((unpaid > (0)::numeric))
+);
+
+
+--
+-- Name: trust_lease_offer_completions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_offer_completions (
+    offer_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    completed_by uuid NOT NULL,
+    completed_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: trust_lease_offer_signers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_offer_signers (
+    offer_id uuid NOT NULL,
+    "position" bigint NOT NULL,
+    pmc_id uuid NOT NULL,
+    display_name text NOT NULL,
+    email text NOT NULL,
+    CONSTRAINT trust_lease_offer_signers_display_name_check CHECK (((display_name ~ '\S'::text) AND (length(display_name) <= 200))),
+    CONSTRAINT trust_lease_offer_signers_email_check CHECK (((email = lower(email)) AND (email ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'::text) AND (length(email) <= 254))),
+    CONSTRAINT trust_lease_offer_signers_position_check CHECK ((("position" >= 1) AND ("position" <= 6)))
+);
+
+
+--
+-- Name: trust_lease_offers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_offers (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    application_id uuid,
+    renews_lease_id uuid,
+    unit_id uuid NOT NULL,
+    starts_on date NOT NULL,
+    ends_on date,
+    monthly_rent numeric NOT NULL,
+    document_title text NOT NULL,
+    document bytea NOT NULL,
+    offered_by uuid NOT NULL,
+    offered_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_lease_offers_check CHECK (((application_id IS NULL) <> (renews_lease_id IS NULL))),
+    CONSTRAINT trust_lease_offers_check1 CHECK ((ends_on >= starts_on)),
+    CONSTRAINT trust_lease_offers_document_check CHECK ((((length(document) >= 5) AND (length(document) <= 5000000)) AND (SUBSTRING(document FROM 1 FOR 5) = '\x255044462d'::bytea))),
+    CONSTRAINT trust_lease_offers_document_title_check CHECK (((document_title ~ '\S'::text) AND (length(document_title) <= 200))),
+    CONSTRAINT trust_lease_offers_monthly_rent_check CHECK ((monthly_rent > (0)::numeric))
 );
 
 
@@ -3988,6 +5532,35 @@ CREATE TABLE public.trust_logins (
     CONSTRAINT trust_logins_check CHECK ((((kind = 'staff'::text) AND (staff_id IS NOT NULL) AND (owner_id IS NULL) AND (tenant_id IS NULL)) OR ((kind = 'owner'::text) AND (owner_id IS NOT NULL) AND (staff_id IS NULL) AND (tenant_id IS NULL)) OR ((kind = 'tenant'::text) AND (tenant_id IS NOT NULL) AND (staff_id IS NULL) AND (owner_id IS NULL)))),
     CONSTRAINT trust_logins_email_check CHECK (((email = lower(email)) AND (email ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'::text))),
     CONSTRAINT trust_logins_kind_check CHECK ((kind = ANY (ARRAY['staff'::text, 'owner'::text, 'tenant'::text])))
+);
+
+
+--
+-- Name: trust_maintenance_request_work_orders; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_maintenance_request_work_orders (
+    request_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    work_order_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: trust_maintenance_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_maintenance_requests (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    summary text NOT NULL,
+    entry_allowed boolean NOT NULL,
+    submitted_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_maintenance_requests_summary_check CHECK (((summary ~ '\S'::text) AND (length(summary) <= 2000)))
 );
 
 
@@ -4159,6 +5732,22 @@ CREATE TABLE public.trust_properties (
 
 
 --
+-- Name: trust_reconciliation_preparations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_reconciliation_preparations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    bank_account_id uuid NOT NULL,
+    through date NOT NULL,
+    bank_balance numeric NOT NULL,
+    book_cash numeric NOT NULL,
+    prepared_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
 -- Name: trust_reconciliations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4214,6 +5803,29 @@ CREATE TABLE public.trust_recurring_bills (
 
 
 --
+-- Name: trust_screenings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_screenings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    application_id uuid NOT NULL,
+    partner text NOT NULL,
+    partner_reference text NOT NULL,
+    agency text NOT NULL,
+    recommendation text NOT NULL,
+    reasons text[] NOT NULL,
+    requested_by uuid NOT NULL,
+    reported_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_screenings_agency_check CHECK ((agency ~ '\S'::text)),
+    CONSTRAINT trust_screenings_check CHECK (((recommendation = 'approve'::text) = (cardinality(reasons) = 0))),
+    CONSTRAINT trust_screenings_partner_check CHECK ((partner ~ '\S'::text)),
+    CONSTRAINT trust_screenings_partner_reference_check CHECK ((partner_reference ~ '\S'::text)),
+    CONSTRAINT trust_screenings_recommendation_check CHECK ((recommendation = ANY (ARRAY['approve'::text, 'conditional'::text, 'decline'::text])))
+);
+
+
+--
 -- Name: trust_sessions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4231,6 +5843,35 @@ CREATE TABLE public.trust_sessions (
 
 
 --
+-- Name: trust_signature_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_signature_requests (
+    offer_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    partner text NOT NULL,
+    partner_reference text NOT NULL,
+    sent_by uuid NOT NULL,
+    sent_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_signature_requests_partner_check CHECK ((partner ~ '\S'::text)),
+    CONSTRAINT trust_signature_requests_partner_reference_check CHECK ((partner_reference ~ '\S'::text))
+);
+
+
+--
+-- Name: trust_signatures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_signatures (
+    offer_id uuid NOT NULL,
+    "position" bigint NOT NULL,
+    pmc_id uuid NOT NULL,
+    signed_at timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: trust_staff; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4240,6 +5881,22 @@ CREATE TABLE public.trust_staff (
     display_name text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_staff_display_name_check CHECK ((display_name <> ''::text))
+);
+
+
+--
+-- Name: trust_staff_roles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_staff_roles (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    staff_id uuid NOT NULL,
+    role text NOT NULL,
+    granted boolean NOT NULL,
+    changed_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_staff_roles_role_check CHECK ((role = ANY (ARRAY['admin'::text, 'approve'::text, 'disburse'::text])))
 );
 
 
@@ -4351,6 +6008,110 @@ ALTER TABLE ONLY public.schema_migrations
 
 
 --
+-- Name: trust_adverse_actions trust_adverse_actions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_adverse_actions
+    ADD CONSTRAINT trust_adverse_actions_pkey PRIMARY KEY (application_id);
+
+
+--
+-- Name: trust_applicants trust_applicants_application_id_email_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applicants
+    ADD CONSTRAINT trust_applicants_application_id_email_key UNIQUE (application_id, email);
+
+
+--
+-- Name: trust_applicants trust_applicants_application_id_position_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applicants
+    ADD CONSTRAINT trust_applicants_application_id_position_key UNIQUE (application_id, "position");
+
+
+--
+-- Name: trust_applicants trust_applicants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applicants
+    ADD CONSTRAINT trust_applicants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_application_decisions trust_application_decisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_decisions
+    ADD CONSTRAINT trust_application_decisions_pkey PRIMARY KEY (application_id);
+
+
+--
+-- Name: trust_application_decisions trust_application_decisions_pmc_id_application_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_decisions
+    ADD CONSTRAINT trust_application_decisions_pmc_id_application_id_key UNIQUE (pmc_id, application_id);
+
+
+--
+-- Name: trust_application_link_closings trust_application_link_closings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_link_closings
+    ADD CONSTRAINT trust_application_link_closings_pkey PRIMARY KEY (link_id);
+
+
+--
+-- Name: trust_application_links trust_application_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_links
+    ADD CONSTRAINT trust_application_links_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_application_links trust_application_links_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_links
+    ADD CONSTRAINT trust_application_links_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_application_links trust_application_links_token_sha256_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_links
+    ADD CONSTRAINT trust_application_links_token_sha256_key UNIQUE (token_sha256);
+
+
+--
+-- Name: trust_applications trust_applications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applications
+    ADD CONSTRAINT trust_applications_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_applications trust_applications_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applications
+    ADD CONSTRAINT trust_applications_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_applications trust_applications_status_token_sha256_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applications
+    ADD CONSTRAINT trust_applications_status_token_sha256_key UNIQUE (status_token_sha256);
+
+
+--
 -- Name: trust_audit_log trust_audit_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4372,6 +6133,110 @@ ALTER TABLE ONLY public.trust_bank_accounts
 
 ALTER TABLE ONLY public.trust_bank_accounts
     ADD CONSTRAINT trust_bank_accounts_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_bank_match_cutover_items trust_bank_match_cutover_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_match_cutover_items
+    ADD CONSTRAINT trust_bank_match_cutover_items_pkey PRIMARY KEY (match_id, item_id);
+
+
+--
+-- Name: trust_bank_match_lines trust_bank_match_lines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_match_lines
+    ADD CONSTRAINT trust_bank_match_lines_pkey PRIMARY KEY (match_id, line_id);
+
+
+--
+-- Name: trust_bank_match_transfers trust_bank_match_transfers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_match_transfers
+    ADD CONSTRAINT trust_bank_match_transfers_pkey PRIMARY KEY (match_id, transfer_id);
+
+
+--
+-- Name: trust_bank_matches trust_bank_matches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_matches
+    ADD CONSTRAINT trust_bank_matches_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_bank_matches trust_bank_matches_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_matches
+    ADD CONSTRAINT trust_bank_matches_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_bank_statement_lines trust_bank_statement_lines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_statement_lines
+    ADD CONSTRAINT trust_bank_statement_lines_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_bank_statement_lines trust_bank_statement_lines_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_statement_lines
+    ADD CONSTRAINT trust_bank_statement_lines_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_bank_statement_lines trust_bank_statement_lines_statement_id_line_no_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_statement_lines
+    ADD CONSTRAINT trust_bank_statement_lines_statement_id_line_no_key UNIQUE (statement_id, line_no);
+
+
+--
+-- Name: trust_bank_statements trust_bank_statements_bank_account_id_file_sha256_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_statements
+    ADD CONSTRAINT trust_bank_statements_bank_account_id_file_sha256_key UNIQUE (bank_account_id, file_sha256);
+
+
+--
+-- Name: trust_bank_statements trust_bank_statements_bank_account_id_first_day_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_statements
+    ADD CONSTRAINT trust_bank_statements_bank_account_id_first_day_key UNIQUE (bank_account_id, first_day);
+
+
+--
+-- Name: trust_bank_statements trust_bank_statements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_statements
+    ADD CONSTRAINT trust_bank_statements_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_bank_statements trust_bank_statements_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_statements
+    ADD CONSTRAINT trust_bank_statements_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_bank_unmatches trust_bank_unmatches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_unmatches
+    ADD CONSTRAINT trust_bank_unmatches_pkey PRIMARY KEY (match_id);
 
 
 --
@@ -4439,6 +6304,30 @@ ALTER TABLE ONLY public.trust_charges
 
 
 --
+-- Name: trust_cutover_items trust_cutover_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cutover_items
+    ADD CONSTRAINT trust_cutover_items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_cutover_items trust_cutover_items_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cutover_items
+    ADD CONSTRAINT trust_cutover_items_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_cutover_signoffs trust_cutover_signoffs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cutover_signoffs
+    ADD CONSTRAINT trust_cutover_signoffs_pkey PRIMARY KEY (bank_account_id);
+
+
+--
 -- Name: trust_idempotency_keys trust_idempotency_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4492,6 +6381,54 @@ ALTER TABLE ONLY public.trust_late_fees
 
 ALTER TABLE ONLY public.trust_late_fees
     ADD CONSTRAINT trust_late_fees_pkey PRIMARY KEY (rent_charge_id);
+
+
+--
+-- Name: trust_lease_offer_completions trust_lease_offer_completions_lease_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_completions
+    ADD CONSTRAINT trust_lease_offer_completions_lease_id_key UNIQUE (lease_id);
+
+
+--
+-- Name: trust_lease_offer_completions trust_lease_offer_completions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_completions
+    ADD CONSTRAINT trust_lease_offer_completions_pkey PRIMARY KEY (offer_id);
+
+
+--
+-- Name: trust_lease_offer_signers trust_lease_offer_signers_offer_id_email_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_signers
+    ADD CONSTRAINT trust_lease_offer_signers_offer_id_email_key UNIQUE (offer_id, email);
+
+
+--
+-- Name: trust_lease_offer_signers trust_lease_offer_signers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_signers
+    ADD CONSTRAINT trust_lease_offer_signers_pkey PRIMARY KEY (offer_id, "position");
+
+
+--
+-- Name: trust_lease_offers trust_lease_offers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offers
+    ADD CONSTRAINT trust_lease_offers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_lease_offers trust_lease_offers_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offers
+    ADD CONSTRAINT trust_lease_offers_pmc_id_id_key UNIQUE (pmc_id, id);
 
 
 --
@@ -4588,6 +6525,38 @@ ALTER TABLE ONLY public.trust_logins
 
 ALTER TABLE ONLY public.trust_logins
     ADD CONSTRAINT trust_logins_pmc_id_tenant_id_key UNIQUE (pmc_id, tenant_id);
+
+
+--
+-- Name: trust_maintenance_request_work_orders trust_maintenance_request_work_orders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_work_orders
+    ADD CONSTRAINT trust_maintenance_request_work_orders_pkey PRIMARY KEY (request_id);
+
+
+--
+-- Name: trust_maintenance_request_work_orders trust_maintenance_request_work_orders_work_order_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_work_orders
+    ADD CONSTRAINT trust_maintenance_request_work_orders_work_order_id_key UNIQUE (work_order_id);
+
+
+--
+-- Name: trust_maintenance_requests trust_maintenance_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_requests
+    ADD CONSTRAINT trust_maintenance_requests_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_maintenance_requests trust_maintenance_requests_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_requests
+    ADD CONSTRAINT trust_maintenance_requests_pmc_id_id_key UNIQUE (pmc_id, id);
 
 
 --
@@ -4727,6 +6696,14 @@ ALTER TABLE ONLY public.trust_properties
 
 
 --
+-- Name: trust_reconciliation_preparations trust_reconciliation_preparations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_reconciliation_preparations
+    ADD CONSTRAINT trust_reconciliation_preparations_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_reconciliations trust_reconciliations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4767,6 +6744,22 @@ ALTER TABLE ONLY public.trust_recurring_bills
 
 
 --
+-- Name: trust_screenings trust_screenings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_screenings
+    ADD CONSTRAINT trust_screenings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_screenings trust_screenings_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_screenings
+    ADD CONSTRAINT trust_screenings_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_sessions trust_sessions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4783,6 +6776,22 @@ ALTER TABLE ONLY public.trust_sessions
 
 
 --
+-- Name: trust_signature_requests trust_signature_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signature_requests
+    ADD CONSTRAINT trust_signature_requests_pkey PRIMARY KEY (offer_id);
+
+
+--
+-- Name: trust_signatures trust_signatures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signatures
+    ADD CONSTRAINT trust_signatures_pkey PRIMARY KEY (offer_id, "position");
+
+
+--
 -- Name: trust_staff trust_staff_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4796,6 +6805,22 @@ ALTER TABLE ONLY public.trust_staff
 
 ALTER TABLE ONLY public.trust_staff
     ADD CONSTRAINT trust_staff_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_staff_roles trust_staff_roles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_staff_roles
+    ADD CONSTRAINT trust_staff_roles_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_staff_roles trust_staff_roles_staff_id_role_created_at_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_staff_roles
+    ADD CONSTRAINT trust_staff_roles_staff_id_role_created_at_key UNIQUE (staff_id, role, created_at);
 
 
 --
@@ -4906,10 +6931,52 @@ CREATE INDEX pgledger_transfers_to_account_id_idx ON public.pgledger_transfers U
 
 
 --
+-- Name: trust_application_links_unit_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_application_links_unit_id ON public.trust_application_links USING btree (unit_id);
+
+
+--
+-- Name: trust_applications_link_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_applications_link_id ON public.trust_applications USING btree (link_id);
+
+
+--
 -- Name: trust_audit_log_pmc_id_at; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX trust_audit_log_pmc_id_at ON public.trust_audit_log USING btree (pmc_id, at);
+
+
+--
+-- Name: trust_bank_match_cutover_items_item_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bank_match_cutover_items_item_id ON public.trust_bank_match_cutover_items USING btree (item_id);
+
+
+--
+-- Name: trust_bank_match_lines_line_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bank_match_lines_line_id ON public.trust_bank_match_lines USING btree (line_id);
+
+
+--
+-- Name: trust_bank_match_transfers_transfer_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bank_match_transfers_transfer_id ON public.trust_bank_match_transfers USING btree (transfer_id);
+
+
+--
+-- Name: trust_bank_matches_bank_account_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bank_matches_bank_account_id ON public.trust_bank_matches USING btree (bank_account_id);
 
 
 --
@@ -4955,10 +7022,31 @@ CREATE UNIQUE INDEX trust_charges_one_rent_per_due_date ON public.trust_charges 
 
 
 --
+-- Name: trust_cutover_items_bank_account_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_cutover_items_bank_account_id ON public.trust_cutover_items USING btree (bank_account_id);
+
+
+--
 -- Name: trust_late_fees_policy_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX trust_late_fees_policy_id ON public.trust_late_fees USING btree (policy_id);
+
+
+--
+-- Name: trust_lease_offers_application_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_offers_application_id ON public.trust_lease_offers USING btree (application_id);
+
+
+--
+-- Name: trust_lease_offers_renews_lease_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_offers_renews_lease_id ON public.trust_lease_offers USING btree (renews_lease_id);
 
 
 --
@@ -5053,6 +7141,20 @@ CREATE INDEX trust_ledger_accounts_pmc_id ON public.trust_ledger_accounts USING 
 
 
 --
+-- Name: trust_maintenance_requests_lease_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_maintenance_requests_lease_id ON public.trust_maintenance_requests USING btree (lease_id);
+
+
+--
+-- Name: trust_maintenance_requests_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_maintenance_requests_tenant_id ON public.trust_maintenance_requests USING btree (tenant_id);
+
+
+--
 -- Name: trust_management_fees_agreement_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5095,6 +7197,13 @@ CREATE INDEX trust_payment_reversals_reversal_id ON public.trust_payment_reversa
 
 
 --
+-- Name: trust_reconciliation_preparations_bank_account_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_reconciliation_preparations_bank_account_id ON public.trust_reconciliation_preparations USING btree (bank_account_id, created_at);
+
+
+--
 -- Name: trust_reconciliations_bank_account_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -5102,10 +7211,24 @@ CREATE INDEX trust_reconciliations_bank_account_id ON public.trust_reconciliatio
 
 
 --
+-- Name: trust_screenings_application_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_screenings_application_id ON public.trust_screenings USING btree (application_id);
+
+
+--
 -- Name: trust_sessions_login; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX trust_sessions_login ON public.trust_sessions USING btree (login_id);
+
+
+--
+-- Name: trust_staff_roles_pmc_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_staff_roles_pmc_id ON public.trust_staff_roles USING btree (pmc_id);
 
 
 --
@@ -5137,6 +7260,34 @@ CREATE TRIGGER trust_account_in_its_bank BEFORE INSERT ON public.trust_ledger_ac
 
 
 --
+-- Name: trust_invites trust_admin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_admin BEFORE INSERT ON public.trust_invites FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_invite();
+
+
+--
+-- Name: trust_logins trust_admin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_admin BEFORE UPDATE OF disabled_at ON public.trust_logins FOR EACH ROW WHEN ((old.kind = 'staff'::text)) EXECUTE FUNCTION public.trust_check_staff_role('admin', 'disable a staff login');
+
+
+--
+-- Name: trust_adverse_actions trust_adverse_action_belongs; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_adverse_action_belongs AFTER INSERT ON public.trust_adverse_actions DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_adverse_action();
+
+
+--
+-- Name: trust_application_decisions trust_adverse_action_given; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_adverse_action_given AFTER INSERT ON public.trust_application_decisions DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_adverse_action();
+
+
+--
 -- Name: trust_management_agreements trust_agreement_account; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5158,10 +7309,101 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.p
 
 
 --
+-- Name: trust_adverse_actions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_adverse_actions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_applicants trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_applicants FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_application_decisions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_application_decisions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_application_link_closings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_application_link_closings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_application_links trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_application_links FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_applications trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_applications FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_audit_log trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_audit_log FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_bank_match_cutover_items trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bank_match_cutover_items FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_bank_match_lines trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bank_match_lines FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_bank_match_transfers trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bank_match_transfers FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_bank_matches trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bank_matches FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_bank_statement_lines trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bank_statement_lines FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_bank_statements trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bank_statements FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_bank_unmatches trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bank_unmatches FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -5200,6 +7442,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_cutover_items trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_cutover_items FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_cutover_signoffs trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_cutover_signoffs FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_idempotency_keys trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5221,6 +7477,27 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_lease_offer_completions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_offer_completions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_lease_offer_signers trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_offer_signers FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_lease_offers trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_offers FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_lease_tenants trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5239,6 +7516,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_ledger_accounts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_maintenance_request_work_orders trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_maintenance_request_work_orders FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_maintenance_requests trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_maintenance_requests FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -5305,6 +7596,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_reconciliation_preparations trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_reconciliation_preparations FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_reconciliations trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5326,6 +7624,34 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_screenings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_screenings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_signature_requests trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_signature_requests FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_signatures trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_signatures FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_staff_roles trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_staff_roles FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_work_order_steps trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5340,6 +7666,41 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_application_decisions trust_application_decision_screening; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_application_decision_screening BEFORE INSERT ON public.trust_application_decisions FOR EACH ROW EXECUTE FUNCTION public.trust_check_application_decision();
+
+
+--
+-- Name: trust_application_link_closings trust_application_link_lock; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_application_link_lock BEFORE INSERT ON public.trust_application_link_closings FOR EACH ROW EXECUTE FUNCTION public.trust_lock_application_link();
+
+
+--
+-- Name: trust_applications trust_application_link_open; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_application_link_open BEFORE INSERT ON public.trust_applications FOR EACH ROW EXECUTE FUNCTION public.trust_check_application();
+
+
+--
+-- Name: trust_cutover_signoffs trust_approve; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_approve BEFORE INSERT ON public.trust_cutover_signoffs FOR EACH ROW EXECUTE FUNCTION public.trust_check_cutover_signer();
+
+
+--
+-- Name: trust_reconciliations trust_approve; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_approve BEFORE INSERT ON public.trust_reconciliations FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('approve', 'approve a reconciliation');
+
+
+--
 -- Name: pgledger_transfers trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5347,10 +7708,101 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.pgledger_t
 
 
 --
+-- Name: trust_adverse_actions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_adverse_actions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_applicants trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_applicants FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_application_decisions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_application_decisions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_application_link_closings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_application_link_closings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_application_links trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_application_links FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_applications trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_applications FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_bank_accounts trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bank_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_bank_match_cutover_items trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bank_match_cutover_items FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_bank_match_lines trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bank_match_lines FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_bank_match_transfers trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bank_match_transfers FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_bank_matches trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bank_matches FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_bank_statement_lines trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bank_statement_lines FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_bank_statements trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bank_statements FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_bank_unmatches trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bank_unmatches FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -5389,6 +7841,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_char
 
 
 --
+-- Name: trust_cutover_items trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_cutover_items FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_cutover_signoffs trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_cutover_signoffs FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_invites trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5407,6 +7873,27 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_late
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_late_fees FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_lease_offer_completions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_offer_completions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_lease_offer_signers trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_offer_signers FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_lease_offers trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_offers FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -5442,6 +7929,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_ledg
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_logins FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_maintenance_request_work_orders trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_maintenance_request_work_orders FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_maintenance_requests trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_maintenance_requests FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -5529,6 +8030,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_prop
 
 
 --
+-- Name: trust_reconciliation_preparations trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_reconciliation_preparations FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_reconciliations trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5550,6 +8058,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_recu
 
 
 --
+-- Name: trust_screenings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_screenings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_sessions trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5557,10 +8072,31 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_sess
 
 
 --
+-- Name: trust_signature_requests trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_signature_requests FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_signatures trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_signatures FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_staff trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_staff FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_staff_roles trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_staff_roles FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -5603,6 +8139,27 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_work
 --
 
 CREATE TRIGGER trust_bank_kind_fixed BEFORE UPDATE OF kind ON public.trust_bank_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_changing_bank_kind();
+
+
+--
+-- Name: trust_bank_statements trust_bank_statement_follows; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_bank_statement_follows BEFORE INSERT ON public.trust_bank_statements FOR EACH ROW EXECUTE FUNCTION public.trust_check_bank_statement();
+
+
+--
+-- Name: trust_bank_statement_lines trust_bank_statement_line; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_bank_statement_line BEFORE INSERT ON public.trust_bank_statement_lines FOR EACH ROW EXECUTE FUNCTION public.trust_check_bank_statement_line();
+
+
+--
+-- Name: trust_bank_statements trust_bank_statement_total; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_bank_statement_total AFTER INSERT ON public.trust_bank_statements DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_bank_statement_total();
 
 
 --
@@ -5662,6 +8219,41 @@ CREATE TRIGGER trust_closed_through BEFORE INSERT OR UPDATE OF closed_through ON
 
 
 --
+-- Name: trust_cutover_items trust_cutover_entry; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_cutover_entry BEFORE INSERT ON public.trust_cutover_items FOR EACH ROW EXECUTE FUNCTION public.trust_check_cutover_entry();
+
+
+--
+-- Name: trust_cutover_signoffs trust_cutover_entry; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_cutover_entry BEFORE INSERT ON public.trust_cutover_signoffs FOR EACH ROW EXECUTE FUNCTION public.trust_check_cutover_entry();
+
+
+--
+-- Name: trust_bill_payments trust_disburse; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_bill_payments FOR EACH ROW WHEN ((new.step = 'paid'::text)) EXECUTE FUNCTION public.trust_check_staff_role('disburse', 'pay out money');
+
+
+--
+-- Name: trust_owner_draws trust_disburse; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_owner_draws FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('disburse', 'pay out money');
+
+
+--
+-- Name: trust_lease_offers trust_lease_offer_terms; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_lease_offer_terms BEFORE INSERT ON public.trust_lease_offers FOR EACH ROW EXECUTE FUNCTION public.trust_check_lease_offer();
+
+
+--
 -- Name: pgledger_accounts trust_no_negative_balance; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5680,6 +8272,20 @@ CREATE TRIGGER trust_one_lease_at_a_time BEFORE INSERT OR UPDATE ON public.trust
 --
 
 CREATE TRIGGER trust_opened_at BEFORE INSERT OR UPDATE OF opened_at ON public.trust_bank_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_moving_opened_at();
+
+
+--
+-- Name: trust_maintenance_request_work_orders trust_request_work_order_unit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_request_work_order_unit BEFORE INSERT ON public.trust_maintenance_request_work_orders FOR EACH ROW EXECUTE FUNCTION public.trust_check_request_work_order();
+
+
+--
+-- Name: trust_staff_roles trust_staff_role_change; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_staff_role_change BEFORE INSERT ON public.trust_staff_roles FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role_change();
 
 
 --
@@ -5736,6 +8342,142 @@ ALTER TABLE ONLY public.pgledger_transfers
 
 
 --
+-- Name: trust_adverse_actions trust_adverse_actions_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_adverse_actions
+    ADD CONSTRAINT trust_adverse_actions_pmc_id_application_id_fkey FOREIGN KEY (pmc_id, application_id) REFERENCES public.trust_application_decisions(pmc_id, application_id);
+
+
+--
+-- Name: trust_adverse_actions trust_adverse_actions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_adverse_actions
+    ADD CONSTRAINT trust_adverse_actions_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_adverse_actions trust_adverse_actions_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_adverse_actions
+    ADD CONSTRAINT trust_adverse_actions_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_applicants trust_applicants_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applicants
+    ADD CONSTRAINT trust_applicants_pmc_id_application_id_fkey FOREIGN KEY (pmc_id, application_id) REFERENCES public.trust_applications(pmc_id, id);
+
+
+--
+-- Name: trust_applicants trust_applicants_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applicants
+    ADD CONSTRAINT trust_applicants_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_application_decisions trust_application_decisions_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_decisions
+    ADD CONSTRAINT trust_application_decisions_pmc_id_application_id_fkey FOREIGN KEY (pmc_id, application_id) REFERENCES public.trust_applications(pmc_id, id);
+
+
+--
+-- Name: trust_application_decisions trust_application_decisions_pmc_id_decided_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_decisions
+    ADD CONSTRAINT trust_application_decisions_pmc_id_decided_by_fkey FOREIGN KEY (pmc_id, decided_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_application_decisions trust_application_decisions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_decisions
+    ADD CONSTRAINT trust_application_decisions_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_application_decisions trust_application_decisions_pmc_id_screening_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_decisions
+    ADD CONSTRAINT trust_application_decisions_pmc_id_screening_id_fkey FOREIGN KEY (pmc_id, screening_id) REFERENCES public.trust_screenings(pmc_id, id);
+
+
+--
+-- Name: trust_application_link_closings trust_application_link_closings_pmc_id_closed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_link_closings
+    ADD CONSTRAINT trust_application_link_closings_pmc_id_closed_by_fkey FOREIGN KEY (pmc_id, closed_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_application_link_closings trust_application_link_closings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_link_closings
+    ADD CONSTRAINT trust_application_link_closings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_application_link_closings trust_application_link_closings_pmc_id_link_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_link_closings
+    ADD CONSTRAINT trust_application_link_closings_pmc_id_link_id_fkey FOREIGN KEY (pmc_id, link_id) REFERENCES public.trust_application_links(pmc_id, id);
+
+
+--
+-- Name: trust_application_links trust_application_links_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_links
+    ADD CONSTRAINT trust_application_links_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_application_links trust_application_links_pmc_id_opened_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_links
+    ADD CONSTRAINT trust_application_links_pmc_id_opened_by_fkey FOREIGN KEY (pmc_id, opened_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_application_links trust_application_links_pmc_id_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_links
+    ADD CONSTRAINT trust_application_links_pmc_id_unit_id_fkey FOREIGN KEY (pmc_id, unit_id) REFERENCES public.trust_units(pmc_id, id);
+
+
+--
+-- Name: trust_applications trust_applications_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applications
+    ADD CONSTRAINT trust_applications_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_applications trust_applications_pmc_id_link_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_applications
+    ADD CONSTRAINT trust_applications_pmc_id_link_id_fkey FOREIGN KEY (pmc_id, link_id) REFERENCES public.trust_application_links(pmc_id, id);
+
+
+--
 -- Name: trust_audit_log trust_audit_log_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5757,6 +8499,166 @@ ALTER TABLE ONLY public.trust_audit_log
 
 ALTER TABLE ONLY public.trust_bank_accounts
     ADD CONSTRAINT trust_bank_accounts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bank_match_cutover_items trust_bank_match_cutover_items_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_match_cutover_items
+    ADD CONSTRAINT trust_bank_match_cutover_items_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bank_match_cutover_items trust_bank_match_cutover_items_pmc_id_item_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_match_cutover_items
+    ADD CONSTRAINT trust_bank_match_cutover_items_pmc_id_item_id_fkey FOREIGN KEY (pmc_id, item_id) REFERENCES public.trust_cutover_items(pmc_id, id);
+
+
+--
+-- Name: trust_bank_match_cutover_items trust_bank_match_cutover_items_pmc_id_match_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_match_cutover_items
+    ADD CONSTRAINT trust_bank_match_cutover_items_pmc_id_match_id_fkey FOREIGN KEY (pmc_id, match_id) REFERENCES public.trust_bank_matches(pmc_id, id);
+
+
+--
+-- Name: trust_bank_match_lines trust_bank_match_lines_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_match_lines
+    ADD CONSTRAINT trust_bank_match_lines_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bank_match_lines trust_bank_match_lines_pmc_id_line_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_match_lines
+    ADD CONSTRAINT trust_bank_match_lines_pmc_id_line_id_fkey FOREIGN KEY (pmc_id, line_id) REFERENCES public.trust_bank_statement_lines(pmc_id, id);
+
+
+--
+-- Name: trust_bank_match_lines trust_bank_match_lines_pmc_id_match_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_match_lines
+    ADD CONSTRAINT trust_bank_match_lines_pmc_id_match_id_fkey FOREIGN KEY (pmc_id, match_id) REFERENCES public.trust_bank_matches(pmc_id, id);
+
+
+--
+-- Name: trust_bank_match_transfers trust_bank_match_transfers_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_match_transfers
+    ADD CONSTRAINT trust_bank_match_transfers_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bank_match_transfers trust_bank_match_transfers_pmc_id_match_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_match_transfers
+    ADD CONSTRAINT trust_bank_match_transfers_pmc_id_match_id_fkey FOREIGN KEY (pmc_id, match_id) REFERENCES public.trust_bank_matches(pmc_id, id);
+
+
+--
+-- Name: trust_bank_match_transfers trust_bank_match_transfers_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_match_transfers
+    ADD CONSTRAINT trust_bank_match_transfers_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
+-- Name: trust_bank_matches trust_bank_matches_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_matches
+    ADD CONSTRAINT trust_bank_matches_pmc_id_bank_account_id_fkey FOREIGN KEY (pmc_id, bank_account_id) REFERENCES public.trust_bank_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_bank_matches trust_bank_matches_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_matches
+    ADD CONSTRAINT trust_bank_matches_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bank_matches trust_bank_matches_pmc_id_matched_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_matches
+    ADD CONSTRAINT trust_bank_matches_pmc_id_matched_by_fkey FOREIGN KEY (pmc_id, matched_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_bank_statement_lines trust_bank_statement_lines_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_statement_lines
+    ADD CONSTRAINT trust_bank_statement_lines_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bank_statement_lines trust_bank_statement_lines_pmc_id_statement_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_statement_lines
+    ADD CONSTRAINT trust_bank_statement_lines_pmc_id_statement_id_fkey FOREIGN KEY (pmc_id, statement_id) REFERENCES public.trust_bank_statements(pmc_id, id);
+
+
+--
+-- Name: trust_bank_statements trust_bank_statements_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_statements
+    ADD CONSTRAINT trust_bank_statements_pmc_id_bank_account_id_fkey FOREIGN KEY (pmc_id, bank_account_id) REFERENCES public.trust_bank_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_bank_statements trust_bank_statements_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_statements
+    ADD CONSTRAINT trust_bank_statements_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bank_statements trust_bank_statements_pmc_id_imported_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_statements
+    ADD CONSTRAINT trust_bank_statements_pmc_id_imported_by_fkey FOREIGN KEY (pmc_id, imported_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_bank_unmatches trust_bank_unmatches_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_unmatches
+    ADD CONSTRAINT trust_bank_unmatches_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bank_unmatches trust_bank_unmatches_pmc_id_match_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_unmatches
+    ADD CONSTRAINT trust_bank_unmatches_pmc_id_match_id_fkey FOREIGN KEY (pmc_id, match_id) REFERENCES public.trust_bank_matches(pmc_id, id);
+
+
+--
+-- Name: trust_bank_unmatches trust_bank_unmatches_pmc_id_unmatched_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_unmatches
+    ADD CONSTRAINT trust_bank_unmatches_pmc_id_unmatched_by_fkey FOREIGN KEY (pmc_id, unmatched_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -5872,6 +8774,54 @@ ALTER TABLE ONLY public.trust_charges
 
 
 --
+-- Name: trust_cutover_items trust_cutover_items_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cutover_items
+    ADD CONSTRAINT trust_cutover_items_pmc_id_bank_account_id_fkey FOREIGN KEY (pmc_id, bank_account_id) REFERENCES public.trust_bank_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_cutover_items trust_cutover_items_pmc_id_entered_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cutover_items
+    ADD CONSTRAINT trust_cutover_items_pmc_id_entered_by_fkey FOREIGN KEY (pmc_id, entered_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_cutover_items trust_cutover_items_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cutover_items
+    ADD CONSTRAINT trust_cutover_items_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_cutover_signoffs trust_cutover_signoffs_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cutover_signoffs
+    ADD CONSTRAINT trust_cutover_signoffs_pmc_id_bank_account_id_fkey FOREIGN KEY (pmc_id, bank_account_id) REFERENCES public.trust_bank_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_cutover_signoffs trust_cutover_signoffs_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cutover_signoffs
+    ADD CONSTRAINT trust_cutover_signoffs_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_cutover_signoffs trust_cutover_signoffs_pmc_id_signed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cutover_signoffs
+    ADD CONSTRAINT trust_cutover_signoffs_pmc_id_signed_by_fkey FOREIGN KEY (pmc_id, signed_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_idempotency_keys trust_idempotency_keys_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5949,6 +8899,94 @@ ALTER TABLE ONLY public.trust_late_fees
 
 ALTER TABLE ONLY public.trust_late_fees
     ADD CONSTRAINT trust_late_fees_policy_id_fkey FOREIGN KEY (policy_id) REFERENCES public.trust_late_fee_policies(id);
+
+
+--
+-- Name: trust_lease_offer_completions trust_lease_offer_completions_pmc_id_completed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_completions
+    ADD CONSTRAINT trust_lease_offer_completions_pmc_id_completed_by_fkey FOREIGN KEY (pmc_id, completed_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_lease_offer_completions trust_lease_offer_completions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_completions
+    ADD CONSTRAINT trust_lease_offer_completions_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_offer_completions trust_lease_offer_completions_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_completions
+    ADD CONSTRAINT trust_lease_offer_completions_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_lease_offer_completions trust_lease_offer_completions_pmc_id_offer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_completions
+    ADD CONSTRAINT trust_lease_offer_completions_pmc_id_offer_id_fkey FOREIGN KEY (pmc_id, offer_id) REFERENCES public.trust_lease_offers(pmc_id, id);
+
+
+--
+-- Name: trust_lease_offer_signers trust_lease_offer_signers_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_signers
+    ADD CONSTRAINT trust_lease_offer_signers_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_offer_signers trust_lease_offer_signers_pmc_id_offer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_signers
+    ADD CONSTRAINT trust_lease_offer_signers_pmc_id_offer_id_fkey FOREIGN KEY (pmc_id, offer_id) REFERENCES public.trust_lease_offers(pmc_id, id);
+
+
+--
+-- Name: trust_lease_offers trust_lease_offers_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offers
+    ADD CONSTRAINT trust_lease_offers_pmc_id_application_id_fkey FOREIGN KEY (pmc_id, application_id) REFERENCES public.trust_applications(pmc_id, id);
+
+
+--
+-- Name: trust_lease_offers trust_lease_offers_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offers
+    ADD CONSTRAINT trust_lease_offers_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_offers trust_lease_offers_pmc_id_offered_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offers
+    ADD CONSTRAINT trust_lease_offers_pmc_id_offered_by_fkey FOREIGN KEY (pmc_id, offered_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_lease_offers trust_lease_offers_pmc_id_renews_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offers
+    ADD CONSTRAINT trust_lease_offers_pmc_id_renews_lease_id_fkey FOREIGN KEY (pmc_id, renews_lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_lease_offers trust_lease_offers_pmc_id_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offers
+    ADD CONSTRAINT trust_lease_offers_pmc_id_unit_id_fkey FOREIGN KEY (pmc_id, unit_id) REFERENCES public.trust_units(pmc_id, id);
 
 
 --
@@ -6133,6 +9171,62 @@ ALTER TABLE ONLY public.trust_logins
 
 ALTER TABLE ONLY public.trust_logins
     ADD CONSTRAINT trust_logins_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
+
+
+--
+-- Name: trust_maintenance_request_work_orders trust_maintenance_request_work_orders_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_work_orders
+    ADD CONSTRAINT trust_maintenance_request_work_orders_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_maintenance_request_work_orders trust_maintenance_request_work_orders_pmc_id_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_work_orders
+    ADD CONSTRAINT trust_maintenance_request_work_orders_pmc_id_request_id_fkey FOREIGN KEY (pmc_id, request_id) REFERENCES public.trust_maintenance_requests(pmc_id, id);
+
+
+--
+-- Name: trust_maintenance_request_work_orders trust_maintenance_request_work_orders_pmc_id_work_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_request_work_orders
+    ADD CONSTRAINT trust_maintenance_request_work_orders_pmc_id_work_order_id_fkey FOREIGN KEY (pmc_id, work_order_id) REFERENCES public.trust_work_orders(pmc_id, id);
+
+
+--
+-- Name: trust_maintenance_requests trust_maintenance_requests_lease_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_requests
+    ADD CONSTRAINT trust_maintenance_requests_lease_id_tenant_id_fkey FOREIGN KEY (lease_id, tenant_id) REFERENCES public.trust_lease_tenants(lease_id, tenant_id);
+
+
+--
+-- Name: trust_maintenance_requests trust_maintenance_requests_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_requests
+    ADD CONSTRAINT trust_maintenance_requests_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_maintenance_requests trust_maintenance_requests_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_requests
+    ADD CONSTRAINT trust_maintenance_requests_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_maintenance_requests trust_maintenance_requests_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_maintenance_requests
+    ADD CONSTRAINT trust_maintenance_requests_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
 
 
 --
@@ -6352,6 +9446,30 @@ ALTER TABLE ONLY public.trust_properties
 
 
 --
+-- Name: trust_reconciliation_preparations trust_reconciliation_preparations_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_reconciliation_preparations
+    ADD CONSTRAINT trust_reconciliation_preparations_pmc_id_bank_account_id_fkey FOREIGN KEY (pmc_id, bank_account_id) REFERENCES public.trust_bank_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_reconciliation_preparations trust_reconciliation_preparations_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_reconciliation_preparations
+    ADD CONSTRAINT trust_reconciliation_preparations_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_reconciliation_preparations trust_reconciliation_preparations_pmc_id_prepared_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_reconciliation_preparations
+    ADD CONSTRAINT trust_reconciliation_preparations_pmc_id_prepared_by_fkey FOREIGN KEY (pmc_id, prepared_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_reconciliations trust_reconciliations_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6408,6 +9526,30 @@ ALTER TABLE ONLY public.trust_recurring_bills
 
 
 --
+-- Name: trust_screenings trust_screenings_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_screenings
+    ADD CONSTRAINT trust_screenings_pmc_id_application_id_fkey FOREIGN KEY (pmc_id, application_id) REFERENCES public.trust_applications(pmc_id, id);
+
+
+--
+-- Name: trust_screenings trust_screenings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_screenings
+    ADD CONSTRAINT trust_screenings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_screenings trust_screenings_pmc_id_requested_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_screenings
+    ADD CONSTRAINT trust_screenings_pmc_id_requested_by_fkey FOREIGN KEY (pmc_id, requested_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_sessions trust_sessions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -6424,11 +9566,91 @@ ALTER TABLE ONLY public.trust_sessions
 
 
 --
+-- Name: trust_signature_requests trust_signature_requests_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signature_requests
+    ADD CONSTRAINT trust_signature_requests_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_signature_requests trust_signature_requests_pmc_id_offer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signature_requests
+    ADD CONSTRAINT trust_signature_requests_pmc_id_offer_id_fkey FOREIGN KEY (pmc_id, offer_id) REFERENCES public.trust_lease_offers(pmc_id, id);
+
+
+--
+-- Name: trust_signature_requests trust_signature_requests_pmc_id_sent_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signature_requests
+    ADD CONSTRAINT trust_signature_requests_pmc_id_sent_by_fkey FOREIGN KEY (pmc_id, sent_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_signatures trust_signatures_offer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signatures
+    ADD CONSTRAINT trust_signatures_offer_id_fkey FOREIGN KEY (offer_id) REFERENCES public.trust_signature_requests(offer_id);
+
+
+--
+-- Name: trust_signatures trust_signatures_offer_id_position_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signatures
+    ADD CONSTRAINT trust_signatures_offer_id_position_fkey FOREIGN KEY (offer_id, "position") REFERENCES public.trust_lease_offer_signers(offer_id, "position");
+
+
+--
+-- Name: trust_signatures trust_signatures_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signatures
+    ADD CONSTRAINT trust_signatures_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_signatures trust_signatures_pmc_id_offer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signatures
+    ADD CONSTRAINT trust_signatures_pmc_id_offer_id_fkey FOREIGN KEY (pmc_id, offer_id) REFERENCES public.trust_lease_offers(pmc_id, id);
+
+
+--
 -- Name: trust_staff trust_staff_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.trust_staff
     ADD CONSTRAINT trust_staff_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_staff_roles trust_staff_roles_pmc_id_changed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_staff_roles
+    ADD CONSTRAINT trust_staff_roles_pmc_id_changed_by_fkey FOREIGN KEY (pmc_id, changed_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_staff_roles trust_staff_roles_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_staff_roles
+    ADD CONSTRAINT trust_staff_roles_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_staff_roles trust_staff_roles_pmc_id_staff_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_staff_roles
+    ADD CONSTRAINT trust_staff_roles_pmc_id_staff_id_fkey FOREIGN KEY (pmc_id, staff_id) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -6558,4 +9780,10 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261010000025'),
     ('20261010000026'),
     ('20261010000027'),
-    ('20261011000028');
+    ('20261011000028'),
+    ('20261011000029'),
+    ('20261011000030'),
+    ('20261011000031'),
+    ('20261012000032'),
+    ('20261012000033'),
+    ('20261012000034');

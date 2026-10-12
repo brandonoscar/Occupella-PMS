@@ -13,7 +13,9 @@ What a browser may do:
   - API answers are never cached.
 
 Staff see their whole PMC. Owners and tenants get their own endpoints in the portal PRs; here
-they can sign in and read who they are, and nothing else.
+they can sign in and read who they are, and nothing else. What a staff member may do beyond that
+is their roles' (migration 0034, src/pms/api/staff.py): the database refuses the rest, and the
+refusal is answered 403.
 """
 
 from __future__ import annotations
@@ -37,8 +39,23 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
 from pms import accounts, exports
-from pms.api import owner, people
+from pms.api import (
+    fake_esign,
+    leasing,
+    maintenance,
+    offers,
+    owner,
+    payables,
+    people,
+    reconcile,
+    rent,
+    setup,
+    staff,
+    switching,
+    tenant,
+)
 from pms.api.deps import COOKIE, Conn, Current, Staff, download
+from pms.leasing import esign, screening
 
 HEALTH_TIMEOUT = 2.0  # seconds to wait for a database connection before answering 503
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -52,6 +69,10 @@ class Settings:
     db_role: str = "trust_app"
     # The built portal (frontend/dist), served at / when set.
     static_dir: Path | None = None
+    # The tenant screening partner (pms.leasing.screening): "fake", or empty for none.
+    screening_partner: str = ""
+    # The e-sign partner (pms.leasing.esign): "fake", or empty for none.
+    esign_partner: str = ""
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -63,6 +84,8 @@ class Settings:
             static_dir=Path(os.environ["PMS_STATIC_DIR"])
             if "PMS_STATIC_DIR" in os.environ
             else None,
+            screening_partner=os.environ.get("PMS_SCREENING_PARTNER", ""),
+            esign_partner=os.environ.get("PMS_ESIGN_PARTNER", ""),
         )
 
     @property
@@ -111,6 +134,8 @@ class Me(BaseModel):
     person_id: UUID
     pmc_id: UUID
     pmc_name: str
+    # A staff member's roles (staff.ROLES); none for an owner or a tenant.
+    roles: list[str]
 
 
 class InviteLink(BaseModel):
@@ -154,6 +179,8 @@ def create_app(settings: Settings) -> FastAPI:
     app = FastAPI(title="Occupella PMS", lifespan=lifespan, docs_url=None, redoc_url=None)
     app.state.settings = settings
     app.state.pool = pool
+    app.state.screening = screening.partner_named(settings.screening_partner)
+    app.state.esign = esign.partner_named(settings.esign_partner, settings.public_url)
 
     @app.middleware("http")
     async def guard(
@@ -184,6 +211,12 @@ def create_app(settings: Settings) -> FastAPI:
         }.get(type(error), 422)
         return JSONResponse({"detail": str(error)}, status)
 
+    @app.exception_handler(psycopg.errors.InsufficientPrivilege)
+    async def not_allowed(request: Request, error: psycopg.Error) -> JSONResponse:
+        # A staff member without the role a write takes (the transaction is rolled back).
+        reason = str(error).splitlines()[0].removeprefix("trust: ")
+        return JSONResponse({"detail": reason}, 403)
+
     def signed_in(response: Response, signed: accounts.Signed, conn: Conn) -> Me:
         response.set_cookie(
             COOKIE,
@@ -205,6 +238,7 @@ def create_app(settings: Settings) -> FastAPI:
             person_id=session.person_id,
             pmc_id=session.pmc_id,
             pmc_name=pmc_name,
+            roles=staff.roles_of(conn, session) if session.kind == "staff" else [],
         )
 
     @app.get("/health")
@@ -288,7 +322,19 @@ def create_app(settings: Settings) -> FastAPI:
         return download(exports.ledger_zip(conn, session.pmc_id), "ledger", "zip")
 
     app.include_router(owner.router)
+    app.include_router(tenant.router)
+    app.include_router(maintenance.router)
+    app.include_router(leasing.router)
+    app.include_router(offers.router)
+    if isinstance(app.state.esign, esign.FakeESign):
+        app.include_router(fake_esign.router)
     app.include_router(people.router)
+    app.include_router(setup.router)
+    app.include_router(rent.router)
+    app.include_router(payables.router)
+    app.include_router(reconcile.router)
+    app.include_router(switching.router)
+    app.include_router(staff.router)
     if settings.static_dir is not None:
         serve_portal(app, settings.static_dir)
     return app

@@ -360,6 +360,12 @@ class LedgerMachine(RuleBasedStateMachine):
         end = start + data.draw(
             st.timedeltas(min_value=timedelta(microseconds=1), max_value=self.now - start)
         )
+        if role == "app":
+            # The app approves only a month-end preparation (trust_approve_bank_reconciliation),
+            # never the core function (tests/test_staff_roles.py).
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                approve(self.conns[role], self.pmc_id, self.bank_id[cash], start, end, statement)
+            return
         approved = approve(self.conns[role], self.pmc_id, self.bank_id[cash], start, end, statement)
         book = self.book_balance(cash, end)
         row = self.conn.execute(

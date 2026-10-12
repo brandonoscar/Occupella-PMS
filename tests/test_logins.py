@@ -141,6 +141,8 @@ def test_the_command_line_adds_staff_and_prints_their_invite(
 
     assert admin.main(["add-staff", str(pmc.pmc_id), "First Staff"]) == 0
     staff_id = uuid.UUID(capsys.readouterr().out.strip())
+    assert admin.main(["make-admin", str(pmc.pmc_id), str(staff_id)]) == 0
+    assert capsys.readouterr().out == f"{staff_id} is an admin\n"
     assert admin.main(["invite", str(pmc.pmc_id), "staff", str(staff_id), "First@Example.com"]) == 0
 
     printed = capsys.readouterr()
@@ -158,11 +160,14 @@ def test_the_command_line_says_why_it_refused(conn, database_url, monkeypatch, c
 
     unknown = admin.main(["invite", str(pmc.pmc_id), "owner", str(uuid.uuid4()), "o@example.com"])
     no_pmc = admin.main(["add-staff", str(uuid.uuid4()), "Nobody"])
+    first_admin = admin.main(["make-admin", str(pmc.pmc_id), str(staff_id)])
+    second_admin = admin.main(["make-admin", str(pmc.pmc_id), str(add_staff(conn, pmc.pmc_id))])
 
-    assert (unknown, no_pmc) == (2, 2)
+    assert (unknown, no_pmc, first_admin, second_admin) == (2, 2, 0, 2)
     err = capsys.readouterr().err
     assert "refused: no owner" in err
     assert "refused: insert or update on table" in err
+    assert "refused: name the admin who changes a role" in err
     assert conn.execute(
         "SELECT count(*) FROM trust_logins WHERE staff_id = %s", (staff_id,)
     ).fetchone() == (0,)

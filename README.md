@@ -11,12 +11,34 @@ Apache License 2.0 (see `LICENSE`). Third-party code and its licenses: `THIRD_PA
 Built: the trust ledger (schema and the tests that prove it), its reports, exports of every
 report as CSV, Excel or PDF plus the whole ledger as CSV
 (`PYTHONPATH=src python -m pms.exports --help`), the API with logins
-(`python -m pms.api`; the first staff invite comes from `python -m pms.admin`), and the owner
-portal (`frontend/`, served by the API): an owner signs in from an invite and sees each
-property's balance and their statement for any period, as PDF, Excel or CSV too.
+(`python -m pms.api`; the first staff invite comes from `python -m pms.admin`), and the portals
+(`frontend/`, served by the API):
+- an owner sees each property's balance and their statement for any period, as PDF, Excel or
+  CSV too;
+- a tenant sees their lease, what is due and its ledger, and sends maintenance requests, which
+  staff turn into work orders and follow to done. Rent is still paid the usual way: the portal
+  takes no payments.
 
-Being built, in this order (`docs/adr/0002-portals-and-exports.md`): the tenant portal and
-leasing basics.
+Leasing basics, part one: staff open an application link for a unit, applicants apply
+through it and follow their application, and staff screen (through a partner; a fake one for
+now), decide, and record the adverse action notice a decline or conditional approval needs.
+
+Leasing basics, part two: staff offer a lease to an approved applicant, or the renewal of a
+lease, with the PMC's own lease document (a PDF); the signers sign through an e-sign partner (a
+fake one for now), a tenant from their portal; and once everyone has signed, staff make it the
+lease. That completes the founder's list in `docs/adr/0002-portals-and-exports.md`.
+
+The staff back office (`docs/adr/0003-staff-back-office.md`) is being built: staff set up
+their books in the portal (trust bank accounts, owners, properties, units, tenants, vendors,
+management and late fee terms, leases in place) and do the rent work there (the rent run, late
+fees, fees and credits, tenants' payments and deposits as they reached the bank, prepaid rent,
+bounced payments), vendors' bills (entry, the owner's approval, setting aside and payment,
+recurring bills), owners' money (draws, contributions, management and leasing fees) and the
+month-end: bank statements imported from CSV or OFX, matched to the books, and the
+reconciliation prepared by one staff member once the books lack no line and approved by
+another; a switching tool that brings a PMC's roster, opening balances and uncleared checks
+over from its old system, with a tie-out staff sign off; and staff roles, so only those an
+admin allows approve and pay out money. Move-out and documents come next.
 
 Still true:
 

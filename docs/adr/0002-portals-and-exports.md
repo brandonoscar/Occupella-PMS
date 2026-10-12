@@ -94,3 +94,79 @@ serve the pages and the API. The self-host image builds it in a Node stage.
 - Tests: vitest for the pages and helpers, including one that fails on a raw colour or a size
   off DESIGN.md's scale; API tests for each endpoint; and Playwright in Chromium against the
   served build on a seeded database (`e2e.yml`), which fails on anything the policy blocks.
+
+## The tenant portal, as built
+
+`src/pms/api/tenant.py` and `src/pms/api/maintenance.py` on migration 0029, and the tenant's
+and staff's pages in `frontend/`.
+
+- A tenant sees every lease they are on (the one in effect first), with its rent, who else is
+  on it and the balance due at the end of today (UTC), and each lease's ledger
+  (`trust_report_tenant_ledger`) on screen or as PDF, Excel or CSV. A lease they aren't on
+  reads as not found, whoever's it is.
+- No payments: the page says to pay the PMC as before (online payment needs Stripe keys,
+  which hard rule 5 doesn't allow).
+- Maintenance requests: a tenant on a lease in effect says what needs fixing and whether
+  someone may come in while they're out, at most 10 a day per lease. Their co-tenants see the
+  request too. The database refuses a request from anyone not on the lease, and never changes
+  one.
+- Staff see open requests, open a work order for one (at the lease's unit, at most one per
+  request), assign it to a vendor, and mark it done or closed without work. The tenant sees
+  each step as the request's status, never the work order or the vendor.
+- Tests: migration tests (`tests/test_maintenance_requests.py`), API tests for each endpoint,
+  the audit property machine (requests filed, refused and given work orders), vitest for the
+  pages, and Playwright: a tenant joins, sees what is due and asks for a repair; staff take a
+  request through to done.
+
+## Leasing basics, part one, as built
+
+Applications through a link per unit (the founder's choice, 2026-10-11), screening and adverse
+action records: `src/pms/api/leasing.py`, `src/pms/leasing/screening.py`, migration 0030. E-sign
+and renewals are part two.
+
+- Staff open an application link for a unit at a rent and post it anywhere; it is shown once
+  and kept as its token's SHA-256. Anyone with it applies, with no login: a move-in day, the
+  household's monthly income, and up to six applicants' names and emails. A link takes at most
+  50 applications a day. The applicant keeps a status link to see where it stands: received,
+  in review, then the decision (with any conditions). The screening itself is never shown to
+  them.
+- Screening goes through a partner interface. The founder picks the real partner at deploy
+  time; until then the only one is a fake that pulls no report and answers from income against
+  rent (3x or more approve, 2x to 3x conditions, less decline). It is on only where
+  `PMS_SCREENING_PARTNER=fake` (development and CI); otherwise screening is refused.
+- A decision is approve, approve on conditions, or decline, maybe resting on a screening. A
+  decline or a conditional approval that rests on a screening records its adverse action notice
+  with it: the reasons, the reporting agency the partner names, and the day it was given. Staff
+  download the notice as a PDF to give the applicants. Its wording lists what such a notice
+  usually carries (the agency, that it didn't make the decision, a free copy within 60 days,
+  the right to dispute); it is not legal advice, and a PMC should have its own counsel check it
+  before relying on it.
+- `trust_ai_agent` reads none of it. No application fee: payments stay out.
+
+## Leasing basics, part two, as built
+
+Lease offers, e-sign and renewals: `src/pms/api/offers.py`, `src/pms/leasing/esign.py`,
+migration 0031. With it, the four things this ADR moved into scope are built.
+
+- Staff offer a lease to an application they approved (outright or on conditions), at the unit
+  it applied for, or the renewal of a lease that hasn't ended, starting after it does. An offer
+  has its terms (start, end or month to month, rent) and the PMC's own lease document, a PDF of
+  at most 5 MB uploaded with it: the PMS writes no lease text, so what a lease says stays the
+  PMC's (and its counsel's) to decide.
+- Who signs: for a new lease, the applicants unless staff name others; for a renewal, the
+  people staff name (prefilled with the lease's tenants and their login emails). Up to six,
+  each with their own email.
+- The offer goes to the e-sign partner once. Staff send each signer their link (the PMS sends
+  no email yet) and check the signatures, which are recorded as the partner reports them. A
+  tenant signs a renewal of their own lease from the portal, matched by their login's email,
+  and sees their signature as soon as the partner has it.
+- When everyone has signed, staff make it the lease (`trust_complete_lease_offer`): a new
+  lease's signers become its tenants, and a renewal keeps the old lease's tenants and ends it
+  the day before. An application or a lease takes one completed offer, and the unit's one
+  lease at a time still holds.
+- The founder picks the real e-sign partner at deploy time. Until then the only partner is a
+  fake, on only where `PMS_ESIGN_PARTNER=fake` (development and CI): its envelopes live in the
+  server process's memory, its signing page (`/esign#<token>`) is part of the portal, and
+  typing your name there is not a signature, which the page says. Without a partner no offer
+  can be sent.
+- `trust_ai_agent` reads none of it.
