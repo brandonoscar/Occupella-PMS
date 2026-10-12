@@ -17,6 +17,7 @@ type Seed = {
   offers_invite: string;
   renewer_invite: string;
   setup_invite: string;
+  rent_invite: string;
 };
 const seed: Seed = JSON.parse(readFileSync(new URL("./.seed.json", import.meta.url), "utf8"));
 const PASSWORD = "a long synthetic passphrase";
@@ -293,4 +294,33 @@ test("staff set up a property from nothing, lease a unit and see it on the rent 
   const csv = await rentRoll.text();
   expect(csv).toContain("E2E Property 9");
   expect(csv).toContain("Tenant Setup E2E");
+});
+
+test("staff record a tenant's payment, the rest held as prepaid rent, and then its bounce", async ({
+  page,
+}) => {
+  await page.goto(`/invite#${seed.rent_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
+  await page.getByRole("button", { name: "Finish" }).click();
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Rent" }).click();
+
+  const lease = page.getByRole("listitem", { name: "E2E Property 3, E2E Unit 5" });
+  await expect(lease.getByTestId("owed")).toHaveText("Owes $800.00");
+  await lease.getByText("Record for E2E Unit 5").click();
+  await lease.getByLabel("Payment received").fill("1000.00");
+  await lease.getByLabel("Check or reference").fill("Money order 9");
+  await lease.getByRole("button", { name: "Record payment" }).click();
+  await expect(lease).toContainText("$800.00 paid what is owed; $200.00 held as prepaid rent.");
+  await expect(lease.getByTestId("owed")).toHaveText("Paid up");
+  await expect(lease).toContainText("Payer E2E: prepaid $200.00");
+  await expect(lease).toContainText("(Money order 9)");
+
+  await lease.getByRole("button", { name: "It bounced" }).click();
+  await expect(lease).toContainText("The $800.00 payment is owed again.");
+  await expect(lease.getByTestId("owed")).toHaveText("Owes $800.00");
+  await expect(lease).toContainText("Payer E2E: prepaid $0.00");
+  await expect(lease.getByText("Bounced")).toBeVisible();
 });

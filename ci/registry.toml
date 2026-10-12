@@ -517,6 +517,18 @@ tests = [
   "tests/test_privileges.py::test_ai_role_reads_only_what_the_app_reads",
 ]
 
+[[invariant]]
+id = "rent-payments-pay-what-is-owed"
+statement = "A tenant's payment recorded by staff pays the owner's account no more than the lease owes, matched in full to its open charges oldest first, and holds the rest for the tenant as prepaid rent; prepaid rent pays no more than is owed. Sending the same request again records nothing new. A bounce takes back exactly what the payment moved, once, or is refused with nothing written."
+tests = [
+  "tests/properties/test_rent_properties.py::test_rent_invariants_hold_under_random_charges_payments_and_bounces",
+  "tests/api/test_rent.py::test_a_payment_pays_what_is_owed_oldest_first_and_holds_the_rest_as_prepaid_rent",
+  "tests/api/test_rent.py::test_sending_a_payment_again_records_it_once",
+  "tests/api/test_rent.py::test_a_bounced_payment_is_owed_again_once",
+  "tests/api/test_rent.py::test_a_payment_the_owner_was_paid_out_of_cannot_bounce_into_the_negative",
+  "tests/api/test_rent.py::test_a_payment_hold_refuses_payments_and_records_nothing",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]

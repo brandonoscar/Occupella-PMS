@@ -236,7 +236,8 @@ authenticator, invite someone and take a request through to done, and an applica
 through a link that staff screen (with the fake partner, `PMS_SCREENING_PARTNER=fake`) and
 decline with a notice, and staff offer a lease and a renewal that the applicant and the tenant
 sign on the fake e-sign partner's page (`PMS_ESIGN_PARTNER=fake`) before staff make each the
-lease, and staff set up a property from nothing, lease a unit and find it on the rent roll. On
+lease, and staff set up a property from nothing, lease a unit and find it on the rent roll, and
+record a tenant's payment (the rest held as prepaid rent) and then its bounce. On
 failure it keeps the Playwright
 report and the API's log for 7 days. Run it locally with `cd frontend && npm ci && npm test &&
 npm run build`, then the same steps as the workflow (`PW_CHROMIUM` points Playwright at a

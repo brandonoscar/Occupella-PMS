@@ -197,6 +197,31 @@ def main() -> None:
             "INSERT INTO trust_staff (pmc_id, display_name) VALUES (%s, 'Setup E2E') RETURNING id",
             (pmc,),
         )
+        # Rent: a tenant owing this month's rent on a lease of their own, and a staff member to
+        # record their payment.
+        rent_staff = one(
+            "INSERT INTO trust_staff (pmc_id, display_name) VALUES (%s, 'Rent E2E') RETURNING id",
+            (pmc,),
+        )
+        unit_five = one(
+            "INSERT INTO trust_units (pmc_id, property_id, display_name)"
+            " VALUES (%s, %s, 'E2E Unit 5') RETURNING id",
+            (pmc, prop_three),
+        )
+        payer = one(
+            "INSERT INTO trust_tenants (pmc_id, property_id, display_name)"
+            " VALUES (%s, %s, 'Payer E2E') RETURNING id",
+            (pmc, prop_three),
+        )
+        payer_lease = one(
+            "SELECT trust_open_lease(%s, %s, %s, NULL, 800.00, %s::uuid[])",
+            (pmc, unit_five, first_of_last_month, [payer]),
+        )
+        conn.execute(
+            "INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)"
+            " VALUES (%s, %s, %s, 'rent', 800.00, 'Rent')",
+            (pmc, payer_lease, first_of_this_month),
+        )
         owner_email, staff_email = f"owner.{tag}@example.com", f"staff.{tag}@example.com"
         seeded = {
             "pmc_id": str(pmc),
@@ -219,6 +244,9 @@ def main() -> None:
             ).token,
             "renewer_invite": accounts.create_invite(
                 conn, pmc, "tenant", renewer, f"renewer.{tag}@example.com", None
+            ).token,
+            "rent_invite": accounts.create_invite(
+                conn, pmc, "staff", rent_staff, f"rent.{tag}@example.com", None
             ).token,
             "setup_invite": accounts.create_invite(
                 conn, pmc, "staff", setup_staff, f"setup.{tag}@example.com", None
