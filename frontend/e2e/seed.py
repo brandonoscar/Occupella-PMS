@@ -245,6 +245,12 @@ def main() -> None:
             "SELECT pgledger_create_transfer(%s, %s, 1000.00, %s, %s)",
             (cash, payee_account, last_month, json.dumps({"memo": "Rent"})),
         )
+        # Month-end: a staff member to reconcile last month from the bank's statement.
+        month_end_staff = one(
+            "INSERT INTO trust_staff (pmc_id, display_name) VALUES (%s, 'Month-end E2E')"
+            " RETURNING id",
+            (pmc,),
+        )
         owner_email, staff_email = f"owner.{tag}@example.com", f"staff.{tag}@example.com"
         seeded = {
             "pmc_id": str(pmc),
@@ -273,6 +279,9 @@ def main() -> None:
             ).token,
             "bills_invite": accounts.create_invite(
                 conn, pmc, "staff", bills_staff, f"bills.{tag}@example.com", None
+            ).token,
+            "month_end_invite": accounts.create_invite(
+                conn, pmc, "staff", month_end_staff, f"month-end.{tag}@example.com", None
             ).token,
             "setup_invite": accounts.create_invite(
                 conn, pmc, "staff", setup_staff, f"setup.{tag}@example.com", None

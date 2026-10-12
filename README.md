@@ -33,8 +33,10 @@ their books in the portal (trust bank accounts, owners, properties, units, tenan
 management and late fee terms, leases in place) and do the rent work there (the rent run, late
 fees, fees and credits, tenants' payments and deposits as they reached the bank, prepaid rent,
 bounced payments), vendors' bills (entry, the owner's approval, setting aside and payment,
-recurring bills) and owners' money (draws, contributions, management and leasing fees). The
-monthly reconciliation in the portal comes next.
+recurring bills), owners' money (draws, contributions, management and leasing fees) and the
+month-end: bank statements imported from CSV or OFX, matched to the books, and the
+reconciliation approved once the books lack no line. The switching tool, staff roles,
+move-out and documents come next.
 
 Still true:
 

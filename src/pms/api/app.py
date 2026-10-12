@@ -45,6 +45,7 @@ from pms.api import (
     owner,
     payables,
     people,
+    reconcile,
     rent,
     setup,
     tenant,
@@ -318,6 +319,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(setup.router)
     app.include_router(rent.router)
     app.include_router(payables.router)
+    app.include_router(reconcile.router)
     if settings.static_dir is not None:
         serve_portal(app, settings.static_dir)
     return app

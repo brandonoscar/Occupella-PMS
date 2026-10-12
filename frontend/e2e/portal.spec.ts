@@ -19,6 +19,7 @@ type Seed = {
   setup_invite: string;
   rent_invite: string;
   bills_invite: string;
+  month_end_invite: string;
 };
 const seed: Seed = JSON.parse(readFileSync(new URL("./.seed.json", import.meta.url), "utf8"));
 const PASSWORD = "a long synthetic passphrase";
@@ -368,4 +369,60 @@ test("staff enter a vendor's bill, record the owner's approval, set it aside and
   await payee.getByRole("button", { name: "Record draw" }).click();
   await expect(payee).toContainText("$700.00 paid out to Payee E2E.");
   await expect(payee.getByTestId("available")).toHaveText("$0.00 available");
+});
+
+// Last, since approving closes the operating trust account through last month.
+test("staff import last month's statement, match it to the books and approve the reconciliation", async ({
+  page,
+}) => {
+  const now = new Date();
+  const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const fifth = iso(new Date(first.getTime() + 4 * 86_400_000));
+  const sixth = iso(new Date(first.getTime() + 5 * 86_400_000));
+
+  await page.goto(`/invite#${seed.month_end_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
+  await page.getByRole("button", { name: "Finish" }).click();
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Month-end" }).click();
+
+  await page
+    .getByRole("combobox", { name: "Trust bank account", exact: true })
+    .selectOption({ label: "E2E operating trust account" });
+  // The seed's rents of last month: two owners' in one deposit, two more on their own.
+  const csv = [
+    "Date,Description,Amount,Reference",
+    `${sixth},Deposit,"2,750.00",D-1`,
+    `${sixth},Deposit,950.00,D-2`,
+    `${sixth},Deposit,"1,000.00",D-3`,
+  ].join("\n");
+  await page
+    .getByLabel("Statement file (CSV or OFX)")
+    .setInputFiles({ name: "statement.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+  await expect(page.getByText("Ready: statement.csv.")).toBeVisible();
+  await page.getByLabel("First day").fill(iso(first));
+  await page.getByLabel("Last day").fill(iso(last));
+  await page.getByRole("button", { name: "Import statement" }).click();
+  await expect(page.getByText(`Imported 3 lines, ${iso(first)} to ${iso(last)}.`)).toBeVisible();
+
+  await page.getByRole("button", { name: "Match the sure ones" }).click();
+  await expect(page.getByText("2 lines matched.")).toBeVisible();
+  const approve = page.getByRole("button", { name: `Approve through ${iso(last)}` });
+  await expect(approve).toBeDisabled();
+
+  await page.getByLabel(`${sixth} Deposit (D-1): $2,750.00`).check();
+  await page.getByLabel(`${fifth} Rent: $1,500.00`).check();
+  await page.getByLabel(`${fifth} Rent: $1,250.00`).check();
+  await page.getByRole("button", { name: "Match these" }).click();
+  await expect(page.getByText("Matched.")).toBeVisible();
+
+  await approve.click();
+  await expect(page.getByText(`Approved through ${iso(last)}; the account is closed through it.`)).toBeVisible();
+  await expect(page.getByRole("list", { name: "Approved" })).toContainText(
+    `${iso(first)} to ${iso(last)}: bank $4,700.00, books $4,700.00, approved by Month-end E2E`,
+  );
 });

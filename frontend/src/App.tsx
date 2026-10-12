@@ -9,6 +9,7 @@ import { ESignPage } from "./pages/ESignPage";
 import { InvitePage } from "./pages/InvitePage";
 import { OwnerHome } from "./pages/OwnerHome";
 import { OwnersPage } from "./pages/OwnersPage";
+import { ReconcilePage } from "./pages/ReconcilePage";
 import { RentPage } from "./pages/RentPage";
 import { PMC_KEY, SignInPage } from "./pages/SignInPage";
 import { SetupPage } from "./pages/SetupPage";
@@ -53,6 +54,7 @@ function Home({ path }: { path: string }) {
     if (path === "/rent") return <RentPage me={me} />;
     if (path === "/bills") return <BillsPage me={me} />;
     if (path === "/owners") return <OwnersPage me={me} />;
+    if (path === "/reconcile") return <ReconcilePage me={me} />;
     return <StaffHome me={me} />;
   }
   return <TenantHome me={me} />;

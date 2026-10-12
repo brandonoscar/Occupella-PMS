@@ -82,8 +82,9 @@ required invariant, report and self-host step.
   the database to the screen, never a float. Staff's pages have sections (`pages/staffNav.ts`);
   they set up the books at `/setup` (`src/pms/api/setup.py`: plain inserts and the database's
   own write paths, nothing that moves money), do the rent work at `/rent`
-  (`src/pms/api/rent.py`), and pay bills and handle owners' money at `/bills` and `/owners`
-  (`src/pms/api/payables.py`). npm packages are pinned exactly and their
+  (`src/pms/api/rent.py`), pay bills and handle owners' money at `/bills` and `/owners`
+  (`src/pms/api/payables.py`), and reconcile at `/reconcile` (`src/pms/api/reconcile.py`).
+  npm packages are pinned exactly and their
   licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
   owner only: no request names an owner, a property or a PMC. A tenant's pages
   (`src/pms/api/tenant.py`) show the session's tenant only: a lease named in a path is answered
@@ -123,8 +124,9 @@ required invariant, report and self-host step.
   `trust_open_lease`, `trust_end_lease`, `trust_apply_payment`, `trust_reverse_payment`,
   `trust_post_management_fee`, `trust_post_leasing_fee`, `trust_draw_owner`,
   `trust_set_aside_bill`, `trust_pay_bill`, `trust_assess_late_fees`,
-  `trust_post_opening_balances`, `trust_record_owner_contribution` and
-  `trust_complete_lease_offer`, which run as the table owner (`trust_charge_rent_due` and `trust_enter_recurring_bills` run with the app's own
+  `trust_post_opening_balances`, `trust_record_owner_contribution`,
+  `trust_complete_lease_offer`, `trust_match_bank_lines`, `trust_unmatch_bank_lines` and
+  `trust_approve_bank_reconciliation`, which run as the table owner (`trust_charge_rent_due` and `trust_enter_recurring_bills` run with the app's own
   grants). It can't call pgledger's posting functions: every posting it makes goes through
   `trust_post_transfers`, which takes an idempotency key, unique per PMC, so it is safe to
   retry: the same key returns the original transfers, and a different posting under it is
@@ -233,6 +235,14 @@ required invariant, report and self-host step.
   is what a draw of everything takes: the balance less the reserve and the unpaid bills, which
   it counts as `trust_unpaid_bills` does (the app may not call it). Draws and contributions
   carry a request id the page makes, so a retry pays nothing twice.
+- Bank statements (migration 0032): a trust bank account's statements, imported from CSV or
+  OFX, follow one another day after day and balance after balance from 0 (a first statement's
+  opening balance is a line of its own), each with all its lines, and a file goes in once.
+  `trust_match_bank_lines` matches lines to transfers that moved the account's cash by the same
+  total; a line or a transfer is in at most one match not undone (`trust_unmatch_bank_lines`),
+  and neither changes a period already approved. `trust_report_bank_reconciliation` shows a
+  day's end; `trust_approve_bank_reconciliation` approves only when no line up to it is missing
+  from the books. All append-only.
 - Vendor payments: `trust_report_vendor_payments` lists what each vendor was paid through
   `trust_pay_bill` in a calendar year (UTC), for 1099 preparation. It files nothing, holds no
   tax IDs and applies no threshold.
