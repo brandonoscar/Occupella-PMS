@@ -21,6 +21,7 @@ type Seed = {
   bills_invite: string;
   month_end_invite: string;
   approver_invite: string;
+  move_out_invite: string;
   switch_invite: string;
 };
 const seed: Seed = JSON.parse(readFileSync(new URL("./.seed.json", import.meta.url), "utf8"));
@@ -371,6 +372,36 @@ test("staff enter a vendor's bill, record the owner's approval, set it aside and
   await payee.getByRole("button", { name: "Record draw" }).click();
   await expect(payee).toContainText("$700.00 paid out to Payee E2E.");
   await expect(payee.getByTestId("available")).toHaveText("$0.00 available");
+});
+
+test("staff charge a tenant's damage at move-out, return the rest of the deposit and get the statement", async ({
+  page,
+}) => {
+  await page.goto(`/invite#${seed.move_out_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
+  await page.getByRole("button", { name: "Finish" }).click();
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Move-out" }).click();
+
+  const card = page.locator("section", { hasText: "E2E Property 8 / E2E Unit 8: Leaver E2E" });
+  await card.getByLabel("Cleaning or damage").fill("Carpet cleaning");
+  await card.getByLabel("Amount").fill("150.00");
+  await card.getByRole("button", { name: "Charge it" }).click();
+  await expect(card.getByText("Charged $150.00: Carpet cleaning.")).toBeVisible();
+  await expect(card.getByText(/Keeps \$150.00 for what the lease owes; \$750.00 goes back/)).toBeVisible();
+
+  await card.getByRole("button", { name: "Return the deposit" }).click();
+  await expect(card.getByText("Returned $750.00 to the tenants; the rest paid what the lease owed.")).toBeVisible();
+  await expect(card.getByLabel("Returned, E2E Property 8 / E2E Unit 8: Leaver E2E")).toContainText(
+    "kept $150.00 of $900.00, $750.00 back to the tenants",
+  );
+  const statement = await page.request.get(
+    (await card.getByRole("link", { name: "Statement for the tenants (PDF)" }).getAttribute("href")) ?? "",
+  );
+  expect(statement.status()).toBe(200);
+  expect(statement.headers()["content-type"]).toBe("application/pdf");
 });
 
 // Last, since approving closes the operating trust account through last month.

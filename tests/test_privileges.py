@@ -98,6 +98,9 @@ TABLES = {
     # month-end preparations are written only by trust_prepare_bank_reconciliation.
     "trust_staff_roles": {"SELECT", "INSERT"},
     "trust_reconciliation_preparations": {"SELECT"},
+    # Deposits returned at move-out: written only by trust_return_deposit.
+    "trust_deposit_returns": {"SELECT"},
+    "trust_deposit_return_lines": {"SELECT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -174,6 +177,9 @@ FUNCTIONS = {
     "trust_unmatch_bank_lines(uuid,uuid,uuid)": {"trust_app"},
     "trust_prepare_bank_reconciliation(uuid,uuid,date)": {"trust_app"},
     "trust_approve_bank_reconciliation(uuid,uuid)": {"trust_app"},
+    "trust_return_deposit(uuid,uuid,text,text,timestamptz)": {"trust_app"},
+    # What a lease owes, as the deposit's return counts it: the move-out page reads it.
+    "trust_lease_owed(uuid)": {"trust_app"},
     # The app approves only month-end preparations, which another staff member made: this one
     # is the owner's, called by trust_approve_bank_reconciliation.
     "trust_approve_reconciliation(uuid,uuid,timestamptz,timestamptz,numeric,text,text)": set(),
@@ -214,6 +220,7 @@ FUNCTIONS = {
     "trust_report_vendor_payments(uuid,integer)": {"trust_app", "trust_ai_agent"},
     "trust_report_bank_reconciliation(uuid,uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_cutover(uuid,uuid)": {"trust_app", "trust_ai_agent"},
+    "trust_report_deposit_return(uuid,uuid)": {"trust_app", "trust_ai_agent"},
     # pgledger's posting functions take no idempotency key, so a retried request could post
     # twice: only the owner calls them (trust_post_transfers does, as the owner).
     "pgledger_create_transfer(text,text,numeric,timestamptz,jsonb)": set(),
@@ -289,6 +296,7 @@ SECURITY_DEFINER = {
     "trust_unmatch_bank_lines(uuid,uuid,uuid)",
     "trust_prepare_bank_reconciliation(uuid,uuid,date)",
     "trust_approve_bank_reconciliation(uuid,uuid)",
+    "trust_return_deposit(uuid,uuid,text,text,timestamptz)",
     "trust_audit()",  # writes the audit log, which no other role may write
     "trust_check_payment_hold()",  # locks the hold's lease, which the app can't
 }

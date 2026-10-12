@@ -60,6 +60,7 @@ def test_report_discovery_and_missing_cases(conn, tmp_path):
         "trust_report_bank_reconciliation",
         "trust_report_cutover",
         "trust_report_delinquency",
+        "trust_report_deposit_return",
         "trust_report_general_ledger",
         "trust_report_owner_balances",
         "trust_report_owner_statement",

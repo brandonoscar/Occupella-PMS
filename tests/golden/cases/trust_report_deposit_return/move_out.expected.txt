@@ -1,0 +1,15 @@
+line	item	detail	amount
+1	PMC	Golden PMC	NULL
+2	property and unit	Property 1 / Unit 1	NULL
+3	tenants	Tenant A; Tenant B	NULL
+4	lease	2026-01-01 to 2026-06-30	NULL
+5	deposit held	Tenant A	600.00
+6	deposit held	Tenant B	900.00
+7	kept for	2026-06-01 rent: June rent	1000.00
+8	kept for	2026-06-30 fee: Cleaning	150.00
+9	kept for	2026-06-30 fee: Broken window	220.00
+10	deposits held, total	NULL	1500.00
+11	kept, total	NULL	1370.00
+12	returned to	Tenant B	130.00
+13	returned, total	NULL	130.00
+14	returned on	2026-07-05 (UTC), by Manager 1	NULL

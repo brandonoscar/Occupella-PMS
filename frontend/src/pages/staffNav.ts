@@ -6,6 +6,7 @@ export const STAFF_NAV: NavItem[] = [
   { href: "/rent", label: "Rent" },
   { href: "/bills", label: "Bills" },
   { href: "/owners", label: "Owners" },
+  { href: "/move-out", label: "Move-out" },
   { href: "/reconcile", label: "Month-end" },
   { href: "/switching", label: "Switching" },
   { href: "/staff", label: "Staff" },

@@ -170,3 +170,26 @@ How it holds:
   which works only while the PMC has none. On upgrade every existing staff member holds every
   role, as each could do everything before; an admin then takes away what they shouldn't hold.
 
+## Move-out, as built
+
+At `/move-out` (`src/pms/api/moveout.py`, migration 0035) staff see every lease that holds a
+security deposit for its tenants, with what it owes:
+
+- They set the lease's last day, and charge what the tenants owe at move-out (cleaning, damage)
+  as fees on the lease, like any other charge.
+- Once the lease has ended, they record the deposit's return on the day the bank paid it
+  (`trust_return_deposit`, once per lease, safe to retry): what the lease owes (its rent and
+  fees less what was paid and less its credits), or every deposit if that is less, is kept for
+  the owner's account of the property (staff choose one when there are several) and matched to
+  the open charges oldest first; its cash moves from the security-deposit trust bank account to
+  the owner's. The rest goes back to each tenant out of the security-deposit account, kept from
+  in name order when there are several.
+- A tenant still on another lease (a renewal) keeps their deposit with it, so that lease's
+  return waits. A payment hold on the lease refuses keeping money for its charges, as it
+  refuses any payment.
+- Returning a deposit pays out money, so it takes the disburse role.
+- The statement for the tenants is `trust_report_deposit_return`, downloaded as a PDF like any
+  report: each tenant's deposit, what was kept for each charge, what went back to whom, and who
+  returned it when. The PMS keeps no tenant's address: staff send it.
+- No state's deadline for returning a deposit, interest on it, or form of notice is built in.
+

@@ -8,6 +8,7 @@ import { BillsPage } from "./pages/BillsPage";
 import { ESignPage } from "./pages/ESignPage";
 import { InvitePage } from "./pages/InvitePage";
 import { OwnerHome } from "./pages/OwnerHome";
+import { MoveOutPage } from "./pages/MoveOutPage";
 import { OwnersPage } from "./pages/OwnersPage";
 import { ReconcilePage } from "./pages/ReconcilePage";
 import { RentPage } from "./pages/RentPage";
@@ -56,6 +57,7 @@ function Home({ path }: { path: string }) {
     if (path === "/rent") return <RentPage me={me} />;
     if (path === "/bills") return <BillsPage me={me} />;
     if (path === "/owners") return <OwnersPage me={me} />;
+    if (path === "/move-out") return <MoveOutPage me={me} />;
     if (path === "/reconcile") return <ReconcilePage me={me} />;
     if (path === "/switching") return <SwitchPage me={me} />;
     if (path === "/staff") return <StaffPage me={me} />;
