@@ -77,6 +77,7 @@ describe("TenantHome", () => {
     const fetch = server({
       "GET /api/tenant/leases": [lease("1", true)],
       "GET /api/tenant/requests": [],
+      "GET /api/tenant/renewals": [],
       "GET /api/tenant/leases/1/ledger": LEDGER,
       "POST /api/tenant/requests": REQUEST,
     });
@@ -85,6 +86,7 @@ describe("TenantHome", () => {
     expect((await screen.findByTestId("balance-due")).textContent).toBe("$1,500.00");
     expect(screen.getByText("Tenant 1, Tenant 2")).toBeTruthy();
     expect(await screen.findByText("Balance at the end of 2026-10-11")).toBeTruthy();
+    expect(screen.queryByText("Lease renewal")).toBeNull();
     expect(screen.getByRole("link", { name: "PDF" }).getAttribute("href")).toBe(
       "/api/tenant/leases/1/ledger/download?format=pdf",
     );
@@ -110,6 +112,7 @@ describe("TenantHome", () => {
     server({
       "GET /api/tenant/leases": [lease("1", false)],
       "GET /api/tenant/requests": [],
+      "GET /api/tenant/renewals": [],
       "GET /api/tenant/leases/1/ledger": LEDGER,
     });
     render(<TenantHome me={ME} />);
@@ -119,7 +122,11 @@ describe("TenantHome", () => {
   });
 
   it("says when no lease is on file", async () => {
-    server({ "GET /api/tenant/leases": [], "GET /api/tenant/requests": [] });
+    server({
+      "GET /api/tenant/leases": [],
+      "GET /api/tenant/requests": [],
+      "GET /api/tenant/renewals": [],
+    });
     render(<TenantHome me={ME} />);
 
     expect(await screen.findByText("No lease is on file for you. Ask Synthetic PMC.")).toBeTruthy();

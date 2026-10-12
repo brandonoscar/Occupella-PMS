@@ -14,9 +14,12 @@ type Seed = {
   apply_token: string;
   leasing_email: string;
   leasing_invite: string;
+  offers_invite: string;
+  renewer_invite: string;
 };
 const seed: Seed = JSON.parse(readFileSync(new URL("./.seed.json", import.meta.url), "utf8"));
 const PASSWORD = "a long synthetic passphrase";
+const day = (fromNow: number) => new Date(Date.now() + fromNow * 86_400_000).toISOString().slice(0, 10);
 
 // The pages are served under a strict Content-Security-Policy (src/pms/api/app.py). Anything it
 // blocks, such as a script or an image from another origin, fails the test that loaded it.
@@ -166,4 +169,78 @@ test("an applicant applies; staff screen, decline with a notice, and the applica
   const path = new URL(statusUrl).pathname + new URL(statusUrl).hash;
   await page.goto(path);
   await expect(page.getByTestId("application-status")).toContainText("Declined");
+});
+
+test("staff offer a lease and a renewal; the signers sign on the partner's page; both become leases", async ({
+  page,
+  browser,
+}) => {
+  await page.goto(`/invite#${seed.offers_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
+  await page.getByRole("button", { name: "Finish" }).click();
+  const document = {
+    name: "lease.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.4 a synthetic lease for the browser test"),
+  };
+
+  // A lease for the approved application; the applicant signs from the link staff send them.
+  const choose = page.getByRole("combobox", { name: "Offer", exact: true });
+  await choose.selectOption({ label: "Mover E2E for E2E Property 3, E2E Unit 4" });
+  await expect(page.getByLabel("Starts")).toHaveValue(day(30));
+  await page.getByLabel("Lease document (PDF, your own)").setInputFiles(document);
+  await page.getByRole("button", { name: "Send for signing" }).click();
+  const offer = page.getByRole("listitem", { name: "Offer for E2E Unit 4" });
+  const link = new URL((await offer.getByTestId("signing-link").textContent()) ?? "");
+  const pdf = await page.request.get(
+    (await offer.getByRole("link", { name: "Lease (PDF)" }).getAttribute("href")) ?? "",
+  );
+  expect(await pdf.body()).toEqual(document.buffer);
+
+  const mover = await (await browser.newContext()).newPage();
+  await mover.goto(link.pathname + link.hash);
+  await expect(mover.getByText("For Mover E2E")).toBeVisible();
+  await mover.getByLabel("Type your name as it is on the lease").fill("Someone Else");
+  await mover.getByRole("button", { name: "Sign" }).click();
+  await expect(mover.getByRole("alert")).toHaveText("type your name as it is on the lease");
+  await mover.getByLabel("Type your name as it is on the lease").fill("mover e2e");
+  await mover.getByRole("button", { name: "Sign" }).click();
+  await expect(mover.getByTestId("esign-status")).toHaveText("Signed. You can close this page.");
+
+  await offer.getByRole("button", { name: "Make it the lease" }).click();
+  await expect(page.getByText(`E2E Property 3, E2E Unit 4 has its lease from ${day(30)}.`)).toBeVisible();
+  await expect(offer).toHaveCount(0);
+
+  // The renewal of a tenant's lease; the tenant signs it from their portal.
+  await choose.selectOption({ label: "E2E Property 3, E2E Unit 3: Renewer E2E" });
+  await page.getByLabel("Starts").fill(day(60));
+  await page.getByLabel("Lease document (PDF, your own)").setInputFiles(document);
+  await page.getByRole("button", { name: "Send for signing" }).click();
+  const renewal = page.getByRole("listitem", { name: "Offer for E2E Unit 3" });
+  await expect(renewal).toContainText("Signed by 0 of 1.");
+
+  const tenant = await (await browser.newContext()).newPage();
+  await tenant.goto(`/invite#${seed.renewer_invite}`);
+  await tenant.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await tenant.getByLabel("The same password again").fill(PASSWORD);
+  await tenant.getByRole("button", { name: "Set password" }).click();
+  const offered = tenant.getByRole("listitem", { name: "Renewal of E2E Unit 3" });
+  await expect(offered).toContainText(`${day(60)} to month to month, $1,000.00 a month`);
+  await offered.getByRole("button", { name: "Sign" }).click();
+  await tenant.getByLabel("Type your name as it is on the lease").fill("Renewer E2E");
+  await tenant.getByRole("button", { name: "Sign" }).click();
+  await expect(tenant.getByTestId("esign-status")).toBeVisible();
+  await tenant.goto("/");
+  await expect(tenant.getByTestId("renewal-signed")).toContainText("You signed");
+
+  await renewal.getByRole("button", { name: "Check signatures" }).click();
+  await expect(renewal).toContainText("Signed by everyone");
+  await renewal.getByRole("button", { name: "Make it the lease" }).click();
+  await expect(renewal).toHaveCount(0);
+  await tenant.reload();
+  await expect(tenant.getByRole("heading", { name: "Welcome, Renewer E2E" })).toBeVisible();
+  await expect(tenant.getByRole("heading", { name: "Lease renewal" })).toHaveCount(0);
 });

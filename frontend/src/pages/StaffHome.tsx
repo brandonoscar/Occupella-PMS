@@ -7,6 +7,7 @@ import { Card, Shell } from "../components/Shell";
 import { day } from "../money";
 import { LeasingCard } from "./LeasingCard";
 import { MaintenanceCard } from "./MaintenanceCard";
+import { OffersCard } from "./OffersCard";
 
 type Person = {
   kind: "staff" | "owner" | "tenant";
@@ -25,6 +26,8 @@ export function StaffHome({ me }: { me: Me }) {
   const [emails, setEmails] = useState<Record<string, string>>({});
   const [links, setLinks] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
+  // Counts the leasing card's changes, so the offers card sees a new approval.
+  const [decided, setDecided] = useState(0);
   const today = day(new Date());
 
   function refresh() {
@@ -115,7 +118,8 @@ export function StaffHome({ me }: { me: Me }) {
         )}
       </Card>
       <MaintenanceCard />
-      <LeasingCard />
+      <LeasingCard onChange={() => setDecided((n) => n + 1)} />
+      <OffersCard changed={decided} />
     </Shell>
   );
 }

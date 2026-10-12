@@ -37,9 +37,9 @@ from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
 from pms import accounts, exports
-from pms.api import leasing, maintenance, owner, people, tenant
+from pms.api import fake_esign, leasing, maintenance, offers, owner, people, tenant
 from pms.api.deps import COOKIE, Conn, Current, Staff, download
-from pms.leasing import screening
+from pms.leasing import esign, screening
 
 HEALTH_TIMEOUT = 2.0  # seconds to wait for a database connection before answering 503
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -55,6 +55,8 @@ class Settings:
     static_dir: Path | None = None
     # The tenant screening partner (pms.leasing.screening): "fake", or empty for none.
     screening_partner: str = ""
+    # The e-sign partner (pms.leasing.esign): "fake", or empty for none.
+    esign_partner: str = ""
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -67,6 +69,7 @@ class Settings:
             if "PMS_STATIC_DIR" in os.environ
             else None,
             screening_partner=os.environ.get("PMS_SCREENING_PARTNER", ""),
+            esign_partner=os.environ.get("PMS_ESIGN_PARTNER", ""),
         )
 
     @property
@@ -159,6 +162,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.state.settings = settings
     app.state.pool = pool
     app.state.screening = screening.partner_named(settings.screening_partner)
+    app.state.esign = esign.partner_named(settings.esign_partner, settings.public_url)
 
     @app.middleware("http")
     async def guard(
@@ -296,6 +300,9 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(tenant.router)
     app.include_router(maintenance.router)
     app.include_router(leasing.router)
+    app.include_router(offers.router)
+    if isinstance(app.state.esign, esign.FakeESign):
+        app.include_router(fake_esign.router)
     app.include_router(people.router)
     if settings.static_dir is not None:
         serve_portal(app, settings.static_dir)

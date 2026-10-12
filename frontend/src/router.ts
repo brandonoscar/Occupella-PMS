@@ -16,3 +16,8 @@ export function usePath(): string {
   }, []);
   return path;
 }
+
+// Leaves the portal for another page, such as an e-sign partner's.
+export function leave(url: string): void {
+  window.location.assign(url);
+}

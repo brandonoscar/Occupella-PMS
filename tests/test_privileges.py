@@ -77,6 +77,12 @@ TABLES = {
     "trust_screenings": {"SELECT", "INSERT"},
     "trust_application_decisions": {"SELECT", "INSERT"},
     "trust_adverse_actions": {"SELECT", "INSERT"},
+    # Lease offers: staff offer and send them, the partner's signatures are recorded.
+    "trust_lease_offers": {"SELECT", "INSERT"},
+    "trust_lease_offer_signers": {"SELECT", "INSERT"},
+    "trust_signature_requests": {"SELECT", "INSERT"},
+    "trust_signatures": {"SELECT", "INSERT"},
+    "trust_lease_offer_completions": {"SELECT"},  # written only by trust_complete_lease_offer
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -109,6 +115,11 @@ AI_NEVER_READS = {
     "trust_screenings",
     "trust_application_decisions",
     "trust_adverse_actions",
+    "trust_lease_offers",
+    "trust_lease_offer_signers",
+    "trust_signature_requests",
+    "trust_signatures",
+    "trust_lease_offer_completions",
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
 RENAMEABLE = [
@@ -144,6 +155,7 @@ FUNCTIONS = {
     "trust_assess_late_fees(uuid,date)": {"trust_app"},
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)": {"trust_app"},
     "trust_record_owner_contribution(uuid,text,text,numeric,timestamptz,text)": {"trust_app"},
+    "trust_complete_lease_offer(uuid,uuid,uuid)": {"trust_app"},
     "trust_enter_recurring_bills(uuid,date)": {"trust_app"},
     # Helpers the fee, draw and bill functions call as the owner: nobody else.
     "trust_lock_owner_account(uuid,text)": set(),
@@ -212,6 +224,7 @@ FUNCTIONS = {
     "trust_lock_application_link()": {"PUBLIC"},
     "trust_check_application_decision()": {"PUBLIC"},
     "trust_check_adverse_action()": {"PUBLIC"},
+    "trust_check_lease_offer()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.
@@ -232,6 +245,7 @@ SECURITY_DEFINER = {
     "trust_assess_late_fees(uuid,date)",
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)",
     "trust_record_owner_contribution(uuid,text,text,numeric,timestamptz,text)",
+    "trust_complete_lease_offer(uuid,uuid,uuid)",
     "trust_audit()",  # writes the audit log, which no other role may write
     "trust_check_payment_hold()",  # locks the hold's lease, which the app can't
 }

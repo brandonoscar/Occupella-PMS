@@ -6,7 +6,8 @@ usage: PYTHONPATH=src python frontend/e2e/seed.py > frontend/e2e/.seed.json
 Last month's rent goes to the owner's two properties, so the statement the owner portal shows
 first (last month) has postings. A second owner's property has a tenant on a lease, with last
 month's rent paid, this month's due and a maintenance request; a vacant unit there has an open
-application link. Every name is synthetic.
+application link. For lease offers, another vacant unit has an approved application, and a
+third unit a tenant on a month-to-month lease to renew. Every name is synthetic.
 """
 
 import json
@@ -139,6 +140,58 @@ def main() -> None:
             " VALUES (%s, %s, %s, 'The back door sticks', true)",
             (pmc, lease, renter),
         )
+        # Lease offers: an approved application for a vacant unit, a tenant whose lease is to be
+        # renewed, and a staff member of their own to offer both.
+        offers_staff = one(
+            "INSERT INTO trust_staff (pmc_id, display_name) VALUES (%s, 'Offers E2E') RETURNING id",
+            (pmc,),
+        )
+        unit_four = one(
+            "INSERT INTO trust_units (pmc_id, property_id, display_name)"
+            " VALUES (%s, %s, 'E2E Unit 4') RETURNING id",
+            (pmc, prop_three),
+        )
+        link_four = one(
+            "INSERT INTO trust_application_links"
+            " (pmc_id, unit_id, token_sha256, monthly_rent, opened_by)"
+            " VALUES (%s, %s, %s, 1100.00, %s) RETURNING id",
+            (pmc, unit_four, accounts.digest(secrets.token_urlsafe(32)), offers_staff),
+        )
+        approved = one(
+            "INSERT INTO trust_applications"
+            " (pmc_id, link_id, status_token_sha256, move_in_on, monthly_income)"
+            " VALUES (%s, %s, %s, %s, 4000.00) RETURNING id",
+            (
+                pmc,
+                link_four,
+                accounts.digest(secrets.token_urlsafe(32)),
+                today.date() + timedelta(days=30),
+            ),
+        )
+        conn.execute(
+            "INSERT INTO trust_applicants (pmc_id, application_id, position, display_name, email)"
+            " VALUES (%s, %s, 1, 'Mover E2E', %s)",
+            (pmc, approved, f"mover.{tag}@example.com"),
+        )
+        conn.execute(
+            "INSERT INTO trust_application_decisions"
+            " (pmc_id, application_id, decision, decided_by) VALUES (%s, %s, 'approved', %s)",
+            (pmc, approved, offers_staff),
+        )
+        unit_three = one(
+            "INSERT INTO trust_units (pmc_id, property_id, display_name)"
+            " VALUES (%s, %s, 'E2E Unit 3') RETURNING id",
+            (pmc, prop_three),
+        )
+        renewer = one(
+            "INSERT INTO trust_tenants (pmc_id, property_id, display_name)"
+            " VALUES (%s, %s, 'Renewer E2E') RETURNING id",
+            (pmc, prop_three),
+        )
+        conn.execute(
+            "SELECT trust_open_lease(%s, %s, %s, NULL, 1000.00, %s::uuid[])",
+            (pmc, unit_three, first_of_last_month, [renewer]),
+        )
         owner_email, staff_email = f"owner.{tag}@example.com", f"staff.{tag}@example.com"
         seeded = {
             "pmc_id": str(pmc),
@@ -155,6 +208,12 @@ def main() -> None:
             "leasing_email": f"leasing.{tag}@example.com",
             "leasing_invite": accounts.create_invite(
                 conn, pmc, "staff", leasing_staff, f"leasing.{tag}@example.com", None
+            ).token,
+            "offers_invite": accounts.create_invite(
+                conn, pmc, "staff", offers_staff, f"offers.{tag}@example.com", None
+            ).token,
+            "renewer_invite": accounts.create_invite(
+                conn, pmc, "tenant", renewer, f"renewer.{tag}@example.com", None
             ).token,
             "renter_email": f"renter.{tag}@example.com",
             "renter_invite": accounts.create_invite(

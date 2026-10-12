@@ -1119,6 +1119,47 @@ $$;
 
 
 --
+-- Name: trust_check_lease_offer(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_lease_offer() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_unit uuid;
+    v_starts date;
+BEGIN
+    IF NEW.application_id IS NOT NULL THEN
+        SELECT l.unit_id INTO v_unit
+        FROM trust_applications AS a
+        JOIN trust_application_links AS l ON l.id = a.link_id
+        JOIN trust_application_decisions AS d ON d.application_id = a.id
+        WHERE a.id = NEW.application_id AND d.decision IN ('approved', 'conditional');
+        IF NOT FOUND THEN
+            RAISE EXCEPTION 'trust: application % is not approved; offer it no lease',
+                NEW.application_id
+                USING ERRCODE = 'check_violation';
+        END IF;
+    ELSE
+        SELECT l.unit_id, l.starts_on INTO v_unit, v_starts
+        FROM trust_leases AS l WHERE l.id = NEW.renews_lease_id;
+        IF NEW.starts_on <= v_starts THEN
+            RAISE EXCEPTION 'trust: a renewal of lease % starts after %', NEW.renews_lease_id,
+                v_starts
+                USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+    IF NEW.unit_id IS DISTINCT FROM v_unit THEN
+        RAISE EXCEPTION 'trust: the offer is for unit %, not %', v_unit, NEW.unit_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_payment_hold(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1277,6 +1318,95 @@ BEGIN
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_complete_lease_offer(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_complete_lease_offer(p_pmc_id uuid, p_offer_id uuid, p_completed_by uuid) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_offer trust_lease_offers;
+    v_lease uuid;
+    v_old trust_leases;
+    v_tenants uuid[];
+BEGIN
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'trust: complete lease offers at READ COMMITTED, not %',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
+    SELECT o.* INTO v_offer FROM trust_lease_offers AS o
+    WHERE o.id = p_offer_id AND o.pmc_id = p_pmc_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no lease offer % in PMC %', p_offer_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Offers for one application or one lease wait for each other.
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+        'lease offer of ' || coalesce(v_offer.application_id, v_offer.renews_lease_id), 0
+    ));
+
+    SELECT c.lease_id INTO v_lease FROM trust_lease_offer_completions AS c
+    WHERE c.offer_id = p_offer_id;
+    IF FOUND THEN
+        RETURN v_lease;
+    END IF;
+    IF EXISTS (
+        SELECT s.position FROM trust_lease_offer_signers AS s
+        WHERE s.offer_id = p_offer_id AND NOT EXISTS (
+            SELECT g.position FROM trust_signatures AS g
+            WHERE g.offer_id = s.offer_id AND g.position = s.position
+        )
+    ) OR NOT EXISTS (
+        SELECT s.position FROM trust_lease_offer_signers AS s WHERE s.offer_id = p_offer_id
+    ) THEN
+        RAISE EXCEPTION 'trust: lease offer % is not signed by everyone yet', p_offer_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (
+        SELECT o.id FROM trust_lease_offers AS o
+        JOIN trust_lease_offer_completions AS c ON c.offer_id = o.id
+        WHERE o.application_id = v_offer.application_id
+           OR o.renews_lease_id = v_offer.renews_lease_id
+    ) THEN
+        RAISE EXCEPTION 'trust: another offer for this % became its lease already',
+            CASE WHEN v_offer.application_id IS NULL THEN 'lease' ELSE 'application' END
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    IF v_offer.application_id IS NOT NULL THEN
+        WITH made AS (
+            INSERT INTO trust_tenants (pmc_id, property_id, display_name)
+            SELECT p_pmc_id, u.property_id, s.display_name
+            FROM trust_lease_offer_signers AS s
+            JOIN trust_units AS u ON u.id = v_offer.unit_id
+            WHERE s.offer_id = p_offer_id
+            ORDER BY s.position
+            RETURNING id
+        )
+        SELECT array_agg(m.id) INTO v_tenants FROM made AS m;
+    ELSE
+        SELECT l.* INTO v_old FROM trust_leases AS l WHERE l.id = v_offer.renews_lease_id;
+        SELECT array_agg(t.tenant_id) INTO v_tenants
+        FROM trust_lease_tenants AS t WHERE t.lease_id = v_old.id;
+        IF v_old.ends_on IS NULL OR v_old.ends_on >= v_offer.starts_on THEN
+            PERFORM trust_end_lease(p_pmc_id, v_old.id, v_offer.starts_on - 1);
+        END IF;
+    END IF;
+
+    v_lease := trust_open_lease(
+        p_pmc_id, v_offer.unit_id, v_offer.starts_on, v_offer.ends_on, v_offer.monthly_rent,
+        v_tenants
+    );
+    INSERT INTO trust_lease_offer_completions (pmc_id, offer_id, lease_id, completed_by)
+    VALUES (p_pmc_id, p_offer_id, v_lease, p_completed_by);
+    RETURN v_lease;
 END;
 $$;
 
@@ -4131,6 +4261,60 @@ CREATE TABLE public.trust_late_fees (
 
 
 --
+-- Name: trust_lease_offer_completions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_offer_completions (
+    offer_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    completed_by uuid NOT NULL,
+    completed_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: trust_lease_offer_signers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_offer_signers (
+    offer_id uuid NOT NULL,
+    "position" bigint NOT NULL,
+    pmc_id uuid NOT NULL,
+    display_name text NOT NULL,
+    email text NOT NULL,
+    CONSTRAINT trust_lease_offer_signers_display_name_check CHECK (((display_name ~ '\S'::text) AND (length(display_name) <= 200))),
+    CONSTRAINT trust_lease_offer_signers_email_check CHECK (((email = lower(email)) AND (email ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'::text) AND (length(email) <= 254))),
+    CONSTRAINT trust_lease_offer_signers_position_check CHECK ((("position" >= 1) AND ("position" <= 6)))
+);
+
+
+--
+-- Name: trust_lease_offers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_offers (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    application_id uuid,
+    renews_lease_id uuid,
+    unit_id uuid NOT NULL,
+    starts_on date NOT NULL,
+    ends_on date,
+    monthly_rent numeric NOT NULL,
+    document_title text NOT NULL,
+    document bytea NOT NULL,
+    offered_by uuid NOT NULL,
+    offered_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_lease_offers_check CHECK (((application_id IS NULL) <> (renews_lease_id IS NULL))),
+    CONSTRAINT trust_lease_offers_check1 CHECK ((ends_on >= starts_on)),
+    CONSTRAINT trust_lease_offers_document_check CHECK ((((length(document) >= 5) AND (length(document) <= 5000000)) AND (SUBSTRING(document FROM 1 FOR 5) = '\x255044462d'::bytea))),
+    CONSTRAINT trust_lease_offers_document_title_check CHECK (((document_title ~ '\S'::text) AND (length(document_title) <= 200))),
+    CONSTRAINT trust_lease_offers_monthly_rent_check CHECK ((monthly_rent > (0)::numeric))
+);
+
+
+--
 -- Name: trust_lease_tenants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4507,6 +4691,35 @@ CREATE TABLE public.trust_sessions (
 
 
 --
+-- Name: trust_signature_requests; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_signature_requests (
+    offer_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    partner text NOT NULL,
+    partner_reference text NOT NULL,
+    sent_by uuid NOT NULL,
+    sent_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_signature_requests_partner_check CHECK ((partner ~ '\S'::text)),
+    CONSTRAINT trust_signature_requests_partner_reference_check CHECK ((partner_reference ~ '\S'::text))
+);
+
+
+--
+-- Name: trust_signatures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_signatures (
+    offer_id uuid NOT NULL,
+    "position" bigint NOT NULL,
+    pmc_id uuid NOT NULL,
+    signed_at timestamp with time zone NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: trust_staff; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4875,6 +5088,54 @@ ALTER TABLE ONLY public.trust_late_fees
 
 
 --
+-- Name: trust_lease_offer_completions trust_lease_offer_completions_lease_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_completions
+    ADD CONSTRAINT trust_lease_offer_completions_lease_id_key UNIQUE (lease_id);
+
+
+--
+-- Name: trust_lease_offer_completions trust_lease_offer_completions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_completions
+    ADD CONSTRAINT trust_lease_offer_completions_pkey PRIMARY KEY (offer_id);
+
+
+--
+-- Name: trust_lease_offer_signers trust_lease_offer_signers_offer_id_email_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_signers
+    ADD CONSTRAINT trust_lease_offer_signers_offer_id_email_key UNIQUE (offer_id, email);
+
+
+--
+-- Name: trust_lease_offer_signers trust_lease_offer_signers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_signers
+    ADD CONSTRAINT trust_lease_offer_signers_pkey PRIMARY KEY (offer_id, "position");
+
+
+--
+-- Name: trust_lease_offers trust_lease_offers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offers
+    ADD CONSTRAINT trust_lease_offers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_lease_offers trust_lease_offers_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offers
+    ADD CONSTRAINT trust_lease_offers_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_lease_tenants trust_lease_tenants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5211,6 +5472,22 @@ ALTER TABLE ONLY public.trust_sessions
 
 
 --
+-- Name: trust_signature_requests trust_signature_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signature_requests
+    ADD CONSTRAINT trust_signature_requests_pkey PRIMARY KEY (offer_id);
+
+
+--
+-- Name: trust_signatures trust_signatures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signatures
+    ADD CONSTRAINT trust_signatures_pkey PRIMARY KEY (offer_id, "position");
+
+
+--
 -- Name: trust_staff trust_staff_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5401,6 +5678,20 @@ CREATE UNIQUE INDEX trust_charges_one_rent_per_due_date ON public.trust_charges 
 --
 
 CREATE INDEX trust_late_fees_policy_id ON public.trust_late_fees USING btree (policy_id);
+
+
+--
+-- Name: trust_lease_offers_application_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_offers_application_id ON public.trust_lease_offers USING btree (application_id);
+
+
+--
+-- Name: trust_lease_offers_renews_lease_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_offers_renews_lease_id ON public.trust_lease_offers USING btree (renews_lease_id);
 
 
 --
@@ -5740,6 +6031,27 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_lease_offer_completions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_offer_completions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_lease_offer_signers trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_offer_signers FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_lease_offers trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_offers FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_lease_tenants trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5863,6 +6175,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_screenings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_signature_requests trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_signature_requests FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_signatures trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_signatures FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -6010,6 +6336,27 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_late
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_late_fees FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_lease_offer_completions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_offer_completions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_lease_offer_signers trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_offer_signers FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_lease_offers trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_offers FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -6181,6 +6528,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_sess
 
 
 --
+-- Name: trust_signature_requests trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_signature_requests FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_signatures trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_signatures FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_staff trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -6283,6 +6644,13 @@ CREATE TRIGGER trust_closed_period BEFORE INSERT ON public.pgledger_transfers FO
 --
 
 CREATE TRIGGER trust_closed_through BEFORE INSERT OR UPDATE OF closed_through ON public.trust_bank_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_moving_closed_through();
+
+
+--
+-- Name: trust_lease_offers trust_lease_offer_terms; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_lease_offer_terms BEFORE INSERT ON public.trust_lease_offers FOR EACH ROW EXECUTE FUNCTION public.trust_check_lease_offer();
 
 
 --
@@ -6716,6 +7084,94 @@ ALTER TABLE ONLY public.trust_late_fees
 
 ALTER TABLE ONLY public.trust_late_fees
     ADD CONSTRAINT trust_late_fees_policy_id_fkey FOREIGN KEY (policy_id) REFERENCES public.trust_late_fee_policies(id);
+
+
+--
+-- Name: trust_lease_offer_completions trust_lease_offer_completions_pmc_id_completed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_completions
+    ADD CONSTRAINT trust_lease_offer_completions_pmc_id_completed_by_fkey FOREIGN KEY (pmc_id, completed_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_lease_offer_completions trust_lease_offer_completions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_completions
+    ADD CONSTRAINT trust_lease_offer_completions_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_offer_completions trust_lease_offer_completions_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_completions
+    ADD CONSTRAINT trust_lease_offer_completions_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_lease_offer_completions trust_lease_offer_completions_pmc_id_offer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_completions
+    ADD CONSTRAINT trust_lease_offer_completions_pmc_id_offer_id_fkey FOREIGN KEY (pmc_id, offer_id) REFERENCES public.trust_lease_offers(pmc_id, id);
+
+
+--
+-- Name: trust_lease_offer_signers trust_lease_offer_signers_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_signers
+    ADD CONSTRAINT trust_lease_offer_signers_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_offer_signers trust_lease_offer_signers_pmc_id_offer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_signers
+    ADD CONSTRAINT trust_lease_offer_signers_pmc_id_offer_id_fkey FOREIGN KEY (pmc_id, offer_id) REFERENCES public.trust_lease_offers(pmc_id, id);
+
+
+--
+-- Name: trust_lease_offers trust_lease_offers_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offers
+    ADD CONSTRAINT trust_lease_offers_pmc_id_application_id_fkey FOREIGN KEY (pmc_id, application_id) REFERENCES public.trust_applications(pmc_id, id);
+
+
+--
+-- Name: trust_lease_offers trust_lease_offers_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offers
+    ADD CONSTRAINT trust_lease_offers_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_offers trust_lease_offers_pmc_id_offered_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offers
+    ADD CONSTRAINT trust_lease_offers_pmc_id_offered_by_fkey FOREIGN KEY (pmc_id, offered_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_lease_offers trust_lease_offers_pmc_id_renews_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offers
+    ADD CONSTRAINT trust_lease_offers_pmc_id_renews_lease_id_fkey FOREIGN KEY (pmc_id, renews_lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_lease_offers trust_lease_offers_pmc_id_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offers
+    ADD CONSTRAINT trust_lease_offers_pmc_id_unit_id_fkey FOREIGN KEY (pmc_id, unit_id) REFERENCES public.trust_units(pmc_id, id);
 
 
 --
@@ -7271,6 +7727,62 @@ ALTER TABLE ONLY public.trust_sessions
 
 
 --
+-- Name: trust_signature_requests trust_signature_requests_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signature_requests
+    ADD CONSTRAINT trust_signature_requests_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_signature_requests trust_signature_requests_pmc_id_offer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signature_requests
+    ADD CONSTRAINT trust_signature_requests_pmc_id_offer_id_fkey FOREIGN KEY (pmc_id, offer_id) REFERENCES public.trust_lease_offers(pmc_id, id);
+
+
+--
+-- Name: trust_signature_requests trust_signature_requests_pmc_id_sent_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signature_requests
+    ADD CONSTRAINT trust_signature_requests_pmc_id_sent_by_fkey FOREIGN KEY (pmc_id, sent_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_signatures trust_signatures_offer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signatures
+    ADD CONSTRAINT trust_signatures_offer_id_fkey FOREIGN KEY (offer_id) REFERENCES public.trust_signature_requests(offer_id);
+
+
+--
+-- Name: trust_signatures trust_signatures_offer_id_position_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signatures
+    ADD CONSTRAINT trust_signatures_offer_id_position_fkey FOREIGN KEY (offer_id, "position") REFERENCES public.trust_lease_offer_signers(offer_id, "position");
+
+
+--
+-- Name: trust_signatures trust_signatures_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signatures
+    ADD CONSTRAINT trust_signatures_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_signatures trust_signatures_pmc_id_offer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signatures
+    ADD CONSTRAINT trust_signatures_pmc_id_offer_id_fkey FOREIGN KEY (pmc_id, offer_id) REFERENCES public.trust_lease_offers(pmc_id, id);
+
+
+--
 -- Name: trust_staff trust_staff_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7407,4 +7919,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261010000027'),
     ('20261011000028'),
     ('20261011000029'),
-    ('20261011000030');
+    ('20261011000030'),
+    ('20261011000031');
