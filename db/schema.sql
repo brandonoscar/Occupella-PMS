@@ -884,10 +884,10 @@ $$;
 
 
 --
--- Name: trust_bank_match_closed(timestamp with time zone, uuid[], text[]); Type: FUNCTION; Schema: public; Owner: -
+-- Name: trust_bank_match_closed(timestamp with time zone, uuid[], text[], uuid[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.trust_bank_match_closed(p_closed_through timestamp with time zone, p_line_ids uuid[], p_transfer_ids text[]) RETURNS boolean
+CREATE FUNCTION public.trust_bank_match_closed(p_closed_through timestamp with time zone, p_line_ids uuid[], p_transfer_ids text[], p_item_ids uuid[]) RETURNS boolean
     LANGUAGE sql STABLE
     SET search_path TO 'public', 'pg_temp'
     AS $$
@@ -900,6 +900,12 @@ CREATE FUNCTION public.trust_bank_match_closed(p_closed_through timestamp with t
        AND NOT EXISTS (
            SELECT tr.id FROM pgledger_transfers AS tr
            WHERE tr.id = ANY (p_transfer_ids) AND tr.event_at >= p_closed_through
+       )
+       AND NOT EXISTS (
+           SELECT i.id FROM trust_cutover_items AS i
+           JOIN trust_opening_balances AS o ON o.bank_account_id = i.bank_account_id
+           WHERE i.id = ANY (p_item_ids)
+             AND o.opened_on >= (p_closed_through AT TIME ZONE 'UTC')::date
        )
 $$;
 
@@ -1088,7 +1094,7 @@ CREATE FUNCTION public.trust_check_bank_statement() RETURNS trigger
     AS $$
 DECLARE
     v_last trust_bank_statements;
-    v_closed timestamptz;
+    v_bank trust_bank_accounts;
 BEGIN
     -- Statements of one bank account wait for each other.
     PERFORM pg_advisory_xact_lock(hashtextextended('bank statements of ' || NEW.bank_account_id, 0));
@@ -1113,11 +1119,15 @@ BEGIN
             USING ERRCODE = 'check_violation',
                   HINT = 'Bring its opening balance in as its first line.';
     END IF;
-    SELECT b.closed_through INTO v_closed FROM trust_bank_accounts AS b
-    WHERE b.id = NEW.bank_account_id;
-    IF NEW.first_day < (v_closed AT TIME ZONE 'UTC')::date THEN
+    SELECT b.* INTO v_bank FROM trust_bank_accounts AS b WHERE b.id = NEW.bank_account_id;
+    IF NEW.first_day < (v_bank.closed_through AT TIME ZONE 'UTC')::date THEN
         RAISE EXCEPTION 'trust: trust bank account % is closed through %; a statement starts '
-            'no earlier', NEW.bank_account_id, v_closed
+            'no earlier', NEW.bank_account_id, v_bank.closed_through
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.first_day < (v_bank.opened_at AT TIME ZONE 'UTC')::date THEN
+        RAISE EXCEPTION 'trust: trust bank account % opened on %; a statement starts no earlier',
+            NEW.bank_account_id, (v_bank.opened_at AT TIME ZONE 'UTC')::date
             USING ERRCODE = 'check_violation';
     END IF;
     IF NEW.last_day > (now() AT TIME ZONE 'UTC')::date THEN
@@ -1252,6 +1262,42 @@ BEGIN
         WHERE s.work_order_id = NEW.work_order_id AND s.step = 'cancelled'
     ) THEN
         RAISE EXCEPTION 'trust: work order % was cancelled; it takes no bills', NEW.work_order_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_cutover_entry(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_cutover_entry() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_opened date;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('cutover of ' || NEW.bank_account_id, 0));
+    SELECT o.opened_on INTO v_opened FROM trust_opening_balances AS o
+    WHERE o.bank_account_id = NEW.bank_account_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: trust bank account % has no opening balances to carry over to',
+            NEW.bank_account_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (SELECT s.bank_account_id FROM trust_cutover_signoffs AS s
+               WHERE s.bank_account_id = NEW.bank_account_id) THEN
+        RAISE EXCEPTION 'trust: the cutover of trust bank account % is signed off already',
+            NEW.bank_account_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF TG_TABLE_NAME = 'trust_cutover_items' AND (to_jsonb(NEW) ->> 'issued_on')::date > v_opened
+    THEN
+        RAISE EXCEPTION 'trust: an item carried over was issued by the cutover, %, not %',
+            v_opened, to_jsonb(NEW) ->> 'issued_on'
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
@@ -1875,10 +1921,10 @@ $$;
 
 
 --
--- Name: trust_match_bank_lines(uuid, uuid, uuid[], text[], uuid); Type: FUNCTION; Schema: public; Owner: -
+-- Name: trust_match_bank_lines(uuid, uuid, uuid[], text[], uuid[], uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.trust_match_bank_lines(p_pmc_id uuid, p_bank_account_id uuid, p_line_ids uuid[], p_transfer_ids text[], p_matched_by uuid) RETURNS uuid
+CREATE FUNCTION public.trust_match_bank_lines(p_pmc_id uuid, p_bank_account_id uuid, p_line_ids uuid[], p_transfer_ids text[], p_item_ids uuid[], p_matched_by uuid) RETURNS uuid
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public', 'pg_temp'
     AS $$
@@ -1886,19 +1932,21 @@ DECLARE
     v_bank trust_bank_accounts := trust_lock_bank_matches(p_pmc_id, p_bank_account_id);
     v_lines uuid[] := coalesce(p_line_ids, '{}');
     v_transfers text[] := coalesce(p_transfer_ids, '{}');
+    v_items uuid[] := coalesce(p_item_ids, '{}');
     v_unmoved text;
     v_line_total numeric;
-    v_cash_total numeric;
+    v_book_total numeric;
     v_id uuid;
 BEGIN
-    IF cardinality(v_lines) + cardinality(v_transfers) = 0 THEN
-        RAISE EXCEPTION 'trust: a match holds at least one line or transfer'
+    IF cardinality(v_lines) + cardinality(v_transfers) + cardinality(v_items) = 0 THEN
+        RAISE EXCEPTION 'trust: a match holds at least one line, transfer or cutover item'
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     IF cardinality(v_lines) <> (SELECT count(DISTINCT x) FROM unnest(v_lines) AS x)
         OR cardinality(v_transfers) <> (SELECT count(DISTINCT x) FROM unnest(v_transfers) AS x)
+        OR cardinality(v_items) <> (SELECT count(DISTINCT x) FROM unnest(v_items) AS x)
     THEN
-        RAISE EXCEPTION 'trust: a match names each line and transfer once'
+        RAISE EXCEPTION 'trust: a match names each line, transfer and item once'
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     IF cardinality(v_lines) <> (
@@ -1907,6 +1955,14 @@ BEGIN
         WHERE l.id = ANY (v_lines) AND s.bank_account_id = p_bank_account_id
     ) THEN
         RAISE EXCEPTION 'trust: a line named is not on a statement of trust bank account %',
+            p_bank_account_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF cardinality(v_items) <> (
+        SELECT count(*) FROM trust_cutover_items AS i
+        WHERE i.id = ANY (v_items) AND i.bank_account_id = p_bank_account_id
+    ) THEN
+        RAISE EXCEPTION 'trust: an item named was not carried over into trust bank account %',
             p_bank_account_id
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
@@ -1928,21 +1984,39 @@ BEGIN
         WHERE mt.transfer_id = ANY (v_transfers) AND m.bank_account_id = p_bank_account_id
           AND NOT EXISTS (SELECT u.match_id FROM trust_bank_unmatches AS u
                           WHERE u.match_id = mt.match_id)
+    ) OR EXISTS (
+        SELECT mi.item_id FROM trust_bank_match_cutover_items AS mi
+        WHERE mi.item_id = ANY (v_items) AND mi.side = 'cleared'
+          AND NOT EXISTS (SELECT u.match_id FROM trust_bank_unmatches AS u
+                          WHERE u.match_id = mi.match_id)
     ) THEN
-        RAISE EXCEPTION 'trust: a line or transfer named is matched already'
+        RAISE EXCEPTION 'trust: a line, transfer or item named is matched already'
             USING ERRCODE = 'check_violation',
                   HINT = 'Undo that match first.';
     END IF;
+    IF cardinality(v_items) <> (
+        SELECT count(DISTINCT mi.item_id) FROM trust_bank_match_cutover_items AS mi
+        WHERE mi.item_id = ANY (v_items) AND mi.side = 'carried'
+          AND NOT EXISTS (SELECT u.match_id FROM trust_bank_unmatches AS u
+                          WHERE u.match_id = mi.match_id)
+    ) THEN
+        RAISE EXCEPTION 'trust: an item carried over clears once the opening is matched'
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Match the balance brought forward to the opening first.';
+    END IF;
     SELECT coalesce(sum(l.amount), 0) INTO v_line_total
     FROM trust_bank_statement_lines AS l WHERE l.id = ANY (v_lines);
-    SELECT coalesce(sum(trust_bank_cash_moved(p_bank_account_id, x)), 0) INTO v_cash_total
+    SELECT coalesce(sum(trust_bank_cash_moved(p_bank_account_id, x)), 0)
+           + coalesce((SELECT sum(i.amount) FROM trust_cutover_items AS i
+                       WHERE i.id = ANY (v_items)), 0)
+    INTO v_book_total
     FROM unnest(v_transfers) AS x;
-    IF v_line_total <> v_cash_total THEN
-        RAISE EXCEPTION 'trust: the lines come to % and the transfers to %; a match comes to the '
-            'same on both sides', v_line_total, v_cash_total
+    IF v_line_total <> v_book_total THEN
+        RAISE EXCEPTION 'trust: the lines come to % and the transfers and items to %; a match '
+            'comes to the same on both sides', v_line_total, v_book_total
             USING ERRCODE = 'check_violation';
     END IF;
-    IF trust_bank_match_closed(v_bank.closed_through, v_lines, v_transfers) THEN
+    IF trust_bank_match_closed(v_bank.closed_through, v_lines, v_transfers, v_items) THEN
         RAISE EXCEPTION 'trust: trust bank account % is closed through %; this match would '
             'change a reconciliation already approved', p_bank_account_id, v_bank.closed_through
             USING ERRCODE = 'check_violation';
@@ -1955,6 +2029,89 @@ BEGIN
     SELECT v_id, x, p_pmc_id FROM unnest(v_lines) AS x;
     INSERT INTO trust_bank_match_transfers (match_id, transfer_id, pmc_id)
     SELECT v_id, x, p_pmc_id FROM unnest(v_transfers) AS x;
+    INSERT INTO trust_bank_match_cutover_items (match_id, item_id, side, pmc_id)
+    SELECT v_id, x, 'cleared', p_pmc_id FROM unnest(v_items) AS x;
+    RETURN v_id;
+END;
+$$;
+
+
+--
+-- Name: trust_match_cutover_opening(uuid, uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_match_cutover_opening(p_pmc_id uuid, p_bank_account_id uuid, p_line_id uuid, p_matched_by uuid) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bank trust_bank_accounts := trust_lock_bank_matches(p_pmc_id, p_bank_account_id);
+    v_opening trust_opening_balances;
+    v_items uuid[];
+    v_line numeric;
+    v_carried numeric;
+    v_id uuid;
+BEGIN
+    SELECT o.* INTO v_opening FROM trust_opening_balances AS o
+    WHERE o.bank_account_id = p_bank_account_id;
+    IF NOT FOUND OR NOT EXISTS (
+        SELECT s.bank_account_id FROM trust_cutover_signoffs AS s
+        WHERE s.bank_account_id = p_bank_account_id
+    ) THEN
+        RAISE EXCEPTION 'trust: trust bank account % has no signed-off cutover to match',
+            p_bank_account_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT l.amount INTO v_line FROM trust_bank_statement_lines AS l
+    JOIN trust_bank_statements AS s ON s.id = l.statement_id
+    WHERE l.id = p_line_id AND s.bank_account_id = p_bank_account_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: the line named is not on a statement of trust bank account %',
+            p_bank_account_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT coalesce(array_agg(i.id ORDER BY i.id), '{}'), coalesce(sum(i.amount), 0)
+    INTO v_items, v_carried
+    FROM trust_cutover_items AS i WHERE i.bank_account_id = p_bank_account_id;
+    IF EXISTS (
+        SELECT ml.line_id FROM trust_bank_match_lines AS ml
+        WHERE ml.line_id = p_line_id
+          AND NOT EXISTS (SELECT u.match_id FROM trust_bank_unmatches AS u
+                          WHERE u.match_id = ml.match_id)
+    ) OR EXISTS (
+        SELECT mt.transfer_id FROM trust_bank_match_transfers AS mt
+        JOIN trust_bank_matches AS m ON m.id = mt.match_id
+        WHERE mt.transfer_id = ANY (v_opening.transfer_ids)
+          AND m.bank_account_id = p_bank_account_id
+          AND NOT EXISTS (SELECT u.match_id FROM trust_bank_unmatches AS u
+                          WHERE u.match_id = mt.match_id)
+    ) THEN
+        RAISE EXCEPTION 'trust: the line or the opening is matched already'
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Undo that match first.';
+    END IF;
+    IF v_line <> v_opening.book_cash - v_carried THEN
+        RAISE EXCEPTION 'trust: the balance brought forward is %; the opening balances (%) less '
+            'the items not yet cleared (%) come to %', v_line, v_opening.book_cash, v_carried,
+            v_opening.book_cash - v_carried
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF trust_bank_match_closed(v_bank.closed_through, ARRAY[p_line_id],
+                               v_opening.transfer_ids, v_items) THEN
+        RAISE EXCEPTION 'trust: trust bank account % is closed through %; this match would '
+            'change a reconciliation already approved', p_bank_account_id, v_bank.closed_through
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    INSERT INTO trust_bank_matches (pmc_id, bank_account_id, matched_by)
+    VALUES (p_pmc_id, p_bank_account_id, p_matched_by)
+    RETURNING id INTO v_id;
+    INSERT INTO trust_bank_match_lines (match_id, line_id, pmc_id)
+    VALUES (v_id, p_line_id, p_pmc_id);
+    INSERT INTO trust_bank_match_transfers (match_id, transfer_id, pmc_id)
+    SELECT v_id, x, p_pmc_id FROM unnest(v_opening.transfer_ids) AS x;
+    INSERT INTO trust_bank_match_cutover_items (match_id, item_id, side, pmc_id)
+    SELECT v_id, x, 'carried', p_pmc_id FROM unnest(v_items) AS x;
     RETURN v_id;
 END;
 $$;
@@ -2915,6 +3072,18 @@ BEGIN
               WHERE mt.match_id = m.id AND tr.event_at >= v_end
           )
     ),
+    -- Items carried over that a cleared opening match carries and no cleared match clears.
+    carried AS (
+        SELECT i.id, i.issued_on, i.amount, i.description, i.reference
+        FROM trust_cutover_items AS i
+        WHERE i.bank_account_id = p_bank_account_id
+          AND EXISTS (SELECT mi.item_id FROM trust_bank_match_cutover_items AS mi
+                      JOIN cleared AS c ON c.id = mi.match_id
+                      WHERE mi.item_id = i.id AND mi.side = 'carried')
+          AND NOT EXISTS (SELECT mi.item_id FROM trust_bank_match_cutover_items AS mi
+                          JOIN cleared AS c ON c.id = mi.match_id
+                          WHERE mi.item_id = i.id AND mi.side = 'cleared')
+    ),
     outstanding AS (
         SELECT mv.* FROM moved AS mv
         WHERE NOT EXISTS (
@@ -2931,11 +3100,16 @@ BEGIN
             WHERE ml.line_id = ln.id
         )
     ),
+    uncleared AS (
+        SELECT o.cash AS amount FROM outstanding AS o
+        UNION ALL
+        SELECT ci.amount FROM carried AS ci
+    ),
     totals AS (
         SELECT (SELECT coalesce(sum(ln.amount), 0) FROM lines AS ln) AS bank,
-               (SELECT coalesce(sum(o.cash), 0) FROM outstanding AS o WHERE o.cash > 0)
+               (SELECT coalesce(sum(u.amount), 0) FROM uncleared AS u WHERE u.amount > 0)
                    AS in_transit,
-               (SELECT coalesce(sum(o.cash), 0) FROM outstanding AS o WHERE o.cash < 0)
+               (SELECT coalesce(sum(u.amount), 0) FROM uncleared AS u WHERE u.amount < 0)
                    AS outstanding,
                (SELECT coalesce(sum(mv.cash), 0) FROM moved AS mv) AS book
     ),
@@ -2972,6 +3146,14 @@ BEGIN
                o.cash AS amount, o.event_at::text AS happened, o.id::text AS id
         FROM outstanding AS o
         UNION ALL
+        SELECT CASE WHEN ci.amount > 0 THEN 1 ELSE 2 END,
+               CASE WHEN ci.amount > 0 THEN 'deposit in transit' ELSE 'outstanding withdrawal'
+               END,
+               to_char(ci.issued_on, 'YYYY-MM-DD') || ' ' || ci.description
+                   || coalesce(' (' || ci.reference || ')', '') || ', from before the cutover',
+               ci.amount, ci.issued_on::text, ci.id::text
+        FROM carried AS ci
+        UNION ALL
         SELECT 3, 'bank line not in the books',
                to_char(ms.posted_on, 'YYYY-MM-DD') || ' ' || ms.description
                    || coalesce(' (' || ms.bank_reference || ')', ''),
@@ -2985,6 +3167,104 @@ BEGIN
            )::integer,
            i.item, i.detail, i.amount
     FROM items AS i
+    ORDER BY 1;
+END;
+$$;
+
+
+--
+-- Name: trust_report_cutover(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_cutover(p_pmc_id uuid, p_bank_account_id uuid) RETURNS TABLE(line integer, item text, detail text, amount numeric)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_opening trust_opening_balances;
+BEGIN
+    SELECT o.* INTO v_opening FROM trust_opening_balances AS o
+    WHERE o.bank_account_id = p_bank_account_id AND o.pmc_id = p_pmc_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: trust bank account % of PMC % has no opening balances',
+            p_bank_account_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    RETURN QUERY
+    WITH balances AS (
+        SELECT b.key AS account, (b.value #>> '{}')::numeric AS amount,
+               t.kind || ': ' || CASE t.kind
+                   WHEN 'owner_property' THEN o.display_name || ' / ' || pr.display_name
+                   WHEN 'vendor_payable' THEN v.display_name
+                   WHEN 'pmc_income' THEN pmc.display_name
+                   ELSE tn.display_name
+               END AS holder
+        FROM jsonb_each(v_opening.balances) AS b
+        JOIN trust_ledger_accounts AS t ON t.ledger_account_id = b.key
+        JOIN trust_pmcs AS pmc ON pmc.pmc_id = t.pmc_id
+        LEFT JOIN trust_owners AS o ON o.id = t.owner_id
+        LEFT JOIN trust_properties AS pr ON pr.id = t.property_id
+        LEFT JOIN trust_tenants AS tn ON tn.id = t.tenant_id
+        LEFT JOIN trust_vendors AS v ON v.id = t.vendor_id
+    ),
+    carried AS (
+        SELECT i.* FROM trust_cutover_items AS i WHERE i.bank_account_id = p_bank_account_id
+    ),
+    lines AS (
+        SELECT 0 AS section, 1 AS n, 'PMC' AS item, p.display_name AS detail,
+               NULL::numeric AS amount, NULL::text AS sort, NULL::text AS id
+        FROM trust_pmcs AS p WHERE p.pmc_id = p_pmc_id
+        UNION ALL
+        SELECT 0, 2, 'trust bank account', b.display_name || ' (' || b.kind || ')', NULL, NULL,
+               NULL
+        FROM trust_bank_accounts AS b WHERE b.id = p_bank_account_id
+        UNION ALL
+        SELECT 0, 3, 'cutover', to_char(v_opening.opened_on, 'YYYY-MM-DD')
+                   || ' (opening balances at the start of the day, UTC)', NULL, NULL, NULL
+        UNION ALL
+        SELECT 0, 4, 'entered by', v_opening.entered_by || ' at '
+                   || to_char(v_opening.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
+                   || ' UTC', NULL, NULL, NULL
+        UNION ALL
+        SELECT 0, 5, 'old system''s book cash', NULL, v_opening.book_cash, NULL, NULL
+        UNION ALL
+        SELECT 1, 0, 'opening balance', b.holder, b.amount, b.holder, b.account
+        FROM balances AS b
+        UNION ALL
+        SELECT 2, 0, 'opening balances, total', NULL,
+               (SELECT coalesce(sum(b.amount), 0) FROM balances AS b), NULL, NULL
+        UNION ALL
+        SELECT 2, 1, 'difference: total - book cash', NULL,
+               (SELECT coalesce(sum(b.amount), 0) FROM balances AS b) - v_opening.book_cash,
+               NULL, NULL
+        UNION ALL
+        SELECT 3, 0, CASE WHEN c.amount < 0 THEN 'outstanding check' ELSE 'deposit in transit'
+                     END,
+               to_char(c.issued_on, 'YYYY-MM-DD') || ' ' || c.description
+                   || coalesce(' (' || c.reference || ')', ''),
+               c.amount, to_char(c.issued_on, 'YYYY-MM-DD') || c.description, c.id::text
+        FROM carried AS c
+        UNION ALL
+        SELECT 4, 0, 'bank balance to expect at the cutover',
+               'book cash less the items the bank had not cleared',
+               v_opening.book_cash - (SELECT coalesce(sum(c.amount), 0) FROM carried AS c),
+               NULL, NULL
+        UNION ALL
+        SELECT 4, 1, 'signed off by', coalesce(
+                   (SELECT st.display_name || ' at '
+                           || to_char(s.signed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
+                           || ' UTC'
+                    FROM trust_cutover_signoffs AS s
+                    JOIN trust_staff AS st ON st.id = s.signed_by
+                    WHERE s.bank_account_id = p_bank_account_id),
+                   'not signed off yet'), NULL, NULL, NULL
+    )
+    SELECT row_number() OVER (
+               ORDER BY l.section, l.n, l.sort COLLATE "C", l.id COLLATE "C"
+           )::integer,
+           l.item, l.detail, l.amount
+    FROM lines AS l
     ORDER BY 1;
 END;
 $$;
@@ -4368,11 +4648,25 @@ BEGIN
         ARRAY(SELECT ml.line_id FROM trust_bank_match_lines AS ml
               WHERE ml.match_id = p_match_id),
         ARRAY(SELECT mt.transfer_id FROM trust_bank_match_transfers AS mt
-              WHERE mt.match_id = p_match_id)
+              WHERE mt.match_id = p_match_id),
+        ARRAY(SELECT mi.item_id FROM trust_bank_match_cutover_items AS mi
+              WHERE mi.match_id = p_match_id)
     ) THEN
         RAISE EXCEPTION 'trust: trust bank account % is closed through %; undoing this match '
             'would change a reconciliation already approved', v_bank.id, v_bank.closed_through
             USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (
+        SELECT carried.item_id FROM trust_bank_match_cutover_items AS carried
+        JOIN trust_bank_match_cutover_items AS cleared
+          ON cleared.item_id = carried.item_id AND cleared.side = 'cleared'
+        WHERE carried.match_id = p_match_id AND carried.side = 'carried'
+          AND NOT EXISTS (SELECT u.match_id FROM trust_bank_unmatches AS u
+                          WHERE u.match_id = cleared.match_id)
+    ) THEN
+        RAISE EXCEPTION 'trust: a later match clears an item this opening carries'
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Undo that match first.';
     END IF;
     INSERT INTO trust_bank_unmatches (pmc_id, match_id, unmatched_by)
     VALUES (p_pmc_id, p_match_id, p_unmatched_by);
@@ -4603,6 +4897,19 @@ ALTER TABLE public.trust_audit_log ALTER COLUMN id ADD GENERATED BY DEFAULT AS I
 
 
 --
+-- Name: trust_bank_match_cutover_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_bank_match_cutover_items (
+    match_id uuid NOT NULL,
+    item_id uuid NOT NULL,
+    side text NOT NULL,
+    pmc_id uuid NOT NULL,
+    CONSTRAINT trust_bank_match_cutover_items_side_check CHECK ((side = ANY (ARRAY['carried'::text, 'cleared'::text])))
+);
+
+
+--
 -- Name: trust_bank_match_lines; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4752,6 +5059,38 @@ CREATE TABLE public.trust_charges (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_charges_amount_check CHECK ((amount > (0)::numeric)),
     CONSTRAINT trust_charges_kind_check CHECK ((kind = ANY (ARRAY['rent'::text, 'fee'::text, 'credit'::text])))
+);
+
+
+--
+-- Name: trust_cutover_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_cutover_items (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    bank_account_id uuid NOT NULL,
+    issued_on date NOT NULL,
+    amount numeric NOT NULL,
+    description text NOT NULL,
+    reference text,
+    entered_by uuid NOT NULL,
+    entered_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_cutover_items_amount_check CHECK (((amount <> (0)::numeric) AND (amount = round(amount, 2)) AND (abs(amount) < (1000000000)::numeric))),
+    CONSTRAINT trust_cutover_items_description_check CHECK (((description ~ '\S'::text) AND (length(description) <= 200))),
+    CONSTRAINT trust_cutover_items_reference_check CHECK (((reference ~ '\S'::text) AND (length(reference) <= 100)))
+);
+
+
+--
+-- Name: trust_cutover_signoffs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_cutover_signoffs (
+    bank_account_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    signed_by uuid NOT NULL,
+    signed_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -5534,6 +5873,14 @@ ALTER TABLE ONLY public.trust_bank_accounts
 
 
 --
+-- Name: trust_bank_match_cutover_items trust_bank_match_cutover_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_match_cutover_items
+    ADD CONSTRAINT trust_bank_match_cutover_items_pkey PRIMARY KEY (match_id, item_id);
+
+
+--
 -- Name: trust_bank_match_lines trust_bank_match_lines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -5691,6 +6038,30 @@ ALTER TABLE ONLY public.trust_charges
 
 ALTER TABLE ONLY public.trust_charges
     ADD CONSTRAINT trust_charges_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_cutover_items trust_cutover_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cutover_items
+    ADD CONSTRAINT trust_cutover_items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_cutover_items trust_cutover_items_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cutover_items
+    ADD CONSTRAINT trust_cutover_items_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_cutover_signoffs trust_cutover_signoffs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cutover_signoffs
+    ADD CONSTRAINT trust_cutover_signoffs_pkey PRIMARY KEY (bank_account_id);
 
 
 --
@@ -6294,6 +6665,13 @@ CREATE INDEX trust_audit_log_pmc_id_at ON public.trust_audit_log USING btree (pm
 
 
 --
+-- Name: trust_bank_match_cutover_items_item_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bank_match_cutover_items_item_id ON public.trust_bank_match_cutover_items USING btree (item_id);
+
+
+--
 -- Name: trust_bank_match_lines_line_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -6354,6 +6732,13 @@ CREATE INDEX trust_charges_lease_id ON public.trust_charges USING btree (lease_i
 --
 
 CREATE UNIQUE INDEX trust_charges_one_rent_per_due_date ON public.trust_charges USING btree (lease_id, due_on) WHERE (kind = 'rent'::text);
+
+
+--
+-- Name: trust_cutover_items_bank_account_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_cutover_items_bank_account_id ON public.trust_cutover_items USING btree (bank_account_id);
 
 
 --
@@ -6658,6 +7043,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_bank_match_cutover_items trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bank_match_cutover_items FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_bank_match_lines trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -6732,6 +7124,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_charges FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_cutover_items trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_cutover_items FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_cutover_signoffs trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_cutover_signoffs FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -7008,6 +7414,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bank
 
 
 --
+-- Name: trust_bank_match_cutover_items trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bank_match_cutover_items FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_bank_match_lines trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -7082,6 +7495,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_char
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_charges FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_cutover_items trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_cutover_items FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_cutover_signoffs trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_cutover_signoffs FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -7435,6 +7862,20 @@ CREATE TRIGGER trust_closed_through BEFORE INSERT OR UPDATE OF closed_through ON
 
 
 --
+-- Name: trust_cutover_items trust_cutover_entry; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_cutover_entry BEFORE INSERT ON public.trust_cutover_items FOR EACH ROW EXECUTE FUNCTION public.trust_check_cutover_entry();
+
+
+--
+-- Name: trust_cutover_signoffs trust_cutover_entry; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_cutover_entry BEFORE INSERT ON public.trust_cutover_signoffs FOR EACH ROW EXECUTE FUNCTION public.trust_check_cutover_entry();
+
+
+--
 -- Name: trust_lease_offers trust_lease_offer_terms; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -7683,6 +8124,30 @@ ALTER TABLE ONLY public.trust_bank_accounts
 
 
 --
+-- Name: trust_bank_match_cutover_items trust_bank_match_cutover_items_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_match_cutover_items
+    ADD CONSTRAINT trust_bank_match_cutover_items_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bank_match_cutover_items trust_bank_match_cutover_items_pmc_id_item_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_match_cutover_items
+    ADD CONSTRAINT trust_bank_match_cutover_items_pmc_id_item_id_fkey FOREIGN KEY (pmc_id, item_id) REFERENCES public.trust_cutover_items(pmc_id, id);
+
+
+--
+-- Name: trust_bank_match_cutover_items trust_bank_match_cutover_items_pmc_id_match_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_match_cutover_items
+    ADD CONSTRAINT trust_bank_match_cutover_items_pmc_id_match_id_fkey FOREIGN KEY (pmc_id, match_id) REFERENCES public.trust_bank_matches(pmc_id, id);
+
+
+--
 -- Name: trust_bank_match_lines trust_bank_match_lines_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7928,6 +8393,54 @@ ALTER TABLE ONLY public.trust_charges
 
 ALTER TABLE ONLY public.trust_charges
     ADD CONSTRAINT trust_charges_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_cutover_items trust_cutover_items_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cutover_items
+    ADD CONSTRAINT trust_cutover_items_pmc_id_bank_account_id_fkey FOREIGN KEY (pmc_id, bank_account_id) REFERENCES public.trust_bank_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_cutover_items trust_cutover_items_pmc_id_entered_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cutover_items
+    ADD CONSTRAINT trust_cutover_items_pmc_id_entered_by_fkey FOREIGN KEY (pmc_id, entered_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_cutover_items trust_cutover_items_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cutover_items
+    ADD CONSTRAINT trust_cutover_items_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_cutover_signoffs trust_cutover_signoffs_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cutover_signoffs
+    ADD CONSTRAINT trust_cutover_signoffs_pmc_id_bank_account_id_fkey FOREIGN KEY (pmc_id, bank_account_id) REFERENCES public.trust_bank_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_cutover_signoffs trust_cutover_signoffs_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cutover_signoffs
+    ADD CONSTRAINT trust_cutover_signoffs_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_cutover_signoffs trust_cutover_signoffs_pmc_id_signed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_cutover_signoffs
+    ADD CONSTRAINT trust_cutover_signoffs_pmc_id_signed_by_fkey FOREIGN KEY (pmc_id, signed_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -8845,4 +9358,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261011000029'),
     ('20261011000030'),
     ('20261011000031'),
-    ('20261012000032');
+    ('20261012000032'),
+    ('20261012000033');

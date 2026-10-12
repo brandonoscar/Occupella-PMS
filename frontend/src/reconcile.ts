@@ -39,12 +39,35 @@ export type OpenLine = {
   reference: string | null;
 };
 export type OpenTransfer = { id: string; on: string; amount: string; memo: string | null };
-export type StandingMatch = { id: string; lines: OpenLine[]; transfers: OpenTransfer[] };
+// A check or deposit carried over from the old system that the bank had not cleared.
+export type OpenItem = {
+  id: string;
+  issued_on: string;
+  amount: string;
+  description: string;
+  reference: string | null;
+};
+export type StandingMatch = {
+  id: string;
+  lines: OpenLine[];
+  transfers: OpenTransfer[];
+  items: OpenItem[];
+};
+// A migrated account's cutover, as the opening match needs it.
+export type Opening = {
+  book_cash: string;
+  carried: string;
+  brought_forward: string;
+  signed_off: boolean;
+  matched: boolean;
+};
 export type Worksheet = {
   through: string | null;
   rows: ReportRow[];
   open_lines: OpenLine[];
   open_transfers: OpenTransfer[];
+  open_items: OpenItem[];
+  opening: Opening | null;
   matches: StandingMatch[];
 };
 
@@ -100,4 +123,9 @@ export function transferLabel(transfer: OpenTransfer): string {
 // A period ends at midnight UTC after its last day; the day staff read is that last day.
 export function lastDayOf(periodEnd: string): string {
   return day(new Date(new Date(periodEnd).getTime() - 86_400_000));
+}
+
+export function itemLabel(item: OpenItem): string {
+  const ref = item.reference ? ` (${item.reference})` : "";
+  return `${item.issued_on} ${item.description}${ref}, from before the cutover: ${money(item.amount)}`;
 }

@@ -5,6 +5,7 @@ import {
   figures,
   formatOf,
   fromCents,
+  itemLabel,
   items,
   lastDayOf,
   lineLabel,
@@ -60,5 +61,9 @@ describe("reconcile", () => {
     expect(transferLabel({ id: "t", on: "2026-01-04", amount: "1.00", memo: null }))
       .toBe("2026-01-04 No memo: $1.00");
     expect(lastDayOf("2026-02-01T00:00:00Z")).toBe("2026-01-31");
+    expect(itemLabel({ id: "i", issued_on: "2025-12-30", amount: "-200.00", description: "Check", reference: "1041" }))
+      .toBe("2025-12-30 Check (1041), from before the cutover: -$200.00");
+    expect(itemLabel({ id: "i", issued_on: "2025-12-31", amount: "75.00", description: "Deposit", reference: null }))
+      .toBe("2025-12-31 Deposit, from before the cutover: $75.00");
   });
 });

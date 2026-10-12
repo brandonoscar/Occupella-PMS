@@ -1,0 +1,39 @@
+// The switching tool as the API sends it (src/pms/api/switching.py), and how it reads.
+
+export type RosterKind = "owners" | "vendors" | "properties" | "units" | "tenants" | "leases" | "charges";
+export type TieOutRow = { line: number; item: string; detail: string | null; amount: string | null };
+export type Cutover = {
+  bank_account_id: string;
+  name: string;
+  kind: "operating" | "security_deposit";
+  can_open: boolean;
+  opened_on: string | null;
+  signed_off: boolean;
+  tie_out: TieOutRow[];
+};
+export type Counted = { added: number; kept: number };
+
+// Each roster file, in the order staff bring them in, with the columns it needs.
+export const ROSTER: { kind: RosterKind; label: string; columns: string }[] = [
+  { kind: "owners", label: "Owners", columns: "Name" },
+  { kind: "vendors", label: "Vendors", columns: "Name" },
+  { kind: "properties", label: "Properties and their owners", columns: "Property, Owner (and Bank account if there are several)" },
+  { kind: "units", label: "Units", columns: "Property, Unit" },
+  { kind: "tenants", label: "Tenants", columns: "Property, Tenant" },
+  { kind: "leases", label: "Leases in place", columns: "Property, Unit, Tenants (separated by ;), Starts on, Ends on, Monthly rent" },
+  { kind: "charges", label: "Unpaid charges", columns: "Property, Unit, Due on, Amount, Kind (rent or fee), Memo" },
+];
+
+export const BALANCE_COLUMNS =
+  "Kind (owner, prepaid rent, deposit, vendor or fees), Owner, Property, Tenant, Vendor, Amount";
+export const ITEM_COLUMNS = "Date, Amount (a check out is negative), Description, Reference";
+
+export function countedLabel(counted: Counted): string {
+  const kept = counted.kept ? `; ${counted.kept} already here` : "";
+  return `${counted.added} added${kept}.`;
+}
+
+// The tie-out's line staff look for first: the bank balance to expect at the cutover.
+export function expectedBank(rows: TieOutRow[]): string | null {
+  return rows.find((r) => r.item === "bank balance to expect at the cutover")?.amount ?? null;
+}

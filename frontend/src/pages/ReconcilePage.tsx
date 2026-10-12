@@ -7,11 +7,12 @@ import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card, Shell } from "../components/Shell";
 import { money } from "../money";
-import type { BankBooks, OpenLine, OpenTransfer, Worksheet } from "../reconcile";
+import type { BankBooks, OpenItem, OpenLine, OpenTransfer, Worksheet } from "../reconcile";
 import {
   difference,
   figures,
   formatOf,
+  itemLabel,
   items,
   lastDayOf,
   lineLabel,
@@ -70,6 +71,9 @@ export function ReconcilePage({ me }: { me: Me }) {
           </div>
           <Notice tone="error">{error}</Notice>
           <StatementsCard bank={bank} refresh={refresh} />
+          {sheet.opening && !sheet.opening.matched && (
+            <OpeningCard bank={bank} sheet={sheet} refresh={refresh} />
+          )}
           <WorksheetCard bank={bank} sheet={sheet} through={through} setThrough={setThrough}
             refresh={refresh} />
           <MatchCard bank={bank} sheet={sheet} refresh={refresh} />
@@ -224,10 +228,11 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
   const { said, error, record } = useRecord(refresh);
   const [lines, setLines] = useState<string[]>([]);
   const [moved, setMoved] = useState<string[]>([]);
+  const [carried, setCarried] = useState<string[]>([]);
   const picked = <T extends { id: string; amount: string }>(all: T[], ids: string[]) =>
     sum(all.filter((x) => ids.includes(x.id)).map((x) => x.amount));
   const lineTotal = picked(sheet.open_lines, lines);
-  const movedTotal = picked(sheet.open_transfers, moved);
+  const movedTotal = sum([picked(sheet.open_transfers, moved), picked(sheet.open_items, carried)]);
   const toggle = (ids: string[], set: (ids: string[]) => void, id: string) =>
     set(ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]);
   return (
@@ -242,7 +247,7 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
           Pairs a line with the one transfer of its amount within a week, when there is no other.
         </span>
       </div>
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className={`grid gap-6 ${sheet.open_items.length > 0 ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
         <fieldset>
           <legend className="mb-2 text-sm font-medium">Bank lines no match holds</legend>
           {sheet.open_lines.length === 0 ? <p className="text-sm text-ink-subtle">None.</p> : (
@@ -257,18 +262,26 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
               toggle={(id) => toggle(moved, setMoved, id)} />
           )}
         </fieldset>
+        {sheet.open_items.length > 0 && (
+          <fieldset>
+            <legend className="mb-2 text-sm font-medium">Carried over, not cleared yet</legend>
+            <Checks items={sheet.open_items} label={itemLabel} chosen={carried}
+              toggle={(id) => toggle(carried, setCarried, id)} />
+          </fieldset>
+        )}
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <span className="text-sm" data-testid="picked">
           Lines {money(lineTotal)} · Transfers {money(movedTotal)}
         </span>
         <Button
-          disabled={lines.length + moved.length === 0 || lineTotal !== movedTotal}
+          disabled={lines.length + moved.length + carried.length === 0 || lineTotal !== movedTotal}
           onClick={async () => {
-            const body = { line_ids: lines, transfer_ids: moved };
+            const body = { line_ids: lines, transfer_ids: moved, cutover_item_ids: carried };
             if (await record(`/api/reconcile/${bank.id}/matches`, body, () => "Matched.")) {
               setLines([]);
               setMoved([]);
+              setCarried([]);
             }
           }}
         >
@@ -281,7 +294,8 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
             <li key={m.id} className="flex flex-wrap items-center gap-3">
               <span>
                 {m.lines.map(lineLabel).join("; ") || "No bank line"} ={" "}
-                {m.transfers.map(transferLabel).join("; ") || "No transfer"}
+                {[...m.transfers.map(transferLabel), ...m.items.map(itemLabel)].join("; ") ||
+                  "No transfer"}
               </span>
               <Button variant="ghost"
                 onClick={() => record(`/api/reconcile/matches/${m.id}/undo`, {}, () => "Match undone.")}>
@@ -297,7 +311,49 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
   );
 }
 
-function Checks<T extends OpenLine | OpenTransfer>({
+// A migrated account's first statement opens with the bank's balance brought forward: it is
+// matched to the opening balances less the items carried over, once the cutover is signed off.
+function OpeningCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
+  const { said, error, record } = useRecord(refresh);
+  const opening = sheet.opening;
+  const candidates = sheet.open_lines.filter((l) => l.amount === opening?.brought_forward);
+  const [line, setLine] = useState("");
+  const chosen = candidates.some((l) => l.id === line) ? line : (candidates[0]?.id ?? "");
+  if (!opening) return null;
+  return (
+    <Card title="Opening from the old system">
+      <p className="mb-4 text-sm text-ink-muted">
+        Opening balances of {money(opening.book_cash)}, less {money(opening.carried)} the bank had
+        not cleared: the first statement's balance brought forward should be{" "}
+        {money(opening.brought_forward)}.
+      </p>
+      {!opening.signed_off ? (
+        <Notice tone="info">Sign off the cutover at Switching first.</Notice>
+      ) : candidates.length === 0 ? (
+        <Notice tone="info">No open bank line comes to {money(opening.brought_forward)}.</Notice>
+      ) : (
+        <div className="flex flex-wrap items-end gap-3">
+          <Select label="Balance brought forward" id="opening-line" value={chosen}
+            onChange={(e) => setLine(e.target.value)}>
+            {candidates.map((l) => (
+              <option key={l.id} value={l.id}>
+                {lineLabel(l)}
+              </option>
+            ))}
+          </Select>
+          <Button onClick={() => record(`/api/reconcile/${bank.id}/opening-match`, { line_id: chosen },
+            () => "The opening is matched.")}>
+            Match the opening
+          </Button>
+        </div>
+      )}
+      <Notice tone="info">{said}</Notice>
+      <Notice tone="error">{error}</Notice>
+    </Card>
+  );
+}
+
+function Checks<T extends OpenLine | OpenTransfer | OpenItem>({
   items: all,
   label,
   chosen,

@@ -58,6 +58,7 @@ def test_report_discovery_and_missing_cases(conn, tmp_path):
     assert golden.report_functions(conn) == [
         "trust_report_audit_log",
         "trust_report_bank_reconciliation",
+        "trust_report_cutover",
         "trust_report_delinquency",
         "trust_report_general_ledger",
         "trust_report_owner_balances",

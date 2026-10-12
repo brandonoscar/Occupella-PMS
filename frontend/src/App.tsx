@@ -14,6 +14,7 @@ import { RentPage } from "./pages/RentPage";
 import { PMC_KEY, SignInPage } from "./pages/SignInPage";
 import { SetupPage } from "./pages/SetupPage";
 import { StaffHome } from "./pages/StaffHome";
+import { SwitchPage } from "./pages/SwitchPage";
 import { TenantHome } from "./pages/TenantHome";
 import { navigate, usePath } from "./router";
 
@@ -55,6 +56,7 @@ function Home({ path }: { path: string }) {
     if (path === "/bills") return <BillsPage me={me} />;
     if (path === "/owners") return <OwnersPage me={me} />;
     if (path === "/reconcile") return <ReconcilePage me={me} />;
+    if (path === "/switching") return <SwitchPage me={me} />;
     return <StaffHome me={me} />;
   }
   return <TenantHome me={me} />;

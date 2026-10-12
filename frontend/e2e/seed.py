@@ -251,6 +251,22 @@ def main() -> None:
             " RETURNING id",
             (pmc,),
         )
+        # Switching: a staff member, and an operating trust account with nothing in it yet, to
+        # open with balances from the old system.
+        switch_staff = one(
+            "INSERT INTO trust_staff (pmc_id, display_name) VALUES (%s, 'Switch E2E') RETURNING id",
+            (pmc,),
+        )
+        cutover_bank = one(
+            "INSERT INTO trust_bank_accounts (pmc_id, kind, display_name)"
+            " VALUES (%s, 'operating', 'E2E cutover trust account') RETURNING id",
+            (pmc,),
+        )
+        for kind in ("bank_cash", "pmc_income"):
+            conn.execute(
+                "SELECT trust_open_ledger_account(%s, %s, %s, NULL, NULL, NULL)",
+                (pmc, cutover_bank, kind),
+            )
         owner_email, staff_email = f"owner.{tag}@example.com", f"staff.{tag}@example.com"
         seeded = {
             "pmc_id": str(pmc),
@@ -282,6 +298,9 @@ def main() -> None:
             ).token,
             "month_end_invite": accounts.create_invite(
                 conn, pmc, "staff", month_end_staff, f"month-end.{tag}@example.com", None
+            ).token,
+            "switch_invite": accounts.create_invite(
+                conn, pmc, "staff", switch_staff, f"switch.{tag}@example.com", None
             ).token,
             "setup_invite": accounts.create_invite(
                 conn, pmc, "staff", setup_staff, f"setup.{tag}@example.com", None

@@ -20,6 +20,7 @@ type Seed = {
   rent_invite: string;
   bills_invite: string;
   month_end_invite: string;
+  switch_invite: string;
 };
 const seed: Seed = JSON.parse(readFileSync(new URL("./.seed.json", import.meta.url), "utf8"));
 const PASSWORD = "a long synthetic passphrase";
@@ -264,9 +265,9 @@ test("staff set up a property from nothing, lease a unit and see it on the rent 
   await owners.getByRole("button", { name: "Add" }).click();
   await expect(owners.getByText("Owner Setup E2E")).toBeVisible();
 
-  // The seeded PMC has one operating trust account, so it is chosen already.
   await page.getByLabel("Property name").fill("E2E Property 9");
   await page.locator("#property-owner").selectOption({ label: "Owner Setup E2E" });
+  await page.locator("#property-bank").selectOption({ label: "E2E operating trust account" });
   await page.getByRole("button", { name: "Add property" }).click();
   const property = page.getByRole("listitem", { name: "E2E Property 9" });
   await expect(property).toContainText("Owned by Owner Setup E2E.");
@@ -424,5 +425,71 @@ test("staff import last month's statement, match it to the books and approve the
   await expect(page.getByText(`Approved through ${iso(last)}; the account is closed through it.`)).toBeVisible();
   await expect(page.getByRole("list", { name: "Approved" })).toContainText(
     `${iso(first)} to ${iso(last)}: bank $4,700.00, books $4,700.00, approved by Month-end E2E`,
+  );
+});
+
+test("staff bring a roster in, open an account with its old balances and a check not cleared, sign off and match the opening", async ({
+  page,
+}) => {
+  const now = new Date();
+  const cutover = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+  const before = iso(new Date(cutover.getTime() - 86_400_000));
+  const file = (name: string, text: string) => ({ name, mimeType: "text/csv", buffer: Buffer.from(text) });
+
+  await page.goto(`/invite#${seed.switch_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
+  await page.getByRole("button", { name: "Finish" }).click();
+  const sections = page.getByRole("navigation", { name: "Sections" });
+  await sections.getByRole("link", { name: "Switching" }).click();
+
+  await page.getByLabel("CSV file").setInputFiles(file("owners.csv", "Name\nOwner Cutover E2E\n"));
+  await page.getByRole("button", { name: "Import" }).click();
+  await expect(page.getByText("1 added.")).toBeVisible();
+  await page.getByRole("combobox", { name: "File of", exact: true }).selectOption("properties");
+  await page
+    .getByLabel("CSV file")
+    .setInputFiles(file("properties.csv", "Property,Owner,Bank account\nE2E Property 8,Owner Cutover E2E,E2E cutover trust account\n"));
+  await page.getByRole("button", { name: "Import" }).click();
+  await expect(page.getByText("1 added.")).toBeVisible();
+
+  const card = page.locator("section", { hasText: "Cutover: E2E cutover trust account" });
+  await card.getByLabel("Cutover date").fill(iso(cutover));
+  await card.getByLabel("Old system's book cash").fill("900.00");
+  await card
+    .getByLabel("Opening balances (CSV)")
+    .setInputFiles(file("balances.csv", "Kind,Owner,Property,Amount\nowner,Owner Cutover E2E,E2E Property 8,900.00\n"));
+  await card.getByRole("button", { name: "Open with balances" }).click();
+  await expect(card).toContainText("Opened with 1 balance.");
+  await card
+    .getByLabel("Checks and deposits not cleared (CSV)")
+    .setInputFiles(file("items.csv", `Date,Amount,Description,Reference\n${before},-150.00,Check to Vendor E2E,2001\n`));
+  await card.getByRole("button", { name: "Add items" }).click();
+  await expect(card).toContainText("1 item carried over.");
+  await expect(card).toContainText("The bank's statement should open at $1,050.00.");
+  await card.getByRole("button", { name: "Sign off the tie-out" }).click();
+  await expect(card).toContainText("Signed off. The items carried over are frozen.");
+  await expect(card).toContainText("Switch E2E at ");
+
+  await sections.getByRole("link", { name: "Month-end" }).click();
+  await page
+    .getByRole("combobox", { name: "Trust bank account", exact: true })
+    .selectOption({ label: "E2E cutover trust account" });
+  await page.getByLabel("Statement file (CSV or OFX)").setInputFiles(file("statement.csv", "Date,Description,Amount\n"));
+  await page.getByLabel("First day").fill(iso(cutover));
+  await page.getByLabel("Last day").fill(iso(cutover));
+  await page.getByLabel("Opening balance", { exact: true }).fill("1050.00");
+  await page.getByRole("button", { name: "Import statement" }).click();
+  await expect(page.getByText(`Imported 1 line, ${iso(cutover)} to ${iso(cutover)}.`)).toBeVisible();
+  await expect(page.getByText(/balance brought forward should be \$1,050.00/)).toBeVisible();
+  await page.getByRole("button", { name: "Match the opening" }).click();
+  await expect(page.getByText("The opening is matched.")).toBeVisible();
+  // Carried by the opening match, the check waits for the bank line that clears it.
+  await expect(page.getByLabel(`${before} Check to Vendor E2E (2001), from before the cutover: -$150.00`)).toBeVisible();
+  await expect(page.getByLabel("Reconciling items")).toContainText(
+    `outstanding withdrawal: ${before} Check to Vendor E2E (2001), from before the cutover -$150.00`,
   );
 });

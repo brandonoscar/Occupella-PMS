@@ -48,6 +48,7 @@ from pms.api import (
     reconcile,
     rent,
     setup,
+    switching,
     tenant,
 )
 from pms.api.deps import COOKIE, Conn, Current, Staff, download
@@ -320,6 +321,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(rent.router)
     app.include_router(payables.router)
     app.include_router(reconcile.router)
+    app.include_router(switching.router)
     if settings.static_dir is not None:
         serve_portal(app, settings.static_dir)
     return app

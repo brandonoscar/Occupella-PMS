@@ -1,0 +1,17 @@
+line	item	detail	amount
+1	PMC	Golden PMC	NULL
+2	trust bank account	Golden operating trust account (operating)	NULL
+3	cutover	2026-01-01 (opening balances at the start of the day, UTC)	NULL
+4	entered by	Preparer 1 at 2026-01-01 15:00:00 UTC	NULL
+5	old system's book cash	NULL	2500.00
+6	opening balance	owner_property: Owner 1 / Property 1	1200.00
+7	opening balance	owner_property: Owner 2 / Property 2	800.00
+8	opening balance	pmc_income: Golden PMC	50.00
+9	opening balance	prepaid_rent: Tenant 1	300.00
+10	opening balance	vendor_payable: Vendor 1	150.00
+11	opening balances, total	NULL	2500.00
+12	difference: total - book cash	NULL	0.00
+13	outstanding check	2025-12-28 Check to Vendor 1 (1041)	-200.00
+14	deposit in transit	2025-12-31 Deposit, Tenant 1	75.00
+15	bank balance to expect at the cutover	book cash less the items the bank had not cleared	2625.00
+16	signed off by	Staff 1 at 2026-01-02 10:30:00 UTC	NULL

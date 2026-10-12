@@ -255,9 +255,8 @@ def test_a_payment_and_its_bounce_the_bank_never_saw_match_with_no_line(conn, pm
 
     match_lines(conn, pmc.pmc_id, pmc.operating_bank_id, [], [paid, back], staff)
 
-    with refused(
-        "a match holds at least one line or transfer", psycopg.errors.InvalidParameterValue
-    ):
+    empty = "a match holds at least one line, transfer or cutover item"
+    with refused(empty, psycopg.errors.InvalidParameterValue):
         match_lines(conn, pmc.pmc_id, pmc.operating_bank_id, [], [], staff)
 
 
@@ -265,7 +264,7 @@ def test_a_match_comes_to_the_same_on_both_sides(conn, pmc, staff):
     paid = rent(conn, pmc, "1500.00", date(2026, 1, 5))
     _, (line,) = january(conn, pmc, staff, [(date(2026, 1, 6), "1500.01", "Deposit", None)])
 
-    with refused("the lines come to 1500.01 and the transfers to 1500.00"):
+    with refused("the lines come to 1500.01 and the transfers and items to 1500.00"):
         match_lines(conn, pmc.pmc_id, pmc.operating_bank_id, [line], [paid], staff)
 
 
@@ -290,8 +289,8 @@ def test_a_match_names_only_this_accounts_lines_and_cash_once_each(conn, pmc, st
     )
     bank = pmc.operating_bank_id
     cases = [
-        ([line, line], [paid], "names each line and transfer once"),
-        ([line], [paid, paid], "names each line and transfer once"),
+        ([line, line], [paid], "names each line, transfer and item once"),
+        ([line], [paid, paid], "names each line, transfer and item once"),
         ([theirs], [paid], "not on a statement of trust bank account"),
         ([line], [fee], f"transfer {fee} moved no cash"),
     ]

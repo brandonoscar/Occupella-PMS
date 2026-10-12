@@ -311,10 +311,31 @@ class OpenTransfer(BaseModel):
     memo: str | None
 
 
+class OpenItem(BaseModel):
+    """A check or deposit carried over from the old system that the bank had not cleared."""
+
+    id: UUID
+    issued_on: date
+    amount: str  # the cash it moved in the old books: a check out is negative
+    description: str
+    reference: str | None
+
+
 class StandingMatch(BaseModel):
     id: UUID
     lines: list[OpenLine]
     transfers: list[OpenTransfer]
+    items: list[OpenItem]
+
+
+class Opening(BaseModel):
+    """A migrated account's cutover, as the opening match needs it."""
+
+    book_cash: str
+    carried: str  # the items not yet cleared at the cutover
+    brought_forward: str  # what the first statement's opening line must be
+    signed_off: bool
+    matched: bool
 
 
 class Worksheet(BaseModel):
@@ -322,6 +343,8 @@ class Worksheet(BaseModel):
     rows: list[Row]
     open_lines: list[OpenLine]
     open_transfers: list[OpenTransfer]
+    open_items: list[OpenItem]
+    opening: Opening | None
     matches: list[StandingMatch]
 
 
@@ -363,6 +386,58 @@ def transfers(
         OpenTransfer(id=i, on=o, amount=cents(a), memo=m)
         for i, o, a, m in conn.execute(TRANSFERS.format(where=where), {"bank": bank, **more})
     ]
+
+
+ITEMS = """
+SELECT i.id, i.issued_on, i.amount, i.description, i.reference
+FROM trust_cutover_items AS i
+WHERE i.bank_account_id = %(bank)s AND {where}
+ORDER BY i.issued_on, i.description COLLATE "C", i.id
+"""
+
+
+def items(conn: psycopg.Connection[Any], bank: UUID, where: str, **more: Any) -> list[OpenItem]:
+    return [
+        OpenItem(id=i, issued_on=o, amount=cents(a), description=d, reference=r)
+        for i, o, a, d, r in conn.execute(ITEMS.format(where=where), {"bank": bank, **more})
+    ]
+
+
+def in_live_match(side: str) -> str:
+    return (
+        "EXISTS (SELECT 1 FROM trust_bank_match_cutover_items AS mi WHERE mi.item_id = i.id"
+        f" AND mi.side = '{side}' AND " + LIVE.format("mi") + ")"
+    )
+
+
+# Carried by the opening match and not cleared yet: what a bank line may still clear.
+OPEN_ITEM = in_live_match("carried") + " AND NOT " + in_live_match("cleared")
+
+
+def opening(conn: psycopg.Connection[Any], bank: UUID) -> Opening | None:
+    row = conn.execute(
+        "SELECT o.book_cash,"
+        " (SELECT coalesce(sum(i.amount), 0) FROM trust_cutover_items AS i"
+        "  WHERE i.bank_account_id = o.bank_account_id),"
+        " EXISTS (SELECT 1 FROM trust_cutover_signoffs AS s"
+        "  WHERE s.bank_account_id = o.bank_account_id),"
+        " EXISTS (SELECT 1 FROM trust_bank_match_transfers AS mt"
+        "  JOIN trust_bank_matches AS m ON m.id = mt.match_id"
+        "  WHERE mt.transfer_id = o.transfer_ids[1] AND m.bank_account_id = o.bank_account_id"
+        "  AND " + LIVE.format("mt") + ")"
+        " FROM trust_opening_balances AS o WHERE o.bank_account_id = %s",
+        (bank,),
+    ).fetchone()
+    if row is None:
+        return None
+    book, carried, signed, matched = row
+    return Opening(
+        book_cash=cents(book),
+        carried=cents(carried),
+        brought_forward=cents(book - carried),
+        signed_off=signed,
+        matched=matched,
+    )
 
 
 UNMATCHED_LINE = (
@@ -428,6 +503,13 @@ def worksheet(
                     " WHERE match_id = %(m)s)",
                     m=match,
                 ),
+                items=items(
+                    conn,
+                    bank_account_id,
+                    "i.id IN (SELECT item_id FROM trust_bank_match_cutover_items"
+                    " WHERE match_id = %(m)s)",
+                    m=match,
+                ),
             )
         )
     return Worksheet(
@@ -435,6 +517,8 @@ def worksheet(
         rows=rows,
         open_lines=open_lines(conn, bank_account_id, UNMATCHED_LINE),
         open_transfers=transfers(conn, bank_account_id, UNMATCHED_TRANSFER),
+        open_items=items(conn, bank_account_id, OPEN_ITEM),
+        opening=opening(conn, bank_account_id),
         matches=matches,
     )
 
@@ -445,6 +529,8 @@ def worksheet(
 class NewMatch(BaseModel):
     line_ids: Annotated[list[UUID], Field(max_length=100)] = []
     transfer_ids: Annotated[list[Annotated[str, Field(max_length=100)]], Field(max_length=100)] = []
+    # Checks and deposits carried over from the old system that these lines clear.
+    cutover_item_ids: Annotated[list[UUID], Field(max_length=100)] = []
 
 
 class Created(BaseModel):
@@ -452,14 +538,19 @@ class Created(BaseModel):
 
 
 def match(
-    conn: psycopg.Connection[Any], session: Any, bank: UUID, lines: list[UUID], moved: list[str]
+    conn: psycopg.Connection[Any],
+    session: Any,
+    bank: UUID,
+    lines: list[UUID],
+    moved: list[str],
+    carried: list[UUID] | None = None,
 ) -> UUID:
     return UUID(
         str(
             one(
                 conn,
-                "SELECT trust_match_bank_lines(%s, %s, %s::uuid[], %s::text[], %s)",
-                (session.pmc_id, bank, lines, moved, session.person_id),
+                "SELECT trust_match_bank_lines(%s, %s, %s::uuid[], %s::text[], %s::uuid[], %s)",
+                (session.pmc_id, bank, lines, moved, carried or [], session.person_id),
             )
         )
     )
@@ -470,11 +561,43 @@ def add_match(session: Staff, conn: Conn, bank_account_id: UUID, new: NewMatch) 
     """Matches lines to the transfers that moved the account's cash by the same total."""
     bank_of(conn, session.pmc_id, bank_account_id)
     try:
-        return Created(id=match(conn, session, bank_account_id, new.line_ids, new.transfer_ids))
+        return Created(
+            id=match(
+                conn,
+                session,
+                bank_account_id,
+                new.line_ids,
+                new.transfer_ids,
+                new.cutover_item_ids,
+            )
+        )
     except psycopg.errors.InvalidParameterValue as bad:  # not this account's, named twice
         raise HTTPException(422, reason(bad)) from None
     except psycopg.errors.CheckViolation as refused:  # sides differ, matched, a closed period
         raise HTTPException(409, reason(refused)) from None
+
+
+class OpeningMatch(BaseModel):
+    line_id: UUID
+
+
+@router.post("/{bank_account_id}/opening-match", status_code=201)
+def match_opening(session: Staff, conn: Conn, bank_account_id: UUID, new: OpeningMatch) -> Created:
+    """Matches a migrated account's balance brought forward (the first statement's opening line)
+    to its opening balances less the items the bank had not cleared, once the cutover is signed
+    off."""
+    bank_of(conn, session.pmc_id, bank_account_id)
+    try:
+        made = one(
+            conn,
+            "SELECT trust_match_cutover_opening(%s, %s, %s, %s)",
+            (session.pmc_id, bank_account_id, new.line_id, session.person_id),
+        )
+    except psycopg.errors.InvalidParameterValue as bad:  # not this account's line
+        raise HTTPException(422, reason(bad)) from None
+    except psycopg.errors.CheckViolation as refused:  # not signed off, amounts differ, matched
+        raise HTTPException(409, reason(refused)) from None
+    return Created(id=made)
 
 
 @router.post("/matches/{match_id}/undo", status_code=204)

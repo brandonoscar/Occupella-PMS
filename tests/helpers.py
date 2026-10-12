@@ -766,11 +766,12 @@ def import_statement(
     return statement, ids
 
 
-def match_lines(connection, pmc_id, bank_id, line_ids, transfer_ids, staff_id) -> UUID:
+def match_lines(connection, pmc_id, bank_id, line_ids, transfer_ids, staff_id, item_ids=()) -> UUID:
+    """Match statement lines to transfers (and cutover items the bank cleared)."""
     return _one(
         connection,
-        "SELECT trust_match_bank_lines(%s, %s, %s::uuid[], %s::text[], %s)",
-        (pmc_id, bank_id, list(line_ids), list(transfer_ids), staff_id),
+        "SELECT trust_match_bank_lines(%s, %s, %s::uuid[], %s::text[], %s::uuid[], %s)",
+        (pmc_id, bank_id, list(line_ids), list(transfer_ids), list(item_ids), staff_id),
     )
 
 
@@ -793,6 +794,34 @@ def approve_bank(
         connection,
         "SELECT trust_approve_bank_reconciliation(%s, %s, %s, %s, %s)",
         (pmc_id, bank_id, through, prepared_by, approved_by),
+    )
+
+
+def carry_over(
+    connection, pmc_id, bank_id, staff_id, issued_on, amount, description="Check", reference=None
+) -> UUID:
+    """A check (negative) or deposit the bank had not cleared at the account's cutover."""
+    return _one(
+        connection,
+        "INSERT INTO trust_cutover_items (pmc_id, bank_account_id, issued_on, amount,"
+        " description, reference, entered_by) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, bank_id, issued_on, Decimal(amount), description, reference, staff_id),
+    )
+
+
+def sign_off(connection, pmc_id, bank_id, staff_id) -> None:
+    connection.execute(
+        "INSERT INTO trust_cutover_signoffs (pmc_id, bank_account_id, signed_by)"
+        " VALUES (%s, %s, %s)",
+        (pmc_id, bank_id, staff_id),
+    )
+
+
+def match_opening(connection, pmc_id, bank_id, line_id, staff_id) -> UUID:
+    return _one(
+        connection,
+        "SELECT trust_match_cutover_opening(%s, %s, %s, %s)",
+        (pmc_id, bank_id, line_id, staff_id),
     )
 
 
