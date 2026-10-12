@@ -81,8 +81,9 @@ required invariant, report and self-host step.
   (`designTokens.test.ts` fails on a raw colour or a size off the scale). Money stays text from
   the database to the screen, never a float. Staff's pages have sections (`pages/staffNav.ts`);
   they set up the books at `/setup` (`src/pms/api/setup.py`: plain inserts and the database's
-  own write paths, nothing that moves money) and do the rent work at `/rent`
-  (`src/pms/api/rent.py`). npm packages are pinned exactly and their
+  own write paths, nothing that moves money), do the rent work at `/rent`
+  (`src/pms/api/rent.py`), and pay bills and handle owners' money at `/bills` and `/owners`
+  (`src/pms/api/payables.py`). npm packages are pinned exactly and their
   licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
   owner only: no request names an owner, a property or a PMC. A tenant's pages
   (`src/pms/api/tenant.py`) show the session's tenant only: a lease named in a path is answered
@@ -226,6 +227,12 @@ required invariant, report and self-host step.
   nothing new. A bounce moves back what the payment moved and reverses its matches, once. A
   lease's rent work takes an advisory lock on the lease. The PMS records what the bank did;
   it sends no money.
+- Bills and owners' money (`src/pms/api/payables.py`): staff enter, approve, set aside and pay
+  bills, run recurring bills, record owner draws and contributions, and take management and
+  leasing fees, each through its `trust_*` write path. What the owners page shows as available
+  is what a draw of everything takes: the balance less the reserve and the unpaid bills, which
+  it counts as `trust_unpaid_bills` does (the app may not call it). Draws and contributions
+  carry a request id the page makes, so a retry pays nothing twice.
 - Vendor payments: `trust_report_vendor_payments` lists what each vendor was paid through
   `trust_pay_bill` in a calendar year (UTC), for 1099 preparation. It files nothing, holds no
   tax IDs and applies no threshold.

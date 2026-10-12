@@ -529,6 +529,16 @@ tests = [
   "tests/api/test_rent.py::test_a_payment_hold_refuses_payments_and_records_nothing",
 ]
 
+[[invariant]]
+id = "owners-page-shows-what-a-draw-takes"
+statement = "What the staff owners page shows as available to draw is exactly what a draw of everything takes: the balance less the reserve of the agreement in force and the unpaid bills the database itself counts (trust_unpaid_bills); a draw of more is refused with nothing written, and sending a draw again pays nothing twice. A bill is set aside only from money the owner holds, and paid once it was."
+tests = [
+  "tests/properties/test_payables_properties.py::test_payables_invariants_hold_under_random_bills_contributions_and_draws",
+  "tests/api/test_payables.py::test_owners_money_shows_what_a_draw_may_take",
+  "tests/api/test_payables.py::test_a_draw_pays_out_what_is_available_once",
+  "tests/api/test_payables.py::test_a_bill_is_paid_only_once_set_aside_and_never_into_the_negative",
+]
+
 # --- Reports (golden.yml) ------------------------------------------------------------------
 
 [[report]]

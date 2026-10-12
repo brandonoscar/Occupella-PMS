@@ -222,6 +222,29 @@ def main() -> None:
             " VALUES (%s, %s, %s, 'rent', 800.00, 'Rent')",
             (pmc, payer_lease, first_of_this_month),
         )
+        # Bills and owners: an owner of their own holding last month's rent, and a staff member
+        # to pay a vendor's bill from it and draw the rest.
+        bills_staff = one(
+            "INSERT INTO trust_staff (pmc_id, display_name) VALUES (%s, 'Bills E2E') RETURNING id",
+            (pmc,),
+        )
+        payee = one(
+            "INSERT INTO trust_owners (pmc_id, display_name) VALUES (%s, 'Payee E2E') RETURNING id",
+            (pmc,),
+        )
+        prop_seven = one(
+            "INSERT INTO trust_properties (pmc_id, display_name) VALUES (%s, 'E2E Property 7')"
+            " RETURNING id",
+            (pmc,),
+        )
+        payee_account = one(
+            "SELECT trust_open_ledger_account(%s, %s, 'owner_property', %s, %s, NULL)",
+            (pmc, bank, payee, prop_seven),
+        )
+        conn.execute(
+            "SELECT pgledger_create_transfer(%s, %s, 1000.00, %s, %s)",
+            (cash, payee_account, last_month, json.dumps({"memo": "Rent"})),
+        )
         owner_email, staff_email = f"owner.{tag}@example.com", f"staff.{tag}@example.com"
         seeded = {
             "pmc_id": str(pmc),
@@ -247,6 +270,9 @@ def main() -> None:
             ).token,
             "rent_invite": accounts.create_invite(
                 conn, pmc, "staff", rent_staff, f"rent.{tag}@example.com", None
+            ).token,
+            "bills_invite": accounts.create_invite(
+                conn, pmc, "staff", bills_staff, f"bills.{tag}@example.com", None
             ).token,
             "setup_invite": accounts.create_invite(
                 conn, pmc, "staff", setup_staff, f"setup.{tag}@example.com", None

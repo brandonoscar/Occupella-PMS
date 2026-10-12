@@ -32,7 +32,9 @@ The staff back office (`docs/adr/0003-staff-back-office.md`) is being built: sta
 their books in the portal (trust bank accounts, owners, properties, units, tenants, vendors,
 management and late fee terms, leases in place) and do the rent work there (the rent run, late
 fees, fees and credits, tenants' payments and deposits as they reached the bank, prepaid rent,
-bounced payments). Bills, owner draws and the monthly reconciliation in the portal come next.
+bounced payments), vendors' bills (entry, the owner's approval, setting aside and payment,
+recurring bills) and owners' money (draws, contributions, management and leasing fees). The
+monthly reconciliation in the portal comes next.
 
 Still true:
 

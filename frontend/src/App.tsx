@@ -4,9 +4,11 @@ import { ApiError, api } from "./api";
 import { Notice } from "./components/Notice";
 import { ApplicationStatusPage } from "./pages/ApplicationStatusPage";
 import { ApplyPage } from "./pages/ApplyPage";
+import { BillsPage } from "./pages/BillsPage";
 import { ESignPage } from "./pages/ESignPage";
 import { InvitePage } from "./pages/InvitePage";
 import { OwnerHome } from "./pages/OwnerHome";
+import { OwnersPage } from "./pages/OwnersPage";
 import { RentPage } from "./pages/RentPage";
 import { PMC_KEY, SignInPage } from "./pages/SignInPage";
 import { SetupPage } from "./pages/SetupPage";
@@ -49,6 +51,8 @@ function Home({ path }: { path: string }) {
   if (me.kind === "staff") {
     if (path === "/setup") return <SetupPage me={me} />;
     if (path === "/rent") return <RentPage me={me} />;
+    if (path === "/bills") return <BillsPage me={me} />;
+    if (path === "/owners") return <OwnersPage me={me} />;
     return <StaffHome me={me} />;
   }
   return <TenantHome me={me} />;
