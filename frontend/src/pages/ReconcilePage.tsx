@@ -73,9 +73,7 @@ export function ReconcilePage({ me }: { me: Me }) {
           </div>
           <Notice tone="error">{error}</Notice>
           <StatementsCard bank={bank} refresh={refresh} />
-          {sheet.opening && !sheet.opening.matched && (
-            <OpeningCard bank={bank} sheet={sheet} refresh={refresh} />
-          )}
+          {sheet.opening && <OpeningCard bank={bank} sheet={sheet} refresh={refresh} />}
           <WorksheetCard me={me} bank={bank} sheet={sheet} through={through}
             setThrough={setThrough} refresh={refresh} />
           <MatchCard bank={bank} sheet={sheet} refresh={refresh} />
@@ -349,6 +347,8 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
 
 // A migrated account's first statement opens with the bank's balance brought forward: it is
 // matched to the opening balances less the items carried over, once the cutover is signed off.
+// Once matched, the card says so for good (the refresh after matching must not take the
+// confirmation away with the form).
 function OpeningCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
   const { said, error, record } = useRecord(refresh);
   const opening = sheet.opening;
@@ -363,7 +363,9 @@ function OpeningCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet })
         not cleared: the first statement's balance brought forward should be{" "}
         {money(opening.brought_forward)}.
       </p>
-      {!opening.signed_off ? (
+      {opening.matched ? (
+        <Notice tone="info">The opening is matched.</Notice>
+      ) : !opening.signed_off ? (
         <Notice tone="info">Sign off the cutover at Switching first.</Notice>
       ) : candidates.length === 0 ? (
         <Notice tone="info">No open bank line comes to {money(opening.brought_forward)}.</Notice>
@@ -383,7 +385,7 @@ function OpeningCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet })
           </Button>
         </div>
       )}
-      <Notice tone="info">{said}</Notice>
+      {!opening.matched && <Notice tone="info">{said}</Notice>}
       <Notice tone="error">{error}</Notice>
     </Card>
   );
