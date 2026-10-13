@@ -40,6 +40,7 @@ from pydantic import BaseModel, Field
 
 from pms import accounts, exports
 from pms.api import (
+    documents,
     fake_esign,
     leasing,
     maintenance,
@@ -337,6 +338,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(switching.router)
     app.include_router(staff.router)
     app.include_router(moveout.router)
+    app.include_router(documents.router)
     if settings.static_dir is not None:
         serve_portal(app, settings.static_dir)
     return app

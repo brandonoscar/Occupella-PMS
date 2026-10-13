@@ -193,3 +193,27 @@ security deposit for its tenants, with what it owes:
   returned it when. The PMS keeps no tenant's address: staff send it.
 - No state's deadline for returning a deposit, interest on it, or form of notice is built in.
 
+## Documents, as built
+
+At `/documents` (`src/pms/api/documents.py`, migration 0036) staff keep four kinds of document,
+each about one record of their PMC: a vendor's W-9, a bill's receipt, a lease's move-out photos
+and an owner's documents.
+
+- A document is a PDF, a JPEG or a PNG of at most 5 MB, uploaded from the page (as base64 in
+  the JSON body, so changes stay JSON from the app's own origin). The API checks the type's
+  first bytes and the size; the database checks them again, with the SHA-256 the document's
+  row records, and refuses a document without its file at commit.
+- The bytes are kept apart from the document's row (`trust_document_files`): the row is audited
+  like every trust record, the bytes never are, so a W-9's tax ID never reaches the audit log.
+  `trust_ai_agent` may see that a document exists and never reads its file.
+- Staff remove a document with a removal row; it is then neither listed nor served. Nothing is
+  deleted, as with every trust record.
+- A download is an attachment named after the title, served under
+  `Content-Security-Policy: default-src 'none'; sandbox`, so a file opened in the browser runs
+  nothing.
+- An owner sees and downloads their own owner documents in the owner portal
+  (`/api/owner/documents`), and no other document.
+- The PMS reads nothing out of a file: no tax ID is extracted, and 1099s are still not filed.
+  Files live in the database; a PMC with many photos may later want them in object storage
+  (not built, and no hosted storage is used).
+

@@ -39,7 +39,9 @@ reconciliation prepared by one staff member once the books lack no line and appr
 another; a switching tool that brings a PMC's roster, opening balances and uncleared checks
 over from its old system, with a tie-out staff sign off; and staff roles, so only those an
 admin allows approve and pay out money; and move-out, where a lease's deposits pay what it owes
-and the rest goes back to the tenants with an itemized statement. Documents come next.
+and the rest goes back to the tenants with an itemized statement; and documents (vendors'
+W-9s, bills' receipts, move-out photos, owners' documents, which owners download in the
+portal).
 
 Still true:
 

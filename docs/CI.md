@@ -243,7 +243,7 @@ tenant's damage at move-out and return the rest of their deposit with its statem
 last month's bank statement, match it to the books and prepare the reconciliation for another
 staff member, who may approve, to approve, and bring a
 roster in, open an account with its old balances and a check not cleared, sign off the tie-out
-and match the opening. On
+and match the opening, and keep an owner's document that the owner then downloads. On
 failure it keeps the Playwright
 report and the API's log for 7 days. Run it locally with `cd frontend && npm ci && npm test &&
 npm run build`, then the same steps as the workflow (`PW_CHROMIUM` points Playwright at a

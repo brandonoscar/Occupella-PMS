@@ -22,6 +22,7 @@ type Seed = {
   month_end_invite: string;
   approver_invite: string;
   move_out_invite: string;
+  documents_invite: string;
   switch_invite: string;
 };
 const seed: Seed = JSON.parse(readFileSync(new URL("./.seed.json", import.meta.url), "utf8"));
@@ -402,6 +403,41 @@ test("staff charge a tenant's damage at move-out, return the rest of the deposit
   );
   expect(statement.status()).toBe(200);
   expect(statement.headers()["content-type"]).toBe("application/pdf");
+});
+
+test("staff keep an owner's document and the owner downloads it from the portal", async ({ page, browser }) => {
+  await page.goto(`/invite#${seed.documents_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
+  await page.getByRole("button", { name: "Finish" }).click();
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Documents" }).click();
+
+  const pdf = Buffer.from("%PDF-1.4\n% synthetic management agreement\n");
+  await page.getByRole("combobox", { name: "Kind" }).selectOption({ label: "Owner document" });
+  await page.getByRole("combobox", { name: "Owner" }).selectOption({ label: "Owner E2E" });
+  await page.getByLabel("File").setInputFiles({ name: "agreement-2026.pdf", mimeType: "application/pdf", buffer: pdf });
+  await expect(page.getByLabel("Title")).toHaveValue("agreement-2026");
+  await page.getByLabel("Title").fill("Management agreement 2026");
+  await page.getByRole("button", { name: "Keep it" }).click();
+  await expect(page.getByText("Kept Management agreement 2026.")).toBeVisible();
+  const kept = page.getByRole("list", { name: "Documents" }).getByRole("listitem");
+  await expect(kept).toContainText("Owner document, Owner E2E");
+
+  // The owner, who joined in the first test, signs in on their own and downloads it.
+  const owner = await (await browser.newContext()).newPage();
+  await owner.goto(`/sign-in?pmc=${seed.pmc_id}`);
+  await owner.getByLabel("Email").fill(seed.owner_email);
+  await owner.getByLabel("Password").fill(PASSWORD);
+  await owner.getByRole("button", { name: "Sign in" }).click();
+  const link = owner.getByRole("list", { name: "Your documents" }).getByRole("link", { name: "Management agreement 2026" });
+  const file = await owner.request.get((await link.getAttribute("href")) ?? "");
+  expect(file.status()).toBe(200);
+  expect(file.headers()["content-type"]).toBe("application/pdf");
+  expect(file.headers()["content-disposition"]).toBe('attachment; filename="Management-agreement-2026.pdf"');
+  expect(Buffer.from(await file.body()).equals(pdf)).toBe(true);
+  await owner.context().close();
 });
 
 // Last, since approving closes the operating trust account through last month.
