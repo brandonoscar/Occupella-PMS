@@ -949,6 +949,39 @@ $$;
 
 
 --
+-- Name: trust_charge_recurring_due(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_charge_recurring_due(p_pmc_id uuid, p_due_on date) RETURNS integer
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_charged integer;
+BEGIN
+    IF p_due_on IS NULL THEN
+        RAISE EXCEPTION 'trust: recurring charges are charged for a due date; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo, recurring_charge_id)
+    SELECT r.pmc_id, r.lease_id, p_due_on, r.kind, r.amount,
+           r.memo || ' due ' || to_char(p_due_on, 'YYYY-MM-DD'), r.id
+    FROM trust_recurring_charges AS r
+    JOIN trust_leases AS l ON l.id = r.lease_id
+    LEFT JOIN trust_recurring_charge_ends AS e ON e.recurring_charge_id = r.id
+    WHERE r.pmc_id = p_pmc_id AND r.starts_on <= p_due_on
+      AND (e.ends_on IS NULL OR p_due_on < e.ends_on)
+      AND l.starts_on <= p_due_on AND (l.ends_on IS NULL OR p_due_on <= l.ends_on)
+    ORDER BY r.id
+    ON CONFLICT (recurring_charge_id, due_on) WHERE recurring_charge_id IS NOT NULL DO NOTHING;
+    GET DIAGNOSTICS v_charged = ROW_COUNT;
+    RETURN v_charged;
+END;
+$$;
+
+
+--
 -- Name: trust_charge_rent_due(uuid, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5670,6 +5703,7 @@ CREATE TABLE public.trust_charges (
     amount numeric NOT NULL,
     memo text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    recurring_charge_id uuid,
     CONSTRAINT trust_charges_amount_check CHECK ((amount > (0)::numeric)),
     CONSTRAINT trust_charges_kind_check CHECK ((kind = ANY (ARRAY['rent'::text, 'fee'::text, 'credit'::text])))
 );
@@ -6273,6 +6307,37 @@ CREATE TABLE public.trust_recurring_bills (
     CONSTRAINT trust_recurring_bills_day_of_month_check CHECK (((day_of_month >= 1) AND (day_of_month <= 28))),
     CONSTRAINT trust_recurring_bills_memo_check CHECK ((memo <> ''::text)),
     CONSTRAINT trust_recurring_bills_reference_prefix_check CHECK ((reference_prefix <> ''::text))
+);
+
+
+--
+-- Name: trust_recurring_charge_ends; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_recurring_charge_ends (
+    recurring_charge_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    ends_on date NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: trust_recurring_charges; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_recurring_charges (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    kind text NOT NULL,
+    amount numeric NOT NULL,
+    memo text NOT NULL,
+    starts_on date NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_recurring_charges_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_recurring_charges_kind_check CHECK ((kind = ANY (ARRAY['fee'::text, 'credit'::text]))),
+    CONSTRAINT trust_recurring_charges_memo_check CHECK ((memo <> ''::text))
 );
 
 
@@ -7282,6 +7347,38 @@ ALTER TABLE ONLY public.trust_recurring_bills
 
 
 --
+-- Name: trust_recurring_charge_ends trust_recurring_charge_ends_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_charge_ends
+    ADD CONSTRAINT trust_recurring_charge_ends_pkey PRIMARY KEY (recurring_charge_id);
+
+
+--
+-- Name: trust_recurring_charges trust_recurring_charges_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_charges
+    ADD CONSTRAINT trust_recurring_charges_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_recurring_charges trust_recurring_charges_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_charges
+    ADD CONSTRAINT trust_recurring_charges_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_recurring_charges trust_recurring_charges_pmc_id_lease_id_id_kind_amount_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_charges
+    ADD CONSTRAINT trust_recurring_charges_pmc_id_lease_id_id_kind_amount_key UNIQUE (pmc_id, lease_id, id, kind, amount);
+
+
+--
 -- Name: trust_screenings trust_screenings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7553,6 +7650,13 @@ CREATE INDEX trust_charges_lease_id ON public.trust_charges USING btree (lease_i
 
 
 --
+-- Name: trust_charges_one_per_recurring_due_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_charges_one_per_recurring_due_date ON public.trust_charges USING btree (recurring_charge_id, due_on) WHERE (recurring_charge_id IS NOT NULL);
+
+
+--
 -- Name: trust_charges_one_rent_per_due_date; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -7753,6 +7857,13 @@ CREATE INDEX trust_reconciliation_preparations_bank_account_id ON public.trust_r
 --
 
 CREATE INDEX trust_reconciliations_bank_account_id ON public.trust_reconciliations USING btree (bank_account_id, period_end);
+
+
+--
+-- Name: trust_recurring_charges_lease_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_recurring_charges_lease_id ON public.trust_recurring_charges USING btree (lease_id);
 
 
 --
@@ -8201,6 +8312,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_recurring_bills FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_recurring_charge_ends trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_recurring_charge_ends FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_recurring_charges trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_recurring_charges FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -8663,6 +8788,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_recu
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_recurring_bills FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_recurring_charge_ends trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_recurring_charge_ends FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_recurring_charges trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_recurring_charges FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -9414,6 +9553,14 @@ ALTER TABLE ONLY public.trust_charges
 
 ALTER TABLE ONLY public.trust_charges
     ADD CONSTRAINT trust_charges_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_charges trust_charges_recurring_charge_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_charges
+    ADD CONSTRAINT trust_charges_recurring_charge_fkey FOREIGN KEY (pmc_id, lease_id, recurring_charge_id, kind, amount) REFERENCES public.trust_recurring_charges(pmc_id, lease_id, id, kind, amount);
 
 
 --
@@ -10313,6 +10460,38 @@ ALTER TABLE ONLY public.trust_recurring_bills
 
 
 --
+-- Name: trust_recurring_charge_ends trust_recurring_charge_ends_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_charge_ends
+    ADD CONSTRAINT trust_recurring_charge_ends_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_recurring_charge_ends trust_recurring_charge_ends_pmc_id_recurring_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_charge_ends
+    ADD CONSTRAINT trust_recurring_charge_ends_pmc_id_recurring_charge_id_fkey FOREIGN KEY (pmc_id, recurring_charge_id) REFERENCES public.trust_recurring_charges(pmc_id, id);
+
+
+--
+-- Name: trust_recurring_charges trust_recurring_charges_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_charges
+    ADD CONSTRAINT trust_recurring_charges_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_recurring_charges trust_recurring_charges_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_charges
+    ADD CONSTRAINT trust_recurring_charges_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
 -- Name: trust_screenings trust_screenings_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -10575,4 +10754,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261012000033'),
     ('20261012000034'),
     ('20261012000035'),
-    ('20261012000036');
+    ('20261012000036'),
+    ('20261013000037');

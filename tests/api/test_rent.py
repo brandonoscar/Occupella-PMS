@@ -1,6 +1,6 @@
 """Staff's rent work through the API (src/pms/api/rent.py): the rent run and late fees, fees
-and credits, tenants' payments matched to what a lease owes (the rest held as prepaid rent),
-prepaid rent used, payments that bounced, and security deposits."""
+and credits once or every month, tenants' payments matched to what a lease owes (the rest held
+as prepaid rent), prepaid rent used, payments that bounced, and security deposits."""
 
 import json
 import uuid
@@ -91,11 +91,74 @@ def test_the_rent_run_charges_each_lease_once_a_due_date(client, staff, home):
     again = ok(call(client, "charge-rent", on=TODAY), 200)
     row = lease_row(client, home)
 
-    assert (first, again) == ({"charged": 1}, {"charged": 0})
+    assert (first, again) == ({"charged": 1, "recurring": 0}, {"charged": 0, "recurring": 0})
     assert row["owed"] == "1500.00"
     assert [(c["due_on"], c["kind"], c["open"]) for c in row["open_charges"]] == [
         (str(TODAY), "rent", "1500.00")
     ]
+
+
+def recur(client, home, amount="35.00", memo="Pet rent", starts_on=START, kind="fee"):
+    return call(
+        client,
+        f"leases/{home.lease}/recurring-charges",
+        kind=kind,
+        amount=amount,
+        memo=memo,
+        starts_on=starts_on,
+    )
+
+
+def test_the_rent_run_charges_a_recurring_charge_with_the_rent_until_it_stops(client, staff, home):
+    pet_rent = ok(recur(client, home))["id"]
+    ok(recur(client, home, "100.00", "Concession", kind="credit"))
+
+    first = ok(call(client, "charge-rent", on=TODAY), 200)
+    again = ok(call(client, "charge-rent", on=TODAY), 200)
+    row = lease_row(client, home)
+
+    assert (first, again) == ({"charged": 1, "recurring": 2}, {"charged": 0, "recurring": 0})
+    assert row["owed"] == "1435.00"
+    assert [(r["kind"], r["memo"], r["amount"], r["ends_on"]) for r in row["recurring"]] == [
+        ("credit", "Concession", "100.00", None),
+        ("fee", "Pet rent", "35.00", None),
+    ]
+    # Charged in one run, so the same day and time: which comes first is the ids' order.
+    assert sorted((c["kind"], c["memo"], c["open"]) for c in row["open_charges"]) == [
+        ("fee", f"Pet rent due {TODAY}", "35.00"),
+        ("rent", f"Rent due {TODAY}", "1500.00"),
+    ]
+
+    ok(call(client, f"recurring-charges/{pet_rent}/stop", ends_on=TODAY + DAY))
+    assert [r["ends_on"] for r in lease_row(client, home)["recurring"]] == [
+        None,
+        str(TODAY + DAY),
+    ]
+    assert ok(call(client, "charge-rent", on=TODAY + DAY), 200) == {"charged": 1, "recurring": 1}
+    refused(
+        call(client, f"recurring-charges/{pet_rent}/stop", ends_on=TODAY),
+        409,
+        "this recurring charge has stopped already",
+    )
+
+
+def test_a_stopped_recurring_charge_is_no_longer_listed(client, staff, home):
+    pet_rent = ok(recur(client, home))["id"]
+
+    ok(call(client, f"recurring-charges/{pet_rent}/stop", ends_on=TODAY))
+
+    assert lease_row(client, home)["recurring"] == []
+    assert ok(call(client, "charge-rent", on=TODAY), 200) == {"charged": 1, "recurring": 0}
+
+
+def test_a_recurring_charge_names_the_staff_member_in_the_audit_log(client, conn, staff, home):
+    made = ok(recur(client, home))
+
+    assert conn.execute(
+        "SELECT staff_id FROM trust_audit_log WHERE table_name = 'trust_recurring_charges'"
+        " AND row_data ->> 'id' = %s",
+        (made["id"],),
+    ).fetchone() == (staff.person_id,)
 
 
 def test_a_payment_pays_what_is_owed_oldest_first_and_holds_the_rest_as_prepaid_rent(
@@ -395,8 +458,27 @@ def test_another_pmcs_lease_is_not_found(client, conn, staff, home, other_pmc_le
             due_on=TODAY,
             memo="x",
         ),
+        recur(client, other_pmc_lease),
     ):
         refused(answer, 404, "no such lease")
+
+
+def test_another_pmcs_recurring_charge_is_not_found(client, conn, staff, other_pmc_lease):
+    from helpers import add_recurring_charge
+
+    theirs = add_recurring_charge(
+        conn, other_pmc_lease.pmc.pmc_id, other_pmc_lease.lease, "35.00", START
+    )
+
+    refused(
+        call(client, f"recurring-charges/{theirs}/stop", ends_on=TODAY),
+        404,
+        "no such recurring charge",
+    )
+    assert conn.execute(
+        "SELECT count(*) FROM trust_recurring_charge_ends WHERE recurring_charge_id = %s",
+        (theirs,),
+    ).fetchone() == (0,)
 
 
 @pytest.fixture
@@ -411,6 +493,8 @@ ENDPOINTS = [
     ("post", "/api/rent/charge-rent"),
     ("post", "/api/rent/late-fees"),
     ("post", f"/api/rent/leases/{uuid.uuid4()}/charges"),
+    ("post", f"/api/rent/leases/{uuid.uuid4()}/recurring-charges"),
+    ("post", f"/api/rent/recurring-charges/{uuid.uuid4()}/stop"),
     ("post", f"/api/rent/leases/{uuid.uuid4()}/payments"),
     ("post", f"/api/rent/leases/{uuid.uuid4()}/use-prepaid"),
     ("post", "/api/rent/deposits"),
@@ -447,11 +531,31 @@ def test_only_staff_do_rent_work(client, conn, app_conn, pmc, caller, method, pa
         ),
         ("charges", {"kind": "rent", "amount": "1.00", "due_on": str(TODAY), "memo": "x"}),
         ("charges", {"kind": "fee", "amount": "1.00", "due_on": str(TODAY), "memo": " "}),
+        (
+            "recurring-charges",
+            {"kind": "rent", "amount": "1.00", "starts_on": str(TODAY), "memo": "x"},
+        ),
+        (
+            "recurring-charges",
+            {"kind": "fee", "amount": "0", "starts_on": str(TODAY), "memo": "x"},
+        ),
+        (
+            "recurring-charges",
+            {"kind": "fee", "amount": "1.00", "starts_on": str(TODAY), "memo": " "},
+        ),
+        ("recurring-charges", {"kind": "fee", "amount": "1.00", "memo": "x"}),  # no first day
         ("use-prepaid", {"request_id": str(uuid.uuid4())}),
     ],
 )
 def test_bad_input_is_refused(client, staff, home, path, body):
     refused(client.post(f"/api/rent/leases/{home.lease}/{path}", json=body), 422)
+
+
+@pytest.mark.parametrize("body", [{}, {"ends_on": "someday"}])
+def test_a_stop_needs_its_day(client, staff, home, body):
+    pet_rent = ok(recur(client, home))["id"]
+
+    refused(client.post(f"/api/rent/recurring-charges/{pet_rent}/stop", json=body), 422)
 
 
 @pytest.mark.parametrize("path", ["payments", "use-prepaid"])

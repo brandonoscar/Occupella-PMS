@@ -26,7 +26,10 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     match made before still returns it; a release ends a hold once, after it starts;
   - late fees are the model's: the rent run (run_the_rent) charges each lease in effect on the
     due date once, and each rent still unpaid when its grace ran out is charged one late fee,
-    worked from what was unpaid then under the terms in force on its due date.
+    worked from what was unpaid then under the terms in force on its due date;
+  - recurring charges are the model's: the rent run charges each recurring charge in force on
+    the due date (from its first day, before the day it stops) whose lease is in effect then,
+    once per recurring charge and due date, as a fee or credit of its lease and amount.
 
 The rule check_the_tenant_reports reads the delinquency report as of a random day and compares
 every lease line with the model's aging, and checks a lease's tenant ledger closes at its
@@ -50,12 +53,14 @@ import pytest
 from helpers import (
     add_agreement,
     add_late_fee_policy,
+    add_recurring_charge,
     add_tenant,
     add_unit,
     allow_payment,
     apply_payment,
     assess_late_fees,
     charge,
+    charge_recurring_due,
     charge_rent_due,
     contribute,
     draw_owner,
@@ -68,6 +73,7 @@ from helpers import (
     post_management_fee,
     release_hold,
     reverse_payment,
+    stop_recurring_charge,
     transfer_batch,
 )
 from hypothesis import strategies as st
@@ -124,6 +130,18 @@ class Charge:
     due_on: date
     kind: str
     amount: Decimal
+
+
+@dataclass
+class Recurring:
+    lease_id: UUID
+    kind: str
+    amount: Decimal
+    starts_on: date
+    ends_on: date | None = None  # the first due date it is no longer charged for
+
+    def in_force(self, day):
+        return self.starts_on <= day < (self.ends_on or LAST_DAY)
 
 
 @dataclass(frozen=True)
@@ -227,6 +245,9 @@ class RentRollMachine(RuleBasedStateMachine):
         self.allowed: set[tuple[UUID, str]] = set()
         # Owners' contributions: request key -> (account, amount, transfer).
         self.contributions: dict[str, tuple[str, Decimal, str]] = {}
+        # Recurring charges, and (recurring charge, due date) -> the charge the run made.
+        self.recurring: dict[UUID, Recurring] = {}
+        self.recurring_charged: dict[tuple[UUID, date], UUID] = {}
 
     # --- helpers -------------------------------------------------------------------------
 
@@ -1162,13 +1183,78 @@ class RentRollMachine(RuleBasedStateMachine):
     @precondition(lambda self: self.leases)
     @rule(data=st.data(), role=ROLES, day=DAYS)
     def run_the_rent(self, data, role, day):
-        """Usually on a day some lease is in effect, so the run charges something."""
+        """Usually on a day some lease is in effect, or some recurring charge starts or stops,
+        so the run charges something. The staff rent run charges the rent and then the
+        recurring charges."""
         covered = sorted(
             {d for lease in self.leases.values() for d in (lease.starts_on, lease.ends_on) if d}
+            | {d for r in self.recurring.values() for d in (r.starts_on, r.ends_on) if d}
         )
-        self.charge_rent_on(
-            role, data.draw(st.sampled_from([*covered, BASE + timedelta(days=day)]))
+        due_on = data.draw(st.sampled_from([*covered, BASE + timedelta(days=day)]))
+        self.charge_rent_on(role, due_on)
+        self.charge_recurring_on(role, due_on)
+
+    @precondition(lambda self: self.recurring)
+    @rule(data=st.data(), role=ROLES, after=st.integers(min_value=0, max_value=90))
+    def run_the_rent_while_a_charge_recurs(self, data, role, after):
+        """The rent run on a day after some recurring charge's first day, so it is usually in
+        force then; now and then the same day twice, as a retried run."""
+        recurring = self.recurring[data.draw(st.sampled_from(list(self.recurring)))]
+        due_on = recurring.starts_on + timedelta(days=after)
+        for _ in range(data.draw(st.integers(min_value=1, max_value=2))):
+            self.charge_rent_on(role, due_on)
+            self.charge_recurring_on(role, due_on)
+
+    def charge_recurring_on(self, role, due_on):
+        due = [
+            recurring_id
+            for recurring_id, recurring in self.recurring.items()
+            if recurring.in_force(due_on)
+            and self.leases[recurring.lease_id].covers(due_on)
+            and (recurring_id, due_on) not in self.recurring_charged
+        ]
+
+        assert charge_recurring_due(self.conns[role], self.pmc_id, due_on) == len(due)
+
+        for recurring_id in due:
+            recurring = self.recurring[recurring_id]
+            (charge_id,) = self.conn.execute(
+                "SELECT id FROM trust_charges WHERE recurring_charge_id = %s AND due_on = %s",
+                (recurring_id, due_on),
+            ).fetchone()
+            self.charges[charge_id] = Charge(
+                recurring.lease_id, due_on, recurring.kind, recurring.amount
+            )
+            self.recurring_charged[(recurring_id, due_on)] = charge_id
+
+    @precondition(lambda self: self.leases)
+    @rule(
+        data=st.data(),
+        role=ROLES,
+        start=st.one_of(st.just(0), st.integers(min_value=-20, max_value=220)),
+        kind=st.sampled_from(["fee", "fee", "credit"]),
+        amount=AMOUNTS,
+    )
+    def add_a_recurring_charge(self, data, role, start, kind, amount):
+        lease_id = data.draw(st.sampled_from(list(self.leases)))
+        starts_on = self.leases[lease_id].starts_on + timedelta(days=start)
+        recurring_id = add_recurring_charge(
+            self.conns[role], self.pmc_id, lease_id, amount, starts_on, "Parking", kind
         )
+        self.recurring[recurring_id] = Recurring(lease_id, kind, amount, starts_on)
+
+    @precondition(lambda self: self.recurring)
+    @rule(data=st.data(), role=ROLES, after=st.integers(min_value=-10, max_value=220))
+    def stop_a_recurring_charge(self, data, role, after):
+        recurring_id = data.draw(st.sampled_from(list(self.recurring)))
+        recurring = self.recurring[recurring_id]
+        ends_on = recurring.starts_on + timedelta(days=after)
+        if recurring.ends_on is not None:
+            with pytest.raises(psycopg.errors.UniqueViolation, match="ends_pkey"):
+                stop_recurring_charge(self.conns[role], self.pmc_id, recurring_id, ends_on)
+        else:
+            stop_recurring_charge(self.conns[role], self.pmc_id, recurring_id, ends_on)
+            recurring.ends_on = ends_on
 
     def charge_rent_on(self, role, due_on):
         due = [
@@ -1449,6 +1535,8 @@ class RentRollMachine(RuleBasedStateMachine):
                 "run the rent",
                 "assess late fees",
                 "record late fee terms",
+                "record a recurring charge",
+                "charge recurring charges",
             ]
         ),
     )
@@ -1476,6 +1564,10 @@ class RentRollMachine(RuleBasedStateMachine):
                 assess_late_fees(ai, self.pmc_id, LAST_DAY)
             elif write == "record late fee terms":
                 add_late_fee_policy(ai, self.pmc_id, self.properties[0], LAST_DAY, 0, "1")
+            elif write == "record a recurring charge":
+                add_recurring_charge(ai, self.pmc_id, lease_id, "1.00", lease.starts_on)
+            elif write == "charge recurring charges":
+                charge_recurring_due(ai, self.pmc_id, lease.starts_on)
             else:
                 reverse_payment(ai, self.pmc_id, charge_id, transfer_id, transfer_id, "0.01")
 
@@ -1616,6 +1708,26 @@ class RentRollMachine(RuleBasedStateMachine):
         assert all(
             Charge(lease, due, kind, amount) == self.charges[fee_id]
             for _, _, _, fee_id, lease, due, kind, amount in stored
+        )
+
+    @invariant()
+    def recurring_charges_are_the_models(self):
+        stored = self.conn.execute(
+            "SELECT r.id, r.lease_id, r.kind, r.amount, r.starts_on, e.ends_on"
+            " FROM trust_recurring_charges r LEFT JOIN trust_recurring_charge_ends e"
+            " ON e.recurring_charge_id = r.id WHERE r.pmc_id = %s",
+            (self.pmc_id,),
+        ).fetchall()
+        assert {i: Recurring(*rest) for i, *rest in stored} == self.recurring
+        charged = self.conn.execute(
+            "SELECT recurring_charge_id, due_on, id, lease_id, kind, amount FROM trust_charges"
+            " WHERE pmc_id = %s AND recurring_charge_id IS NOT NULL",
+            (self.pmc_id,),
+        ).fetchall()
+        assert {(r, d): i for r, d, i, *_ in charged} == self.recurring_charged
+        assert all(
+            self.charges[i] == Charge(lease, d, kind, amount)
+            for _, d, i, lease, kind, amount in charged
         )
 
     @invariant()

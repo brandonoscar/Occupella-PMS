@@ -61,6 +61,8 @@ TABLES = {
     "trust_owner_contributions": {"SELECT"},  # written only by trust_record_owner_contribution
     "trust_recurring_bills": {"SELECT", "INSERT"},
     "trust_recurring_bill_ends": {"SELECT", "INSERT"},
+    "trust_recurring_charges": {"SELECT", "INSERT"},
+    "trust_recurring_charge_ends": {"SELECT", "INSERT"},
     # Logins (the API writes them; UPDATE only on the columns in COLUMN_UPDATES).
     "trust_logins": {"SELECT", "INSERT"},
     "trust_invites": {"SELECT", "INSERT"},
@@ -173,6 +175,7 @@ FUNCTIONS = {
     "trust_set_aside_bill(uuid,uuid,timestamptz)": {"trust_app"},
     "trust_pay_bill(uuid,uuid,timestamptz)": {"trust_app"},
     "trust_charge_rent_due(uuid,date)": {"trust_app"},
+    "trust_charge_recurring_due(uuid,date)": {"trust_app"},
     "trust_assess_late_fees(uuid,date)": {"trust_app"},
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)": {"trust_app"},
     "trust_record_owner_contribution(uuid,text,text,numeric,timestamptz,text)": {"trust_app"},

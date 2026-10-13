@@ -17,6 +17,16 @@ export type Paid = {
   bounced: boolean;
 };
 export type LeaseTenant = { id: string; name: string; prepaid: string; deposit: string };
+// A fee the lease owes every month besides its rent, or a credit it gets every month. ends_on is
+// the first due date it is no longer charged for.
+export type RecurringCharge = {
+  id: string;
+  kind: "fee" | "credit";
+  memo: string;
+  amount: string;
+  starts_on: string;
+  ends_on: string | null;
+};
 export type RentLease = {
   id: string;
   property: string;
@@ -29,8 +39,11 @@ export type RentLease = {
   on_hold: boolean;
   open_charges: OpenCharge[];
   payments: Paid[];
+  recurring: RecurringCharge[];
 };
 export type Payment = { transfers: string[]; to_owner: string; to_prepaid: string };
+// What the rent run charged: leases their rent, and recurring charges.
+export type RentRun = { charged: number; recurring: number };
 
 // A fresh id for one thing staff record: sent again (a double click, a retry), it records
 // nothing new.
@@ -58,4 +71,16 @@ export function chargeLabel(charge: OpenCharge): string {
   const what = charge.memo ?? (charge.kind === "rent" ? "Rent" : "Fee");
   const part = charge.open === charge.amount ? "" : ` of ${money(charge.amount)}`;
   return `${charge.due_on} ${what}: ${money(charge.open)} open${part}`;
+}
+
+export function recurringLabel(recurring: RecurringCharge): string {
+  const amount = recurring.kind === "credit" ? `credit of ${money(recurring.amount)}` : money(recurring.amount);
+  const stops = recurring.ends_on ? `, stops ${recurring.ends_on}` : "";
+  return `${recurring.memo}: ${amount} a month from ${recurring.starts_on}${stops}`;
+}
+
+export function rentRunSummary(run: RentRun): string {
+  const rents = `${run.charged} rent${run.charged === 1 ? "" : "s"}`;
+  const recurring = `${run.recurring} recurring charge${run.recurring === 1 ? "" : "s"}`;
+  return `${rents} and ${recurring} charged.`;
 }

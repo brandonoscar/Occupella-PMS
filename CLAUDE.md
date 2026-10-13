@@ -184,6 +184,12 @@ required invariant, report and self-host step.
   cap) are in force from a date; `trust_assess_late_fees` charges a rent still unpaid at the
   end of its last grace day (UTC) one late fee under the terms in force on its due date. READ
   COMMITTED.
+- Recurring charges (migration 0037): a fee a lease owes every month besides its rent (pet
+  rent, parking) or a credit it gets every month (`trust_recurring_charges`, from a first due
+  date; an end row stops it from a day). `trust_charge_recurring_due` charges each one in force
+  on a due date while its lease is in effect, once per recurring charge and date; the staff
+  rent run calls it with `trust_charge_rent_due`. A charge naming one is of its PMC, lease, kind
+  and amount (`trust_charges.recurring_charge_id`). Late fees stay on rent only.
 - Cutover: `trust_post_opening_balances` opens a trust bank account with what each account in
   it held in the old system, from its cash at the start of the cutover date (UTC), checked
   against the old book cash. Once per account, before any posting or reconciliation in it, safe

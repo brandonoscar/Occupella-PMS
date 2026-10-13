@@ -618,6 +618,32 @@ def charge_rent_due(connection, pmc_id, due_on) -> int:
     return _one(connection, "SELECT trust_charge_rent_due(%s, %s)", (pmc_id, due_on))
 
 
+def add_recurring_charge(
+    connection, pmc_id, lease_id, amount, starts_on, memo="Pet rent", kind="fee"
+) -> UUID:
+    """A fee (or credit) the lease owes every month besides its rent, from starts_on."""
+    return _one(
+        connection,
+        "INSERT INTO trust_recurring_charges (pmc_id, lease_id, kind, amount, memo, starts_on)"
+        " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, lease_id, kind, Decimal(amount), memo, starts_on),
+    )
+
+
+def stop_recurring_charge(connection, pmc_id, recurring_charge_id, ends_on) -> None:
+    """No longer charged for due dates from ends_on."""
+    connection.execute(
+        "INSERT INTO trust_recurring_charge_ends (pmc_id, recurring_charge_id, ends_on)"
+        " VALUES (%s, %s, %s)",
+        (pmc_id, recurring_charge_id, ends_on),
+    )
+
+
+def charge_recurring_due(connection, pmc_id, due_on) -> int:
+    """Charge every recurring charge in force on due_on; the number charged."""
+    return _one(connection, "SELECT trust_charge_recurring_due(%s, %s)", (pmc_id, due_on))
+
+
 def add_late_fee_policy(
     connection, pmc_id, property_id, starts_on, grace_days, flat_fee="0", percent="0", maximum=None
 ) -> UUID:

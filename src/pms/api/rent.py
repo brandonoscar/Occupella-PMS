@@ -1,5 +1,6 @@
-"""Staff's rent work: charge the month's rent and late fees, add a fee or a credit, record a
-tenant's payment or security deposit, use prepaid rent, and undo a payment that bounced.
+"""Staff's rent work: charge the month's rent (with each lease's recurring charges) and late
+fees, add a fee or a credit once or every month, record a tenant's payment or security deposit,
+use prepaid rent, and undo a payment that bounced.
 
 What a lease owes (its rent and fees, less its credits, less what payments matched, plus what
 bounced back) stays out of the trust ledger. Money is recorded as it reached the trust bank
@@ -497,6 +498,15 @@ class LeaseTenant(BaseModel):
     deposit: str
 
 
+class RecurringCharge(BaseModel):
+    id: UUID
+    kind: Literal["fee", "credit"]
+    memo: str
+    amount: str
+    starts_on: date
+    ends_on: date | None  # the first due date it is no longer charged for
+
+
 class RentLease(BaseModel):
     id: UUID
     property: str
@@ -509,6 +519,7 @@ class RentLease(BaseModel):
     on_hold: bool
     open_charges: list[OpenCharge]
     payments: list[Paid]
+    recurring: list[RecurringCharge]
 
 
 LEASES = f"""
@@ -535,6 +546,15 @@ SELECT lt.lease_id, t.id, t.display_name,
 FROM trust_lease_tenants AS lt JOIN trust_tenants AS t ON t.id = lt.tenant_id
 WHERE lt.pmc_id = %s
 ORDER BY t.display_name COLLATE "C", t.id
+"""
+
+# Recurring charges not stopped by the day: still charged, or to be.
+RECURRING = """
+SELECT r.lease_id, r.id, r.kind, r.memo, r.amount, r.starts_on, e.ends_on
+FROM trust_recurring_charges AS r
+LEFT JOIN trust_recurring_charge_ends AS e ON e.recurring_charge_id = r.id
+WHERE r.pmc_id = %(pmc)s AND (e.ends_on IS NULL OR %(as_of)s < e.ends_on)
+ORDER BY r.starts_on, r.memo COLLATE "C", r.id
 """
 
 PAYMENTS = """
@@ -587,6 +607,15 @@ def leases(
                 open=cents(left),
             )
         )
+    recurring: dict[UUID, list[RecurringCharge]] = {}
+    for lease, r, kind, memo, amount, starts, ends in conn.execute(
+        RECURRING, {"pmc": pmc, "as_of": day}
+    ).fetchall():
+        recurring.setdefault(lease, []).append(
+            RecurringCharge(
+                id=r, kind=kind, memo=memo, amount=cents(amount), starts_on=starts, ends_on=ends
+            )
+        )
     found = []
     for i, prop, unit, starts, ends, rent, due, on_hold in conn.execute(
         LEASES, {"pmc": pmc, "as_of": day}
@@ -607,6 +636,7 @@ def leases(
                 on_hold=on_hold,
                 open_charges=charges.get(i, []),
                 payments=payments.get(i, [])[:12],
+                recurring=recurring.get(i, []),
             )
         )
     return found
@@ -620,12 +650,22 @@ class Counted(BaseModel):
     charged: int
 
 
+class RentRun(BaseModel):
+    charged: int  # leases charged their rent
+    recurring: int  # recurring charges charged
+
+
 @router.post("/charge-rent")
-def charge_rent(session: Staff, conn: Conn, run: Day) -> Counted:
-    """Charges every lease in effect on the day its monthly rent, once per lease and day."""
-    row = conn.execute("SELECT trust_charge_rent_due(%s, %s)", (session.pmc_id, run.on)).fetchone()
-    assert row is not None
-    return Counted(charged=row[0])
+def charge_rent(session: Staff, conn: Conn, run: Day) -> RentRun:
+    """Charges every lease in effect on the day its monthly rent, and every recurring charge in
+    force then, once per lease (or recurring charge) and day."""
+    rent = conn.execute("SELECT trust_charge_rent_due(%s, %s)", (session.pmc_id, run.on))
+    charged = rent.fetchone()
+    recurring = conn.execute(
+        "SELECT trust_charge_recurring_due(%s, %s)", (session.pmc_id, run.on)
+    ).fetchone()
+    assert charged is not None and recurring is not None
+    return RentRun(charged=charged[0], recurring=recurring[0])
 
 
 @router.post("/late-fees")
@@ -661,6 +701,54 @@ def add_charge(session: Staff, conn: Conn, lease_id: UUID, new: NewCharge) -> Cr
     ).fetchone()
     assert row is not None
     return Created(id=row[0])
+
+
+class NewRecurringCharge(BaseModel):
+    kind: Literal["fee", "credit"]
+    amount: Amount
+    memo: Memo
+    starts_on: date
+
+
+@router.post("/leases/{lease_id}/recurring-charges", status_code=201)
+def add_recurring_charge(
+    session: Staff, conn: Conn, lease_id: UUID, new: NewRecurringCharge
+) -> Created:
+    """A fee the lease owes every month besides its rent (pet rent, parking), or a credit it
+    gets every month, charged by the rent run from the first due date on or after starts_on."""
+    lease_of(conn, session.pmc_id, lease_id)
+    row = conn.execute(
+        "INSERT INTO trust_recurring_charges (pmc_id, lease_id, kind, amount, memo, starts_on)"
+        " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+        (session.pmc_id, lease_id, new.kind, new.amount, new.memo, new.starts_on),
+    ).fetchone()
+    assert row is not None
+    return Created(id=row[0])
+
+
+class Stop(BaseModel):
+    ends_on: date  # the first due date it is no longer charged for
+
+
+@router.post("/recurring-charges/{recurring_id}/stop", status_code=201)
+def stop_recurring_charge(session: Staff, conn: Conn, recurring_id: UUID, stop: Stop) -> None:
+    """Stops a recurring charge: the rent run charges it for no due date from the day on."""
+    if (
+        conn.execute(
+            "SELECT 1 FROM trust_recurring_charges WHERE pmc_id = %s AND id = %s",
+            (session.pmc_id, recurring_id),
+        ).fetchone()
+        is None
+    ):
+        raise HTTPException(404, "no such recurring charge")
+    try:
+        conn.execute(
+            "INSERT INTO trust_recurring_charge_ends (pmc_id, recurring_charge_id, ends_on)"
+            " VALUES (%s, %s, %s)",
+            (session.pmc_id, recurring_id, stop.ends_on),
+        )
+    except psycopg.errors.UniqueViolation:
+        raise HTTPException(409, "this recurring charge has stopped already") from None
 
 
 class NewPayment(BaseModel):
