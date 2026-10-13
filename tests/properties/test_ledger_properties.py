@@ -701,6 +701,18 @@ class LedgerMachine(RuleBasedStateMachine):
             assert figures["beneficiary ledgers"] == book == sum(ledgers)
             assert figures["difference: trust journal - beneficiary ledgers"] == 0
             assert figures["difference: bank statement - trust journal"] == statement - book
+            # No statement is imported here, so what had not cleared is not known (0050).
+            assert [
+                (detail.startswith("not known: "), amount)
+                for item, detail, amount in rows
+                if item
+                in (
+                    "deposits in transit",
+                    "outstanding withdrawals",
+                    "adjusted bank balance",
+                    "difference: adjusted bank balance - trust journal",
+                )
+            ] == [(True, None)] * 4
 
     @invariant()
     def deposits_sit_only_in_the_deposit_account(self):

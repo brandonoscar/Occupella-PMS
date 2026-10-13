@@ -14,7 +14,10 @@ Invariants checked after every step (ci/registry.toml maps them to this test):
     same on both sides;
   - a match or an undo that would change an approved period is refused with nothing written;
   - a period is approved only when the books lack no line, at the bank balance the statements
-    give, and its trust bank account is closed through its end.
+    give, and its trust bank account is closed through its end;
+  - each approved period's three-way reconciliation adds the deposits in transit and outstanding
+    withdrawals of its last day to the statement balance, lists each of them and each line the
+    books lack, and its adjusted bank balance comes to the trust journal (migration 0050).
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
@@ -92,6 +95,7 @@ class BankMachine(RuleBasedStateMachine):
         self.matches: list[Match] = []
         self.next_day = START  # the next statement's first day
         self.closed: date | None = None  # the first day still open, once a period is approved
+        self.approved: list[tuple[uuid.UUID, date]] = []  # (reconciliation, its last day)
 
     # --- helpers --------------------------------------------------------------------------
 
@@ -321,6 +325,7 @@ class BankMachine(RuleBasedStateMachine):
         ).fetchone()
         assert balance == self.bank_total(through)
         self.closed = through + timedelta(days=1)
+        self.approved.append((reconciliation, through))
 
     # --- invariants -----------------------------------------------------------------------
 
@@ -349,6 +354,40 @@ class BankMachine(RuleBasedStateMachine):
         assert sorted(a for i, a in listed if i == "deposit in transit") == sorted(transit)
         assert sorted(a for i, a in listed if i == "outstanding withdrawal") == sorted(out)
         assert sorted(a for i, a in listed if i == "bank line not in the books") == sorted(lacking)
+
+    @invariant()
+    def each_three_way_lists_what_had_not_cleared(self):
+        """Each approved period's three-way reconciliation adds what had not cleared by its last
+        day to the statement balance, lists each item, and comes to the trust journal less the
+        lines the books lack (none in all, once approved)."""
+        for reconciliation, through in self.approved:
+            rows = self.conn.execute(
+                "SELECT line, item, detail, amount"
+                " FROM trust_report_three_way_reconciliation(%s, %s)",
+                (self.pmc.pmc_id, reconciliation),
+            ).fetchall()
+            totals = {item: amount for line, item, _, amount in rows if line <= 14}
+            listed = [(i, a) for line, i, _, a in rows if line > 14 and i != "ledger"]
+            book = sum((mv.cash for mv in self.moved if mv.day <= through), Decimal(0))
+            transit = [mv.cash for mv in self.outstanding(through) if mv.cash > 0]
+            out = [mv.cash for mv in self.outstanding(through) if mv.cash < 0]
+            lacking = [ln.amount for ln in self.missing(through)]
+            assert totals["bank statement balance"] == self.bank_total(through)
+            assert totals["trust journal (book cash)"] == book
+            assert totals["deposits in transit"] == sum(transit, Decimal(0))
+            assert totals["outstanding withdrawals"] == sum(out, Decimal(0))
+            assert totals["adjusted bank balance"] == self.bank_total(through) + sum(
+                transit + out, Decimal(0)
+            )
+            assert totals["difference: adjusted bank balance - trust journal"] == sum(
+                lacking, Decimal(0)
+            )
+            assert sum(lacking, Decimal(0)) == 0
+            assert sorted(a for i, a in listed if i == "deposit in transit") == sorted(transit)
+            assert sorted(a for i, a in listed if i == "outstanding withdrawal") == sorted(out)
+            assert sorted(a for i, a in listed if i == "bank line not in the books") == sorted(
+                lacking
+            )
 
     @invariant()
     def matches_stand_alone_and_balance(self):

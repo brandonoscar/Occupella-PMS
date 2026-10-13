@@ -295,7 +295,9 @@ required invariant, report and self-host step.
   total; a line or a transfer is in at most one match not undone (`trust_unmatch_bank_lines`),
   and neither changes a period already approved. `trust_report_bank_reconciliation` shows a
   day's end; `trust_prepare_bank_reconciliation` prepares a period only when no line up to it is
-  missing from the books. All append-only.
+  missing from the books. All append-only. The three-way reconciliation report adds what had
+  not cleared by a period's last day to its statement balance and lists it, from that day's
+  bank reconciliation (migration 0050); without an imported statement of that day it says so.
 - Switching (migration 0033): after a trust bank account's opening balances, the checks and
   deposits the bank had not cleared at the cutover are carried over (`trust_cutover_items`, the
   cash each moved in the old books, issued by the cutover) until a staff member signs off the
