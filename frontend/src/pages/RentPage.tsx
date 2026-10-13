@@ -7,8 +7,16 @@ import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card, Shell } from "../components/Shell";
 import { day, money } from "../money";
-import type { Payment, RecurringCharge, RentLease, RentRun } from "../rent";
-import { chargeLabel, owedLabel, paymentSummary, recurringLabel, rentRunSummary, requestId } from "../rent";
+import type { Bounce, Payment, RecurringCharge, RentLease, RentRun } from "../rent";
+import {
+  bounceSummary,
+  chargeLabel,
+  owedLabel,
+  paymentSummary,
+  recurringLabel,
+  rentRunSummary,
+  requestId,
+} from "../rent";
 import { STAFF_NAV } from "./staffNav";
 
 function detail(failed: unknown): string {
@@ -186,8 +194,8 @@ function PaymentLine({ payment, record }: { payment: RentLease["payments"][numbe
           className="flex items-center gap-2"
           onSubmit={(event) => {
             event.preventDefault();
-            record(`/api/rent/payments/${payment.transfer_id}/bounce`, { on },
-              () => `The ${money(payment.amount)} payment is owed again.`);
+            record<Bounce>(`/api/rent/payments/${payment.transfer_id}/bounce`, { on },
+              (answer) => bounceSummary(payment.amount, answer));
           }}
         >
           <input type="date" aria-label={`Bounced on, ${payment.received_on} payment`} value={on}

@@ -10,6 +10,7 @@ from decimal import Decimal
 import pytest
 from helpers import (
     add_late_fee_policy,
+    add_nsf_fee_policy,
     add_unit,
     approve,
     balance,
@@ -256,8 +257,28 @@ def test_a_bounced_payment_is_owed_again_once(client, conn, staff, home, pmc):
     refused(again, 409, "this payment bounced already")
     assert row["owed"] == "1500.00" and row["tenants"][0]["prepaid"] == "0.00"
     assert row["payments"][0]["bounced"] is True
+    assert returned["nsf_fee"] is None  # the property charges no NSF fee
     assert balance(conn, home.owner) == Decimal(0)
     assert set(bank_sums(conn, pmc.pmc_id).values()) == {Decimal(0)}
+
+
+def test_a_bounce_charges_the_propertys_nsf_fee_in_force_that_day(client, conn, staff, home, pmc):
+    prop = pmc.owners[0].property_id
+    add_nsf_fee_policy(conn, pmc.pmc_id, prop, START, "25.00")
+    add_nsf_fee_policy(conn, pmc.pmc_id, prop, TODAY - DAY, "35.00")
+    home.charge(conn, START)
+    payment = ok(pay(client, home, "1500.00", received_on=TODAY - 3 * DAY))["transfers"][0]
+
+    returned = ok(call(client, f"payments/{payment}/bounce", on=TODAY))
+    row = lease_row(client, home)
+
+    assert returned["nsf_fee"] == "35.00"
+    assert row["owed"] == "1535.00"
+    assert [(c["kind"], c["memo"], c["open"]) for c in row["open_charges"]][-1] == (
+        "fee",
+        f"NSF fee, payment returned {TODAY}",
+        "35.00",
+    )
 
 
 def test_a_payment_the_owner_was_paid_out_of_cannot_bounce_into_the_negative(

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Agreement, LateFees } from "./setup";
-import { agreementSummary, kindLabel, lateFeeSummary, leaseSummary } from "./setup";
+import { agreementSummary, kindLabel, lateFeeSummary, leaseSummary, nsfFeeSummary } from "./setup";
 
 const NONE: Agreement = {
   starts_on: "2026-10-01",
@@ -48,6 +48,14 @@ const FEES: LateFees = {
   percent: "5",
   maximum: "100.00",
 };
+
+describe("nsfFeeSummary", () => {
+  it("names the fee, or says there is none", () => {
+    expect(nsfFeeSummary({ starts_on: "2026-10-01", fee: "35.00" })).toBe("NSF fee $35.00");
+    expect(nsfFeeSummary({ starts_on: "2026-10-01", fee: "0.00" })).toBe("No NSF fee");
+    expect(nsfFeeSummary(null)).toBe("No NSF fee");
+  });
+});
 
 describe("lateFeeSummary", () => {
   it("reads the grace, the fees and the cap", () => {

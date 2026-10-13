@@ -39,8 +39,15 @@ const BOOKS: Portfolio = {
         { id: "u2", name: "Unit 2", leases: [] },
       ],
       late_fees: { starts_on: "2026-10-01", grace_days: 5, flat_fee: "50.00", percent: "0", maximum: null },
+      nsf_fee: { starts_on: "2026-10-01", fee: "35.00" },
     },
-    { id: "p2", name: "Property B", units: [{ id: "u3", name: "Unit 9", leases: [] }], late_fees: null },
+    {
+      id: "p2",
+      name: "Property B",
+      units: [{ id: "u3", name: "Unit 9", leases: [] }],
+      late_fees: null,
+      nsf_fee: null,
+    },
   ],
   accounts: [
     {
@@ -103,7 +110,9 @@ describe("SetupPage", () => {
     expect(banks.textContent).toContain("Operating trust (Operating)");
     expect(banks.textContent).toContain("Deposit trust (Security deposit)");
     const property = screen.getByRole("listitem", { name: "Property A" });
-    expect(property.textContent).toContain("Owned by Owner A. After 5 days' grace: $50.00.");
+    expect(property.textContent).toContain(
+      "Owned by Owner A. After 5 days' grace: $50.00. NSF fee $35.00.",
+    );
     expect(property.textContent).toContain(
       "Unit 1: Tenant A: from 2026-10-01, month to month, $1,500.00 a month",
     );
@@ -141,7 +150,7 @@ describe("SetupPage", () => {
     );
   });
 
-  it("adds a property in the only operating account, and to a property its unit, owner and late fees", async () => {
+  it("adds a property in the only operating account, and to a property its unit, owner, late fees and NSF fee", async () => {
     const fetch = server();
     render(<SetupPage me={ME} />);
 
@@ -160,8 +169,11 @@ describe("SetupPage", () => {
     type("Grace days", "3", row);
     type("Percent of unpaid", "5", row);
     fireEvent.click(within(row).getByRole("button", { name: "Set late fees" }));
+    type("NSF fee from", "2026-11-01", row);
+    type("NSF fee", "35.00", row);
+    fireEvent.click(within(row).getByRole("button", { name: "Set NSF fee" }));
 
-    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(4));
+    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(5));
     expect(posted(fetch)).toEqual([
       ["/api/setup/properties", { name: "Property B", owner_id: "o1", bank_account_id: "b1" }],
       ["/api/setup/units", { property_id: "p1", name: "Unit 3" }],
@@ -170,6 +182,7 @@ describe("SetupPage", () => {
         "/api/setup/late-fees",
         { property_id: "p1", starts_on: "2026-11-01", grace_days: 3, flat_fee: "0", percent: "5", maximum: null },
       ],
+      ["/api/setup/nsf-fees", { property_id: "p1", starts_on: "2026-11-01", fee: "35.00" }],
     ]);
   });
 
@@ -238,7 +251,7 @@ describe("SetupPage", () => {
     expect(within(leases).getByText("Add the tenants of Property B first.")).toBeTruthy();
     expect(within(leases).queryByLabelText("Tenant A")).toBeNull();
     expect(screen.getByRole("listitem", { name: "Property B" }).textContent).toContain(
-      "Owned by nobody yet. No late fee terms.",
+      "Owned by nobody yet. No late fee terms. No NSF fee.",
     );
   });
 

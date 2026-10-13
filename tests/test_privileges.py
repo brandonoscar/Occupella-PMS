@@ -55,6 +55,8 @@ TABLES = {
     "trust_work_order_steps": {"SELECT", "INSERT"},
     "trust_late_fee_policies": {"SELECT", "INSERT"},
     "trust_late_fees": {"SELECT"},  # written only by trust_assess_late_fees
+    "trust_nsf_fee_policies": {"SELECT", "INSERT"},
+    "trust_nsf_fees": {"SELECT"},  # written only by trust_charge_nsf_fee
     "trust_opening_balances": {"SELECT"},  # written only by trust_post_opening_balances
     "trust_staff": {"SELECT", "INSERT"},
     "trust_audit_log": {"SELECT"},  # written only by the trust_audit trigger
@@ -185,6 +187,7 @@ FUNCTIONS = {
     "trust_charge_rent_due(uuid,date)": {"trust_app"},
     "trust_charge_recurring_due(uuid,date)": {"trust_app"},
     "trust_assess_late_fees(uuid,date)": {"trust_app"},
+    "trust_charge_nsf_fee(uuid,text)": {"trust_app"},
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)": {"trust_app"},
     "trust_record_owner_contribution(uuid,text,text,numeric,timestamptz,text)": {"trust_app"},
     "trust_complete_lease_offer(uuid,uuid,uuid)": {"trust_app"},
@@ -311,6 +314,7 @@ SECURITY_DEFINER = {
     "trust_set_aside_bill(uuid,uuid,timestamptz)",
     "trust_pay_bill(uuid,uuid,timestamptz)",
     "trust_assess_late_fees(uuid,date)",
+    "trust_charge_nsf_fee(uuid,text)",
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)",
     "trust_record_owner_contribution(uuid,text,text,numeric,timestamptz,text)",
     "trust_complete_lease_offer(uuid,uuid,uuid)",

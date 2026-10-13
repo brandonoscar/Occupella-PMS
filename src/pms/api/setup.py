@@ -1,7 +1,7 @@
 """Staff set up their PMC's books: trust bank accounts, owners, properties and the owner accounts
 that hold each owner's money for a property, units, tenants, vendors, management agreements,
-late fee terms, and leases of tenants already in place (a new tenant's lease comes through a
-lease offer, offers.py).
+late fee and NSF fee terms, and leases of tenants already in place (a new tenant's lease comes
+through a lease offer, offers.py).
 
 Every write is a plain insert the app role may make, or one of the database's own write paths
 (trust_open_ledger_account, trust_open_lease), so the database's rules hold whoever calls: a
@@ -102,10 +102,17 @@ class LateFees(BaseModel):
     maximum: str | None
 
 
+class NsfFee(BaseModel):
+    starts_on: date
+    fee: str
+
+
 class Property(Named):
     units: list[Unit]
     # The late fee terms in force today, if any.
     late_fees: LateFees | None
+    # The NSF fee terms in force today, if any.
+    nsf_fee: NsfFee | None
 
 
 class Tenant(Named):
@@ -194,13 +201,19 @@ def portfolio(session: Staff, conn: Conn) -> Portfolio:
                 percent=exports.text(percent),
                 maximum=money(maximum),
             ),
+            nsf_fee=None
+            if nsf_starts is None
+            else NsfFee(starts_on=nsf_starts, fee=exports.text(nsf_fee)),
         )
-        for i, n, starts, grace, flat, percent, maximum in conn.execute(
+        for i, n, starts, grace, flat, percent, maximum, nsf_starts, nsf_fee in conn.execute(
             "SELECT p.id, p.display_name, f.starts_on, f.grace_days, f.flat_fee, f.percent,"
-            " f.maximum FROM trust_properties AS p"
+            " f.maximum, s.starts_on, s.fee FROM trust_properties AS p"
             " LEFT JOIN LATERAL (SELECT * FROM trust_late_fee_policies AS f"
             "   WHERE f.property_id = p.id AND f.starts_on <= (now() AT TIME ZONE 'UTC')::date"
             "   ORDER BY f.starts_on DESC LIMIT 1) AS f ON true"
+            " LEFT JOIN LATERAL (SELECT * FROM trust_nsf_fee_policies AS s"
+            "   WHERE s.property_id = p.id AND s.starts_on <= (now() AT TIME ZONE 'UTC')::date"
+            "   ORDER BY s.starts_on DESC LIMIT 1) AS s ON true"
             ' WHERE p.pmc_id = %s ORDER BY p.display_name COLLATE "C", p.id',
             (pmc,),
         ).fetchall()
@@ -513,6 +526,27 @@ def add_late_fees(session: Staff, conn: Conn, new: NewLateFees) -> Created:
                     new.percent,
                     new.maximum,
                 ),
+            )
+        )
+
+
+class NewNsfFee(BaseModel):
+    property_id: UUID
+    starts_on: date
+    fee: Money  # 0: none from that day
+
+
+@router.post("/nsf-fees", status_code=201)
+def add_nsf_fee(session: Staff, conn: Conn, new: NewNsfFee) -> Created:
+    """A property's NSF fee, charged for a payment the bank returns, in force from a day."""
+    found(conn, "property", session.pmc_id, new.property_id)
+    with refusals("this property has an NSF fee starting that day already"):
+        return Created(
+            id=insert(
+                conn,
+                "INSERT INTO trust_nsf_fee_policies (pmc_id, property_id, starts_on, fee)"
+                " VALUES (%s, %s, %s, %s) RETURNING id",
+                (session.pmc_id, new.property_id, new.starts_on, new.fee),
             )
         )
 

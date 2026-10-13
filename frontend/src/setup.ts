@@ -41,7 +41,9 @@ export type LateFees = {
   percent: string;
   maximum: string | null;
 };
-export type Property = Named & { units: Unit[]; late_fees: LateFees | null };
+// A property's NSF fee, charged when the bank returns a tenant's payment; "0.00" charges none.
+export type NsfFee = { starts_on: string; fee: string };
+export type Property = Named & { units: Unit[]; late_fees: LateFees | null; nsf_fee: NsfFee | null };
 export type Tenant = Named & { property_id: string; property: string };
 export type Portfolio = {
   bank_accounts: BankAccount[];
@@ -94,6 +96,11 @@ export function lateFeeSummary(terms: LateFees): string {
   const grace = terms.grace_days === 1 ? "1 day's" : `${terms.grace_days} days'`;
   const cap = terms.maximum === null ? "" : `, up to ${money(terms.maximum)}`;
   return `After ${grace} grace: ${fees.join(" and ")}${cap}`;
+}
+
+// NSF fee terms in a line: "NSF fee $35.00", or none.
+export function nsfFeeSummary(terms: NsfFee | null): string {
+  return terms && positive(terms.fee) ? `NSF fee ${money(terms.fee)}` : "No NSF fee";
 }
 
 export function leaseSummary(lease: Lease): string {
