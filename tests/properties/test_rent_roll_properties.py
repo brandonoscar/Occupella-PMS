@@ -31,7 +31,10 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     the due date (from its first day, before the day it stops) whose lease is in effect then,
     once per recurring charge and due date, as a fee or credit of its lease and amount.
 
-The rule check_the_tenant_reports reads the delinquency report as of a random day and compares
+The rule check_the_owner_year_end reads an owner's year-end package for a random year and
+compares each part (collected from tenants net of bounces, fees, draws, contributions, the
+balances at the year's start and end, and the 1099-MISC rents) with the model. The rule
+check_the_tenant_reports reads the delinquency report as of a random day and compares
 every lease line with the model's aging, and checks a lease's tenant ledger closes at its
 balance due. The rule check_owner_balances reads the owner balances report as of a random day
 and compares it with the model. The rule check_the_rent_roll reads the roll as of a random day,
@@ -236,6 +239,9 @@ class RentRollMachine(RuleBasedStateMachine):
         self.leasing: dict[UUID, tuple[str, Decimal]] = {}
         self.draws: dict[str, tuple[str, Decimal]] = {}
         self.draw_transfers: set[str] = set()
+        # The transfers that took management and leasing fees.
+        self.fee_transfers: set[str] = set()
+        self.leasing_transfers: set[str] = set()
         # Rent automation: (property index, first day) -> late fee terms; rent charge ->
         # (unpaid when its grace ran out, fee, the fee's charge).
         self.late_terms: dict[tuple[int, date], LateTerms] = {}
@@ -1050,6 +1056,7 @@ class RentRollMachine(RuleBasedStateMachine):
                 (account, start),
             ).fetchone()
             self.record(transfer_id, account, self.pmc.pmc_income, fee, posted_at)
+            self.fee_transfers.add(transfer_id)
 
     @precondition(lambda self: self.leases)
     @rule(data=st.data(), role=ROLES, day=DAYS, second=TIMES, its_owner=st.booleans())
@@ -1090,6 +1097,7 @@ class RentRollMachine(RuleBasedStateMachine):
                         (lease_id,),
                     ).fetchone()
                     self.record(transfer_id, account, self.pmc.pmc_income, fee, when)
+                    self.leasing_transfers.add(transfer_id)
                 return
         with pytest.raises(refusal[0], match=refusal[1]):
             send()
@@ -1370,6 +1378,94 @@ class RentRollMachine(RuleBasedStateMachine):
             self.charges[fee_id] = Charge(self.charges[rent_id].lease_id, late_day, "fee", fee)
 
     # --- rules: the reports --------------------------------------------------------------
+
+    @rule(data=st.data(), role=st.sampled_from(["owner", "app", "ai"]), owner=st.integers(0, 1))
+    def check_the_owner_year_end(self, data, role, owner):
+        """An owner's year-end package for a year (UTC), part by part, as the model has it:
+        the owner's one property account here, so its lines and the totals are the same.
+        Mostly a year its account moved in, now and then one either side."""
+        account = self.owner_account[owner]
+        years = sorted(
+            {
+                t.event_at.astimezone(UTC).year
+                for t in self.transfers.values()
+                if account in (t.source, t.target)
+            }
+        ) or [BASE.year]
+        if data.draw(st.integers(0, 3)) == 0:
+            years = [*range(years[0] - 1, years[-1] + 2)]
+        self.year_end_is_the_models(role, owner, data.draw(st.sampled_from(years)))
+
+    @precondition(lambda self: self.matches or self.fee_transfers or self.leasing_transfers)
+    @rule(data=st.data(), role=st.sampled_from(["owner", "app", "ai"]))
+    def check_the_year_end_of_a_payment_or_fee(self, data, role):
+        """The year-end package of the year a payment was matched or a fee taken, for the
+        owner whose account it moved."""
+        moving = sorted({t for _, t in self.matches} | self.fee_transfers | self.leasing_transfers)
+        transfer = self.transfers[data.draw(st.sampled_from(moving))]
+        for owner, account in enumerate(self.owner_account):
+            if account in (transfer.source, transfer.target):
+                self.year_end_is_the_models(role, owner, transfer.event_at.astimezone(UTC).year)
+
+    def year_end_is_the_models(self, role, owner, year):
+        account = self.owner_account[owner]
+        start = datetime(year, 1, 1, tzinfo=UTC)
+        end = datetime(year + 1, 1, 1, tzinfo=UTC)
+
+        def moved(ids, sign=-1):
+            return sum(
+                (
+                    sign * self.transfers[t].amount
+                    for t in ids
+                    if account in (self.transfers[t].source, self.transfers[t].target)
+                    and start <= self.transfers[t].event_at < end
+                ),
+                Decimal(0),
+            )
+
+        collected = sum(
+            (
+                a
+                for (_, t), a in self.matches.items()
+                if self.transfers[t].target == account and start <= self.transfers[t].event_at < end
+            ),
+            Decimal(0),
+        ) - sum(
+            (
+                a
+                for (_, _, r), a in self.reversals.items()
+                if self.transfers[r].source == account and start <= self.transfers[r].event_at < end
+            ),
+            Decimal(0),
+        )
+        contributed = [t for (held, _, t) in self.contributions.values() if held == account]
+        opening, closing = self.held_on(account, start), self.held_on(account, end)
+        parts = [
+            ("opening balance", opening),
+            ("collected from tenants", collected),
+            ("management fees", moved(self.fee_transfers)),
+            ("leasing fees", moved(self.leasing_transfers)),
+            ("bills paid", Decimal(0)),
+            ("owner draws", moved(self.draw_transfers)),
+            ("owner contributions", moved(contributed, 1)),
+        ]
+        moved_total = sum((a for _, a in parts[1:]), Decimal(0))
+        parts += [("other", closing - opening - moved_total), ("closing balance", closing)]
+        rows = (
+            self.conns[role]
+            .execute(
+                "SELECT property, item, amount FROM trust_report_owner_year_end(%s, %s, %s)"
+                " WHERE line > 3",
+                (self.pmc_id, self.pmc.owners[owner].owner_id, year),
+            )
+            .fetchall()
+        )
+        name = self.property_names[owner]
+        assert rows == [
+            *((name, item, amount) for item, amount in parts),
+            *((None, f"all properties: {item}", amount) for item, amount in parts),
+            (None, "1099-MISC rents (box 1)", collected),
+        ]
 
     @rule(
         role=st.sampled_from(["owner", "app", "ai"]), day=st.integers(min_value=-5, max_value=640)

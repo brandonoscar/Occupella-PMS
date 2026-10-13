@@ -60,7 +60,10 @@ test("an owner joins from the invite, reads their statement and signs back in", 
   await expect(holdings.getByRole("row", { name: /E2E Property 1/ })).toContainText("$1,500.00");
   await expect(holdings.getByRole("row", { name: /E2E Property 2/ })).toContainText("$1,250.00");
 
-  const statement = page.locator("section", { hasText: "Statement" });
+  // By its heading: the year-end card below also says "statement" (case-insensitive hasText).
+  const statement = page.locator("section", {
+    has: page.getByRole("heading", { name: "Statement", exact: true }),
+  });
   await expect(statement.getByText("Closing, all properties")).toBeVisible();
   await expect(statement.locator("dd").last()).toHaveText("$2,750.00");
   const pdf = await page.request.get(

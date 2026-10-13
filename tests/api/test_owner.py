@@ -1,5 +1,5 @@
-"""The owner portal's endpoints (src/pms/api/owner.py): an owner sees their own properties and
-statement, and nobody else's."""
+"""The owner portal's endpoints (src/pms/api/owner.py): an owner sees their own properties,
+statement and year-end package, and nobody else's."""
 
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -73,6 +73,53 @@ def test_the_owner_downloads_their_statement(client, conn, app_conn, pmc, fmt, m
     )
 
 
+def test_the_year_end_package_is_the_owners_report_for_the_year(client, conn, app_conn, pmc):
+    rent(conn, pmc, 0, "1500.00")
+    rent(conn, pmc, 0, "10.00", datetime(2027, 1, 1, tzinfo=UTC))  # the next year
+    rent(conn, pmc, 1, "999.00")  # owner 2's: never shown to owner 1
+    join_as_owner(client, app_conn, pmc)
+    direct = conn.execute(
+        "SELECT * FROM trust_report_owner_year_end(%s, %s, 2026)",
+        (pmc.pmc_id, pmc.owners[0].owner_id),
+    ).fetchall()
+
+    answer = client.get("/api/owner/year-end", params={"year": 2026})
+
+    assert answer.status_code == 200
+    package = answer.json()
+    assert package["title"] == "Year-end package, 2026"
+    assert package["columns"] == ["line", "property", "item", "amount"]
+    assert len(package["rows"]) == len(direct)
+    closing = [row for row in package["rows"] if row[2] == "all properties: closing balance"]
+    assert closing == [["21", None, "all properties: closing balance", "1500.00"]]
+    flat = [cell for row in package["rows"] for cell in row]
+    assert "999.00" not in flat and "Owner 1" in flat
+
+
+@pytest.mark.parametrize(("fmt", "magic"), [("pdf", b"%PDF-"), ("csv", b"line,"), ("xlsx", b"PK")])
+def test_the_owner_downloads_their_year_end_package(client, conn, app_conn, pmc, fmt, magic):
+    rent(conn, pmc, 0, "1500.00")
+    join_as_owner(client, app_conn, pmc)
+
+    answer = client.get("/api/owner/year-end/download", params={"year": 2026, "format": fmt})
+
+    assert answer.status_code == 200
+    assert answer.content.startswith(magic)
+    assert answer.headers["content-disposition"] == (f'attachment; filename="year-end-2026.{fmt}"')
+
+
+@pytest.mark.parametrize(
+    "params", [{}, {"year": "x"}, {"year": 1899}, {"year": 9999}, {"year": 2026, "format": "docx"}]
+)
+def test_a_bad_year_is_refused(client, app_conn, pmc, params):
+    join_as_owner(client, app_conn, pmc)
+
+    for path in ("/api/owner/year-end", "/api/owner/year-end/download"):
+        if "format" in params and path == "/api/owner/year-end":
+            continue
+        assert client.get(path, params=params).status_code == 422, path
+
+
 def test_another_owners_statement_is_never_reachable(client, other_client, conn, app_conn, pmc):
     rent(conn, pmc, 1, "777.00")
     join_as_owner(client, app_conn, pmc, n=0)
@@ -106,9 +153,11 @@ def test_only_an_owner_reaches_the_owner_endpoints(client, conn, app_conn, pmc, 
         client.get("/api/owner/properties"),
         client.get("/api/owner/statement", params=period),
         client.get("/api/owner/statement/download", params=period),
+        client.get("/api/owner/year-end", params={"year": 2026}),
+        client.get("/api/owner/year-end/download", params={"year": 2026}),
     ]
 
-    assert [a.status_code for a in answers] == [expected] * 3
+    assert [a.status_code for a in answers] == [expected] * 5
 
 
 @pytest.mark.parametrize(

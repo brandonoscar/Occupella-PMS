@@ -121,6 +121,10 @@ REPORTS = {
         "SELECT * FROM trust_report_vendor_payments(%s, %s)",
         lambda pmc, _: (pmc.pmc_id, 2026),
     ),
+    "owner year-end": (
+        "SELECT * FROM trust_report_owner_year_end(%s, %s, %s)",
+        lambda pmc, _: (pmc.pmc_id, pmc.owners[0].owner_id, 2026),
+    ),
 }
 
 
