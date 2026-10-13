@@ -226,7 +226,7 @@ class RentMachine(RuleBasedStateMachine):
                     (paid.transfers[0],),
                 ).fetchone()
                 assert matched == paid.to_owner
-        assert all(left > 0 for _, left in rent.open_charges(self.conn, self.lease))
+        assert all(left > 0 for _, left in rent.open_charges(self.conn, self.pmc_id, self.lease))
         assert not self.conn.execute(
             "SELECT 1 FROM trust_charges AS c WHERE c.lease_id = %s AND c.kind <> 'credit'"
             " AND c.amount < coalesce((SELECT sum(p.amount) FROM trust_charge_payments AS p"

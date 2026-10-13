@@ -827,19 +827,11 @@ BEGIN
         );
 
         v_cutoff := (v_rent.due_on + v_rent.grace_days + 1)::timestamp AT TIME ZONE 'UTC';
-        v_unpaid := v_rent.amount
-            - coalesce((
-                SELECT sum(cp.amount)
-                FROM trust_charge_payments AS cp
-                JOIN pgledger_transfers AS t ON t.id = cp.transfer_id
-                WHERE cp.charge_id = v_rent.id AND t.event_at < v_cutoff
-            ), 0)
-            + coalesce((
-                SELECT sum(r.amount)
-                FROM trust_payment_reversals AS r
-                JOIN pgledger_transfers AS t ON t.id = r.reversal_id
-                WHERE r.charge_id = v_rent.id AND t.event_at < v_cutoff
-            ), 0);
+        -- What is open of it then: payments and bounces dated before then, and the lease's
+        -- credits due by its last day of grace, oldest charges first.
+        SELECT o.open INTO v_unpaid
+        FROM trust_open_charges(p_pmc_id, v_rent.lease_id, v_cutoff) AS o
+        WHERE o.charge_id = v_rent.id;
         CONTINUE WHEN v_unpaid <= 0;
         v_fee := least(
             round(v_rent.flat_fee + v_rent.percent / 100 * v_unpaid, 2),
@@ -2603,6 +2595,55 @@ BEGIN
     NEW.uploaded_by := nullif(current_setting('trust.staff_id', true), '')::uuid;
     RETURN NEW;
 END;
+$$;
+
+
+--
+-- Name: trust_open_charges(uuid, uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_open_charges(p_pmc_id uuid, p_lease_id uuid, p_at timestamp with time zone) RETURNS TABLE(lease_id uuid, charge_id uuid, open numeric)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    WITH charged AS (
+        SELECT c.id, c.lease_id, c.kind, c.amount, c.due_on,
+               c.amount
+               - coalesce((
+                   SELECT sum(cp.amount)
+                   FROM trust_charge_payments AS cp
+                   JOIN pgledger_transfers AS t ON t.id = cp.transfer_id
+                   WHERE cp.charge_id = c.id AND t.event_at < p_at
+               ), 0)
+               + coalesce((
+                   SELECT sum(r.amount)
+                   FROM trust_payment_reversals AS r
+                   JOIN pgledger_transfers AS t ON t.id = r.reversal_id
+                   WHERE r.charge_id = c.id AND t.event_at < p_at
+               ), 0) AS left_owing
+        FROM trust_charges AS c
+        WHERE c.pmc_id = p_pmc_id AND (p_lease_id IS NULL OR c.lease_id = p_lease_id)
+    ),
+    credits AS (
+        SELECT k.lease_id, sum(k.amount) AS amount
+        FROM charged AS k
+        WHERE k.kind = 'credit' AND k.due_on < (p_at AT TIME ZONE 'UTC')::date
+        GROUP BY k.lease_id
+    ),
+    owing AS (
+        SELECT k.lease_id, k.id, k.left_owing,
+               coalesce(sum(k.left_owing) OVER (
+                   PARTITION BY k.lease_id ORDER BY k.due_on, k.id
+                   ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+               ), 0) AS owing_before
+        FROM charged AS k
+        WHERE k.kind <> 'credit'
+    )
+    SELECT o.lease_id, o.id,
+           o.left_owing
+           - least(o.left_owing, greatest(coalesce(cr.amount, 0) - o.owing_before, 0))
+    FROM owing AS o
+    LEFT JOIN credits AS cr ON cr.lease_id = o.lease_id
 $$;
 
 
@@ -11886,4 +11927,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261013000045'),
     ('20261013000046'),
     ('20261013000047'),
-    ('20261013000048');
+    ('20261013000048'),
+    ('20261013000049');

@@ -211,9 +211,11 @@ required invariant, report and self-host step.
   rent x days / days in the month, to the cent), and a lease starting later in the month its
   first part month, due on its first day, unless rent was charged in that month already. It
   never reaches back into an earlier month. A property's late fee terms (grace days, flat, percent of unpaid,
-  cap) are in force from a date; `trust_assess_late_fees` charges a rent still unpaid at the
+  cap) are in force from a date; `trust_assess_late_fees` charges a rent still open at the
   end of its last grace day (UTC) one late fee under the terms in force on its due date. READ
-  COMMITTED. A property's NSF fee is in force from a date too (migration 0044, 0 charges
+  COMMITTED. What is open of a charge (`trust_open_charges`, migration 0049) is its amount less
+  payments matched, plus what bounced, less its share of the lease's credits, which come off
+  the oldest open charges first (by due date, then id), as the delinquency report counts them. A property's NSF fee is in force from a date too (migration 0044, 0 charges
   none); `trust_charge_nsf_fee` charges the lease of a returned payment (postings under one key
   moving money back to a trust bank account's cash) the fee in force the day it came back
   (UTC), due that day, once per returned payment. Neither fee counts toward the other.
@@ -272,7 +274,8 @@ required invariant, report and self-host step.
   signers become its tenants; a renewal keeps the lease's tenants and ends it the day before.
   READ COMMITTED; all append-only.
 - Rent work (`src/pms/api/rent.py`): a tenant's payment recorded by staff pays the owner's
-  account no more than the lease owes, matched to its open charges oldest first, and the rest is
+  account no more than the lease owes, matched to what is open of its charges oldest first
+  (`trust_open_charges`, so a credit counts), and the rest is
   the first tenant's prepaid rent; prepaid rent is used the same way. Each record carries a
   request id the page makes (its key in `trust_post_transfers`), so sending it again records
   nothing new. A bounce moves back what the payment moved, reverses its matches and charges

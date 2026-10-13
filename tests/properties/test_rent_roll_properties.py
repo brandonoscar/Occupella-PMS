@@ -28,8 +28,9 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     on the due date once, its rent for the days of the month it is in effect (monthly rent x
     days / days in the month, to the cent), and each lease starting later that month with no
     rent charged in the month yet its first part month, due on its first day; each rent still
-    unpaid when its grace ran out is charged one late fee, worked from what was unpaid then
-    under the terms in force on its due date;
+    open when its grace ran out (unpaid, less its share of the lease's credits due by then,
+    which come off the oldest open charges first) is charged one late fee, worked from what was
+    open then under the terms in force on its due date;
   - recurring charges are the model's: the rent run charges each recurring charge in force on
     the due date (from its first day, before the day it stops) whose lease is in effect then,
     once per recurring charge and due date, as a fee or credit of its lease, for the days of the
@@ -1424,6 +1425,27 @@ class RentRollMachine(RuleBasedStateMachine):
         )
         return self.charges[charge_id].amount - paid + back
 
+    def open_by(self, charge_id, cutoff):
+        """What is open of a charge at cutoff: unpaid by then, less its share of its lease's
+        credits due before cutoff's day, which come off the lease's open charges oldest first
+        (by due date, then id)."""
+        lease_id = self.charges[charge_id].lease_id
+        mine = {c: b for c, b in self.charges.items() if b.lease_id == lease_id}
+        credits = sum(
+            (b.amount for b in mine.values() if b.kind == "credit" and b.due_on < cutoff.date()),
+            Decimal(0),
+        )
+        for c, _ in sorted(
+            ((c, b) for c, b in mine.items() if b.kind != "credit"),
+            key=lambda pair: (pair[1].due_on, pair[0]),
+        ):
+            left = self.unpaid_by(c, cutoff)
+            take = min(left, credits)
+            credits -= take
+            if c == charge_id:
+                return left - take
+        raise AssertionError("a charge that is not a credit is open or not")
+
     @rule(role=ROLES, day=st.integers(min_value=0, max_value=640))
     def assess_late_fees_as_of(self, role, day):
         self.assess(role, BASE + timedelta(days=day))
@@ -1483,7 +1505,7 @@ class RentRollMachine(RuleBasedStateMachine):
             if terms is None or rent.due_on + timedelta(days=terms.grace) >= as_of:
                 continue
             late_day = rent.due_on + timedelta(days=terms.grace + 1)
-            unpaid = self.unpaid_by(charge_id, datetime.combine(late_day, time(0), tzinfo=UTC))
+            unpaid = self.open_by(charge_id, datetime.combine(late_day, time(0), tzinfo=UTC))
             if unpaid <= 0:
                 continue
             fee = to_cents(terms.flat + terms.percent / 100 * unpaid)

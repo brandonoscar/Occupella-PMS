@@ -123,7 +123,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
             coming_due=[
                 ComingDue(due_on=due, kind=kind, memo=memo, open=rent_api.cents(left))
                 for _, _, due, kind, memo, _, left in rent_api.charges_open(
-                    conn, rent_api.OF_LEASE, lease
+                    conn, session.pmc_id, lease
                 )
                 if due > on
             ],
