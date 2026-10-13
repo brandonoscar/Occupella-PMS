@@ -600,6 +600,15 @@ tests = [
 ]
 
 [[report]]
+id = "owner-year-end"
+statement = "An owner's year-end package for a calendar year (UTC): per property the opening balance, what was collected from tenants (matched payments less what bounced back), management and leasing fees, bills set aside, owner draws and contributions, anything else, and the closing balance, which ties to the ledger; then the same across the owner's properties and the year's 1099-MISC rents. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_owner_year_end.py::test_each_part_of_the_year_shows_under_its_property",
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+]
+
+[[report]]
 id = "three-way-reconciliation"
 statement = "Three-way reconciliation report (bank statement, trust journal and beneficiary ledgers of one approved reconciliation, with every difference listed), compared to a checked-in golden file."
 tests = [

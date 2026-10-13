@@ -89,6 +89,11 @@ serve the pages and the API. The self-host image builds it in a Node stage.
 - An owner sees each property they hold money in with its balance now, and their statement
   (`trust_report_owner_statement`) for whole UTC days, at most 3660, on screen or as PDF, Excel
   or CSV. The owner and the PMC come from the session only.
+- Since 2026-10-13 (product item 3 of three the founder approved), an owner also reads their
+  year-end package for a calendar year (`trust_report_owner_year_end`): per property and
+  across them, the opening balance, what tenants paid (less bounces), fees, bills, draws,
+  contributions, anything else and the closing balance, and the year's 1099-MISC rents, on
+  screen or as PDF, Excel or CSV, with the year's whole statement as a PDF. It files nothing.
 - Pages are served with a Content-Security-Policy that allows only the app's own scripts,
   styles, fonts and data: images (the QR code), and no framing.
 - Tests: vitest for the pages and helpers, including one that fails on a raw colour or a size

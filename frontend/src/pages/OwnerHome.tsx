@@ -9,6 +9,7 @@ import { lastMonth, money } from "../money";
 import type { StatementData } from "../statement";
 import { group } from "../statement";
 import { OwnerDocuments } from "./OwnerDocuments";
+import { OwnerYearEnd } from "./OwnerYearEnd";
 
 type Property = { account_id: string; property_id: string; name: string; bank: string; balance: string };
 
@@ -144,6 +145,7 @@ export function OwnerHome({ me }: { me: Me }) {
           </div>
         )}
       </Card>
+      <OwnerYearEnd />
       <OwnerDocuments />
     </Shell>
   );

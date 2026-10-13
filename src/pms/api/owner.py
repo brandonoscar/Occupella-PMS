@@ -1,7 +1,9 @@
-"""The owner portal's endpoints: an owner's properties and their statement, for that owner only.
+"""The owner portal's endpoints: an owner's properties, their statement and their year-end
+package, for that owner only.
 
 The owner and the PMC always come from the session, never from the request. The statement is
-trust_report_owner_statement over whole days in UTC, from the first day to the last.
+trust_report_owner_statement over whole days in UTC, from the first day to the last; the
+year-end package is trust_report_owner_year_end for a calendar year.
 """
 
 from __future__ import annotations
@@ -94,6 +96,37 @@ def statement_download(
     )
     name = f"owner-statement-{start.isoformat()}-{end.isoformat()}"
     return download(exports.export(titled, fmt), name, fmt)
+
+
+Year = Annotated[int, Query(ge=1900, le=9998)]
+
+
+def year_end_table(
+    conn: psycopg.Connection[object], session: accounts.Session, year: int
+) -> exports.Table:
+    table = exports.run_report(
+        conn, "trust_report_owner_year_end", [session.pmc_id, session.person_id, year]
+    )
+    return exports.Table(f"Year-end package, {year}", table.columns, table.rows)
+
+
+@router.get("/year-end")
+def year_end(session: Owner, conn: Conn, year: Year) -> Rows:
+    """The year's summary per property and across them, and the rents for the owner's
+    1099-MISC. The PMS files nothing."""
+    return Rows.of(year_end_table(conn, session, year))
+
+
+@router.get("/year-end/download")
+def year_end_download(
+    session: Owner,
+    conn: Conn,
+    year: Year,
+    fmt: Annotated[Literal["csv", "xlsx", "pdf"], Query(alias="format")] = "pdf",
+) -> Response:
+    return download(
+        exports.export(year_end_table(conn, session, year), fmt), f"year-end-{year}", fmt
+    )
 
 
 class OwnerDocument(BaseModel):
