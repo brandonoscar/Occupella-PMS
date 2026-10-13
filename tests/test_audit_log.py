@@ -17,10 +17,16 @@ from helpers import (
     add_unit,
     charge,
     make_pmc,
+    open_application_link,
     open_lease,
     post,
+    record_screening,
+    submit_application,
     transfer_batch,
 )
+from test_privileges import AI_NEVER_READS
+
+from pms import accounts
 
 JAN = datetime(2026, 1, 1, tzinfo=UTC)
 FEB = datetime(2026, 2, 1, tzinfo=UTC)
@@ -365,3 +371,80 @@ def test_the_report_reads_the_same_in_any_time_zone_and_for_every_role(
             readings.append(report(session, pmc))
 
     assert all(reading == readings[0] for reading in readings)
+
+
+# --- what the AI reads of it (migration 20261013000043) ------------------------------------
+
+
+def never_read_rows(conn, pmc):
+    """Write rows the AI may never read: an owner's login and invite, and a rental application
+    with its link, applicant and screening."""
+    staff = add_staff(conn, pmc.pmc_id)
+    accounts.create_invite(
+        conn, pmc.pmc_id, "owner", pmc.owners[0].owner_id, "owner.audit@example.com", None
+    )
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id)
+    application = submit_application(
+        conn, pmc.pmc_id, open_application_link(conn, pmc.pmc_id, unit, staff)
+    )
+    record_screening(conn, pmc.pmc_id, application, staff)
+
+
+def tables_logged(connection, pmc):
+    return {
+        row[0]
+        for row in connection.execute(
+            "SELECT DISTINCT table_name FROM trust_audit_log WHERE pmc_id = %s", (pmc.pmc_id,)
+        )
+    }
+
+
+def test_the_ai_reads_no_audit_row_of_a_table_it_may_not_read(conn, app_conn, ai_conn, pmc):
+    never_read_rows(conn, pmc)
+    logged = tables_logged(conn, pmc)
+    readable = {
+        table
+        for table in logged
+        if conn.execute(
+            "SELECT has_table_privilege('trust_ai_agent', %s, 'SELECT')", (table,)
+        ).fetchone()[0]
+    }
+
+    assert {"trust_logins", "trust_invites", "trust_applicants", "trust_screenings"} <= logged
+    assert tables_logged(ai_conn, pmc) == readable == logged - AI_NEVER_READS
+    assert {"trust_pmcs", "trust_properties", "trust_units"} <= readable
+    assert tables_logged(app_conn, pmc) == logged
+
+
+def test_the_ai_audit_report_leaves_out_what_it_may_not_read(conn, app_conn, ai_conn, pmc):
+    never_read_rows(conn, pmc)
+    emails = {
+        email
+        for (email,) in conn.execute(
+            "SELECT DISTINCT row_data ->> 'email' FROM trust_audit_log"
+            " WHERE pmc_id = %s AND table_name = ANY(%s) AND row_data ? 'email'",
+            (pmc.pmc_id, sorted(AI_NEVER_READS)),
+        )
+    }
+    staff_lines = [line for line in report(app_conn, pmc) if line[1] == "change"]
+    staffs = {line[6] for line in staff_lines}
+    ais = [line for line in report(ai_conn, pmc) if line[1] == "change"]
+
+    assert {"owner.audit@example.com"} <= emails
+    assert any(email.startswith("applicant1.") for email in emails)
+    assert {"applicants", "screenings", "logins", "invites"} <= staffs
+    assert not {line[6] for line in ais} & {"applicants", "screenings", "logins", "invites"}
+    # Staff see the emails in the lines' details; the AI sees none of them.
+    assert [line for line in staff_lines for email in emails if email in (line[7] or "")]
+    assert not [line for line in ais for email in emails if email in (line[7] or "")]
+
+
+def test_an_audit_row_of_a_table_since_gone_shows_the_ai_nothing(conn, ai_conn, pmc):
+    conn.execute(
+        "INSERT INTO trust_audit_log (pmc_id, db_role, action, table_name, row_data)"
+        " VALUES (%s, 'trust_app', 'insert', 'trust_since_dropped', '{}')",
+        (pmc.pmc_id,),
+    )
+
+    assert "trust_since_dropped" not in tables_logged(ai_conn, pmc)
+    assert "trust_since_dropped" in tables_logged(conn, pmc)

@@ -155,7 +155,8 @@ required invariant, report and self-host step.
   it a new table's SELECT only if `trust_app` has it, and never a write path. It never reads
   logins, invites, sessions or credentials, nor rental applications, applicants and their
   screenings, nor lease offers and signatures, nor documents' files (`AI_NEVER_READS` in
-  `tests/test_privileges.py`).
+  `tests/test_privileges.py`), nor their rows in the audit log: row-level security shows it only
+  the audit rows of tables it may read (migration 0043).
 - A new table starts with `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it
   needs, never DELETE. `tests/test_privileges.py` pins the exact grants of every table and
   function: a new one fails until it is listed there, with who may use it. Postgres lets PUBLIC
@@ -221,7 +222,8 @@ required invariant, report and self-host step.
   update), the database role, and the staff member the app names with
   `set_config('trust.staff_id', ...)`, who must be on the PMC's `trust_staff`. The API names
   the signed-in staff member on every request; the server's command line names nobody. A new
-  trust table gets the trigger (`tests/test_audit_log.py`).
+  trust table gets the trigger (`tests/test_audit_log.py`). The app reads the whole log; the AI
+  role only the rows of tables it may read.
 - Payment holds (an eviction filed): from a hold's first day until its release, by the
   transfer's UTC date, `trust_apply_payment` refuses to match a payment to the lease's charges
   unless the PMC allowed that transfer on every hold in force. Holds, releases and allowances

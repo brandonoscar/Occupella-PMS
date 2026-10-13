@@ -120,6 +120,16 @@ tests = [
 ]
 
 [[invariant]]
+id = "ai-reads-no-private-audit-rows"
+statement = "The AI role reads no audit-log row of a table it may not read (logins, invites and sessions, rental applications, applicants and screenings, lease offers and their signers, and any table it is never granted), in the log or in the audit report. Row-level security on the audit log does it; the app reads the whole log, and no other table has row-level security."
+tests = [
+  "tests/test_audit_log.py::test_the_ai_reads_no_audit_row_of_a_table_it_may_not_read",
+  "tests/test_audit_log.py::test_the_ai_audit_report_leaves_out_what_it_may_not_read",
+  "tests/test_audit_log.py::test_an_audit_row_of_a_table_since_gone_shows_the_ai_nothing",
+  "tests/test_privileges.py::test_row_level_security_only_hides_the_audit_rows_the_ai_may_not_read",
+]
+
+[[invariant]]
 id = "concurrent-postings-all-finish"
 statement = "Concurrent transfers across the same accounts all finish, and the balances still add up: accounts are locked in one global order, and unrelated transfers never wait for each other."
 tests = [
