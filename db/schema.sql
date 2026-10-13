@@ -2684,12 +2684,16 @@ BEGIN
 
     SELECT coalesce(sum(cp.amount), 0) INTO v_collected
     FROM trust_charge_payments AS cp
-    JOIN trust_charges AS c ON c.id = cp.charge_id AND c.kind = 'rent'
+    -- Rent, or a fee the rent run made from a recurring charge. (A recurring credit is never
+    -- paid, so it has no payments here.)
+    JOIN trust_charges AS c ON c.id = cp.charge_id
+        AND (c.kind = 'rent' OR c.recurring_charge_id IS NOT NULL)
     JOIN pgledger_transfers AS t ON t.id = cp.transfer_id
     WHERE t.to_account_id = p_account AND t.event_at >= v_start AND t.event_at < v_end;
     SELECT v_collected - coalesce(sum(r.amount), 0) INTO v_collected
     FROM trust_payment_reversals AS r
-    JOIN trust_charges AS c ON c.id = r.charge_id AND c.kind = 'rent'
+    JOIN trust_charges AS c ON c.id = r.charge_id
+        AND (c.kind = 'rent' OR c.recurring_charge_id IS NOT NULL)
     JOIN pgledger_transfers AS t ON t.id = r.reversal_id
     WHERE t.from_account_id = p_account AND t.event_at >= v_start AND t.event_at < v_end;
 
@@ -10978,4 +10982,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261012000036'),
     ('20261013000037'),
     ('20261013000038'),
-    ('20261013000039');
+    ('20261013000039'),
+    ('20261013000040');

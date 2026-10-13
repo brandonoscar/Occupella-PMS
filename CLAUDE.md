@@ -165,11 +165,11 @@ required invariant, report and self-host step.
   `trust_reverse_payment`, against the ledger transfer that moved the money back; matches are
   never rewritten. Leases, matches and reversals are written at READ COMMITTED.
 - The owner money loop: a management agreement per owner's property account, in force from a
-  date (new terms are a new row). `trust_post_management_fee` takes its percent of rent
-  collected in a period (net of bounces), or the minimum, plus a flat fee, into the PMC's fee
-  account, once per period; `trust_post_leasing_fee` once per lease; `trust_draw_owner` pays
-  out the balance above the reserve and unpaid bills, once per request key. All at READ
-  COMMITTED.
+  date (new terms are a new row). `trust_post_management_fee` takes its percent of rent and
+  recurring fees collected in a period (net of bounces; recurring fees since migration 0040),
+  or the minimum, plus a flat fee, into the PMC's fee account, once per period;
+  `trust_post_leasing_fee` once per lease; `trust_draw_owner` pays out the balance above the
+  reserve and unpaid bills, once per request key. All at READ COMMITTED.
 - Vendor bills: entered once per vendor reference against an owner's property account. A bill
   over the approval limit of the agreement in force on its date (0 without one) needs the
   owner's approval recorded first. `trust_set_aside_bill` moves its amount from the owner's
@@ -189,7 +189,8 @@ required invariant, report and self-host step.
   date; an end row stops it from a day). `trust_charge_recurring_due` charges each one in force
   on a due date while its lease is in effect, once per recurring charge and date; the staff
   rent run calls it with `trust_charge_rent_due`. A charge naming one is of its PMC, lease, kind
-  and amount (`trust_charges.recurring_charge_id`). Late fees stay on rent only.
+  and amount (`trust_charges.recurring_charge_id`). A management fee counts recurring fees
+  collected with rent (migration 0040); late fees stay on rent only.
 - Cutover: `trust_post_opening_balances` opens a trust bank account with what each account in
   it held in the old system, from its cash at the start of the cutover date (UTC), checked
   against the old book cash. Once per account, before any posting or reconciliation in it, safe

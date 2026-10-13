@@ -46,7 +46,9 @@ Staff do the rent work at `/rent` (`src/pms/api/rent.py`):
   month (since 2026-10-13, product item 1 of three the founder approved): a recurring charge
   such as pet rent or parking, or a recurring credit such as a concession, is charged by the
   same rent run on every due date from its first until staff stop it
-  (`trust_charge_recurring_due`, migration 0037), once per recurring charge and date.
+  (`trust_charge_recurring_due`, migration 0037), once per recurring charge and date. A
+  management fee's percent counts the recurring fees collected along with the rent (founder,
+  2026-10-13: "Rent + recurring fees"; migration 0040), not one-off fees, credits or deposits.
 - A tenant's payment is recorded as it reached the operating trust account. The owner's account
   takes what the lease owes (rent and fees, less credits, less what was paid, plus what
   bounced), matched to the open charges oldest first; anything more is held as the first

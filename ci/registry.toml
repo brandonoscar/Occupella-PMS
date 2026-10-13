@@ -184,11 +184,14 @@ tests = [
 
 [[invariant]]
 id = "management-fee-once-per-period"
-statement = "A management fee is the agreement's percent of rent collected in the period (net of bounced payments), or its minimum if that is more, plus its flat fee. It is taken once per owner account and period, an account's fee periods never overlap, and the same period retried returns the fee taken."
+statement = "A management fee is the agreement's percent of the rent and recurring fees collected in the period (net of bounced payments), or its minimum if that is more, plus its flat fee. It is taken once per owner account and period, an account's fee periods never overlap, and the same period retried returns the fee taken."
 tests = [
   "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
   "tests/test_owner_money.py::test_the_fee_is_a_percent_of_rent_collected_in_the_period",
   "tests/test_owner_money.py::test_a_bounce_in_the_period_counts_against_it",
+  "tests/test_owner_money.py::test_recurring_fees_count_with_rent_and_one_off_fees_do_not",
+  "tests/test_owner_money.py::test_a_recurring_fee_bounced_in_the_period_comes_off_it",
+  "tests/test_owner_money.py::test_a_one_off_fee_bounced_in_the_period_leaves_it_as_it_is",
   "tests/test_owner_money.py::test_taking_the_fee_again_returns_it_and_posts_once",
   "tests/test_owner_money.py::test_a_period_overlapping_one_taken_is_refused",
   "tests/test_owner_money.py::test_the_same_fee_taken_twice_at_once_posts_once",

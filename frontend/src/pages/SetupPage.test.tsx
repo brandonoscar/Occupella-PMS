@@ -109,7 +109,7 @@ describe("SetupPage", () => {
     );
     expect(property.textContent).toContain("Unit 2: vacant");
     expect((await card("Management terms")).textContent).toContain(
-      "Owner A, Property A: 8% of rent collected; keeps $250.00 in reserve;" +
+      "Owner A, Property A: 8% of rent and recurring fees collected; keeps $250.00 in reserve;" +
         " owner approves bills over $500.00 (from 2026-10-01)",
     );
     expect((await card("Tenants and leases in place")).textContent).toContain("Tenant B (Property A)");
@@ -180,7 +180,7 @@ describe("SetupPage", () => {
     const terms = await card("Management terms");
     fireEvent.change(within(terms).getByLabelText("For"), { target: { value: "acct-1" } });
     type("In force from", "2027-01-01", terms);
-    type("Fee, percent of rent collected", "9", terms);
+    type("Fee, percent of rent and recurring fees collected", "9", terms);
     type("Owner approves bills over", "750.00", terms);
     fireEvent.click(within(terms).getByRole("button", { name: "Set terms" }));
 

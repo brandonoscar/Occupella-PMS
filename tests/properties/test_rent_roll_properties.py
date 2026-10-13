@@ -15,11 +15,11 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
   - the rent roll for all time ties to the trust ledger: what it shows held for all tenants is
     every tenant's deposit and prepaid rent balance, current and not-current leases add up to
     all of them, and every lease's balance is its charges less its payments, net of reversals;
-  - fees and draws are the model's: a management fee is the agreement's percent of rent
-    collected in its period (net of bounces), or its minimum, plus its flat fee, taken once per
-    period with no two periods of an account overlapping; a leasing fee is taken once per
-    lease; a draw never pays out more than the balance above the reserve, and its request key
-    pays once;
+  - fees and draws are the model's: a management fee is the agreement's percent of the rent and
+    recurring fees collected in its period (net of bounces), or its minimum, plus its flat fee,
+    taken once per period with no two periods of an account overlapping; a leasing fee is taken
+    once per lease; a draw never pays out more than the balance above the reserve, and its
+    request key pays once;
   - an owner's contribution is recorded once per request key and never matched to a charge;
   - payment holds are the model's: a match of a payment dated on or after a hold's first day
     and before its release is refused unless that hold allowed the transfer, and a retry of a
@@ -276,9 +276,10 @@ class RentRollMachine(RuleBasedStateMachine):
         return self.agreements[(account, max(starts))] if starts else None
 
     def collected(self, account, start, end):
-        """Rent matched to payments into the account in [start, end), less rent bounced back
-        out of it in that time."""
+        """Rent and recurring fees matched to payments into the account in [start, end), less
+        what of them bounced back out of it in that time."""
         rent = {c for c, bill in self.charges.items() if bill.kind == "rent"}
+        rent |= {c for c in self.recurring_charged.values() if self.charges[c].kind == "fee"}
         got = sum(
             (
                 a
@@ -969,13 +970,17 @@ class RentRollMachine(RuleBasedStateMachine):
         day=st.integers(0, 27),
         percent=st.sampled_from(["8", "10.5", "100"]),
         rent_cents=st.integers(min_value=50_000, max_value=300_000),
+        recurring_cents=st.one_of(st.none(), st.integers(min_value=1_000, max_value=20_000)),
     )
-    def collect_rent_then_take_the_fee(self, data, role, day, percent, rent_cents):
+    def collect_rent_then_take_the_fee(self, data, role, day, percent, rent_cents, recurring_cents):
         """A month in one go: an agreement in force (recorded if none is), the month's rent on
-        a lease of the property charged, paid in cash and matched, then the month's fee. The
-        month is one with no fee taken yet, when there is one."""
+        a lease of the property charged, paid in cash and matched, now and then a fee recurring
+        on the lease (pet rent, parking) charged by the rent run and paid too, then the month's
+        fee. The month is one with no fee taken yet, when there is one; with a recurring fee,
+        one a lease of the property is in effect on the first day of, when there is one."""
         i = data.draw(st.integers(0, len(self.owner_account) - 1))
         account = self.owner_account[i]
+        leases = [i_ for i_, lease in self.leases.items() if lease.unit.property_index == i]
         free = [
             k
             for k in range(14)
@@ -984,6 +989,9 @@ class RentRollMachine(RuleBasedStateMachine):
                 for (a, s), held in self.fees.items()
             )
         ]
+        leased = [k for k in free if any(self.leases[i_].covers(month_start(k)) for i_ in leases)]
+        if recurring_cents is not None and leased:
+            free = leased
         month = data.draw(st.sampled_from(free or list(range(14))))
         start = month_start(month)
         if self.agreement_on(account, start) is None:
@@ -991,7 +999,6 @@ class RentRollMachine(RuleBasedStateMachine):
             self.agreements[(account, start)] = Terms(
                 Decimal(percent), Decimal("25.00"), Decimal("5.00"), Decimal(50), Decimal(0)
             )
-        leases = [i_ for i_, lease in self.leases.items() if lease.unit.property_index == i]
         if leases:
             lease_id = data.draw(st.sampled_from(leases))
             rent = next(
@@ -1011,7 +1018,35 @@ class RentRollMachine(RuleBasedStateMachine):
                 when = datetime.combine(start + timedelta(days=day), time(12), tzinfo=UTC)
                 paid = self.pay_in("cash", self.tenants[0], account, owed, when)
                 self.attempt_match(role, rent, paid, owed)
+            # The rent run charges a lease in effect on the day, so the fee goes on one.
+            covering = [i_ for i_ in leases if self.leases[i_].covers(start)]
+            if recurring_cents is not None and covering:
+                lease_id = data.draw(st.sampled_from(covering))
+                amount = Decimal(recurring_cents) / 100
+                self.pay_a_recurring_fee(role, lease_id, account, start, day, amount)
         self.attempt_fee(role, account, start, month_start(month + 1))
+
+    def pay_a_recurring_fee(self, role, lease_id, account, start, day, amount):
+        """A fee recurring on the lease from `start` (one is added if none is in force then),
+        charged by the rent run on `start`, and what is owed of it paid in cash and matched."""
+        if not any(
+            r.lease_id == lease_id and r.kind == "fee" and r.in_force(start)
+            for r in self.recurring.values()
+        ):
+            recurring_id = add_recurring_charge(
+                self.conns[role], self.pmc_id, lease_id, amount, start, "Parking"
+            )
+            self.recurring[recurring_id] = Recurring(lease_id, "fee", amount, start)
+        self.charge_recurring_on(role, start)
+        for (recurring_id, due_on), charged in list(self.recurring_charged.items()):
+            recurring = self.recurring[recurring_id]
+            if due_on != start or recurring.lease_id != lease_id or recurring.kind != "fee":
+                continue
+            owed = self.charges[charged].amount - self.paid_on(charged)
+            if owed > 0:
+                when = datetime.combine(start + timedelta(days=day), time(13), tzinfo=UTC)
+                paid = self.pay_in("cash", self.tenants[0], account, owed, when)
+                self.attempt_match(role, charged, paid, owed)
 
     def attempt_fee(self, role, account, start, end):
         """Take the fee for [start, end) as the model predicts: taken, the fee already taken
