@@ -320,6 +320,12 @@ required invariant, report and self-host step.
   before it (`trust_vendor_payments_carried_over`, migration 0038, once per vendor and year; a
   January 1 cutover carries over the year before) is added to the vendor's year, on a line of
   its own.
+- Lease expirations (migration 0046): `trust_report_lease_expirations` lists the leases whose
+  last day is the as-of day or one of the 90 after it, in groups of 0-30, 31-60 and 61-90 days
+  left, each with its renewal status as of the end of the day (UTC): none, drafted, sent,
+  signed or renewed. It runs as the owner so the AI role, which never reads lease offers, gets
+  that status word and nothing else of them (founder decision, 2026-10-13). Staff download it
+  from the overview.
 - Owner year-end (migration 0039): `trust_report_owner_year_end` sums each of an owner's
   property accounts over a calendar year (UTC): opening balance, collected from tenants
   (payments matched to charges, less bounces), management and leasing fees, bills set aside,

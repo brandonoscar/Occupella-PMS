@@ -239,6 +239,7 @@ FUNCTIONS = {
     "trust_report_security_deposits(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_general_ledger(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_audit_log(uuid,date,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_lease_expirations(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_vendor_payments(uuid,integer)": {"trust_app", "trust_ai_agent"},
     "trust_report_bank_reconciliation(uuid,uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_cutover(uuid,uuid)": {"trust_app", "trust_ai_agent"},
@@ -328,6 +329,9 @@ SECURITY_DEFINER = {
     "trust_audit()",  # writes the audit log, which no other role may write
     "trust_check_payment_hold()",  # locks the hold's lease, which the app can't
     "trust_check_bill_decision()",  # locks the bill's owner account, which the app can't
+    # Reads lease offers for the AI role, which never reads them, and returns only each lease's
+    # renewal status (founder decision, 2026-10-13).
+    "trust_report_lease_expirations(uuid,date)",
 }
 
 
