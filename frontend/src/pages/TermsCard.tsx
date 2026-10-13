@@ -19,7 +19,7 @@ const BLANK = {
   approval_limit: "",
 };
 const AMOUNTS = [
-  ["fee_percent", "Fee, percent of rent collected"],
+  ["fee_percent", "Fee, percent of rent and recurring fees collected"],
   ["minimum_fee", "Minimum fee"],
   ["flat_fee", "Flat fee"],
   ["leasing_fee_percent", "Leasing fee, percent of rent"],

@@ -25,7 +25,7 @@ describe("agreementSummary", () => {
         approval_limit: "500.00",
       }),
     ).toBe(
-      "8.5% of rent collected (at least $50.00); a $10.00 flat fee;" +
+      "8.5% of rent and recurring fees collected (at least $50.00); a $10.00 flat fee;" +
         " 50% of a new lease's monthly rent; keeps $250.00 in reserve;" +
         " owner approves bills over $500.00",
     );
@@ -36,7 +36,7 @@ describe("agreementSummary", () => {
       "a $75.00 minimum fee; owner approves every bill",
     );
     expect(agreementSummary({ ...NONE, fee_percent: "10" })).toBe(
-      "10% of rent collected; owner approves every bill",
+      "10% of rent and recurring fees collected; owner approves every bill",
     );
   });
 });

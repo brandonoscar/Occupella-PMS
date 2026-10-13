@@ -154,7 +154,8 @@ function FeesCard({ refresh }: { refresh: () => void }) {
   return (
     <Card title="Management fees">
       <p className="mb-4 text-sm text-ink-muted">
-        Each agreement's fee for the period, from the rent collected in it, once per period.
+        Each agreement's fee for the period, from the rent and recurring fees collected in it, once
+        per period.
       </p>
       <form
         className="flex flex-wrap items-end gap-3"

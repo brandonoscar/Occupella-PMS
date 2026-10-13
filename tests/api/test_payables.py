@@ -10,6 +10,7 @@ from decimal import Decimal
 import pytest
 from helpers import (
     add_agreement,
+    add_recurring_charge,
     add_unit,
     add_work_order,
     apply_payment,
@@ -17,6 +18,7 @@ from helpers import (
     balance,
     bank_sums,
     charge,
+    charge_recurring_due,
     enter_bill,
     open_lease,
     post,
@@ -353,6 +355,34 @@ def test_management_fees_are_taken_once_a_period_for_each_agreement(client, conn
     assert again == first == one
     assert overlapping[0]["fee"] is None and "overlaps" in overlapping[0]["refused"]
     assert balance(conn, pmc.pmc_income) == Decimal("150.00")
+
+
+def test_the_fee_counts_a_recurring_fee_collected_with_the_rent(client, conn, staff, pmc):
+    rented = Rented(conn, pmc)
+    add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 60 * DAY, fee_percent="10")
+    parking = add_recurring_charge(
+        conn, pmc.pmc_id, rented.lease, "40.00", TODAY - 20 * DAY, "Parking"
+    )
+    charge_recurring_due(conn, pmc.pmc_id, TODAY - 20 * DAY)
+    (charged,) = conn.execute(
+        "SELECT id FROM trust_charges WHERE recurring_charge_id = %s", (parking,)
+    ).fetchone()
+    (paid,) = post(
+        conn,
+        pmc.pmc_id,
+        f"parking-{uuid.uuid4()}",
+        [(pmc.operating_cash, pmc.owners[0].account, Decimal("40.00"))],
+        NOW - 10 * DAY,
+    )
+    apply_payment(conn, pmc.pmc_id, charged, paid, "40.00")
+
+    fees = ok(
+        call(client, "management-fees", period_start=TODAY - 30 * DAY, period_end=TODAY, on=TODAY),
+        200,
+    )
+
+    # 10% of the 1500.00 rent and the 40.00 parking.
+    assert [(f["owner"], f["fee"]) for f in fees] == [("Owner 1", "154.00")]
 
 
 def test_a_fee_refused_for_one_owner_leaves_the_others_taken(client, conn, staff, pmc):

@@ -1,5 +1,6 @@
 """The owner money loop: management agreements, management and leasing fees, and owner draws
-(migration 20261010000016).
+(migration 20261010000016; a management fee counts recurring fees with rent since migration
+20261013000040).
 
 Fees move money from an owner's property account to the PMC's fee account; draws pay it out
 through the trust bank account's cash. Each is safe to retry, and the no-negative rule holds.
@@ -13,11 +14,13 @@ import psycopg
 import pytest
 from helpers import (
     add_agreement,
+    add_recurring_charge,
     add_unit,
     apply_payment,
     approve,
     balance,
     charge,
+    charge_recurring_due,
     draw_owner,
     in_background,
     make_pmc,
@@ -159,6 +162,60 @@ def test_the_fee_is_a_percent_of_rent_collected_in_the_period(conn, app_conn, pm
     assert transfers_between(conn, owner, pmc.pmc_income) == [
         (Decimal("130.00"), "Management fee 2026-01-01 to 2026-01-31")
     ]
+
+
+def pay_recurring(conn, pmc, recurring, due, amount, when):
+    """The charge the rent run made from a recurring charge on `due`, paid into Owner 1's
+    account at `when`: (charge, transfer)."""
+    (charged,) = conn.execute(
+        "SELECT id FROM trust_charges WHERE recurring_charge_id = %s AND due_on = %s",
+        (recurring, due),
+    ).fetchone()
+    (paid,) = transfer_batch(conn, [(pmc.operating_cash, pmc.owners[0].account, amount)], when)
+    apply_payment(conn, pmc.pmc_id, charged, paid, amount)
+    return charged, paid
+
+
+def test_recurring_fees_count_with_rent_and_one_off_fees_do_not(conn, app_conn, pmc, owner, lease):
+    add_agreement(conn, pmc.pmc_id, owner, JAN_1, fee_percent="10")
+    pets = add_recurring_charge(conn, pmc.pmc_id, lease, "50.00", JAN_1, "Pet rent")
+    add_recurring_charge(conn, pmc.pmc_id, lease, "25.00", JAN_1, "Loyalty credit", kind="credit")
+    assert charge_recurring_due(conn, pmc.pmc_id, JAN_1) == 2
+    collect(conn, pmc, lease, RENT, at(date(2026, 1, 2)))
+    pay_recurring(conn, pmc, pets, JAN_1, "50.00", at(date(2026, 1, 3)))
+    collect(conn, pmc, lease, "75.00", at(date(2026, 1, 9)), kind="fee")  # a one-off fee
+
+    fee = post_management_fee(app_conn, pmc.pmc_id, owner, JAN_1, FEB_1, JAN_31)
+
+    # 10% of the 1500.00 rent and the 50.00 pet rent. Not the one-off fee, and the credit,
+    # never paid, adds nothing.
+    assert fee == Decimal("155.00")
+    assert fee_rows(conn, owner) == [(JAN_1, FEB_1, Decimal("1550.00"), fee, True)]
+
+
+def test_a_recurring_fee_bounced_in_the_period_comes_off_it(conn, pmc, owner, lease):
+    add_agreement(conn, pmc.pmc_id, owner, JAN_1, fee_percent="10")
+    parking = add_recurring_charge(conn, pmc.pmc_id, lease, "100.00", JAN_1, "Parking")
+    charge_recurring_due(conn, pmc.pmc_id, JAN_1)
+    january = pay_recurring(conn, pmc, parking, JAN_1, "100.00", at(date(2026, 1, 5)))
+    collect(conn, pmc, lease, RENT, at(date(2026, 2, 6)), due=FEB_1)
+    (returned,) = transfer_batch(conn, [(owner, pmc.operating_cash, "100.00")], at(FEB_1))
+    reverse_payment(conn, pmc.pmc_id, *january, returned, "100.00")
+
+    # February: its 1500.00 rent, less January's parking that bounced in it.
+    assert post_management_fee(conn, pmc.pmc_id, owner, FEB_1, MAR_1, at(MAR_1)) == 140
+    assert fee_rows(conn, owner)[0][2] == Decimal("1400.00")
+
+
+def test_a_one_off_fee_bounced_in_the_period_leaves_it_as_it_is(conn, pmc, owner, lease):
+    add_agreement(conn, pmc.pmc_id, owner, JAN_1, fee_percent="10")
+    key_fee = collect(conn, pmc, lease, "75.00", at(date(2026, 1, 5)), kind="fee")
+    collect(conn, pmc, lease, RENT, at(date(2026, 2, 6)), due=FEB_1)
+    (returned,) = transfer_batch(conn, [(owner, pmc.operating_cash, "75.00")], at(FEB_1))
+    reverse_payment(conn, pmc.pmc_id, *key_fee, returned, "75.00")
+
+    # February: its 1500.00 rent. The one-off fee was never counted, so its bounce isn't either.
+    assert post_management_fee(conn, pmc.pmc_id, owner, FEB_1, MAR_1, at(MAR_1)) == 150
 
 
 def test_the_minimum_applies_when_little_rent_came_in(conn, pmc, owner, lease):

@@ -93,9 +93,9 @@ records management agreements, takes fees and pays owners, and checks:
   it moved; a reversal undoes no more than its match; a retried match or reversal adds nothing;
 - the rent roll for all time ties to every tenant's deposits and prepaid rent in the ledger, and
   the roll as of any day matches the model line by line;
-- each management fee matches its agreement and the rent collected, once per period; a leasing
-  fee once per lease; a draw never pays out more than the balance above the reserve, and the
-  owner balances report as of any day matches the model.
+- each management fee matches its agreement and the rent and recurring fees collected, once per
+  period; a leasing fee once per lease; a draw never pays out more than the balance above the
+  reserve, and the owner balances report as of any day matches the model.
 - the rent run charges every lease in effect on its due date once; each late rent is charged one
   late fee, worked from what was unpaid when its grace ran out under the terms in force on its
   due date.

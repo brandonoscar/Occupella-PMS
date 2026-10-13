@@ -58,13 +58,13 @@ export function kindLabel(kind: BankKind): string {
 
 const positive = (amount: string) => Number(amount) > 0;
 
-// Management terms in a line, as fees per period: "8.5% of rent collected (at least $50.00);
-// ...", saying so when they take no management fee.
+// Management terms in a line, as fees per period: "8.5% of rent and recurring fees collected
+// (at least $50.00); ...", saying so when they take no management fee.
 export function agreementSummary(terms: Agreement): string {
   const parts: string[] = [];
   if (positive(terms.fee_percent)) {
     parts.push(
-      `${terms.fee_percent}% of rent collected` +
+      `${terms.fee_percent}% of rent and recurring fees collected` +
         (positive(terms.minimum_fee) ? ` (at least ${money(terms.minimum_fee)})` : ""),
     );
   } else if (positive(terms.minimum_fee)) {

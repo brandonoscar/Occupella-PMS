@@ -531,8 +531,9 @@ class Fee(BaseModel):
 @router.post("/management-fees")
 def management_fees(session: Staff, conn: Conn, run: FeeRun) -> list[Fee]:
     """Takes the management fee of a period from each owner's account (or one), once per
-    period: its percent of the rent collected in it, at least the minimum, plus a flat fee.
-    An account the fee can't be taken from says why, and the others are taken."""
+    period: its percent of the rent and recurring fees (pet rent, parking) collected in it, at
+    least the minimum, plus a flat fee. An account the fee can't be taken from says why, and the
+    others are taken."""
     not_after_today(run.on)
     if run.period_end <= run.period_start:
         raise HTTPException(422, "a fee period ends after it starts")
