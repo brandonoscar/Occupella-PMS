@@ -1,11 +1,15 @@
 """The tenant portal's endpoints (src/pms/api/tenant.py): a tenant sees their own leases, what
-they owe and each lease's ledger, and files maintenance requests, never anyone else's."""
+they owe and what comes due, each lease's ledger and the statement of a deposit returned at
+move-out, and files maintenance requests, never anyone else's."""
 
+import csv
+import io
 import uuid
 from datetime import UTC, date, datetime, timedelta
 
 import pytest
 from helpers import (
+    add_recurring_charge,
     add_tenant,
     add_unit,
     add_work_order,
@@ -13,7 +17,9 @@ from helpers import (
     charge,
     make_pmc,
     open_lease,
+    return_deposit,
     step_work_order,
+    stop_recurring_charge,
     transfer_batch,
 )
 from people import join_as, join_as_owner, join_as_staff, join_as_tenant, tenant_of
@@ -91,6 +97,17 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
             "tenants": ["Tenant 1", "Tenant 2"],
             "balance_due": "1500.00",
             "in_effect": True,
+            "each_month": [
+                {
+                    "what": "Rent",
+                    "kind": "rent",
+                    "amount": "1500.00",
+                    "starts_on": "2026-01-01",
+                    "ends_on": None,
+                }
+            ],
+            "coming_due": [],
+            "deposit_returned": False,
         },
         {
             "lease_id": str(home.old_lease),
@@ -102,8 +119,97 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
             "tenants": ["Tenant 1"],
             "balance_due": "0.00",
             "in_effect": False,
+            "each_month": [],  # it has ended
+            "coming_due": [],
+            "deposit_returned": False,
         },
     ]
+
+
+def test_a_tenant_sees_what_each_month_charges_and_what_comes_due(client, conn, app_conn, home):
+    pmc_id, today = home.pmc.pmc_id, datetime.now(UTC).date()
+    add_recurring_charge(conn, pmc_id, home.lease, "35.00", FEB_1, "Pet rent")
+    parking = add_recurring_charge(conn, pmc_id, home.lease, "25.00", FEB_1, "Parking", "credit")
+    stop_recurring_charge(conn, pmc_id, parking, today)  # no longer charged from today
+    storage = add_recurring_charge(conn, pmc_id, home.lease, "40.00", FEB_1, "Storage")
+    stop_recurring_charge(conn, pmc_id, storage, today + timedelta(days=60))
+    charge(conn, pmc_id, home.lease, today + timedelta(days=10), "50.00", "fee", "Key replacement")
+    join_as_tenant(client, conn, app_conn, home.pmc)
+
+    (lease,) = [x for x in client.get("/api/tenant/leases").json() if x["in_effect"]]
+
+    assert [(m["what"], m["kind"], m["amount"], m["ends_on"]) for m in lease["each_month"]] == [
+        ("Rent", "rent", "1500.00", None),
+        ("Pet rent", "fee", "35.00", None),
+        ("Storage", "fee", "40.00", str(today + timedelta(days=60))),
+    ]
+    assert lease["coming_due"] == [
+        {
+            "due_on": str(today + timedelta(days=10)),
+            "kind": "fee",
+            "memo": "Key replacement",
+            "open": "50.00",
+        }
+    ]
+    assert lease["balance_due"] == "1500.00"  # February's rent; the fee is not due yet
+
+
+@pytest.fixture
+def moved_out(client, conn, app_conn):
+    """A tenant whose lease ended in June, with their 1500.00 deposit returned in July: 1000.00
+    kept for June's rent, 500.00 back."""
+    pmc = make_pmc(conn)
+    tenant = tenant_of(conn, pmc)
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id)
+    lease = open_lease(conn, pmc.pmc_id, unit, JAN_1, date(2026, 6, 30), "1000.00", [tenant])
+    transfer_batch(conn, [(pmc.deposit_cash, pmc.tenant_deposit, "1500.00")], JAN_3)
+    charge(conn, pmc.pmc_id, lease, date(2026, 6, 1), "1000.00", "rent", "June rent")
+    return_deposit(conn, pmc.pmc_id, lease, "move-out-1", datetime(2026, 7, 5, 12, tzinfo=UTC))
+    join_as_tenant(client, conn, app_conn, pmc)
+    return pmc, lease
+
+
+@pytest.mark.parametrize(("fmt", "magic"), [("pdf", b"%PDF-"), ("csv", b"line,")])
+def test_a_tenant_downloads_the_statement_of_their_returned_deposit(client, moved_out, fmt, magic):
+    _, lease = moved_out
+
+    (seen,) = client.get("/api/tenant/leases").json()
+    answer = client.get(
+        f"/api/tenant/leases/{lease}/deposit-return/download", params={"format": fmt}
+    )
+
+    assert seen["deposit_returned"] is True
+    assert answer.status_code == 200
+    assert answer.content.startswith(magic)
+    assert answer.headers["content-disposition"] == f'attachment; filename="deposit-return.{fmt}"'
+
+
+def test_the_deposit_statement_is_the_deposit_return_report(client, conn, moved_out):
+    pmc, lease = moved_out
+    direct = conn.execute(
+        "SELECT item, detail, amount FROM trust_report_deposit_return(%s, %s)",
+        (pmc.pmc_id, lease),
+    ).fetchall()
+
+    answer = client.get(
+        f"/api/tenant/leases/{lease}/deposit-return/download", params={"format": "csv"}
+    )
+
+    header, *rows = csv.reader(io.StringIO(answer.content.decode(), newline=""))
+    assert header == ["line", "item", "detail", "amount"]
+    assert [tuple(row[1:]) for row in rows] == [
+        (item, detail or "", "" if amount is None else str(amount))
+        for item, detail, amount in direct
+    ]
+
+
+def test_a_deposit_not_yet_returned_has_no_statement(client, conn, app_conn, home):
+    join_as_tenant(client, conn, app_conn, home.pmc)
+
+    answer = client.get(f"/api/tenant/leases/{home.old_lease}/deposit-return/download")
+
+    assert answer.status_code == 404
+    assert answer.json()["detail"] == "this lease's deposit has not been returned"
 
 
 def test_the_ledger_is_the_tenant_ledger_report(client, conn, app_conn, home):
@@ -161,10 +267,11 @@ def test_a_lease_that_isnt_theirs_reads_as_not_found(client, conn, app_conn, hom
     answers = [
         client.get(f"/api/tenant/leases/{lease}/ledger"),
         client.get(f"/api/tenant/leases/{lease}/ledger/download"),
+        client.get(f"/api/tenant/leases/{lease}/deposit-return/download"),
         client.post("/api/tenant/requests", json=new_request(home, lease)),
     ]
 
-    assert [a.status_code for a in answers] == [404] * 3
+    assert [a.status_code for a in answers] == [404] * 4
     assert {a.json()["detail"] for a in answers} == {"no such lease of yours"}
 
 
@@ -180,11 +287,12 @@ def test_only_a_tenant_reaches_the_tenant_endpoints(client, conn, app_conn, home
         client.get("/api/tenant/leases"),
         client.get(f"/api/tenant/leases/{home.lease}/ledger"),
         client.get(f"/api/tenant/leases/{home.lease}/ledger/download"),
+        client.get(f"/api/tenant/leases/{home.lease}/deposit-return/download"),
         client.get("/api/tenant/requests"),
         client.post("/api/tenant/requests", json=new_request(home)),
     ]
 
-    assert [a.status_code for a in answers] == [expected] * 5
+    assert [a.status_code for a in answers] == [expected] * 6
 
 
 @pytest.mark.parametrize(
@@ -194,6 +302,8 @@ def test_only_a_tenant_reaches_the_tenant_endpoints(client, conn, app_conn, home
         ("/api/tenant/leases/not-a-lease/ledger", {}),
         ("/api/tenant/leases/{lease}/ledger/download", {"format": "docx"}),
         ("/api/tenant/leases/{lease}/ledger/download", {"as_of": "2026-02-30"}),
+        ("/api/tenant/leases/{lease}/deposit-return/download", {"format": "docx"}),
+        ("/api/tenant/leases/not-a-lease/deposit-return/download", {}),
     ],
 )
 def test_a_bad_ledger_request_is_refused(client, conn, app_conn, home, path, params):

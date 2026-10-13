@@ -108,7 +108,9 @@ required invariant, report and self-host step.
   owner only: no request names an owner, a property or a PMC, and a bill named in a path is
   answered only if it is theirs (they approve or decline those over their limit). A tenant's pages
   (`src/pms/api/tenant.py`) show the session's tenant only: a lease named in a path is answered
-  only if they are on it, and reads as not found otherwise. The portal takes no payments.
+  only if they are on it, and reads as not found otherwise. They show what each lease charges
+  every month and what is charged already but due later, and once a deposit was returned at
+  move-out, its statement (`trust_report_deposit_return`) to download. The portal takes no payments.
 - Leasing (`src/pms/api/leasing.py`, `src/pms/leasing/`): applicants have no login. They apply
   through a link staff open for a unit (`/apply#<token>`) and follow it with a status link;
   both tokens travel in JSON bodies and are kept only as SHA-256. Screening goes through

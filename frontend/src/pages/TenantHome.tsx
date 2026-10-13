@@ -8,9 +8,21 @@ import type { Ledger } from "../ledger";
 import { itemLabel, readLedger } from "../ledger";
 import type { MaintenanceRequest } from "../maintenance";
 import { statusLabel, when } from "../maintenance";
-import { money } from "../money";
+import { day, money } from "../money";
 import type { StatementData } from "../statement";
 import { RenewalsCard } from "./RenewalsCard";
+
+// What the lease charges every month: its rent, and each recurring fee or credit not stopped
+// (ends_on is the first due date it is no longer charged for).
+export type Monthly = {
+  what: string;
+  kind: "rent" | "fee" | "credit";
+  amount: string;
+  starts_on: string;
+  ends_on: string | null;
+};
+// A charge entered already and due after today, with what is still open of it.
+export type ComingDue = { due_on: string; kind: "rent" | "fee"; memo: string | null; open: string };
 
 export type Lease = {
   lease_id: string;
@@ -22,7 +34,24 @@ export type Lease = {
   tenants: string[];
   balance_due: string;
   in_effect: boolean;
+  each_month: Monthly[];
+  coming_due: ComingDue[];
+  deposit_returned: boolean;
 };
+
+// "Pet rent: $35.00", "Parking: $25.00 off" for a credit, with when it starts or stops.
+export function monthlyLabel(item: Monthly, today: string): string {
+  const amount = item.kind === "credit" ? `${money(item.amount)} off` : money(item.amount);
+  const from = item.starts_on > today ? `, from ${item.starts_on}` : "";
+  const until = item.ends_on ? `, until ${item.ends_on}` : "";
+  return `${item.what}: ${amount}${from}${until}`;
+}
+
+// "2026-10-23 Key replacement: $50.00" (the kind when it has no memo).
+export function comingDueLabel(charge: ComingDue): string {
+  const what = charge.memo ?? (charge.kind === "rent" ? "Rent" : "Fee");
+  return `${charge.due_on} ${what}: ${money(charge.open)}`;
+}
 
 const CELL = "px-3 py-2 text-left";
 const AMOUNT = "px-3 py-2 text-right font-mono";
@@ -144,7 +173,41 @@ export function TenantHome({ me }: { me: Me }) {
                 Pay {me.pmc_name} the way you always have; payments can't be made here yet.
               </p>
             </div>
+            {lease.deposit_returned && (
+              <div className="mt-4">
+                <LinkButton
+                  href={`/api/tenant/leases/${encodeURIComponent(lease.lease_id)}/deposit-return/download?format=pdf`}
+                >
+                  Deposit statement (PDF)
+                </LinkButton>
+              </div>
+            )}
           </Card>
+
+          {(lease.each_month.length > 0 || lease.coming_due.length > 0) && (
+            <Card title="Coming up">
+              {lease.each_month.length > 0 && (
+                <>
+                  <p className="text-sm text-ink-subtle">Each month</p>
+                  <ul className="mb-4 flex flex-col gap-1 text-base">
+                    {lease.each_month.map((item) => (
+                      <li key={`${item.what}-${item.starts_on}`}>{monthlyLabel(item, day(new Date()))}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+              {lease.coming_due.length > 0 && (
+                <>
+                  <p className="text-sm text-ink-subtle">Charged already, due later</p>
+                  <ul className="flex flex-col gap-1 text-base">
+                    {lease.coming_due.map((charge) => (
+                      <li key={`${charge.due_on}-${charge.memo}`}>{comingDueLabel(charge)}</li>
+                    ))}
+                  </ul>
+                </>
+              )}
+            </Card>
+          )}
 
           <RenewalsCard me={me} />
 

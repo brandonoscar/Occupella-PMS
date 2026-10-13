@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { Lease } from "./TenantHome";
-import { TenantHome, firstLease } from "./TenantHome";
+import { TenantHome, comingDueLabel, firstLease, monthlyLabel } from "./TenantHome";
 
 afterEach(() => {
   cleanup();
@@ -28,6 +28,9 @@ const lease = (id: string, inEffect: boolean): Lease => ({
   tenants: ["Tenant 1", "Tenant 2"],
   balance_due: "1500.00",
   in_effect: inEffect,
+  each_month: [],
+  coming_due: [],
+  deposit_returned: false,
 });
 
 const LEDGER = {
@@ -72,7 +75,61 @@ describe("firstLease", () => {
   });
 });
 
+describe("what comes up", () => {
+  it("reads what each month charges, and a charge due later", () => {
+    const pet = { what: "Pet rent", kind: "fee" as const, amount: "35.00", starts_on: "2026-02-01", ends_on: null };
+    expect(monthlyLabel(pet, "2026-10-13")).toBe("Pet rent: $35.00");
+    expect(monthlyLabel({ ...pet, what: "Parking", kind: "credit", ends_on: "2026-12-01" }, "2026-10-13")).toBe(
+      "Parking: $35.00 off, until 2026-12-01",
+    );
+    expect(monthlyLabel({ ...pet, starts_on: "2026-11-01" }, "2026-10-13")).toBe("Pet rent: $35.00, from 2026-11-01");
+    const key = { due_on: "2026-10-23", kind: "fee" as const, memo: "Key replacement", open: "50.00" };
+    expect(comingDueLabel(key)).toBe("2026-10-23 Key replacement: $50.00");
+    expect(comingDueLabel({ ...key, kind: "rent", memo: null, open: "1500.00" })).toBe("2026-10-23 Rent: $1,500.00");
+  });
+});
+
 describe("TenantHome", () => {
+  it("shows what comes up and, once returned, the deposit statement", async () => {
+    server({
+      "GET /api/tenant/leases": [{
+        ...lease("1", true),
+        each_month: [
+          { what: "Rent", kind: "rent", amount: "1500.00", starts_on: "2026-01-01", ends_on: null },
+          { what: "Pet rent", kind: "fee", amount: "35.00", starts_on: "2026-02-01", ends_on: null },
+        ],
+        coming_due: [{ due_on: "2099-01-01", kind: "fee", memo: "Key replacement", open: "50.00" }],
+        deposit_returned: true,
+      }],
+      "GET /api/tenant/requests": [],
+      "GET /api/tenant/renewals": [],
+      "GET /api/tenant/leases/1/ledger": LEDGER,
+    });
+    render(<TenantHome me={ME} />);
+
+    const card = (await screen.findByRole("heading", { name: "Coming up" })).closest("section") as HTMLElement;
+    expect(within(card).getByText("Rent: $1,500.00")).toBeTruthy();
+    expect(within(card).getByText("Pet rent: $35.00")).toBeTruthy();
+    expect(within(card).getByText("2099-01-01 Key replacement: $50.00")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Deposit statement (PDF)" }).getAttribute("href")).toBe(
+      "/api/tenant/leases/1/deposit-return/download?format=pdf",
+    );
+  });
+
+  it("shows neither when nothing comes up and no deposit was returned", async () => {
+    server({
+      "GET /api/tenant/leases": [lease("1", false)],
+      "GET /api/tenant/requests": [],
+      "GET /api/tenant/renewals": [],
+      "GET /api/tenant/leases/1/ledger": LEDGER,
+    });
+    render(<TenantHome me={ME} />);
+
+    expect(await screen.findByTestId("balance-due")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "Coming up" })).toBeNull();
+    expect(screen.queryByRole("link", { name: "Deposit statement (PDF)" })).toBeNull();
+  });
+
   it("shows the lease, what is due, its ledger, and sends a request", async () => {
     const fetch = server({
       "GET /api/tenant/leases": [lease("1", true)],

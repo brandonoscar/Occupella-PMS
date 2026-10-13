@@ -1,6 +1,6 @@
-"""The tenant portal's endpoints: a tenant's leases with what they owe, each lease's ledger, and
-maintenance requests. No payments: online payment is out of scope
-(docs/adr/0002-portals-and-exports.md).
+"""The tenant portal's endpoints: a tenant's leases with what they owe and what comes due, each
+lease's ledger, the statement of a deposit returned at move-out, and maintenance requests. No
+payments: online payment is out of scope (docs/adr/0002-portals-and-exports.md).
 
 The tenant and the PMC always come from the session. A lease named in the path is answered only
 if the tenant is on it; any other reads as not found, whoever's it is.
@@ -18,6 +18,7 @@ from pydantic import BaseModel, Field
 
 from pms import accounts, exports
 from pms.api import maintenance
+from pms.api import rent as rent_api
 from pms.api.deps import Conn, Rows, Tenant, download
 
 router = APIRouter(prefix="/api/tenant")
@@ -28,6 +29,26 @@ REQUESTS_PER_DAY = 10
 
 def today() -> date:
     return datetime.now(UTC).date()
+
+
+class Monthly(BaseModel):
+    """What the lease charges every month: its rent, and each recurring fee or credit not
+    stopped (from its first due date, until the first one it is no longer charged for)."""
+
+    what: str
+    kind: Literal["rent", "fee", "credit"]
+    amount: str
+    starts_on: date
+    ends_on: date | None
+
+
+class ComingDue(BaseModel):
+    """A charge entered already and due after today, with what is still open of it."""
+
+    due_on: date
+    kind: Literal["rent", "fee"]
+    memo: str | None
+    open: str
 
 
 class Lease(BaseModel):
@@ -41,6 +62,11 @@ class Lease(BaseModel):
     tenants: list[str]
     balance_due: str
     in_effect: bool
+    # Nothing for a lease that has ended.
+    each_month: list[Monthly]
+    coming_due: list[ComingDue]
+    # Its tenants' deposits were returned at move-out: the statement can be downloaded.
+    deposit_returned: bool
 
 
 class NewRequest(BaseModel):
@@ -72,7 +98,8 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
         "       JOIN trust_tenants AS t ON t.id = everyone.tenant_id"
         '       WHERE everyone.lease_id = l.id ORDER BY t.display_name COLLATE "C", t.id),'
         " (SELECT b.balance FROM trust_report_tenant_ledger(l.pmc_id, l.id, %s) AS b"
-        "  WHERE b.item = 'balance')"
+        "  WHERE b.item = 'balance'),"
+        " EXISTS (SELECT 1 FROM trust_deposit_returns AS r WHERE r.lease_id = l.id)"
         " FROM trust_lease_tenants AS mine"
         " JOIN trust_leases AS l ON l.id = mine.lease_id"
         " JOIN trust_units AS u ON u.id = l.unit_id"
@@ -92,8 +119,36 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
             tenants=list(names),
             balance_due=exports.text(balance),
             in_effect=starts <= on and (ends is None or on <= ends),
+            each_month=[] if ends is not None and ends < on else monthly(conn, lease, starts, rent),
+            coming_due=[
+                ComingDue(due_on=due, kind=kind, memo=memo, open=rent_api.cents(left))
+                for _, _, due, kind, memo, _, left in rent_api.charges_open(
+                    conn, rent_api.OF_LEASE, lease
+                )
+                if due > on
+            ],
+            deposit_returned=returned,
         )
-        for lease, prop, unit, starts, ends, rent, names, balance in rows
+        for lease, prop, unit, starts, ends, rent, names, balance, returned in rows
+    ]
+
+
+def monthly(conn: psycopg.Connection[Any], lease: UUID, starts: date, rent: Any) -> list[Monthly]:
+    """The lease's rent, then each recurring fee or credit not stopped, by first due date."""
+    return [
+        Monthly(
+            what="Rent", kind="rent", amount=rent_api.cents(rent), starts_on=starts, ends_on=None
+        )
+    ] + [
+        Monthly(what=memo, kind=kind, amount=rent_api.cents(amount), starts_on=first, ends_on=last)
+        for memo, kind, amount, first, last in conn.execute(
+            "SELECT r.memo, r.kind, r.amount, r.starts_on, e.ends_on"
+            " FROM trust_recurring_charges AS r"
+            " LEFT JOIN trust_recurring_charge_ends AS e ON e.recurring_charge_id = r.id"
+            " WHERE r.lease_id = %s AND (e.ends_on IS NULL OR e.ends_on > %s)"
+            ' ORDER BY r.starts_on, r.memo COLLATE "C", r.id',
+            (lease, today()),
+        ).fetchall()
     ]
 
 
@@ -130,6 +185,26 @@ def ledger_download(
     table = ledger_table(conn, session, lease_id, as_of)
     name = f"tenant-ledger-{(as_of or today()).isoformat()}"
     return download(exports.export(table, fmt), name, fmt)
+
+
+@router.get("/leases/{lease_id}/deposit-return/download")
+def deposit_return_download(
+    session: Tenant,
+    conn: Conn,
+    lease_id: UUID,
+    fmt: Annotated[Literal["csv", "xlsx", "pdf"], Query(alias="format")] = "pdf",
+) -> Response:
+    """The itemized statement of the lease's deposits returned at move-out: what each tenant
+    held, what was kept for what the lease owed, and what went back to each."""
+    lease_of(conn, session, lease_id)
+    try:
+        with conn.transaction():
+            table = exports.run_report(
+                conn, "trust_report_deposit_return", [session.pmc_id, lease_id]
+            )
+    except psycopg.errors.InvalidParameterValue:
+        raise HTTPException(404, "this lease's deposit has not been returned") from None
+    return download(exports.export(table, fmt), "deposit-return", fmt)
 
 
 @router.get("/requests")
