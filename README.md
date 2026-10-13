@@ -14,7 +14,8 @@ report as CSV, Excel or PDF plus the whole ledger as CSV
 (`python -m pms.api`; the first staff invite comes from `python -m pms.admin`), and the portals
 (`frontend/`, served by the API):
 - an owner sees each property's balance and their statement for any period, as PDF, Excel or
-  CSV too;
+  CSV too, and approves or declines each bill over their approval limit, which the PMS emails
+  them about (through the PMC's own mail server; `docs/adr/0004-email.md`);
 - a tenant sees their lease, what is due and its ledger, and sends maintenance requests, which
   staff turn into work orders and follow to done. Rent is still paid the usual way: the portal
   takes no payments.

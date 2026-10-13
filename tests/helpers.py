@@ -596,12 +596,25 @@ def complete_offer(connection, pmc_id, offer_id, staff_id) -> UUID:
     )
 
 
-def approve_bill(connection, pmc_id, bill_id, approved_on, approved_by) -> None:
-    """Record the owner's approval of a bill over the approval limit."""
+def approve_bill(connection, pmc_id, bill_id, approved_on, approved_by, owner_id=None) -> None:
+    """Record the owner's approval of a bill over the approval limit (owner_id: given in the
+    portal)."""
     connection.execute(
-        "INSERT INTO trust_bill_approvals (pmc_id, bill_id, approved_on, approved_by)"
-        " VALUES (%s, %s, %s, %s)",
-        (pmc_id, bill_id, approved_on, approved_by),
+        "INSERT INTO trust_bill_approvals (pmc_id, bill_id, approved_on, approved_by, owner_id)"
+        " VALUES (%s, %s, %s, %s, %s)",
+        (pmc_id, bill_id, approved_on, approved_by, owner_id),
+    )
+
+
+def decline_bill(
+    connection, pmc_id, bill_id, declined_on, declined_by, reason="Too much", owner_id=None
+) -> None:
+    """Record the owner's decline of a bill (owner_id: declined in the portal)."""
+    connection.execute(
+        "INSERT INTO trust_bill_declines"
+        " (pmc_id, bill_id, declined_on, declined_by, reason, owner_id)"
+        " VALUES (%s, %s, %s, %s, %s, %s)",
+        (pmc_id, bill_id, declined_on, declined_by, reason, owner_id),
     )
 
 

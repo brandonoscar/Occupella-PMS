@@ -31,14 +31,14 @@ from urllib.parse import urlsplit
 from uuid import UUID
 
 import psycopg
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from psycopg import sql
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
-from pms import accounts, exports
+from pms import accounts, email, exports
 from pms.api import (
     documents,
     fake_esign,
@@ -46,6 +46,7 @@ from pms.api import (
     maintenance,
     moveout,
     offers,
+    outbox,
     owner,
     payables,
     people,
@@ -75,6 +76,9 @@ class Settings:
     screening_partner: str = ""
     # The e-sign partner (pms.leasing.esign): "fake", or empty for none.
     esign_partner: str = ""
+    # The email sender (pms.email): "fake", "smtp" (its settings from the environment), or
+    # empty for none.
+    email_sender: str = ""
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -88,6 +92,7 @@ class Settings:
             else None,
             screening_partner=os.environ.get("PMS_SCREENING_PARTNER", ""),
             esign_partner=os.environ.get("PMS_ESIGN_PARTNER", ""),
+            email_sender=os.environ.get("PMS_EMAIL_SENDER", ""),
         )
 
     @property
@@ -183,6 +188,9 @@ def create_app(settings: Settings) -> FastAPI:
     app.state.pool = pool
     app.state.screening = screening.partner_named(settings.screening_partner)
     app.state.esign = esign.partner_named(settings.esign_partner, settings.public_url)
+    # The SMTP settings come straight from the environment, so a password is never part of
+    # Settings (which a log or an error could print).
+    app.state.email = email.sender_named(settings.email_sender, os.environ)
 
     @app.middleware("http")
     async def guard(
@@ -196,7 +204,15 @@ def create_app(settings: Settings) -> FastAPI:
                 "application/json"
             ):
                 return JSONResponse({"detail": "send JSON"}, 415)
+        outbox.PUBLIC_URL.set(settings.public_url)
         response = await call_next(request)
+        sender = request.app.state.email
+        if request.method not in SAFE_METHODS and response.status_code < 400 and sender:
+            # After the answer is sent, so after the request's transaction committed: what it
+            # wrote to the outbox exists, and goes out.
+            delivery = BackgroundTasks()
+            delivery.add_task(outbox.deliver, pool, sender)
+            response.background = delivery
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         if request.url.path.startswith("/api/"):

@@ -1,11 +1,14 @@
 """The owner portal's endpoints (src/pms/api/owner.py): an owner sees their own properties,
-statement and year-end package, and nobody else's."""
+statement and year-end package, and nobody else's, and approves or declines their own bills
+over the approval limit."""
 
-from datetime import UTC, datetime
+import uuid
+from datetime import UTC, date, datetime
 from decimal import Decimal
 
+import psycopg
 import pytest
-from helpers import make_pmc, transfer_batch
+from helpers import add_agreement, enter_bill, make_pmc, set_aside_bill, transfer_batch
 from people import join_as_owner, join_as_staff, join_as_tenant
 
 JAN_3 = datetime(2026, 1, 3, 12, tzinfo=UTC)
@@ -155,9 +158,12 @@ def test_only_an_owner_reaches_the_owner_endpoints(client, conn, app_conn, pmc, 
         client.get("/api/owner/statement/download", params=period),
         client.get("/api/owner/year-end", params={"year": 2026}),
         client.get("/api/owner/year-end/download", params={"year": 2026}),
+        client.get("/api/owner/bills"),
+        client.post(f"/api/owner/bills/{uuid.uuid4()}/approval", json={}),
+        client.post(f"/api/owner/bills/{uuid.uuid4()}/decline", json={"reason": "No"}),
     ]
 
-    assert [a.status_code for a in answers] == [expected] * 5
+    assert [a.status_code for a in answers] == [expected] * 8
 
 
 @pytest.mark.parametrize(
@@ -180,3 +186,144 @@ def test_a_bad_statement_period_is_refused(client, app_conn, pmc, params, detail
         assert answer.status_code == 422, path
         if detail:
             assert detail in answer.json()["detail"]
+
+
+# --- bills over the approval limit ---------------------------------------------------------
+
+JAN_1, JAN_10 = date(2026, 1, 1), date(2026, 1, 10)
+
+
+def bills_of(conn, pmc):
+    """Owner 1's 600.00 roof bill over their 500.00 limit and an 80.00 one under it; owner 2's
+    700.00 bill. Owner 1's account holds 1000.00."""
+    for n in (0, 1):
+        add_agreement(conn, pmc.pmc_id, pmc.owners[n].account, JAN_1, approval_limit="500")
+    rent(conn, pmc, 0, "1000.00")
+
+    def bill(n, reference, amount):
+        return enter_bill(
+            conn,
+            pmc.pmc_id,
+            pmc.vendor_id,
+            pmc.owners[n].account,
+            reference,
+            JAN_10,
+            JAN_10,
+            amount,
+        )
+
+    return bill(0, "ROOF-1", "600.00"), bill(0, "LIGHT-1", "80.00"), bill(1, "OTHER-1", "700.00")
+
+
+def test_an_owner_sees_the_bills_waiting_for_them_and_approves_one(client, conn, app_conn, pmc):
+    roof, _, _ = bills_of(conn, pmc)
+    join_as_owner(client, app_conn, pmc)
+
+    waiting = client.get("/api/owner/bills")
+    approved = client.post(f"/api/owner/bills/{roof}/approval", json={})
+    after = client.get("/api/owner/bills").json()
+
+    assert waiting.status_code == 200
+    assert waiting.json() == [
+        {
+            "id": str(roof),
+            "vendor": "Vendor 1",
+            "reference": "ROOF-1",
+            "property": "Property 1",
+            "bill_date": "2026-01-10",
+            "due_on": "2026-01-10",
+            "amount": "600.00",
+            "memo": "Repair",
+            "approval_limit": "500.00",
+            "decision": None,
+            "decided_on": None,
+            "decided_by": None,
+            "reason": None,
+        }
+    ]
+    assert approved.status_code == 201
+    assert (after[0]["decision"], after[0]["decided_by"]) == (
+        "approved",
+        "Owner 1, in the owner portal",
+    )
+    assert conn.execute(
+        "SELECT owner_id FROM trust_bill_approvals WHERE bill_id = %s", (roof,)
+    ).fetchone() == (pmc.owners[0].owner_id,)
+    set_aside_bill(conn, pmc.pmc_id, roof, datetime(2026, 1, 11, tzinfo=UTC))  # staff may now
+
+
+def test_an_owner_declines_a_bill_and_it_is_never_paid(client, conn, app_conn, pmc):
+    roof, _, _ = bills_of(conn, pmc)
+    join_as_owner(client, app_conn, pmc)
+
+    declined = client.post(
+        f"/api/owner/bills/{roof}/decline", json={"reason": "  Get a second quote  "}
+    )
+
+    assert declined.status_code == 201
+    shown = client.get("/api/owner/bills").json()[0]
+    assert (shown["decision"], shown["reason"]) == ("declined", "Get a second quote")
+    with pytest.raises(psycopg.errors.CheckViolation, match="declined"):
+        set_aside_bill(conn, pmc.pmc_id, roof, datetime(2026, 1, 11, tzinfo=UTC))
+
+
+def test_an_owner_decides_a_bill_once(client, conn, app_conn, pmc):
+    roof, _, _ = bills_of(conn, pmc)
+    join_as_owner(client, app_conn, pmc)
+    client.post(f"/api/owner/bills/{roof}/approval", json={})
+
+    again = client.post(f"/api/owner/bills/{roof}/approval", json={})
+    declined = client.post(f"/api/owner/bills/{roof}/decline", json={"reason": "Changed my mind"})
+
+    assert [again.status_code, declined.status_code] == [409, 409]
+    assert again.json()["detail"] == "this bill has its decision already"
+
+
+def test_a_bill_set_aside_is_not_declined_in_the_portal(client, conn, app_conn, pmc):
+    _, light, _ = bills_of(conn, pmc)
+    set_aside_bill(conn, pmc.pmc_id, light, datetime(2026, 1, 11, tzinfo=UTC))
+    join_as_owner(client, app_conn, pmc)
+
+    answer = client.post(f"/api/owner/bills/{light}/decline", json={"reason": "Too much"})
+
+    assert answer.status_code == 409
+    assert answer.json()["detail"] == "this bill is set aside to pay already"
+
+
+def test_another_owners_bill_reads_as_not_found(client, conn, app_conn, pmc):
+    _, _, other = bills_of(conn, pmc)
+    join_as_owner(client, app_conn, pmc)
+
+    answers = [
+        client.post(f"/api/owner/bills/{other}/approval", json={}),
+        client.post(f"/api/owner/bills/{other}/decline", json={"reason": "No"}),
+        client.post(f"/api/owner/bills/{uuid.uuid4()}/approval", json={}),
+    ]
+
+    assert [a.status_code for a in answers] == [404, 404, 404]
+    assert "OTHER-1" not in {b["reference"] for b in client.get("/api/owner/bills").json()}
+    assert conn.execute(
+        "SELECT (SELECT count(*) FROM trust_bill_approvals WHERE pmc_id = %(pmc)s),"
+        " (SELECT count(*) FROM trust_bill_declines WHERE pmc_id = %(pmc)s)",
+        {"pmc": pmc.pmc_id},
+    ).fetchone() == (0, 0)
+
+
+@pytest.mark.parametrize(
+    ("path", "body"),
+    [
+        ("decline", {"reason": ""}),
+        ("decline", {"reason": "   "}),
+        ("decline", {"reason": "x" * 1001}),
+        ("decline", {}),
+        ("approval", None),
+    ],
+)
+def test_a_decision_needs_a_bill_and_a_decline_a_reason(client, conn, app_conn, pmc, path, body):
+    roof, _, _ = bills_of(conn, pmc)
+    join_as_owner(client, app_conn, pmc)
+
+    target = "not-a-bill" if body is None else str(roof)
+    answer = client.post(f"/api/owner/bills/{target}/{path}", json=body or {})
+
+    assert answer.status_code == 422

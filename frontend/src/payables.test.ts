@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { OwnerMoney, Recurring } from "./payables";
-import { feeLine, heldLabel, lastMonthPeriod, nextStep, recurringLabel } from "./payables";
+import type { Bill, OwnerMoney, Recurring } from "./payables";
+import { emailNote, feeLine, heldLabel, lastMonthPeriod, nextStep, recurringLabel } from "./payables";
 
 describe("payables", () => {
   it("names a bill's next step, and none once it is paid", () => {
@@ -56,5 +56,15 @@ describe("payables", () => {
       start: "2025-12-01",
       end: "2026-01-01",
     });
+  });
+
+  it("tells staff about the owner's email only while a bill waits for the owner", () => {
+    const bill = { status: "needs approval", owner_email: "sent" } as Bill;
+    expect(emailNote(bill)).toBe("Emailed the owner to approve or decline it in their portal.");
+    expect(emailNote({ ...bill, owner_email: "waiting" })).toBe("An email to the owner waits to be sent.");
+    expect(emailNote({ ...bill, owner_email: "failed" })).toContain("could not be sent");
+    expect(emailNote({ ...bill, owner_email: null })).toContain("no active portal login");
+    expect(emailNote({ ...bill, status: "to set aside" })).toBeNull();
+    expect(nextStep("declined")).toBeNull();
   });
 });

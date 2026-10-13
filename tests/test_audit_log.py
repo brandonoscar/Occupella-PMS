@@ -27,12 +27,15 @@ FEB = datetime(2026, 2, 1, tzinfo=UTC)
 # Not audited, each for a reason: the log itself; idempotency keys, written only with the
 # transfers they record (which are); a balance and two entries change with every transfer, and
 # the transfer row says it all; password hashes and authenticator secrets must never be copied
-# into a log (the login, its invites and sessions are audited); and a document's bytes, a W-9's
-# tax ID among them, whose document row is audited with their SHA-256.
+# into a log (the login, its invites and sessions are audited); a document's bytes, a W-9's
+# tax ID among them, whose document row is audited with their SHA-256; and emails to owners and
+# their deliveries, which hold people's addresses (ADR 0004).
 NOT_AUDITED = {
     "trust_audit_log",
     "trust_login_secrets",
     "trust_document_files",
+    "trust_emails",
+    "trust_email_deliveries",
     "trust_idempotency_keys",
     "pgledger_accounts",
     "pgledger_entries",

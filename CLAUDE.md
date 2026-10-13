@@ -27,9 +27,11 @@ be able to move money in this system either: its role, `trust_ai_agent`, can't (
 In scope since 2026-10-11 (founder, `docs/adr/0002-portals-and-exports.md`): exports, the owner
 portal, the tenant portal and leasing basics, with the API and logins they need. Since
 2026-10-12 (`docs/adr/0003-staff-back-office.md`): the staff back office for the accounting,
-bank statement import, a switching tool, staff roles, move-out and documents. Still out of
-scope: Stripe and online payments, bank files, 1099 filing, and state rules beyond the
-no-negative rule. If one of these looks needed, stop and ask the founder.
+bank statement import, a switching tool, staff roles, move-out and documents. Since
+2026-10-13 (`docs/adr/0004-email.md`): one email, to a rental owner when a bill waits for
+their approval. Still out of scope: Stripe and online payments, bank files, 1099 filing, any
+other email, and state rules beyond the no-negative rule. If one of these looks needed, stop
+and ask the founder.
 
 ## The standing rule: tests come with the code
 
@@ -76,8 +78,18 @@ required invariant, report and self-host step.
   role and their invite come from `python -m pms.admin`. A demo PMC to show the PMS with
   comes from `python -m pms.demo` (`src/pms/demo.py`): synthetic, built through the API's own
   route functions as its staff, with last month's reconciliation waiting for approval.
-  Payments, email sending and the real screening and e-sign partners are still out
-  (`docs/adr/0002-portals-and-exports.md`).
+  Payments, any email but ADR 0004's and the real screening and e-sign partners are still
+  out (`docs/adr/0002-portals-and-exports.md`).
+- Email (`src/pms/email.py`, migration 0042, `docs/adr/0004-email.md`): entering a bill over
+  the owner's approval limit writes, in the same transaction, an email to the owner's active
+  portal login (`trust_emails`, once per bill) naming the bill and linking to the portal; it
+  decides nothing and carries no token. After the request commits, the app hands what waits to
+  the server's `PMS_EMAIL_SENDER` ("fake" keeps it in the outbox and sends it nowhere, for
+  development and CI; "smtp" with `PMS_SMTP_*` and `PMS_EMAIL_FROM` from the environment, over
+  STARTTLS; none by default) and records each attempt (`trust_email_deliveries`, delivered at
+  most once, given up after five failures). `python -m pms.email deliver` delivers what waits.
+  Staff see each bill's email and the outbox at `/bills`. Emails are not audited, and the AI
+  never reads them.
 - The portal (`frontend/`): React 19, Vite and Tailwind v4, following Occupella's `DESIGN.md`.
   Its build is served by the API (`PMS_STATIC_DIR`) under a strict Content-Security-Policy.
   Colours, sizes and fonts come only from the tokens in `frontend/src/styles/globals.css`
@@ -92,7 +104,8 @@ required invariant, report and self-host step.
   (`src/pms/api/moveout.py`), and keep documents at `/documents` (`src/pms/api/documents.py`).
   npm packages are pinned exactly and their
   licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
-  owner only: no request names an owner, a property or a PMC. A tenant's pages
+  owner only: no request names an owner, a property or a PMC, and a bill named in a path is
+  answered only if it is theirs (they approve or decline those over their limit). A tenant's pages
   (`src/pms/api/tenant.py`) show the session's tenant only: a lease named in a path is answered
   only if they are on it, and reads as not found otherwise. The portal takes no payments.
 - Leasing (`src/pms/api/leasing.py`, `src/pms/leasing/`): applicants have no login. They apply
@@ -178,7 +191,11 @@ required invariant, report and self-host step.
   owner's approval recorded first. `trust_set_aside_bill` moves its amount from the owner's
   account to the vendor's (`vendor_payable`); `trust_pay_bill` then sends it out through the
   trust bank account's cash, no earlier than it was set aside. Each step once per bill, at READ
-  COMMITTED.
+  COMMITTED. A bill takes one owner's decision (migration 0041): an approval or a decline
+  (`trust_bill_declines`, with a reason), a decline only before it is set aside, and one taken
+  in the owner portal only by the owner of its property account. A declined bill is never set
+  aside or paid, and from the day it was declined it holds nothing back from draws and is not
+  unpaid in the reports.
 - Work orders: a job at a property (maybe one of its units). Its steps (assigned to a vendor,
   completed, cancelled) are append-only and in order, and nothing follows a close. A bill may
   name a work order of its property, never a cancelled one.

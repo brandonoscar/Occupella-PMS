@@ -2,19 +2,21 @@
 
 Hypothesis records management agreements (a reserve and an approval limit), pays money into
 owners' accounts, enters bills from three vendors (one with no account to pay it from), records
-owners' approvals, sets bills aside, pays them and pays owners. All in random order, through
-both the owner role and trust_app. A Python model predicts every step: the database must accept
-exactly what the model accepts and refuse the rest with the model's reason.
+owners' approvals and declines, sets bills aside, pays them and pays owners. All in random
+order, through both the owner role and trust_app. A Python model predicts every step: the
+database must accept exactly what the model accepts and refuse the rest with the model's
+reason.
 
 Invariants checked after every step (ci/registry.toml maps each to this test):
-  - the bills, approvals and payment steps are the model's: a vendor's reference is entered
-    once; a bill is set aside at most once, only with the owner's approval when it is over the
-    limit in force on its date; it is paid at most once, after it was set aside and never dated
-    before that;
+  - the bills, decisions and payment steps are the model's: a vendor's reference is entered
+    once; a bill takes one decision, an approval or a decline, and a decline only before it is
+    set aside; a bill is set aside at most once, never once declined, and only with the owner's
+    approval when it is over the limit in force on its date; it is paid at most once, after it
+    was set aside and never dated before that;
   - each vendor's account holds exactly what was set aside for its bills and not yet paid, and
     every balance is the model's;
-  - a draw never pays out more than the balance above the reserve and the unpaid bills, and
-    its request key pays once.
+  - a draw never pays out more than the balance above the reserve and the unpaid bills (a bill
+    declined holds nothing back from the day it was declined), and its request key pays once.
 
 Recurring bills are added on random days of the month, ended and entered through random days:
 each month's bill is entered once, never under a reference the vendor already has. What the
@@ -42,6 +44,7 @@ from helpers import (
     add_recurring_bill,
     approve_bill,
     carry_over_vendor_payments,
+    decline_bill,
     draw_owner,
     end_recurring_bill,
     enter_bill,
@@ -145,6 +148,7 @@ class BillMachine(RuleBasedStateMachine):
         self.agreements: dict[tuple[str, date], Terms] = {}
         self.bills: dict[UUID, Bill] = {}
         self.approved: set[UUID] = set()
+        self.declined: dict[UUID, date] = {}  # bill -> the day its owner declined it
         self.set_aside: dict[UUID, tuple[str, datetime]] = {}  # bill -> (transfer, when)
         self.paid: dict[UUID, tuple[str, datetime]] = {}
         self.draws: dict[str, tuple[str, Decimal]] = {}
@@ -164,7 +168,8 @@ class BillMachine(RuleBasedStateMachine):
         return self.agreements[(account, max(starts))] if starts else None
 
     def unpaid(self, account, day):
-        """Bills dated by the end of `day` whose money was not set aside by then."""
+        """Bills dated by the end of `day` whose money was not set aside by then, and not
+        declined by then."""
         return sum(
             (
                 b.amount
@@ -172,6 +177,7 @@ class BillMachine(RuleBasedStateMachine):
                 if b.account == account
                 and b.bill_date <= day
                 and not (i in self.set_aside and self.set_aside[i][1] < end_of(day))
+                and not (i in self.declined and self.declined[i] <= day)
             ),
             Decimal(0),
         )
@@ -263,12 +269,32 @@ class BillMachine(RuleBasedStateMachine):
                 self.conns[role], self.pmc_id, bill_id, BASE + timedelta(days=day), "Owner, email"
             )
 
-        if bill_id in self.approved:
+        if bill_id in self.approved or bill_id in self.declined:
             with pytest.raises(psycopg.errors.UniqueViolation):
                 send()
             return
         send()
         self.approved.add(bill_id)
+
+    @precondition(lambda self: self.bills)
+    @rule(data=st.data(), role=ROLES, day=DAYS)
+    def decline_a_bill(self, data, role, day):
+        """The owner declines a bill, now and then one they decided or one set aside already."""
+        bill_id = data.draw(st.sampled_from(list(self.bills)))
+        on = BASE + timedelta(days=day)
+
+        def send():
+            decline_bill(self.conns[role], self.pmc_id, bill_id, on, "Owner, in the portal")
+
+        if bill_id in self.approved or bill_id in self.declined:
+            with pytest.raises(psycopg.errors.UniqueViolation, match="decision already"):
+                send()
+        elif bill_id in self.set_aside:
+            with pytest.raises(psycopg.errors.CheckViolation, match="set aside already"):
+                send()
+        else:
+            send()
+            self.declined[bill_id] = on
 
     @precondition(lambda self: self.bills)
     @rule(data=st.data(), role=ROLES, day=DAYS, second=TIMES)
@@ -289,7 +315,7 @@ class BillMachine(RuleBasedStateMachine):
         if short > 0:
             transfer_batch(self.conn, [(self.pmc.operating_cash, bill.account, short)], when)
             self.record(self.pmc.operating_cash, bill.account, short, when)
-        if bill_id not in self.approved:
+        if bill_id not in self.approved and bill_id not in self.declined:
             approve_bill(self.conn, self.pmc_id, bill_id, bill.bill_date, "Owner, phone")
             self.approved.add(bill_id)
         self.attempt_set_aside(role, bill_id, day, second)
@@ -305,7 +331,9 @@ class BillMachine(RuleBasedStateMachine):
         if bill_id in self.set_aside:
             assert send() == self.set_aside[bill_id][0]  # a retry: nothing moves again
             return
-        if bill.amount > (terms.limit if terms else 0) and bill_id not in self.approved:
+        if bill_id in self.declined:
+            refusal = (psycopg.errors.CheckViolation, "declined")
+        elif bill.amount > (terms.limit if terms else 0) and bill_id not in self.approved:
             refusal = (psycopg.errors.CheckViolation, "approval limit")
         elif payable is None:
             refusal = (psycopg.errors.InvalidParameterValue, "open the vendor's account")
@@ -463,6 +491,8 @@ class BillMachine(RuleBasedStateMachine):
         for i, b in self.bills.items():
             if b.bill_date > as_of or (i in self.paid and self.paid[i][1] < end_of(as_of)):
                 continue
+            if i in self.declined and self.declined[i] <= as_of:
+                continue
             due = b.due
             late = max((as_of - due).days, 0)
             bucket = next(
@@ -488,7 +518,7 @@ class BillMachine(RuleBasedStateMachine):
     @precondition(lambda self: self.bills)
     @rule(
         data=st.data(),
-        write=st.sampled_from(["enter", "approve", "set aside", "pay", "carry over"]),
+        write=st.sampled_from(["enter", "approve", "decline", "set aside", "pay", "carry over"]),
     )
     def the_ai_role_cannot_write(self, data, write):
         """Whatever the AI tries, valid or not, is refused for lack of a grant, and nothing
@@ -509,6 +539,8 @@ class BillMachine(RuleBasedStateMachine):
                 )
             elif write == "approve":
                 approve_bill(ai, self.pmc_id, bill_id, day, "AI")
+            elif write == "decline":
+                decline_bill(ai, self.pmc_id, bill_id, day, "AI")
             elif write == "set aside":
                 set_aside_bill(ai, self.pmc_id, bill_id, moment(0, 0))
             elif write == "carry over":
@@ -718,6 +750,11 @@ class BillMachine(RuleBasedStateMachine):
             "SELECT bill_id FROM trust_bill_approvals WHERE pmc_id = %s", (self.pmc_id,)
         ).fetchall()
         assert {i for (i,) in approvals} == self.approved
+        declines = self.conn.execute(
+            "SELECT bill_id, declined_on FROM trust_bill_declines WHERE pmc_id = %s",
+            (self.pmc_id,),
+        ).fetchall()
+        assert dict(declines) == self.declined
         steps = self.conn.execute(
             "SELECT p.bill_id, p.step, p.transfer_id, t.event_at FROM trust_bill_payments p"
             " JOIN pgledger_transfers t ON t.id = p.transfer_id WHERE p.pmc_id = %s",

@@ -8,6 +8,7 @@ import { Card, Shell } from "../components/Shell";
 import { lastMonth, money } from "../money";
 import type { StatementData } from "../statement";
 import { group } from "../statement";
+import { OwnerBills } from "./OwnerBills";
 import { OwnerDocuments } from "./OwnerDocuments";
 import { OwnerYearEnd } from "./OwnerYearEnd";
 
@@ -74,6 +75,8 @@ export function OwnerHome({ me }: { me: Me }) {
           </table>
         )}
       </Card>
+
+      <OwnerBills />
 
       <Card title="Statement">
         <form

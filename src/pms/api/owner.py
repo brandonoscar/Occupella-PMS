@@ -1,5 +1,6 @@
 """The owner portal's endpoints: an owner's properties, their statement and their year-end
-package, for that owner only.
+package, their documents, and the bills over their approval limit, which they approve or
+decline. For that owner only.
 
 The owner and the PMC always come from the session, never from the request. The statement is
 trust_report_owner_statement over whole days in UTC, from the first day to the last; the
@@ -9,12 +10,13 @@ year-end package is trust_report_owner_year_end for a calendar year.
 from __future__ import annotations
 
 from datetime import UTC, date, datetime, time, timedelta
-from typing import Annotated, Literal
+from decimal import Decimal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import psycopg
 from fastapi import APIRouter, HTTPException, Query, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, StringConstraints
 
 from pms import accounts, exports
 from pms.api import documents
@@ -157,3 +159,143 @@ def owner_documents(session: Owner, conn: Conn) -> list[OwnerDocument]:
 def owner_document_file(session: Owner, conn: Conn, document_id: UUID) -> Response:
     """One of this owner's documents; any other reads as not found."""
     return documents.served(conn, session.pmc_id, document_id, session.person_id)
+
+
+# --- bills over the approval limit ---------------------------------------------------------
+
+
+class OwnerBill(BaseModel):
+    id: UUID
+    vendor: str
+    reference: str
+    property: str
+    bill_date: date
+    due_on: date
+    amount: str
+    memo: str
+    approval_limit: str
+    # None while it waits for the owner's decision.
+    decision: Literal["approved", "declined"] | None
+    decided_on: date | None
+    decided_by: str | None
+    reason: str | None
+
+
+OWNER_BILLS = """
+SELECT b.id, v.display_name, b.reference, p.display_name, b.bill_date, b.due_on, b.amount,
+       b.memo, g.approval_limit,
+       CASE WHEN ap.bill_id IS NOT NULL THEN 'approved'
+            WHEN dc.bill_id IS NOT NULL THEN 'declined' END,
+       coalesce(ap.approved_on, dc.declined_on), coalesce(ap.approved_by, dc.declined_by),
+       dc.reason
+FROM trust_bills AS b
+JOIN trust_ledger_accounts AS t ON t.ledger_account_id = b.ledger_account_id
+JOIN trust_vendors AS v ON v.id = b.vendor_id
+JOIN trust_properties AS p ON p.id = t.property_id
+-- The limit of the agreement in force on the bill's date, 0 without one, as
+-- trust_set_aside_bill reads it.
+CROSS JOIN LATERAL (
+    SELECT coalesce((SELECT a.approval_limit FROM trust_management_agreements AS a
+                     WHERE a.ledger_account_id = b.ledger_account_id
+                       AND a.starts_on <= b.bill_date
+                     ORDER BY a.starts_on DESC LIMIT 1), 0) AS approval_limit
+) AS g
+LEFT JOIN trust_bill_approvals AS ap ON ap.bill_id = b.id
+LEFT JOIN trust_bill_declines AS dc ON dc.bill_id = b.id
+WHERE b.pmc_id = %s AND t.owner_id = %s AND t.kind = 'owner_property'
+  AND (ap.bill_id IS NOT NULL OR dc.bill_id IS NOT NULL OR b.amount > g.approval_limit)
+ORDER BY b.due_on, b.bill_date, v.display_name COLLATE "C", b.reference COLLATE "C", b.id
+"""
+
+
+@router.get("/bills")
+def owner_bills(session: Owner, conn: Conn) -> list[OwnerBill]:
+    """The owner's bills over the approval limit, by due date: those waiting for their decision
+    and those decided, by them or as staff recorded it."""
+    rows = conn.execute(OWNER_BILLS, (session.pmc_id, session.person_id)).fetchall()
+    return [
+        OwnerBill(
+            id=row[0],
+            vendor=row[1],
+            reference=row[2],
+            property=row[3],
+            bill_date=row[4],
+            due_on=row[5],
+            amount=cents(row[6]),
+            memo=row[7],
+            approval_limit=cents(row[8]),
+            decision=row[9],
+            decided_on=row[10],
+            decided_by=row[11],
+            reason=row[12],
+        )
+        for row in rows
+    ]
+
+
+class Decline(BaseModel):
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]
+
+
+def your_bill(conn: psycopg.Connection[Any], session: accounts.Session, bill_id: UUID) -> str:
+    """The owner's name, for a bill on one of their property accounts; any other bill reads as
+    not found."""
+    row = conn.execute(
+        "SELECT o.display_name FROM trust_bills AS b"
+        " JOIN trust_ledger_accounts AS t ON t.ledger_account_id = b.ledger_account_id"
+        " JOIN trust_owners AS o ON o.id = t.owner_id"
+        " WHERE b.pmc_id = %s AND b.id = %s AND t.owner_id = %s",
+        (session.pmc_id, bill_id, session.person_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, "no such bill of yours")
+    return str(row[0])
+
+
+def decide(conn: psycopg.Connection[Any], query: str, params: tuple[Any, ...]) -> None:
+    try:
+        conn.execute(query, params)
+    except psycopg.errors.UniqueViolation:
+        raise HTTPException(409, "this bill has its decision already") from None
+    except psycopg.errors.CheckViolation:  # set aside before the owner declined it
+        raise HTTPException(409, "this bill is set aside to pay already") from None
+
+
+@router.post("/bills/{bill_id}/approval", status_code=201)
+def approve_bill(session: Owner, conn: Conn, bill_id: UUID) -> None:
+    """The owner approves one of their bills: staff may then set it aside and pay it."""
+    name = your_bill(conn, session, bill_id)
+    decide(
+        conn,
+        "INSERT INTO trust_bill_approvals (pmc_id, bill_id, approved_on, approved_by, owner_id)"
+        " VALUES (%s, %s, %s, %s, %s)",
+        (session.pmc_id, bill_id, today(), f"{name}, in the owner portal", session.person_id),
+    )
+
+
+@router.post("/bills/{bill_id}/decline", status_code=201)
+def decline_bill(session: Owner, conn: Conn, bill_id: UUID, decline: Decline) -> None:
+    """The owner declines one of their bills: it is never paid from their money."""
+    name = your_bill(conn, session, bill_id)
+    decide(
+        conn,
+        "INSERT INTO trust_bill_declines"
+        " (pmc_id, bill_id, declined_on, declined_by, reason, owner_id)"
+        " VALUES (%s, %s, %s, %s, %s, %s)",
+        (
+            session.pmc_id,
+            bill_id,
+            today(),
+            f"{name}, in the owner portal",
+            decline.reason,
+            session.person_id,
+        ),
+    )
+
+
+def today() -> date:
+    return datetime.now(UTC).date()
+
+
+def cents(amount: Decimal) -> str:
+    return f"{amount.quantize(Decimal('0.01'))}"

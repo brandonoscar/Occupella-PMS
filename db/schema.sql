@@ -1341,6 +1341,52 @@ $$;
 
 
 --
+-- Name: trust_check_bill_decision(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_bill_decision() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bill trust_bills;
+    v_owner uuid;
+BEGIN
+    SELECT b.* INTO v_bill FROM trust_bills AS b
+    WHERE b.id = NEW.bill_id AND b.pmc_id = NEW.pmc_id;
+    IF NOT FOUND THEN
+        RETURN NEW;  -- the key to trust_bills refuses it
+    END IF;
+    PERFORM trust_lock_bill(NEW.pmc_id, NEW.bill_id);
+    IF EXISTS (SELECT a.bill_id FROM trust_bill_approvals AS a WHERE a.bill_id = NEW.bill_id)
+       OR EXISTS (SELECT d.bill_id FROM trust_bill_declines AS d WHERE d.bill_id = NEW.bill_id)
+    THEN
+        RAISE EXCEPTION 'trust: bill % has its owner''s decision already', v_bill.reference
+            USING ERRCODE = 'unique_violation';
+    END IF;
+    IF TG_TABLE_NAME = 'trust_bill_declines' AND EXISTS (
+        SELECT p.bill_id FROM trust_bill_payments AS p
+        WHERE p.bill_id = NEW.bill_id AND p.step = 'set_aside'
+    ) THEN
+        RAISE EXCEPTION 'trust: bill % is set aside already; it can''t be declined',
+            v_bill.reference
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.owner_id IS NOT NULL THEN
+        SELECT t.owner_id INTO v_owner
+        FROM trust_ledger_accounts AS t WHERE t.ledger_account_id = v_bill.ledger_account_id;
+        IF v_owner IS DISTINCT FROM NEW.owner_id THEN
+            RAISE EXCEPTION 'trust: only the owner of bill %''s property account decides it in '
+                'the portal', v_bill.reference
+                USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_cutover_entry(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4020,6 +4066,10 @@ BEGIN
                          WHERE p.bill_id = b.id AND p.step = 'set_aside'
                            AND tr.event_at < v_cutoff
                      )
+                     AND NOT EXISTS (
+                         SELECT d.bill_id FROM trust_bill_declines AS d
+                         WHERE d.bill_id = b.id AND d.declined_on <= p_as_of
+                     )
                ), 0.00) AS owed,
                ag.id, ag.fee_percent, ag.minimum_fee, ag.flat_fee
         FROM trust_ledger_accounts AS t
@@ -4912,6 +4962,11 @@ BEGIN
           AND NOT EXISTS (
               SELECT s.bill_id FROM steps AS s WHERE s.bill_id = b.id AND s.step = 'paid'
           )
+          -- Not a bill its owner declined by the day: it won't be paid.
+          AND NOT EXISTS (
+              SELECT d.bill_id FROM trust_bill_declines AS d
+              WHERE d.bill_id = b.id AND d.declined_on <= p_as_of
+          )
     ),
     lines AS (
         SELECT 0 AS section, NULL::text AS vendor_name, 1 AS step, NULL::date AS due,
@@ -5375,12 +5430,20 @@ DECLARE
     v_limit numeric;
     v_payable text;
     v_transfer_id text;
+    v_declined trust_bill_declines;
 BEGIN
     SELECT p.transfer_id INTO v_transfer_id
     FROM trust_bill_payments AS p
     WHERE p.bill_id = p_bill_id AND p.step = 'set_aside';
     IF FOUND THEN
         RETURN v_transfer_id;  -- a retry: the bill is set aside already
+    END IF;
+
+    SELECT d.* INTO v_declined FROM trust_bill_declines AS d WHERE d.bill_id = p_bill_id;
+    IF FOUND THEN
+        RAISE EXCEPTION 'trust: bill % was declined by % on %; it is not paid',
+            v_bill.reference, v_declined.declined_by, v_declined.declined_on
+            USING ERRCODE = 'check_violation';
     END IF;
 
     v_limit := coalesce((
@@ -5507,6 +5570,11 @@ CREATE FUNCTION public.trust_unpaid_bills(p_account text, p_day date) RETURNS nu
           JOIN pgledger_transfers AS t ON t.id = p.transfer_id
           WHERE p.bill_id = b.id AND p.step = 'set_aside'
             AND t.event_at < (p_day + 1)::timestamp AT TIME ZONE 'UTC'
+      )
+      -- A bill its owner declined holds nothing back from the day it was declined.
+      AND NOT EXISTS (
+          SELECT d.bill_id FROM trust_bill_declines AS d
+          WHERE d.bill_id = b.id AND d.declined_on <= p_day
       )
 $$;
 
@@ -5828,7 +5896,25 @@ CREATE TABLE public.trust_bill_approvals (
     approved_on date NOT NULL,
     approved_by text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    owner_id uuid,
     CONSTRAINT trust_bill_approvals_approved_by_check CHECK ((approved_by <> ''::text))
+);
+
+
+--
+-- Name: trust_bill_declines; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_bill_declines (
+    bill_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    declined_on date NOT NULL,
+    declined_by text NOT NULL,
+    reason text NOT NULL,
+    owner_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_bill_declines_declined_by_check CHECK (((declined_by <> ''::text) AND (length(declined_by) <= 200))),
+    CONSTRAINT trust_bill_declines_reason_check CHECK (((reason <> ''::text) AND (length(reason) <= 1000)))
 );
 
 
@@ -6000,6 +6086,42 @@ CREATE TABLE public.trust_documents (
     CONSTRAINT trust_documents_sha256_check CHECK ((length(sha256) = 32)),
     CONSTRAINT trust_documents_size_check CHECK (((size >= 1) AND (size <= 5242880))),
     CONSTRAINT trust_documents_title_check CHECK (((title ~ '\S'::text) AND (length(title) <= 200)))
+);
+
+
+--
+-- Name: trust_email_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_email_deliveries (
+    email_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    attempted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    sender text NOT NULL,
+    error text,
+    CONSTRAINT trust_email_deliveries_error_check CHECK (((error IS NULL) OR ((error <> ''::text) AND (length(error) <= 1000)))),
+    CONSTRAINT trust_email_deliveries_sender_check CHECK ((sender = ANY (ARRAY['fake'::text, 'smtp'::text])))
+);
+
+
+--
+-- Name: trust_emails; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_emails (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    kind text NOT NULL,
+    bill_id uuid,
+    to_address text NOT NULL,
+    subject text NOT NULL,
+    body text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_emails_body_check CHECK (((body <> ''::text) AND (length(body) <= 10000))),
+    CONSTRAINT trust_emails_check CHECK (((kind = 'bill_approval'::text) = (bill_id IS NOT NULL))),
+    CONSTRAINT trust_emails_kind_check CHECK ((kind = 'bill_approval'::text)),
+    CONSTRAINT trust_emails_subject_check CHECK (((subject <> ''::text) AND (length(subject) <= 200))),
+    CONSTRAINT trust_emails_to_address_check CHECK (((to_address <> ''::text) AND (length(to_address) <= 320)))
 );
 
 
@@ -6974,6 +7096,14 @@ ALTER TABLE ONLY public.trust_bill_approvals
 
 
 --
+-- Name: trust_bill_declines trust_bill_declines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_declines
+    ADD CONSTRAINT trust_bill_declines_pkey PRIMARY KEY (bill_id);
+
+
+--
 -- Name: trust_bill_payments trust_bill_payments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7115,6 +7245,30 @@ ALTER TABLE ONLY public.trust_documents
 
 ALTER TABLE ONLY public.trust_documents
     ADD CONSTRAINT trust_documents_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_email_deliveries trust_email_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_email_deliveries
+    ADD CONSTRAINT trust_email_deliveries_pkey PRIMARY KEY (email_id, attempted_at);
+
+
+--
+-- Name: trust_emails trust_emails_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_emails trust_emails_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pmc_id_id_key UNIQUE (pmc_id, id);
 
 
 --
@@ -7873,6 +8027,20 @@ CREATE INDEX trust_documents_pmc_id_kind ON public.trust_documents USING btree (
 
 
 --
+-- Name: trust_email_deliveries_once; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_email_deliveries_once ON public.trust_email_deliveries USING btree (email_id) WHERE (error IS NULL);
+
+
+--
+-- Name: trust_emails_one_per_bill_approval; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_emails_one_per_bill_approval ON public.trust_emails USING btree (bill_id) WHERE (kind = 'bill_approval'::text);
+
+
+--
 -- Name: trust_late_fees_policy_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -8265,6 +8433,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_bill_declines trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bill_declines FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_bill_payments trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -8339,6 +8514,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_documents FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_email_deliveries trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_email_deliveries FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_emails trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_emails FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -8717,6 +8906,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bank
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bill_approvals FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_bill_declines trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bill_declines FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -9130,6 +9326,20 @@ CREATE CONSTRAINT TRIGGER trust_bank_tie_out AFTER INSERT ON public.pgledger_tra
 --
 
 CREATE TRIGGER trust_bill_account BEFORE INSERT ON public.trust_bills FOR EACH ROW EXECUTE FUNCTION public.trust_check_bill_account();
+
+
+--
+-- Name: trust_bill_approvals trust_bill_decision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_bill_decision BEFORE INSERT ON public.trust_bill_approvals FOR EACH ROW EXECUTE FUNCTION public.trust_check_bill_decision();
+
+
+--
+-- Name: trust_bill_declines trust_bill_decision; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_bill_decision BEFORE INSERT ON public.trust_bill_declines FOR EACH ROW EXECUTE FUNCTION public.trust_check_bill_decision();
 
 
 --
@@ -9653,6 +9863,14 @@ ALTER TABLE ONLY public.trust_bank_unmatches
 
 
 --
+-- Name: trust_bill_approvals trust_bill_approvals_owner_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_approvals
+    ADD CONSTRAINT trust_bill_approvals_owner_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id);
+
+
+--
 -- Name: trust_bill_approvals trust_bill_approvals_pmc_id_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9666,6 +9884,30 @@ ALTER TABLE ONLY public.trust_bill_approvals
 
 ALTER TABLE ONLY public.trust_bill_approvals
     ADD CONSTRAINT trust_bill_approvals_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bill_declines trust_bill_declines_pmc_id_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_declines
+    ADD CONSTRAINT trust_bill_declines_pmc_id_bill_id_fkey FOREIGN KEY (pmc_id, bill_id) REFERENCES public.trust_bills(pmc_id, id);
+
+
+--
+-- Name: trust_bill_declines trust_bill_declines_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_declines
+    ADD CONSTRAINT trust_bill_declines_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bill_declines trust_bill_declines_pmc_id_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_declines
+    ADD CONSTRAINT trust_bill_declines_pmc_id_owner_id_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id);
 
 
 --
@@ -9962,6 +10204,38 @@ ALTER TABLE ONLY public.trust_documents
 
 ALTER TABLE ONLY public.trust_documents
     ADD CONSTRAINT trust_documents_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
+-- Name: trust_email_deliveries trust_email_deliveries_pmc_id_email_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_email_deliveries
+    ADD CONSTRAINT trust_email_deliveries_pmc_id_email_id_fkey FOREIGN KEY (pmc_id, email_id) REFERENCES public.trust_emails(pmc_id, id);
+
+
+--
+-- Name: trust_email_deliveries trust_email_deliveries_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_email_deliveries
+    ADD CONSTRAINT trust_email_deliveries_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_emails trust_emails_pmc_id_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pmc_id_bill_id_fkey FOREIGN KEY (pmc_id, bill_id) REFERENCES public.trust_bills(pmc_id, id);
+
+
+--
+-- Name: trust_emails trust_emails_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
 
 
 --
@@ -10983,4 +11257,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261013000037'),
     ('20261013000038'),
     ('20261013000039'),
-    ('20261013000040');
+    ('20261013000040'),
+    ('20261013000041'),
+    ('20261013000042');
