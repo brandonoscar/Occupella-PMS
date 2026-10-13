@@ -48,6 +48,8 @@ const BILL: Bill = {
   work_order_id: null,
   approval_limit: "500.00",
   approved_by: null,
+  declined_by: null,
+  decline_reason: null,
   status: "needs approval",
 };
 
@@ -174,6 +176,44 @@ describe("BillsPage", () => {
     ]);
   });
 
+  it("records the owner's decline behind its own button", async () => {
+    const fetch = server();
+    render(<BillsPage me={ME} />);
+
+    const first = await bill("Vendor 1 INV-1");
+    expect(within(first).queryByLabelText("Why")).toBeNull();
+    fireEvent.click(within(first).getByRole("button", { name: "Record a decline instead" }));
+    fireEvent.change(within(first).getByLabelText("Declined by"), { target: { value: "Owner 1, by phone" } });
+    fireEvent.change(within(first).getByLabelText("Declined on"), { target: { value: "2026-10-03" } });
+    fireEvent.change(within(first).getByLabelText("Why"), { target: { value: "Get a second quote" } });
+    fireEvent.click(within(first).getByRole("button", { name: "Record decline" }));
+    expect(await within(first).findByText("The owner's decline of INV-1 is recorded.")).toBeTruthy();
+
+    expect(posted(fetch)).toEqual([
+      [
+        "/api/payables/bills/b1/decline",
+        { declined_on: "2026-10-03", declined_by: "Owner 1, by phone", reason: "Get a second quote" },
+      ],
+    ]);
+  });
+
+  it("shows a declined bill with who declined it and why, and no step", async () => {
+    server({}, {}, [
+      {
+        ...BILL,
+        status: "declined",
+        declined_by: "Owner 1, in the owner portal",
+        decline_reason: "Get a second quote",
+      },
+    ]);
+    render(<BillsPage me={ME} />);
+
+    const first = await bill("Vendor 1 INV-1");
+    expect(within(first).getByTestId("status").textContent).toBe("declined");
+    expect(within(first).getByText(/Declined by Owner 1, in the owner portal: Get a second quote/)).toBeTruthy();
+    expect(within(first).queryAllByRole("button")).toEqual([]);
+  });
+
   it("shows why a step was refused on its bill", async () => {
     server({}, { "/api/payables/bills/b2/set-aside": "the owner's account would go below zero" });
     render(<BillsPage me={ME} />);
@@ -236,7 +276,7 @@ describe("BillsPage", () => {
     );
     render(<BillsPage me={ME} />);
 
-    expect(await screen.findByText("Every bill is paid.")).toBeTruthy();
+    expect(await screen.findByText("Nothing left to pay: every bill is paid or declined.")).toBeTruthy();
     expect(await screen.findByText("Add a vendor and a property with an owner in Setup first.")).toBeTruthy();
     expect(screen.getByText("No recurring bills yet.")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Show"), { target: { value: "all" } });

@@ -94,6 +94,11 @@ serve the pages and the API. The self-host image builds it in a Node stage.
   across them, the opening balance, what tenants paid (less bounces), fees, bills, draws,
   contributions, anything else and the closing balance, and the year's 1099-MISC rents, on
   screen or as PDF, Excel or CSV, with the year's whole statement as a PDF. It files nothing.
+- Since 2026-10-13 (product item 2 of the founder's second list), an owner approves or
+  declines, with a reason, each of their bills over their agreement's approval limit
+  (`/api/owner/bills`). No money moves: an approval lets staff set the bill aside and pay it;
+  a declined bill is never paid, and from that day it holds nothing back from the owner's
+  draws. Staff record a decline an owner gives them the same way they record an approval.
 - Pages are served with a Content-Security-Policy that allows only the app's own scripts,
   styles, fonts and data: images (the QR code), and no framing.
 - Tests: vitest for the pages and helpers, including one that fails on a raw colour or a size

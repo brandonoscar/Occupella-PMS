@@ -92,7 +92,8 @@ required invariant, report and self-host step.
   (`src/pms/api/moveout.py`), and keep documents at `/documents` (`src/pms/api/documents.py`).
   npm packages are pinned exactly and their
   licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
-  owner only: no request names an owner, a property or a PMC. A tenant's pages
+  owner only: no request names an owner, a property or a PMC, and a bill named in a path is
+  answered only if it is theirs (they approve or decline those over their limit). A tenant's pages
   (`src/pms/api/tenant.py`) show the session's tenant only: a lease named in a path is answered
   only if they are on it, and reads as not found otherwise. The portal takes no payments.
 - Leasing (`src/pms/api/leasing.py`, `src/pms/leasing/`): applicants have no login. They apply
@@ -178,7 +179,11 @@ required invariant, report and self-host step.
   owner's approval recorded first. `trust_set_aside_bill` moves its amount from the owner's
   account to the vendor's (`vendor_payable`); `trust_pay_bill` then sends it out through the
   trust bank account's cash, no earlier than it was set aside. Each step once per bill, at READ
-  COMMITTED.
+  COMMITTED. A bill takes one owner's decision (migration 0041): an approval or a decline
+  (`trust_bill_declines`, with a reason), a decline only before it is set aside, and one taken
+  in the owner portal only by the owner of its property account. A declined bill is never set
+  aside or paid, and from the day it was declined it holds nothing back from draws and is not
+  unpaid in the reports.
 - Work orders: a job at a property (maybe one of its units). Its steps (assigned to a vendor,
   completed, cancelled) are append-only and in order, and nothing follows a close. A bill may
   name a work order of its property, never a cancelled one.

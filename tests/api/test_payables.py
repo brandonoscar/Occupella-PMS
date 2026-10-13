@@ -174,6 +174,71 @@ def test_a_bill_over_the_limit_needs_the_owners_approval_once(client, conn, staf
     assert statuses(client) == {"INV-1": "set aside"}
 
 
+def test_staff_record_an_owners_decline_and_the_bill_is_never_paid(client, conn, staff, pmc):
+    fund(conn, pmc, "1000.00")
+    add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 60 * DAY, approval_limit="500")
+    bill = ok(new_bill(client, pmc, "800.00"))["id"]
+    before = ok(client.get("/api/payables/owners"), 200)[0]
+
+    ok(
+        call(
+            client,
+            f"bills/{bill}/decline",
+            declined_on=TODAY,
+            declined_by="Owner 1, by email",
+            reason="Get a second quote",
+        )
+    )
+    shown = next(b for b in ok(client.get("/api/payables/bills?show=all"), 200) if b["id"] == bill)
+    after = ok(client.get("/api/payables/owners"), 200)[0]
+    aside = call(client, f"bills/{bill}/set-aside", on=TODAY)
+    approval = call(client, f"bills/{bill}/approval", approved_on=TODAY, approved_by="Owner 1")
+    again = call(
+        client, f"bills/{bill}/decline", declined_on=TODAY, declined_by="Owner 1", reason="No"
+    )
+
+    assert (shown["status"], shown["declined_by"], shown["decline_reason"]) == (
+        "declined",
+        "Owner 1, by email",
+        "Get a second quote",
+    )
+    assert statuses(client) == {}  # nothing left to pay
+    assert (before["unpaid_bills"], after["unpaid_bills"]) == ("800.00", "0.00")
+    refused(aside, 409)
+    assert "declined by Owner 1, by email" in aside.json()["detail"]
+    refused(approval, 409, "the owner declined this bill")
+    refused(again, 409, "the owner declined this bill")
+
+
+def test_a_bill_set_aside_is_not_declined_by_staff_either(client, conn, staff, pmc):
+    fund(conn, pmc, "1000.00")
+    bill = ok(new_bill(client, pmc, "80.00"))["id"]
+    add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 60 * DAY, approval_limit="500")
+    ok(call(client, f"bills/{bill}/set-aside", on=TODAY))
+
+    answer = call(
+        client, f"bills/{bill}/decline", declined_on=TODAY, declined_by="Owner 1", reason="No"
+    )
+
+    refused(answer, 409)
+    assert "set aside already" in answer.json()["detail"]
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"declined_by": "Owner 1", "reason": "No"},
+        {"declined_on": str(TODAY), "declined_by": "", "reason": "No"},
+        {"declined_on": str(TODAY), "declined_by": "Owner 1", "reason": " "},
+        {"declined_on": str(TODAY), "declined_by": "Owner 1", "reason": "x" * 1001},
+    ],
+)
+def test_a_decline_says_when_who_and_why(client, conn, staff, pmc, body):
+    bill = ok(new_bill(client, pmc, "800.00"))["id"]
+
+    refused(client.post(f"/api/payables/bills/{bill}/decline", json=body), 422)
+
+
 def test_a_bill_is_paid_only_once_set_aside_and_never_into_the_negative(client, conn, staff, pmc):
     add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 60 * DAY, approval_limit="500")
     bill = ok(new_bill(client, pmc))["id"]
@@ -448,6 +513,16 @@ def test_another_pmcs_records_are_not_found(client, conn, staff, pmc):
         (call(client, f"bills/{theirs}/set-aside", on=TODAY), "no such bill"),
         (call(client, f"bills/{theirs}/pay", on=TODAY), "no such bill"),
         (
+            call(
+                client,
+                f"bills/{theirs}/decline",
+                declined_on=TODAY,
+                declined_by="Owner",
+                reason="No",
+            ),
+            "no such bill",
+        ),
+        (
             call(client, f"bills/{theirs}/approval", approved_on=TODAY, approved_by="X"),
             "no such bill",
         ),
@@ -502,6 +577,7 @@ ENDPOINTS = [
     ("get", "/api/payables/bills"),
     ("post", "/api/payables/bills"),
     ("post", f"/api/payables/bills/{uuid.uuid4()}/approval"),
+    ("post", f"/api/payables/bills/{uuid.uuid4()}/decline"),
     ("post", f"/api/payables/bills/{uuid.uuid4()}/set-aside"),
     ("post", f"/api/payables/bills/{uuid.uuid4()}/pay"),
     ("get", "/api/payables/recurring"),

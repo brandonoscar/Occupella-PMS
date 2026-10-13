@@ -17,8 +17,8 @@ import { useRecord } from "./useRecord";
 type Show = "open" | "all";
 
 // Staff's vendor bills: enter one against an owner's property account, record the owner's
-// approval when it is over their limit, set it aside from the owner's money and record that
-// the trust bank account paid it. Recurring bills are entered each month. The PMS records what
+// approval (or decline) when it is over their limit, unless the owner decided in their portal,
+// set it aside from the owner's money and record that the trust bank account paid it. Recurring bills are entered each month. The PMS records what
 // the bank did; it sends no payment itself.
 export function BillsPage({ me }: { me: Me }) {
   const [show, setShow] = useState<Show>("open");
@@ -45,14 +45,14 @@ export function BillsPage({ me }: { me: Me }) {
         <div className="mb-4 max-w-48">
           <Select label="Show" id="bills-show" value={show}
             onChange={(e) => setShow(e.target.value as Show)}>
-            <option value="open">Not paid yet</option>
+            <option value="open">Still to pay</option>
             <option value="all">All bills</option>
           </Select>
         </div>
         {bills === null ? (
           <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
         ) : bills.length === 0 ? (
-          <Notice tone="info">{show === "open" ? "Every bill is paid." : "No bills yet."}</Notice>
+          <Notice tone="info">{show === "open" ? "Nothing left to pay: every bill is paid or declined." : "No bills yet."}</Notice>
         ) : (
           <ul className="flex flex-col divide-y divide-line">
             {bills.map((bill) => (
@@ -151,8 +151,16 @@ function BillRow({ bill, refresh }: { bill: Bill; refresh: () => void }) {
       {bill.approved_by && (
         <p className="text-sm text-ink-subtle">Approved by {bill.approved_by}.</p>
       )}
+      {bill.declined_by && (
+        <p className="text-sm text-ink-subtle">
+          Declined by {bill.declined_by}: {bill.decline_reason}. It is never paid from the owner's money.
+        </p>
+      )}
       {step === "Record approval" ? (
-        <ApprovalForm bill={bill} record={record} />
+        <>
+          <ApprovalForm bill={bill} record={record} />
+          <DeclineForm bill={bill} record={record} />
+        </>
       ) : step ? (
         <StepForm bill={bill} step={step} record={record} />
       ) : null}
@@ -182,6 +190,41 @@ function ApprovalForm({ bill, record }: { bill: Bill; record: Recorder }) {
       <Field label="Approved on" id={`approved-on-${bill.id}`} type="date" required value={on}
         onChange={(e) => setOn(e.target.value)} />
       <Button type="submit" variant="secondary">Record approval</Button>
+    </form>
+  );
+}
+
+// The owner's decline as they gave it to staff (by phone, say), behind a button: most owners
+// approve, many in their portal.
+function DeclineForm({ bill, record }: { bill: Bill; record: Recorder }) {
+  const [open, setOpen] = useState(false);
+  const [on, setOn] = useState(day(new Date()));
+  const [by, setBy] = useState("");
+  const [why, setWhy] = useState("");
+  if (!open) {
+    return (
+      <div>
+        <Button variant="secondary" onClick={() => setOpen(true)}>Record a decline instead</Button>
+      </div>
+    );
+  }
+  return (
+    <form
+      className="flex flex-wrap items-end gap-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        record(`/api/payables/bills/${bill.id}/decline`,
+          { declined_on: on, declined_by: by, reason: why },
+          () => `The owner's decline of ${bill.reference} is recorded.`);
+      }}
+    >
+      <Field label="Declined by" id={`declined-by-${bill.id}`} required maxLength={200} value={by}
+        onChange={(e) => setBy(e.target.value)} />
+      <Field label="Declined on" id={`declined-on-${bill.id}`} type="date" required value={on}
+        onChange={(e) => setOn(e.target.value)} />
+      <Field label="Why" id={`declined-why-${bill.id}`} required maxLength={1000} value={why}
+        onChange={(e) => setWhy(e.target.value)} />
+      <Button type="submit" variant="secondary">Record decline</Button>
     </form>
   );
 }

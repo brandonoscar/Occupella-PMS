@@ -233,6 +233,19 @@ tests = [
 ]
 
 [[invariant]]
+id = "bill-takes-one-owner-decision"
+statement = "A bill takes one owner's decision, an approval or a decline, a decline only before its money is set aside, and a decision taken in the portal only by the owner of its property account. A declined bill is never set aside or paid, and from the day it was declined it holds nothing back from the owner's draws and no longer shows as unpaid."
+tests = [
+  "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
+  "tests/test_bill_decisions.py::test_a_declined_bill_is_never_set_aside",
+  "tests/test_bill_decisions.py::test_from_the_day_it_is_declined_a_bill_holds_nothing_back",
+  "tests/test_bill_decisions.py::test_a_bill_takes_one_decision",
+  "tests/test_bill_decisions.py::test_a_bill_set_aside_is_not_declined",
+  "tests/test_bill_decisions.py::test_a_decision_in_the_portal_is_the_bills_owners",
+  "tests/test_bill_decisions.py::test_a_decline_waits_for_a_set_aside_in_flight_and_is_then_refused",
+]
+
+[[invariant]]
 id = "bill-paid-once-after-set-aside"
 statement = "A bill is paid once, out of the vendor's account through the trust bank account's cash, only after its money was set aside and never dated before that. A retry returns the original transfer."
 tests = [

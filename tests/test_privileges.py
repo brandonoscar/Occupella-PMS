@@ -46,6 +46,7 @@ TABLES = {
     "trust_owner_draws": {"SELECT"},  # written only by trust_draw_owner
     "trust_bills": {"SELECT", "INSERT"},
     "trust_bill_approvals": {"SELECT", "INSERT"},
+    "trust_bill_declines": {"SELECT", "INSERT"},
     "trust_bill_payments": {"SELECT"},  # written only by trust_set_aside_bill, trust_pay_bill
     "trust_work_orders": {"SELECT", "INSERT"},
     "trust_work_order_steps": {"SELECT", "INSERT"},
@@ -211,6 +212,7 @@ FUNCTIONS = {
     "trust_audit()": set(),
     # Checks a payment hold as the owner, to take its lease's lock: no role calls it on its own.
     "trust_check_payment_hold()": set(),
+    "trust_check_bill_decision()": set(),
     # Reports read trust records, so only the app and the AI; they run with the caller's own
     # read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app", "trust_ai_agent"},
@@ -314,6 +316,7 @@ SECURITY_DEFINER = {
     "trust_return_deposit(uuid,uuid,text,text,timestamptz)",
     "trust_audit()",  # writes the audit log, which no other role may write
     "trust_check_payment_hold()",  # locks the hold's lease, which the app can't
+    "trust_check_bill_decision()",  # locks the bill's owner account, which the app can't
 }
 
 

@@ -2,7 +2,7 @@
 // they read.
 import { day, lastMonth, money } from "./money";
 
-export type BillStatus = "needs approval" | "to set aside" | "set aside" | "paid";
+export type BillStatus = "needs approval" | "declined" | "to set aside" | "set aside" | "paid";
 export type Bill = {
   id: string;
   vendor: string;
@@ -17,6 +17,9 @@ export type Bill = {
   work_order_id: string | null;
   approval_limit: string;
   approved_by: string | null;
+  // Who declined it for the owner (in the portal, or as staff recorded it), and why.
+  declined_by: string | null;
+  decline_reason: string | null;
   status: BillStatus;
 };
 export type Recurring = {

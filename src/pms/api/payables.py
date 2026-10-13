@@ -72,7 +72,7 @@ def owner_account(conn: psycopg.Connection[Any], pmc_id: UUID, account: str) -> 
 
 # --- bills --------------------------------------------------------------------------------------
 
-Status = Literal["needs approval", "to set aside", "set aside", "paid"]
+Status = Literal["needs approval", "declined", "to set aside", "set aside", "paid"]
 
 
 class Bill(BaseModel):
@@ -89,6 +89,9 @@ class Bill(BaseModel):
     work_order_id: UUID | None
     approval_limit: str
     approved_by: str | None
+    # Who declined it for the owner (the owner in the portal, or as staff recorded it), and why.
+    declined_by: str | None = None
+    decline_reason: str | None = None
     status: Status
 
 
@@ -98,7 +101,7 @@ SELECT b.id, v.display_name, b.reference, b.ledger_account_id, o.display_name, p
        coalesce((SELECT g.approval_limit FROM trust_management_agreements AS g
                  WHERE g.ledger_account_id = b.ledger_account_id AND g.starts_on <= b.bill_date
                  ORDER BY g.starts_on DESC LIMIT 1), 0),
-       ap.approved_by,
+       ap.approved_by, dc.declined_by, dc.reason,
        EXISTS (SELECT 1 FROM trust_bill_payments AS s WHERE s.bill_id = b.id
                AND s.step = 'set_aside'),
        EXISTS (SELECT 1 FROM trust_bill_payments AS s WHERE s.bill_id = b.id AND s.step = 'paid')
@@ -108,16 +111,21 @@ JOIN trust_ledger_accounts AS a ON a.ledger_account_id = b.ledger_account_id
 JOIN trust_owners AS o ON o.id = a.owner_id
 JOIN trust_properties AS p ON p.id = a.property_id
 LEFT JOIN trust_bill_approvals AS ap ON ap.bill_id = b.id
+LEFT JOIN trust_bill_declines AS dc ON dc.bill_id = b.id
 WHERE b.pmc_id = %s
 ORDER BY b.due_on, b.bill_date, v.display_name COLLATE "C", b.reference COLLATE "C", b.id
 """
 
 
-def status_of(amount: Decimal, limit: Decimal, approved: bool, aside: bool, paid: bool) -> Status:
+def status_of(
+    amount: Decimal, limit: Decimal, approved: bool, declined: bool, aside: bool, paid: bool
+) -> Status:
     if paid:
         return "paid"
     if aside:
         return "set aside"
+    if declined:
+        return "declined"
     if amount > limit and not approved:
         return "needs approval"
     return "to set aside"
@@ -127,7 +135,8 @@ def status_of(amount: Decimal, limit: Decimal, approved: bool, aside: bool, paid
 def bills(
     session: Staff, conn: Conn, show: Annotated[Literal["open", "all"], Query()] = "open"
 ) -> list[Bill]:
-    """The PMC's vendor bills, by due date: by default those not paid yet."""
+    """The PMC's vendor bills, by due date: by default those still to pay (not paid, nor
+    declined by the owner)."""
     found = []
     for (
         i,
@@ -143,11 +152,15 @@ def bills(
         order,
         limit,
         approved_by,
+        declined_by,
+        decline_reason,
         aside,
         paid,
     ) in conn.execute(BILLS, (session.pmc_id,)).fetchall():
-        status = status_of(amount, limit, approved_by is not None, aside, paid)
-        if show == "open" and status == "paid":
+        status = status_of(
+            amount, limit, approved_by is not None, declined_by is not None, aside, paid
+        )
+        if show == "open" and status in ("paid", "declined"):
             continue
         found.append(
             Bill(
@@ -164,6 +177,8 @@ def bills(
                 work_order_id=order,
                 approval_limit=cents(limit),
                 approved_by=approved_by,
+                declined_by=declined_by,
+                decline_reason=decline_reason,
                 status=status,
             )
         )
@@ -249,13 +264,54 @@ def approve(session: Staff, conn: Conn, bill_id: UUID, approval: Approval) -> No
     """Records the owner's approval of a bill over the agreement's approval limit."""
     bill_of(conn, session.pmc_id, bill_id)
     try:
-        conn.execute(
-            "INSERT INTO trust_bill_approvals (pmc_id, bill_id, approved_on, approved_by)"
-            " VALUES (%s, %s, %s, %s)",
-            (session.pmc_id, bill_id, approval.approved_on, approval.approved_by),
-        )
+        with conn.transaction():  # a savepoint: a refusal leaves the request's transaction usable
+            conn.execute(
+                "INSERT INTO trust_bill_approvals (pmc_id, bill_id, approved_on, approved_by)"
+                " VALUES (%s, %s, %s, %s)",
+                (session.pmc_id, bill_id, approval.approved_on, approval.approved_by),
+            )
     except psycopg.errors.UniqueViolation:
-        raise HTTPException(409, "this bill is approved already") from None
+        raise HTTPException(409, decided(conn, bill_id)) from None
+
+
+def decided(conn: psycopg.Connection[Any], bill_id: UUID) -> str:
+    """Why a second decision on a bill is refused."""
+    approved = conn.execute(
+        "SELECT 1 FROM trust_bill_approvals WHERE bill_id = %s", (bill_id,)
+    ).fetchone()
+    return "this bill is approved already" if approved else "the owner declined this bill"
+
+
+class Decline(BaseModel):
+    declined_on: date
+    # Who declined it for the owner, as staff record it (the owner, or someone they named).
+    declined_by: Text
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]
+
+
+@router.post("/bills/{bill_id}/decline", status_code=201)
+def decline(session: Staff, conn: Conn, bill_id: UUID, refusal: Decline) -> None:
+    """Records the owner's decline of a bill: it is never set aside or paid, and holds nothing
+    back from the owner's draws from that day."""
+    bill_of(conn, session.pmc_id, bill_id)
+    try:
+        with conn.transaction():  # a savepoint, as above
+            conn.execute(
+                "INSERT INTO trust_bill_declines"
+                " (pmc_id, bill_id, declined_on, declined_by, reason)"
+                " VALUES (%s, %s, %s, %s, %s)",
+                (
+                    session.pmc_id,
+                    bill_id,
+                    refusal.declined_on,
+                    refusal.declined_by,
+                    refusal.reason,
+                ),
+            )
+    except psycopg.errors.UniqueViolation:
+        raise HTTPException(409, decided(conn, bill_id)) from None
+    except psycopg.errors.CheckViolation as refused:  # set aside already
+        raise HTTPException(409, reason(refused)) from None
 
 
 class Day(BaseModel):
@@ -474,7 +530,10 @@ SELECT a.ledger_account_id, o.display_name, p.display_name, b.display_name, l.ba
                        SELECT 1 FROM trust_bill_payments AS s
                        JOIN pgledger_transfers AS t ON t.id = s.transfer_id
                        WHERE s.bill_id = x.id AND s.step = 'set_aside'
-                         AND t.event_at < (%(today)s + 1)::timestamp AT TIME ZONE 'UTC')), 0),
+                         AND t.event_at < (%(today)s + 1)::timestamp AT TIME ZONE 'UTC')
+                   AND NOT EXISTS (
+                       SELECT 1 FROM trust_bill_declines AS d
+                       WHERE d.bill_id = x.id AND d.declined_on <= %(today)s)), 0),
        g.id IS NOT NULL
 FROM trust_ledger_accounts AS a
 JOIN trust_owners AS o ON o.id = a.owner_id
