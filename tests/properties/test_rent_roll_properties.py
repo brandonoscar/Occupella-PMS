@@ -24,9 +24,12 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
   - payment holds are the model's: a match of a payment dated on or after a hold's first day
     and before its release is refused unless that hold allowed the transfer, and a retry of a
     match made before still returns it; a release ends a hold once, after it starts;
-  - late fees are the model's: the rent run (run_the_rent) charges each lease in effect on the
-    due date once, and each rent still unpaid when its grace ran out is charged one late fee,
-    worked from what was unpaid then under the terms in force on its due date;
+  - rent and late fees are the model's: the rent run (run_the_rent) charges each lease in effect
+    on the due date once, its rent for the days of the month it is in effect (monthly rent x
+    days / days in the month, to the cent), and each lease starting later that month with no
+    rent charged in the month yet its first part month, due on its first day; each rent still
+    unpaid when its grace ran out is charged one late fee, worked from what was unpaid then
+    under the terms in force on its due date;
   - recurring charges are the model's: the rent run charges each recurring charge in force on
     the due date (from its first day, before the day it stops) whose lease is in effect then,
     once per recurring charge and due date, as a fee or credit of its lease and amount.
@@ -79,6 +82,7 @@ from helpers import (
     stop_recurring_charge,
     transfer_batch,
 )
+from hypothesis import event
 from hypothesis import strategies as st
 from hypothesis.stateful import (
     RuleBasedStateMachine,
@@ -188,6 +192,17 @@ def month_start(n):
 def to_cents(amount):
     """Round to cents, halves away from zero, as Postgres's round(numeric, 2) does."""
     return amount.quantize(CENT, ROUND_HALF_UP)
+
+
+def rent_for_month(lease, day):
+    """A lease's rent for the days it is in effect in day's month, to the cent, and whether
+    that is only part of the month."""
+    month_start = day.replace(day=1)
+    month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
+    first = max(lease.starts_on, month_start)
+    last = min(lease.ends_on or month_end, month_end)
+    days, month_days = (last - first).days + 1, (month_end - month_start).days + 1
+    return to_cents(lease.rent * days / month_days), days < month_days
 
 
 def overlaps(a_start, a_end, b_start, b_end):
@@ -1226,11 +1241,12 @@ class RentRollMachine(RuleBasedStateMachine):
     @precondition(lambda self: self.leases)
     @rule(data=st.data(), role=ROLES, day=DAYS)
     def run_the_rent(self, data, role, day):
-        """Usually on a day some lease is in effect, or some recurring charge starts or stops,
-        so the run charges something. The staff rent run charges the rent and then the
-        recurring charges."""
+        """Usually on a day some lease is in effect, or starts later in the month (the first of
+        its month), or some recurring charge starts or stops, so the run charges something. The
+        staff rent run charges the rent and then the recurring charges."""
         covered = sorted(
             {d for lease in self.leases.values() for d in (lease.starts_on, lease.ends_on) if d}
+            | {lease.starts_on.replace(day=1) for lease in self.leases.values()}
             | {d for r in self.recurring.values() for d in (r.starts_on, r.ends_on) if d}
         )
         due_on = data.draw(st.sampled_from([*covered, BASE + timedelta(days=day)]))
@@ -1300,25 +1316,50 @@ class RentRollMachine(RuleBasedStateMachine):
             recurring.ends_on = ends_on
 
     def charge_rent_on(self, role, due_on):
+        """The rent run: each lease in effect on due_on its rent for the days of the month it is
+        in effect, due that day; then each lease starting later that month, with no rent charged
+        in the month yet, its first part month, due on its first day."""
+        month = (due_on.year, due_on.month)
         due = [
-            lease_id
+            (lease_id, due_on)
             for lease_id, lease in self.leases.items()
             if lease.covers(due_on)
+            and rent_for_month(lease, due_on)[0] > 0
             and not any(
                 c.lease_id == lease_id and c.due_on == due_on and c.kind == "rent"
                 for c in self.charges.values()
             )
         ]
+        first = [
+            (lease_id, lease.starts_on)
+            for lease_id, lease in self.leases.items()
+            if lease.starts_on > due_on
+            and (lease.starts_on.year, lease.starts_on.month) == month
+            and rent_for_month(lease, lease.starts_on)[0] > 0
+            and not any(
+                c.lease_id == lease_id
+                and c.kind == "rent"
+                and (c.due_on.year, c.due_on.month) == month
+                for c in self.charges.values()
+            )
+        ]
+        if first:
+            event("rent run: a first part month charged")
+        if any(rent_for_month(self.leases[i], d)[1] for i, d in due):
+            event("rent run: a part month in effect on the due date")
 
-        assert charge_rent_due(self.conns[role], self.pmc_id, due_on) == len(due)
+        assert charge_rent_due(self.conns[role], self.pmc_id, due_on) == len(due) + len(first)
 
-        for lease_id in due:
-            (charge_id,) = self.conn.execute(
-                "SELECT id FROM trust_charges WHERE lease_id = %s AND due_on = %s"
+        for lease_id, day in due + first:
+            (charge_id, amount, memo) = self.conn.execute(
+                "SELECT id, amount, memo FROM trust_charges WHERE lease_id = %s AND due_on = %s"
                 " AND kind = 'rent'",
-                (lease_id, due_on),
+                (lease_id, day),
             ).fetchone()
-            self.charges[charge_id] = Charge(lease_id, due_on, "rent", self.leases[lease_id].rent)
+            rent, part = rent_for_month(self.leases[lease_id], day)
+            assert amount == rent
+            assert memo.startswith(f"Rent due {day}") and (", " in memo) == part
+            self.charges[charge_id] = Charge(lease_id, day, "rent", rent)
 
     def unpaid_by(self, charge_id, cutoff):
         """A charge less its matches dated before cutoff, plus what of them bounced back
@@ -1370,10 +1411,16 @@ class RentRollMachine(RuleBasedStateMachine):
             self.late_terms[(place, due_on)] = LateTerms(grace, Decimal(25), Decimal(10), None)
         self.charge_rent_on(role, due_on)
         rent = next(
-            c
-            for c, bill in self.charges.items()
-            if bill.lease_id == lease_id and bill.due_on == due_on and bill.kind == "rent"
+            (
+                c
+                for c, bill in self.charges.items()
+                if bill.lease_id == lease_id and bill.due_on == due_on and bill.kind == "rent"
+            ),
+            None,
         )
+        if rent is None:
+            event("late month: a day's rent rounds to nothing, none charged")
+            return
         terms = self.late_terms_on(place, due_on)
         late_day = due_on + timedelta(days=terms.grace + 1)
         cutoff = datetime.combine(late_day, time(0), tzinfo=UTC)

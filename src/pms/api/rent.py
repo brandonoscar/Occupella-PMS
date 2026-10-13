@@ -668,8 +668,9 @@ class RentRun(BaseModel):
 
 @router.post("/charge-rent")
 def charge_rent(session: Staff, conn: Conn, run: Day) -> RentRun:
-    """Charges every lease in effect on the day its monthly rent, and every recurring charge in
-    force then, once per lease (or recurring charge) and day."""
+    """Charges every lease in effect on the day its rent for the days of the month it is in
+    effect, every lease starting later that month its first part month, and every recurring
+    charge in force on the day, once per lease (or recurring charge) and due date."""
     rent = conn.execute("SELECT trust_charge_rent_due(%s, %s)", (session.pmc_id, run.on))
     charged = rent.fetchone()
     recurring = conn.execute(

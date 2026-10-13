@@ -1,8 +1,9 @@
 """Rent automation: the monthly rent run and late fees (migration 20261010000019).
 
 trust_charge_rent_due charges every lease in effect on a due date its rent, once per lease and
-date. trust_assess_late_fees charges each rent still unpaid at the end of its last day of grace
-its late fee, once, under the property's terms in force on the rent's due date.
+date (by the days of the month since migration 0045: tests/test_prorated_rent.py).
+trust_assess_late_fees charges each rent still unpaid at the end of its last day of grace its
+late fee, once, under the property's terms in force on the rent's due date.
 """
 
 from datetime import UTC, date, datetime
@@ -88,23 +89,31 @@ def test_the_run_charges_every_lease_in_effect_its_rent(conn, app_conn, pmc):
 
 
 def test_only_leases_in_effect_on_the_due_date_are_charged(conn, pmc):
+    """Each for the days of the month it is in effect (migration 0045). A lease starting later
+    in the month is charged its first part month too: tests/test_prorated_rent.py."""
     starts_that_day = lease_on(conn, pmc, FEB_1, name="Unit 1")
-    starts_after = lease_on(conn, pmc, date(2026, 2, 2), name="Unit 2")
+    starts_next_month = lease_on(conn, pmc, MAR_1, name="Unit 2")
     ends_that_day = lease_on(conn, pmc, JAN_1, FEB_1, name="Unit 3")
     ended_before = lease_on(conn, pmc, JAN_1, date(2026, 1, 31), name="Unit 4")
     month_to_month = lease_on(conn, pmc, JAN_1, name="Unit 5")
 
     assert charge_rent_due(conn, pmc.pmc_id, FEB_1) == 3
     charged = {
-        lease: bool(charges(conn, lease))
-        for lease in (starts_that_day, starts_after, ends_that_day, ended_before, month_to_month)
+        lease: [(due_on, amount) for due_on, _, amount, _ in charges(conn, lease)]
+        for lease in (
+            starts_that_day,
+            starts_next_month,
+            ends_that_day,
+            ended_before,
+            month_to_month,
+        )
     }
     assert charged == {
-        starts_that_day: True,
-        starts_after: False,
-        ends_that_day: True,
-        ended_before: False,
-        month_to_month: True,
+        starts_that_day: [(FEB_1, RENT)],
+        starts_next_month: [],
+        ends_that_day: [(FEB_1, Decimal("53.57"))],  # 1 of 28 days: 1500.00 / 28 = 53.571...
+        ended_before: [],
+        month_to_month: [(FEB_1, RENT)],
     }
 
 
