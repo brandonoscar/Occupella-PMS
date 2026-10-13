@@ -63,6 +63,7 @@ TABLES = {
     "trust_recurring_bill_ends": {"SELECT", "INSERT"},
     "trust_recurring_charges": {"SELECT", "INSERT"},
     "trust_recurring_charge_ends": {"SELECT", "INSERT"},
+    "trust_vendor_payments_carried_over": {"SELECT", "INSERT"},
     # Logins (the API writes them; UPDATE only on the columns in COLUMN_UPDATES).
     "trust_logins": {"SELECT", "INSERT"},
     "trust_invites": {"SELECT", "INSERT"},

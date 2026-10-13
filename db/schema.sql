@@ -4836,33 +4836,52 @@ BEGIN
     v_end := make_date(p_year + 1, 1, 1)::timestamp AT TIME ZONE 'UTC';
 
     RETURN QUERY
-    WITH paid AS (
-        SELECT v.id AS vendor_id, v.display_name, count(*) AS payments, sum(tr.amount) AS total
+    WITH here AS (
+        SELECT b.vendor_id, count(*) AS payments, sum(tr.amount) AS total
         FROM trust_bill_payments AS p
         JOIN trust_bills AS b ON b.id = p.bill_id
-        JOIN trust_vendors AS v ON v.id = b.vendor_id
         JOIN pgledger_transfers AS tr ON tr.id = p.transfer_id
         WHERE p.pmc_id = p_pmc_id AND p.step = 'paid'
           AND tr.event_at >= v_start AND tr.event_at < v_end
-        GROUP BY v.id, v.display_name
+        GROUP BY b.vendor_id
+    ),
+    before AS (
+        SELECT c.vendor_id, c.paid_before, c.amount
+        FROM trust_vendor_payments_carried_over AS c
+        WHERE c.pmc_id = p_pmc_id AND c.year = p_year
+    ),
+    paid AS (
+        SELECT v.id AS vendor_id, v.display_name, coalesce(h.payments, 0) AS payments,
+               coalesce(h.total, 0) + coalesce(c.amount, 0) AS total,
+               c.paid_before, c.amount AS carried
+        FROM trust_vendors AS v
+        LEFT JOIN here AS h ON h.vendor_id = v.id
+        LEFT JOIN before AS c ON c.vendor_id = v.id
+        WHERE v.pmc_id = p_pmc_id AND (h.vendor_id IS NOT NULL OR c.vendor_id IS NOT NULL)
     ),
     lines AS (
-        SELECT 0 AS section, NULL::text AS name, NULL::uuid AS id, 'PMC' AS item,
+        SELECT 0 AS section, NULL::text AS name, NULL::uuid AS id, 0 AS part, 'PMC' AS item,
                pmc.display_name AS label, NULL::bigint AS payments, NULL::numeric AS total
         FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
         UNION ALL
-        SELECT 0, NULL, NULL, 'year', p_year::text || ', paid January 1 to December 31 UTC',
+        SELECT 0, NULL, NULL, 1, 'year', p_year::text || ', paid January 1 to December 31 UTC',
                NULL, NULL
         UNION ALL
-        SELECT 1, p.display_name, p.vendor_id, 'vendor', p.display_name, p.payments, p.total
+        SELECT 1, p.display_name, p.vendor_id, 0, 'vendor', p.display_name, p.payments, p.total
         FROM paid AS p
         UNION ALL
-        SELECT 2, NULL, NULL, 'total', NULL, coalesce(sum(p.payments), 0)::bigint,
+        -- What of the vendor's total the old system paid, under the vendor's line.
+        SELECT 1, p.display_name, p.vendor_id, 1, 'carried over',
+               'paid in the old system before ' || to_char(p.paid_before, 'YYYY-MM-DD'),
+               NULL, p.carried
+        FROM paid AS p WHERE p.carried IS NOT NULL
+        UNION ALL
+        SELECT 2, NULL, NULL, 0, 'total', NULL, coalesce(sum(p.payments), 0)::bigint,
                coalesce(sum(p.total), 0)
         FROM paid AS p
     )
     SELECT row_number() OVER (
-               ORDER BY l.section, l.name COLLATE "C", l.id, l.item COLLATE "C"
+               ORDER BY l.section, l.name COLLATE "C", l.id, l.part
            )::integer,
            l.item,
            -- The PMC's name and the year sit in the vendor column of the first two lines.
@@ -6468,6 +6487,23 @@ CREATE TABLE public.trust_units (
 
 
 --
+-- Name: trust_vendor_payments_carried_over; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_vendor_payments_carried_over (
+    pmc_id uuid NOT NULL,
+    vendor_id uuid NOT NULL,
+    year integer NOT NULL,
+    paid_before date NOT NULL,
+    amount numeric NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_vendor_payments_carried_over_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_vendor_payments_carried_over_check CHECK (((paid_before > make_date(year, 1, 1)) AND (paid_before <= make_date((year + 1), 1, 1)))),
+    CONSTRAINT trust_vendor_payments_carried_over_year_check CHECK (((year >= 1900) AND (year <= 9998)))
+);
+
+
+--
 -- Name: trust_vendors; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -7491,6 +7527,14 @@ ALTER TABLE ONLY public.trust_units
 
 
 --
+-- Name: trust_vendor_payments_carried_over trust_vendor_payments_carried_over_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_vendor_payments_carried_over
+    ADD CONSTRAINT trust_vendor_payments_carried_over_pkey PRIMARY KEY (vendor_id, year);
+
+
+--
 -- Name: trust_vendors trust_vendors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8357,6 +8401,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_vendor_payments_carried_over trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_vendor_payments_carried_over FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_work_order_steps trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -8858,6 +8909,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_tena
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_units FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_vendor_payments_carried_over trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_vendor_payments_carried_over FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -10652,6 +10710,22 @@ ALTER TABLE ONLY public.trust_units
 
 
 --
+-- Name: trust_vendor_payments_carried_over trust_vendor_payments_carried_over_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_vendor_payments_carried_over
+    ADD CONSTRAINT trust_vendor_payments_carried_over_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_vendor_payments_carried_over trust_vendor_payments_carried_over_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_vendor_payments_carried_over
+    ADD CONSTRAINT trust_vendor_payments_carried_over_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
 -- Name: trust_vendors trust_vendors_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -10755,4 +10829,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261012000034'),
     ('20261012000035'),
     ('20261012000036'),
-    ('20261013000037');
+    ('20261013000037'),
+    ('20261013000038');

@@ -81,11 +81,13 @@ SELECT t.pmc_id, t.id, t.bill_date, 'Owner 1, by email'
 FROM trust_bills AS t WHERE t.pmc_id = '00000000-0000-4000-8000-000000000001';
 
 SELECT trust_set_aside_bill('00000000-0000-4000-8000-000000000001', t.id, b.set_aside_at)
-FROM golden_bill AS b JOIN trust_bills AS t ON t.reference = b.reference
+FROM golden_bill AS b JOIN trust_bills AS t
+    ON t.pmc_id = '00000000-0000-4000-8000-000000000001' AND t.reference = b.reference
 ORDER BY b.n;
 
 SELECT trust_pay_bill('00000000-0000-4000-8000-000000000001', t.id, b.paid_at)
-FROM golden_bill AS b JOIN trust_bills AS t ON t.reference = b.reference
+FROM golden_bill AS b JOIN trust_bills AS t
+    ON t.pmc_id = '00000000-0000-4000-8000-000000000001' AND t.reference = b.reference
 WHERE b.paid_at IS NOT NULL
 ORDER BY b.n;
 

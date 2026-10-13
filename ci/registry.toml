@@ -361,6 +361,18 @@ tests = [
 ]
 
 [[invariant]]
+id = "vendor-payments-carried-over-once-and-counted"
+statement = "What the old system paid a vendor in a calendar year before the cutover is kept once per vendor and year, for a cutover inside that year or on the next January 1, and the year's vendor payments report adds it to what the PMS paid that vendor in the year: the vendor's line is the whole year, a line under it shows what the old system paid, and the total counts both. Other PMCs' are never counted."
+tests = [
+  "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
+  "tests/test_vendor_payments_carried_over.py::test_the_year_adds_what_the_old_system_paid_before_the_cutover",
+  "tests/test_vendor_payments_carried_over.py::test_a_vendor_the_pms_has_not_paid_yet_is_listed",
+  "tests/test_vendor_payments_carried_over.py::test_a_january_first_cutover_carries_over_the_whole_year_before",
+  "tests/test_vendor_payments_carried_over.py::test_a_vendors_year_is_carried_over_once",
+  "tests/test_vendor_payments_carried_over.py::test_only_the_pmcs_own_are_counted",
+]
+
+[[invariant]]
 id = "exports-hold-the-report"
 statement = "Every report exports as CSV, Excel and PDF holding what the report holds: CSV cell for cell, Excel value for value with its types, and no exported cell is ever a spreadsheet formula. Only a trust_report_* function can be exported, under the caller's own role. A PMC's ledger exports whole: every account, transfer and entry, and nothing of another PMC."
 tests = [

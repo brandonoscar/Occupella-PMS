@@ -17,8 +17,10 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     its request key pays once.
 
 Recurring bills are added on random days of the month, ended and entered through random days:
-each month's bill is entered once, never under a reference the vendor already has. The rule
-check_vendor_payments reads what each vendor was paid in a year and compares it with the model.
+each month's bill is entered once, never under a reference the vendor already has. What the
+old system paid a vendor in a year before a cutover is carried over once per vendor and year.
+The rule check_vendor_payments reads what each vendor was paid in a year, here and carried
+over, and compares it with the model.
 
 The rules check_owner_balances and check_unpaid_bills read the owner balances and unpaid bills
 reports as of a random day, as any role including the AI's, and compare every line with the
@@ -39,6 +41,7 @@ from helpers import (
     add_agreement,
     add_recurring_bill,
     approve_bill,
+    carry_over_vendor_payments,
     draw_owner,
     end_recurring_bill,
     enter_bill,
@@ -146,6 +149,8 @@ class BillMachine(RuleBasedStateMachine):
         self.paid: dict[UUID, tuple[str, datetime]] = {}
         self.draws: dict[str, tuple[str, Decimal]] = {}
         self.recurring: dict[UUID, Recurring] = {}
+        # (vendor index, year) -> (paid before, amount) the old system paid it that year
+        self.carried: dict[tuple[int, int], tuple[date, Decimal]] = {}
 
     # --- the model -----------------------------------------------------------------------
 
@@ -481,7 +486,10 @@ class BillMachine(RuleBasedStateMachine):
         assert rows == expected
 
     @precondition(lambda self: self.bills)
-    @rule(data=st.data(), write=st.sampled_from(["enter", "approve", "set aside", "pay"]))
+    @rule(
+        data=st.data(),
+        write=st.sampled_from(["enter", "approve", "set aside", "pay", "carry over"]),
+    )
     def the_ai_role_cannot_write(self, data, write):
         """Whatever the AI tries, valid or not, is refused for lack of a grant, and nothing
         changes (the invariants below compare every table with the model)."""
@@ -503,6 +511,10 @@ class BillMachine(RuleBasedStateMachine):
                 approve_bill(ai, self.pmc_id, bill_id, day, "AI")
             elif write == "set aside":
                 set_aside_bill(ai, self.pmc_id, bill_id, moment(0, 0))
+            elif write == "carry over":
+                carry_over_vendor_payments(
+                    ai, self.pmc_id, self.vendors[0][0], BASE.year, BASE + timedelta(1), "1.00"
+                )
             else:
                 pay_bill(ai, self.pmc_id, bill_id, moment(0, 0))
 
@@ -602,38 +614,93 @@ class BillMachine(RuleBasedStateMachine):
                 recurring.account, vendor, reference, due, recurring.amount, due
             )
 
+    @rule(
+        data=st.data(),
+        role=ROLES,
+        vendor=st.integers(min_value=0, max_value=2),
+        year=st.integers(min_value=-1, max_value=1),
+        day=st.integers(min_value=1, max_value=366),
+        amount=AMOUNTS,
+    )
+    def carry_over_a_vendors_payments(self, data, role, vendor, year, day, amount):
+        """What the old system paid a vendor in a year before the cutover: from the year's
+        second day through the next January 1 (the whole year)."""
+        year += BASE.year
+        paid_before = min(date(year, 1, 1) + timedelta(days=day), date(year + 1, 1, 1))
+        if (vendor, year) in self.carried:
+            with pytest.raises(psycopg.errors.UniqueViolation, match="carried_over_pkey"):
+                carry_over_vendor_payments(
+                    self.conns[role],
+                    self.pmc_id,
+                    self.vendors[vendor][0],
+                    year,
+                    paid_before,
+                    amount,
+                )
+        else:
+            carry_over_vendor_payments(
+                self.conns[role], self.pmc_id, self.vendors[vendor][0], year, paid_before, amount
+            )
+            self.carried[(vendor, year)] = (paid_before, amount)
+
     @rule(data=st.data(), role=st.sampled_from(["owner", "app", "ai"]))
     def check_vendor_payments(self, data, role):
-        """What each vendor was paid in a year (UTC), by payment date, as the model has it:
-        mostly a year with payments, now and then one either side."""
-        years = sorted({when.year for _, when in self.paid.values()}) or [2000]
-        if not self.paid or data.draw(st.integers(0, 3)) == 0:
+        """What each vendor was paid in a year (UTC), by payment date, and what the old system
+        paid it that year before the cutover, as the model has it: mostly a year with payments,
+        now and then one either side."""
+        years = sorted(
+            {when.year for _, when in self.paid.values()} | {y for _, y in self.carried}
+        ) or [2000]
+        if not (self.paid or self.carried) or data.draw(st.integers(0, 3)) == 0:
             years = [*range(years[0] - 1, years[-1] + 2)]
         year = data.draw(st.sampled_from(years))
         rows = (
             self.conns[role]
             .execute(
                 "SELECT item, vendor, payments, paid FROM trust_report_vendor_payments(%s, %s)"
-                " WHERE item IN ('vendor', 'total')",
+                " WHERE item IN ('vendor', 'carried over', 'total')",
                 (self.pmc_id, year),
             )
             .fetchall()
         )
-        paid: dict[str, tuple[int, Decimal]] = {}
+        paid: dict[int, tuple[int, Decimal]] = {}
         for bill_id, (_, when) in self.paid.items():
             if when.astimezone(UTC).year == year:
-                name = f"Vendor {self.bills[bill_id].vendor + 1}"
-                count, total = paid.get(name, (0, Decimal(0)))
-                paid[name] = (count + 1, total + self.bills[bill_id].amount)
+                vendor = self.bills[bill_id].vendor
+                count, total = paid.get(vendor, (0, Decimal(0)))
+                paid[vendor] = (count + 1, total + self.bills[bill_id].amount)
+        carried = {v: kept for (v, y), kept in self.carried.items() if y == year}
+        expected = []
+        for vendor in sorted(set(paid) | set(carried)):
+            count, here = paid.get(vendor, (0, Decimal(0)))
+            before = carried.get(vendor)
+            expected.append(
+                ("vendor", f"Vendor {vendor + 1}", count, here + (before[1] if before else 0))
+            )
+            if before:
+                expected.append(
+                    ("carried over", f"paid in the old system before {before[0]}", None, before[1])
+                )
         assert rows == [
-            *(("vendor", name, *paid[name]) for name in sorted(paid)),
+            *expected,
             (
                 "total",
                 None,
                 sum(c for c, _ in paid.values()),
-                sum((t for _, t in paid.values()), Decimal(0)),
+                sum((t for _, t in paid.values()), Decimal(0))
+                + sum((a for _, a in carried.values()), Decimal(0)),
             ),
         ]
+
+    @invariant()
+    def carried_over_payments_are_the_models(self):
+        stored = self.conn.execute(
+            "SELECT vendor_id, year, paid_before, amount FROM trust_vendor_payments_carried_over"
+            " WHERE pmc_id = %s",
+            (self.pmc_id,),
+        ).fetchall()
+        vendor_ids = [vendor_id for vendor_id, _ in self.vendors]
+        assert {(vendor_ids.index(v), y): (d, a) for v, y, d, a in stored} == self.carried
 
     @invariant()
     def bills_and_their_steps_are_the_models(self):

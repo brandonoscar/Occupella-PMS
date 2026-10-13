@@ -725,6 +725,15 @@ def enter_recurring_bills(connection, pmc_id, through) -> int:
     return _one(connection, "SELECT trust_enter_recurring_bills(%s, %s)", (pmc_id, through))
 
 
+def carry_over_vendor_payments(connection, pmc_id, vendor_id, year, paid_before, amount) -> None:
+    """What the old system paid a vendor in `year` before the cutover, `paid_before`."""
+    connection.execute(
+        "INSERT INTO trust_vendor_payments_carried_over"
+        " (pmc_id, vendor_id, year, paid_before, amount) VALUES (%s, %s, %s, %s, %s)",
+        (pmc_id, vendor_id, year, paid_before, Decimal(amount)),
+    )
+
+
 def contribute(connection, pmc_id, account, request_key, amount, event_at=None, memo=None) -> str:
     """An owner's money into their property account, as its own kind; the transfer id."""
     return _one(
