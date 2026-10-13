@@ -12,12 +12,14 @@ from helpers import (
     add_agreement,
     add_late_fee_policy,
     add_recurring_bill,
+    add_recurring_charge,
     add_unit,
     add_work_order,
     apply_payment,
     approve,
     assess_late_fees,
     charge,
+    charge_recurring_due,
     charge_rent_due,
     contribute,
     enter_bill,
@@ -239,6 +241,15 @@ WRITES = {
         (pmc.pmc_id,),
     ),
     "enter recurring bills": lambda c, pmc, *_: enter_recurring_bills(c, pmc.pmc_id, FEB.date()),
+    "record a recurring charge": lambda c, pmc, lease, *_: add_recurring_charge(
+        c, pmc.pmc_id, lease, "25.00", FEB.date()
+    ),
+    "stop a recurring charge": lambda c, pmc, *_: c.execute(
+        "INSERT INTO trust_recurring_charge_ends (pmc_id, recurring_charge_id, ends_on)"
+        " SELECT pmc_id, id, '2030-01-01' FROM trust_recurring_charges WHERE pmc_id = %s",
+        (pmc.pmc_id,),
+    ),
+    "charge recurring charges": lambda c, pmc, *_: charge_recurring_due(c, pmc.pmc_id, FEB.date()),
     "record an owner's contribution": lambda c, pmc, *_: contribute(
         c, pmc.pmc_id, pmc.owners[0].account, "ai-1", "1.00"
     ),

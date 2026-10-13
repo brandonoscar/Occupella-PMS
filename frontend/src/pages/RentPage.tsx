@@ -7,17 +7,18 @@ import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card, Shell } from "../components/Shell";
 import { day, money } from "../money";
-import type { Payment, RentLease } from "../rent";
-import { chargeLabel, owedLabel, paymentSummary, requestId } from "../rent";
+import type { Payment, RecurringCharge, RentLease, RentRun } from "../rent";
+import { chargeLabel, owedLabel, paymentSummary, recurringLabel, rentRunSummary, requestId } from "../rent";
 import { STAFF_NAV } from "./staffNav";
 
 function detail(failed: unknown): string {
   return failed instanceof ApiError ? failed.detail : String(failed);
 }
 
-// Staff's rent work: the month's rent and late fees for every lease, and per lease its open
-// charges and payments, with forms to record a payment, a deposit, a fee or a credit, to use
-// prepaid rent and to undo a payment that bounced. The PMS records what reached the bank; it
+// Staff's rent work: the month's rent (with each lease's recurring charges) and late fees for
+// every lease, and per lease its open charges, payments and recurring charges, with forms to
+// record a payment, a deposit, a fee or a credit once or every month, to use prepaid rent, to
+// stop a recurring charge and to undo a payment that bounced. The PMS records what reached the bank; it
 // takes no payments itself.
 export function RentPage({ me }: { me: Me }) {
   const [leases, setLeases] = useState<RentLease[] | null>(null);
@@ -55,34 +56,36 @@ function RunsCard({ refresh }: { refresh: () => void }) {
   const [said, setSaid] = useState("");
   const [error, setError] = useState("");
 
-  async function run(path: string, on: string, what: string) {
+  async function run<T>(path: string, on: string, say: (done: T) => string) {
     setError("");
     setSaid("");
     try {
-      const done = await api.post<{ charged: number }>(`/api/rent/${path}`, { on });
-      setSaid(`${done.charged} ${what}${done.charged === 1 ? "" : "s"} charged.`);
+      setSaid(say(await api.post<T>(`/api/rent/${path}`, { on })));
       refresh();
     } catch (failed) {
       setError(detail(failed));
     }
   }
+  const lateFees = (done: { charged: number }) =>
+    `${done.charged} late fee${done.charged === 1 ? "" : "s"} charged.`;
 
   return (
     <Card title="Rent run and late fees">
       <div className="flex flex-wrap items-end gap-6">
-        <form className="flex items-end gap-3" onSubmit={(e) => { e.preventDefault(); run("charge-rent", due, "rent"); }}>
+        <form className="flex items-end gap-3" onSubmit={(e) => { e.preventDefault(); run<RentRun>("charge-rent", due, rentRunSummary); }}>
           <Field label="Rent due on" id="rent-due" type="date" required value={due}
             onChange={(e) => setDue(e.target.value)} />
           <Button type="submit" variant="secondary">Charge rent</Button>
         </form>
-        <form className="flex items-end gap-3" onSubmit={(e) => { e.preventDefault(); run("late-fees", asOf, "late fee"); }}>
+        <form className="flex items-end gap-3" onSubmit={(e) => { e.preventDefault(); run("late-fees", asOf, lateFees); }}>
           <Field label="Late fees as of" id="late-as-of" type="date" required value={asOf}
             onChange={(e) => setAsOf(e.target.value)} />
           <Button type="submit" variant="secondary">Assess late fees</Button>
         </form>
       </div>
       <p className="mt-3 text-sm text-ink-subtle">
-        Each lease is charged once per due date, and each rent at most one late fee.
+        Each lease is charged its rent and recurring charges once per due date, and each rent at
+        most one late fee.
       </p>
       <Notice tone="info">{said}</Notice>
       <Notice tone="error">{error}</Notice>
@@ -137,6 +140,13 @@ function LeaseRow({ lease, refresh }: { lease: RentLease; refresh: () => void })
           ))}
         </ul>
       )}
+      {lease.recurring.length > 0 && (
+        <ul className="text-sm">
+          {lease.recurring.map((r) => (
+            <RecurringLine key={r.id} recurring={r} record={record} />
+          ))}
+        </ul>
+      )}
       {lease.payments.length > 0 && (
         <ul className="text-sm">
           {lease.payments.map((p) => (
@@ -149,6 +159,7 @@ function LeaseRow({ lease, refresh }: { lease: RentLease; refresh: () => void })
         <div className="mt-3 flex flex-col gap-4">
           <PaymentForm lease={lease} record={record} />
           <ChargeForm lease={lease} record={record} />
+          <RecurringForm lease={lease} record={record} />
           <DepositForm lease={lease} record={record} />
         </div>
       </details>
@@ -262,6 +273,64 @@ function ChargeForm({ lease, record }: { lease: RentLease; record: Recorder }) {
       <Field label="What for" id={`charge-memo-${lease.id}`} required maxLength={200} value={memo}
         onChange={(e) => setMemo(e.target.value)} />
       <Button type="submit" variant="secondary">Add</Button>
+    </form>
+  );
+}
+
+function RecurringLine({ recurring, record }: { recurring: RecurringCharge; record: Recorder }) {
+  const [on, setOn] = useState(day(new Date()));
+  return (
+    <li className="flex flex-wrap items-center gap-3 py-1">
+      <span>{recurringLabel(recurring)}</span>
+      {recurring.ends_on === null && (
+        <form
+          className="flex items-center gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            record(`/api/rent/recurring-charges/${recurring.id}/stop`, { ends_on: on },
+              () => `${recurring.memo} stops ${on}.`);
+          }}
+        >
+          <input type="date" aria-label={`Stops on, ${recurring.memo}`} value={on}
+            onChange={(e) => setOn(e.target.value)}
+            className="h-8 rounded-sm border border-line-strong bg-sunken px-2 text-sm text-ink" />
+          <Button type="submit" variant="ghost">Stop</Button>
+        </form>
+      )}
+    </li>
+  );
+}
+
+function RecurringForm({ lease, record }: { lease: RentLease; record: Recorder }) {
+  const [kind, setKind] = useState<"fee" | "credit">("fee");
+  const [amount, setAmount] = useState("");
+  const [from, setFrom] = useState(day(new Date()));
+  const [memo, setMemo] = useState("");
+  return (
+    <form
+      className="flex flex-wrap items-end gap-3"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        const body = { kind, amount, memo, starts_on: from };
+        const said = () => `${memo} of ${money(amount)} added every month.`;
+        if (await record(`/api/rent/leases/${lease.id}/recurring-charges`, body, said)) {
+          setAmount("");
+          setMemo("");
+        }
+      }}
+    >
+      <Select label="Every month, a" id={`recurring-kind-${lease.id}`} value={kind}
+        onChange={(e) => setKind(e.target.value as "fee" | "credit")}>
+        <option value="fee">Fee</option>
+        <option value="credit">Credit</option>
+      </Select>
+      <Field label="Monthly amount" id={`recurring-amount-${lease.id}`} inputMode="decimal" required
+        value={amount} onChange={(e) => setAmount(e.target.value)} />
+      <Field label="First due on" id={`recurring-from-${lease.id}`} type="date" required value={from}
+        onChange={(e) => setFrom(e.target.value)} />
+      <Field label="Monthly, for" id={`recurring-memo-${lease.id}`} required maxLength={200}
+        value={memo} onChange={(e) => setMemo(e.target.value)} />
+      <Button type="submit" variant="secondary">Add every month</Button>
     </form>
   );
 }

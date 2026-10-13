@@ -39,6 +39,10 @@ const LEASE: RentLease = {
     { transfer_id: "tr1", received_on: "2026-09-01", amount: "1500.00", reference: "Check 101", bounced: false },
     { transfer_id: "tr0", received_on: "2026-08-01", amount: "1500.00", reference: null, bounced: true },
   ],
+  recurring: [
+    { id: "r1", kind: "fee", memo: "Pet rent", amount: "35.00", starts_on: "2026-01-01", ends_on: null },
+    { id: "r2", kind: "credit", memo: "Concession", amount: "100.00", starts_on: "2026-02-01", ends_on: "2026-12-01" },
+  ],
 };
 
 // The API: the leases on GET; each POST answers with `answers[path]` (or 201 {}), or 409.
@@ -78,7 +82,7 @@ describe("RentPage", () => {
 
   it("runs the rent and late fees and says how many were charged", async () => {
     const fetch = server({
-      "/api/rent/charge-rent": { charged: 3 },
+      "/api/rent/charge-rent": { charged: 3, recurring: 1 },
       "/api/rent/late-fees": { charged: 1 },
     });
     render(<RentPage me={ME} />);
@@ -86,7 +90,7 @@ describe("RentPage", () => {
 
     fireEvent.change(screen.getByLabelText("Rent due on"), { target: { value: "2026-11-01" } });
     fireEvent.click(screen.getByRole("button", { name: "Charge rent" }));
-    expect(await screen.findByText("3 rents charged.")).toBeTruthy();
+    expect(await screen.findByText("3 rents and 1 recurring charge charged.")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Late fees as of"), { target: { value: "2026-11-06" } });
     fireEvent.click(screen.getByRole("button", { name: "Assess late fees" }));
     expect(await screen.findByText("1 late fee charged.")).toBeTruthy();
@@ -160,6 +164,39 @@ describe("RentPage", () => {
     expect(calls[1]?.[1]).toMatchObject({ kind: "credit", amount: "25.00", memo: "Leak repair" });
     expect(calls[2]?.[1]).toMatchObject({ tenant_id: "t2", amount: "500.00" });
     expect(calls[3]?.[1]).toEqual({ on: "2026-09-05" });
+  });
+
+  it("shows a lease's recurring charges, adds one and stops one", async () => {
+    const fetch = server();
+    render(<RentPage me={ME} />);
+    const lease = await row();
+
+    expect(lease.textContent).toContain("Pet rent: $35.00 a month from 2026-01-01");
+    expect(lease.textContent).toContain(
+      "Concession: credit of $100.00 a month from 2026-02-01, stops 2026-12-01",
+    );
+    // Only one still to stop.
+    expect(within(lease).getAllByRole("button", { name: "Stop" })).toHaveLength(1);
+    fireEvent.change(within(lease).getByLabelText("Stops on, Pet rent"), {
+      target: { value: "2026-11-01" },
+    });
+    fireEvent.click(within(lease).getByRole("button", { name: "Stop" }));
+    expect(await within(lease).findByText("Pet rent stops 2026-11-01.")).toBeTruthy();
+
+    fireEvent.change(within(lease).getByLabelText("Every month, a"), { target: { value: "fee" } });
+    fireEvent.change(within(lease).getByLabelText("Monthly amount"), { target: { value: "50.00" } });
+    fireEvent.change(within(lease).getByLabelText("First due on"), { target: { value: "2026-11-01" } });
+    fireEvent.change(within(lease).getByLabelText("Monthly, for"), { target: { value: "Parking" } });
+    fireEvent.click(within(lease).getByRole("button", { name: "Add every month" }));
+    expect(await within(lease).findByText("Parking of $50.00 added every month.")).toBeTruthy();
+
+    expect(posted(fetch)).toEqual([
+      ["/api/rent/recurring-charges/r1/stop", { ends_on: "2026-11-01" }],
+      [
+        "/api/rent/leases/l1/recurring-charges",
+        { kind: "fee", amount: "50.00", memo: "Parking", starts_on: "2026-11-01" },
+      ],
+    ]);
   });
 
   it("shows a refusal on the lease, and a hold", async () => {

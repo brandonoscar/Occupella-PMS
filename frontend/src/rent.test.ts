@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { OpenCharge } from "./rent";
-import { chargeLabel, owedLabel, paymentSummary, requestId } from "./rent";
+import type { OpenCharge, RecurringCharge } from "./rent";
+import { chargeLabel, owedLabel, paymentSummary, recurringLabel, rentRunSummary, requestId } from "./rent";
 
 describe("rent", () => {
   it("says what a payment did", () => {
@@ -30,6 +30,19 @@ describe("rent", () => {
     expect(chargeLabel({ ...rent, memo: "Rent due 2026-10-01" })).toBe(
       "2026-10-01 Rent due 2026-10-01: $1,500.00 open",
     );
+  });
+  it("reads a recurring charge", () => {
+    const pet: RecurringCharge = {
+      id: "r", kind: "fee", memo: "Pet rent", amount: "35.00", starts_on: "2026-01-01", ends_on: null,
+    };
+    expect(recurringLabel(pet)).toBe("Pet rent: $35.00 a month from 2026-01-01");
+    expect(recurringLabel({ ...pet, kind: "credit", memo: "Concession", ends_on: "2026-07-01" })).toBe(
+      "Concession: credit of $35.00 a month from 2026-01-01, stops 2026-07-01",
+    );
+  });
+  it("says what the rent run charged", () => {
+    expect(rentRunSummary({ charged: 1, recurring: 1 })).toBe("1 rent and 1 recurring charge charged.");
+    expect(rentRunSummary({ charged: 0, recurring: 2 })).toBe("0 rents and 2 recurring charges charged.");
   });
   it("makes a new request id each time", () => {
     const one = requestId();
