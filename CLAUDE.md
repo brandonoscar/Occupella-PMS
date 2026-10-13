@@ -95,7 +95,8 @@ required invariant, report and self-host step.
   Colours, sizes and fonts come only from the tokens in `frontend/src/styles/globals.css`
   (`designTokens.test.ts` fails on a raw colour or a size off the scale). Money stays text from
   the database to the screen, never a float. Staff's pages have sections (`pages/staffNav.ts`);
-  they set up the books at `/setup` (`src/pms/api/setup.py`: plain inserts and the database's
+  they see what is late or waits on them at `/today` (`src/pms/api/today.py`: read only, each
+  part the work page's own answer), set up the books at `/setup` (`src/pms/api/setup.py`: plain inserts and the database's
   own write paths, nothing that moves money), do the rent work at `/rent`
   (`src/pms/api/rent.py`), pay bills and handle owners' money at `/bills` and `/owners`
   (`src/pms/api/payables.py`), reconcile at `/reconcile` (`src/pms/api/reconcile.py`), bring a
