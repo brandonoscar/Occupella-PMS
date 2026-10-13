@@ -221,9 +221,12 @@ required invariant, report and self-host step.
   rent, parking) or a credit it gets every month (`trust_recurring_charges`, from a first due
   date; an end row stops it from a day). `trust_charge_recurring_due` charges each one in force
   on a due date while its lease is in effect, once per recurring charge and date; the staff
-  rent run calls it with `trust_charge_rent_due`. A charge naming one is of its PMC, lease, kind
-  and amount (`trust_charges.recurring_charge_id`). A management fee counts recurring fees
-  collected with rent (migration 0040); late fees stay on rent only.
+  rent run calls it with `trust_charge_rent_due`. Like rent, it is charged for the days of the
+  month the lease is in effect, and a lease starting later in the month is charged its first
+  part month, due on its first day (migration 0048). A charge naming one is of its PMC, lease
+  and kind (`trust_charges.recurring_charge_id`), and its amount for those days (a trigger
+  checks it). A management fee counts recurring fees collected with rent (migration 0040);
+  late fees stay on rent only.
 - Cutover: `trust_post_opening_balances` opens a trust bank account with what each account in
   it held in the old system, from its cash at the start of the cutover date (UTC), checked
   against the old book cash. Once per account, before any posting or reconciliation in it, safe
