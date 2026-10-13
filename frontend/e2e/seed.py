@@ -7,7 +7,8 @@ Last month's rent goes to the owner's two properties, so the statement the owner
 first (last month) has postings. A second owner's property has a tenant on a lease, with last
 month's rent paid, this month's due and a maintenance request; a vacant unit there has an open
 application link. For lease offers, another vacant unit has an approved application, and a
-third unit a tenant on a month-to-month lease to renew. Every name is synthetic.
+third unit a tenant on a month-to-month lease to renew. Last, the demo PMC (src/pms/demo.py),
+with invites for its manager and its owner of three properties. Every name is synthetic.
 """
 
 import json
@@ -18,7 +19,7 @@ from datetime import UTC, datetime, timedelta
 
 import psycopg
 
-from pms import accounts
+from pms import accounts, demo
 
 
 def main() -> None:
@@ -413,6 +414,21 @@ def main() -> None:
                 conn, pmc, "tenant", renter, f"renter.{tag}@example.com", None
             ).token,
         }
+    # The demo PMC (src/pms/demo.py), built as staff build one: its manager and owner.
+    with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as app:
+        app.execute("SET ROLE trust_app")
+        made = demo.build(app)
+        seeded["demo_manager_invite"] = accounts.create_invite(
+            app, made.pmc_id, "staff", made.manager, f"demo-manager.{tag}@example.com", None
+        ).token
+        seeded["demo_owner_invite"] = accounts.create_invite(
+            app,
+            made.pmc_id,
+            "owner",
+            made.owners["Demo Owner A"],
+            f"demo-owner.{tag}@example.com",
+            None,
+        ).token
     print(json.dumps(seeded))
 
 

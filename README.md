@@ -52,6 +52,15 @@ The placement decision and the Phase 0 plan live in AgenticHelixis:
 `docs/decisions/ADR-free-pms-placement.md` (section "Phase 0 plan"), with the research in
 `docs/research/free-pms-gaps.md`.
 
+## Try the demo
+
+On a migrated database (`dbmate up`), `PYTHONPATH=src python -m pms.demo` adds a synthetic PMC
+and prints sign-in links for its manager, an owner with three properties and a tenant. Serve
+the portal (`python -m pms.api`, with `PMS_STATIC_DIR=frontend/dist` and `PMS_PUBLIC_URL` set to
+where it's served) and open the manager's link: last month's reconciliation is prepared and
+waits for their approval, with a check not yet cleared at the bank. Like every staff member,
+the manager signs in with a password and an authenticator app.
+
 ## Working here
 
 Read [CLAUDE.md](CLAUDE.md) first: the hard rules, the standing rule that tests come with the
