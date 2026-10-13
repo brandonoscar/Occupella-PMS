@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { OpenCharge, RecurringCharge } from "./rent";
-import { chargeLabel, owedLabel, paymentSummary, recurringLabel, rentRunSummary, requestId } from "./rent";
+import {
+  bounceSummary,
+  chargeLabel,
+  owedLabel,
+  paymentSummary,
+  recurringLabel,
+  rentRunSummary,
+  requestId,
+} from "./rent";
 
 describe("rent", () => {
   it("says what a payment did", () => {
@@ -12,6 +20,14 @@ describe("rent", () => {
     );
     expect(paymentSummary({ transfers: ["u"], to_owner: "0.00", to_prepaid: "50.00" })).toBe(
       "$50.00 held as prepaid rent.",
+    );
+  });
+  it("says what a bounce did, with its NSF fee when there is one", () => {
+    expect(bounceSummary("1500.00", { transfers: ["r"], nsf_fee: null })).toBe(
+      "The $1,500.00 payment is owed again.",
+    );
+    expect(bounceSummary("1500.00", { transfers: ["r", "s"], nsf_fee: "35.00" })).toBe(
+      "The $1,500.00 payment is owed again, with a $35.00 NSF fee.",
     );
   });
   it("reads what a lease owes", () => {

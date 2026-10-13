@@ -678,6 +678,21 @@ def add_late_fee_policy(
     )
 
 
+def add_nsf_fee_policy(connection, pmc_id, property_id, starts_on, fee) -> UUID:
+    """A property's NSF fee, in force from starts_on."""
+    return _one(
+        connection,
+        "INSERT INTO trust_nsf_fee_policies (pmc_id, property_id, starts_on, fee)"
+        " VALUES (%s, %s, %s, %s) RETURNING id",
+        (pmc_id, property_id, starts_on, Decimal(fee)),
+    )
+
+
+def charge_nsf_fee(connection, pmc_id, returned_key) -> UUID | None:
+    """Charge the NSF fee of the payment returned under returned_key; its charge, or None."""
+    return _one(connection, "SELECT trust_charge_nsf_fee(%s, %s)", (pmc_id, returned_key))
+
+
 def assess_late_fees(connection, pmc_id, as_of) -> int:
     """Charge the late fee of each rent unpaid when its grace ran out before as_of."""
     return _one(connection, "SELECT trust_assess_late_fees(%s, %s)", (pmc_id, as_of))

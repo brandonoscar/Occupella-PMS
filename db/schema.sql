@@ -949,6 +949,87 @@ $$;
 
 
 --
+-- Name: trust_charge_nsf_fee(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_charge_nsf_fee(p_pmc_id uuid, p_returned_key text) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_key trust_idempotency_keys;
+    v_lease trust_leases;
+    v_on date;
+    v_terms trust_nsf_fee_policies;
+    v_fee_id uuid;
+BEGIN
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'trust: charge an NSF fee at READ COMMITTED, not %',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
+
+    SELECT k.* INTO v_key FROM trust_idempotency_keys AS k
+    WHERE k.pmc_id = p_pmc_id AND k.idempotency_key = p_returned_key
+    FOR NO KEY UPDATE;
+    IF NOT FOUND OR v_key.request -> 'metadata' ->> 'kind' IS DISTINCT FROM 'bounced payment' THEN
+        RAISE EXCEPTION 'trust: no returned payment % in PMC %', p_returned_key, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT f.fee_charge_id INTO v_fee_id FROM trust_nsf_fees AS f
+    WHERE f.pmc_id = p_pmc_id AND f.returned_key = p_returned_key;
+    IF FOUND THEN
+        RETURN v_fee_id;
+    END IF;
+
+    SELECT l.* INTO v_lease FROM trust_leases AS l
+    WHERE l.pmc_id = p_pmc_id AND l.id::text = v_key.request -> 'metadata' ->> 'lease_id';
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: returned payment % names no lease of PMC %',
+            p_returned_key, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Money the bank sent back: each posting moves it from what the payment paid into (the
+    -- owner's account or the tenant's prepaid rent) back to a trust bank account's cash.
+    IF EXISTS (
+        SELECT t.id
+        FROM pgledger_transfers AS t
+        JOIN trust_ledger_accounts AS f ON f.ledger_account_id = t.from_account_id
+        JOIN trust_ledger_accounts AS c ON c.ledger_account_id = t.to_account_id
+        WHERE t.id = ANY (v_key.transfer_ids)
+          AND (f.kind NOT IN ('owner_property', 'prepaid_rent') OR c.kind <> 'bank_cash')
+    ) THEN
+        RAISE EXCEPTION 'trust: % moves money that is not a returned payment', p_returned_key
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    SELECT (min(t.event_at) AT TIME ZONE 'UTC')::date INTO v_on
+    FROM pgledger_transfers AS t WHERE t.id = ANY (v_key.transfer_ids);
+    -- The terms in force that day: the latest starting on or before it.
+    SELECT p.* INTO v_terms
+    FROM trust_nsf_fee_policies AS p
+    JOIN trust_units AS u ON u.property_id = p.property_id
+    WHERE u.id = v_lease.unit_id AND p.starts_on <= v_on
+    ORDER BY p.starts_on DESC
+    LIMIT 1;
+    IF NOT FOUND OR v_terms.fee = 0 THEN
+        RETURN NULL;
+    END IF;
+
+    INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)
+    VALUES (
+        p_pmc_id, v_lease.id, v_on, 'fee', v_terms.fee,
+        'NSF fee, payment returned ' || to_char(v_on, 'YYYY-MM-DD')
+    )
+    RETURNING id INTO v_fee_id;
+    INSERT INTO trust_nsf_fees (pmc_id, returned_key, policy_id, fee, fee_charge_id)
+    VALUES (p_pmc_id, p_returned_key, v_terms.id, v_terms.fee, v_fee_id);
+    RETURN v_fee_id;
+END;
+$$;
+
+
+--
 -- Name: trust_charge_recurring_due(uuid, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6385,6 +6466,36 @@ CREATE TABLE public.trust_management_fees (
 
 
 --
+-- Name: trust_nsf_fee_policies; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_nsf_fee_policies (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    property_id uuid NOT NULL,
+    starts_on date NOT NULL,
+    fee numeric NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_nsf_fee_policies_fee_check CHECK (((fee >= (0)::numeric) AND (fee = round(fee, 2))))
+);
+
+
+--
+-- Name: trust_nsf_fees; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_nsf_fees (
+    pmc_id uuid NOT NULL,
+    returned_key text NOT NULL,
+    policy_id uuid NOT NULL,
+    fee numeric NOT NULL,
+    fee_charge_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_nsf_fees_fee_check CHECK ((fee > (0)::numeric))
+);
+
+
+--
 -- Name: trust_opening_balances; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -7528,6 +7639,38 @@ ALTER TABLE ONLY public.trust_management_fees
 
 
 --
+-- Name: trust_nsf_fee_policies trust_nsf_fee_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_nsf_fee_policies
+    ADD CONSTRAINT trust_nsf_fee_policies_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_nsf_fee_policies trust_nsf_fee_policies_property_id_starts_on_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_nsf_fee_policies
+    ADD CONSTRAINT trust_nsf_fee_policies_property_id_starts_on_key UNIQUE (property_id, starts_on);
+
+
+--
+-- Name: trust_nsf_fees trust_nsf_fees_fee_charge_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_nsf_fees
+    ADD CONSTRAINT trust_nsf_fees_fee_charge_id_key UNIQUE (fee_charge_id);
+
+
+--
+-- Name: trust_nsf_fees trust_nsf_fees_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_nsf_fees
+    ADD CONSTRAINT trust_nsf_fees_pkey PRIMARY KEY (pmc_id, returned_key);
+
+
+--
 -- Name: trust_opening_balances trust_opening_balances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8181,6 +8324,13 @@ CREATE INDEX trust_management_fees_transfer_id ON public.trust_management_fees U
 
 
 --
+-- Name: trust_nsf_fees_policy_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_nsf_fees_policy_id ON public.trust_nsf_fees USING btree (policy_id);
+
+
+--
 -- Name: trust_owner_draws_ledger_account_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -8619,6 +8769,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_management_fees FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_nsf_fee_policies trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_nsf_fee_policies FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_nsf_fees trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_nsf_fees FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -9088,6 +9252,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_mana
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_management_fees FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_nsf_fee_policies trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_nsf_fee_policies FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_nsf_fees trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_nsf_fees FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -10695,6 +10873,54 @@ ALTER TABLE ONLY public.trust_management_fees
 
 
 --
+-- Name: trust_nsf_fee_policies trust_nsf_fee_policies_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_nsf_fee_policies
+    ADD CONSTRAINT trust_nsf_fee_policies_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_nsf_fee_policies trust_nsf_fee_policies_pmc_id_property_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_nsf_fee_policies
+    ADD CONSTRAINT trust_nsf_fee_policies_pmc_id_property_id_fkey FOREIGN KEY (pmc_id, property_id) REFERENCES public.trust_properties(pmc_id, id);
+
+
+--
+-- Name: trust_nsf_fees trust_nsf_fees_pmc_id_fee_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_nsf_fees
+    ADD CONSTRAINT trust_nsf_fees_pmc_id_fee_charge_id_fkey FOREIGN KEY (pmc_id, fee_charge_id) REFERENCES public.trust_charges(pmc_id, id);
+
+
+--
+-- Name: trust_nsf_fees trust_nsf_fees_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_nsf_fees
+    ADD CONSTRAINT trust_nsf_fees_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_nsf_fees trust_nsf_fees_pmc_id_returned_key_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_nsf_fees
+    ADD CONSTRAINT trust_nsf_fees_pmc_id_returned_key_fkey FOREIGN KEY (pmc_id, returned_key) REFERENCES public.trust_idempotency_keys(pmc_id, idempotency_key);
+
+
+--
+-- Name: trust_nsf_fees trust_nsf_fees_policy_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_nsf_fees
+    ADD CONSTRAINT trust_nsf_fees_policy_id_fkey FOREIGN KEY (policy_id) REFERENCES public.trust_nsf_fee_policies(id);
+
+
+--
 -- Name: trust_opening_balances trust_opening_balances_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11280,4 +11506,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261013000040'),
     ('20261013000041'),
     ('20261013000042'),
-    ('20261013000043');
+    ('20261013000043'),
+    ('20261013000044');

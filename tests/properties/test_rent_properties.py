@@ -1,9 +1,9 @@
 """Property-based tests for staff's rent work (src/pms/api/rent.py).
 
 Hypothesis charges a lease rent, fees and credits, records tenant payments (and sends some
-again), uses prepaid rent and bounces payments, in random order. A model predicts what the lease
-owes, what the owner's account and the tenant's prepaid rent hold, and which steps are refused;
-the database must agree after every step.
+again), uses prepaid rent, sets the property's NSF fee and bounces payments, in random order. A
+model predicts what the lease owes, what the owner's account and the tenant's prepaid rent hold,
+and which steps are refused; the database must agree after every step.
 
 Invariants checked after every step (ci/registry.toml maps them to this test):
   - a payment pays the owner's account no more than the lease owes, and the rest is the tenant's
@@ -12,6 +12,8 @@ Invariants checked after every step (ci/registry.toml maps them to this test):
     its amount;
   - sending a payment again records nothing new;
   - a bounce takes back exactly what the payment moved, or is refused with nothing written;
+  - a bounce charges the lease the property's NSF fee in force that day, once, and nothing when
+    the terms charge none; every NSF fee is its terms' fee, due the day the payment came back;
   - every trust bank account ties out.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
@@ -19,13 +21,13 @@ Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import psycopg
 import pytest
 from fastapi import HTTPException
-from helpers import add_unit, balance, bank_sums, charge, make_pmc, open_lease
+from helpers import add_nsf_fee_policy, add_unit, balance, bank_sums, charge, make_pmc, open_lease
 from hypothesis import event
 from hypothesis import strategies as st
 from hypothesis.stateful import (
@@ -67,12 +69,15 @@ class RentMachine(RuleBasedStateMachine):
         ).fetchone()[0]
         unit = add_unit(conn, self.pmc_id, pmc.owners[0].property_id)
         self.lease = open_lease(conn, self.pmc_id, unit, START, None, "1000.00", [tenant])
+        self.property = pmc.owners[0].property_id
         self.rents = 0
         # Model
         self.owed = Decimal(0)
         self.in_owner = Decimal(0)
         self.in_prepaid = Decimal(0)
         self.payments: list[Paid] = []
+        self.nsf_terms: dict[date, Decimal] = {}  # NSF fee from each day
+        self.nsf_fees: list[tuple[Decimal, date]] = []  # each fee charged, and its terms' day
 
     # --- what the lease owes ----------------------------------------------------------------
 
@@ -91,6 +96,26 @@ class RentMachine(RuleBasedStateMachine):
     def credit(self, amount):
         charge(self.conn, self.pmc_id, self.lease, TODAY, amount, "credit")
         self.owed -= amount
+
+    @rule(
+        fee=st.integers(min_value=0, max_value=10_000).map(lambda c: Decimal(c) / 100),
+        days=st.integers(min_value=-2, max_value=3),
+    )
+    def set_nsf_fee(self, fee, days):
+        starts_on = TODAY - timedelta(days=days)
+        if starts_on in self.nsf_terms:
+            event("NSF fee: refused, terms start that day already")
+            with pytest.raises(psycopg.errors.UniqueViolation), self.conn.transaction():
+                add_nsf_fee_policy(self.conn, self.pmc_id, self.property, starts_on, fee)
+            return
+        add_nsf_fee_policy(self.conn, self.pmc_id, self.property, starts_on, fee)
+        self.nsf_terms[starts_on] = fee
+
+    def nsf_terms_on(self, day):
+        """The model's NSF fee in force on a day, and the day those terms start: the terms
+        starting latest on or before it."""
+        started = [d for d in self.nsf_terms if d <= day]
+        return (self.nsf_terms[max(started)], max(started)) if started else (Decimal(0), None)
 
     # --- money ----------------------------------------------------------------------------
 
@@ -153,10 +178,15 @@ class RentMachine(RuleBasedStateMachine):
             return
         event("bounce: taken back")
         with self.conn.transaction():
-            reversals = rent.bounce(self.conn, self.pmc_id, paid.transfers[0], TODAY)
-        assert len(reversals) == len(paid.transfers)
+            returned = rent.bounce(self.conn, self.pmc_id, paid.transfers[0], TODAY)
+        assert len(returned.transfers) == len(paid.transfers)
+        fee, terms = self.nsf_terms_on(TODAY)
+        event("bounce: NSF fee charged" if fee else "bounce: no NSF fee")
+        assert returned.nsf_fee == (fee or None)
         paid.bounced = True
-        self.owed += paid.to_owner
+        self.owed += paid.to_owner + fee
+        if fee:
+            self.nsf_fees.append((fee, terms))
         self.in_owner -= paid.to_owner
         self.in_prepaid -= paid.to_prepaid
 
@@ -168,6 +198,23 @@ class RentMachine(RuleBasedStateMachine):
         assert balance(self.conn, self.owner) == self.in_owner
         assert balance(self.conn, self.prepaid) == self.in_prepaid
         assert set(bank_sums(self.conn, self.pmc_id).values()) == {Decimal(0)}
+
+    @invariant()
+    def every_nsf_fee_is_its_terms_fee_due_the_day_it_came_back(self):
+        fees = self.conn.execute(
+            "SELECT f.fee, p.fee, p.property_id, p.starts_on, c.lease_id, c.kind, c.amount,"
+            " c.due_on FROM trust_nsf_fees AS f"
+            " JOIN trust_nsf_fee_policies AS p ON p.id = f.policy_id"
+            " JOIN trust_charges AS c ON c.id = f.fee_charge_id WHERE f.pmc_id = %s"
+            " ORDER BY f.created_at, c.created_at",
+            (self.pmc_id,),
+        ).fetchall()
+        assert sorted((fee, starts_on) for fee, _, _, starts_on, *_ in fees) == sorted(
+            self.nsf_fees
+        )
+        for fee, terms, prop, _, lease, kind, amount, due_on in fees:
+            assert (prop, lease, kind, due_on) == (self.property, self.lease, "fee", TODAY)
+            assert fee == terms == amount > 0
 
     @invariant()
     def payments_are_matched_in_full_and_no_charge_is_overpaid(self):

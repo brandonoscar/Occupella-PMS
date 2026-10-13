@@ -133,6 +133,7 @@ describe("RentPage", () => {
   it("uses prepaid rent, adds a credit, records a deposit and a bounce", async () => {
     const fetch = server({
       "/api/rent/leases/l1/use-prepaid": { transfers: ["p"], to_owner: "50.00", to_prepaid: "0.00" },
+      "/api/rent/payments/tr1/bounce": { transfers: ["r"], nsf_fee: "35.00" },
     });
     render(<RentPage me={ME} />);
     const lease = await row();
@@ -152,7 +153,9 @@ describe("RentPage", () => {
       target: { value: "2026-09-05" },
     });
     fireEvent.click(within(lease).getByRole("button", { name: "It bounced" }));
-    expect(await within(lease).findByText("The $1,500.00 payment is owed again.")).toBeTruthy();
+    expect(
+      await within(lease).findByText("The $1,500.00 payment is owed again, with a $35.00 NSF fee."),
+    ).toBeTruthy();
 
     const calls = posted(fetch);
     expect(calls.map(([path]) => path)).toEqual([

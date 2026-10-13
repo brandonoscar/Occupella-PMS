@@ -319,6 +319,19 @@ tests = [
 ]
 
 [[invariant]]
+id = "nsf-fee-once-per-returned-payment"
+statement = "A payment the bank returned charges its lease one NSF fee: the property's fee in force on the day it came back (UTC), due that day, never more than once per returned payment, and none for a fee of 0.00 or without terms. Only postings that move money back to a trust bank account's cash, for a lease of the PMC, count as a returned payment."
+tests = [
+  "tests/properties/test_rent_properties.py::test_rent_invariants_hold_under_random_charges_payments_and_bounces",
+  "tests/test_nsf_fees.py::test_a_returned_payment_is_charged_the_propertys_nsf_fee_due_the_day_it_came_back",
+  "tests/test_nsf_fees.py::test_the_same_return_again_returns_the_same_fee",
+  "tests/test_nsf_fees.py::test_the_terms_are_those_in_force_the_day_it_came_back",
+  "tests/test_nsf_fees.py::test_only_a_returned_payment_is_charged",
+  "tests/test_nsf_fees.py::test_postings_that_are_not_money_sent_back_are_refused",
+  "tests/test_nsf_fees.py::test_two_calls_at_once_charge_one_fee",
+]
+
+[[invariant]]
 id = "cutover-opens-once-and-first"
 statement = "A trust bank account opens with balances carried over from another system once, before any posting or approved reconciliation in it: posted from its cash at the start of the cutover date (UTC), adding up to the old book cash given with them. The same opening again returns the original transfers; a different one is refused. From then on no transfer touching it is dated before the cutover, whoever posts it, and its first reconciliation starts at the cutover."
 tests = [

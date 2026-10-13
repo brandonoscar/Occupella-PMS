@@ -42,6 +42,9 @@ export type RentLease = {
   recurring: RecurringCharge[];
 };
 export type Payment = { transfers: string[]; to_owner: string; to_prepaid: string };
+// A payment the bank returned: nsf_fee is the NSF fee the lease was charged for it, if the
+// property's terms charge one.
+export type Bounce = { transfers: string[]; nsf_fee: string | null };
 // What the rent run charged: leases their rent, and recurring charges.
 export type RentRun = { charged: number; recurring: number };
 
@@ -49,6 +52,12 @@ export type RentRun = { charged: number; recurring: number };
 // nothing new.
 export function requestId(): string {
   return crypto.randomUUID();
+}
+
+// What recording a returned payment did, in a line.
+export function bounceSummary(amount: string, bounce: Bounce): string {
+  const fee = bounce.nsf_fee === null ? "" : `, with a ${money(bounce.nsf_fee)} NSF fee`;
+  return `The ${money(amount)} payment is owed again${fee}.`;
 }
 
 // What a recorded payment did, in a line.

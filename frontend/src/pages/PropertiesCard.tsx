@@ -5,7 +5,7 @@ import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card } from "../components/Shell";
 import type { Portfolio, Property } from "../setup";
-import { lateFeeSummary, leaseSummary } from "../setup";
+import { lateFeeSummary, leaseSummary, nsfFeeSummary } from "../setup";
 import type { CardProps } from "./useAdd";
 import { useAdd } from "./useAdd";
 
@@ -56,8 +56,8 @@ function OwnerSelect({ books, id, value, onChange }: {
   );
 }
 
-// Properties: each with its owners, units (and their leases) and late fee terms, and the
-// forms to add a unit, another owner or new late fee terms.
+// Properties: each with its owners, units (and their leases), late fee and NSF fee terms, and
+// the forms to add a unit, another owner or new late fee or NSF fee terms.
 export function PropertiesCard({ books, refresh }: CardProps) {
   const { error, add } = useAdd(refresh);
   const [name, setName] = useState("");
@@ -102,6 +102,7 @@ function PropertyRow({ property, books, refresh }: CardProps & { property: Prope
     percent: "",
     maximum: "",
   });
+  const [nsf, setNsf] = useState({ starts_on: "", fee: "" });
   const owners = books.accounts.filter((a) => a.property_id === property.id).map((a) => a.owner);
   const at = (field: string) => `${field}-${property.id}`;
   return (
@@ -109,7 +110,8 @@ function PropertyRow({ property, books, refresh }: CardProps & { property: Prope
       <p className="text-md font-medium">{property.name}</p>
       <p className="text-sm text-ink-subtle">
         Owned by {owners.join(", ") || "nobody yet"}.{" "}
-        {property.late_fees ? lateFeeSummary(property.late_fees) : "No late fee terms"}.
+        {property.late_fees ? lateFeeSummary(property.late_fees) : "No late fee terms"}.{" "}
+        {nsfFeeSummary(property.nsf_fee)}.
       </p>
       <ul className="flex flex-col gap-1 text-sm">
         {property.units.map((u) => (
@@ -172,6 +174,19 @@ function PropertyRow({ property, books, refresh }: CardProps & { property: Prope
             <Field label="Up to" id={at("maximum")} inputMode="decimal" value={fees.maximum}
               onChange={(e) => setFees({ ...fees, maximum: e.target.value })} />
             <Button type="submit" variant="secondary">Set late fees</Button>
+          </form>
+          <form
+            className="flex flex-wrap items-end gap-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              add("nsf-fees", { property_id: property.id, starts_on: nsf.starts_on, fee: nsf.fee });
+            }}
+          >
+            <Field label="NSF fee from" id={at("nsf-from")} type="date" required
+              value={nsf.starts_on} onChange={(e) => setNsf({ ...nsf, starts_on: e.target.value })} />
+            <Field label="NSF fee" id={at("nsf-fee")} inputMode="decimal" required value={nsf.fee}
+              onChange={(e) => setNsf({ ...nsf, fee: e.target.value })} />
+            <Button type="submit" variant="secondary">Set NSF fee</Button>
           </form>
           <Notice tone="error">{error}</Notice>
         </div>

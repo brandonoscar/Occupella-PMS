@@ -1,6 +1,6 @@
 """Staff's rent work: charge the month's rent (with each lease's recurring charges) and late
 fees, add a fee or a credit once or every month, record a tenant's payment or security deposit,
-use prepaid rent, and undo a payment that bounced.
+use prepaid rent, and undo a payment that bounced (charging the property's NSF fee).
 
 What a lease owes (its rent and fees, less its credits, less what payments matched, plus what
 bounced back) stays out of the trust ledger. Money is recorded as it reached the trust bank
@@ -388,9 +388,16 @@ def use_prepaid(
     return Recorded(posted, sum((t[2] for t in transfers), ZERO), ZERO)
 
 
-def bounce(conn: psycopg.Connection[Any], pmc_id: UUID, transfer_id: str, on: date) -> list[str]:
-    """A payment the bank returned: its transfers move back to cash, and their matches to
-    charges are reversed (trust_reverse_payment). Once per payment."""
+@dataclass(frozen=True)
+class Returned:
+    transfers: list[str]
+    nsf_fee: Decimal | None  # the NSF fee charged for it, if the property's terms charge one
+
+
+def bounce(conn: psycopg.Connection[Any], pmc_id: UUID, transfer_id: str, on: date) -> Returned:
+    """A payment the bank returned: its transfers move back to cash, their matches to charges
+    are reversed (trust_reverse_payment), and the lease is charged the property's NSF fee
+    (trust_charge_nsf_fee). Once per payment."""
     rows = conn.execute(
         "SELECT t.id, t.from_account_id, t.to_account_id, t.amount, t.metadata, t.event_at"
         " FROM pgledger_transfers AS t"
@@ -423,7 +430,11 @@ def bounce(conn: psycopg.Connection[Any], pmc_id: UUID, transfer_id: str, on: da
                 "SELECT trust_reverse_payment(%s, %s, %s, %s, %s)",
                 (pmc_id, charge, payment, reversal, matched),
             )
-    return posted
+    # Two statements: one that read the charge in the same statement as the call wouldn't see it.
+    charged = conn.execute("SELECT trust_charge_nsf_fee(%s, %s)", (pmc_id, key)).fetchone()
+    fee = charged[0] if charged else None  # None: the terms charge none
+    amount = conn.execute("SELECT amount FROM trust_charges WHERE id = %s", (fee,)).fetchone()
+    return Returned(posted, None if amount is None else amount[0])
 
 
 def record_deposit(
@@ -859,12 +870,20 @@ def deposit(session: Staff, conn: Conn, new: NewDeposit) -> Posted:
         raise HTTPException(409, reason(refused)) from None
 
 
+class Bounced(Posted):
+    nsf_fee: str | None  # the NSF fee charged for it, if the property's terms charge one
+
+
 @router.post("/payments/{transfer_id}/bounce", status_code=201)
-def bounced(session: Staff, conn: Conn, transfer_id: str, returned: Day) -> Posted:
+def bounced(session: Staff, conn: Conn, transfer_id: str, returned: Day) -> Bounced:
     """Records a returned payment: its money leaves the owner's account (and prepaid rent)
-    back to cash, and what it paid of each charge is owed again."""
+    back to cash, what it paid of each charge is owed again, and the lease is charged the
+    property's NSF fee in force that day."""
     not_after_today(returned.on)
     try:
-        return Posted(transfers=bounce(conn, session.pmc_id, transfer_id, returned.on))
+        done = bounce(conn, session.pmc_id, transfer_id, returned.on)
     except psycopg.errors.CheckViolation as refused:  # the owner's account would go negative
         raise HTTPException(409, reason(refused)) from None
+    return Bounced(
+        transfers=done.transfers, nsf_fee=None if done.nsf_fee is None else cents(done.nsf_fee)
+    )

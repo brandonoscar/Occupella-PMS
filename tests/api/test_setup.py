@@ -89,6 +89,9 @@ def test_staff_set_up_a_pmc_from_nothing(client, conn, staff, blank):
         flat_fee="50.00",
         maximum="100.00",
     )
+    nsf_fee = post(
+        client, "nsf-fees", property_id=books.property, starts_on=str(TODAY), fee="35.00"
+    )
     lease = post(
         client,
         "leases",
@@ -100,7 +103,7 @@ def test_staff_set_up_a_pmc_from_nothing(client, conn, staff, blank):
 
     seen = client.get("/api/setup").json()
 
-    for answer in (agreement, late_fees, lease):
+    for answer in (agreement, late_fees, nsf_fee, lease):
         made(answer)
     assert [(b["name"], b["kind"]) for b in seen["bank_accounts"]] == [
         ("Deposit trust", "security_deposit"),
@@ -117,6 +120,7 @@ def test_staff_set_up_a_pmc_from_nothing(client, conn, staff, blank):
         "percent": "0",
         "maximum": "100.00",
     }
+    assert prop["nsf_fee"] == {"starts_on": str(TODAY), "fee": "35.00"}
     (unit,) = prop["units"]
     assert unit["name"] == "Unit 1"
     assert [
@@ -205,14 +209,20 @@ def test_terms_start_on_a_day_and_show_once_in_force(client, staff):
     made(post(client, "agreements", starts_on=str(LATER), **(terms | {"fee_percent": "9"})))
     made(post(client, "late-fees", starts_on=str(earlier), **fees))
     made(post(client, "late-fees", starts_on=str(LATER), **(fees | {"grace_days": 10})))
+    nsf = {"property_id": books.property}
+    made(post(client, "nsf-fees", starts_on=str(earlier), fee="25.00", **nsf))
+    made(post(client, "nsf-fees", starts_on=str(LATER), fee="0", **nsf))
     same_agreement = post(client, "agreements", starts_on=str(LATER), **terms)
     same_fees = post(client, "late-fees", starts_on=str(LATER), **fees)
+    same_nsf = post(client, "nsf-fees", starts_on=str(LATER), fee="40.00", **nsf)
     seen = client.get("/api/setup").json()
 
     refused(same_agreement, 409, "this account has terms starting that day already")
     refused(same_fees, 409, "this property has late fee terms starting that day already")
+    refused(same_nsf, 409, "this property has an NSF fee starting that day already")
     assert seen["accounts"][0]["agreement"]["fee_percent"] == "8"
     assert seen["properties"][0]["late_fees"]["grace_days"] == 3
+    assert seen["properties"][0]["nsf_fee"] == {"starts_on": str(earlier), "fee": "25.00"}
 
 
 def test_an_agreement_is_only_for_an_owners_account_of_the_pmc(client, conn, staff, blank):
@@ -323,6 +333,11 @@ OTHER_PMCS = [
         "no such property",
     ),
     (
+        "nsf-fees",
+        lambda o, b: {"property_id": o.owners[0].property_id, "starts_on": str(TODAY), "fee": "1"},
+        "no such property",
+    ),
+    (
         "agreements",
         lambda o, b: {"account": o.owners[0].account, "starts_on": str(TODAY)},
         "no such owner account",
@@ -380,6 +395,7 @@ ENDPOINTS = [
     ("post", "/api/setup/tenants"),
     ("post", "/api/setup/agreements"),
     ("post", "/api/setup/late-fees"),
+    ("post", "/api/setup/nsf-fees"),
     ("post", "/api/setup/leases"),
 ]
 
@@ -411,6 +427,9 @@ def test_only_staff_set_up_the_books(client, conn, app_conn, pmc, caller, method
         ("agreements", {"account": "a", "starts_on": "2026-10-12", "flat_fee": "1.001"}),
         ("agreements", {"account": "", "starts_on": "2026-10-12"}),
         ("late-fees", {"property_id": str(date.min), "starts_on": "2026-10-12", "grace_days": 366}),
+        ("nsf-fees", {"property_id": str(date.min), "starts_on": "2026-10-12", "fee": "-1"}),
+        ("nsf-fees", {"property_id": str(date.min), "starts_on": "2026-10-12", "fee": "35.001"}),
+        ("nsf-fees", {"property_id": str(date.min), "starts_on": "2026-10-12"}),
         (
             "leases",
             {"unit_id": "x", "starts_on": "2026-10-12", "monthly_rent": "0", "tenant_ids": []},

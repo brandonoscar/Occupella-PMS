@@ -141,7 +141,7 @@ required invariant, report and self-host step.
 - The app role `trust_app` only reads ledger tables. It writes through `trust_post_transfers`,
   `trust_open_ledger_account`, `trust_open_vendor_account`, `trust_open_lease`, `trust_end_lease`, `trust_apply_payment`, `trust_reverse_payment`,
   `trust_post_management_fee`, `trust_post_leasing_fee`, `trust_draw_owner`,
-  `trust_set_aside_bill`, `trust_pay_bill`, `trust_assess_late_fees`,
+  `trust_set_aside_bill`, `trust_pay_bill`, `trust_assess_late_fees`, `trust_charge_nsf_fee`,
   `trust_post_opening_balances`, `trust_record_owner_contribution`,
   `trust_complete_lease_offer`, `trust_match_bank_lines`, `trust_unmatch_bank_lines`,
   `trust_prepare_bank_reconciliation`, `trust_approve_bank_reconciliation`,
@@ -204,7 +204,10 @@ required invariant, report and self-host step.
   once per lease and date. A property's late fee terms (grace days, flat, percent of unpaid,
   cap) are in force from a date; `trust_assess_late_fees` charges a rent still unpaid at the
   end of its last grace day (UTC) one late fee under the terms in force on its due date. READ
-  COMMITTED.
+  COMMITTED. A property's NSF fee is in force from a date too (migration 0044, 0 charges
+  none); `trust_charge_nsf_fee` charges the lease of a returned payment (postings under one key
+  moving money back to a trust bank account's cash) the fee in force the day it came back
+  (UTC), due that day, once per returned payment. Neither fee counts toward the other.
 - Recurring charges (migration 0037): a fee a lease owes every month besides its rent (pet
   rent, parking) or a credit it gets every month (`trust_recurring_charges`, from a first due
   date; an end row stops it from a day). `trust_charge_recurring_due` charges each one in force
@@ -260,7 +263,8 @@ required invariant, report and self-host step.
   account no more than the lease owes, matched to its open charges oldest first, and the rest is
   the first tenant's prepaid rent; prepaid rent is used the same way. Each record carries a
   request id the page makes (its key in `trust_post_transfers`), so sending it again records
-  nothing new. A bounce moves back what the payment moved and reverses its matches, once. A
+  nothing new. A bounce moves back what the payment moved, reverses its matches and charges
+  the property's NSF fee, once. A
   lease's rent work takes an advisory lock on the lease. The PMS records what the bank did;
   it sends no money.
 - Bills and owners' money (`src/pms/api/payables.py`): staff enter, approve, set aside and pay

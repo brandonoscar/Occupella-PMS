@@ -42,11 +42,11 @@ const BOOKS: Portfolio = {
   owners: [],
   properties: [
     {
-      id: "pr1", name: "Property 1", late_fees: null,
+      id: "pr1", name: "Property 1", late_fees: null, nsf_fee: null,
       units: [{ id: "u1", name: "Unit 1", leases: [{ id: "l1", starts_on: "2026-09-01", ends_on: null, monthly_rent: "1500.00", tenants: ["Tenant 1"] }] }],
     },
     {
-      id: "pr2", name: "Property 2", late_fees: null,
+      id: "pr2", name: "Property 2", late_fees: null, nsf_fee: null,
       units: [{ id: "u2", name: "Unit 2", leases: [{ id: "l2", starts_on: "2026-10-01", ends_on: null, monthly_rent: "900.00", tenants: ["Tenant 2"] }] }],
     },
   ],
