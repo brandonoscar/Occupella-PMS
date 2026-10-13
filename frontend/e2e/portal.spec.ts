@@ -24,6 +24,8 @@ type Seed = {
   move_out_invite: string;
   documents_invite: string;
   switch_invite: string;
+  demo_manager_invite: string;
+  demo_owner_invite: string;
 };
 const seed: Seed = JSON.parse(readFileSync(new URL("./.seed.json", import.meta.url), "utf8"));
 const PASSWORD = "a long synthetic passphrase";
@@ -581,4 +583,46 @@ test("staff bring a roster in, open an account with its old balances and a check
   await expect(page.getByLabel("Reconciling items")).toContainText(
     `outstanding withdrawal: ${before} Check to Vendor E2E (2001), from before the cutover -$150.00`,
   );
+});
+
+test("the demo opens on last month waiting for its manager, who approves it; its owner reads three properties", async ({
+  page,
+}) => {
+  const now = new Date();
+  const first = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1));
+  const last = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 0));
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+
+  await page.goto(`/invite#${seed.demo_manager_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
+  await page.getByRole("button", { name: "Finish" }).click();
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Month-end" }).click();
+  await page
+    .getByRole("combobox", { name: "Trust bank account", exact: true })
+    .selectOption({ label: "Demo operating trust account" });
+
+  // The bookkeeper prepared last month; the roof repair's check hasn't cleared the bank.
+  await expect(page.getByRole("list", { name: "Reconciling items" })).toContainText("Bill RF-2207 paid");
+  await expect(page.getByLabel("Prepared")).toContainText(
+    `Prepared through ${iso(last)} by Demo Bookkeeper: bank $3,158.40, books $2,508.40.`,
+  );
+  await page.getByRole("button", { name: `Approve through ${iso(last)}` }).click();
+  await expect(page.getByText(`Approved through ${iso(last)}; the account is closed through it.`)).toBeVisible();
+  await expect(page.getByRole("list", { name: "Approved" })).toContainText(
+    `${iso(first)} to ${iso(last)}: bank $3,158.40, books $2,508.40, approved by Demo Manager`,
+  );
+  await page.getByRole("button", { name: "Sign out" }).click();
+
+  await page.goto(`/invite#${seed.demo_owner_invite}`);
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await expect(page.getByRole("heading", { name: "Your properties" })).toBeVisible();
+  const holdings = page.locator("section", { hasText: "What each property holds today" });
+  for (const name of ["Birch Flats", "Cedar House", "Elm Court"]) {
+    await expect(holdings.getByRole("row", { name: new RegExp(name) })).toContainText("$250.00");
+  }
 });

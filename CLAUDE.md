@@ -73,8 +73,11 @@ required invariant, report and self-host step.
   by email; the link carries a token kept only as its SHA-256, in the URL fragment. Accepting
   sets an argon2id password (and for staff an authenticator, TOTP); a new invite resets a
   password. `trust_login_secrets` is never audited. The first staff member, their first admin
-  role and their invite come from `python -m pms.admin`. Payments, email sending and the real
-  screening and e-sign partners are still out (`docs/adr/0002-portals-and-exports.md`).
+  role and their invite come from `python -m pms.admin`. A demo PMC to show the PMS with
+  comes from `python -m pms.demo` (`src/pms/demo.py`): synthetic, built through the API's own
+  route functions as its staff, with last month's reconciliation waiting for approval.
+  Payments, email sending and the real screening and e-sign partners are still out
+  (`docs/adr/0002-portals-and-exports.md`).
 - The portal (`frontend/`): React 19, Vite and Tailwind v4, following Occupella's `DESIGN.md`.
   Its build is served by the API (`PMS_STATIC_DIR`) under a strict Content-Security-Policy.
   Colours, sizes and fonts come only from the tokens in `frontend/src/styles/globals.css`
