@@ -6090,6 +6090,42 @@ CREATE TABLE public.trust_documents (
 
 
 --
+-- Name: trust_email_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_email_deliveries (
+    email_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    attempted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    sender text NOT NULL,
+    error text,
+    CONSTRAINT trust_email_deliveries_error_check CHECK (((error IS NULL) OR ((error <> ''::text) AND (length(error) <= 1000)))),
+    CONSTRAINT trust_email_deliveries_sender_check CHECK ((sender = ANY (ARRAY['fake'::text, 'smtp'::text])))
+);
+
+
+--
+-- Name: trust_emails; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_emails (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    kind text NOT NULL,
+    bill_id uuid,
+    to_address text NOT NULL,
+    subject text NOT NULL,
+    body text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_emails_body_check CHECK (((body <> ''::text) AND (length(body) <= 10000))),
+    CONSTRAINT trust_emails_check CHECK (((kind = 'bill_approval'::text) = (bill_id IS NOT NULL))),
+    CONSTRAINT trust_emails_kind_check CHECK ((kind = 'bill_approval'::text)),
+    CONSTRAINT trust_emails_subject_check CHECK (((subject <> ''::text) AND (length(subject) <= 200))),
+    CONSTRAINT trust_emails_to_address_check CHECK (((to_address <> ''::text) AND (length(to_address) <= 320)))
+);
+
+
+--
 -- Name: trust_idempotency_keys; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -7212,6 +7248,30 @@ ALTER TABLE ONLY public.trust_documents
 
 
 --
+-- Name: trust_email_deliveries trust_email_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_email_deliveries
+    ADD CONSTRAINT trust_email_deliveries_pkey PRIMARY KEY (email_id, attempted_at);
+
+
+--
+-- Name: trust_emails trust_emails_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_emails trust_emails_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_idempotency_keys trust_idempotency_keys_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7967,6 +8027,20 @@ CREATE INDEX trust_documents_pmc_id_kind ON public.trust_documents USING btree (
 
 
 --
+-- Name: trust_email_deliveries_once; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_email_deliveries_once ON public.trust_email_deliveries USING btree (email_id) WHERE (error IS NULL);
+
+
+--
+-- Name: trust_emails_one_per_bill_approval; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_emails_one_per_bill_approval ON public.trust_emails USING btree (bill_id) WHERE (kind = 'bill_approval'::text);
+
+
+--
 -- Name: trust_late_fees_policy_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -8440,6 +8514,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_documents FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_email_deliveries trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_email_deliveries FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_emails trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_emails FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -10119,6 +10207,38 @@ ALTER TABLE ONLY public.trust_documents
 
 
 --
+-- Name: trust_email_deliveries trust_email_deliveries_pmc_id_email_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_email_deliveries
+    ADD CONSTRAINT trust_email_deliveries_pmc_id_email_id_fkey FOREIGN KEY (pmc_id, email_id) REFERENCES public.trust_emails(pmc_id, id);
+
+
+--
+-- Name: trust_email_deliveries trust_email_deliveries_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_email_deliveries
+    ADD CONSTRAINT trust_email_deliveries_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_emails trust_emails_pmc_id_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pmc_id_bill_id_fkey FOREIGN KEY (pmc_id, bill_id) REFERENCES public.trust_bills(pmc_id, id);
+
+
+--
+-- Name: trust_emails trust_emails_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
 -- Name: trust_idempotency_keys trust_idempotency_keys_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11138,4 +11258,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261013000038'),
     ('20261013000039'),
     ('20261013000040'),
-    ('20261013000041');
+    ('20261013000041'),
+    ('20261013000042');

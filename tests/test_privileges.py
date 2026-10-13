@@ -47,6 +47,8 @@ TABLES = {
     "trust_bills": {"SELECT", "INSERT"},
     "trust_bill_approvals": {"SELECT", "INSERT"},
     "trust_bill_declines": {"SELECT", "INSERT"},
+    "trust_emails": {"SELECT", "INSERT"},
+    "trust_email_deliveries": {"SELECT", "INSERT"},
     "trust_bill_payments": {"SELECT"},  # written only by trust_set_aside_bill, trust_pay_bill
     "trust_work_orders": {"SELECT", "INSERT"},
     "trust_work_order_steps": {"SELECT", "INSERT"},
@@ -148,6 +150,9 @@ AI_NEVER_READS = {
     "trust_lease_offer_completions",
     # A document's bytes (a W-9 carries a tax ID): the AI may know it exists, never read it.
     "trust_document_files",
+    # Emails to owners and their deliveries: people's addresses (ADR 0004).
+    "trust_emails",
+    "trust_email_deliveries",
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
 RENAMEABLE = [

@@ -20,8 +20,28 @@ export type Bill = {
   // Who declined it for the owner (in the portal, or as staff recorded it), and why.
   declined_by: string | null;
   decline_reason: string | null;
+  // The email asking the owner to decide it: null when none was written.
+  owner_email: EmailStatus | null;
   status: BillStatus;
 };
+export type EmailStatus = "sent" | "waiting" | "failed";
+export type OutboxEmail = {
+  id: string;
+  to: string;
+  subject: string;
+  written_at: string;
+  status: EmailStatus;
+  error: string | null;
+};
+
+// What staff are told about the email to a bill's owner, while the bill waits for them.
+export function emailNote(bill: Bill): string | null {
+  if (bill.status !== "needs approval") return null;
+  if (bill.owner_email === "sent") return "Emailed the owner to approve or decline it in their portal.";
+  if (bill.owner_email === "waiting") return "An email to the owner waits to be sent.";
+  if (bill.owner_email === "failed") return "The email to the owner could not be sent; see Emails to owners.";
+  return "No email went to the owner: they have no active portal login. Ask them yourself.";
+}
 export type Recurring = {
   id: string;
   vendor: string;

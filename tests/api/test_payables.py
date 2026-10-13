@@ -26,6 +26,8 @@ from helpers import (
 )
 from people import join_as_owner, join_as_staff, join_as_tenant
 
+from pms import accounts, email
+
 NOW = datetime.now(UTC)
 TODAY = NOW.date()
 DAY = timedelta(days=1)
@@ -573,6 +575,128 @@ def test_another_pmcs_records_are_not_found(client, conn, staff, pmc):
         refused(answer, 404, detail)
 
 
+# --- the email to the owner (ADR 0004) -------------------------------------------------------
+
+
+def owner_signs_in(conn, pmc, n=0):
+    """Owner n's portal login, password set: the address their bill emails go to."""
+    owner = pmc.owners[n].owner_id
+    made = accounts.create_invite(
+        conn, pmc.pmc_id, "owner", owner, f"owner{n}.{owner.hex[:6]}@example.com", None
+    )
+    accounts.accept_invite(conn, made.token, "a long synthetic passphrase")
+    return f"owner{n}.{owner.hex[:6]}@example.com"
+
+
+def bill_email(client, bill):
+    return next(
+        b["owner_email"]
+        for b in ok(client.get("/api/payables/bills?show=all"), 200)
+        if b["id"] == bill
+    )
+
+
+def test_a_bill_over_the_limit_emails_its_owner_after_it_commits(client, conn, staff, pmc):
+    client.app.state.email = email.FakeSender()
+    to = owner_signs_in(conn, pmc)
+    add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 60 * DAY, approval_limit="500")
+
+    bill = ok(new_bill(client, pmc, "800.00"))["id"]
+
+    assert bill_email(client, bill) == "sent"
+    (sent,) = [e for e in ok(client.get("/api/payables/emails"), 200) if e["to"] == to]
+    assert (sent["subject"], sent["status"], sent["error"]) == (
+        "A bill waits for your approval: Vendor 1, $800.00",
+        "sent",
+        None,
+    )
+    assert conn.execute(
+        "SELECT d.sender, d.error FROM trust_email_deliveries AS d"
+        " JOIN trust_emails AS e ON e.id = d.email_id WHERE e.bill_id = %s",
+        (bill,),
+    ).fetchall() == [("fake", None)]
+
+
+def test_with_no_sender_the_email_waits_in_the_outbox(client, conn, staff, pmc):
+    owner_signs_in(conn, pmc)
+    add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 60 * DAY, approval_limit="500")
+
+    bill = ok(new_bill(client, pmc, "800.00"))["id"]
+
+    assert bill_email(client, bill) == "waiting"
+
+
+def test_a_bill_refused_writes_no_email(client, conn, staff, pmc):
+    client.app.state.email = email.FakeSender()
+    owner_signs_in(conn, pmc)
+    add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 60 * DAY, approval_limit="500")
+    ok(new_bill(client, pmc, "800.00"))
+
+    again = new_bill(client, pmc, "900.00")  # the same reference: refused, rolled back
+
+    refused(again, 409)
+    assert conn.execute(
+        "SELECT count(*) FROM trust_emails WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone() == (1,)
+
+
+@pytest.mark.parametrize("why", ["within the limit", "no login"])
+def test_no_email_when_the_bill_needs_none_or_the_owner_cannot_sign_in(
+    client, conn, staff, pmc, why
+):
+    client.app.state.email = email.FakeSender()
+    if why == "within the limit":
+        owner_signs_in(conn, pmc)
+    add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 60 * DAY, approval_limit="500")
+
+    bill = ok(new_bill(client, pmc, "300.00" if why == "within the limit" else "800.00"))["id"]
+
+    assert bill_email(client, bill) is None
+
+
+def test_recurring_bills_over_the_limit_email_their_owner(client, conn, staff, pmc):
+    client.app.state.email = email.FakeSender()
+    to = owner_signs_in(conn, pmc)
+    add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 400 * DAY, approval_limit="500")
+    ok(
+        call(
+            client,
+            "recurring",
+            vendor_id=pmc.vendor_id,
+            account=pmc.owners[0].account,
+            reference_prefix="HOA",
+            amount="600.00",
+            memo="Association dues",
+            day_of_month=1,
+            starts_on=TODAY - 40 * DAY,
+        )
+    )
+
+    entered = ok(call(client, "recurring/enter", on=TODAY), 200)["entered"]
+
+    emailed = [e for e in ok(client.get("/api/payables/emails"), 200) if e["to"] == to]
+    assert entered >= 1 and len(emailed) == entered
+    assert {e["status"] for e in emailed} == {"sent"}
+
+
+def test_an_email_given_up_on_shows_as_failed_with_why(client, conn, staff, pmc):
+    owner_signs_in(conn, pmc)
+    add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 60 * DAY, approval_limit="500")
+    bill = ok(new_bill(client, pmc, "800.00"))["id"]
+    (email_id,) = conn.execute("SELECT id FROM trust_emails WHERE bill_id = %s", (bill,)).fetchone()
+    for n in range(email.MAX_ATTEMPTS):
+        conn.execute(
+            "INSERT INTO trust_email_deliveries (email_id, pmc_id, sender, error, attempted_at)"
+            " VALUES (%s, %s, 'smtp', 'SMTPRecipientsRefused: no such mailbox',"
+            " now() + %s * interval '1 second')",
+            (email_id, pmc.pmc_id, n),
+        )
+
+    (shown,) = [e for e in ok(client.get("/api/payables/emails"), 200) if e["id"] == str(email_id)]
+    assert bill_email(client, bill) == "failed"
+    assert (shown["status"], shown["error"]) == ("failed", "SMTPRecipientsRefused: no such mailbox")
+
+
 ENDPOINTS = [
     ("get", "/api/payables/bills"),
     ("post", "/api/payables/bills"),
@@ -585,6 +709,7 @@ ENDPOINTS = [
     ("post", f"/api/payables/recurring/{uuid.uuid4()}/end"),
     ("post", "/api/payables/recurring/enter"),
     ("get", "/api/payables/owners"),
+    ("get", "/api/payables/emails"),
     ("post", "/api/payables/management-fees"),
     ("post", "/api/payables/leasing-fees"),
     ("post", "/api/payables/draws"),

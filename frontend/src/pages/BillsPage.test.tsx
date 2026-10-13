@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
-import type { Bill, Recurring } from "../payables";
+import type { Bill, OutboxEmail, Recurring } from "../payables";
 import type { Portfolio } from "../setup";
 import { BillsPage } from "./BillsPage";
 
@@ -50,6 +50,7 @@ const BILL: Bill = {
   approved_by: null,
   declined_by: null,
   decline_reason: null,
+  owner_email: "sent",
   status: "needs approval",
 };
 
@@ -69,6 +70,25 @@ const RECURRING: Recurring[] = [
 
 // The API: bills, recurring bills and the books on GET; each POST answers with
 // `answers[path]` (or 201 {}), or 409 with `refuse[path]`.
+const OUTBOX: OutboxEmail[] = [
+  {
+    id: "e1",
+    to: "owner1@example.com",
+    subject: "A bill waits for your approval: Vendor 1, $750.00",
+    written_at: "2026-10-02T09:00:00Z",
+    status: "sent",
+    error: null,
+  },
+  {
+    id: "e2",
+    to: "owner2@example.com",
+    subject: "A bill waits for your approval: Vendor 1, $900.00",
+    written_at: "2026-10-01T09:00:00Z",
+    status: "failed",
+    error: "SMTPRecipientsRefused: no such mailbox",
+  },
+];
+
 function server(
   answers: Record<string, unknown> = {},
   refuse: Record<string, string> = {},
@@ -78,7 +98,8 @@ function server(
     if (init?.method !== "POST") {
       const body = path.startsWith("/api/payables/bills")
         ? path.endsWith("show=all") ? [...bills, { ...BILL, id: "b4", reference: "INV-4", status: "paid" }] : bills
-        : path === "/api/payables/recurring" ? RECURRING : BOOKS;
+        : path === "/api/payables/recurring" ? RECURRING
+        : path === "/api/payables/emails" ? OUTBOX : BOOKS;
       return new Response(JSON.stringify(body), { status: 200 });
     }
     if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
@@ -212,6 +233,30 @@ describe("BillsPage", () => {
     expect(within(first).getByTestId("status").textContent).toBe("declined");
     expect(within(first).getByText(/Declined by Owner 1, in the owner portal: Get a second quote/)).toBeTruthy();
     expect(within(first).queryAllByRole("button")).toEqual([]);
+  });
+
+  it("says whether the owner was emailed about a bill waiting for them", async () => {
+    server({}, {}, [
+      BILL,
+      { ...BILL, id: "b5", reference: "INV-5", owner_email: "waiting" },
+      { ...BILL, id: "b6", reference: "INV-6", owner_email: null },
+    ]);
+    render(<BillsPage me={ME} />);
+
+    expect(within(await bill("Vendor 1 INV-1")).getByText(/Emailed the owner/)).toBeTruthy();
+    expect(within(await bill("Vendor 1 INV-5")).getByText("An email to the owner waits to be sent.")).toBeTruthy();
+    expect(within(await bill("Vendor 1 INV-6")).getByText(/no active portal login/)).toBeTruthy();
+  });
+
+  it("lists the emails to owners and whether each went", async () => {
+    server();
+    render(<BillsPage me={ME} />);
+
+    const outbox = await screen.findByRole("list", { name: "Emails to owners" });
+    expect(outbox.textContent).toContain(
+      "2026-10-02 to owner1@example.com: A bill waits for your approval: Vendor 1, $750.00. Sent.",
+    );
+    expect(outbox.textContent).toContain("Not sent (SMTPRecipientsRefused: no such mailbox).");
   });
 
   it("shows why a step was refused on its bill", async () => {

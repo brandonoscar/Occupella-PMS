@@ -20,7 +20,8 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, StringConstraints
 
-from pms import exports
+from pms import email, exports
+from pms.api import outbox
 from pms.api.deps import Conn, Staff
 
 router = APIRouter(prefix="/api/payables")
@@ -73,6 +74,17 @@ def owner_account(conn: psycopg.Connection[Any], pmc_id: UUID, account: str) -> 
 # --- bills --------------------------------------------------------------------------------------
 
 Status = Literal["needs approval", "declined", "to set aside", "set aside", "paid"]
+EmailStatus = Literal["sent", "waiting", "failed"]
+
+# An email's state: delivered, or waiting for a delivery (none tried yet, or fewer than
+# pms.email.MAX_ATTEMPTS failed), or given up on.
+EMAIL_STATUS = f"""
+CASE WHEN EXISTS (SELECT 1 FROM trust_email_deliveries AS d
+                  WHERE d.email_id = {{e}}.id AND d.error IS NULL) THEN 'sent'
+     WHEN (SELECT count(*) FROM trust_email_deliveries AS d
+           WHERE d.email_id = {{e}}.id) >= {email.MAX_ATTEMPTS} THEN 'failed'
+     ELSE 'waiting' END
+"""
 
 
 class Bill(BaseModel):
@@ -92,16 +104,22 @@ class Bill(BaseModel):
     # Who declined it for the owner (the owner in the portal, or as staff recorded it), and why.
     declined_by: str | None = None
     decline_reason: str | None = None
+    # The email asking the owner to decide it (ADR 0004): None when none was written.
+    owner_email: EmailStatus | None = None
     status: Status
 
 
-BILLS = """
+BILLS = (
+    """
 SELECT b.id, v.display_name, b.reference, b.ledger_account_id, o.display_name, p.display_name,
        b.bill_date, b.due_on, b.amount, b.memo, b.work_order_id,
        coalesce((SELECT g.approval_limit FROM trust_management_agreements AS g
                  WHERE g.ledger_account_id = b.ledger_account_id AND g.starts_on <= b.bill_date
                  ORDER BY g.starts_on DESC LIMIT 1), 0),
        ap.approved_by, dc.declined_by, dc.reason,
+       CASE WHEN em.id IS NOT NULL THEN """
+    + EMAIL_STATUS.format(e="em")
+    + """ END,
        EXISTS (SELECT 1 FROM trust_bill_payments AS s WHERE s.bill_id = b.id
                AND s.step = 'set_aside'),
        EXISTS (SELECT 1 FROM trust_bill_payments AS s WHERE s.bill_id = b.id AND s.step = 'paid')
@@ -112,9 +130,11 @@ JOIN trust_owners AS o ON o.id = a.owner_id
 JOIN trust_properties AS p ON p.id = a.property_id
 LEFT JOIN trust_bill_approvals AS ap ON ap.bill_id = b.id
 LEFT JOIN trust_bill_declines AS dc ON dc.bill_id = b.id
+LEFT JOIN trust_emails AS em ON em.kind = 'bill_approval' AND em.bill_id = b.id
 WHERE b.pmc_id = %s
 ORDER BY b.due_on, b.bill_date, v.display_name COLLATE "C", b.reference COLLATE "C", b.id
 """
+)
 
 
 def status_of(
@@ -154,6 +174,7 @@ def bills(
         approved_by,
         declined_by,
         decline_reason,
+        owner_email,
         aside,
         paid,
     ) in conn.execute(BILLS, (session.pmc_id,)).fetchall():
@@ -179,6 +200,7 @@ def bills(
                 approved_by=approved_by,
                 declined_by=declined_by,
                 decline_reason=decline_reason,
+                owner_email=owner_email,
                 status=status,
             )
         )
@@ -240,6 +262,9 @@ def enter_bill(session: Staff, conn: Conn, new: NewBill) -> Created:
     except (psycopg.errors.CheckViolation, psycopg.errors.ForeignKeyViolation) as refused:
         # a work order of another property, a cancelled one, or none of this PMC's
         raise HTTPException(409, reason(refused)) from None
+    # Over the owner's limit: the email asking them to decide it, which goes out once this
+    # commits (ADR 0004).
+    email.write_bill_approval(conn, session.pmc_id, bill, outbox.PUBLIC_URL.get())
     return Created(id=bill)
 
 
@@ -495,12 +520,47 @@ class Counted(BaseModel):
 
 @router.post("/recurring/enter")
 def enter_recurring(session: Staff, conn: Conn, through: Day) -> Counted:
-    """Enters each recurring bill's months up to the day, each month once."""
-    return Counted(
-        entered=one(
-            conn, "SELECT trust_enter_recurring_bills(%s, %s)", (session.pmc_id, through.on)
-        )
-    )
+    """Enters each recurring bill's months up to the day, each month once, and writes the
+    email to the owner of each one over their limit."""
+    entered = one(conn, "SELECT trust_enter_recurring_bills(%s, %s)", (session.pmc_id, through.on))
+    # The bills this transaction entered: their created_at is its start, now().
+    for (bill,) in conn.execute(
+        "SELECT id FROM trust_bills WHERE pmc_id = %s AND created_at = now() ORDER BY id",
+        (session.pmc_id,),
+    ).fetchall():
+        email.write_bill_approval(conn, session.pmc_id, bill, outbox.PUBLIC_URL.get())
+    return Counted(entered=entered)
+
+
+# --- the outbox: emails to owners (ADR 0004) --------------------------------------------------
+
+
+class OutboxEmail(BaseModel):
+    id: UUID
+    to: str
+    subject: str
+    written_at: datetime
+    status: EmailStatus
+    # Why the last delivery failed, while it isn't sent.
+    error: str | None
+
+
+@router.get("/emails")
+def emails(session: Staff, conn: Conn) -> list[OutboxEmail]:
+    """The PMC's emails to owners, newest first (the last 100): to whom, about what, and
+    whether each went."""
+    rows = conn.execute(
+        "SELECT e.id, e.to_address, e.subject, e.created_at, "
+        + EMAIL_STATUS.format(e="e")
+        + ", (SELECT d.error FROM trust_email_deliveries AS d WHERE d.email_id = e.id"
+        "    ORDER BY d.attempted_at DESC LIMIT 1)"
+        " FROM trust_emails AS e WHERE e.pmc_id = %s ORDER BY e.created_at DESC, e.id LIMIT 100",
+        (session.pmc_id,),
+    ).fetchall()
+    return [
+        OutboxEmail(id=i, to=to, subject=subject, written_at=at, status=status, error=error)
+        for i, to, subject, at, status, error in rows
+    ]
 
 
 # --- owners' money ----------------------------------------------------------------------------

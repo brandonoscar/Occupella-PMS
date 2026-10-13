@@ -7,8 +7,8 @@ import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card, Shell } from "../components/Shell";
 import { day, money } from "../money";
-import type { Bill, Recurring } from "../payables";
-import { nextStep, recurringLabel } from "../payables";
+import type { Bill, OutboxEmail, Recurring } from "../payables";
+import { emailNote, nextStep, recurringLabel } from "../payables";
 import type { Portfolio } from "../setup";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
@@ -24,6 +24,7 @@ export function BillsPage({ me }: { me: Me }) {
   const [show, setShow] = useState<Show>("open");
   const [bills, setBills] = useState<Bill[] | null>(null);
   const [recurring, setRecurring] = useState<Recurring[]>([]);
+  const [outbox, setOutbox] = useState<OutboxEmail[]>([]);
   const [books, setBooks] = useState<Portfolio | null>(null);
   const [error, setError] = useState("");
   const failed = (why: unknown) => setError(why instanceof ApiError ? why.detail : String(why));
@@ -31,6 +32,7 @@ export function BillsPage({ me }: { me: Me }) {
   function refresh() {
     api.get<Bill[]>(`/api/payables/bills?show=${show}`).then(setBills).catch(failed);
     api.get<Recurring[]>("/api/payables/recurring").then(setRecurring).catch(failed);
+    api.get<OutboxEmail[]>("/api/payables/emails").then(setOutbox).catch(failed);
   }
   useEffect(refresh, [show]);
   useEffect(() => {
@@ -62,6 +64,7 @@ export function BillsPage({ me }: { me: Me }) {
         )}
       </Card>
       {books && <RecurringCard books={books} recurring={recurring} refresh={refresh} />}
+      <OutboxCard emails={outbox} />
     </Shell>
   );
 }
@@ -151,6 +154,7 @@ function BillRow({ bill, refresh }: { bill: Bill; refresh: () => void }) {
       {bill.approved_by && (
         <p className="text-sm text-ink-subtle">Approved by {bill.approved_by}.</p>
       )}
+      {emailNote(bill) && <p className="text-sm text-ink-subtle">{emailNote(bill)}</p>}
       {bill.declined_by && (
         <p className="text-sm text-ink-subtle">
           Declined by {bill.declined_by}: {bill.decline_reason}. It is never paid from the owner's money.
@@ -369,5 +373,29 @@ function NewRecurringForm({ books, record }: { books: Portfolio; record: Recorde
         onChange={(e) => setStarts(e.target.value)} />
       <Button type="submit" variant="secondary">Add recurring bill</Button>
     </form>
+  );
+}
+
+// The emails the PMS wrote to owners, newest first, and whether each went (ADR 0004).
+function OutboxCard({ emails }: { emails: OutboxEmail[] }) {
+  return (
+    <Card title="Emails to owners">
+      {emails.length === 0 ? (
+        <Notice tone="info">No emails yet.</Notice>
+      ) : (
+        <ul className="flex flex-col gap-1 text-sm" aria-label="Emails to owners">
+          {emails.map((e) => (
+            <li key={e.id}>
+              {e.written_at.slice(0, 10)} to {e.to}: {e.subject}.{" "}
+              <span className="text-ink-muted">
+                {e.status === "sent" ? "Sent." : e.status === "waiting" ? "Waiting to be sent." : "Not sent"}
+                {e.status !== "sent" && e.error ? ` (${e.error})` : ""}
+                {e.status === "failed" ? "." : ""}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Card>
   );
 }
