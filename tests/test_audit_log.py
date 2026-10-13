@@ -418,12 +418,25 @@ def test_the_ai_reads_no_audit_row_of_a_table_it_may_not_read(conn, app_conn, ai
 
 def test_the_ai_audit_report_leaves_out_what_it_may_not_read(conn, app_conn, ai_conn, pmc):
     never_read_rows(conn, pmc)
-    staffs = {line[6] for line in report(app_conn, pmc) if line[1] == "change"}
+    emails = {
+        email
+        for (email,) in conn.execute(
+            "SELECT DISTINCT row_data ->> 'email' FROM trust_audit_log"
+            " WHERE pmc_id = %s AND table_name = ANY(%s) AND row_data ? 'email'",
+            (pmc.pmc_id, sorted(AI_NEVER_READS)),
+        )
+    }
+    staff_lines = [line for line in report(app_conn, pmc) if line[1] == "change"]
+    staffs = {line[6] for line in staff_lines}
     ais = [line for line in report(ai_conn, pmc) if line[1] == "change"]
 
+    assert {"owner.audit@example.com"} <= emails
+    assert any(email.startswith("applicant1.") for email in emails)
     assert {"applicants", "screenings", "logins", "invites"} <= staffs
     assert not {line[6] for line in ais} & {"applicants", "screenings", "logins", "invites"}
-    assert not any("example.com" in (line[7] or "") for line in ais)
+    # Staff see the emails in the lines' details; the AI sees none of them.
+    assert [line for line in staff_lines for email in emails if email in (line[7] or "")]
+    assert not [line for line in ais for email in emails if email in (line[7] or "")]
 
 
 def test_an_audit_row_of_a_table_since_gone_shows_the_ai_nothing(conn, ai_conn, pmc):
