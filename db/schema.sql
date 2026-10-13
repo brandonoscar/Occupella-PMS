@@ -6548,6 +6548,33 @@ CREATE TABLE public.trust_leasing_fees (
 
 
 --
+-- Name: trust_listing_removals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_listing_removals (
+    listing_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    removed_by uuid NOT NULL,
+    removed_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: trust_listings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_listings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    link_id uuid NOT NULL,
+    description text,
+    listed_by uuid NOT NULL,
+    listed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_listings_description_check CHECK (((description ~ '\S'::text) AND (length(description) <= 2000)))
+);
+
+
+--
 -- Name: trust_login_secrets; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -7695,6 +7722,38 @@ ALTER TABLE ONLY public.trust_leasing_fees
 
 ALTER TABLE ONLY public.trust_ledger_accounts
     ADD CONSTRAINT trust_ledger_accounts_pkey PRIMARY KEY (ledger_account_id);
+
+
+--
+-- Name: trust_listing_removals trust_listing_removals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_listing_removals
+    ADD CONSTRAINT trust_listing_removals_pkey PRIMARY KEY (listing_id);
+
+
+--
+-- Name: trust_listings trust_listings_link_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_listings
+    ADD CONSTRAINT trust_listings_link_id_key UNIQUE (link_id);
+
+
+--
+-- Name: trust_listings trust_listings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_listings
+    ADD CONSTRAINT trust_listings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_listings trust_listings_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_listings
+    ADD CONSTRAINT trust_listings_pmc_id_id_key UNIQUE (pmc_id, id);
 
 
 --
@@ -8915,6 +8974,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_listing_removals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_listing_removals FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_listings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_listings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_maintenance_request_work_orders trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -9388,6 +9461,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_leas
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_ledger_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_listing_removals trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_listing_removals FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_listings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_listings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -10892,6 +10979,54 @@ ALTER TABLE ONLY public.trust_ledger_accounts
 
 
 --
+-- Name: trust_listing_removals trust_listing_removals_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_listing_removals
+    ADD CONSTRAINT trust_listing_removals_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_listing_removals trust_listing_removals_pmc_id_listing_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_listing_removals
+    ADD CONSTRAINT trust_listing_removals_pmc_id_listing_id_fkey FOREIGN KEY (pmc_id, listing_id) REFERENCES public.trust_listings(pmc_id, id);
+
+
+--
+-- Name: trust_listing_removals trust_listing_removals_pmc_id_removed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_listing_removals
+    ADD CONSTRAINT trust_listing_removals_pmc_id_removed_by_fkey FOREIGN KEY (pmc_id, removed_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_listings trust_listings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_listings
+    ADD CONSTRAINT trust_listings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_listings trust_listings_pmc_id_link_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_listings
+    ADD CONSTRAINT trust_listings_pmc_id_link_id_fkey FOREIGN KEY (pmc_id, link_id) REFERENCES public.trust_application_links(pmc_id, id);
+
+
+--
+-- Name: trust_listings trust_listings_pmc_id_listed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_listings
+    ADD CONSTRAINT trust_listings_pmc_id_listed_by_fkey FOREIGN KEY (pmc_id, listed_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_login_secrets trust_login_secrets_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11680,4 +11815,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261013000043'),
     ('20261013000044'),
     ('20261013000045'),
-    ('20261013000046');
+    ('20261013000046'),
+    ('20261013000047');

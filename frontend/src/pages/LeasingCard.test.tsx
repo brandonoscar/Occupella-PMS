@@ -40,7 +40,12 @@ const DECIDED = {
   },
 };
 
-function server() {
+const LINKS = [
+  { id: "k1", property: "Property 1", unit: "Unit 1", monthly_rent: "1500.00", opened_at: "2026-10-11T18:00:00Z", applications: 0, listing_id: null },
+  { id: "k2", property: "Property 1", unit: "Unit 2", monthly_rent: "1250.00", opened_at: "2026-10-11T18:00:00Z", applications: 2, listing_id: "v2" },
+];
+
+function server(links: unknown[] = []) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method === "POST") {
       const body = path === "/api/leasing/links" ? { id: "l9", url: "http://x/apply#new-token" } : {};
@@ -48,7 +53,7 @@ function server() {
     }
     const answers: Record<string, unknown> = {
       "/api/leasing/units": [{ unit_id: "u1", property: "Property 1", unit: "Unit 1", leased_today: false }],
-      "/api/leasing/links": [],
+      "/api/leasing/links": links,
       "/api/leasing/applications?show=all": [OPEN, DECIDED],
     };
     return new Response(JSON.stringify(answers[path] ?? { detail: path }), {
@@ -65,6 +70,38 @@ const posts = (fetch: ReturnType<typeof server>) =>
     .map(([path, init]) => [path, JSON.parse(String(init?.body))]);
 
 describe("LeasingCard", () => {
+  it("lists a link on the public page with its description, and takes one off", async () => {
+    const fetch = server(LINKS);
+    render(<LeasingCard pmcId="p1" />);
+
+    const unlisted = await screen.findByRole("listitem", { name: "Property 1, Unit 1" });
+    const listed = screen.getByRole("listitem", { name: "Property 1, Unit 2" });
+    expect(within(listed).getByText(/2 applications; on the public page/)).toBeTruthy();
+    expect(within(listed).queryByRole("button", { name: "List on the public page" })).toBeNull();
+    fireEvent.change(within(unlisted).getByLabelText("Description for the public page (optional)"), {
+      target: { value: "  Two bedrooms, sunny.  " },
+    });
+    fireEvent.click(within(unlisted).getByRole("button", { name: "List on the public page" }));
+    fireEvent.click(within(listed).getByRole("button", { name: "Take off the page" }));
+
+    await vi.waitFor(() => expect(posts(fetch)).toHaveLength(2));
+    expect(posts(fetch)).toEqual([
+      ["/api/leasing/links/k1/listing", { description: "Two bedrooms, sunny." }],
+      ["/api/leasing/listings/v2/remove", {}],
+    ]);
+    expect(screen.getByRole("link", { name: "/listings?pmc=p1" }).getAttribute("href")).toBe("/listings?pmc=p1");
+  });
+
+  it("lists a link with no description", async () => {
+    const fetch = server(LINKS.slice(0, 1));
+    render(<LeasingCard />);
+
+    fireEvent.click(await screen.findByRole("button", { name: "List on the public page" }));
+
+    await vi.waitFor(() => expect(posts(fetch)).toEqual([["/api/leasing/links/k1/listing", { description: null }]]));
+    expect(screen.queryByText(/Your public vacancy page/)).toBeNull();
+  });
+
   it("opens a link for a unit and shows its URL once", async () => {
     const fetch = server();
     render(<LeasingCard />);

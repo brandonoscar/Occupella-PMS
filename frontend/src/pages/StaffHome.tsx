@@ -124,7 +124,7 @@ export function StaffHome({ me }: { me: Me }) {
         )}
       </Card>
       <MaintenanceCard />
-      <LeasingCard onChange={() => setDecided((n) => n + 1)} />
+      <LeasingCard pmcId={me.pmc_id} onChange={() => setDecided((n) => n + 1)} />
       <OffersCard changed={decided} />
     </Shell>
   );

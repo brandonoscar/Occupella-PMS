@@ -2,6 +2,25 @@
 
 export type Listing = { pmc: string; property: string; unit: string; monthly_rent: string };
 
+// A unit on a PMC's public vacancy page, and the page.
+export type Vacancy = {
+  id: string;
+  property: string;
+  unit: string;
+  monthly_rent: string;
+  description: string | null;
+  listed_at: string;
+};
+export type Vacancies = { pmc: string; listings: Vacancy[] };
+
+// What an applicant applies through: a listing from the public page (/apply?listing=<id>), else
+// the token of a link staff posted (/apply#<token>).
+export type ApplyVia = { listing: string } | { token: string };
+export function applyVia(search: string, hash: string): ApplyVia {
+  const listing = new URLSearchParams(search).get("listing");
+  return listing ? { listing } : { token: hash.replace(/^#/, "") };
+}
+
 export type ApplicantStatus = {
   property: string;
   unit: string;

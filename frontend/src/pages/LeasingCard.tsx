@@ -17,6 +17,8 @@ type Link = {
   monthly_rent: string;
   opened_at: string;
   applications: number;
+  // Its listing on the PMC's public vacancy page, while it is there.
+  listing_id: string | null;
 };
 
 type Draft = {
@@ -29,10 +31,11 @@ type Draft = {
 
 const SELECT = "h-9 rounded-sm border border-line-strong bg-sunken px-2 text-sm text-ink";
 
-// Staff's leasing: application links for units, and the applications that come through them,
-// screened through the server's partner and decided. A decline or conditional approval that
-// rests on a screening records its adverse action notice with it.
-export function LeasingCard({ onChange }: { onChange?: () => void }) {
+// Staff's leasing: application links for units, each of which may be listed on the PMC's public
+// vacancy page, and the applications that come through them, screened through the server's
+// partner and decided. A decline or conditional approval that rests on a screening records its
+// adverse action notice with it.
+export function LeasingCard({ pmcId, onChange }: { pmcId?: string; onChange?: () => void }) {
   const [units, setUnits] = useState<Unit[]>([]);
   const [links, setLinks] = useState<Link[]>([]);
   // Every application, decided or not: the open ones to decide, the decided ones' notices.
@@ -41,6 +44,7 @@ export function LeasingCard({ onChange }: { onChange?: () => void }) {
   const [rent, setRent] = useState("");
   const [opened, setOpened] = useState("");
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const [descriptions, setDescriptions] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
 
   function show(failed: unknown) {
@@ -148,22 +152,60 @@ export function LeasingCard({ onChange }: { onChange?: () => void }) {
           </span>
         </p>
       )}
-      <ul className="mb-8 flex flex-col divide-y divide-line">
+      <ul className="mb-4 flex flex-col divide-y divide-line">
         {links.map((link) => (
-          <li key={link.id} className="flex items-center justify-between gap-4 py-2">
-            <span>
-              {link.property}, {link.unit} at {money(link.monthly_rent)}.{" "}
-              <span className="text-sm text-ink-subtle">
-                {link.applications} {link.applications === 1 ? "application" : "applications"}
+          <li key={link.id} className="flex flex-col gap-2 py-2" aria-label={`${link.property}, ${link.unit}`}>
+            <div className="flex items-center justify-between gap-4">
+              <span>
+                {link.property}, {link.unit} at {money(link.monthly_rent)}.{" "}
+                <span className="text-sm text-ink-subtle">
+                  {link.applications} {link.applications === 1 ? "application" : "applications"}
+                  {link.listing_id ? "; on the public page" : ""}
+                </span>
               </span>
-            </span>
-            <Button variant="ghost"
-              onClick={() => act(() => api.post(`/api/leasing/links/${link.id}/close`))}>
-              Close
-            </Button>
+              <span className="flex gap-2">
+                {link.listing_id && (
+                  <Button variant="ghost"
+                    onClick={() => act(() => api.post(`/api/leasing/listings/${link.listing_id}/remove`))}>
+                    Take off the page
+                  </Button>
+                )}
+                <Button variant="ghost"
+                  onClick={() => act(() => api.post(`/api/leasing/links/${link.id}/close`))}>
+                  Close
+                </Button>
+              </span>
+            </div>
+            {!link.listing_id && (
+              <form
+                className="flex flex-wrap items-end gap-3"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  act(() =>
+                    api.post(`/api/leasing/links/${link.id}/listing`, {
+                      description: (descriptions[link.id] ?? "").trim() || null,
+                    }),
+                  );
+                }}
+              >
+                <Field label="Description for the public page (optional)" id={`describe-${link.id}`}
+                  maxLength={2000} value={descriptions[link.id] ?? ""}
+                  onChange={(e) => setDescriptions({ ...descriptions, [link.id]: e.target.value })} />
+                <Button type="submit" variant="secondary">List on the public page</Button>
+              </form>
+            )}
           </li>
         ))}
       </ul>
+      {pmcId && (
+        <p className="mb-8 text-sm text-ink-muted">
+          Your public vacancy page:{" "}
+          <a className="font-mono text-ink underline" href={`/listings?pmc=${pmcId}`}>
+            /listings?pmc={pmcId}
+          </a>
+          . Point applicants to it; nothing is sent to listing sites.
+        </p>
+      )}
 
       <h3 className="mb-3 text-md font-medium">Applications to decide</h3>
       {applications === null ? (

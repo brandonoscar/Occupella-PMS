@@ -1,9 +1,11 @@
 """Leasing basics, part one: application links, applications, screening and decisions.
 
 Applicants have no login. Staff open an application link for a unit (its token is shown once
-and kept only as a SHA-256), and anyone with it applies. Each application gets a status token
-the applicant keeps to see where it stands. Tokens travel in JSON bodies, never in a path, so
-they stay out of server logs.
+and kept only as a SHA-256), and anyone with it applies. Staff may list an open link on the
+PMC's public vacancy page (/listings?pmc=...); anyone who opens the page applies through the
+listing as through the link, until it is removed or the link closed. Nothing is syndicated.
+Each application gets a status token the applicant keeps to see where it stands. Tokens travel
+in JSON bodies, never in a path, so they stay out of server logs.
 
 Staff screen an application through the partner the server is set up with
 (pms.leasing.screening) and decide on it. A decline or a conditional approval that rests on a
@@ -21,7 +23,7 @@ from uuid import UUID
 
 import psycopg
 from fastapi import APIRouter, HTTPException, Query, Request, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from pms import accounts, exports
 from pms.api.deps import Conn, Staff, download
@@ -53,7 +55,16 @@ def public_url(request: Request) -> str:
 
 
 class LinkToken(BaseModel):
-    token: Token
+    """An open link's token, or a listing's id from the PMC's public page: one of the two."""
+
+    token: Token | None = None
+    listing: UUID | None = None
+
+    @model_validator(mode="after")
+    def one_of_the_two(self) -> LinkToken:
+        if (self.token is None) == (self.listing is None):
+            raise ValueError("apply through a link's token or a listing, one of the two")
+        return self
 
 
 class Listing(BaseModel):
@@ -68,8 +79,7 @@ class ApplicantIn(BaseModel):
     email: str = Field(min_length=3, max_length=254)
 
 
-class ApplicationIn(BaseModel):
-    token: Token
+class ApplicationIn(LinkToken):
     move_in_on: date
     monthly_income: Money
     applicants: list[ApplicantIn] = Field(min_length=1, max_length=MAX_APPLICANTS)
@@ -95,19 +105,36 @@ class Status(BaseModel):
     conditions: str | None
 
 
-def open_link(conn: psycopg.Connection[Any], token: str) -> tuple[Any, ...]:
-    """(link, PMC, PMC name, property, unit, rent) of an open link, or 404 for any other."""
-    row = conn.execute(
-        "SELECT l.id, l.pmc_id, pmc.display_name, p.display_name, u.display_name,"
-        " l.monthly_rent"
-        " FROM trust_application_links AS l"
-        " JOIN trust_pmcs AS pmc ON pmc.pmc_id = l.pmc_id"
-        " JOIN trust_units AS u ON u.id = l.unit_id"
-        " JOIN trust_properties AS p ON p.id = u.property_id"
-        " WHERE l.token_sha256 = %s AND NOT EXISTS ("
-        "   SELECT 1 FROM trust_application_link_closings AS c WHERE c.link_id = l.id)",
-        (accounts.digest(token),),
-    ).fetchone()
+def open_link(conn: psycopg.Connection[Any], via: LinkToken) -> tuple[Any, ...]:
+    """(link, PMC, PMC name, property, unit, rent) of an open link, by its token or a listing
+    of it not removed, or 404 for any other."""
+    if via.listing is not None:
+        found = conn.execute(
+            "SELECT s.link_id FROM trust_listings AS s WHERE s.id = %s AND NOT EXISTS ("
+            "   SELECT 1 FROM trust_listing_removals AS r WHERE r.listing_id = s.id)",
+            (via.listing,),
+        ).fetchone()
+    else:
+        assert via.token is not None
+        found = conn.execute(
+            "SELECT l.id FROM trust_application_links AS l WHERE l.token_sha256 = %s",
+            (accounts.digest(via.token),),
+        ).fetchone()
+    row = (
+        None
+        if found is None
+        else conn.execute(
+            "SELECT l.id, l.pmc_id, pmc.display_name, p.display_name, u.display_name,"
+            " l.monthly_rent"
+            " FROM trust_application_links AS l"
+            " JOIN trust_pmcs AS pmc ON pmc.pmc_id = l.pmc_id"
+            " JOIN trust_units AS u ON u.id = l.unit_id"
+            " JOIN trust_properties AS p ON p.id = u.property_id"
+            " WHERE l.id = %s AND NOT EXISTS ("
+            "   SELECT 1 FROM trust_application_link_closings AS c WHERE c.link_id = l.id)",
+            (found[0],),
+        ).fetchone()
+    )
     if row is None:
         raise HTTPException(404, NOT_OPEN)
     return tuple(row)
@@ -116,7 +143,7 @@ def open_link(conn: psycopg.Connection[Any], token: str) -> tuple[Any, ...]:
 @router.post("/api/apply/view")
 def view_listing(conn: Conn, link: LinkToken) -> Listing:
     """What an open link is for, so the applicant knows what they apply for."""
-    _, _, pmc, prop, unit, rent = open_link(conn, link.token)
+    _, _, pmc, prop, unit, rent = open_link(conn, link)
     return Listing(pmc=pmc, property=prop, unit=unit, monthly_rent=exports.text(rent))
 
 
@@ -135,7 +162,7 @@ def apply(request: Request, conn: Conn, application: ApplicationIn) -> Submitted
         people.append((name, email))
     if len({email for _, email in people}) < len(people):
         raise HTTPException(422, "each applicant has their own email")
-    link, pmc_id, *_ = open_link(conn, application.token)
+    link, pmc_id, *_ = open_link(conn, application)
     recent = conn.execute(
         "SELECT count(*) FROM trust_applications WHERE link_id = %s AND submitted_at > %s",
         (link, datetime.now(UTC) - timedelta(days=1)),
@@ -208,6 +235,8 @@ class Link(BaseModel):
     monthly_rent: str
     opened_at: datetime
     applications: int
+    # Its listing on the PMC's public page, while it is there.
+    listing_id: UUID | None = None
 
 
 class OpenedLink(BaseModel):
@@ -279,7 +308,9 @@ def links(session: Staff, conn: Conn) -> list[Link]:
     """The PMC's open application links, newest first."""
     rows = conn.execute(
         "SELECT l.id, p.display_name, u.display_name, l.monthly_rent, l.opened_at,"
-        " (SELECT count(*) FROM trust_applications AS a WHERE a.link_id = l.id)"
+        " (SELECT count(*) FROM trust_applications AS a WHERE a.link_id = l.id),"
+        " (SELECT s.id FROM trust_listings AS s WHERE s.link_id = l.id AND NOT EXISTS ("
+        "   SELECT 1 FROM trust_listing_removals AS r WHERE r.listing_id = s.id))"
         " FROM trust_application_links AS l"
         " JOIN trust_units AS u ON u.id = l.unit_id"
         " JOIN trust_properties AS p ON p.id = u.property_id"
@@ -290,9 +321,15 @@ def links(session: Staff, conn: Conn) -> list[Link]:
     ).fetchall()
     return [
         Link(
-            id=i, property=p, unit=u, monthly_rent=exports.text(rent), opened_at=at, applications=n
+            id=i,
+            property=p,
+            unit=u,
+            monthly_rent=exports.text(rent),
+            opened_at=at,
+            applications=n,
+            listing_id=listing,
         )
-        for i, p, u, rent, at, n in rows
+        for i, p, u, rent, at, n, listing in rows
     ]
 
 

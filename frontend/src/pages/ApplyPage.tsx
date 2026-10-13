@@ -5,16 +5,18 @@ import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Card, Wordmark } from "../components/Shell";
 import type { Listing } from "../leasing";
+import { applyVia } from "../leasing";
 import { money } from "../money";
 
 const MAX_APPLICANTS = 6;
 
 type Person = { name: string; email: string };
 
-// The public application page: /apply#<token>, from a link the property manager posted. No
-// login; the answer is a status link the applicant keeps.
+// The public application page: /apply#<token>, from a link the property manager posted, or
+// /apply?listing=<id> from their public vacancy page. No login; the answer is a status link the
+// applicant keeps.
 export function ApplyPage() {
-  const token = window.location.hash.slice(1);
+  const [via] = useState(() => applyVia(window.location.search, window.location.hash));
   const [listing, setListing] = useState<Listing | null>(null);
   const [moveIn, setMoveIn] = useState("");
   const [income, setIncome] = useState("");
@@ -25,10 +27,10 @@ export function ApplyPage() {
 
   useEffect(() => {
     api
-      .post<Listing>("/api/apply/view", { token })
+      .post<Listing>("/api/apply/view", via)
       .then(setListing)
       .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
-  }, [token]);
+  }, [via]);
 
   function change(n: number, key: keyof Person, value: string) {
     setPeople(people.map((person, i) => (i === n ? { ...person, [key]: value } : person)));
@@ -40,7 +42,7 @@ export function ApplyPage() {
     setError("");
     try {
       const done = await api.post<{ status_url: string }>("/api/apply", {
-        token,
+        ...via,
         move_in_on: moveIn,
         monthly_income: income,
         applicants: people,

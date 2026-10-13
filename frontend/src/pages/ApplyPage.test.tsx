@@ -56,6 +56,28 @@ describe("ApplyPage", () => {
     });
   });
 
+  it("applies through a listing from the public page", async () => {
+    window.history.replaceState(null, "", "/apply?listing=v1");
+    const fetch = server(
+      new Response(JSON.stringify({ status_url: "http://x/application#status" }), { status: 201 }),
+    );
+    render(<ApplyPage />);
+
+    expect(await screen.findByText("Apply for Property 1, Unit 1")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Move-in day"), { target: { value: "2026-12-01" } });
+    fireEvent.change(screen.getByLabelText("Monthly income of everyone applying, together"), {
+      target: { value: "4500" },
+    });
+    fireEvent.change(screen.getByLabelText("Full name"), { target: { value: "Applicant A" } });
+    fireEvent.change(screen.getByLabelText("Email"), { target: { value: "a@example.com" } });
+    fireEvent.click(screen.getByRole("button", { name: "Send application" }));
+
+    expect(await screen.findByTestId("status-url")).toBeTruthy();
+    expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({ listing: "v1" });
+    expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body))).toMatchObject({ listing: "v1" });
+    expect(JSON.parse(String(fetch.mock.calls[1]?.[1]?.body)).token).toBeUndefined();
+  });
+
   it("says so when the link is closed", async () => {
     window.history.replaceState(null, "", "/apply#old");
     vi.stubGlobal(
