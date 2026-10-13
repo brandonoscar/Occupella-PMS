@@ -776,6 +776,7 @@ tests = [
   "tests/test_documents.py::test_the_log_records_the_document_and_never_its_bytes",
   "tests/test_documents.py::test_the_ai_knows_a_document_exists_and_never_reads_it",
   "tests/api/test_documents_api.py::test_an_owner_reads_their_own_documents_only",
+  "tests/properties/test_document_properties.py::test_documents_are_their_files_and_their_bytes_stay_out_of_the_log",
 ]
 
 [[report]]
