@@ -201,7 +201,10 @@ required invariant, report and self-host step.
   completed, cancelled) are append-only and in order, and nothing follows a close. A bill may
   name a work order of its property, never a cancelled one.
 - Rent automation: `trust_charge_rent_due` charges every lease in effect on a due date its rent,
-  once per lease and date. A property's late fee terms (grace days, flat, percent of unpaid,
+  once per lease and date: for the days of the month it is in effect (migration 0045: monthly
+  rent x days / days in the month, to the cent), and a lease starting later in the month its
+  first part month, due on its first day, unless rent was charged in that month already. It
+  never reaches back into an earlier month. A property's late fee terms (grace days, flat, percent of unpaid,
   cap) are in force from a date; `trust_assess_late_fees` charges a rent still unpaid at the
   end of its last grace day (UTC) one late fee under the terms in force on its due date. READ
   COMMITTED. A property's NSF fee is in force from a date too (migration 0044, 0 charges

@@ -41,7 +41,9 @@ money.
 Staff do the rent work at `/rent` (`src/pms/api/rent.py`):
 
 - The rent run charges every lease in effect on a due date its rent (`trust_charge_rent_due`),
-  once per lease and date; late fees are assessed as of today or an earlier day
+  once per lease and date, for the days of the month it is in effect, and a lease starting later
+  in the month its first part month, due on its first day (since 2026-10-13, product item 3:
+  actual days, rounded to the cent); late fees are assessed as of today or an earlier day
   (`trust_assess_late_fees`). A fee or a credit is added to a lease by hand, once or every
   month (since 2026-10-13, product item 1 of three the founder approved): a recurring charge
   such as pet rent or parking, or a recurring credit such as a concession, is charged by the

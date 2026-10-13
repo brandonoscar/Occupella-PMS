@@ -286,12 +286,18 @@ tests = [
 
 [[invariant]]
 id = "rent-run-once-per-lease-and-date"
-statement = "The rent run charges every lease in effect on the due date (from its first day through its last) its monthly rent, once per lease and due date, however often it runs or how many run at once; leases of other PMCs are never charged."
+statement = "The rent run charges every lease in effect on the due date (from its first day through its last) its rent for the days of the month it is in effect (monthly rent x days / days in the month, rounded to the cent; the whole rent for a whole month), and every lease starting later that month with no rent charged in the month yet its first part month, due on its first day; once per lease and due date, however often it runs or how many run at once. It never reaches back into an earlier month, charges nothing that rounds to 0.00, and never charges another PMC's lease."
 tests = [
   "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
   "tests/test_rent_automation.py::test_only_leases_in_effect_on_the_due_date_are_charged",
   "tests/test_rent_automation.py::test_running_again_charges_nothing_more",
   "tests/test_rent_automation.py::test_two_runs_at_once_charge_each_lease_once",
+  "tests/test_prorated_rent.py::test_a_lease_starting_later_in_the_month_is_charged_its_part_month_due_its_first_day",
+  "tests/test_prorated_rent.py::test_a_lease_ending_in_the_month_is_charged_to_its_last_day",
+  "tests/test_prorated_rent.py::test_a_month_is_its_own_number_of_days",
+  "tests/test_prorated_rent.py::test_half_a_cent_rounds_up",
+  "tests/test_prorated_rent.py::test_the_run_never_reaches_back_into_an_earlier_month",
+  "tests/test_prorated_rent.py::test_rent_already_charged_in_the_first_month_stops_the_part_month",
 ]
 
 [[invariant]]

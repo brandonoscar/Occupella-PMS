@@ -1072,22 +1072,49 @@ CREATE FUNCTION public.trust_charge_rent_due(p_pmc_id uuid, p_due_on date) RETUR
     AS $$
 DECLARE
     v_charged integer;
+    v_first integer;
 BEGIN
     IF p_due_on IS NULL THEN
         RAISE EXCEPTION 'trust: rent is charged for a due date; none was given'
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
 
+    -- Every lease in effect on the due date: its rent for the days of the month it is in effect.
     INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)
-    SELECT l.pmc_id, l.id, p_due_on, 'rent', l.monthly_rent,
-           'Rent due ' || to_char(p_due_on, 'YYYY-MM-DD')
+    SELECT l.pmc_id, l.id, p_due_on, 'rent', r.amount,
+           'Rent due ' || to_char(p_due_on, 'YYYY-MM-DD') || r.days
     FROM trust_leases AS l
+    CROSS JOIN LATERAL trust_rent_for_month(
+        l.starts_on, l.ends_on, l.monthly_rent, p_due_on
+    ) AS r
     WHERE l.pmc_id = p_pmc_id AND l.starts_on <= p_due_on
       AND (l.ends_on IS NULL OR p_due_on <= l.ends_on)
+      AND r.amount > 0  -- a day of a few cents' rent rounds to nothing
     ORDER BY l.id
     ON CONFLICT (lease_id, due_on) WHERE kind = 'rent' DO NOTHING;
     GET DIAGNOSTICS v_charged = ROW_COUNT;
-    RETURN v_charged;
+
+    -- Every lease that starts later this month, with no rent charged in the month yet: its first
+    -- month's rent, due on its first day.
+    INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)
+    SELECT l.pmc_id, l.id, l.starts_on, 'rent', r.amount,
+           'Rent due ' || to_char(l.starts_on, 'YYYY-MM-DD') || r.days
+    FROM trust_leases AS l
+    CROSS JOIN LATERAL trust_rent_for_month(
+        l.starts_on, l.ends_on, l.monthly_rent, l.starts_on
+    ) AS r
+    WHERE l.pmc_id = p_pmc_id AND l.starts_on > p_due_on AND r.amount > 0
+      AND date_trunc('month', l.starts_on::timestamp) = date_trunc('month', p_due_on::timestamp)
+      AND NOT EXISTS (
+          SELECT c.id FROM trust_charges AS c
+          WHERE c.lease_id = l.id AND c.kind = 'rent'
+            AND date_trunc('month', c.due_on::timestamp)
+                = date_trunc('month', l.starts_on::timestamp)
+      )
+    ORDER BY l.id
+    ON CONFLICT (lease_id, due_on) WHERE kind = 'rent' DO NOTHING;
+    GET DIAGNOSTICS v_first = ROW_COUNT;
+    RETURN v_charged + v_first;
 END;
 $$;
 
@@ -3363,6 +3390,33 @@ BEGIN
     END LOOP;
     RETURN NEW;
 END;
+$$;
+
+
+--
+-- Name: trust_rent_for_month(date, date, numeric, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_rent_for_month(p_starts_on date, p_ends_on date, p_monthly_rent numeric, p_day date) RETURNS TABLE(amount numeric, days text)
+    LANGUAGE sql IMMUTABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT round(p_monthly_rent * (d.last_day - d.first_day + 1) / d.month_days, 2),
+           CASE WHEN d.last_day - d.first_day + 1 = d.month_days THEN ''
+                ELSE ', ' || to_char(d.first_day, 'YYYY-MM-DD') || ' to '
+                     || to_char(d.last_day, 'YYYY-MM-DD') || ' ('
+                     || (d.last_day - d.first_day + 1) || ' of ' || d.month_days || ' days)'
+           END
+    FROM (
+        SELECT greatest(p_starts_on, m.month_start) AS first_day,
+               least(coalesce(p_ends_on, m.month_end), m.month_end) AS last_day,
+               m.month_end - m.month_start + 1 AS month_days
+        FROM (
+            SELECT date_trunc('month', p_day::timestamp)::date AS month_start,
+                   (date_trunc('month', p_day::timestamp) + interval '1 month - 1 day')::date
+                       AS month_end
+        ) AS m
+    ) AS d
 $$;
 
 
@@ -11507,4 +11561,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261013000041'),
     ('20261013000042'),
     ('20261013000043'),
-    ('20261013000044');
+    ('20261013000044'),
+    ('20261013000045');
