@@ -84,8 +84,9 @@ required invariant, report and self-host step.
   own write paths, nothing that moves money), do the rent work at `/rent`
   (`src/pms/api/rent.py`), pay bills and handle owners' money at `/bills` and `/owners`
   (`src/pms/api/payables.py`), reconcile at `/reconcile` (`src/pms/api/reconcile.py`), bring a
-  PMC over from another system at `/switching` (`src/pms/api/switching.py`), and see and change
-  staff roles at `/staff` (`src/pms/api/staff.py`).
+  PMC over from another system at `/switching` (`src/pms/api/switching.py`), see and change
+  staff roles at `/staff` (`src/pms/api/staff.py`), and handle move-outs at `/move-out`
+  (`src/pms/api/moveout.py`).
   npm packages are pinned exactly and their
   licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
   owner only: no request names an owner, a property or a PMC. A tenant's pages
@@ -127,8 +128,8 @@ required invariant, report and self-host step.
   `trust_set_aside_bill`, `trust_pay_bill`, `trust_assess_late_fees`,
   `trust_post_opening_balances`, `trust_record_owner_contribution`,
   `trust_complete_lease_offer`, `trust_match_bank_lines`, `trust_unmatch_bank_lines`,
-  `trust_prepare_bank_reconciliation`, `trust_approve_bank_reconciliation` and
-  `trust_match_cutover_opening`, which run as the table owner (`trust_charge_rent_due` and `trust_enter_recurring_bills` run with the app's own
+  `trust_prepare_bank_reconciliation`, `trust_approve_bank_reconciliation`,
+  `trust_match_cutover_opening` and `trust_return_deposit`, which run as the table owner (`trust_charge_rent_due` and `trust_enter_recurring_bills` run with the app's own
   grants). It can't call pgledger's posting functions: every posting it makes goes through
   `trust_post_transfers`, which takes an idempotency key, unique per PMC, so it is safe to
   retry: the same key returns the original transfers, and a different posting under it is
@@ -262,6 +263,13 @@ required invariant, report and self-host step.
   (`trust_approve_bank_reconciliation` takes the preparation), on the figures prepared; the app
   can't call `trust_approve_reconciliation` itself. On upgrade every staff member holds every
   role.
+- Move-out (migration 0035): once a lease has ended, `trust_return_deposit` returns its
+  tenants' deposits once per lease (same request key again returns the same): what the lease owes
+  (`trust_lease_owed`), or all the deposits if less, is kept for the owner's account and matched
+  to its charges oldest first, the cash moving to the owner's trust bank account; the rest goes
+  back to each tenant from the security-deposit account. A tenant still on another lease keeps
+  their deposit with it. It takes the disburse role. `trust_report_deposit_return` is the
+  itemized statement for the tenants. READ COMMITTED; append-only.
 - Vendor payments: `trust_report_vendor_payments` lists what each vendor was paid through
   `trust_pay_bill` in a calendar year (UTC), for 1099 preparation. It files nothing, holds no
   tax IDs and applies no threshold.

@@ -238,7 +238,8 @@ decline with a notice, and staff offer a lease and a renewal that the applicant 
 sign on the fake e-sign partner's page (`PMS_ESIGN_PARTNER=fake`) before staff make each the
 lease, and staff set up a property from nothing, lease a unit and find it on the rent roll, and
 record a tenant's payment (the rest held as prepaid rent) and then its bounce, and pay a
-vendor's bill (after the owner's approval) and draw what is left for its owner, and import
+vendor's bill (after the owner's approval) and draw what is left for its owner, charge a
+tenant's damage at move-out and return the rest of their deposit with its statement, and import
 last month's bank statement, match it to the books and prepare the reconciliation for another
 staff member, who may approve, to approve, and bring a
 roster in, open an account with its old balances and a check not cleared, sign off the tie-out

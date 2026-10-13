@@ -38,7 +38,8 @@ month-end: bank statements imported from CSV or OFX, matched to the books, and t
 reconciliation prepared by one staff member once the books lack no line and approved by
 another; a switching tool that brings a PMC's roster, opening balances and uncleared checks
 over from its old system, with a tie-out staff sign off; and staff roles, so only those an
-admin allows approve and pay out money. Move-out and documents come next.
+admin allows approve and pay out money; and move-out, where a lease's deposits pay what it owes
+and the rest goes back to the tenants with an itemized statement. Documents come next.
 
 Still true:
 

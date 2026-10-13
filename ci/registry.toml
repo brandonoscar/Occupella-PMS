@@ -754,3 +754,23 @@ tests = [
   "tests/test_staff_roles.py::test_a_pmc_keeps_an_admin",
   "tests/api/test_staff.py::test_paying_out_money_takes_the_disburse_role",
 ]
+
+[[invariant]]
+id = "a-deposit-pays-what-is-owed-and-the-rest-goes-back"
+statement = "Once a lease has ended, its tenants' security deposits are returned once (the same request again returns the same; another is refused): what the lease owes, or every deposit if that is less, is kept for the owner's account and matched to its charges oldest first, its cash moving to the owner's trust bank account; the rest goes back to the tenants, kept from in name order. Every deposit is emptied and every trust bank account ties out. A tenant still on another lease keeps their deposit with it, and returning one takes the disburse role."
+tests = [
+  "tests/properties/test_deposit_return_properties.py::test_a_deposit_return_keeps_what_is_owed_and_gives_back_the_rest",
+  "tests/test_move_out.py::test_a_deposit_pays_what_the_lease_owes_and_the_rest_goes_back",
+  "tests/test_move_out.py::test_a_tenant_still_on_another_lease_keeps_their_deposit",
+  "tests/test_move_out.py::test_the_same_request_again_returns_nothing_twice_and_another_is_refused",
+  "tests/api/test_moveout.py::test_a_move_out_ends_the_lease_charges_damage_and_returns_the_rest",
+]
+
+[[report]]
+id = "deposit-return"
+statement = "The itemized statement of a lease's security deposits once returned, as staff send it to the tenants: the property and unit, the tenants and the lease's days, each tenant's deposit, what was kept for each charge, the totals, what went back to each tenant, and who returned it when. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_move_out.py::test_a_deposit_pays_what_the_lease_owes_and_the_rest_goes_back",
+  "tests/api/test_moveout.py::test_a_move_out_ends_the_lease_charges_damage_and_returns_the_rest",
+]

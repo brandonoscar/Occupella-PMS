@@ -255,6 +255,15 @@ def open_lease(connection, pmc_id, unit_id, starts_on, ends_on, rent, tenant_ids
     )
 
 
+def return_deposit(connection, pmc_id, lease_id, request_key, event_at, owner_account=None):
+    """Settle an ended lease's deposits: keep what it owes for the owner, return the rest."""
+    return _one(
+        connection,
+        "SELECT trust_return_deposit(%s, %s, %s, %s, %s)",
+        (pmc_id, lease_id, owner_account, request_key, event_at),
+    )
+
+
 def end_lease(connection, pmc_id, lease_id, ends_on) -> None:
     connection.execute("SELECT trust_end_lease(%s, %s, %s)", (pmc_id, lease_id, ends_on))
 

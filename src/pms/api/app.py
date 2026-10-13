@@ -43,6 +43,7 @@ from pms.api import (
     fake_esign,
     leasing,
     maintenance,
+    moveout,
     offers,
     owner,
     payables,
@@ -335,6 +336,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(reconcile.router)
     app.include_router(switching.router)
     app.include_router(staff.router)
+    app.include_router(moveout.router)
     if settings.static_dir is not None:
         serve_portal(app, settings.static_dir)
     return app

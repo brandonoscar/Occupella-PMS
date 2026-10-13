@@ -267,6 +267,69 @@ def main() -> None:
                 "SELECT trust_open_ledger_account(%s, %s, %s, NULL, NULL, NULL)",
                 (pmc, cutover_bank, kind),
             )
+        # Move-out: a lease that ended last month, its tenant's deposit held in a security
+        # deposit trust account, and a staff member who may pay it back.
+        move_out_staff = one(
+            "INSERT INTO trust_staff (pmc_id, display_name) VALUES (%s, 'Move-out E2E')"
+            " RETURNING id",
+            (pmc,),
+        )
+        deposit_bank = one(
+            "INSERT INTO trust_bank_accounts (pmc_id, kind, display_name)"
+            " VALUES (%s, 'security_deposit', 'E2E security deposit trust account') RETURNING id",
+            (pmc,),
+        )
+        deposit_cash = one(
+            "SELECT trust_open_ledger_account(%s, %s, 'bank_cash', NULL, NULL, NULL)",
+            (pmc, deposit_bank),
+        )
+        landlord = one(
+            "INSERT INTO trust_owners (pmc_id, display_name) VALUES (%s, 'Landlord E2E')"
+            " RETURNING id",
+            (pmc,),
+        )
+        prop_eight = one(
+            "INSERT INTO trust_properties (pmc_id, display_name) VALUES (%s, 'E2E Property 8')"
+            " RETURNING id",
+            (pmc,),
+        )
+        conn.execute(
+            "SELECT trust_open_ledger_account(%s, %s, 'owner_property', %s, %s, NULL)",
+            (pmc, bank, landlord, prop_eight),
+        )
+        unit_eight = one(
+            "INSERT INTO trust_units (pmc_id, property_id, display_name)"
+            " VALUES (%s, %s, 'E2E Unit 8') RETURNING id",
+            (pmc, prop_eight),
+        )
+        leaver = one(
+            "INSERT INTO trust_tenants (pmc_id, property_id, display_name)"
+            " VALUES (%s, %s, 'Leaver E2E') RETURNING id",
+            (pmc, prop_eight),
+        )
+        conn.execute(
+            "SELECT trust_open_lease(%s, %s, %s, %s, 900.00, %s::uuid[])",
+            (
+                pmc,
+                unit_eight,
+                first_of_last_month - timedelta(days=60),
+                first_of_this_month - timedelta(days=1),
+                [leaver],
+            ),
+        )
+        leaver_deposit = one(
+            "SELECT trust_open_ledger_account(%s, %s, 'tenant_deposit', NULL, NULL, %s)",
+            (pmc, deposit_bank, leaver),
+        )
+        conn.execute(
+            "SELECT pgledger_create_transfer(%s, %s, 900.00, %s, %s)",
+            (
+                deposit_cash,
+                leaver_deposit,
+                last_month - timedelta(days=60),
+                json.dumps({"memo": "Security deposit"}),
+            ),
+        )
         # Month-end is approved by someone other than whoever prepared it.
         approver_staff = one(
             "INSERT INTO trust_staff (pmc_id, display_name) VALUES (%s, 'Approver E2E')"
@@ -284,6 +347,7 @@ def main() -> None:
             (bills_staff, "disburse"),
             (switch_staff, "approve"),
             (approver_staff, "approve"),
+            (move_out_staff, "disburse"),
         ):
             conn.execute(
                 "INSERT INTO trust_staff_roles (pmc_id, staff_id, role, granted)"
@@ -325,6 +389,9 @@ def main() -> None:
             ).token,
             "approver_invite": accounts.create_invite(
                 conn, pmc, "staff", approver_staff, f"approver.{tag}@example.com", None
+            ).token,
+            "move_out_invite": accounts.create_invite(
+                conn, pmc, "staff", move_out_staff, f"move-out.{tag}@example.com", None
             ).token,
             "switch_invite": accounts.create_invite(
                 conn, pmc, "staff", switch_staff, f"switch.{tag}@example.com", None
