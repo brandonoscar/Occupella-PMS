@@ -1038,6 +1038,9 @@ BEGIN
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
 
+    -- Leases' ends don't change while the run charges (trust_end_lease waits for it).
+    PERFORM pg_advisory_xact_lock_shared(hashtextextended('lease days of ' || p_pmc_id, 0));
+
     -- Every recurring charge in force on the due date whose lease is in effect then: its amount
     -- for the days of the month the lease is in effect.
     INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo, recurring_charge_id)
@@ -1098,6 +1101,9 @@ BEGIN
         RAISE EXCEPTION 'trust: rent is charged for a due date; none was given'
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+
+    -- Leases' ends don't change while the run charges (trust_end_lease waits for it).
+    PERFORM pg_advisory_xact_lock_shared(hashtextextended('lease days of ' || p_pmc_id, 0));
 
     -- Every lease in effect on the due date: its rent for the days of the month it is in effect.
     INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)
@@ -2065,6 +2071,23 @@ BEGIN
         p_pmc_id, v_offer.unit_id, v_offer.starts_on, v_offer.ends_on, v_offer.monthly_rent,
         v_tenants
     );
+    -- A renewal starting in a month whose rent the old lease was charged: the old lease's days
+    -- after its end come off (trust_end_lease above), and the new lease is charged its days of
+    -- that month, due on its first day, as the rent run would.
+    IF v_offer.application_id IS NULL THEN
+        INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)
+        SELECT p_pmc_id, v_lease, v_offer.starts_on, 'rent', r.amount,
+               'Rent due ' || to_char(v_offer.starts_on, 'YYYY-MM-DD') || r.days
+        FROM trust_rent_for_month(
+            v_offer.starts_on, v_offer.ends_on, v_offer.monthly_rent, v_offer.starts_on
+        ) AS r
+        WHERE r.amount > 0 AND EXISTS (
+            SELECT c.id FROM trust_charges AS c
+            WHERE c.lease_id = v_old.id AND c.kind = 'rent'
+              AND date_trunc('month', c.due_on::timestamp)
+                  = date_trunc('month', v_offer.starts_on::timestamp)
+        );
+    END IF;
     INSERT INTO trust_lease_offer_completions (pmc_id, offer_id, lease_id, completed_by)
     VALUES (p_pmc_id, p_offer_id, v_lease, p_completed_by);
     RETURN v_lease;
@@ -2152,12 +2175,74 @@ CREATE FUNCTION public.trust_end_lease(p_pmc_id uuid, p_lease_id uuid, p_ends_on
     LANGUAGE plpgsql SECURITY DEFINER
     SET search_path TO 'public', 'pg_temp'
     AS $$
+DECLARE
+    v_old trust_leases;
+    v_new trust_leases;
+    v_charge record;
+    v_adjustment uuid;
 BEGIN
-    UPDATE trust_leases SET ends_on = p_ends_on WHERE id = p_lease_id AND pmc_id = p_pmc_id;
+    -- Wait for a rent run of the PMC under way, so the charges it makes are seen below, and keep
+    -- the next one from charging until this commits.
+    PERFORM pg_advisory_xact_lock(hashtextextended('lease days of ' || p_pmc_id, 0));
+    SELECT l.* INTO v_old FROM trust_leases AS l WHERE l.id = p_lease_id AND l.pmc_id = p_pmc_id;
+    UPDATE trust_leases SET ends_on = p_ends_on WHERE id = p_lease_id AND pmc_id = p_pmc_id
+    RETURNING * INTO v_new;
     IF NOT FOUND THEN
         RAISE EXCEPTION 'trust: no lease % in PMC %', p_lease_id, p_pmc_id
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+
+    -- Each charge the rent run makes (rent, and a recurring charge's) that, with what was added
+    -- or taken off it before, stands at its month's days under the old end: added to or taken
+    -- off so it stands at its month's days under the new end.
+    FOR v_charge IN
+        SELECT k.id, k.due_on, k.label, k.was, k.now
+        FROM (
+            SELECT c.id, c.due_on,
+                   coalesce(rc.memo, 'Rent') AS label,
+                   (CASE WHEN c.kind = 'credit' THEN -c.amount ELSE c.amount END)
+                   + coalesce((
+                       SELECT sum(CASE WHEN a.kind = 'credit' THEN -a.amount ELSE a.amount END)
+                       FROM trust_lease_end_adjustments AS x
+                       JOIN trust_charges AS a ON a.id = x.adjustment_charge_id
+                       WHERE x.charge_id = c.id
+                   ), 0) AS net,
+                   (CASE WHEN c.kind = 'credit' THEN -1 ELSE 1 END) * greatest((
+                       SELECT r.amount FROM trust_rent_for_month(
+                           v_old.starts_on, v_old.ends_on,
+                           coalesce(rc.amount, v_old.monthly_rent), c.due_on
+                       ) AS r
+                   ), 0) AS was,
+                   (CASE WHEN c.kind = 'credit' THEN -1 ELSE 1 END) * greatest((
+                       SELECT r.amount FROM trust_rent_for_month(
+                           v_new.starts_on, v_new.ends_on,
+                           coalesce(rc.amount, v_new.monthly_rent), c.due_on
+                       ) AS r
+                   ), 0) AS now
+            FROM trust_charges AS c
+            LEFT JOIN trust_recurring_charges AS rc ON rc.id = c.recurring_charge_id
+            WHERE c.lease_id = p_lease_id
+              AND (c.kind = 'rent' OR c.recurring_charge_id IS NOT NULL)
+        ) AS k
+        WHERE k.net = k.was AND k.now <> k.was
+        ORDER BY k.due_on, k.id
+    LOOP
+        INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)
+        VALUES (
+            p_pmc_id, p_lease_id, v_charge.due_on,
+            CASE WHEN v_charge.now < v_charge.was THEN 'credit' ELSE 'fee' END,
+            abs(v_charge.now - v_charge.was),
+            v_charge.label || ' due ' || to_char(v_charge.due_on, 'YYYY-MM-DD') || CASE
+                WHEN abs(v_charge.now) < abs(v_charge.was)
+                    THEN ': the days after the lease ends ' || to_char(p_ends_on, 'YYYY-MM-DD')
+                WHEN p_ends_on IS NULL THEN ': the days back, the lease no longer ends'
+                ELSE ': the days back, the lease now ends ' || to_char(p_ends_on, 'YYYY-MM-DD')
+            END
+        )
+        RETURNING id INTO v_adjustment;
+        INSERT INTO trust_lease_end_adjustments (adjustment_charge_id, pmc_id, charge_id, ends_on)
+        VALUES (v_adjustment, p_pmc_id, v_charge.id, p_ends_on);
+    END LOOP;
 END;
 $$;
 
@@ -6601,6 +6686,19 @@ CREATE TABLE public.trust_late_fees (
 
 
 --
+-- Name: trust_lease_end_adjustments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_end_adjustments (
+    adjustment_charge_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    charge_id uuid NOT NULL,
+    ends_on date,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: trust_lease_offer_completions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -7789,6 +7887,14 @@ ALTER TABLE ONLY public.trust_late_fees
 
 
 --
+-- Name: trust_lease_end_adjustments trust_lease_end_adjustments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_end_adjustments
+    ADD CONSTRAINT trust_lease_end_adjustments_pkey PRIMARY KEY (adjustment_charge_id);
+
+
+--
 -- Name: trust_lease_offer_completions trust_lease_offer_completions_lease_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8573,6 +8679,13 @@ CREATE INDEX trust_late_fees_policy_id ON public.trust_late_fees USING btree (po
 
 
 --
+-- Name: trust_lease_end_adjustments_charge_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_end_adjustments_charge_id ON public.trust_lease_end_adjustments USING btree (charge_id);
+
+
+--
 -- Name: trust_lease_offers_application_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -9091,6 +9204,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_lease_end_adjustments trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_end_adjustments FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_lease_offer_completions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -9571,6 +9691,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_late
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_late_fees FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_lease_end_adjustments trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_end_adjustments FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -10921,6 +11048,30 @@ ALTER TABLE ONLY public.trust_late_fees
 
 
 --
+-- Name: trust_lease_end_adjustments trust_lease_end_adjustments_pmc_id_adjustment_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_end_adjustments
+    ADD CONSTRAINT trust_lease_end_adjustments_pmc_id_adjustment_charge_id_fkey FOREIGN KEY (pmc_id, adjustment_charge_id) REFERENCES public.trust_charges(pmc_id, id);
+
+
+--
+-- Name: trust_lease_end_adjustments trust_lease_end_adjustments_pmc_id_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_end_adjustments
+    ADD CONSTRAINT trust_lease_end_adjustments_pmc_id_charge_id_fkey FOREIGN KEY (pmc_id, charge_id) REFERENCES public.trust_charges(pmc_id, id);
+
+
+--
+-- Name: trust_lease_end_adjustments trust_lease_end_adjustments_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_end_adjustments
+    ADD CONSTRAINT trust_lease_end_adjustments_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
 -- Name: trust_lease_offer_completions trust_lease_offer_completions_pmc_id_completed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11985,4 +12136,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261013000047'),
     ('20261013000048'),
     ('20261013000049'),
-    ('20261013000050');
+    ('20261013000050'),
+    ('20261013000051');

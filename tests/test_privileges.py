@@ -83,6 +83,7 @@ TABLES = {
     "trust_application_link_closings": {"SELECT", "INSERT"},
     "trust_listings": {"SELECT", "INSERT"},
     "trust_listing_removals": {"SELECT", "INSERT"},
+    "trust_lease_end_adjustments": {"SELECT"},  # written only by trust_end_lease
     "trust_applications": {"SELECT", "INSERT"},
     "trust_applicants": {"SELECT", "INSERT"},
     "trust_screenings": {"SELECT", "INSERT"},

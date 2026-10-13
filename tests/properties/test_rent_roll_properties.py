@@ -281,6 +281,8 @@ class RentRollMachine(RuleBasedStateMachine):
         # Recurring charges, and (recurring charge, due date) -> the charge the run made.
         self.recurring: dict[UUID, Recurring] = {}
         self.recurring_charged: dict[tuple[UUID, date], UUID] = {}
+        # Lease ends: charge -> the credits and fees that followed its lease's end since.
+        self.adjusted: dict[UUID, list[UUID]] = {}
 
     # --- helpers -------------------------------------------------------------------------
 
@@ -574,8 +576,57 @@ class RentRollMachine(RuleBasedStateMachine):
             with pytest.raises(psycopg.errors.ExclusionViolation, match="overlap"):
                 end_lease(self.conns[role], self.pmc_id, lease_id, ends_on)
         else:
+            old = replace(lease)
             end_lease(self.conns[role], self.pmc_id, lease_id, ends_on)
             lease.ends_on = ends_on
+            self.follow_the_end(lease_id, old)
+
+    def follow_the_end(self, lease_id, old):
+        """trust_end_lease: each charge the run makes (rent, a recurring charge's) that, with
+        what followed earlier ends, stands at its month's days under the old end gets a credit or
+        a fee, due on its day, so it stands at its month's days under the new end."""
+        lease = self.leases[lease_id]
+        recurring_of = {c: r for (r, _), c in self.recurring_charged.items()}
+        expected = set()
+        for charge_id, c in self.charges.items():
+            if c.lease_id != lease_id or (c.kind != "rent" and charge_id not in recurring_of):
+                continue
+            base = (
+                self.recurring[recurring_of[charge_id]].amount if c.kind != "rent" else lease.rent
+            )
+            sign = -1 if c.kind == "credit" else 1
+            net = sign * c.amount + sum(
+                (
+                    -self.charges[a].amount
+                    if self.charges[a].kind == "credit"
+                    else self.charges[a].amount
+                    for a in self.adjusted.get(charge_id, [])
+                ),
+                Decimal(0),
+            )
+            was = sign * max(for_days_in_month(old, base, c.due_on)[0], Decimal(0))
+            now = sign * max(for_days_in_month(lease, base, c.due_on)[0], Decimal(0))
+            if net == was and now != was:
+                kind = "credit" if now < was else "fee"
+                expected.add((charge_id, kind, abs(now - was), c.due_on))
+        if expected:
+            event("lease end: a charged month followed the end")
+        known = {a for adjusted in self.adjusted.values() for a in adjusted}
+        made = {
+            (charge_id, kind, amount, due_on): adjustment
+            for adjustment, charge_id, kind, amount, due_on in self.conn.execute(
+                "SELECT x.adjustment_charge_id, x.charge_id, a.kind, a.amount, a.due_on"
+                " FROM trust_lease_end_adjustments AS x"
+                " JOIN trust_charges AS a ON a.id = x.adjustment_charge_id"
+                " WHERE a.lease_id = %s",
+                (lease_id,),
+            ).fetchall()
+            if adjustment not in known
+        }
+        assert set(made) == expected
+        for (charge_id, kind, amount, due_on), adjustment in made.items():
+            self.charges[adjustment] = Charge(lease_id, due_on, kind, amount)
+            self.adjusted.setdefault(charge_id, []).append(adjustment)
 
     # --- rules: charges and money --------------------------------------------------------
 

@@ -462,4 +462,9 @@ def test_an_ended_lease_keeps_rent_charged_before_it_ended(conn, pmc):
     end_lease(conn, pmc.pmc_id, lease, date(2026, 2, 15))
 
     assert charge_rent_due(conn, pmc.pmc_id, MAR_1) == 0
-    assert [row[0] for row in charges(conn, lease)] == [FEB_1]
+    # February's rent stays; the 13 days after the end come off it (migration 0051): 1500.00 less
+    # 1500.00 x 15 / 28 = 803.57.
+    assert [row[:3] for row in charges(conn, lease)] == [
+        (FEB_1, "credit", Decimal("696.43")),
+        (FEB_1, "rent", RENT),
+    ]
