@@ -89,7 +89,10 @@ def test_a_removed_document_is_no_longer_listed_or_served(client, conn, staff, p
         (PNG, "application/pdf", "the file isn't a PDF"),
         (PDF, "image/png", "the file isn't a PNG"),
         (PNG, "image/jpeg", "the file isn't a JPG"),
-        (b"%PDF-" + b"x" * (5 * 1024 * 1024), "application/pdf", "at most 5 MB"),
+        # Named, or pytest makes the 5 MB of bytes the test's ID, and `pytest -v` in CI prints it.
+        pytest.param(
+            b"%PDF-" + b"x" * (5 * 1024 * 1024), "application/pdf", "at most 5 MB", id="over-5-mb"
+        ),
     ],
 )
 def test_a_file_is_what_it_says_and_at_most_5_mb(client, staff, pmc, content, content_type, why):
