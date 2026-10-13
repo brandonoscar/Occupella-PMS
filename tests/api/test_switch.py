@@ -1,10 +1,11 @@
 """The switching tool (src/pms/api/switching.py): bringing a PMC's roster in from CSV files,
-opening a trust bank account with its old balances, the items carried over and the sign-off.
-Every file here is synthetic."""
+opening a trust bank account with its old balances, the items carried over, the sign-off, and
+what the old system paid each vendor in the cutover's year. Every file here is synthetic."""
 
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
 from helpers import make_pmc
@@ -432,12 +433,111 @@ def test_another_pmcs_trust_bank_account_is_not_found(client, conn, staff, pmc):
         refused(answer, 404, "no such trust bank account")
 
 
+# --- vendor payments carried over ----------------------------------------------------------
+
+
+def vendor_payments(client, *lines, paid_before="2026-03-01"):
+    return call(client, "vendor-payments", paid_before=paid_before, content=csv(*lines))
+
+
+def report(conn, pmc, year):
+    return conn.execute(
+        "SELECT item, vendor, payments, paid FROM trust_report_vendor_payments(%s, %s)"
+        " WHERE item <> 'PMC'",
+        (pmc.pmc_id, year),
+    ).fetchall()
+
+
+def test_what_the_old_system_paid_vendors_comes_over_once(client, conn, staff, pmc):
+    ok(imported(client, "vendors", "Name", "Vendor A", "Vendor B"))
+
+    first = vendor_payments(client, "Vendor,Paid", 'Vendor A,"$1,250.50"', "Vendor B,80.00")
+    again = vendor_payments(client, "vendor,paid", "Vendor A,1250.50")
+
+    assert (ok(first, 201), ok(again, 201)) == ({"added": 2, "kept": 0}, {"added": 0, "kept": 1})
+    assert report(conn, pmc, 2026)[1:] == [
+        ("vendor", "Vendor A", 0, Decimal("1250.50")),
+        ("carried over", "paid in the old system before 2026-03-01", None, Decimal("1250.50")),
+        ("vendor", "Vendor B", 0, Decimal("80.00")),
+        ("carried over", "paid in the old system before 2026-03-01", None, Decimal("80.00")),
+        ("total", None, 0, Decimal("1330.50")),
+    ]
+    assert conn.execute(
+        "SELECT staff_id FROM trust_audit_log"
+        " WHERE table_name = 'trust_vendor_payments_carried_over' AND pmc_id = %s",
+        (pmc.pmc_id,),
+    ).fetchall() == [(staff.person_id,), (staff.person_id,)]
+
+
+def test_a_january_first_cutover_carries_over_the_year_before(client, conn, staff, pmc):
+    ok(imported(client, "vendors", "Name", "Vendor A"))
+
+    ok(vendor_payments(client, "Vendor,Paid", "Vendor A,900.00", paid_before="2027-01-01"), 201)
+
+    assert report(conn, pmc, 2026)[-1] == ("total", None, 0, Decimal("900.00"))
+
+
+@pytest.mark.parametrize(
+    ("lines", "why"),
+    [
+        (("Vendor,Paid", "Vendor Z,10.00"), "line 2: no vendor 'Vendor Z'"),
+        (("Vendor,Paid", "Vendor A,0.00"), "line 2: what was paid is more than 0"),
+        (("Vendor,Paid", "Vendor A,-5.00"), "line 2: what was paid is more than 0"),
+        (("Vendor,Paid", "Vendor A,1.005"), "not an amount in cents"),
+        (("Vendor,Paid", "Vendor A,10.00", "Vendor A,11.00"), "line 3: Vendor A's 2026"),
+        (("Vendor",), "line 1: no paid column"),
+    ],
+)
+def test_a_vendor_payments_file_that_cant_go_in_says_why_and_adds_nothing(
+    client, conn, staff, pmc, lines, why
+):
+    ok(imported(client, "vendors", "Name", "Vendor A"))
+
+    refused(vendor_payments(client, *lines), 422, why)
+    assert report(conn, pmc, 2026)[-1] == ("total", None, 0, Decimal("0.00"))
+
+
+def test_another_amount_for_a_year_carried_over_is_refused(client, conn, staff, pmc):
+    ok(imported(client, "vendors", "Name", "Vendor A"))
+    ok(vendor_payments(client, "Vendor,Paid", "Vendor A,10.00"), 201)
+
+    refused(
+        vendor_payments(client, "Vendor,Paid", "Vendor A,10.00", paid_before="2026-04-01"),
+        422,
+        "line 2: Vendor A's 2026 was carried over already: 10.00 paid before 2026-03-01",
+    )
+
+
+def test_another_pmcs_vendor_is_not_found(client, conn, staff, pmc):
+    other = make_pmc(conn)
+    conn.execute(
+        "INSERT INTO trust_vendors (pmc_id, display_name) VALUES (%s, 'Vendor Elsewhere')",
+        (other.pmc_id,),
+    )
+
+    refused(
+        vendor_payments(client, "Vendor,Paid", "Vendor Elsewhere,10.00"),
+        422,
+        "line 2: no vendor 'Vendor Elsewhere'",
+    )
+    assert conn.execute(
+        "SELECT count(*) FROM trust_vendor_payments_carried_over WHERE pmc_id IN (%s, %s)",
+        (pmc.pmc_id, other.pmc_id),
+    ).fetchone() == (0,)
+
+
+@pytest.mark.parametrize("paid_before", ["0001-01-01", "1900-01-01", "9999-12-31", "someday"])
+def test_a_cutover_day_out_of_range_is_refused(client, staff, paid_before):
+    refused(vendor_payments(client, "Vendor,Paid", "Vendor 1,10.00", paid_before=paid_before), 422)
+
+
 ENDPOINTS = [
     ("get", "/api/switching"),
     ("post", "/api/switching/import"),
     ("post", "/api/switching/opening-balances"),
     ("post", "/api/switching/items"),
     ("post", "/api/switching/sign-off"),
+    ("post", "/api/switching/vendor-payments"),
 ]
 
 
@@ -479,6 +579,8 @@ def test_only_staff_switch(client, conn, app_conn, pmc, caller, method, path):
         ),
         ("items", {"bank_account_id": "x", "content": "x"}),
         ("sign-off", {}),
+        ("vendor-payments", {"content": "Vendor,Paid\nVendor 1,1.00\n"}),  # no cutover day
+        ("vendor-payments", {"paid_before": "2026-03-01", "content": ""}),
     ],
 )
 def test_bad_input_is_refused(client, staff, path, body):

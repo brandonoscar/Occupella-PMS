@@ -286,7 +286,10 @@ required invariant, report and self-host step.
   owner downloads their own owner documents in the portal.
 - Vendor payments: `trust_report_vendor_payments` lists what each vendor was paid through
   `trust_pay_bill` in a calendar year (UTC), for 1099 preparation. It files nothing, holds no
-  tax IDs and applies no threshold.
+  tax IDs and applies no threshold. What the old system paid a vendor in the cutover's year
+  before it (`trust_vendor_payments_carried_over`, migration 0038, once per vendor and year; a
+  January 1 cutover carries over the year before) is added to the vendor's year, on a line of
+  its own.
 
 ## Run the checks
 

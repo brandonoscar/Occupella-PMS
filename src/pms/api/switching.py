@@ -1,6 +1,7 @@
 """The switching tool: a PMC moving from another system brings its roster in from CSV files,
 opens each trust bank account with the balances it held there, lists the checks and deposits the
-bank had not cleared at the cutover, and signs off the tie-out (trust_report_cutover).
+bank had not cleared at the cutover, and signs off the tie-out (trust_report_cutover). What the
+old system paid each vendor in the cutover's year comes over too, for the year's 1099s.
 
 Each file goes in whole or not at all, and names are matched exactly within the PMC, so sending
 a file again adds nothing twice. Records go in through the same inserts and write paths staff use
@@ -14,7 +15,7 @@ import csv
 import io
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -515,6 +516,59 @@ def open_balances(session: Staff, conn: Conn, new: Opening) -> Opened:
     except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
         raise HTTPException(409, reason(refused)) from None
     return Opened(accounts=len(balances))
+
+
+# --- vendor payments carried over ---------------------------------------------------------------
+
+
+class VendorPayments(BaseModel):
+    # The cutover: the old system's payments in the year before this day. A January 1 cutover
+    # carries over the whole year before it.
+    paid_before: date
+    content: Content
+
+
+@router.post("/vendor-payments", status_code=201)
+def carry_vendor_payments(session: Staff, conn: Conn, new: VendorPayments) -> Counted:
+    """What the old system paid each vendor in the cutover's year before it, for the year's
+    1099s: a CSV file with vendor and paid. Sending the same file again adds nothing; another
+    amount for a vendor whose year was carried over already is refused."""
+    year = (new.paid_before - timedelta(days=1)).year if new.paid_before > date.min else 0
+    if not 1900 <= year <= 9998:
+        raise HTTPException(422, "the cutover is a day from 1900-01-02 to 9999-01-01")
+    names = Names(conn, session.pmc_id)
+    added = kept = 0
+    try:
+        for row in rows(new.content, ("vendor", "paid")):
+            name = row.get("vendor")
+            vendor = names.vendor(name, line=row.line)
+            amount = row.money("paid")
+            if amount <= 0:
+                raise Bad(f"line {row.line}: what was paid is more than 0")
+            # Another request carrying the same vendor's year over at once is waited for.
+            if conn.execute(
+                "INSERT INTO trust_vendor_payments_carried_over"
+                " (pmc_id, vendor_id, year, paid_before, amount) VALUES (%s, %s, %s, %s, %s)"
+                " ON CONFLICT (vendor_id, year) DO NOTHING RETURNING year",
+                (session.pmc_id, vendor, year, new.paid_before, amount),
+            ).fetchone():
+                added += 1
+                continue
+            before = conn.execute(
+                "SELECT paid_before, amount FROM trust_vendor_payments_carried_over"
+                " WHERE vendor_id = %s AND year = %s",
+                (vendor, year),
+            ).fetchone()
+            assert before is not None
+            if (before[0], before[1]) != (new.paid_before, amount):
+                raise Bad(
+                    f"line {row.line}: {name}'s {year} was carried over already:"
+                    f" {cents(before[1])} paid before {before[0]}"
+                )
+            kept += 1
+    except Bad as bad:
+        raise HTTPException(422, str(bad)) from None
+    return Counted(added=added, kept=kept)
 
 
 # --- items carried over and the sign-off ----------------------------------------------------------

@@ -135,6 +135,11 @@ A PMC moving from another system uses `/switching` (`src/pms/api/switching.py`, 
 - Staff sign off the tie-out (`trust_report_cutover`: the opening balances against the old
   book cash, the items, the bank balance to expect, who signed it and when). The sign-off
   freezes the items.
+- What the old system paid each vendor in the cutover's year before it comes in from a CSV of
+  vendor and amount (`trust_vendor_payments_carried_over`, migration 0038; since 2026-10-13,
+  product item 2 of three the founder approved), once per vendor and year. The year's vendor
+  payments report (`trust_report_vendor_payments`) adds it to what the PMS paid, so the year's
+  1099 preparation counts the whole year. A January 1 cutover carries over the year before.
 - At month-end, the first statement's balance brought forward is matched to the opening
   balances less the items (`trust_match_cutover_opening`); each item then clears when a later
   bank line does, and until then it is outstanding in the reconciliation. So the account's first

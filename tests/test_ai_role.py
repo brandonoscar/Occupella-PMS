@@ -18,6 +18,7 @@ from helpers import (
     apply_payment,
     approve,
     assess_late_fees,
+    carry_over_vendor_payments,
     charge,
     charge_recurring_due,
     charge_rent_due,
@@ -250,6 +251,9 @@ WRITES = {
         (pmc.pmc_id,),
     ),
     "charge recurring charges": lambda c, pmc, *_: charge_recurring_due(c, pmc.pmc_id, FEB.date()),
+    "carry over a vendor's payments": lambda c, pmc, *_: carry_over_vendor_payments(
+        c, pmc.pmc_id, pmc.vendor_id, 2026, "2026-03-01", "1.00"
+    ),
     "record an owner's contribution": lambda c, pmc, *_: contribute(
         c, pmc.pmc_id, pmc.owners[0].account, "ai-1", "1.00"
     ),

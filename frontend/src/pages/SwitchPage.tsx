@@ -8,13 +8,21 @@ import { Select } from "../components/Select";
 import { Card, Shell } from "../components/Shell";
 import { money } from "../money";
 import type { Counted, Cutover, RosterKind } from "../switching";
-import { BALANCE_COLUMNS, ITEM_COLUMNS, ROSTER, countedLabel, expectedBank } from "../switching";
+import {
+  BALANCE_COLUMNS,
+  ITEM_COLUMNS,
+  ROSTER,
+  VENDOR_PAYMENT_COLUMNS,
+  countedLabel,
+  expectedBank,
+} from "../switching";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 
 // The switching tool: a PMC moving from another system brings its roster in from CSV files,
 // opens each trust bank account with the balances it held there, lists the checks and deposits
-// the bank had not cleared, and signs off the tie-out. Each file goes in whole or not at all.
+// the bank had not cleared, and signs off the tie-out. What the old system paid each vendor in
+// the cutover's year comes over too, for the year's 1099s. Each file goes in whole or not at all.
 export function SwitchPage({ me }: { me: Me }) {
   const [cutovers, setCutovers] = useState<Cutover[] | null>(null);
   const [error, setError] = useState("");
@@ -31,6 +39,7 @@ export function SwitchPage({ me }: { me: Me }) {
     <Shell me={me} nav={STAFF_NAV}>
       <h1 className="font-display text-xl font-medium">Switching</h1>
       <RosterCard />
+      <VendorPaymentsCard />
       {cutovers === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : cutovers.length === 0 ? (
@@ -87,6 +96,36 @@ function RosterCard() {
         <Button type="submit" disabled={content === null}>Import</Button>
       </form>
       <p className="mt-3 text-sm text-ink-subtle">Columns: {columns}.</p>
+      <Notice tone="info">{said}</Notice>
+      <Notice tone="error">{error}</Notice>
+    </Card>
+  );
+}
+
+function VendorPaymentsCard() {
+  const { said, error, record } = useRecord(() => undefined);
+  const [cutover, setCutover] = useState("");
+  const [content, setContent] = useState<string | null>(null);
+  return (
+    <Card title="Vendor payments before the cutover">
+      <p className="mb-4 text-sm text-ink-muted">
+        What the old system paid each vendor in the cutover&apos;s year, so the year&apos;s vendor
+        payments (for 1099s) count it. A January 1 cutover carries over the whole year before.
+      </p>
+      <form
+        className="flex flex-wrap items-end gap-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (content !== null)
+            record<Counted>("/api/switching/vendor-payments", { paid_before: cutover, content }, countedLabel);
+        }}
+      >
+        <Field label="Cutover day" id="vendor-payments-cutover" type="date" required value={cutover}
+          onChange={(e) => setCutover(e.target.value)} />
+        <FileField id="vendor-payments-file" label="Vendor payments (CSV)" onRead={setContent} />
+        <Button type="submit" variant="secondary" disabled={content === null}>Carry over</Button>
+      </form>
+      <p className="mt-3 text-sm text-ink-subtle">Columns: {VENDOR_PAYMENT_COLUMNS}.</p>
       <Notice tone="info">{said}</Notice>
       <Notice tone="error">{error}</Notice>
     </Card>

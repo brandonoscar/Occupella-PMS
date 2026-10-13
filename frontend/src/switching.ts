@@ -27,6 +27,7 @@ export const ROSTER: { kind: RosterKind; label: string; columns: string }[] = [
 export const BALANCE_COLUMNS =
   "Kind (owner, prepaid rent, deposit, vendor or fees), Owner, Property, Tenant, Vendor, Amount";
 export const ITEM_COLUMNS = "Date, Amount (a check out is negative), Description, Reference";
+export const VENDOR_PAYMENT_COLUMNS = "Vendor, Paid (what the old system paid it in the year)";
 
 export function countedLabel(counted: Counted): string {
   const kept = counted.kept ? `; ${counted.kept} already here` : "";

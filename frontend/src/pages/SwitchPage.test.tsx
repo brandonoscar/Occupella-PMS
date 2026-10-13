@@ -74,6 +74,27 @@ describe("SwitchPage", () => {
     expect(posted(fetch)).toEqual([["/api/switching/import", { kind: "leases", content: "Property,Unit\n" }]]);
   });
 
+  it("carries over what the old system paid each vendor before the cutover", async () => {
+    const fetch = server({ "/api/switching/vendor-payments": { added: 2, kept: 0 } });
+    render(<SwitchPage me={ME} />);
+    await screen.findByText("Cutover: Operating");
+    const carrying = screen.getByRole("button", { name: "Carry over" }) as HTMLButtonElement;
+    expect(carrying.disabled).toBe(true);
+    expect(screen.getByText(/Columns: Vendor, Paid/)).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("Cutover day"), { target: { value: "2026-03-01" } });
+    fireEvent.change(screen.getByLabelText("Vendor payments (CSV)"), {
+      target: { files: [csvFile("Vendor,Paid\nVendor A,120.00\n")] },
+    });
+    await vi.waitFor(() => expect(carrying.disabled).toBe(false));
+    fireEvent.click(carrying);
+
+    expect(await screen.findByText("2 added.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([
+      ["/api/switching/vendor-payments", { paid_before: "2026-03-01", content: "Vendor,Paid\nVendor A,120.00\n" }],
+    ]);
+  });
+
   it("opens an account with its old balances", async () => {
     const fetch = server({ "/api/switching/opening-balances": { accounts: 3 } });
     render(<SwitchPage me={ME} />);
