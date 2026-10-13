@@ -11207,6 +11207,26 @@ ALTER TABLE ONLY public.trust_work_orders
 
 
 --
+-- Name: trust_audit_log; Type: ROW SECURITY; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_audit_log ENABLE ROW LEVEL SECURITY;
+
+--
+-- Name: trust_audit_log trust_audit_log_ai; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY trust_audit_log_ai ON public.trust_audit_log FOR SELECT TO trust_ai_agent USING (has_table_privilege((to_regclass(('public.'::text || quote_ident(table_name))))::oid, 'SELECT'::text));
+
+
+--
+-- Name: trust_audit_log trust_audit_log_app; Type: POLICY; Schema: public; Owner: -
+--
+
+CREATE POLICY trust_audit_log_app ON public.trust_audit_log FOR SELECT TO trust_app USING (true);
+
+
+--
 -- PostgreSQL database dump complete
 --
 
@@ -11259,4 +11279,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261013000039'),
     ('20261013000040'),
     ('20261013000041'),
-    ('20261013000042');
+    ('20261013000042'),
+    ('20261013000043');

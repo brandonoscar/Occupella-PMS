@@ -7,7 +7,8 @@ pins them down completely: any grant added, dropped or widened by a migration fa
 trust_ai_agent, the role behind the API key Occupella will hold, reads what trust_app reads and
 runs the reports: it can't write a row or call a function that writes (the AI never moves money).
 The one exception is AI_NEVER_READS: who can sign in, sessions and credentials, rental
-applicants with their screenings, and the files of documents.
+applicants with their screenings, and the files of documents. Their copies in the audit log are
+hidden from it too, by the log's row-level security.
 
 Every table, view and function in the schema is pinned, not just the ones that exist today:
 test_every_relation_and_function_is_pinned fails on a new one until it is listed here, so no
@@ -546,3 +547,30 @@ def test_only_the_write_paths_run_as_owner_with_a_pinned_search_path(conn, signa
     assert definer is (signature in SECURITY_DEFINER)
     if definer:
         assert "search_path=public, pg_temp" in (config or [])
+
+
+def test_row_level_security_only_hides_the_audit_rows_the_ai_may_not_read(conn):
+    """The audit log is the one table with row-level security (migration 20261013000043): the
+    app reads all of it, and the AI only the rows of tables it may read. Nobody else may read
+    the log, and the policies only ever filter what a grant already allows."""
+    secured = conn.execute(
+        "SELECT relname, relforcerowsecurity FROM pg_class"
+        " WHERE relnamespace = 'public'::regnamespace AND relrowsecurity"
+    ).fetchall()
+    policies = conn.execute(
+        "SELECT policyname, permissive, roles::text[], cmd, qual FROM pg_policies"
+        " WHERE schemaname = 'public' ORDER BY policyname"
+    ).fetchall()
+
+    assert secured == [("trust_audit_log", False)]
+    assert policies == [
+        (
+            "trust_audit_log_ai",
+            "PERMISSIVE",
+            ["trust_ai_agent"],
+            "SELECT",
+            "has_table_privilege((to_regclass(('public.'::text || quote_ident(table_name))))"
+            "::oid, 'SELECT'::text)",
+        ),
+        ("trust_audit_log_app", "PERMISSIVE", ["trust_app"], "SELECT", "true"),
+    ]

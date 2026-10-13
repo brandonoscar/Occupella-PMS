@@ -20,7 +20,8 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     A tenant who isn't on the lease is refused, and so is a second work order for a request.
 
 The rule check_the_audit_report reads the report for the day, as any role, and compares each
-line's staff name, role, action and record with the model.
+line's staff name, role, action and record with the model; the AI's role sees no line of a
+table it may never read (logins, invites, sessions: migration 20261013000043).
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
@@ -54,6 +55,7 @@ from hypothesis.stateful import (
     rule,
     run_state_machine_as_test,
 )
+from test_privileges import AI_NEVER_READS
 
 from pms import accounts
 
@@ -345,7 +347,12 @@ class AuditMachine(RuleBasedStateMachine):
             )
             .fetchall()
         )
-        mine = rows[len(rows) - len(self.expected) :] if self.expected else []
+        seen = [
+            (table, action, staff, db_role)
+            for table, action, staff, db_role in self.expected
+            if role != "ai" or table not in AI_NEVER_READS
+        ]
+        mine = rows[len(rows) - len(seen) :] if seen else []
         assert mine == [
             (
                 self.names[staff] if staff else "not recorded",
@@ -353,7 +360,7 @@ class AuditMachine(RuleBasedStateMachine):
                 action,
                 table.removeprefix("trust_").removeprefix("pgledger_"),
             )
-            for table, action, staff, db_role in self.expected
+            for table, action, staff, db_role in seen
         ]
 
     # --- invariants ----------------------------------------------------------------------
