@@ -2,7 +2,8 @@
 
 A lease owes some charges every month besides its rent (pet rent, parking) or gets a credit
 every month (a concession). trust_charge_recurring_due charges each one in force on a due date,
-while its lease is in effect, once per recurring charge and date.
+while its lease is in effect, once per recurring charge and date (for the days of the month the
+lease is in effect since migration 0048: tests/test_prorated_recurring_charges.py).
 """
 
 from datetime import UTC, date, datetime
@@ -29,6 +30,7 @@ from helpers import (
 )
 
 JAN_1, FEB_1, MAR_1, APR_1 = date(2026, 1, 1), date(2026, 2, 1), date(2026, 3, 1), date(2026, 4, 1)
+KEY = "trust_charges_recurring_charge_fkey"
 
 
 @pytest.fixture
@@ -105,17 +107,26 @@ def test_a_charge_stopped_the_day_after_a_due_date_is_charged_for_it(conn, pmc):
 
 
 def test_only_while_its_lease_is_in_effect(conn, pmc):
+    """For the days of the month its lease is in effect (migration 0048). A lease starting later
+    in the month is charged its first part month too: tests/test_prorated_recurring_charges.py."""
     ended = lease_on(conn, pmc, JAN_1, date(2026, 2, 15), name="Unit 1")
     ends_that_day = lease_on(conn, pmc, JAN_1, MAR_1, name="Unit 2")
-    starts_later = lease_on(conn, pmc, date(2026, 3, 2), name="Unit 3")
-    for lease in (ended, ends_that_day, starts_later):
+    starts_next_month = lease_on(conn, pmc, date(2026, 4, 2), name="Unit 3")
+    for lease in (ended, ends_that_day, starts_next_month):
         add_recurring_charge(conn, pmc.pmc_id, lease, "35.00", JAN_1)
 
     assert charge_recurring_due(conn, pmc.pmc_id, MAR_1) == 1
-    assert [bool(charges(conn, lease)) for lease in (ended, ends_that_day, starts_later)] == [
-        False,
-        True,
-        False,
+    assert [charges(conn, lease) for lease in (ended, ends_that_day, starts_next_month)] == [
+        [],
+        [  # 35.00 x 1 / 31 = 1.129...
+            (
+                MAR_1,
+                "fee",
+                Decimal("1.13"),
+                "Pet rent due 2026-03-01, 2026-03-01 to 2026-03-01 (1 of 31 days)",
+            )
+        ],
+        [],
     ]
 
 
@@ -276,23 +287,25 @@ def test_a_recurring_charge_stops_once_and_only_in_its_pmc(conn, pmc):
 
 
 @pytest.mark.parametrize(
-    ("change", "kind", "amount"),
+    ("change", "kind", "amount", "refused", "why"),
     [
-        ("another lease", "fee", "35.00"),
-        ("another kind", "credit", "35.00"),
-        ("rent", "rent", "35.00"),
-        ("another amount", "fee", "35.01"),
+        ("another lease", "fee", "35.00", psycopg.errors.ForeignKeyViolation, KEY),
+        ("another kind", "credit", "35.00", psycopg.errors.ForeignKeyViolation, KEY),
+        ("rent", "rent", "35.00", psycopg.errors.ForeignKeyViolation, KEY),
+        # The key no longer holds the amount (a part month's is less, migration 0048); the
+        # trust_recurring_charge_amount trigger checks it: tests/test_prorated_recurring_charges.py.
+        ("another amount", "fee", "35.01", psycopg.errors.CheckViolation, "is 35.00 for the days"),
     ],
 )
 def test_a_charge_names_a_recurring_charge_of_its_lease_kind_and_amount(
-    conn, pmc, change, kind, amount
+    conn, pmc, change, kind, amount, refused, why
 ):
     lease = lease_on(conn, pmc, JAN_1, name="Unit 1")
     pet_rent = add_recurring_charge(conn, pmc.pmc_id, lease, "35.00", JAN_1)
     if change == "another lease":
         lease = lease_on(conn, pmc, JAN_1, name="Unit 2")
 
-    with pytest.raises(psycopg.errors.ForeignKeyViolation, match="recurring_charge_fkey"):
+    with pytest.raises(refused, match=why):
         by_hand(conn, pmc, lease, pet_rent, FEB_1, kind, amount)
 
 

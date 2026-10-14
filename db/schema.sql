@@ -1039,25 +1039,53 @@ CREATE FUNCTION public.trust_charge_recurring_due(p_pmc_id uuid, p_due_on date) 
     AS $$
 DECLARE
     v_charged integer;
+    v_first integer;
 BEGIN
     IF p_due_on IS NULL THEN
         RAISE EXCEPTION 'trust: recurring charges are charged for a due date; none was given'
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
 
+    -- Every recurring charge in force on the due date whose lease is in effect then: its amount
+    -- for the days of the month the lease is in effect.
     INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo, recurring_charge_id)
-    SELECT r.pmc_id, r.lease_id, p_due_on, r.kind, r.amount,
-           r.memo || ' due ' || to_char(p_due_on, 'YYYY-MM-DD'), r.id
+    SELECT r.pmc_id, r.lease_id, p_due_on, r.kind, p.amount,
+           r.memo || ' due ' || to_char(p_due_on, 'YYYY-MM-DD') || p.days, r.id
     FROM trust_recurring_charges AS r
     JOIN trust_leases AS l ON l.id = r.lease_id
     LEFT JOIN trust_recurring_charge_ends AS e ON e.recurring_charge_id = r.id
+    CROSS JOIN LATERAL trust_rent_for_month(l.starts_on, l.ends_on, r.amount, p_due_on) AS p
     WHERE r.pmc_id = p_pmc_id AND r.starts_on <= p_due_on
       AND (e.ends_on IS NULL OR p_due_on < e.ends_on)
       AND l.starts_on <= p_due_on AND (l.ends_on IS NULL OR p_due_on <= l.ends_on)
+      AND p.amount > 0  -- a day of a few cents rounds to nothing
     ORDER BY r.id
     ON CONFLICT (recurring_charge_id, due_on) WHERE recurring_charge_id IS NOT NULL DO NOTHING;
     GET DIAGNOSTICS v_charged = ROW_COUNT;
-    RETURN v_charged;
+
+    -- Every recurring charge in force on the first day of a lease that starts later this month,
+    -- with nothing charged for it in the month yet: its first part month, due on that day.
+    INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo, recurring_charge_id)
+    SELECT r.pmc_id, r.lease_id, l.starts_on, r.kind, p.amount,
+           r.memo || ' due ' || to_char(l.starts_on, 'YYYY-MM-DD') || p.days, r.id
+    FROM trust_recurring_charges AS r
+    JOIN trust_leases AS l ON l.id = r.lease_id
+    LEFT JOIN trust_recurring_charge_ends AS e ON e.recurring_charge_id = r.id
+    CROSS JOIN LATERAL trust_rent_for_month(l.starts_on, l.ends_on, r.amount, l.starts_on) AS p
+    WHERE r.pmc_id = p_pmc_id AND l.starts_on > p_due_on
+      AND date_trunc('month', l.starts_on::timestamp) = date_trunc('month', p_due_on::timestamp)
+      AND r.starts_on <= l.starts_on AND (e.ends_on IS NULL OR l.starts_on < e.ends_on)
+      AND p.amount > 0
+      AND NOT EXISTS (
+          SELECT c.id FROM trust_charges AS c
+          WHERE c.recurring_charge_id = r.id
+            AND date_trunc('month', c.due_on::timestamp)
+                = date_trunc('month', l.starts_on::timestamp)
+      )
+    ORDER BY r.id
+    ON CONFLICT (recurring_charge_id, due_on) WHERE recurring_charge_id IS NOT NULL DO NOTHING;
+    GET DIAGNOSTICS v_first = ROW_COUNT;
+    RETURN v_charged + v_first;
 END;
 $$;
 
@@ -1722,6 +1750,33 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'trust: a recurring bill is paid from an owner''s property account in '
             'its own PMC; % is not one in PMC %', NEW.ledger_account_id, NEW.pmc_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_recurring_charge_amount(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_recurring_charge_amount() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_amount numeric;
+BEGIN
+    SELECT p.amount INTO v_amount
+    FROM trust_recurring_charges AS r
+    JOIN trust_leases AS l ON l.id = r.lease_id
+    CROSS JOIN LATERAL trust_rent_for_month(l.starts_on, l.ends_on, r.amount, NEW.due_on) AS p
+    WHERE r.id = NEW.recurring_charge_id AND r.pmc_id = NEW.pmc_id
+      AND r.lease_id = NEW.lease_id AND r.kind = NEW.kind;
+    IF FOUND AND NEW.amount IS DISTINCT FROM v_amount THEN
+        RAISE EXCEPTION 'trust: a recurring charge due % is % for the days its lease is in '
+            'effect that month, not %', NEW.due_on, v_amount, NEW.amount
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
@@ -8610,6 +8665,13 @@ CREATE INDEX trust_recurring_charges_lease_id ON public.trust_recurring_charges 
 
 
 --
+-- Name: trust_recurring_charges_lease_kind; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_recurring_charges_lease_kind ON public.trust_recurring_charges USING btree (pmc_id, lease_id, id, kind);
+
+
+--
 -- Name: trust_screenings_application_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -9912,6 +9974,13 @@ CREATE TRIGGER trust_opened_at BEFORE INSERT OR UPDATE OF opened_at ON public.tr
 
 
 --
+-- Name: trust_charges trust_recurring_charge_amount; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recurring_charge_amount BEFORE INSERT ON public.trust_charges FOR EACH ROW WHEN ((new.recurring_charge_id IS NOT NULL)) EXECUTE FUNCTION public.trust_check_recurring_charge_amount();
+
+
+--
 -- Name: trust_maintenance_request_work_orders trust_request_work_order_unit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -10447,7 +10516,7 @@ ALTER TABLE ONLY public.trust_charges
 --
 
 ALTER TABLE ONLY public.trust_charges
-    ADD CONSTRAINT trust_charges_recurring_charge_fkey FOREIGN KEY (pmc_id, lease_id, recurring_charge_id, kind, amount) REFERENCES public.trust_recurring_charges(pmc_id, lease_id, id, kind, amount);
+    ADD CONSTRAINT trust_charges_recurring_charge_fkey FOREIGN KEY (pmc_id, lease_id, recurring_charge_id, kind) REFERENCES public.trust_recurring_charges(pmc_id, lease_id, id, kind);
 
 
 --
@@ -11816,4 +11885,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261013000044'),
     ('20261013000045'),
     ('20261013000046'),
-    ('20261013000047');
+    ('20261013000047'),
+    ('20261013000048');

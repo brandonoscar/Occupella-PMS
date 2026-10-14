@@ -32,7 +32,10 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     under the terms in force on its due date;
   - recurring charges are the model's: the rent run charges each recurring charge in force on
     the due date (from its first day, before the day it stops) whose lease is in effect then,
-    once per recurring charge and due date, as a fee or credit of its lease and amount.
+    once per recurring charge and due date, as a fee or credit of its lease, for the days of the
+    month the lease is in effect (its amount x days / days in the month, to the cent), and each
+    in force on the first day of a lease starting later that month, with nothing charged for it
+    in the month yet, its first part month, due on that day.
 
 The rule check_the_owner_year_end reads an owner's year-end package for a random year and
 compares each part (collected from tenants net of bounces, fees, draws, contributions, the
@@ -196,15 +199,21 @@ def to_cents(amount):
     return amount.quantize(CENT, ROUND_HALF_UP)
 
 
-def rent_for_month(lease, day):
-    """A lease's rent for the days it is in effect in day's month, to the cent, and whether
-    that is only part of the month."""
+def for_days_in_month(lease, amount, day):
+    """A monthly amount for the days the lease is in effect in day's month, to the cent, and
+    whether that is only part of the month."""
     month_start = day.replace(day=1)
     month_end = (month_start + timedelta(days=32)).replace(day=1) - timedelta(days=1)
     first = max(lease.starts_on, month_start)
     last = min(lease.ends_on or month_end, month_end)
     days, month_days = (last - first).days + 1, (month_end - month_start).days + 1
-    return to_cents(lease.rent * days / month_days), days < month_days
+    return to_cents(amount * days / month_days), days < month_days
+
+
+def rent_for_month(lease, day):
+    """A lease's rent for the days it is in effect in day's month, and whether that is only
+    part of the month."""
+    return for_days_in_month(lease, lease.rent, day)
 
 
 def overlaps(a_start, a_end, b_start, b_end):
@@ -1266,27 +1275,58 @@ class RentRollMachine(RuleBasedStateMachine):
             self.charge_rent_on(role, due_on)
             self.charge_recurring_on(role, due_on)
 
+    def recurring_for_month(self, recurring_id, day):
+        """A recurring charge's amount for the days its lease is in effect in day's month, and
+        whether that is only part of the month."""
+        recurring = self.recurring[recurring_id]
+        return for_days_in_month(self.leases[recurring.lease_id], recurring.amount, day)
+
     def charge_recurring_on(self, role, due_on):
+        """The rent run's recurring charges: each in force on due_on whose lease is in effect
+        then, for the days of the month the lease is in effect, due that day; then each in force
+        on the first day of a lease starting later that month, with nothing charged for it in
+        the month yet, its first part month, due on that day."""
+        month = (due_on.year, due_on.month)
         due = [
-            recurring_id
+            (recurring_id, due_on)
             for recurring_id, recurring in self.recurring.items()
             if recurring.in_force(due_on)
             and self.leases[recurring.lease_id].covers(due_on)
+            and self.recurring_for_month(recurring_id, due_on)[0] > 0
             and (recurring_id, due_on) not in self.recurring_charged
         ]
-
-        assert charge_recurring_due(self.conns[role], self.pmc_id, due_on) == len(due)
-
-        for recurring_id in due:
-            recurring = self.recurring[recurring_id]
-            (charge_id,) = self.conn.execute(
-                "SELECT id FROM trust_charges WHERE recurring_charge_id = %s AND due_on = %s",
-                (recurring_id, due_on),
-            ).fetchone()
-            self.charges[charge_id] = Charge(
-                recurring.lease_id, due_on, recurring.kind, recurring.amount
+        first = [
+            (recurring_id, starts_on)
+            for recurring_id, recurring in self.recurring.items()
+            for starts_on in [self.leases[recurring.lease_id].starts_on]
+            if starts_on > due_on
+            and (starts_on.year, starts_on.month) == month
+            and recurring.in_force(starts_on)
+            and self.recurring_for_month(recurring_id, starts_on)[0] > 0
+            and not any(
+                charged == recurring_id and (day.year, day.month) == month
+                for charged, day in self.recurring_charged
             )
-            self.recurring_charged[(recurring_id, due_on)] = charge_id
+        ]
+        if first:
+            event("recurring run: a first part month charged")
+        if any(self.recurring_for_month(r, d)[1] for r, d in due):
+            event("recurring run: a part month in effect on the due date")
+
+        assert charge_recurring_due(self.conns[role], self.pmc_id, due_on) == len(due) + len(first)
+
+        for recurring_id, day in due + first:
+            recurring = self.recurring[recurring_id]
+            (charge_id, amount, memo) = self.conn.execute(
+                "SELECT id, amount, memo FROM trust_charges"
+                " WHERE recurring_charge_id = %s AND due_on = %s",
+                (recurring_id, day),
+            ).fetchone()
+            expected, part = self.recurring_for_month(recurring_id, day)
+            assert amount == expected
+            assert memo.startswith(f"Parking due {day}") and (", " in memo) == part
+            self.charges[charge_id] = Charge(recurring.lease_id, day, recurring.kind, expected)
+            self.recurring_charged[(recurring_id, day)] = charge_id
 
     @precondition(lambda self: self.leases)
     @rule(

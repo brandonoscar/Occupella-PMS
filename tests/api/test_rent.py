@@ -132,6 +132,43 @@ def recur(client, home, amount="35.00", memo="Pet rent", starts_on=START, kind="
     )
 
 
+def test_the_rent_run_charges_a_lease_starting_later_that_month_its_part_month_of_recurring(
+    client, conn, staff, home, pmc
+):
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, "Unit 2")
+    lease = open_lease(
+        conn, pmc.pmc_id, unit, date(2026, 3, 15), date(2026, 4, 30), "1500.00", [home.tenant]
+    )
+    ok(
+        call(
+            client,
+            f"leases/{lease}/recurring-charges",
+            kind="fee",
+            amount="35.00",
+            memo="Pet rent",
+            starts_on=date(2026, 3, 15),
+        )
+    )
+
+    run = ok(call(client, "charge-rent", on=date(2026, 3, 1)), 200)
+    (row,) = [x for x in ok(client.get("/api/rent"), 200) if x["id"] == str(lease)]
+
+    assert run == {"charged": 1, "recurring": 1}
+    assert row["owed"] == "841.77"  # 1500.00 and 35.00, each x 17 / 31
+    assert sorted((c["due_on"], c["memo"], c["open"]) for c in row["open_charges"]) == [
+        (
+            "2026-03-15",
+            "Pet rent due 2026-03-15, 2026-03-15 to 2026-03-31 (17 of 31 days)",
+            "19.19",
+        ),
+        (
+            "2026-03-15",
+            "Rent due 2026-03-15, 2026-03-15 to 2026-03-31 (17 of 31 days)",
+            "822.58",
+        ),
+    ]
+
+
 def test_the_rent_run_charges_a_recurring_charge_with_the_rent_until_it_stops(client, staff, home):
     pet_rent = ok(recur(client, home))["id"]
     ok(recur(client, home, "100.00", "Concession", kind="credit"))

@@ -300,6 +300,7 @@ FUNCTIONS = {
     "trust_name_document_remover()": {"PUBLIC"},
     "trust_check_document_file()": {"PUBLIC"},
     "trust_check_document_has_file()": {"PUBLIC"},
+    "trust_check_recurring_charge_amount()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.
