@@ -4,6 +4,7 @@ import {
   bounceSummary,
   chargeLabel,
   owedLabel,
+  owedTone,
   paymentSummary,
   recurringLabel,
   rentRunSummary,
@@ -64,5 +65,11 @@ describe("rent", () => {
     const one = requestId();
     expect(one).toMatch(/^[0-9a-f-]{36}$/);
     expect(requestId()).not.toBe(one);
+  });
+});
+
+describe("owedTone", () => {
+  it("marks owing as a caution, paid up as fine and in credit as news", () => {
+    expect(["1500.00", "0.00", "-25.00"].map(owedTone)).toEqual(["caution", "positive", "info"]);
   });
 });

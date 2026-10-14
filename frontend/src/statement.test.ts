@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { group } from "./statement";
+import { describePosting, group, periodLabel } from "./statement";
 
 // The golden owner statement (tests/golden/cases/trust_report_owner_statement/january), as
 // the API sends it.
@@ -55,5 +55,51 @@ describe("group", () => {
 
   it("refuses a table that isn't a statement", () => {
     expect(() => group({ title: "t", columns: ["line"], rows: [] })).toThrow("no property column");
+  });
+});
+
+describe("describePosting", () => {
+  it("says what each posting was and with whom, not the ledger's kind", () => {
+    const cases: [string, string, { what: string; with: string }][] = [
+      ["bank_cash: Operating trust account", "1430.00", { what: "Received", with: "Operating trust account" }],
+      ["bank_cash: Operating trust account", "-20.00", { what: "Paid out", with: "Operating trust account" }],
+      ["bank_cash: Operating trust account - Owner draw", "-2796.80", { what: "Owner draw", with: "Operating trust account" }],
+      [
+        "pmc_income: Synthetic PMC - Management fee 2026-09-01 to 2026-09-30",
+        "-243.20",
+        { what: "Management fee 2026-09-01 to 2026-09-30", with: "Synthetic PMC" },
+      ],
+      ["vendor_payable: Vendor 1 - Bill RF-1 set aside", "-650.00", { what: "Bill RF-1 set aside", with: "Vendor 1" }],
+      ["pmc_income: Synthetic PMC", "-10.00", { what: "Management company", with: "Synthetic PMC" }],
+      ["vendor_payable: Vendor 1", "-10.00", { what: "Vendor", with: "Vendor 1" }],
+      ["owner_property: Owner 2 / Property 2", "10.00", { what: "Transfer", with: "Owner 2 / Property 2" }],
+      ["prepaid_rent: Tenant 1", "10.00", { what: "Prepaid rent", with: "Tenant 1" }],
+      ["tenant_deposit: Tenant 1", "10.00", { what: "Security deposit", with: "Tenant 1" }],
+    ];
+    for (const [detail, amount, said] of cases) expect(describePosting(detail, amount)).toEqual(said);
+  });
+
+  it("shows anything it doesn't know as it came", () => {
+    expect(describePosting("Opening balance", "1.00")).toEqual({ what: "Opening balance", with: "" });
+    expect(describePosting("something_else: X", "1.00")).toEqual({ what: "something_else: X", with: "" });
+  });
+});
+
+describe("periodLabel", () => {
+  it("reads the report's period, its end not included, in words", () => {
+    expect(periodLabel("2026-09-01 00:00:00 to 2026-10-01 00:00:00 UTC")).toBe("September 1 to September 30, 2026");
+    expect(periodLabel("2025-12-01 00:00:00 to 2026-02-01 00:00:00 UTC")).toBe(
+      "December 1, 2025 to January 31, 2026",
+    );
+    expect(periodLabel("2026-03-05 00:00:00 to 2026-03-06 00:00:00 UTC")).toBe("March 5 to March 5, 2026");
+  });
+
+  it("shows any other period as it came", () => {
+    expect(periodLabel("2026-09-01 12:00:00 to 2026-10-01 00:00:00 UTC")).toBe(
+      "2026-09-01 12:00:00 to 2026-10-01 00:00:00 UTC",
+    );
+    expect(periodLabel("2026-10-01 00:00:00 to 2026-10-01 00:00:00 UTC")).toBe(
+      "2026-10-01 00:00:00 to 2026-10-01 00:00:00 UTC",
+    );
   });
 });

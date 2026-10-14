@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
+import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
@@ -8,7 +9,7 @@ import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { day, money } from "../money";
 import type { Bill, OutboxEmail, Recurring } from "../payables";
-import { emailNote, nextStep, recurringLabel } from "../payables";
+import { emailNote, nextStep, recurringLabel, statusTone } from "../payables";
 import type { Portfolio } from "../setup";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
@@ -146,9 +147,9 @@ function BillRow({ bill, refresh }: { bill: Bill; refresh: () => void }) {
             {" "}· {bill.owner}, {bill.property} · {bill.memo} · dated {bill.bill_date}, due {bill.due_on}
           </span>
         </p>
-        <p>
-          <span className="font-mono">{money(bill.amount)}</span>{" "}
-          <span className="text-sm text-ink-muted" data-testid="status">{bill.status}</span>
+        <p className="flex items-center gap-3">
+          <span className="font-medium">{money(bill.amount)}</span>
+          <Badge tone={statusTone(bill.status)} data-testid="status">{bill.status}</Badge>
         </p>
       </div>
       {bill.approved_by && (
@@ -270,14 +271,14 @@ function RecurringCard({
       {recurring.length === 0 ? (
         <Notice tone="info">No recurring bills yet.</Notice>
       ) : (
-        <ul className="mb-4 flex flex-col gap-2">
+        <ul className="flex flex-col gap-2">
           {recurring.map((bill) => (
             <RecurringLine key={bill.id} bill={bill} record={record} />
           ))}
         </ul>
       )}
       <form
-        className="mb-4 flex items-end gap-3"
+        className="mt-2 flex items-end gap-3"
         onSubmit={(event) => {
           event.preventDefault();
           record<{ entered: number }>("/api/payables/recurring/enter", { on: through },
@@ -289,7 +290,12 @@ function RecurringCard({
         <Button type="submit" variant="secondary">Enter recurring bills</Button>
       </form>
       {books.vendors.length > 0 && books.accounts.length > 0 && (
-        <NewRecurringForm books={books} record={record} />
+        <details className="mt-2">
+          <summary>Add a recurring bill</summary>
+          <div className="mt-3">
+            <NewRecurringForm books={books} record={record} />
+          </div>
+        </details>
       )}
       <Notice tone="info">{said}</Notice>
       <Notice tone="error">{error}</Notice>
@@ -297,26 +303,37 @@ function RecurringCard({
   );
 }
 
+// A recurring bill; stopping it asks for its last day first.
 function RecurringLine({ bill, record }: { bill: Recurring; record: Recorder }) {
+  const [asking, setAsking] = useState(false);
   const [on, setOn] = useState(day(new Date()));
   return (
-    <li className="flex flex-wrap items-center gap-3 text-sm">
+    <li className="flex min-h-8 flex-wrap items-center gap-3 text-sm">
       <span>{recurringLabel(bill)}</span>
-      {bill.ends_on === null && (
-        <form
-          className="flex items-center gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            record(`/api/payables/recurring/${bill.id}/end`, { ends_on: on },
-              () => `${bill.reference_prefix} stops after ${on}.`);
-          }}
-        >
-          <input type="date" aria-label={`Last day, ${bill.reference_prefix}`} value={on}
-            onChange={(e) => setOn(e.target.value)}
-            className="h-8 rounded-sm border border-line-strong bg-sunken px-2 text-sm text-ink" />
-          <Button type="submit" variant="ghost">Stop it</Button>
-        </form>
-      )}
+      {bill.ends_on === null &&
+        (asking ? (
+          <form
+            className="flex items-center gap-2"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const done = await record(`/api/payables/recurring/${bill.id}/end`, { ends_on: on },
+                () => `${bill.reference_prefix} stops after ${on}.`);
+              if (done) setAsking(false);
+            }}
+          >
+            <input type="date" aria-label={`Last day, ${bill.reference_prefix}`} value={on}
+              onChange={(e) => setOn(e.target.value)} required
+              className="h-8 rounded-sm border border-line-strong bg-sunken px-2 text-sm text-ink" />
+            <Button type="submit" variant="secondary" size="sm">Stop it</Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(false)}>
+              Cancel
+            </Button>
+          </form>
+        ) : (
+          <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(true)}>
+            Stop
+          </Button>
+        ))}
     </li>
   );
 }

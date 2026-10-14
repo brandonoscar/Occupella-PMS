@@ -171,7 +171,7 @@ function CutoverCard({ cutover, refresh }: { cutover: Cutover; refresh: () => vo
                   {row.item}
                   {row.detail && row.amount !== null ? `: ${row.detail}` : ""}
                 </dt>
-                <dd className="text-right font-mono">{row.amount !== null ? money(row.amount) : row.detail}</dd>
+                <dd className="text-right">{row.amount !== null ? money(row.amount) : row.detail}</dd>
               </div>
             ))}
           </dl>

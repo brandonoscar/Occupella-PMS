@@ -1,8 +1,10 @@
+import { House } from "lucide-react";
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
 import { LinkButton } from "../components/Button";
+import { EmptyState } from "../components/EmptyState";
 import { Notice } from "../components/Notice";
-import { Card, Wordmark } from "../components/Shell";
+import { PageHeader, Wordmark } from "../components/Shell";
 import type { Vacancies } from "../leasing";
 import { money } from "../money";
 
@@ -25,23 +27,35 @@ export function ListingsPage() {
   }, [pmc]);
 
   return (
-    <div className="mx-auto flex max-w-2xl flex-col gap-6 px-6 py-10">
+    <div className="mx-auto flex max-w-2xl flex-col gap-8 px-6 py-10">
       <Wordmark />
       {page === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : (
-        <Card title={`Homes for rent from ${page.pmc}`}>
+        <>
+          <PageHeader
+            title={`Homes for rent from ${page.pmc}`}
+            description="Each home's rent and a way to apply. Nothing here is sent to listing sites."
+          />
           {page.listings.length === 0 ? (
-            <Notice tone="info">Nothing is available right now.</Notice>
+            <EmptyState
+              icon={House}
+              title="Nothing is available right now."
+              body={`Homes ${page.pmc} lists show here as soon as they are listed.`}
+            />
           ) : (
-            <ul className="flex flex-col divide-y divide-line">
+            <ul className="flex flex-col divide-y divide-line border-y border-line">
               {page.listings.map((listing) => (
                 <li key={listing.id} className="flex flex-col gap-2 py-4" aria-label={`${listing.property}, ${listing.unit}`}>
-                  <p className="text-md font-medium">
-                    {listing.property}, {listing.unit}
-                  </p>
-                  <p className="text-ink-muted">{money(listing.monthly_rent)} a month</p>
-                  {listing.description && <p className="whitespace-pre-line">{listing.description}</p>}
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <p className="text-md font-medium">
+                      {listing.property}, {listing.unit}
+                    </p>
+                    <p className="text-ink-muted">{money(listing.monthly_rent)} a month</p>
+                  </div>
+                  {listing.description && (
+                    <p className="whitespace-pre-line text-ink-secondary">{listing.description}</p>
+                  )}
                   <div>
                     <LinkButton href={`/apply?listing=${encodeURIComponent(listing.id)}`}>Apply</LinkButton>
                   </div>
@@ -49,7 +63,7 @@ export function ListingsPage() {
               ))}
             </ul>
           )}
-        </Card>
+        </>
       )}
     </div>
   );

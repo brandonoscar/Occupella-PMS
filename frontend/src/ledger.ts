@@ -65,3 +65,13 @@ export function itemLabel(item: string): string {
   return { rent: "Rent", fee: "Fee", credit: "Credit", payment: "Payment" }[item] ??
     (item === "bounced payment" ? "Payment returned" : item);
 }
+
+// A ledger line in words: its kind, then its memo, unless the memo already says the kind
+// ("Rent due 2026-08-01" is not "Rent: Rent due 2026-08-01").
+export function entryWords(entry: Pick<Entry, "item" | "detail">): { what: string; detail: string } {
+  const what = itemLabel(entry.item);
+  if (entry.detail.toLowerCase().startsWith(what.toLowerCase())) {
+    return { what: entry.detail, detail: "" };
+  }
+  return { what, detail: entry.detail };
+}

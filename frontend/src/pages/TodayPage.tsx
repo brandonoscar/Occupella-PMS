@@ -1,6 +1,8 @@
+import { CircleCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
+import { EmptyState } from "../components/EmptyState";
 import { Notice } from "../components/Notice";
 import { PageHeader, Shell } from "../components/Shell";
 import { navigate } from "../router";
@@ -44,49 +46,50 @@ export function TodayPage({ me }: { me: Me }) {
       <PageHeader
         title="Today"
         description={
-          today === null
+          today === null || count === 0
             ? "What is late or waits on someone."
-            : count === 0
-              ? "Nothing is late or waiting."
-              : `${count} ${count === 1 ? "item needs" : "items need"} someone today.`
+            : `${count} ${count === 1 ? "item needs" : "items need"} someone today.`
         }
       />
       <Notice tone="error">{error}</Notice>
-      {today === null
-        ? !error && <Notice tone="info">Loading</Notice>
-        : groups.length > 0 && (
-            <div className="divide-y divide-line rounded-md border border-card-edge">
-              {groups.map((group) => (
-                <section key={group.title} aria-label={group.title}>
-                  <div className="flex items-center justify-between px-4 pt-3 pb-1">
-                    <h2 className="text-xs font-medium tracking-wider text-ink-subtle uppercase">
-                      {group.title}
-                      <span className="ml-2 text-iris">{group.lines.length}</span>
-                    </h2>
-                    <a
-                      href={group.go}
-                      className="text-sm text-iris hover:text-iris-hover hover:underline"
-                      onClick={(event) => {
-                        // A click for a new tab or window is the browser's.
-                        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
-                        event.preventDefault();
-                        navigate(group.go);
-                      }}
-                    >
-                      Open {group.goLabel}
-                    </a>
-                  </div>
-                  <ul className="flex flex-col pb-2">
-                    {group.lines.map((line) => (
-                      <li key={line} className="px-4 py-2 text-base">
-                        {line}
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              ))}
-            </div>
-          )}
+      {today === null ? (
+        !error && <Notice tone="info">Loading</Notice>
+      ) : groups.length === 0 ? (
+        <EmptyState icon={CircleCheck} title="Nothing is late or waiting."
+          body="Late rent, bills due this week, month-end, applications and unsigned offers show here." />
+      ) : (
+        <div className="divide-y divide-line rounded-md border border-card-edge">
+          {groups.map((group) => (
+            <section key={group.title} aria-label={group.title}>
+              <div className="flex items-center justify-between px-4 pt-3 pb-1">
+                <h2 className="text-xs font-medium tracking-wider text-ink-subtle uppercase">
+                  {group.title}
+                  <span className="ml-2 text-iris">{group.lines.length}</span>
+                </h2>
+                <a
+                  href={group.go}
+                  className="text-sm text-iris hover:text-iris-hover hover:underline"
+                  onClick={(event) => {
+                    // A click for a new tab or window is the browser's.
+                    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
+                    event.preventDefault();
+                    navigate(group.go);
+                  }}
+                >
+                  Open {group.goLabel}
+                </a>
+              </div>
+              <ul className="flex flex-col pb-2">
+                {group.lines.map((line) => (
+                  <li key={line} className="px-4 py-2 text-base">
+                    {line}
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
+        </div>
+      )}
     </Shell>
   );
 }

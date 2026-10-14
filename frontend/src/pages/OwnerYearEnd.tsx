@@ -8,8 +8,9 @@ import { money } from "../money";
 import type { YearEnd, YearEndData } from "../yearEnd";
 import { groupYearEnd, lastYear, partLabel } from "../yearEnd";
 
-const CELL = "px-3 py-2 text-left";
-const AMOUNT = "px-3 py-2 text-right font-mono";
+// Cells take the table style's padding (less of it on a phone); only their alignment is set here.
+const CELL = "text-left";
+const AMOUNT = "text-right";
 
 // The signed-in owner's year-end package: the year per property and across them, the rents for
 // their 1099-MISC, and the year's whole statement to download. The PMS files nothing.
@@ -72,7 +73,7 @@ export function OwnerYearEnd() {
             </table>
           ))}
           <p className="border-t border-line-strong pt-4 text-base" data-testid="rents">
-            Rents for your 1099-MISC (box 1): <span className="font-mono">{money(shown.rents)}</span>
+            Rents for your 1099-MISC (box 1): <span className="font-medium">{money(shown.rents)}</span>
           </p>
           <p className="text-sm text-ink-subtle">
             What tenants paid toward your properties in the year, less what bounced back. This

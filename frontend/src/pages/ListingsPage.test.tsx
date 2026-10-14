@@ -42,6 +42,9 @@ describe("ListingsPage", () => {
     render(<ListingsPage />);
 
     expect(await screen.findByText("Nothing is available right now.")).toBeTruthy();
+    // An empty page says so with Occupella's empty state, under the page's own title.
+    expect(screen.getByTestId("empty-state").textContent).toContain("Nothing is available right now.");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toMatch(/^Homes for rent from /);
   });
 
   it("says what went wrong for an unknown PMC or a page with no PMC", async () => {

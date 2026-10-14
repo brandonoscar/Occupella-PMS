@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Bill, OwnerMoney, Recurring } from "./payables";
-import { emailNote, feeLine, heldLabel, lastMonthPeriod, nextStep, recurringLabel } from "./payables";
+import { emailNote, feeLine, heldLabel, lastMonthPeriod, nextStep, recurringLabel, statusTone } from "./payables";
 
 describe("payables", () => {
   it("names a bill's next step, and none once it is paid", () => {
@@ -66,5 +66,13 @@ describe("payables", () => {
     expect(emailNote({ ...bill, owner_email: null })).toContain("no active portal login");
     expect(emailNote({ ...bill, status: "to set aside" })).toBeNull();
     expect(nextStep("declined")).toBeNull();
+  });
+});
+
+describe("statusTone", () => {
+  it("marks a bill waiting on its owner as a caution, paid as done and declined as closed", () => {
+    expect((["needs approval", "to set aside", "set aside", "paid", "declined"] as const).map(statusTone)).toEqual([
+      "caution", "info", "info", "positive", "neutral",
+    ]);
   });
 });

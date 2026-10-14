@@ -63,8 +63,9 @@ function OwnerRow({ owner, refresh }: { owner: OwnerMoney; refresh: () => void }
           <span className="font-medium">{owner.owner}, {owner.property}</span>
           <span className="text-ink-muted"> · {owner.bank_account}</span>
         </p>
-        <p className="font-mono" data-testid="available">
-          {money(owner.available)} available
+        <p data-testid="available">
+          <span className="font-medium">{money(owner.available)}</span>{" "}
+          <span className="text-ink-muted">available</span>
         </p>
       </div>
       <p className="text-sm text-ink-subtle">{heldLabel(owner)}</p>
@@ -74,7 +75,7 @@ function OwnerRow({ owner, refresh }: { owner: OwnerMoney; refresh: () => void }
         </p>
       )}
       <details>
-        <summary className="cursor-pointer text-sm text-ink-muted">
+        <summary>
           Record for {owner.owner}, {owner.property}
         </summary>
         <div className="mt-3 flex flex-col gap-4">

@@ -124,11 +124,11 @@ test("staff enroll an authenticator, invite a tenant and see a repair through", 
 
   const people = page.locator("section", { hasText: "People who can sign in" });
   const tenant = people.getByRole("row", { name: /Tenant E2E/ });
-  await expect(tenant).toContainText("no login");
+  await expect(tenant).toContainText("No login");
   await tenant.getByLabel("Email for Tenant E2E").fill("tenant.e2e@example.com");
   await tenant.getByRole("button", { name: "Invite" }).click();
   await expect(tenant).toContainText("/invite#");
-  await expect(tenant).toContainText("invited");
+  await expect(tenant).toContainText("Invited");
 
   // The seeded request: a work order, a vendor, then done.
   const request = page.getByRole("listitem", { name: "The back door sticks" });
@@ -327,9 +327,11 @@ test("staff record a tenant's payment, the rest held as prepaid rent, and then i
   await expect(lease).toContainText("$800.00 paid what is owed; $200.00 held as prepaid rent.");
   await expect(lease.getByTestId("owed")).toHaveText("Paid up");
   await expect(lease).toContainText("Payer E2E: prepaid $200.00");
-  await expect(lease).toContainText("(Money order 9)");
+  await expect(lease.getByRole("row", { name: /Money order 9/ })).toBeVisible();
 
+  // A bounce is asked for, with the day it came back (today by default), before it is recorded.
   await lease.getByRole("button", { name: "It bounced" }).click();
+  await lease.getByRole("button", { name: "Record the bounce" }).click();
   await expect(lease).toContainText("The $800.00 payment is owed again.");
   await expect(lease.getByTestId("owed")).toHaveText("Owes $800.00");
   await expect(lease).toContainText("Payer E2E: prepaid $0.00");
@@ -391,7 +393,7 @@ test("staff charge a tenant's damage at move-out, return the rest of the deposit
   await page.getByRole("button", { name: "Finish" }).click();
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Move-out" }).click();
 
-  const card = page.locator("section", { hasText: "E2E Property 8 / E2E Unit 8: Leaver E2E" });
+  const card = page.getByRole("region", { name: "E2E Property 8 / E2E Unit 8: Leaver E2E" });
   await card.getByLabel("Cleaning or damage").fill("Carpet cleaning");
   await card.getByLabel("Amount").fill("150.00");
   await card.getByRole("button", { name: "Charge it" }).click();
@@ -514,9 +516,10 @@ test("staff import last month's statement, match it to the books and prepare it;
     .selectOption({ label: "E2E operating trust account" });
   await page.getByRole("button", { name: `Approve through ${iso(last)}` }).click();
   await expect(page.getByText(`Approved through ${iso(last)}; the account is closed through it.`)).toBeVisible();
-  await expect(page.getByRole("list", { name: "Approved" })).toContainText(
-    `${iso(first)} to ${iso(last)}: bank $4,700.00, books $4,700.00, approved by Approver E2E`,
-  );
+  const approved = page.getByRole("table", { name: "Approved" }).getByRole("row", {
+    name: `${iso(first)} to ${iso(last)} $4,700.00 $4,700.00 Approver E2E`,
+  });
+  await expect(approved).toBeVisible();
 });
 
 test("staff bring a roster in, open an account with its old balances and a check not cleared, sign off and match the opening", async ({
@@ -580,9 +583,10 @@ test("staff bring a roster in, open an account with its old balances and a check
   await expect(page.getByText("The opening is matched.")).toBeVisible();
   // Carried by the opening match, the check waits for the bank line that clears it.
   await expect(page.getByLabel(`${before} Check to Vendor E2E (2001), from before the cutover: -$150.00`)).toBeVisible();
-  await expect(page.getByLabel("Reconciling items")).toContainText(
-    `outstanding withdrawal: ${before} Check to Vendor E2E (2001), from before the cutover -$150.00`,
-  );
+  const carried = page.getByRole("table", { name: "Reconciling items" }).getByRole("row", {
+    name: `outstanding withdrawal ${before} Check to Vendor E2E (2001), from before the cutover -$150.00`,
+  });
+  await expect(carried).toBeVisible();
 });
 
 test("the demo opens on last month waiting for its manager, who approves it; its owner reads three properties", async ({
@@ -605,15 +609,16 @@ test("the demo opens on last month waiting for its manager, who approves it; its
     .selectOption({ label: "Demo operating trust account" });
 
   // The bookkeeper prepared last month; the roof repair's check hasn't cleared the bank.
-  await expect(page.getByRole("list", { name: "Reconciling items" })).toContainText("Bill RF-2207 paid");
+  await expect(page.getByRole("table", { name: "Reconciling items" })).toContainText("Bill RF-2207 paid");
   await expect(page.getByLabel("Prepared")).toContainText(
     `Prepared through ${iso(last)} by Demo Bookkeeper: bank $3,158.40, books $2,508.40.`,
   );
   await page.getByRole("button", { name: `Approve through ${iso(last)}` }).click();
   await expect(page.getByText(`Approved through ${iso(last)}; the account is closed through it.`)).toBeVisible();
-  await expect(page.getByRole("list", { name: "Approved" })).toContainText(
-    `${iso(first)} to ${iso(last)}: bank $3,158.40, books $2,508.40, approved by Demo Manager`,
-  );
+  const approved = page.getByRole("table", { name: "Approved" }).getByRole("row", {
+    name: `${iso(first)} to ${iso(last)} $3,158.40 $2,508.40 Demo Manager`,
+  });
+  await expect(approved).toBeVisible();
   await page.getByRole("button", { name: "Sign out" }).click();
 
   await page.goto(`/invite#${seed.demo_owner_invite}`);

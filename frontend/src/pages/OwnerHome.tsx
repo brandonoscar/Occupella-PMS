@@ -5,17 +5,19 @@ import { Button, LinkButton } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Card, PageHeader, Shell } from "../components/Shell";
+import { Wide } from "../components/Wide";
 import { lastMonth, money } from "../money";
 import type { StatementData } from "../statement";
-import { group } from "../statement";
+import { describePosting, group, periodLabel } from "../statement";
 import { OwnerBills } from "./OwnerBills";
 import { OwnerDocuments } from "./OwnerDocuments";
 import { OwnerYearEnd } from "./OwnerYearEnd";
 
 type Property = { account_id: string; property_id: string; name: string; bank: string; balance: string };
 
-const CELL = "px-3 py-2 text-left";
-const AMOUNT = "px-3 py-2 text-right font-mono";
+// Cells take the table style's padding (less of it on a phone); only their alignment is set here.
+const CELL = "text-left";
+const AMOUNT = "text-right";
 
 export function OwnerHome({ me }: { me: Me }) {
   const [properties, setProperties] = useState<Property[] | null>(null);
@@ -60,7 +62,7 @@ export function OwnerHome({ me }: { me: Me }) {
               <tr>
                 <th className={CELL}>Property</th>
                 <th className={CELL}>Trust account</th>
-                <th className="px-3 py-2 text-right">Balance</th>
+                <th className="text-right">Balance</th>
               </tr>
             </thead>
             <tbody>
@@ -100,37 +102,45 @@ export function OwnerHome({ me }: { me: Me }) {
         <Notice tone="error">{error}</Notice>
         {grouped && (
           <div className="flex flex-col gap-6">
-            <p className="text-sm text-ink-subtle">{grouped.period}</p>
+            <p className="text-sm text-ink-muted">{periodLabel(grouped.period)}</p>
             {grouped.properties.map((section) => (
-              <table key={section.name} className="w-full text-base">
-                <caption className="pb-2 text-left text-md font-medium">{section.name}</caption>
-                <thead className="text-sm text-ink-subtle">
-                  <tr>
-                    <th className={CELL}>Date</th>
-                    <th className={CELL}>Description</th>
-                    <th className="px-3 py-2 text-right">Amount</th>
-                    <th className="px-3 py-2 text-right">Balance</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr className="border-t border-line text-ink-muted">
-                    <td className={CELL} colSpan={3}>Opening balance</td>
-                    <td className={AMOUNT}>{money(section.opening)}</td>
-                  </tr>
-                  {section.postings.map((posting, n) => (
-                    <tr key={n} className="border-t border-line">
-                      <td className={`${CELL} font-mono text-sm`}>{posting.postedOn}</td>
-                      <td className={CELL}>{posting.detail}</td>
-                      <td className={AMOUNT}>{money(posting.amount)}</td>
-                      <td className={AMOUNT}>{money(posting.balance)}</td>
+              <Wide key={section.name}>
+                <table className="w-full text-base">
+                  <caption className="pb-2 text-left text-md font-medium">{section.name}</caption>
+                  <thead className="text-sm text-ink-subtle">
+                    <tr>
+                      <th className={CELL}>Date</th>
+                      <th className={CELL}>Description</th>
+                      <th className="text-right">Amount</th>
+                      <th className="text-right">Balance</th>
                     </tr>
-                  ))}
-                  <tr className="border-t border-line-strong font-medium">
-                    <td className={CELL} colSpan={3}>Closing balance</td>
-                    <td className={AMOUNT}>{money(section.closing)}</td>
-                  </tr>
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    <tr className="border-t border-line text-ink-muted">
+                      <td className={CELL} colSpan={3}>Opening balance</td>
+                      <td className={AMOUNT}>{money(section.opening)}</td>
+                    </tr>
+                    {section.postings.map((posting, n) => {
+                      const described = describePosting(posting.detail, posting.amount);
+                      return (
+                      <tr key={n} className="border-t border-line">
+                        <td className={`${CELL} whitespace-nowrap text-ink-muted`}>{posting.postedOn}</td>
+                        <td className={CELL}>
+                          {described.what}
+                          {described.with && <span className="text-ink-muted"> · {described.with}</span>}
+                        </td>
+                        <td className={AMOUNT}>{money(posting.amount)}</td>
+                        <td className={AMOUNT}>{money(posting.balance)}</td>
+                      </tr>
+                      );
+                    })}
+                    <tr className="border-t border-line-strong font-medium">
+                      <td className={CELL} colSpan={3}>Closing balance</td>
+                      <td className={AMOUNT}>{money(section.closing)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </Wide>
             ))}
             <dl className="grid grid-cols-2 gap-x-8 gap-y-1 border-t border-line-strong pt-4 text-base sm:grid-cols-4">
               {[
@@ -140,8 +150,8 @@ export function OwnerHome({ me }: { me: Me }) {
                 ["Closing", grouped.totals.closing],
               ].map(([label, value]) => (
                 <div key={label}>
-                  <dt className="text-sm text-ink-subtle">{label}, all properties</dt>
-                  <dd className="font-mono">{money(value ?? null)}</dd>
+                  <dt className="text-sm text-ink-muted">{label}, all properties</dt>
+                  <dd className="text-md font-medium">{money(value ?? null)}</dd>
                 </div>
               ))}
             </dl>
