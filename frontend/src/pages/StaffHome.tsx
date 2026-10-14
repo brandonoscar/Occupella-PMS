@@ -65,6 +65,11 @@ export function StaffHome({ me }: { me: Me }) {
           <LinkButton href={`/api/reports/trust_report_trial_balance?arg=${today}&format=xlsx`}>
             Trial balance (Excel)
           </LinkButton>
+          <LinkButton
+            href={`/api/reports/trust_report_lease_expirations?arg=${today}&format=xlsx`}
+          >
+            Leases ending in 90 days (Excel)
+          </LinkButton>
           <LinkButton href="/api/ledger.zip">Whole ledger (CSV, zip)</LinkButton>
         </div>
       </Card>

@@ -40,7 +40,9 @@ balances at the year's start and end, and the 1099-MISC rents) with the model. T
 check_the_tenant_reports reads the delinquency report as of a random day and compares
 every lease line with the model's aging, and checks a lease's tenant ledger closes at its
 balance due. The rule check_owner_balances reads the owner balances report as of a random day
-and compares it with the model. The rule check_the_rent_roll reads the roll as of a random day,
+and compares it with the model. The rule check_the_lease_expirations reads the lease
+expirations report as of a day near some lease's end and compares every line with the
+model's leases. The rule check_the_rent_roll reads the roll as of a random day,
 as any role including the AI's (trust_ai_agent), and compares every line with the model's: which
 lease each unit is in, its tenants in byte order, the money held for them, what was charged and
 paid by then, and the totals. The AI's role is refused every write it tries, and nothing
@@ -1748,6 +1750,110 @@ class RentRollMachine(RuleBasedStateMachine):
                 charge_recurring_due(ai, self.pmc_id, lease.starts_on)
             else:
                 reverse_payment(ai, self.pmc_id, charge_id, transfer_id, transfer_id, "0.01")
+
+    @precondition(lambda self: self.leases)
+    @rule(data=st.data(), role=st.sampled_from(["owner", "app", "ai"]))
+    def check_the_lease_expirations(self, data, role):
+        """The lease expirations report as of a day, mostly one some lease ends within 90 days
+        of: every lease whose last day falls in the window, soonest first in its group of days
+        left, and each group's and the whole list's rent and leases with no offer out (all of
+        them here: this model makes no lease offers)."""
+        ends = sorted({lease.ends_on for lease in self.leases.values() if lease.ends_on})
+        as_of = data.draw(
+            st.one_of(
+                st.sampled_from(ends).flatmap(
+                    lambda end: st.integers(0, 95).map(lambda back: end - timedelta(days=back))
+                )
+                if ends
+                else st.nothing(),
+                st.integers(-5, 640).map(lambda day: BASE + timedelta(days=day)),
+            )
+        )
+        rows = (
+            self.conns[role]
+            .execute(
+                "SELECT line, item, property, unit, tenants, ends_on, days_left, bucket,"
+                " monthly_rent, renewal FROM trust_report_lease_expirations(%s, %s)",
+                (self.pmc_id, as_of),
+            )
+            .fetchall()
+        )
+        names = {t.tenant_id: t.name for t in self.tenants}
+        expected = []
+        everything = Decimal(0)
+        count = 0
+        for label, low, high in (("0-30", 0, 30), ("31-60", 31, 60), ("61-90", 61, 90)):
+            ending = sorted(
+                (
+                    (lease.ends_on, self.property_names[lease.unit.property_index], lease_id)
+                    for lease_id, lease in self.leases.items()
+                    if lease.ends_on and low <= (lease.ends_on - as_of).days <= high
+                ),
+                key=lambda e: (
+                    e[0],
+                    e[1].encode(),
+                    self.leases[e[2]].unit.name.encode(),
+                    e[2],
+                ),
+            )
+            for ends_on, place, lease_id in ending:
+                lease = self.leases[lease_id]
+                tenants = ", ".join(
+                    names[t] for t in sorted(lease.tenants, key=lambda t: (names[t].encode(), t))
+                )
+                days = (ends_on - as_of).days
+                expected.append(
+                    (
+                        "lease",
+                        place,
+                        lease.unit.name,
+                        tenants,
+                        ends_on,
+                        days,
+                        label,
+                        lease.rent,
+                        "none",
+                    )
+                )
+            rent = sum((self.leases[e[2]].rent for e in ending), Decimal(0))
+            n = len(ending)
+            expected.append(
+                (
+                    "group total",
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    label,
+                    rent,
+                    f"{n} of {n} with no renewal offer out",
+                )
+            )
+            everything += rent
+            count += n
+        expected.append(
+            (
+                "total",
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                everything,
+                f"{count} of {count} with no renewal offer out",
+            )
+        )
+        if count:
+            event("lease expirations: some lease listed")
+
+        assert [row[0] for row in rows] == list(range(1, len(rows) + 1))
+        assert rows[1][1:3] == (
+            "as of",
+            f"{as_of:%Y-%m-%d}, end of day UTC; leases ending in the next 90 days",
+        )
+        assert [tuple(row[1:]) for row in rows[2:]] == expected
 
     @rule(
         role=st.sampled_from(["owner", "app", "ai"]), day=st.integers(min_value=-5, max_value=640)

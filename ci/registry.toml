@@ -663,6 +663,17 @@ tests = [
 ]
 
 [[report]]
+id = "lease-expirations"
+statement = "Lease expirations as of the end of a day (UTC): every lease of the PMC whose last day is that day or one of the 90 after it, soonest first in groups of 0-30, 31-60 and 61-90 days left, with its property, unit, tenants, rent and renewal status (none, drafted, sent, signed, renewed: the furthest along of its offers by the end of the day); each group and the whole list total their rent and the leases with no renewal offer out. The AI role sees the status word and nothing else of an offer. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_lease_expirations.py::test_leases_ending_in_the_next_90_days_are_listed_by_days_left",
+  "tests/test_lease_expirations.py::test_the_renewal_status_is_the_furthest_along_of_its_offers",
+  "tests/test_lease_expirations.py::test_the_status_is_as_of_the_end_of_the_day",
+  "tests/test_lease_expirations.py::test_the_ai_reads_the_renewal_status_and_nothing_else_of_an_offer",
+]
+
+[[report]]
 id = "rent-roll"
 statement = "Rent roll as of the end of a day (UTC): per unit the lease in effect, its tenants, the deposits and prepaid rent held for them, what was charged and paid, and the balance due; then totals that tie back to every tenant's money in the trust ledger. Compared to a checked-in golden file."
 tests = [
