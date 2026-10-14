@@ -210,7 +210,12 @@ required invariant, report and self-host step.
   once per lease and date: for the days of the month it is in effect (migration 0045: monthly
   rent x days / days in the month, to the cent), and a lease starting later in the month its
   first part month, due on its first day, unless rent was charged in that month already. It
-  never reaches back into an earlier month. A property's late fee terms (grace days, flat, percent of unpaid,
+  never reaches back into an earlier month. A lease's end set, moved or cleared after its month
+  was charged (`trust_end_lease`, a renewal included; migration 0051) adds a credit, or a fee
+  for days back, to each rent and recurring charge that stood at the run's amount, so the
+  month comes to the days in effect (`trust_lease_end_adjustments`); a renewal in a charged
+  month charges the new lease its days. The run and an end wait for each other. A property's
+  late fee terms (grace days, flat, percent of unpaid,
   cap) are in force from a date; `trust_assess_late_fees` charges a rent still open at the
   end of its last grace day (UTC) one late fee under the terms in force on its due date. READ
   COMMITTED. What is open of a charge (`trust_open_charges`, migration 0049) is its amount less
