@@ -183,11 +183,12 @@ def test_the_rent_run_charges_a_recurring_charge_with_the_rent_until_it_stops(cl
         ("credit", "Concession", "100.00", None),
         ("fee", "Pet rent", "35.00", None),
     ]
-    # Charged in one run, so the same day and time: which comes first is the ids' order.
-    assert sorted((c["kind"], c["memo"], c["open"]) for c in row["open_charges"]) == [
-        ("fee", f"Pet rent due {TODAY}", "35.00"),
-        ("rent", f"Rent due {TODAY}", "1500.00"),
-    ]
+    # Charged in one run, so the same day and time: which comes first is the ids' order, and
+    # the concession comes off the first (migration 0049), closing the pet rent if it is first.
+    assert [(c["kind"], c["memo"], c["open"]) for c in row["open_charges"]] in (
+        [("rent", f"Rent due {TODAY}", "1400.00"), ("fee", f"Pet rent due {TODAY}", "35.00")],
+        [("rent", f"Rent due {TODAY}", "1435.00")],
+    )
 
     ok(call(client, f"recurring-charges/{pet_rent}/stop", ends_on=TODAY + DAY))
     assert [r["ends_on"] for r in lease_row(client, home)["recurring"]] == [
@@ -268,10 +269,15 @@ def test_a_credit_comes_off_what_is_owed(client, conn, staff, home):
         )
     )
 
+    shown = lease_row(client, home)["open_charges"]
     paid = ok(pay(client, home, "1500.00"))
+    row = lease_row(client, home)
 
+    # The credit comes off the oldest open charge (migration 0049), so the rent shows 1400.00
+    # open, and once that is paid, nothing.
+    assert [(c["kind"], c["open"]) for c in shown] == [("rent", "1400.00")]
     assert (paid["to_owner"], paid["to_prepaid"]) == ("1400.00", "100.00")
-    assert lease_row(client, home)["owed"] == "0.00"
+    assert (row["owed"], row["open_charges"]) == ("0.00", [])
 
 
 def test_sending_a_payment_again_records_it_once(client, conn, staff, home):
@@ -769,11 +775,16 @@ def test_a_bank_account_without_its_cash_account_takes_no_money(client, conn, st
     refused(answer, 409, "the trust bank account has no cash account; set it up again")
 
 
-def test_open_charges_are_narrowed_only_by_the_fixed_conditions(conn):
+def test_open_charges_are_the_pmcs_own(app_conn, conn, home, other_pmc_lease):
+    """Narrowed by the PMC first, so another PMC's lease reads as having none."""
     from pms.api import rent
 
-    with pytest.raises(ValueError, match="fixed conditions"):
-        rent.charges_open(conn, "true OR true", uuid.uuid4())
+    home.charge(conn, START)
+    other_pmc_lease.charge(conn, START)
+
+    assert [row[0] for row in rent.charges_open(app_conn, home.pmc.pmc_id)] == [home.lease]
+    assert rent.charges_open(app_conn, home.pmc.pmc_id, other_pmc_lease.lease) == []
+    assert len(rent.charges_open(app_conn, home.pmc.pmc_id, home.lease)) == 1
 
 
 @pytest.mark.parametrize(

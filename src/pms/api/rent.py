@@ -98,34 +98,29 @@ def owed(conn: psycopg.Connection[Any], lease_id: UUID) -> Decimal:
     return Decimal(found[0])
 
 
-# Rent and fees not fully paid, oldest first, with what is still open of each. {where} is one
-# of the two fixed conditions below.
+# Rent and fees not fully paid, oldest first, with what is still open of each: less what
+# payments matched and plus what bounced, less the lease's credits, which come off its oldest
+# open charges first (trust_open_charges, migration 0049).
 OPEN_CHARGES = """
 SELECT c.lease_id, c.id, c.due_on, c.kind, c.memo, c.amount, o.open
-FROM trust_charges AS c
-CROSS JOIN LATERAL (
-    SELECT c.amount
-           - coalesce((SELECT sum(p.amount) FROM trust_charge_payments AS p
-                       WHERE p.charge_id = c.id), 0)
-           + coalesce((SELECT sum(r.amount) FROM trust_payment_reversals AS r
-                       WHERE r.charge_id = c.id), 0) AS open
-) AS o
-WHERE {where} AND c.kind <> 'credit' AND o.open > 0
+FROM trust_open_charges(%s, %s, 'infinity') AS o
+JOIN trust_charges AS c ON c.id = o.charge_id
+WHERE o.open > 0
 ORDER BY c.due_on, c.created_at, c.id
 """
-OF_LEASE = "c.lease_id = %s"
-OF_PMC = "c.pmc_id = %s"
 
 
-def charges_open(conn: psycopg.Connection[Any], where: str, value: UUID) -> list[tuple[Any, ...]]:
-    if where not in (OF_LEASE, OF_PMC):
-        raise ValueError("open charges are narrowed by one of the fixed conditions only")
-    query = sql.SQL(OPEN_CHARGES).format(where=sql.SQL(where))
-    return conn.execute(query, (value,)).fetchall()
+def charges_open(
+    conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID | None = None
+) -> list[tuple[Any, ...]]:
+    """The open charges of the PMC's leases, or of one of its leases."""
+    return conn.execute(OPEN_CHARGES, (pmc_id, lease_id)).fetchall()
 
 
-def open_charges(conn: psycopg.Connection[Any], lease_id: UUID) -> list[tuple[UUID, Decimal]]:
-    return [(row[1], Decimal(row[6])) for row in charges_open(conn, OF_LEASE, lease_id)]
+def open_charges(
+    conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID
+) -> list[tuple[UUID, Decimal]]:
+    return [(row[1], Decimal(row[6])) for row in charges_open(conn, pmc_id, lease_id)]
 
 
 def allocate(charges: list[tuple[UUID, Decimal]], amount: Decimal) -> list[tuple[UUID, Decimal]]:
@@ -270,7 +265,7 @@ def match(
         "SELECT 1 FROM trust_charge_payments WHERE transfer_id = %s LIMIT 1", (transfer,)
     ).fetchone():
         return []
-    matched = allocate(open_charges(conn, lease_id), amount)
+    matched = allocate(open_charges(conn, pmc_id, lease_id), amount)
     for charge, part in matched:
         conn.execute("SELECT trust_apply_payment(%s, %s, %s, %s)", (pmc_id, charge, transfer, part))
     return matched
@@ -607,7 +602,7 @@ def leases(
             )
         )
     charges: dict[UUID, list[OpenCharge]] = {}
-    for lease, c, due_on, kind, memo, amount, left in charges_open(conn, OF_PMC, pmc):
+    for lease, c, due_on, kind, memo, amount, left in charges_open(conn, pmc):
         charges.setdefault(lease, []).append(
             OpenCharge(
                 id=c,

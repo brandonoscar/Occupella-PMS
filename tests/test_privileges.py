@@ -188,6 +188,7 @@ FUNCTIONS = {
     "trust_pay_bill(uuid,uuid,timestamptz)": {"trust_app"},
     "trust_charge_rent_due(uuid,date)": {"trust_app"},
     "trust_rent_for_month(date,date,numeric,date)": {"trust_app"},
+    "trust_open_charges(uuid,uuid,timestamptz)": {"trust_app"},
     "trust_charge_recurring_due(uuid,date)": {"trust_app"},
     "trust_assess_late_fees(uuid,date)": {"trust_app"},
     "trust_charge_nsf_fee(uuid,text)": {"trust_app"},
