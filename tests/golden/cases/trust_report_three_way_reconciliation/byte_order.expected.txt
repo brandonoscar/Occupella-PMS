@@ -9,5 +9,9 @@ line	item	detail	amount
 8	beneficiary ledgers	NULL	20.00
 9	difference: bank statement - trust journal	NULL	0.00
 10	difference: trust journal - beneficiary ledgers	NULL	0.00
-11	ledger	owner_property: Owner b / Property 2	10.00
-12	ledger	owner_property: owner a / Property 1	10.00
+11	deposits in transit	not known: no imported bank statement covers 2026-01-31	NULL
+12	outstanding withdrawals	not known: no imported bank statement covers 2026-01-31	NULL
+13	adjusted bank balance	not known: no imported bank statement covers 2026-01-31	NULL
+14	difference: adjusted bank balance - trust journal	not known: no imported bank statement covers 2026-01-31	NULL
+15	ledger	owner_property: Owner b / Property 2	10.00
+16	ledger	owner_property: owner a / Property 1	10.00

@@ -665,11 +665,14 @@ tests = [
 
 [[report]]
 id = "three-way-reconciliation"
-statement = "Three-way reconciliation report (bank statement, trust journal and beneficiary ledgers of one approved reconciliation, with every difference listed), compared to a checked-in golden file."
+statement = "Three-way reconciliation report (bank statement, trust journal and beneficiary ledgers of one approved reconciliation, with every difference listed), and what had not cleared the bank by the period's last day (UTC): the deposits in transit and outstanding withdrawals added to the statement balance, each of them and each bank line the books lack listed, as the bank reconciliation of that day shows them from the imported statements, or said to be not known when no imported statement covers that day. Compared to a checked-in golden file."
 tests = [
   "tests/golden/test_golden.py::test_every_golden_case_matches",
   "tests/test_three_way_reconciliation.py::test_a_move_split_across_the_period_end_shows_in_both_accounts",
   "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+  "tests/test_three_way_reconciliation.py::test_a_period_approved_from_statements_lists_what_had_not_cleared",
+  "tests/test_three_way_reconciliation.py::test_without_an_imported_statement_what_had_not_cleared_is_not_known",
+  "tests/properties/test_bank_matching_properties.py::test_bank_matching_invariants_hold_under_random_statements_matches_and_approvals",
 ]
 
 [[report]]
