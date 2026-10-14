@@ -1,15 +1,18 @@
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
-import { LinkButton } from "../components/Button";
 import { Notice } from "../components/Notice";
-import { Card, Shell } from "../components/Shell";
+import { PageHeader, Shell } from "../components/Shell";
+import { navigate } from "../router";
 import type { Today } from "../today";
 import { applicationLine, billLine, lateLine, monthEndLine, offerLine } from "../today";
 import { STAFF_NAV } from "./staffNav";
 
-// Staff's day at a glance: what is late or waits on someone, each part with a way to the page
-// that does that work. It changes nothing.
+type Group = { title: string; go: string; goLabel: string; lines: string[] };
+
+// Staff's day at a glance, laid out as Occupella's Inbox: one list of what is late or waits on
+// someone, a group for each kind with its count and the way to the page that does that work. A
+// kind with nothing in it is left out. It changes nothing.
 export function TodayPage({ me }: { me: Me }) {
   const [today, setToday] = useState<Today | null>(null);
   const [error, setError] = useState("");
@@ -20,49 +23,70 @@ export function TodayPage({ me }: { me: Me }) {
       .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
   }, []);
 
+  const groups: Group[] = today
+    ? [
+        { title: "Late rent", go: "/rent", goLabel: "Rent",
+          lines: today.late_rent.map((lease) => lateLine(lease, today.on)) },
+        { title: "Bills due this week", go: "/bills", goLabel: "Bills",
+          lines: today.bills_due.map((bill) => billLine(bill, today.on)) },
+        { title: "Month-end", go: "/reconcile", goLabel: "Month-end",
+          lines: today.unreconciled.map(monthEndLine) },
+        { title: "Applications waiting", go: "/", goLabel: "Overview",
+          lines: today.applications.map(applicationLine) },
+        { title: "Offers not yet signed", go: "/", goLabel: "Overview",
+          lines: today.unsigned_offers.map(offerLine) },
+      ].filter((group) => group.lines.length > 0)
+    : [];
+  const count = groups.reduce((sum, group) => sum + group.lines.length, 0);
+
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <h1 className="font-display text-xl font-medium">Today</h1>
+      <PageHeader
+        title="Today"
+        description={
+          today === null
+            ? "What is late or waits on someone."
+            : count === 0
+              ? "Nothing is late or waiting."
+              : `${count} ${count === 1 ? "item needs" : "items need"} someone today.`
+        }
+      />
       <Notice tone="error">{error}</Notice>
-      {today === null ? (
-        !error && <Notice tone="info">Loading</Notice>
-      ) : (
-        <>
-          <Part title="Late rent" go="/rent" goLabel="Rent" none="No rent is past due."
-            lines={today.late_rent.map((lease) => lateLine(lease, today.on))} />
-          <Part title="Bills due this week" go="/bills" goLabel="Bills" none="No bill is due this week."
-            lines={today.bills_due.map((bill) => billLine(bill, today.on))} />
-          <Part title="Month-end" go="/reconcile" goLabel="Month-end" none="Every month ended is reconciled."
-            lines={today.unreconciled.map(monthEndLine)} />
-          <Part title="Applications waiting" go="/" goLabel="Overview" none="No application waits for a decision."
-            lines={today.applications.map(applicationLine)} />
-          <Part title="Offers not yet signed" go="/" goLabel="Overview" none="No offer waits for signatures."
-            lines={today.unsigned_offers.map(offerLine)} />
-        </>
-      )}
+      {today === null
+        ? !error && <Notice tone="info">Loading</Notice>
+        : groups.length > 0 && (
+            <div className="divide-y divide-line rounded-md border border-card-edge">
+              {groups.map((group) => (
+                <section key={group.title} aria-label={group.title}>
+                  <div className="flex items-center justify-between px-4 pt-3 pb-1">
+                    <h2 className="text-xs font-medium tracking-wider text-ink-subtle uppercase">
+                      {group.title}
+                      <span className="ml-2 text-iris">{group.lines.length}</span>
+                    </h2>
+                    <a
+                      href={group.go}
+                      className="text-sm text-iris hover:text-iris-hover hover:underline"
+                      onClick={(event) => {
+                        // A click for a new tab or window is the browser's.
+                        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey) return;
+                        event.preventDefault();
+                        navigate(group.go);
+                      }}
+                    >
+                      Open {group.goLabel}
+                    </a>
+                  </div>
+                  <ul className="flex flex-col pb-2">
+                    {group.lines.map((line) => (
+                      <li key={line} className="px-4 py-2 text-base">
+                        {line}
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          )}
     </Shell>
-  );
-}
-
-function Part({ title, lines, none, go, goLabel }: {
-  title: string;
-  lines: string[];
-  none: string;
-  go: string;
-  goLabel: string;
-}) {
-  return (
-    <Card title={`${title} (${lines.length})`}>
-      {lines.length ? (
-        <ul className="mb-4 flex flex-col gap-1 text-base">
-          {lines.map((line) => (
-            <li key={line}>{line}</li>
-          ))}
-        </ul>
-      ) : (
-        <p className="mb-4 text-sm text-ink-subtle">{none}</p>
-      )}
-      <LinkButton href={go}>Go to {goLabel}</LinkButton>
-    </Card>
   );
 }

@@ -5,7 +5,7 @@ import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
-import { Card, Shell } from "../components/Shell";
+import { Card, PageHeader, Shell } from "../components/Shell";
 import { day, money } from "../money";
 import type { Bounce, Payment, RecurringCharge, RentLease, RentRun } from "../rent";
 import {
@@ -39,7 +39,7 @@ export function RentPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <h1 className="font-display text-xl font-medium">Rent</h1>
+      <PageHeader title="Rent" description="Each lease's charges and payments, the month's rent run and late fees." />
       <RunsCard refresh={refresh} />
       <Card title="Leases">
         {leases === null ? (

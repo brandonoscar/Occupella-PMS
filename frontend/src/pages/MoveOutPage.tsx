@@ -5,7 +5,7 @@ import { Button, LinkButton } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
-import { Card, Shell } from "../components/Shell";
+import { Card, PageHeader, Shell } from "../components/Shell";
 import { day, money } from "../money";
 import type { MoveOut } from "../moveout";
 import { chargeLabel, hasEnded, leaseLabel, preview } from "../moveout";
@@ -30,7 +30,7 @@ export function MoveOutPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <h1 className="font-display text-xl font-medium">Move-out</h1>
+      <PageHeader title="Move-out" description="Return the deposits of a lease that has ended, with the itemized statement." />
       {leases === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : leases.length === 0 ? (

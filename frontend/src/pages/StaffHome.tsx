@@ -3,7 +3,7 @@ import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Button, LinkButton } from "../components/Button";
 import { Notice } from "../components/Notice";
-import { Card, Shell } from "../components/Shell";
+import { Card, PageHeader, Shell } from "../components/Shell";
 import { day } from "../money";
 import { LeasingCard } from "./LeasingCard";
 import { MaintenanceCard } from "./MaintenanceCard";
@@ -56,7 +56,7 @@ export function StaffHome({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <h1 className="font-display text-xl font-medium">{me.pmc_name}</h1>
+      <PageHeader title={me.pmc_name} description="Reports to download, who can sign in, maintenance requests, leasing and lease offers." />
       <Card title="Downloads">
         <div className="flex flex-wrap gap-2">
           <LinkButton href={`/api/reports/trust_report_rent_roll?arg=${today}&format=pdf`}>

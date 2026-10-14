@@ -5,7 +5,7 @@ import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
-import { Card, Shell } from "../components/Shell";
+import { Card, PageHeader, Shell } from "../components/Shell";
 import type { BankKind, Named, Portfolio } from "../setup";
 import type { CardProps } from "./useAdd";
 import { useAdd } from "./useAdd";
@@ -31,7 +31,7 @@ export function SetupPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <h1 className="font-display text-xl font-medium">Setup</h1>
+      <PageHeader title="Setup" description="Trust bank accounts, owners, properties, units, tenants and vendors." />
       {books === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : (

@@ -4,7 +4,7 @@ import { ApiError, api } from "../api";
 import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
-import { Card, Shell } from "../components/Shell";
+import { Card, PageHeader, Shell } from "../components/Shell";
 import type { Member } from "../staff";
 import { ROLES, changeLabel, holds } from "../staff";
 import { STAFF_NAV } from "./staffNav";
@@ -30,7 +30,7 @@ export function StaffPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <h1 className="font-display text-xl font-medium">Staff</h1>
+      <PageHeader title="Staff" description="Who works here and what each may do." />
       <Card title="Who may do what">
         <ul className="mb-4 flex flex-col gap-1 text-sm text-ink-muted">
           {ROLES.map((r) => (

@@ -5,7 +5,7 @@ import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
-import { Card, Shell } from "../components/Shell";
+import { Card, PageHeader, Shell } from "../components/Shell";
 import { day, money } from "../money";
 import type { Fee, OwnerMoney } from "../payables";
 import { feeLine, heldLabel, lastMonthPeriod } from "../payables";
@@ -34,7 +34,7 @@ export function OwnersPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <h1 className="font-display text-xl font-medium">Owners</h1>
+      <PageHeader title="Owners" description="What each owner's properties hold, draws and contributions, and the management and leasing fees." />
       <Card title="Owners' money">
         {owners === null ? (
           <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>

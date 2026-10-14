@@ -5,7 +5,7 @@ import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
-import { Card, Shell } from "../components/Shell";
+import { Card, PageHeader, Shell } from "../components/Shell";
 import { money } from "../money";
 import type { BankBooks, OpenItem, OpenLine, OpenTransfer, Worksheet } from "../reconcile";
 import {
@@ -54,7 +54,7 @@ export function ReconcilePage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <h1 className="font-display text-xl font-medium">Month-end</h1>
+      <PageHeader title="Month-end" description="Import bank statements, match the bank to the books, and prepare or approve each month." />
       {banks === null || (bank && sheet === null) ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : !bank || !sheet ? (

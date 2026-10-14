@@ -4,7 +4,7 @@ import { ApiError, api } from "../api";
 import { Button, LinkButton } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
-import { Card, Shell } from "../components/Shell";
+import { Card, PageHeader, Shell } from "../components/Shell";
 import { lastMonth, money } from "../money";
 import type { StatementData } from "../statement";
 import { group } from "../statement";
@@ -48,7 +48,7 @@ export function OwnerHome({ me }: { me: Me }) {
 
   return (
     <Shell me={me}>
-      <h1 className="font-display text-xl font-medium">Your properties</h1>
+      <PageHeader title="Your properties" description="What each property holds today, its statement, and the bills waiting for you." />
       <Card title="What each property holds today">
         {properties === null ? (
           <Notice tone="info">Loading</Notice>

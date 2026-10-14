@@ -5,7 +5,7 @@ import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
-import { Card, Shell } from "../components/Shell";
+import { Card, PageHeader, Shell } from "../components/Shell";
 import { day, money } from "../money";
 import type { Bill, OutboxEmail, Recurring } from "../payables";
 import { emailNote, nextStep, recurringLabel } from "../payables";
@@ -41,7 +41,7 @@ export function BillsPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <h1 className="font-display text-xl font-medium">Bills</h1>
+      <PageHeader title="Bills" description="Vendor bills to enter, approve and pay, recurring bills, and the emails to owners." />
       {books && <EnterBillCard books={books} refresh={refresh} />}
       <Card title="Vendor bills">
         <div className="mb-4 max-w-48">

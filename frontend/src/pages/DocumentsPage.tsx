@@ -5,7 +5,7 @@ import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
-import { Card, Shell } from "../components/Shell";
+import { Card, PageHeader, Shell } from "../components/Shell";
 import type { ContentType, Kind, Library } from "../documents";
 import { KINDS, MAX_BYTES, kindLabel, sizeLabel, titleOf, toBase64, typeOf } from "../documents";
 import { STAFF_NAV } from "./staffNav";
@@ -29,7 +29,7 @@ export function DocumentsPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <h1 className="font-display text-xl font-medium">Documents</h1>
+      <PageHeader title="Documents" description="W-9s, receipts, move-out photos and owner documents." />
       {library === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : (

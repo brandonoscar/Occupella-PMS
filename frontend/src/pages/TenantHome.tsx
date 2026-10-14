@@ -3,7 +3,7 @@ import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Button, LinkButton } from "../components/Button";
 import { Notice } from "../components/Notice";
-import { Card, Shell } from "../components/Shell";
+import { Card, PageHeader, Shell } from "../components/Shell";
 import type { Ledger } from "../ledger";
 import { itemLabel, readLedger } from "../ledger";
 import type { MaintenanceRequest } from "../maintenance";
@@ -123,7 +123,7 @@ export function TenantHome({ me }: { me: Me }) {
 
   return (
     <Shell me={me}>
-      <h1 className="font-display text-xl font-medium">Welcome, {me.name}</h1>
+      <PageHeader title={`Welcome, ${me.name}`} description="Your lease, what comes up, and what you have been charged and paid." />
       <Notice tone="error">{error}</Notice>
       {leases === null ? (
         <Notice tone="info">Loading</Notice>

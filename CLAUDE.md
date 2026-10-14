@@ -90,10 +90,15 @@ required invariant, report and self-host step.
   most once, given up after five failures). `python -m pms.email deliver` delivers what waits.
   Staff see each bill's email and the outbox at `/bills`. Emails are not audited, and the AI
   never reads them.
-- The portal (`frontend/`): React 19, Vite and Tailwind v4, following Occupella's `DESIGN.md`.
+- The portal (`frontend/`): React 19, Vite and Tailwind v4, following Occupella's `DESIGN.md`
+  and looking like Occupella's app (founder, 2026-10-14): its light theme, a full-height
+  light-blue left sidebar with the wordmark, the sections (lucide icons) and Sign out, a white
+  bar above the page with the avatar, and on white each page's Fraunces title, its parts under
+  small uppercase labels and its tables as Occupella's Operations table (`components/Shell.tsx`).
   Its build is served by the API (`PMS_STATIC_DIR`) under a strict Content-Security-Policy.
-  Colours, sizes and fonts come only from the tokens in `frontend/src/styles/globals.css`
-  (`designTokens.test.ts` fails on a raw colour or a size off the scale). Money stays text from
+  Colours, sizes and fonts come only from the tokens in `frontend/src/styles/globals.css`,
+  Occupella's values (`designTokens.test.ts` pins them and fails on a raw colour or a size off
+  the scale). Money stays text from
   the database to the screen, never a float. Staff's pages have sections (`pages/staffNav.ts`);
   they see what is late or waits on them at `/today` (`src/pms/api/today.py`: read only, each
   part the work page's own answer), set up the books at `/setup` (`src/pms/api/setup.py`: plain inserts and the database's

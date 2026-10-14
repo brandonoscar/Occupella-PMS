@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { Today } from "../today";
@@ -24,10 +24,10 @@ function server(answer: Today | { detail: string }, status = 200) {
   return fetch;
 }
 
-const card = (title: string) => screen.getByRole("heading", { name: title }).closest("section") as HTMLElement;
+const group = (title: string) => screen.getByRole("region", { name: title });
 
 describe("TodayPage", () => {
-  it("shows what is late or waiting, each with the way to its page", async () => {
+  it("lists what is late or waiting, a group for each kind with its count and the way to its page", async () => {
     const fetch = server({
       ...QUIET,
       late_rent: [{
@@ -44,13 +44,39 @@ describe("TodayPage", () => {
     expect(await screen.findByText(
       "Unit 1, Property 1 (Tenant A): $1,500.00 of rent past due since 2026-10-03 (10 days)",
     )).toBeTruthy();
-    expect(within(card("Late rent (1)")).getByRole("link", { name: "Go to Rent" }).getAttribute("href")).toBe("/rent");
-    expect(within(card("Month-end (1)")).getByText("Operating trust: September 2026 not reconciled")).toBeTruthy();
-    expect(within(card("Bills due this week (0)")).getByText("No bill is due this week.")).toBeTruthy();
-    expect(within(card("Applications waiting (0)")).getByText("No application waits for a decision.")).toBeTruthy();
-    expect(within(card("Offers not yet signed (0)")).getByText("No offer waits for signatures.")).toBeTruthy();
+    expect(screen.getByText("2 items need someone today.")).toBeTruthy();
+    const late = group("Late rent");
+    expect(within(late).getByRole("heading").textContent).toBe("Late rent1");
+    expect(within(late).getByRole("link", { name: "Open Rent" }).getAttribute("href")).toBe("/rent");
+    const monthEnd = group("Month-end");
+    expect(within(monthEnd).getByText("Operating trust: September 2026 not reconciled")).toBeTruthy();
+    expect(within(monthEnd).getByRole("link", { name: "Open Month-end" }).getAttribute("href")).toBe("/reconcile");
+    // A kind with nothing in it is left out.
+    expect(screen.getAllByRole("region").map((region) => region.getAttribute("aria-label"))).toEqual([
+      "Late rent", "Month-end",
+    ]);
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(fetch.mock.calls[0]?.[0]).toBe("/api/today");
+  });
+
+  it("goes to a group's page in place", async () => {
+    window.history.pushState(null, "", "/today");
+    server({ ...QUIET, unreconciled: [{
+      bank_account_id: "b1", name: "Operating trust", closed_through: null,
+      months: [], waiting_for_approval: "2026-09-30",
+    }] });
+    render(<TodayPage me={ME} />);
+
+    fireEvent.click(within(await screen.findByRole("region", { name: "Month-end" })).getByRole("link"));
+    expect(window.location.pathname).toBe("/reconcile");
+  });
+
+  it("says so in one line on a quiet day", async () => {
+    server(QUIET);
+    render(<TodayPage me={ME} />);
+
+    expect(await screen.findByText("Nothing is late or waiting.")).toBeTruthy();
+    expect(screen.queryAllByRole("region")).toEqual([]);
   });
 
   it("says what went wrong", async () => {
