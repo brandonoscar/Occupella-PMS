@@ -80,7 +80,7 @@ def test_an_admin_adds_a_staff_member_and_changes_roles(client, admin, clerk):
             f"/api/staff/{admin.person_id}/roles", json={"role": "admin", "granted": False}
         ),
         409,
-        "is the PMC's last admin",
+        "the company keeps an admin: give another staff member admin first",
     )
 
 

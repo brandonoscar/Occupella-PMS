@@ -1,4 +1,4 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import { day } from "../money";
@@ -39,10 +39,10 @@ describe("StaffHome", () => {
 
   it("shows each person's role and login as Occupella shows a state: a badge", async () => {
     const people = [
-      { kind: "staff", person_id: "s1", name: "Manager 1", email: "manager@example.com", status: "active" },
-      { kind: "owner", person_id: "o1", name: "Owner 1", email: "owner@example.com", status: "invited" },
-      { kind: "tenant", person_id: "t1", name: "Tenant 1", email: null, status: "no login" },
-      { kind: "tenant", person_id: "t2", name: "Tenant 2", email: "t2@example.com", status: "disabled" },
+      { kind: "staff", person_id: "s1", name: "Manager 1", email: "manager@example.com", login_id: "l1", status: "active" },
+      { kind: "owner", person_id: "o1", name: "Owner 1", email: "owner@example.com", login_id: "l2", status: "invited" },
+      { kind: "tenant", person_id: "t1", name: "Tenant 1", email: null, login_id: null, status: "no login" },
+      { kind: "tenant", person_id: "t2", name: "Tenant 2", email: "t2@example.com", login_id: "l3", status: "disabled" },
     ];
     vi.stubGlobal(
       "fetch",
@@ -66,5 +66,36 @@ describe("StaffHome", () => {
     expect(within(await row("Tenant 2")).queryByRole("button")).toBeNull();
     expect(within(await row("Tenant 1")).getByRole("button", { name: "Invite" })).toBeTruthy();
     expect(within(await row("Owner 1")).getByRole("button", { name: "New invite" })).toBeTruthy();
+  });
+
+  it("disables a login for good only once staff say yes, and never their own or one not made", async () => {
+    const people = [
+      { kind: "staff", person_id: "s1", name: "Manager 1", email: "manager@example.com", login_id: "l1", status: "active" },
+      { kind: "staff", person_id: "s2", name: "Bookkeeper 1", email: "books@example.com", login_id: "l2", status: "active" },
+      { kind: "tenant", person_id: "t1", name: "Tenant 1", email: null, login_id: null, status: "no login" },
+    ];
+    const fetch = vi.fn(async (path: string, init?: RequestInit) => {
+      if (init?.method === "POST") return new Response(null, { status: 204 });
+      return new Response(JSON.stringify(path === "/api/people" ? people : []), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<StaffHome me={ME} />);
+    const row = async (name: string) => screen.findByRole("row", { name: new RegExp(`^${name}`) });
+    const posts = () => fetch.mock.calls.filter(([, init]) => init?.method === "POST").map(([path]) => path);
+
+    expect(within(await row("Manager 1")).queryByRole("button", { name: "Disable" })).toBeNull();
+    expect(within(await row("Tenant 1")).queryByRole("button", { name: "Disable" })).toBeNull();
+
+    const bookkeeper = await row("Bookkeeper 1");
+    fireEvent.click(within(bookkeeper).getByRole("button", { name: "Disable" }));
+    expect(within(bookkeeper).getByText("Bookkeeper 1 can't sign in again, and is signed out now.")).toBeTruthy();
+    fireEvent.click(within(bookkeeper).getByRole("button", { name: "Cancel" }));
+    expect(within(bookkeeper).queryByRole("button", { name: "Disable login" })).toBeNull();
+    expect(posts()).toEqual([]);
+
+    fireEvent.click(within(bookkeeper).getByRole("button", { name: "Disable" }));
+    fireEvent.click(within(bookkeeper).getByRole("button", { name: "Disable login" }));
+    expect(await screen.findByText("Bookkeeper 1's login is disabled; they are signed out.")).toBeTruthy();
+    expect(posts()).toEqual(["/api/logins/l2/disable"]);
   });
 });

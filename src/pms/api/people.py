@@ -1,5 +1,6 @@
 """Staff see who in their PMC can sign in: every staff member, owner and tenant, with the
-email of their login and where it stands (no login, invited, active or disabled)."""
+email of their login and where it stands (no login, invited, active or disabled), and the
+login's id, which disabling it names."""
 
 from __future__ import annotations
 
@@ -21,7 +22,7 @@ WITH people AS (
     UNION ALL
     SELECT 'tenant', id, display_name FROM trust_tenants WHERE pmc_id = %(pmc)s
 )
-SELECT p.kind, p.id, p.display_name, l.email,
+SELECT p.kind, p.id, p.display_name, l.email, l.id,
        CASE WHEN l.id IS NULL THEN 'no login'
             WHEN l.disabled_at IS NOT NULL THEN 'disabled'
             WHEN s.login_id IS NULL OR (p.kind = 'staff' AND s.totp_confirmed_at IS NULL)
@@ -41,10 +42,14 @@ class Person(BaseModel):
     person_id: UUID
     name: str
     email: str | None
+    login_id: UUID | None
     status: Literal["no login", "invited", "active", "disabled"]
 
 
 @router.get("/people")
 def people(session: Staff, conn: Conn) -> list[Person]:
     rows = conn.execute(PEOPLE, {"pmc": session.pmc_id}).fetchall()
-    return [Person(kind=k, person_id=i, name=n, email=e, status=s) for k, i, n, e, s in rows]
+    return [
+        Person(kind=k, person_id=i, name=n, email=e, login_id=g, status=s)
+        for k, i, n, e, g, s in rows
+    ]

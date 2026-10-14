@@ -250,8 +250,8 @@ def test_a_bill_is_paid_only_once_set_aside_and_never_into_the_negative(client, 
 
     refused(unpaid, 409)
     assert "not set aside yet" in unpaid.json()["detail"]
-    refused(no_money, 409)
-    assert "below zero" in no_money.json()["detail"]
+    # The ledger's refusal, in words: whose money, and how much it is short.
+    refused(no_money, 409, "not enough money: the owner's account would be $200.00 short")
 
 
 def test_a_bill_is_entered_once_per_vendor_reference_with_sound_terms(client, conn, staff, pmc):
@@ -350,8 +350,12 @@ def test_a_draw_pays_out_what_is_available_once(client, conn, staff, pmc):
     elsewhere = call(client, "draws", request_id=request, account=pmc.owners[1].account, on=TODAY)
 
     assert drawn == again == {"amount": "800.00"}
-    refused(more, 409)
-    assert "available to draw" in more.json()["detail"]
+    # In words: nothing left, and why (the reserve), not the account's id.
+    refused(
+        more,
+        409,
+        "nothing is available to draw: what the account holds is kept for the $200.00 reserve",
+    )
     refused(elsewhere, 409)
     assert balance(conn, account) == Decimal("200.00")
 
@@ -463,7 +467,7 @@ def test_a_fee_refused_for_one_owner_leaves_the_others_taken(client, conn, staff
     )
 
     assert [(f["owner"], f["fee"]) for f in fees] == [("Owner 1", "150.00"), ("Owner 2", None)]
-    assert "below zero" in fees[1]["refused"]
+    assert fees[1]["refused"] == "not enough money: the owner's account would be $50.00 short"
     assert balance(conn, pmc.pmc_income) == Decimal("150.00")
 
 

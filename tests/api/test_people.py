@@ -23,6 +23,10 @@ def test_staff_see_everyone_and_where_their_login_stands(client, other_client, c
         ("owner", "Owner 2", "o2@example.com", "invited"),
         ("tenant", "Tenant 1", None, "no login"),
     ]
+    logins = {p["name"]: p["login_id"] for p in people}
+    assert logins["Staff 1"] == str(staff.login_id)
+    assert logins["Owner 1"] == str(owner.login_id)
+    assert logins["Tenant 1"] is None
 
 
 def test_a_disabled_login_says_so(client, other_client, conn, app_conn, pmc):

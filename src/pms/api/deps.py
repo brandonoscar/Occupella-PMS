@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
+from decimal import Decimal
 from typing import Annotated, Any
 
 import psycopg
@@ -18,6 +20,57 @@ MEDIA = {
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "pdf": "application/pdf",
 }
+
+
+# What holds the money when the ledger refuses to take an account below zero (migration 0003:
+# "trust: <kind> account <id> would go below zero (balance <n>)"). The account's id means
+# nothing to staff, so the refusal names whose money it is and how much it is short.
+HOLDERS = {
+    "owner_property": "the owner's account",
+    "prepaid_rent": "the tenant's prepaid rent",
+    "tenant_deposit": "the tenant's deposit",
+    "vendor_payable": "the vendor's account",
+    "pmc_income": "the company's fee account",
+}
+BELOW_ZERO = re.compile(r"^(\w+) account \S+ would go below zero \(balance (-\d+(?:\.\d+)?)\)$")
+# trust_draw_owner's refusal (migrations 0016 and 0017) names the owner's account by its id too.
+# Drawing everything from an account holding less than its reserve asks for a negative amount.
+NUMBER = r"(-?\d+(?:\.\d+)?)"
+TOO_MUCH = re.compile(
+    rf"^{NUMBER} is available to draw from \S+ \(its balance less a reserve of {NUMBER} and"
+    rf" unpaid bills of {NUMBER}\); {NUMBER} is too much$"
+)
+
+# trust_staff_roles' check (migration 0034) names the staff member by their id.
+LAST_ADMIN = re.compile(r"^staff member \S+ is the PMC's last admin$")
+
+
+def dollars(amount: str) -> str:
+    return f"${Decimal(amount):,.2f}"
+
+
+def refusal(error: psycopg.Error) -> str:
+    """A database refusal as the API says it: its first line, without the "trust: " every
+    trust_* refusal starts with, and the ledger's refusals about money in words."""
+    text = str(error).splitlines()[0].removeprefix("trust: ")
+    short = BELOW_ZERO.match(text)
+    if short is not None and short[1] in HOLDERS:
+        return f"not enough money: {HOLDERS[short[1]]} would be {dollars(short[2][1:])} short"
+    if LAST_ADMIN.match(text):
+        return "the company keeps an admin: give another staff member admin first"
+    draw = TOO_MUCH.match(text)
+    if draw is not None:
+        available, reserve, unpaid, asked = draw.groups()
+        held = f"the {dollars(reserve)} reserve"
+        if Decimal(unpaid) > 0:
+            held += f" and {dollars(unpaid)} of unpaid bills"
+        if Decimal(available) == 0:
+            return f"nothing is available to draw: what the account holds is kept for {held}"
+        return (
+            f"only {dollars(available)} is available to draw (the balance less {held});"
+            f" {dollars(asked)} is more than that"
+        )
+    return text
 
 
 def connection(request: Request) -> Iterator[psycopg.Connection[Any]]:

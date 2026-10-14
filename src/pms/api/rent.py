@@ -27,7 +27,7 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, StringConstraints
 
 from pms import exports
-from pms.api.deps import Conn, Staff
+from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/rent")
 
@@ -49,10 +49,6 @@ def today() -> date:
 def at(day: date) -> datetime:
     """A day's postings are dated at its start, UTC, as every report reads them."""
     return datetime.combine(day, time(0), UTC)
-
-
-def reason(refused: psycopg.Error) -> str:
-    return str(refused).splitlines()[0].removeprefix("trust: ")
 
 
 # --- reading a lease ------------------------------------------------------------------------
@@ -563,15 +559,27 @@ WHERE r.pmc_id = %(pmc)s AND (e.ends_on IS NULL OR %(as_of)s < e.ends_on)
 ORDER BY r.starts_on, r.memo COLLATE "C", r.id
 """
 
+# Each tenant payment as it was received: its transfers (to the owner's account, to prepaid
+# rent, or both) are one payment under one key, its amount what came in, and it bounced once a
+# bounce was posted under its key. A payment all of it prepaid rent is listed too, so it can
+# bounce like any other.
 PAYMENTS = """
-SELECT x.lease_id, t.id, t.event_at, sum(p.amount), t.metadata ->> 'reference',
-       EXISTS (SELECT 1 FROM trust_payment_reversals AS r WHERE r.transfer_id = t.id)
-FROM trust_charge_payments AS p
-JOIN trust_charges AS x ON x.id = p.charge_id
-JOIN pgledger_transfers AS t ON t.id = p.transfer_id
-WHERE p.pmc_id = %s AND t.metadata ->> 'kind' = 'tenant payment'
-GROUP BY x.lease_id, t.id, t.event_at, t.created_at, t.metadata
-ORDER BY t.event_at DESC, t.created_at DESC, t.id
+SELECT p.lease_id, p.first_id, p.received_at, p.amount, p.reference,
+       EXISTS (SELECT 1 FROM pgledger_transfers AS b
+               JOIN trust_ledger_accounts AS ba ON ba.ledger_account_id = b.to_account_id
+               WHERE ba.pmc_id = %(pmc)s AND b.metadata ->> 'key' = 'bounce/' || p.key)
+FROM (SELECT t.metadata ->> 'key' AS key,
+             (t.metadata ->> 'lease_id')::uuid AS lease_id,
+             (array_agg(t.id ORDER BY t.created_at, t.id))[1] AS first_id,
+             min(t.event_at) AS received_at,
+             min(t.created_at) AS created_at,
+             sum(t.amount) AS amount,
+             t.metadata ->> 'reference' AS reference
+      FROM pgledger_transfers AS t
+      JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id
+      WHERE a.pmc_id = %(pmc)s AND t.metadata ->> 'kind' = 'tenant payment'
+      GROUP BY t.metadata ->> 'key', t.metadata ->> 'lease_id', t.metadata ->> 'reference') AS p
+ORDER BY p.received_at DESC, p.created_at DESC, p.first_id
 """
 
 
@@ -590,7 +598,7 @@ def leases(
         )
     payments: dict[UUID, list[Paid]] = {}
     for lease, transfer, event_at, amount, reference, bounced in conn.execute(
-        PAYMENTS, (pmc,)
+        PAYMENTS, {"pmc": pmc}
     ).fetchall():
         payments.setdefault(lease, []).append(
             Paid(
@@ -805,7 +813,7 @@ def pay(session: Staff, conn: Conn, lease_id: UUID, new: NewPayment) -> Payment:
         )
     except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
         # a payment hold, a closed period, or a match made differently before
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
 
 
 class UsePrepaid(BaseModel):
@@ -822,7 +830,7 @@ def prepaid(session: Staff, conn: Conn, lease_id: UUID, use: UsePrepaid) -> Paym
             use_prepaid(conn, session.pmc_id, lease_id, use.request_id, use.on, use.account)
         )
     except psycopg.errors.CheckViolation as refused:
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
 
 
 class NewDeposit(BaseModel):
@@ -863,7 +871,7 @@ def deposit(session: Staff, conn: Conn, new: NewDeposit) -> Posted:
             )
         )
     except psycopg.errors.CheckViolation as refused:
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
 
 
 class Bounced(Posted):
@@ -879,7 +887,7 @@ def bounced(session: Staff, conn: Conn, transfer_id: str, returned: Day) -> Boun
     try:
         done = bounce(conn, session.pmc_id, transfer_id, returned.on)
     except psycopg.errors.CheckViolation as refused:  # the owner's account would go negative
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
     return Bounced(
         transfers=done.transfers, nsf_fee=None if done.nsf_fee is None else cents(done.nsf_fee)
     )

@@ -33,7 +33,9 @@ The standing-rule checks fail a PR that:
 - changes code without changing tests;
 - changes ledger SQL without a property test;
 - lowers any number in `ci/thresholds.toml`;
-- leaves a required invariant with neither a test nor an open issue.
+- leaves a required invariant with neither a test nor an open issue;
+- serves an API operation that no feature in `ci/features.toml` claims, or removes a feature or
+  one of its browser tests (the feature registry, below).
 
 This is the first line of defense: a ledger bug that an example test can see never reaches main.
 Run it with `ruff check . && ruff format --check . && mypy && python -m
@@ -246,10 +248,29 @@ staff member, who may approve, to approve, and bring a
 roster in, open an account with its old balances and a check not cleared, sign off the tie-out
 and match the opening, and keep an owner's document that the owner then downloads. The seed
 also builds the demo PMC (`src/pms/demo.py`), whose manager approves the month-end it opens on
-and whose owner reads three properties. On failure it keeps the Playwright
+and whose owner reads three properties. `frontend/e2e/features.spec.ts` then takes every feature
+through the browser, each test on a demo PMC of its own: the rent run and late fees, a lease's
+fees, credits, monthly charges, payments, prepaid rent, deposit and bounce, bills the owner
+approves or declines in the portal, recurring bills, management and leasing fees and draws,
+staff roles and disabled logins, the owner's statement and year-end package, the tenant's lease
+and ledger, a mid-month move-out, a listing on the public vacancy page, setup, every report in
+every format, documents, and vendor payments carried over. On failure it keeps the Playwright
 report and the API's log for 7 days. Run it locally with `cd frontend && npm ci && npm test &&
 npm run build`, then the same steps as the workflow (`PW_CHROMIUM` points Playwright at a
 Chromium already installed).
+
+The feature registry (`ci/features.toml`, `tools/check_features.py`) keeps every verified
+feature verified. Each feature says what it does, names the API operations it rests on and the
+browser tests that use it as a person would. The ci job fails when the API serves an operation
+no feature claims (the API's own OpenAPI schema, with the fake partners on, says what it serves;
+`[outside]` lists the health check, with why), when a feature names an operation that doesn't
+exist, and on a PR when a feature is removed or ends with fewer browser tests than on the base.
+After the browser tests, the e2e job checks the run itself: every browser test a feature names
+exists and every browser test belongs to a feature (Playwright's own `--list`), every operation
+a feature claims was called during the run, and no request was answered with a server error
+(the API's access log). So a new endpoint can't land without a browser test that calls it, and
+a page that stops calling its endpoint, or an endpoint that starts failing, turns e2e red. Run
+the first half with `python -m tools.check_features --base origin/main`.
 
 **security.yml** (PRs, main and weekly):
 - CodeQL (security-extended) on the Python, the portal's TypeScript and the workflows themselves.

@@ -16,7 +16,7 @@ from fastapi import APIRouter, HTTPException, Query
 from psycopg import sql
 from pydantic import BaseModel, Field
 
-from pms.api.deps import Conn, Staff
+from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/maintenance")
 Status = Literal["received", "opened", "assigned", "completed", "cancelled"]
@@ -217,4 +217,4 @@ def record_step(session: Staff, conn: Conn, work_order_id: UUID, step: Step) -> 
         raise HTTPException(422, "no such vendor in this PMC") from None
     except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
         # The work order is closed, or this step would come before its last one.
-        raise HTTPException(409, str(refused).splitlines()[0].removeprefix("trust: ")) from None
+        raise HTTPException(409, refusal(refused)) from None

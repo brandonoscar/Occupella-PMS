@@ -193,6 +193,14 @@ function FeesCard({ refresh }: { refresh: () => void }) {
   );
 }
 
+// What taking a lease's leasing fee did. An agreement that takes no leasing fee charges none:
+// the lease's one leasing fee is then $0.00, not a fee to take later.
+export function leasingFeeSaid(amount: string): string {
+  return Number(amount) > 0
+    ? `A leasing fee of ${money(amount)} is taken.`
+    : "No leasing fee: the owner's agreement in force takes none, so none is due for this lease.";
+}
+
 function LeasingFeeCard({ books, refresh }: { books: Portfolio; refresh: () => void }) {
   const { said, error, record } = useRecord(refresh);
   const leases = books.properties.flatMap((p) =>
@@ -215,7 +223,7 @@ function LeasingFeeCard({ books, refresh }: { books: Portfolio; refresh: () => v
           event.preventDefault();
           record<{ amount: string }>("/api/payables/leasing-fees",
             { lease_id: lease, account: chosen, on },
-            (taken) => `A leasing fee of ${money(taken.amount)} is taken.`);
+            (taken) => leasingFeeSaid(taken.amount));
         }}
       >
         <Select label="Lease" id="leasing-lease" value={lease} onChange={(e) => setLease(e.target.value)}>

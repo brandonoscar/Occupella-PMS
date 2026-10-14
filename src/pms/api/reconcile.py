@@ -25,7 +25,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, StringConstraints
 
 from pms import exports, statements
-from pms.api.deps import Conn, Staff
+from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/reconcile")
 
@@ -45,10 +45,6 @@ def one(conn: psycopg.Connection[Any], query: str, params: tuple[Any, ...]) -> A
     row = conn.execute(query, params).fetchone()
     assert row is not None  # every query here returns one row
     return row[0]
-
-
-def reason(refused: psycopg.Error) -> str:
-    return str(refused).splitlines()[0].removeprefix("trust: ")
 
 
 def bank_of(conn: psycopg.Connection[Any], pmc_id: UUID, bank: UUID) -> None:
@@ -319,7 +315,7 @@ def import_statement(session: Staff, conn: Conn, new: NewStatement) -> Imported:
             409, "this file is imported for this trust bank account already"
         ) from None
     except psycopg.errors.CheckViolation as refused:  # not the next statement, a closed period
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
     return Imported(
         id=statement,
         first_day=first_day,
@@ -522,7 +518,7 @@ def worksheet(
                 )
             ]
         except psycopg.errors.InvalidParameterValue as refused:  # no statement covers it
-            raise HTTPException(422, reason(refused)) from None
+            raise HTTPException(422, refusal(refused)) from None
     matches: list[StandingMatch] = []
     for (match,) in conn.execute(
         "SELECT m.id FROM trust_bank_matches AS m WHERE m.bank_account_id = %s AND NOT EXISTS"
@@ -615,9 +611,9 @@ def add_match(session: Staff, conn: Conn, bank_account_id: UUID, new: NewMatch) 
             )
         )
     except psycopg.errors.InvalidParameterValue as bad:  # not this account's, named twice
-        raise HTTPException(422, reason(bad)) from None
+        raise HTTPException(422, refusal(bad)) from None
     except psycopg.errors.CheckViolation as refused:  # sides differ, matched, a closed period
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
 
 
 class OpeningMatch(BaseModel):
@@ -637,9 +633,9 @@ def match_opening(session: Staff, conn: Conn, bank_account_id: UUID, new: Openin
             (session.pmc_id, bank_account_id, new.line_id, session.person_id),
         )
     except psycopg.errors.InvalidParameterValue as bad:  # not this account's line
-        raise HTTPException(422, reason(bad)) from None
+        raise HTTPException(422, refusal(bad)) from None
     except psycopg.errors.CheckViolation as refused:  # not signed off, amounts differ, matched
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
     return Created(id=made)
 
 
@@ -654,7 +650,7 @@ def undo(session: Staff, conn: Conn, match_id: UUID) -> None:
     except psycopg.errors.InvalidParameterValue:
         raise HTTPException(404, "no such match") from None
     except psycopg.errors.CheckViolation as refused:
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
 
 
 class Counted(BaseModel):
@@ -715,9 +711,9 @@ def prepare(session: Staff, conn: Conn, bank_account_id: UUID, preparation: Prep
             (session.pmc_id, bank_account_id, preparation.through),
         )
     except psycopg.errors.InvalidParameterValue as bad:  # no statement covers the day
-        raise HTTPException(422, reason(bad)) from None
+        raise HTTPException(422, refusal(bad)) from None
     except psycopg.errors.CheckViolation as refused:  # lines the books lack
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
     return Created(id=made)
 
 
@@ -747,5 +743,5 @@ def approve(session: Staff, conn: Conn, bank_account_id: UUID, approval: Approva
             (session.pmc_id, approval.preparation_id),
         )
     except psycopg.errors.CheckViolation as refused:  # prepared again, approved, changed
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
     return Created(id=reconciliation)

@@ -24,7 +24,7 @@ from psycopg import sql
 from pydantic import BaseModel, Field, StringConstraints
 
 from pms import exports
-from pms.api.deps import Conn, Staff
+from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/setup")
 
@@ -303,11 +303,6 @@ def found(conn: psycopg.Connection[Any], what: str, pmc_id: UUID, record: UUID) 
         raise HTTPException(404, f"no such {what}")
 
 
-def reason(refused: psycopg.Error) -> str:
-    """The database's own words for a refusal, as staff read them."""
-    return str(refused).splitlines()[0].removeprefix("trust: ")
-
-
 @contextmanager
 def refusals(already: str) -> Iterator[None]:
     """The database's refusals as answers: `already` when the record exists, else its reason."""
@@ -316,7 +311,7 @@ def refusals(already: str) -> Iterator[None]:
     except psycopg.errors.UniqueViolation:
         raise HTTPException(409, already) from None
     except psycopg.errors.CheckViolation as refused:
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
 
 
 def insert(conn: psycopg.Connection[Any], statement: str, params: tuple[Any, ...]) -> Any:
@@ -579,7 +574,7 @@ def add_lease(session: Staff, conn: Conn, new: NewLease) -> Created:
             ),
         )
     except psycopg.errors.ExclusionViolation as refused:  # another lease of the unit
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
     except psycopg.errors.InvalidParameterValue as refused:  # a tenant of another property
-        raise HTTPException(422, reason(refused)) from None
+        raise HTTPException(422, refusal(refused)) from None
     return Created(id=lease)

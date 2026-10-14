@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field, StringConstraints
 
 from pms import email, exports
 from pms.api import outbox
-from pms.api.deps import Conn, Staff
+from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/payables")
 
@@ -42,10 +42,6 @@ def today() -> date:
 
 def at(day: date) -> datetime:
     return datetime.combine(day, time(0), UTC)
-
-
-def reason(refused: psycopg.Error) -> str:
-    return str(refused).splitlines()[0].removeprefix("trust: ")
 
 
 def not_after_today(day: date) -> None:
@@ -261,7 +257,7 @@ def enter_bill(session: Staff, conn: Conn, new: NewBill) -> Created:
         raise HTTPException(409, "this vendor has a bill with that reference already") from None
     except (psycopg.errors.CheckViolation, psycopg.errors.ForeignKeyViolation) as refused:
         # a work order of another property, a cancelled one, or none of this PMC's
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
     # Over the owner's limit: the email asking them to decide it, which goes out once this
     # commits (ADR 0004).
     email.write_bill_approval(conn, session.pmc_id, bill, outbox.PUBLIC_URL.get())
@@ -315,7 +311,7 @@ class Decline(BaseModel):
 
 
 @router.post("/bills/{bill_id}/decline", status_code=201)
-def decline(session: Staff, conn: Conn, bill_id: UUID, refusal: Decline) -> None:
+def decline(session: Staff, conn: Conn, bill_id: UUID, declined: Decline) -> None:
     """Records the owner's decline of a bill: it is never set aside or paid, and holds nothing
     back from the owner's draws from that day."""
     bill_of(conn, session.pmc_id, bill_id)
@@ -328,15 +324,15 @@ def decline(session: Staff, conn: Conn, bill_id: UUID, refusal: Decline) -> None
                 (
                     session.pmc_id,
                     bill_id,
-                    refusal.declined_on,
-                    refusal.declined_by,
-                    refusal.reason,
+                    declined.declined_on,
+                    declined.declined_by,
+                    declined.reason,
                 ),
             )
     except psycopg.errors.UniqueViolation:
         raise HTTPException(409, decided(conn, bill_id)) from None
     except psycopg.errors.CheckViolation as refused:  # set aside already
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
 
 
 class Day(BaseModel):
@@ -376,7 +372,7 @@ def set_aside(session: Staff, conn: Conn, bill_id: UUID, step: Day) -> Moved:
             conn, "SELECT trust_set_aside_bill(%s, %s, %s)", (session.pmc_id, bill_id, at(step.on))
         )
     except psycopg.errors.CheckViolation as refused:  # no approval, not enough money, closed
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
     return Moved(transfer_id=moved)
 
 
@@ -390,9 +386,9 @@ def pay(session: Staff, conn: Conn, bill_id: UUID, step: Day) -> Moved:
             conn, "SELECT trust_pay_bill(%s, %s, %s)", (session.pmc_id, bill_id, at(step.on))
         )
     except psycopg.errors.InvalidParameterValue as refused:  # not set aside, or before that
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
     except psycopg.errors.CheckViolation as refused:  # a closed period
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
     return Moved(transfer_id=moved)
 
 
@@ -687,7 +683,7 @@ def management_fees(session: Staff, conn: Conn, run: FeeRun) -> list[Fee]:
             psycopg.errors.InvalidParameterValue,
         ) as refused:
             taken.append(
-                Fee(account=account, owner=owner, property=prop, fee=None, refused=reason(refused))
+                Fee(account=account, owner=owner, property=prop, fee=None, refused=refusal(refused))
             )
     return taken
 
@@ -714,9 +710,9 @@ def leasing_fee(session: Staff, conn: Conn, new: LeasingFee) -> Taken:
             (session.pmc_id, new.lease_id, new.account, at(new.on)),
         )
     except psycopg.errors.InvalidParameterValue as refused:
-        raise HTTPException(422, reason(refused)) from None
+        raise HTTPException(422, refusal(refused)) from None
     except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
     return Taken(amount=cents(fee))
 
 
@@ -742,7 +738,7 @@ def draw(session: Staff, conn: Conn, new: Draw) -> Taken:
             (session.pmc_id, new.account, f"draw/{new.request_id}", new.amount, at(new.on)),
         )
     except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
     return Taken(amount=cents(drawn))
 
 
@@ -773,5 +769,5 @@ def contribute(session: Staff, conn: Conn, new: Contribution) -> Moved:
             ),
         )
     except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
     return Moved(transfer_id=moved)
