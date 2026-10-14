@@ -56,6 +56,7 @@ from pms.api import (
     staff,
     switching,
     tenant,
+    today,
 )
 from pms.api.deps import COOKIE, Conn, Current, Staff, download
 from pms.leasing import esign, screening
@@ -355,6 +356,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(staff.router)
     app.include_router(moveout.router)
     app.include_router(documents.router)
+    app.include_router(today.router)
     if settings.static_dir is not None:
         serve_portal(app, settings.static_dir)
     return app

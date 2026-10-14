@@ -19,6 +19,7 @@ import { StaffHome } from "./pages/StaffHome";
 import { StaffPage } from "./pages/StaffPage";
 import { SwitchPage } from "./pages/SwitchPage";
 import { TenantHome } from "./pages/TenantHome";
+import { TodayPage } from "./pages/TodayPage";
 import { navigate, usePath } from "./router";
 
 export function App() {
@@ -63,6 +64,7 @@ function Home({ path }: { path: string }) {
     if (path === "/reconcile") return <ReconcilePage me={me} />;
     if (path === "/switching") return <SwitchPage me={me} />;
     if (path === "/staff") return <StaffPage me={me} />;
+    if (path === "/today") return <TodayPage me={me} />;
     return <StaffHome me={me} />;
   }
   return <TenantHome me={me} />;
