@@ -76,6 +76,7 @@ describe("TodayPage", () => {
     render(<TodayPage me={ME} />);
 
     expect(await screen.findByText("Nothing is late or waiting.")).toBeTruthy();
+    expect(screen.getByTestId("empty-state").textContent).toContain("Nothing is late or waiting.");
     expect(screen.queryAllByRole("region")).toEqual([]);
   });
 

@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { MoveOut } from "../moveout";
@@ -67,8 +67,16 @@ describe("MoveOutPage", () => {
   it("ends a lease and charges cleaning or damage", async () => {
     const fetch = server();
     render(<MoveOutPage me={ME} />);
-    await screen.findByText(/Property 1 \/ Unit 2/);
-    expect(screen.getByText("The deposit goes back once the lease has ended.")).toBeTruthy();
+    const open = await screen.findByRole("region", { name: "Property 1 / Unit 2: Tenant 1" });
+    expect(within(open).getByText("The deposit goes back once the lease has ended.")).toBeTruthy();
+    // Each lease says where its move-out stands; a running lease folds its forms away.
+    expect(within(open).getByText("In effect").closest("[data-tone]")?.getAttribute("data-tone")).toBe("neutral");
+    expect(within(open).getByText("Move-out for Unit 2").tagName).toBe("SUMMARY");
+    const ended = screen.getByRole("region", { name: "Property 1 / Unit 1: Tenant 1" });
+    expect(within(ended).getByText("Ended, deposit to return")).toBeTruthy();
+    expect(within(ended).queryByText("Move-out for Unit 1")).toBeNull();
+    const done = screen.getByRole("region", { name: "Property 1 / Unit 3: Tenant 1" });
+    expect(within(done).getByText("Deposit returned").closest("[data-tone]")?.getAttribute("data-tone")).toBe("positive");
 
     fireEvent.change(screen.getAllByLabelText("Last day")[1]!, { target: { value: "2026-07-31" } });
     fireEvent.click(screen.getAllByRole("button", { name: "End the lease" })[1]!);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { itemLabel, readLedger } from "./ledger";
+import { entryWords, itemLabel, readLedger } from "./ledger";
 
 // The golden tenant ledger (tests/golden/cases/trust_report_tenant_ledger/april), as the API
 // sends it.
@@ -42,5 +42,13 @@ describe("itemLabel", () => {
     expect(["rent", "fee", "credit", "payment", "bounced payment", "other"].map(itemLabel)).toEqual(
       ["Rent", "Fee", "Credit", "Payment", "Payment returned", "other"],
     );
+  });
+});
+
+describe("entryWords", () => {
+  it("says a line's kind and memo once", () => {
+    expect(entryWords({ item: "rent", detail: "Rent due 2026-08-01" })).toEqual({ what: "Rent due 2026-08-01", detail: "" });
+    expect(entryWords({ item: "fee", detail: "Key replacement" })).toEqual({ what: "Fee", detail: "Key replacement" });
+    expect(entryWords({ item: "payment", detail: "" })).toEqual({ what: "Payment", detail: "" });
   });
 });

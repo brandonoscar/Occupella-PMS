@@ -50,8 +50,11 @@ describe("OwnerBills", () => {
     const list = await screen.findByRole("list", { name: "Waiting for you" });
     expect(list.textContent).toContain("Vendor 1, ROOF-1: $600.00");
     expect(list.textContent).toContain("Over your approval limit of $500.00.");
-    expect(screen.getByRole("list", { name: "Decided" }).textContent).toBe(
-      "Vendor 1, PAINT-1 ($600.00): declined on 2026-01-11 by Owner 1, in the owner portal. Get a second quote",
+    // A decided bill: its decision as a badge, then what, when and by whom.
+    const decided = screen.getByRole("list", { name: "Decided" });
+    expect(decided.querySelector("[data-tone]")?.getAttribute("data-tone")).toBe("neutral");
+    expect(decided.textContent).toBe(
+      "declinedVendor 1, PAINT-1 ($600.00) on 2026-01-11 by Owner 1, in the owner portal. Get a second quote",
     );
   });
 

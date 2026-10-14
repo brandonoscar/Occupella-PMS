@@ -282,6 +282,9 @@ describe("BillsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Enter recurring bills" }));
     expect(await screen.findByText("2 bills entered.")).toBeTruthy();
 
+    // Stopping asks for the last day first.
+    expect(screen.queryByLabelText("Last day, LAWN")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     fireEvent.change(screen.getByLabelText("Last day, LAWN"), { target: { value: "2026-12-31" } });
     fireEvent.click(screen.getByRole("button", { name: "Stop it" }));
     expect(await screen.findByText("LAWN stops after 2026-12-31.")).toBeTruthy();

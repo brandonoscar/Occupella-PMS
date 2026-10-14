@@ -200,7 +200,7 @@ export function LeasingCard({ pmcId, onChange }: { pmcId?: string; onChange?: ()
       {pmcId && (
         <p className="mb-8 text-sm text-ink-muted">
           Your public vacancy page:{" "}
-          <a className="font-mono text-ink underline" href={`/listings?pmc=${pmcId}`}>
+          <a className="font-mono break-all text-ink underline" href={`/listings?pmc=${pmcId}`}>
             /listings?pmc={pmcId}
           </a>
           . Point applicants to it; nothing is sent to listing sites.

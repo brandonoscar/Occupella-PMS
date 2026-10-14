@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
+import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
@@ -10,6 +11,7 @@ import { money } from "../money";
 import type { BankBooks, OpenItem, OpenLine, OpenTransfer, Worksheet } from "../reconcile";
 import {
   approver,
+  byDay,
   difference,
   figures,
   formatOf,
@@ -98,14 +100,28 @@ function StatementsCard({ bank, refresh }: BankProps) {
       {bank.statements.length === 0 ? (
         <Notice tone="info">No statement yet. The first one sets where the bank record starts.</Notice>
       ) : (
-        <ul className="mb-4 flex flex-col gap-1 text-sm" aria-label="Statements">
-          {bank.statements.map((s) => (
-            <li key={s.id}>
-              {s.first_day} to {s.last_day}: {money(s.opening_balance)} to{" "}
-              {money(s.closing_balance)}, {s.lines} line{s.lines === 1 ? "" : "s"} ({s.source.toUpperCase()})
-            </li>
-          ))}
-        </ul>
+        <table className="mb-4 text-sm" aria-label="Statements">
+          <thead>
+            <tr>
+              <th className="text-left">Period</th>
+              <th className="text-right">Opening</th>
+              <th className="text-right">Closing</th>
+              <th className="text-right">Lines</th>
+              <th className="text-left">File</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bank.statements.map((s) => (
+              <tr key={s.id}>
+                <td>{s.first_day} to {s.last_day}</td>
+                <td className="text-right">{money(s.opening_balance)}</td>
+                <td className="text-right">{money(s.closing_balance)}</td>
+                <td className="text-right">{s.lines}</td>
+                <td className="text-ink-muted">{s.source.toUpperCase()}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
       <form
         className="flex flex-wrap items-end gap-3"
@@ -187,29 +203,53 @@ function WorksheetCard({
         <Notice tone="info">Import a statement to see the reconciliation.</Notice>
       ) : (
         <>
-          <div className="mb-4 max-w-48">
-            <Field label="At the end of" id="reconcile-through" type="date" value={day}
-              onChange={(e) => setThrough(e.target.value)} />
-          </div>
-          <dl className="grid grid-cols-[1fr_auto] gap-x-6 gap-y-1 text-sm" aria-label="Figures">
-            {Object.entries(shown).map(([item, amount]) => (
-              <div key={item} className="contents">
-                <dt className="text-ink-muted">{item}</dt>
-                <dd className="text-right font-mono">{money(amount)}</dd>
-              </div>
-            ))}
-          </dl>
-          {items(sheet.rows).length > 0 && (
-            <ul className="mt-4 flex flex-col gap-1 text-sm" aria-label="Reconciling items">
-              {items(sheet.rows).map((row) => (
-                <li key={row.line}>
-                  {row.item}: {row.detail} {money(row.amount)}
-                </li>
+          <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+            <div className="max-w-48">
+              <Field label="At the end of" id="reconcile-through" type="date" value={day}
+                onChange={(e) => setThrough(e.target.value)} />
+            </div>
+            {gap !== null &&
+              (gap === "0.00" ? (
+                <Badge tone="positive">Ties out</Badge>
+              ) : (
+                <Badge tone="caution">{`Off by ${money(gap)}`}</Badge>
               ))}
-            </ul>
+          </div>
+          <table className="text-sm" aria-label="Figures">
+            <tbody>
+              {Object.entries(shown).map(([item, amount]) => (
+                <tr key={item} className={item.startsWith("difference") ? "font-medium" : ""}>
+                  <th scope="row" className="text-left font-normal first-letter:uppercase">{item}</th>
+                  <td className="text-right">{money(amount)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {items(sheet.rows).length > 0 && (
+            <table className="mt-4 text-sm" aria-label="Reconciling items">
+              <thead>
+                <tr>
+                  <th className="text-left">Reconciling item</th>
+                  <th className="text-left">Detail</th>
+                  <th className="text-right">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items(sheet.rows).map((row) => (
+                  <tr key={row.line}>
+                    <td className="first-letter:uppercase">{row.item}</td>
+                    <td className="text-ink-muted">{row.detail}</td>
+                    <td className="text-right">{money(row.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           )}
           {prepared && (
-            <div className="mt-4 flex flex-wrap items-center gap-3" aria-label="Prepared">
+            <div
+              className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-md border border-card-edge bg-raised px-4 py-3"
+              aria-label="Prepared"
+            >
               <span className="text-sm">
                 Prepared through {prepared.through} by {prepared.prepared_by}: bank{" "}
                 {money(prepared.bank_balance)}, books {money(prepared.book_cash)}.
@@ -283,14 +323,14 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
       </div>
       <div className={`grid gap-6 ${sheet.open_items.length > 0 ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
         <fieldset>
-          <legend className="mb-2 text-sm font-medium">Bank lines no match holds</legend>
+          <legend className="mb-2 text-sm font-medium">Bank lines not matched</legend>
           {sheet.open_lines.length === 0 ? <p className="text-sm text-ink-subtle">None.</p> : (
             <Checks items={sheet.open_lines} label={lineLabel} chosen={lines}
               toggle={(id) => toggle(lines, setLines, id)} />
           )}
         </fieldset>
         <fieldset>
-          <legend className="mb-2 text-sm font-medium">Transfers no match holds</legend>
+          <legend className="mb-2 text-sm font-medium">Transfers not matched</legend>
           {sheet.open_transfers.length === 0 ? <p className="text-sm text-ink-subtle">None.</p> : (
             <Checks items={sheet.open_transfers} label={transferLabel} chosen={moved}
               toggle={(id) => toggle(moved, setMoved, id)} />
@@ -323,21 +363,32 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
         </Button>
       </div>
       {sheet.matches.length > 0 && (
-        <ul className="mt-6 flex flex-col gap-2 text-sm" aria-label="Matches">
-          {sheet.matches.map((m) => (
-            <li key={m.id} className="flex flex-wrap items-center gap-3">
-              <span>
-                {m.lines.map(lineLabel).join("; ") || "No bank line"} ={" "}
-                {[...m.transfers.map(transferLabel), ...m.items.map(itemLabel)].join("; ") ||
-                  "No transfer"}
-              </span>
-              <Button variant="ghost"
-                onClick={() => record(`/api/reconcile/matches/${m.id}/undo`, {}, () => "Match undone.")}>
-                Undo
-              </Button>
-            </li>
-          ))}
-        </ul>
+        <table className="mt-6 text-sm" aria-label="Matches">
+          <thead>
+            <tr>
+              <th className="text-left">Bank</th>
+              <th className="text-left">Books</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {byDay(sheet.matches).map((m) => (
+              <tr key={m.id}>
+                <td>{m.lines.map(lineLabel).join("; ") || "No bank line"}</td>
+                <td>
+                  {[...m.transfers.map(transferLabel), ...m.items.map(itemLabel)].join("; ") ||
+                    "No transfer"}
+                </td>
+                <td className="text-right">
+                  <Button variant="ghost" size="sm"
+                    onClick={() => record(`/api/reconcile/matches/${m.id}/undo`, {}, () => "Match undone.")}>
+                    Undo
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
       <Notice tone="info">{said}</Notice>
       <Notice tone="error">{error}</Notice>
@@ -403,10 +454,10 @@ function Checks<T extends OpenLine | OpenTransfer | OpenItem>({
   toggle: (id: string) => void;
 }) {
   return (
-    <ul className="flex flex-col gap-1 text-sm">
+    <ul className="flex flex-col divide-y divide-line rounded-md border border-card-edge text-sm">
       {all.map((item) => (
         <li key={item.id}>
-          <label className="flex items-center gap-2">
+          <label className="flex items-center gap-2.5 px-3 py-2 hover:bg-raised">
             <input type="checkbox" checked={chosen.includes(item.id)} onChange={() => toggle(item.id)} />
             {label(item)}
           </label>
@@ -422,14 +473,26 @@ function ApprovedCard({ bank }: { bank: BankBooks }) {
       {bank.reconciliations.length === 0 ? (
         <Notice tone="info">None yet.</Notice>
       ) : (
-        <ul className="flex flex-col gap-1 text-sm" aria-label="Approved">
-          {bank.reconciliations.map((r) => (
-            <li key={r.id}>
-              {r.period_start.slice(0, 10)} to {lastDayOf(r.period_end)}: bank{" "}
-              {money(r.statement_balance)}, books {money(r.book_balance)}, approved by {r.approved_by}
-            </li>
-          ))}
-        </ul>
+        <table className="text-sm" aria-label="Approved">
+          <thead>
+            <tr>
+              <th className="text-left">Period</th>
+              <th className="text-right">Bank</th>
+              <th className="text-right">Books</th>
+              <th className="text-left">Approved by</th>
+            </tr>
+          </thead>
+          <tbody>
+            {bank.reconciliations.map((r) => (
+              <tr key={r.id}>
+                <td>{r.period_start.slice(0, 10)} to {lastDayOf(r.period_end)}</td>
+                <td className="text-right">{money(r.statement_balance)}</td>
+                <td className="text-right">{money(r.book_balance)}</td>
+                <td>{r.approved_by}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
       {bank.closed_through && (
         <p className="mt-3 text-sm text-ink-subtle">

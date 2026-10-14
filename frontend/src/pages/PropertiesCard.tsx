@@ -125,7 +125,7 @@ function PropertyRow({ property, books, refresh }: CardProps & { property: Prope
         ))}
       </ul>
       <details>
-        <summary className="cursor-pointer text-sm text-ink-muted">Add to {property.name}</summary>
+        <summary>Add to {property.name}</summary>
         <div className="mt-3 flex flex-col gap-4">
           <form
             className="flex flex-wrap items-end gap-3"

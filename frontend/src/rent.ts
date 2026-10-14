@@ -76,6 +76,14 @@ export function owedLabel(owed: string): string {
   return "Paid up";
 }
 
+// The badge a lease's balance wears: owing is a caution, paid up is fine, in credit is news.
+export function owedTone(owed: string): "caution" | "positive" | "info" {
+  const value = Number(owed);
+  if (value > 0) return "caution";
+  if (value < 0) return "info";
+  return "positive";
+}
+
 export function chargeLabel(charge: OpenCharge): string {
   const what = charge.memo ?? (charge.kind === "rent" ? "Rent" : "Fee");
   const part = charge.open === charge.amount ? "" : ` of ${money(charge.amount)}`;

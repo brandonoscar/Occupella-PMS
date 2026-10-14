@@ -75,6 +75,15 @@ export type Fee = {
 };
 
 // What staff do next with a bill, as its button says; nothing once it is paid.
+// A bill's status as a badge: waiting on the owner is a caution, on its way is news, paid is
+// done, declined is closed.
+export function statusTone(status: BillStatus): "caution" | "info" | "positive" | "neutral" {
+  if (status === "needs approval") return "caution";
+  if (status === "paid") return "positive";
+  if (status === "declined") return "neutral";
+  return "info";
+}
+
 export function nextStep(status: BillStatus): string | null {
   if (status === "needs approval") return "Record approval";
   if (status === "to set aside") return "Set aside";

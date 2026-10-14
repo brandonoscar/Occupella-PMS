@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
+import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
@@ -12,6 +13,7 @@ import {
   bounceSummary,
   chargeLabel,
   owedLabel,
+  owedTone,
   paymentSummary,
   recurringLabel,
   rentRunSummary,
@@ -127,9 +129,9 @@ function LeaseRow({ lease, refresh }: { lease: RentLease; refresh: () => void })
           <span className="font-medium">{lease.property}, {lease.unit}</span>
           <span className="text-ink-muted"> · {names} · {money(lease.monthly_rent)} a month</span>
         </p>
-        <p className="font-mono" data-testid="owed">
+        <Badge tone={owedTone(lease.owed)} data-testid="owed">
           {owedLabel(lease.owed)}
-        </p>
+        </Badge>
       </div>
       {lease.on_hold && (
         <Notice tone="error">
@@ -156,14 +158,23 @@ function LeaseRow({ lease, refresh }: { lease: RentLease; refresh: () => void })
         </ul>
       )}
       {lease.payments.length > 0 && (
-        <ul className="text-sm">
-          {lease.payments.map((p) => (
-            <PaymentLine key={p.transfer_id} payment={p} record={record} />
-          ))}
-        </ul>
+        <table className="text-sm">
+          <thead>
+            <tr>
+              <th className="text-left">Payment received</th>
+              <th className="text-right">Amount</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {lease.payments.map((p) => (
+              <PaymentRow key={p.transfer_id} payment={p} record={record} />
+            ))}
+          </tbody>
+        </table>
       )}
       <details>
-        <summary className="cursor-pointer text-sm text-ink-muted">Record for {lease.unit}</summary>
+        <summary>Record for {lease.unit}</summary>
         <div className="mt-3 flex flex-col gap-4">
           <PaymentForm lease={lease} record={record} />
           <ChargeForm lease={lease} record={record} />
@@ -179,32 +190,46 @@ function LeaseRow({ lease, refresh }: { lease: RentLease; refresh: () => void })
 
 type Recorder = <T>(path: string, body: object, done: (answer: T) => string) => Promise<boolean>;
 
-function PaymentLine({ payment, record }: { payment: RentLease["payments"][number]; record: Recorder }) {
+// A payment as a row; a bounce is asked for, with the day it came back, before it is recorded,
+// since it moves the money back and charges the property's NSF fee.
+function PaymentRow({ payment, record }: { payment: RentLease["payments"][number]; record: Recorder }) {
+  const [asking, setAsking] = useState(false);
   const [on, setOn] = useState(day(new Date()));
   return (
-    <li className="flex flex-wrap items-center gap-3 py-1">
-      <span>
-        {payment.received_on} {money(payment.amount)}
-        {payment.reference && <span className="text-ink-muted"> ({payment.reference})</span>}
-      </span>
-      {payment.bounced ? (
-        <span className="text-danger">Bounced</span>
-      ) : (
-        <form
-          className="flex items-center gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            record<Bounce>(`/api/rent/payments/${payment.transfer_id}/bounce`, { on },
-              (answer) => bounceSummary(payment.amount, answer));
-          }}
-        >
-          <input type="date" aria-label={`Bounced on, ${payment.received_on} payment`} value={on}
-            onChange={(e) => setOn(e.target.value)}
-            className="h-8 rounded-sm border border-line-strong bg-sunken px-2 text-sm text-ink" />
-          <Button type="submit" variant="ghost">It bounced</Button>
-        </form>
-      )}
-    </li>
+    <tr>
+      <td>
+        <span className="whitespace-nowrap">{payment.received_on}</span>
+        {payment.reference && <span className="block text-ink-muted">{payment.reference}</span>}
+      </td>
+      <td className="text-right">{money(payment.amount)}</td>
+      <td className="text-right">
+        {payment.bounced ? (
+          <Badge tone="danger">Bounced</Badge>
+        ) : asking ? (
+          <form
+            className="flex flex-wrap items-center justify-end gap-2"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const done = await record<Bounce>(`/api/rent/payments/${payment.transfer_id}/bounce`,
+                { on }, (answer) => bounceSummary(payment.amount, answer));
+              if (done) setAsking(false);
+            }}
+          >
+            <input type="date" aria-label={`Bounced on, ${payment.received_on} payment`} value={on}
+              onChange={(e) => setOn(e.target.value)} required
+              className="h-8 rounded-sm border border-line-strong bg-sunken px-2 text-sm text-ink" />
+            <Button type="submit" variant="secondary" size="sm">Record the bounce</Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(false)}>
+              Cancel
+            </Button>
+          </form>
+        ) : (
+          <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(true)}>
+            It bounced
+          </Button>
+        )}
+      </td>
+    </tr>
   );
 }
 
@@ -285,26 +310,37 @@ function ChargeForm({ lease, record }: { lease: RentLease; record: Recorder }) {
   );
 }
 
+// A recurring charge; stopping it asks for the day it stops first.
 function RecurringLine({ recurring, record }: { recurring: RecurringCharge; record: Recorder }) {
+  const [asking, setAsking] = useState(false);
   const [on, setOn] = useState(day(new Date()));
   return (
-    <li className="flex flex-wrap items-center gap-3 py-1">
+    <li className="flex min-h-8 flex-wrap items-center gap-3">
       <span>{recurringLabel(recurring)}</span>
-      {recurring.ends_on === null && (
-        <form
-          className="flex items-center gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            record(`/api/rent/recurring-charges/${recurring.id}/stop`, { ends_on: on },
-              () => `${recurring.memo} stops ${on}.`);
-          }}
-        >
-          <input type="date" aria-label={`Stops on, ${recurring.memo}`} value={on}
-            onChange={(e) => setOn(e.target.value)}
-            className="h-8 rounded-sm border border-line-strong bg-sunken px-2 text-sm text-ink" />
-          <Button type="submit" variant="ghost">Stop</Button>
-        </form>
-      )}
+      {recurring.ends_on === null &&
+        (asking ? (
+          <form
+            className="flex items-center gap-2"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const done = await record(`/api/rent/recurring-charges/${recurring.id}/stop`,
+                { ends_on: on }, () => `${recurring.memo} stops ${on}.`);
+              if (done) setAsking(false);
+            }}
+          >
+            <input type="date" aria-label={`Stops on, ${recurring.memo}`} value={on}
+              onChange={(e) => setOn(e.target.value)} required
+              className="h-8 rounded-sm border border-line-strong bg-sunken px-2 text-sm text-ink" />
+            <Button type="submit" variant="secondary" size="sm">Stop it</Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(false)}>
+              Cancel
+            </Button>
+          </form>
+        ) : (
+          <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(true)}>
+            Stop
+          </Button>
+        ))}
     </li>
   );
 }

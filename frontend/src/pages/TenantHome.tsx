@@ -4,8 +4,9 @@ import { ApiError, api } from "../api";
 import { Button, LinkButton } from "../components/Button";
 import { Notice } from "../components/Notice";
 import { Card, PageHeader, Shell } from "../components/Shell";
+import { Wide } from "../components/Wide";
 import type { Ledger } from "../ledger";
-import { itemLabel, readLedger } from "../ledger";
+import { entryWords, readLedger } from "../ledger";
 import type { MaintenanceRequest } from "../maintenance";
 import { statusLabel, when } from "../maintenance";
 import { day, money } from "../money";
@@ -53,8 +54,9 @@ export function comingDueLabel(charge: ComingDue): string {
   return `${charge.due_on} ${what}: ${money(charge.open)}`;
 }
 
-const CELL = "px-3 py-2 text-left";
-const AMOUNT = "px-3 py-2 text-right font-mono";
+// Cells take the table style's padding (less of it on a phone); only their alignment is set here.
+const CELL = "text-left";
+const AMOUNT = "text-right";
 
 // The lease shown first: the one in effect, else the newest.
 export function firstLease(leases: Lease[]): Lease | null {
@@ -166,7 +168,7 @@ export function TenantHome({ me }: { me: Me }) {
             </dl>
             <div className="mt-6 border-t border-line-strong pt-4">
               <p className="text-sm text-ink-subtle">Balance due today</p>
-              <p className="font-mono text-xl" data-testid="balance-due">
+              <p className="text-xl leading-tight font-semibold" data-testid="balance-due">
                 {money(lease.balance_due)}
               </p>
               <p className="mt-1 text-sm text-ink-subtle">
@@ -220,39 +222,44 @@ export function TenantHome({ me }: { me: Me }) {
             {ledger === null ? (
               <Notice tone="info">Loading</Notice>
             ) : (
-              <table className="w-full text-base">
-                <thead className="text-sm text-ink-subtle">
-                  <tr>
-                    <th className={CELL}>Date</th>
-                    <th className={CELL}>What</th>
-                    <th className="px-3 py-2 text-right">Charged</th>
-                    <th className="px-3 py-2 text-right">Paid</th>
-                    <th className="px-3 py-2 text-right">Balance</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ledger.entries.map((entry, n) => (
-                    <tr key={n} className="border-t border-line">
-                      <td className={`${CELL} font-mono text-sm`}>{entry.on}</td>
-                      <td className={CELL}>
-                        {itemLabel(entry.item)}
-                        {entry.detail && <span className="text-ink-muted">: {entry.detail}</span>}
-                      </td>
-                      <td className={AMOUNT}>{entry.charged === "0.00" ? "" : money(entry.charged)}</td>
-                      <td className={AMOUNT}>{entry.paid === "0.00" ? "" : money(entry.paid)}</td>
-                      <td className={AMOUNT}>{money(entry.balance)}</td>
+              <Wide>
+                <table className="w-full text-base">
+                  <thead className="text-sm text-ink-subtle">
+                    <tr>
+                      <th className={CELL}>Date</th>
+                      <th className={CELL}>What</th>
+                      <th className="text-right">Charged</th>
+                      <th className="text-right">Paid</th>
+                      <th className="text-right">Balance</th>
                     </tr>
-                  ))}
-                  <tr className="border-t border-line-strong font-medium">
-                    <td className={CELL} colSpan={2}>
-                      Balance at the end of {ledger.through}
-                    </td>
-                    <td className={AMOUNT}>{money(ledger.totals.charged)}</td>
-                    <td className={AMOUNT}>{money(ledger.totals.paid)}</td>
-                    <td className={AMOUNT}>{money(ledger.totals.balance)}</td>
-                  </tr>
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {ledger.entries.map((entry, n) => {
+                      const words = entryWords(entry);
+                      return (
+                      <tr key={n} className="border-t border-line">
+                        <td className={`${CELL} whitespace-nowrap text-ink-muted`}>{entry.on}</td>
+                        <td className={CELL}>
+                          {words.what}
+                          {words.detail && <span className="text-ink-muted">: {words.detail}</span>}
+                        </td>
+                        <td className={AMOUNT}>{entry.charged === "0.00" ? "" : money(entry.charged)}</td>
+                        <td className={AMOUNT}>{entry.paid === "0.00" ? "" : money(entry.paid)}</td>
+                        <td className={AMOUNT}>{money(entry.balance)}</td>
+                      </tr>
+                      );
+                    })}
+                    <tr className="border-t border-line-strong font-medium">
+                      <td className={CELL} colSpan={2}>
+                        Balance at the end of {ledger.through}
+                      </td>
+                      <td className={AMOUNT}>{money(ledger.totals.charged)}</td>
+                      <td className={AMOUNT}>{money(ledger.totals.paid)}</td>
+                      <td className={AMOUNT}>{money(ledger.totals.balance)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </Wide>
             )}
           </Card>
 

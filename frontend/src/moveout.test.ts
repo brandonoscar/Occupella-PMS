@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { MoveOut } from "./moveout";
-import { chargeLabel, hasEnded, leaseLabel, preview } from "./moveout";
+import { chargeLabel, hasEnded, leaseLabel, moveOutStatus, preview } from "./moveout";
 
 const LEASE: MoveOut = {
   lease_id: "l1", property: "Property 1", unit: "Unit 1", tenants: ["Tenant A", "Tenant B"],
@@ -27,5 +27,18 @@ describe("moveout", () => {
     expect(hasEnded(LEASE, "2026-07-01")).toBe(true);
     expect(hasEnded(LEASE, "2026-06-30")).toBe(false);
     expect(hasEnded({ ...LEASE, ends_on: null }, "2026-07-01")).toBe(false);
+  });
+});
+
+describe("moveOutStatus", () => {
+  it("says where a lease's move-out stands", () => {
+    const today = "2026-07-10";
+    expect(moveOutStatus({ ...LEASE, ends_on: null }, today)).toEqual({ label: "In effect", tone: "neutral" });
+    expect(moveOutStatus({ ...LEASE, ends_on: "2026-07-31" }, today)).toEqual({ label: "Ends 2026-07-31", tone: "info" });
+    // Its last day is still in effect; the day after, the deposit may go back.
+    expect(moveOutStatus({ ...LEASE, ends_on: "2026-07-10" }, today)).toEqual({ label: "Ends 2026-07-10", tone: "info" });
+    expect(moveOutStatus(LEASE, today)).toEqual({ label: "Ended, deposit to return", tone: "caution" });
+    const settled = { held: "1200.00", kept: "350.00", returned: "850.00", returned_on: "2026-07-05" };
+    expect(moveOutStatus({ ...LEASE, settled }, today)).toEqual({ label: "Deposit returned", tone: "positive" });
   });
 });

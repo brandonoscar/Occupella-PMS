@@ -39,6 +39,19 @@ describe("design tokens", () => {
     });
   }
 
+  // Occupella's DESIGN.md: mono "for IDs, amounts and code only, never for labels". Here it is for
+  // links, keys and hashes, which break anywhere, so a mono class always comes with break-all;
+  // money and dates are set in the UI face like everything else.
+  it("mono is only for links, keys and hashes", () => {
+    const uses = FILES.flatMap((file) =>
+      [...file.text.matchAll(/"[^"\n]*\bfont-mono\b[^"\n]*"/g)].map((match) => ({ path: file.path, classes: match[0] })),
+    );
+    const all = FILES.reduce((n, file) => n + (file.text.match(/\bfont-mono\b/g) ?? []).length, 0);
+    expect(uses.length).toBeGreaterThan(0);
+    expect(uses.length).toBe(all); // every mono class is in a class string this test reads
+    expect(uses.filter((use) => !/\bbreak-all\b/.test(use.classes))).toEqual([]);
+  });
+
   it("the type scale is 12, 13, 14, 16, 20 and 28px", () => {
     const css = readFileSync(join(SRC, "styles/globals.css"), "utf8");
     const sizes = [...css.matchAll(/--text-[a-z]+:\s*(\d+)px/g)].map((match) => Number(match[1]));

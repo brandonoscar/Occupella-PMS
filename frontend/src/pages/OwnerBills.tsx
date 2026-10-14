@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
+import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
@@ -59,10 +60,12 @@ export function OwnerBills() {
   const decided = bills?.filter((b) => b.decision !== null) ?? [];
   return (
     <Card title="Bills waiting for you">
-      <div className="mb-4 flex flex-col gap-1">
-        <Notice tone="error">{error}</Notice>
-        <Notice tone="info">{done}</Notice>
-      </div>
+      {(error || done) && (
+        <div className="flex flex-col gap-1">
+          <Notice tone="error">{error}</Notice>
+          <Notice tone="info">{done}</Notice>
+        </div>
+      )}
       {bills === null ? (
         error ? null : <Notice tone="info">Loading</Notice>
       ) : waiting.length === 0 ? (
@@ -72,7 +75,7 @@ export function OwnerBills() {
           {waiting.map((bill) => (
             <li key={bill.id} className="border-t border-line pt-3">
               <p className="text-base">
-                {bill.vendor}, {bill.reference}: <span className="font-mono">{money(bill.amount)}</span>
+                {bill.vendor}, {bill.reference}: <span className="font-medium">{money(bill.amount)}</span>
               </p>
               <p className="text-sm text-ink-muted">
                 {bill.property}: {bill.memo}. Billed {bill.bill_date}, due {bill.due_on}. Over your
@@ -99,12 +102,14 @@ export function OwnerBills() {
         </ul>
       )}
       {decided.length > 0 && (
-        <ul className="mt-6 flex flex-col gap-1 text-sm" aria-label="Decided">
+        <ul className="mt-4 flex flex-col gap-2 text-sm" aria-label="Decided">
           {decided.map((bill) => (
-            <li key={bill.id}>
-              {bill.vendor}, {bill.reference} ({money(bill.amount)}): {bill.decision} on {bill.decided_on} by{" "}
-              {bill.decided_by}
-              {bill.reason ? `. ${bill.reason}` : ""}
+            <li key={bill.id} className="flex flex-wrap items-center gap-2">
+              <Badge tone={bill.decision === "approved" ? "positive" : "neutral"}>{bill.decision}</Badge>
+              <span>
+                {bill.vendor}, {bill.reference} ({money(bill.amount)}) on {bill.decided_on} by {bill.decided_by}
+                {bill.reason ? `. ${bill.reason}` : ""}
+              </span>
             </li>
           ))}
         </ul>

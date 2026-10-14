@@ -114,21 +114,30 @@ const posted = (fetch: ReturnType<typeof server>) =>
     .filter(([, init]) => init?.method === "POST")
     .map(([path, init]) => [path, JSON.parse(String(init?.body))]);
 
+// A table's body rows, each as its cells' text.
+const cells = (table: HTMLElement) =>
+  within(table)
+    .getAllByRole("row")
+    .filter((row) => within(row).queryAllByRole("cell").length > 0)
+    .map((row) => within(row).getAllByRole("cell").map((cell) => cell.textContent));
+
 describe("ReconcilePage", () => {
   it("shows the statements, the figures, the items and the approved periods", async () => {
     server();
     render(<ReconcilePage me={ME} />);
 
-    const statements = await screen.findByRole("list", { name: "Statements" });
-    expect(statements.textContent).toBe("2026-01-01 to 2026-01-31: $0.00 to $4,075.00, 5 lines (CSV)");
-    const shown = screen.getByLabelText("Figures");
+    const statements = await screen.findByRole("table", { name: "Statements" });
+    expect(cells(statements)).toEqual([["2026-01-01 to 2026-01-31", "$0.00", "$4,075.00", "5", "CSV"]]);
+    const shown = screen.getByRole("table", { name: "Figures" });
     expect(shown.textContent).toContain("bank balance (statements)$4,075.00");
-    expect(screen.getByRole("list", { name: "Reconciling items" }).textContent).toBe(
-      "bank line not in the books: 2026-01-28 Service fee -$15.00",
-    );
-    expect(screen.getByRole("list", { name: "Approved" }).textContent).toBe(
-      "2025-12-01 to 2025-12-31: bank $0.00, books $0.00, approved by Staff 1",
-    );
+    // Off by the difference, until the books lack no line.
+    expect(screen.getByText("Off by $65.00").closest("[data-tone]")?.getAttribute("data-tone")).toBe("caution");
+    expect(cells(screen.getByRole("table", { name: "Reconciling items" }))).toEqual([
+      ["bank line not in the books", "2026-01-28 Service fee", "-$15.00"],
+    ]);
+    expect(cells(screen.getByRole("table", { name: "Approved" }))).toEqual([
+      ["2025-12-01 to 2025-12-31", "$0.00", "$0.00", "Staff 1"],
+    ]);
     expect(screen.getByText(/Closed through 2025-12-31/)).toBeTruthy();
     const prepare = screen.getByRole("button", { name: "Prepare through 2026-01-31" });
     expect((prepare as HTMLButtonElement).disabled).toBe(true);
@@ -139,7 +148,7 @@ describe("ReconcilePage", () => {
   it("imports a statement file with its days and balances", async () => {
     const fetch = server(SHEET, { "/api/reconcile/statements": { lines: 2, first_day: "2026-02-01", last_day: "2026-02-28" } });
     render(<ReconcilePage me={ME} />);
-    await screen.findByRole("list", { name: "Statements" });
+    await screen.findByRole("table", { name: "Statements" });
     const importing = screen.getByRole("button", { name: "Import statement" }) as HTMLButtonElement;
     expect(importing.disabled).toBe(true);
 
@@ -167,7 +176,7 @@ describe("ReconcilePage", () => {
   it("matches the lines and transfers picked once they come to the same", async () => {
     const fetch = server(SHEET, { "/api/reconcile/b1/auto-match": { matched: 1 } });
     render(<ReconcilePage me={ME} />);
-    await screen.findByRole("list", { name: "Statements" });
+    await screen.findByRole("table", { name: "Statements" });
     const matching = screen.getByRole("button", { name: "Match these" }) as HTMLButtonElement;
 
     fireEvent.click(screen.getByLabelText("2026-01-05 Deposit (D1): $2,750.00"));
@@ -182,7 +191,7 @@ describe("ReconcilePage", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Match the sure ones" }));
     expect(await screen.findByText("1 line matched.")).toBeTruthy();
-    const matches = screen.getByRole("list", { name: "Matches" });
+    const matches = screen.getByRole("table", { name: "Matches" });
     fireEvent.click(within(matches).getByRole("button", { name: "Undo" }));
     expect(await screen.findByText("Match undone.")).toBeTruthy();
 
@@ -198,6 +207,7 @@ describe("ReconcilePage", () => {
     render(<ReconcilePage me={ME} />);
     const prepare = await screen.findByRole("button", { name: "Prepare through 2026-01-31" });
     expect(screen.queryByText(/Lines the books lack/)).toBeNull();
+    expect(screen.getByText("Ties out").closest("[data-tone]")?.getAttribute("data-tone")).toBe("positive");
 
     fireEvent.click(prepare);
 
@@ -241,7 +251,7 @@ describe("ReconcilePage", () => {
   it("reads the worksheet at another day, and another account", async () => {
     const fetch = server();
     render(<ReconcilePage me={ME} />);
-    await screen.findByRole("list", { name: "Statements" });
+    await screen.findByRole("table", { name: "Statements" });
 
     fireEvent.change(screen.getByLabelText("At the end of"), { target: { value: "2026-01-15" } });
     await vi.waitFor(() =>
@@ -292,7 +302,7 @@ describe("ReconcilePage", () => {
     expect(await screen.findByText(/the first statement's balance brought forward should be \$1,200.00/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Match the opening" }));
     expect(await screen.findByText("The opening is matched.")).toBeTruthy();
-    expect(screen.getByRole("list", { name: "Matches" }).textContent).toContain("2025-12-29 Old check, from before the cutover: -$10.00");
+    expect(screen.getByRole("table", { name: "Matches" }).textContent).toContain("2025-12-29 Old check, from before the cutover: -$10.00");
 
     fireEvent.click(screen.getByLabelText("2026-01-09 Check 1041 (1041): -$200.00"));
     fireEvent.click(screen.getByLabelText("2025-12-30 Check to Vendor 1 (1041), from before the cutover: -$200.00"));

@@ -98,7 +98,9 @@ required invariant, report and self-host step.
   Its build is served by the API (`PMS_STATIC_DIR`) under a strict Content-Security-Policy.
   Colours, sizes and fonts come only from the tokens in `frontend/src/styles/globals.css`,
   Occupella's values (`designTokens.test.ts` pins them and fails on a raw colour or a size off
-  the scale). Money stays text from
+  the scale). A state (paid up, bounced, approved) is a badge (`components/Badge.tsx`), a page
+  with nothing to list says so with `EmptyState`, an error comes with its icon (`Notice`), and
+  mono type is only for links, keys and hashes (the same test checks it). Money stays text from
   the database to the screen, never a float. Staff's pages have sections (`pages/staffNav.ts`);
   they see what is late or waits on them at `/today` (`src/pms/api/today.py`: read only, each
   part the work page's own answer), set up the books at `/setup` (`src/pms/api/setup.py`: plain inserts and the database's

@@ -74,8 +74,16 @@ describe("RentPage", () => {
     expect(within(lease).getByTestId("owed").textContent).toBe("Owes $1,550.00");
     expect(lease.textContent).toContain("Tenant 1: prepaid $50.00, deposit $1,500.00");
     expect(lease.textContent).toContain("2026-10-06 Late fee: $50.00 open");
-    expect(lease.textContent).toContain("2026-09-01 $1,500.00 (Check 101)");
-    expect(within(lease).getByText("Bounced")).toBeTruthy();
+    // The payments as rows: the day with its reference under it, the amount, and a badge on the one
+    // that bounced.
+    const payments = within(lease).getAllByRole("row").slice(1);
+    expect(payments.map((r) => within(r).getAllByRole("cell").map((c) => c.textContent))).toEqual([
+      ["2026-09-01Check 101", "$1,500.00", "It bounced"],
+      ["2026-08-01", "$1,500.00", "Bounced"],
+    ]);
+    expect(within(payments[0]!).getByText("Check 101").className).toContain("text-ink-muted");
+    expect(within(lease).getByTestId("owed").getAttribute("data-tone")).toBe("caution");
+    expect(within(payments[1]!).getByText("Bounced").closest("[data-tone]")?.getAttribute("data-tone")).toBe("danger");
     expect(within(lease).getAllByRole("button", { name: "It bounced" })).toHaveLength(1);
     expect(screen.queryByText(/payment hold/)).toBeNull();
   });
@@ -149,10 +157,16 @@ describe("RentPage", () => {
     fireEvent.change(within(lease).getByLabelText("Deposit received"), { target: { value: "500.00" } });
     fireEvent.click(within(lease).getByRole("button", { name: "Record deposit" }));
     expect(await within(lease).findByText("Deposit of $500.00 held.")).toBeTruthy();
+    // A bounce asks for the day it came back before anything is recorded; Cancel records nothing.
+    expect(within(lease).queryByLabelText("Bounced on, 2026-09-01 payment")).toBeNull();
+    fireEvent.click(within(lease).getByRole("button", { name: "It bounced" }));
+    fireEvent.click(within(lease).getByRole("button", { name: "Cancel" }));
+    expect(within(lease).queryByLabelText("Bounced on, 2026-09-01 payment")).toBeNull();
+    fireEvent.click(within(lease).getByRole("button", { name: "It bounced" }));
     fireEvent.change(within(lease).getByLabelText("Bounced on, 2026-09-01 payment"), {
       target: { value: "2026-09-05" },
     });
-    fireEvent.click(within(lease).getByRole("button", { name: "It bounced" }));
+    fireEvent.click(within(lease).getByRole("button", { name: "Record the bounce" }));
     expect(
       await within(lease).findByText("The $1,500.00 payment is owed again, with a $35.00 NSF fee."),
     ).toBeTruthy();
@@ -180,10 +194,13 @@ describe("RentPage", () => {
     );
     // Only one still to stop.
     expect(within(lease).getAllByRole("button", { name: "Stop" })).toHaveLength(1);
+    // Stopping asks for the day it stops first.
+    expect(within(lease).queryByLabelText("Stops on, Pet rent")).toBeNull();
+    fireEvent.click(within(lease).getByRole("button", { name: "Stop" }));
     fireEvent.change(within(lease).getByLabelText("Stops on, Pet rent"), {
       target: { value: "2026-11-01" },
     });
-    fireEvent.click(within(lease).getByRole("button", { name: "Stop" }));
+    fireEvent.click(within(lease).getByRole("button", { name: "Stop it" }));
     expect(await within(lease).findByText("Pet rent stops 2026-11-01.")).toBeTruthy();
 
     fireEvent.change(within(lease).getByLabelText("Every month, a"), { target: { value: "fee" } });

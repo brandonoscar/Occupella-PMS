@@ -147,3 +147,11 @@ export function approver(me: Me, prepared: Prepared): "preparer" | "may" | "may 
   if (me.person_id === prepared.preparer_id) return "preparer";
   return me.roles?.includes("approve") ? "may" : "may not";
 }
+
+// The matches newest first, by their bank line's day (or, with no line, their transfer's or
+// carried item's): the order a statement reads in, not the order they were made.
+export function byDay(matches: StandingMatch[]): StandingMatch[] {
+  const dayOf = (m: StandingMatch) =>
+    m.lines[0]?.posted_on ?? m.transfers[0]?.on ?? m.items[0]?.issued_on ?? "";
+  return [...matches].sort((a, b) => (dayOf(a) < dayOf(b) ? 1 : dayOf(a) > dayOf(b) ? -1 : 0));
+}

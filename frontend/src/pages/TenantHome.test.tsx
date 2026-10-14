@@ -141,8 +141,15 @@ describe("TenantHome", () => {
     render(<TenantHome me={ME} />);
 
     expect((await screen.findByTestId("balance-due")).textContent).toBe("$1,500.00");
+    // The balance is a figure in the page's own face, 28px, not code.
+    expect(screen.getByTestId("balance-due").className).toContain("text-xl");
+    expect(screen.getByTestId("balance-due").className).not.toContain("font-mono");
     expect(screen.getByText("Tenant 1, Tenant 2")).toBeTruthy();
     expect(await screen.findByText("Balance at the end of 2026-10-11")).toBeTruthy();
+    const rent = screen.getByRole("row", { name: /^2026-01-01 Rent/ });
+    expect(within(rent).getAllByRole("cell").map((cell) => cell.textContent)).toEqual([
+      "2026-01-01", "Rent", "$1,500.00", "", "$1,500.00",
+    ]);
     expect(screen.queryByText("Lease renewal")).toBeNull();
     expect(screen.getByRole("link", { name: "PDF" }).getAttribute("href")).toBe(
       "/api/tenant/leases/1/ledger/download?format=pdf",

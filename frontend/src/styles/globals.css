@@ -117,6 +117,52 @@ body {
     cursor: not-allowed;
   }
 
+  /* Checkboxes and radio buttons in the accent, not the browser's own blue. */
+  input[type="checkbox"],
+  input[type="radio"] {
+    accent-color: var(--color-iris);
+    width: 16px;
+    height: 16px;
+  }
+
+  /* A file picker's button drawn as a secondary button, its file name muted beside it, so it
+     sits in a row of fields like any other control. */
+  input[type="file"] {
+    height: 36px;
+    color: var(--color-ink-muted);
+    font-size: var(--text-sm);
+  }
+
+  input[type="file"]::file-selector-button {
+    height: 36px;
+    margin-right: 12px;
+    padding: 0 14px;
+    border: 1px solid var(--color-line-strong);
+    border-radius: var(--radius-sm);
+    background: var(--color-canvas);
+    color: var(--color-ink);
+    font-family: inherit;
+    font-size: var(--text-base);
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  input[type="file"]::file-selector-button:hover {
+    background: var(--color-raised);
+  }
+
+  /* A disclosure's own label (Record for…, Move-out for…) reads as a quiet link-like control. */
+  summary {
+    width: fit-content;
+    color: var(--color-ink-muted);
+    font-size: var(--text-sm);
+    font-weight: 500;
+  }
+
+  summary:hover {
+    color: var(--color-ink);
+  }
+
   /* Every table as Occupella's Operations table: one hairline frame with rounded corners, a
      light-blue header row of 13px muted labels, and a hairline between rows. A page's own
      padding and alignment classes still win (they are utilities, outside this layer). */
@@ -141,6 +187,14 @@ body {
   td {
     padding: 10px 12px;
     vertical-align: middle;
+  }
+
+  /* On a phone the cells give up some padding, so a table's columns fit its frame. */
+  @media (max-width: 639px) {
+    th,
+    td {
+      padding: 8px;
+    }
   }
 
   tbody tr:not(:first-child) > td,

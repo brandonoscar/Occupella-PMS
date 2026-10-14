@@ -3,6 +3,7 @@ import type { Me } from "./api";
 import type { Prepared, ReportRow } from "./reconcile";
 import {
   approver,
+  byDay,
   difference,
   figures,
   formatOf,
@@ -79,5 +80,19 @@ describe("reconcile", () => {
     expect(approver({ ...me, roles: ["admin", "disburse"] }, prepared)).toBe("may not");
     expect(approver(me, prepared)).toBe("may not");
     expect(approver({ ...me, person_id: "s2", roles: ["approve"] }, prepared)).toBe("preparer");
+  });
+});
+
+describe("byDay", () => {
+  it("lists the matches newest first, by their bank line's day, else their transfer's or item's", () => {
+    const line = (posted_on: string) => ({ id: posted_on, posted_on, amount: "1.00", description: "", reference: null });
+    const matches = [
+      { id: "a", lines: [line("2026-09-03")], transfers: [], items: [] },
+      { id: "b", lines: [], transfers: [{ id: "t", on: "2026-09-20", amount: "1.00", memo: null }], items: [] },
+      { id: "c", lines: [line("2026-09-10")], transfers: [], items: [] },
+      { id: "d", lines: [], transfers: [], items: [{ id: "i", issued_on: "2025-12-29", amount: "1.00", description: "Old", reference: null }] },
+    ];
+    expect(byDay(matches).map((m) => m.id)).toEqual(["b", "c", "a", "d"]);
+    expect(matches.map((m) => m.id)).toEqual(["a", "b", "c", "d"]); // the API's order is left alone
   });
 });

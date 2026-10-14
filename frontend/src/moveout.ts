@@ -37,3 +37,15 @@ export function chargeLabel(charge: OpenCharge): string {
 export function hasEnded(lease: MoveOut, today: string): boolean {
   return lease.ends_on !== null && lease.ends_on < today;
 }
+
+// Where a lease's move-out stands, as a badge: its deposit returned, waiting to go back once the
+// lease has ended, or the lease still running (to a set last day, or month to month).
+export function moveOutStatus(
+  lease: MoveOut,
+  today: string,
+): { label: string; tone: "positive" | "caution" | "info" | "neutral" } {
+  if (lease.settled) return { label: "Deposit returned", tone: "positive" };
+  if (hasEnded(lease, today)) return { label: "Ended, deposit to return", tone: "caution" };
+  if (lease.ends_on !== null) return { label: `Ends ${lease.ends_on}`, tone: "info" };
+  return { label: "In effect", tone: "neutral" };
+}

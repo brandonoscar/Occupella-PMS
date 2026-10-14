@@ -12,16 +12,20 @@ const VARIANTS: Record<Variant, string> = {
   ghost: "border border-transparent text-iris underline-offset-2 hover:text-iris-hover hover:underline",
 };
 
+// A row action inside a table or a list is the small size: 32px, 13px.
+const SIZES = { md: "h-9 px-3.5 text-base", sm: "h-8 px-3 text-sm" };
+
 export function Button({
   variant = "primary",
+  size = "md",
   className = "",
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: keyof typeof SIZES }) {
   const base =
-    "inline-flex h-9 items-center justify-center rounded-sm px-3.5 text-base font-medium" +
+    "inline-flex items-center justify-center rounded-sm font-medium whitespace-nowrap" +
     " transition-colors duration-100 disabled:border-disabled-bg disabled:bg-disabled-bg" +
     " disabled:text-disabled-ink";
-  return <button className={`${base} ${VARIANTS[variant]} ${className}`} {...props} />;
+  return <button className={`${base} ${SIZES[size]} ${VARIANTS[variant]} ${className}`} {...props} />;
 }
 
 export function LinkButton({
