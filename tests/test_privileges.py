@@ -81,6 +81,8 @@ TABLES = {
     # Rental applications: applicants apply through the API, staff screen and decide.
     "trust_application_links": {"SELECT", "INSERT"},
     "trust_application_link_closings": {"SELECT", "INSERT"},
+    "trust_listings": {"SELECT", "INSERT"},
+    "trust_listing_removals": {"SELECT", "INSERT"},
     "trust_applications": {"SELECT", "INSERT"},
     "trust_applicants": {"SELECT", "INSERT"},
     "trust_screenings": {"SELECT", "INSERT"},

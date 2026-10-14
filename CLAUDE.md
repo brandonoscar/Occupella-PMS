@@ -121,7 +121,10 @@ required invariant, report and self-host step.
   `pms.leasing.esign.Partner`, picked by `PMS_ESIGN_PARTNER` ("fake" for development and CI,
   none by default; the fake's signing page, `/esign#<token>`, is served only while it is on).
   A tenant signs a renewal of their own lease from the portal, as the signer with their
-  login's email.
+  login's email. Staff may list an open link on the PMC's public vacancy page
+  (`/listings?pmc=<id>`, `src/pms/api/listings.py`, migration 0047): no login, it shows each
+  listed unit's property, unit, rent and description, and an applicant applies through the
+  listing as through its link until it is removed or the link closed. Nothing is syndicated.
 - Every table we add carries `pmc_id uuid`. It maps to Occupella's `companies.id` at merge time.
 - Table names: `pgledger_*` from upstream, `trust_*` for ours. Our functions and triggers are
   `trust_*` too. A report function is `trust_report_<name>`. `tests/test_schema_conventions.py`

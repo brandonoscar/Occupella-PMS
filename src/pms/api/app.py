@@ -43,6 +43,7 @@ from pms.api import (
     documents,
     fake_esign,
     leasing,
+    listings,
     maintenance,
     moveout,
     offers,
@@ -345,6 +346,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(maintenance.router)
     app.include_router(leasing.router)
     app.include_router(offers.router)
+    app.include_router(listings.router)
     if isinstance(app.state.esign, esign.FakeESign):
         app.include_router(fake_esign.router)
     app.include_router(people.router)

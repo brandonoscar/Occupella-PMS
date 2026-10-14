@@ -1,8 +1,10 @@
-"""Property-based tests for rental applications (migration 20261011000030).
+"""Property-based tests for rental applications (migration 20261011000030) and vacancy listings
+(migration 20261013000047).
 
-Hypothesis opens and closes application links on two units, applies through open and closed
-links, records screenings, and decides applications, each decision with or without a screening
-and with or without an adverse action notice. A Python model predicts every step: the database
+Hypothesis opens and closes application links on two units, lists links on the PMC's public page
+and takes listings off, applies through open and closed links, records screenings, and decides
+applications, each decision with or without a screening and with or without an adverse action
+notice. A Python model predicts every step: the database
 must accept exactly what the model accepts and refuse the rest, writing nothing.
 
 Invariants checked after every step (ci/registry.toml maps them to this test):
@@ -11,13 +13,16 @@ Invariants checked after every step (ci/registry.toml maps them to this test):
     its own;
   - a declined or conditional decision that rests on a screening has its adverse action notice,
     and no other decision has one;
-  - nothing once written changes.
+  - nothing once written changes;
+  - the PMC's public vacancy page shows each listing not taken off whose link is open, and an
+    applicant reaches a link through exactly those listings (migration 20261013000047).
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
 
 import psycopg
 import pytest
+from fastapi import HTTPException
 from helpers import (
     add_staff,
     add_unit,
@@ -37,6 +42,9 @@ from hypothesis.stateful import (
     run_state_machine_as_test,
 )
 
+from pms.api import leasing as leasing_api
+from pms.api import listings as listings_api
+
 RECOMMENDATIONS = {"approve": [], "conditional": ["Income"], "decline": ["Income"]}
 
 
@@ -55,6 +63,7 @@ class LeasingMachine(RuleBasedStateMachine):
         self.applications: dict = {}  # application -> its link
         self.screenings: dict = {}  # screening -> its application
         self.decisions: dict = {}  # application -> (decision, screening or None, notice?)
+        self.listings: dict = {}  # listing -> (its link, taken off?)
         self.snapshot: list = []
 
     # --- links ---------------------------------------------------------------------------
@@ -77,6 +86,40 @@ class LeasingMachine(RuleBasedStateMachine):
             return
         self.conn.execute(closing, (self.pmc_id, link, self.staff))
         self.links[link] = False
+
+    # --- listings ------------------------------------------------------------------------
+
+    @precondition(lambda self: self.links)
+    @rule(data=st.data())
+    def list_a_link(self, data):
+        """Any link, open or closed (the page shows only open ones); a link takes one listing."""
+        link = data.draw(st.sampled_from(list(self.links)))
+        listing = (
+            "INSERT INTO trust_listings (pmc_id, link_id, listed_by) VALUES (%s, %s, %s)"
+            " RETURNING id"
+        )
+        if any(listed == link for listed, _ in self.listings.values()):
+            with pytest.raises(psycopg.errors.UniqueViolation):
+                self.conn.execute(listing, (self.pmc_id, link, self.staff))
+            return
+        made = self.conn.execute(listing, (self.pmc_id, link, self.staff)).fetchone()[0]
+        self.listings[made] = (link, False)
+
+    @precondition(lambda self: self.listings)
+    @rule(data=st.data())
+    def take_a_listing_off(self, data):
+        listing = data.draw(st.sampled_from(list(self.listings)))
+        removal = (
+            "INSERT INTO trust_listing_removals (listing_id, pmc_id, removed_by)"
+            " VALUES (%s, %s, %s)"
+        )
+        link, removed = self.listings[listing]
+        if removed:
+            with pytest.raises(psycopg.errors.UniqueViolation):
+                self.conn.execute(removal, (listing, self.pmc_id, self.staff))
+            return
+        self.conn.execute(removal, (listing, self.pmc_id, self.staff))
+        self.listings[listing] = (link, True)
 
     # --- applications --------------------------------------------------------------------
 
@@ -198,12 +241,28 @@ class LeasingMachine(RuleBasedStateMachine):
         assert stray == 0
 
     @invariant()
+    def the_public_page_is_the_models(self):
+        """The page shows each listing not taken off whose link is open, and an applicant
+        reaches a link through exactly those listings."""
+        shown = {x.id for x in listings_api.vacancies(self.conn, self.pmc_id).listings}
+        live = {s for s, (link, off) in self.listings.items() if not off and self.links[link]}
+        assert shown == live
+        for listing, (link, _) in self.listings.items():
+            try:
+                reached = leasing_api.open_link(self.conn, leasing_api.LinkToken(listing=listing))
+            except HTTPException as refused:
+                assert refused.status_code == 404
+                reached = None
+            assert (reached is not None and reached[0] == link) == (listing in live)
+
+    @invariant()
     def nothing_written_changes(self):
         rows = self.conn.execute(
             "SELECT table_name, row_data FROM trust_audit_log WHERE pmc_id = %s"
             " AND table_name IN ('trust_application_links', 'trust_application_link_closings',"
             " 'trust_applications', 'trust_applicants', 'trust_screenings',"
-            " 'trust_application_decisions', 'trust_adverse_actions') ORDER BY id",
+            " 'trust_application_decisions', 'trust_adverse_actions', 'trust_listings',"
+            " 'trust_listing_removals') ORDER BY id",
             (self.pmc_id,),
         ).fetchall()
         live = {

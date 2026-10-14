@@ -7,6 +7,7 @@ import { ApplyPage } from "./pages/ApplyPage";
 import { BillsPage } from "./pages/BillsPage";
 import { ESignPage } from "./pages/ESignPage";
 import { InvitePage } from "./pages/InvitePage";
+import { ListingsPage } from "./pages/ListingsPage";
 import { OwnerHome } from "./pages/OwnerHome";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { MoveOutPage } from "./pages/MoveOutPage";
@@ -28,6 +29,8 @@ export function App() {
   // Applicants have no login: their links carry what lets them in.
   if (path === "/apply") return <ApplyPage />;
   if (path === "/application") return <ApplicationStatusPage />;
+  // A PMC's public vacancy page; nobody signs in to read it.
+  if (path === "/listings") return <ListingsPage />;
   // The fake e-sign partner's page; a signer's link carries what lets them in.
   if (path === "/esign") return <ESignPage />;
   if (path === "/sign-in") return <SignInPage />;

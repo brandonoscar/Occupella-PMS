@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applicantStatus, incomeMultiple, needsNotice, recommendationLabel } from "./leasing";
+import { applicantStatus, applyVia, incomeMultiple, needsNotice, recommendationLabel } from "./leasing";
 
 describe("leasing helpers", () => {
   it("tells an applicant where their application stands", () => {
@@ -29,5 +29,14 @@ describe("leasing helpers", () => {
     expect(incomeMultiple("4500.00", "1500.00")).toBe("3.0x");
     expect(incomeMultiple("4499.99", "1500.00")).toBe("2.9x");
     expect(incomeMultiple("4500.00", "0")).toBe("");
+  });
+});
+
+describe("applyVia", () => {
+  it("applies through a listing when the page names one, else the link's token", () => {
+    expect(applyVia("?listing=v1", "")).toEqual({ listing: "v1" });
+    expect(applyVia("?listing=v1", "#token")).toEqual({ listing: "v1" });
+    expect(applyVia("", "#token-1")).toEqual({ token: "token-1" });
+    expect(applyVia("?other=x", "#token-1")).toEqual({ token: "token-1" });
   });
 });
