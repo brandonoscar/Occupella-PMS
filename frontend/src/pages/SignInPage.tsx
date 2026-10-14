@@ -49,7 +49,7 @@ export function SignInPage() {
   return (
     <div className="mx-auto flex min-h-screen max-w-sm flex-col justify-center gap-6 px-6">
       <Wordmark />
-      <h1 className="font-display text-xl font-medium">Sign in</h1>
+      <h1 className="font-display text-lg font-semibold">Sign in</h1>
       {pmcId ? (
         <form className="flex flex-col gap-4" onSubmit={submit}>
           <Field label="Email" id="email" type="email" autoComplete="username" value={email}

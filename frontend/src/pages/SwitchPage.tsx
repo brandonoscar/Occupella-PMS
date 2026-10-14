@@ -5,7 +5,7 @@ import { Button, LinkButton } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
-import { Card, Shell } from "../components/Shell";
+import { Card, PageHeader, Shell } from "../components/Shell";
 import { money } from "../money";
 import type { Counted, Cutover, RosterKind } from "../switching";
 import {
@@ -37,7 +37,7 @@ export function SwitchPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <h1 className="font-display text-xl font-medium">Switching</h1>
+      <PageHeader title="Switching" description="Bring a company over from another system: its roster, opening balances and the signed tie-out." />
       <RosterCard />
       <VendorPaymentsCard />
       {cutovers === null ? (

@@ -1,38 +1,72 @@
-/* The portal's design tokens, following Occupella's DESIGN.md: a dark neutral canvas with a
-   faint blue bias, one accent (iris, the occupella.com blue) used sparingly, muted status
-   colours only for real states, borders rather than shadows on static cards, and a type scale
-   of 12/13/14/16/20/28px. The accent and radii are DESIGN.md's values; the neutral and status
-   values are a first pass, to be synced with Occupella's frontend/src/styles/globals.css when
-   the two merge (docs/adr/0002-portals-and-exports.md). Components use these tokens, never a
-   raw colour. */
+/* The portal's design tokens: AgenticHelixis's (Occupella's frontend/src/styles/globals.css and
+   DESIGN.md), so the PMS looks like the product it will merge into. A white canvas with
+   light cool-blue raised surfaces, ink text, one accent (iris, the occupella.com blue) used
+   sparingly, muted status colours only for real states, borders rather than shadows on static
+   cards, and a type scale of 12/13/14/16/20/28px. The sidebar is the light blue "chrome" rail
+   and the bar above the content is white, each with its own tokens, as in Occupella. Values
+   are Occupella's; change one, change both. Components use these tokens, never a raw colour. */
 @import "tailwindcss";
 
 @theme {
-  --color-canvas: #0f1217;
-  --color-raised: #151a21;
-  --color-sunken: #0b0e12;
-  --color-ink: #e6eaf0;
-  --color-ink-muted: #aeb6c2;
-  --color-ink-subtle: #8b95a2;
-  --color-ink-faint: #6b7480;
-  --color-line: #252c36;
-  --color-line-strong: #343d49;
-  --color-card-edge: #2a313b;
+  /* Canvas: the content area is white; raised surfaces carry a light blue tint. */
+  --color-canvas: #ffffff;
+  --color-raised: #f4f8fd;
+  --color-elevated: #edf3fa;
+  --color-overlay: #e4edf7;
+  /* Input wells: white, edged by line-strong. */
+  --color-sunken: #ffffff;
+
+  /* Ink */
+  --color-ink: #0e1620;
+  --color-ink-secondary: #3e4854;
+  --color-ink-muted: #55606e;
+  --color-ink-subtle: #6b7481;
+  --color-ink-faint: #98a1ae;
+
+  /* Hairlines and card edges */
+  --color-line: rgb(14 22 32 / 0.1);
+  --color-line-strong: rgb(14 22 32 / 0.18);
+  --color-card-edge: rgb(14 22 32 / 0.14);
+
+  /* The sidebar rail (Occupella's --chrome*): light blue, ink text, hover and the selected
+     row lift to white, the selected row marked by the accent. */
+  --color-chrome: #e4eef7;
+  --color-chrome-raised: #ffffff;
+  --color-chrome-ink: #12233a;
+  --color-chrome-ink-muted: #4c5c72;
+  --color-chrome-accent: #1957a0;
+  --color-chrome-line: rgb(14 22 32 / 0.09);
+
+  /* The bar above the content (Occupella's --titlebar*): white, separated by a hairline. */
+  --color-titlebar: #ffffff;
+  --color-titlebar-raised: rgb(14 22 32 / 0.05);
+  --color-titlebar-line: rgb(14 22 32 / 0.1);
+
+  /* Iris: the brand blue; hover and press go darker. */
   --color-iris: #1957a0;
   --color-iris-hover: #144a88;
   --color-iris-press: #0f3a6b;
-  --color-iris-soft: rgb(25 87 160 / 0.18);
-  --color-iris-ring: rgb(25 87 160 / 0.6);
-  --color-positive: #5a9e74;
-  --color-caution: #b8933f;
-  --color-danger: #c2645a;
-  --color-info: #5a8bbd;
-  --color-disabled-bg: #20262e;
-  --color-disabled-ink: #6b7480;
+  --color-iris-soft: rgb(25 87 160 / 0.12);
+  --color-iris-ring: rgb(25 87 160 / 0.35);
 
-  --font-sans: "IBM Plex Sans", system-ui, sans-serif;
-  --font-display: "Fraunces", Georgia, serif;
-  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  /* Status: muted, for real states only. */
+  --color-positive: #1d7a4c;
+  --color-positive-bg: #e7f4ec;
+  --color-caution: #a8631a;
+  --color-caution-bg: #faf0e1;
+  --color-danger: #b3261e;
+  --color-danger-bg: #f9e9e7;
+  --color-info: #4a5a6b;
+  --color-info-bg: #eff2f6;
+  --color-disabled-bg: #e6e9ed;
+  --color-disabled-ink: #6b7481;
+
+  /* Behind the sidebar when it opens over the page on a narrow screen. */
+  --color-scrim: rgb(14 22 32 / 0.5);
+
+  --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-display: "Fraunces", Georgia, "Times New Roman", serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   --text-xs: 12px;
   --text-sm: 13px;
@@ -45,10 +79,15 @@
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 8px;
+
+  /* Light, ink-tinted elevation: only for what floats (the selected rail row, a drawer). */
+  --shadow-sm: 0 1px 2px rgb(14 22 32 / 0.06);
+  --shadow-md: 0 8px 24px -8px rgb(14 22 32 / 0.14);
+  --shadow-lg: 0 24px 64px -16px rgb(14 22 32 / 0.18);
 }
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 body {
@@ -60,6 +99,55 @@ body {
   font-weight: 400;
   /* Digits line up in every table and don't shift when they change. */
   font-variant-numeric: tabular-nums;
+}
+
+@layer base {
+  /* Tailwind v4 dropped the pointer on buttons; Occupella puts it back, and shows the
+     not-allowed cursor on a disabled control. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  summary,
+  label[for],
+  a[href] {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+
+  /* Every table as Occupella's Operations table: one hairline frame with rounded corners, a
+     light-blue header row of 13px muted labels, and a hairline between rows. A page's own
+     padding and alignment classes still win (they are utilities, outside this layer). */
+  table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    border: 1px solid var(--color-card-edge);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+  }
+
+  thead th {
+    background: var(--color-raised);
+    color: var(--color-ink-muted);
+    font-size: var(--text-sm);
+    font-weight: 500;
+    border-bottom: 1px solid var(--color-line);
+  }
+
+  th,
+  td {
+    padding: 10px 12px;
+    vertical-align: middle;
+  }
+
+  tbody tr:not(:first-child) > td,
+  tbody tr:not(:first-child) > th,
+  tfoot tr > td {
+    border-top: 1px solid var(--color-line);
+  }
 }
 
 :focus-visible {

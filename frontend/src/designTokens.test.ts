@@ -49,4 +49,31 @@ describe("design tokens", () => {
     const css = readFileSync(join(SRC, "styles/globals.css"), "utf8");
     expect(css).toContain("--color-iris: #1957a0;");
   });
+
+  // The PMS looks like Occupella's app: these are the values in its frontend/src/styles/globals.css
+  // (white canvas, the light-blue sidebar rail, ink text, its status colours). Change one, change both.
+  it("the colours are Occupella's", () => {
+    const css = readFileSync(join(SRC, "styles/globals.css"), "utf8");
+    const tokens = Object.fromEntries(
+      [...css.matchAll(/--color-([a-z-]+):\s*([^;]+);/g)].map((match) => [match[1], match[2]]),
+    );
+    expect(tokens).toMatchObject({
+      canvas: "#ffffff",
+      raised: "#f4f8fd",
+      ink: "#0e1620",
+      "ink-muted": "#55606e",
+      "ink-subtle": "#6b7481",
+      chrome: "#e4eef7",
+      "chrome-raised": "#ffffff",
+      "chrome-ink": "#12233a",
+      "chrome-ink-muted": "#4c5c72",
+      "chrome-accent": "#1957a0",
+      titlebar: "#ffffff",
+      positive: "#1d7a4c",
+      caution: "#a8631a",
+      danger: "#b3261e",
+      info: "#4a5a6b",
+    });
+    expect(css).toContain("color-scheme: light;");
+  });
 });

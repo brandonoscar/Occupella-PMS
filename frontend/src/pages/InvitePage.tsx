@@ -87,7 +87,7 @@ export function InvitePage() {
       <Wordmark />
       {details && (
         <div className="flex flex-col gap-1">
-          <h1 className="font-display text-xl font-medium">Welcome, {details.name}</h1>
+          <h1 className="font-display text-lg font-semibold">Welcome, {details.name}</h1>
           <p className="text-sm text-ink-muted">
             {details.pmc_name} invited {details.email} to sign in.
           </p>
