@@ -258,6 +258,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   run charges it, `trust_end_lease` adjusts at it, the rent roll, lease expirations, tenant
   directory and vacancy reports show it. Staff record one on the rent page; the tenant sees it
   coming in the portal.
+- Renters insurance (migration 0062, `docs/law.md`): a lease's terms say whether it requires
+  renters insurance and the least liability it asks, from a day (`trust_renters_insurance_terms`);
+  a policy (`trust_renters_insurance`) names any insurer the tenant chose, its number, its days,
+  its coverage, recorded by staff or by a tenant on the lease from the portal. Append-only; the
+  PMS picks no insurer and charges nothing. `trust_report_renters_insurance` gives each lease in
+  effect on a day: the policy that runs out last of those started, its standing and whether it is
+  below the minimum; the rent page, the portal and Today read it.
 - Recurring charges (migration 0037): a fee a lease owes every month besides its rent (pet
   rent, parking) or a credit it gets every month (`trust_recurring_charges`, from a first due
   date; an end row stops it from a day). `trust_charge_recurring_due` charges each one in force

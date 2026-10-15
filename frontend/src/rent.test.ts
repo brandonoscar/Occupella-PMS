@@ -3,6 +3,8 @@ import type { OpenCharge, RecurringCharge } from "./rent";
 import {
   bounceSummary,
   earliestRentChange,
+  insuranceBadge,
+  insuranceLine,
   rentChangeLine,
   chargeLabel,
   owedLabel,
@@ -12,6 +14,30 @@ import {
   rentRunSummary,
   requestId,
 } from "./rent";
+
+describe("renters insurance", () => {
+  const ON_FILE = {
+    required: true, minimum_liability: "100000.00", carrier: "Carrier A", policy_number: "RI-1",
+    expires_on: "2027-01-31", liability_limit: "300000.00", standing: "current", below_minimum: false,
+  };
+
+  it("reads what the lease asks and the policy on file", () => {
+    expect(insuranceLine(ON_FILE)).toBe(
+      "Renters insurance required (at least $100,000.00 of liability): Carrier A RI-1 through 2027-01-31, $300,000.00 of liability",
+    );
+    expect(insuranceLine({ ...ON_FILE, required: false, minimum_liability: null, carrier: null,
+      policy_number: null, expires_on: null, liability_limit: null, standing: "none on file" }))
+      .toBe("Renters insurance not required: none on file");
+  });
+
+  it("marks a policy below the minimum or missing where required, and not where it isn't", () => {
+    expect(insuranceBadge(ON_FILE)).toEqual({ word: "current", tone: "positive" });
+    expect(insuranceBadge({ ...ON_FILE, below_minimum: true })).toEqual({ word: "below the minimum", tone: "danger" });
+    expect(insuranceBadge({ ...ON_FILE, standing: "expires in 5 days" })).toEqual({ word: "expires in 5 days", tone: "caution" });
+    expect(insuranceBadge({ ...ON_FILE, standing: "none on file" })).toEqual({ word: "none on file", tone: "danger" });
+    expect(insuranceBadge({ ...ON_FILE, required: false, standing: "expired" })).toEqual({ word: "expired", tone: "neutral" });
+  });
+});
 
 describe("rent changes", () => {
   it("reads a change, with its notice and the lease term that allows it", () => {

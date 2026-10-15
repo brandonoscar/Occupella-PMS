@@ -16,7 +16,7 @@ const ME: Me = {
 
 const QUIET: Today = {
   on: "2026-10-13", late_rent: [], bills_due: [], unreconciled: [], applications: [], unsigned_offers: [],
-  journal_waiting: [], vendor_insurance: [], company_fees: [], signers: [],
+  journal_waiting: [], vendor_insurance: [], company_fees: [], signers: [], renters_insurance: [],
 };
 
 function server(answer: Today | { detail: string }, status = 200) {
@@ -130,6 +130,17 @@ describe("TodayPage", () => {
     expect(within(signers).getByText("Operating trust, Clerk 1: bond runs out in 5 days")).toBeTruthy();
     expect(within(signers).getByText("Deposit trust: no broker on file")).toBeTruthy();
     expect(within(signers).getByRole("link", { name: "Open Staff" }).getAttribute("href")).toBe("/staff");
+  });
+
+  it("lists leases whose required renters insurance isn't current", async () => {
+    server({ ...QUIET, renters_insurance: [
+      { lease_id: "l1", property: "Property 1", unit: "Unit 1", tenants: "Tenant A", standing: "none on file" },
+    ] });
+    render(<TodayPage me={ME} />);
+
+    const insurance = await screen.findByRole("region", { name: "Renters insurance" });
+    expect(within(insurance).getByText("Unit 1, Property 1 (Tenant A): renters insurance none on file")).toBeTruthy();
+    expect(within(insurance).getByRole("link", { name: "Open Rent" }).getAttribute("href")).toBe("/rent");
   });
 
   it("says so in one line on a quiet day", async () => {

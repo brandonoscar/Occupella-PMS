@@ -153,3 +153,33 @@ it only as its own terms allow. Some states ask for more:
 **Left to the company.** Longer notice where its state or city asks (up to 90 days), rent caps,
 the first-year and once-a-year limits, extra days for notice served by mail, and the notice
 itself, which the PMS records but does not write or send.
+
+## Renters insurance on file (migration 0062)
+
+**The rule.** No state requires renters insurance by statute; a landlord may generally require
+it through the lease. Where states limit it:
+
+- Oregon: ORS 90.222 allows it only in a written agreement, with coverage no higher than
+  $100,000 or the local customary amount; the landlord may not require a particular insurer or
+  being named an additional insured (an interested party is allowed); not for households at or
+  below 50% of area median income or publicly subsidized units; 30 days' notice to add it to a
+  month-to-month tenancy.
+- Virginia: Code 55.1-1206 lets the landlord require it; a premium for coverage the landlord buys
+  counts as rent, the tenant may buy their own instead, deposit plus premiums at most two months'
+  rent, and the notice says it doesn't cover flood.
+- West Virginia: no statute found (NOT VERIFIED).
+- That most states forbid steering a tenant to one insurer is NOT VERIFIED; Oregon does.
+
+**What the PMS does.**
+- A lease's terms say whether it requires renters insurance and the least liability coverage it
+  asks, from a day; the latest from that day or before holds.
+- A policy names whatever insurer the tenant chose (free text), its number, the days it runs, its
+  liability coverage, and whether the landlord is named an interested party. Staff record one,
+  or the tenant records their own from the portal; the PMS never picks an insurer and charges
+  nothing for it.
+- The rent page, the portal and Today show how each lease stands: current, expiring within 30
+  days, expired, none on file, or below what the lease asks.
+
+**Left to the company.** Whether its lease may require insurance and how much (Oregon's cap and
+exemptions), any premium it buys for a tenant and the rules on charging for it (Virginia), and
+the notice to add the requirement to a tenancy.

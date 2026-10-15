@@ -109,6 +109,16 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
             ],
             "coming_due": [],
             "deposit_returned": False,
+            "renters_insurance": {
+                "required": False,
+                "minimum_liability": None,
+                "carrier": None,
+                "policy_number": None,
+                "expires_on": None,
+                "liability_limit": None,
+                "standing": "none on file",
+                "below_minimum": False,
+            },
         },
         {
             "lease_id": str(home.old_lease),
@@ -124,6 +134,7 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
             "each_month": [],  # it has ended
             "coming_due": [],
             "deposit_returned": False,
+            "renters_insurance": None,  # not in effect
         },
     ]
 

@@ -1,0 +1,5 @@
+line	lease_id	property	unit	tenants	required	minimum_liability	carrier	policy_number	starts_on	expires_on	liability_limit	standing	below_minimum
+1	<uuid1>	Property 1	Unit 1	Tenant 1	True	100000.00	Carrier A	RI-1	2025-07-11	2026-07-10	300000.00	expires in 10 days	False
+2	<uuid2>	Property 1	Unit 2	Tenant 2	True	NULL	Carrier B	RI-2	2025-06-01	2026-05-31	100000.00	expired	False
+3	<uuid3>	Property 1	Unit 3	Tenant 3	True	500000.00	Carrier C	RI-3	2026-02-01	2027-01-31	300000.00	current	True
+4	<uuid4>	Property 1	Unit 4	Tenant 4	False	NULL	NULL	NULL	NULL	NULL	NULL	none on file	False

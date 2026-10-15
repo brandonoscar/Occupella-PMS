@@ -60,6 +60,15 @@ class SignerNote(BaseModel):
     standing: str  # "no broker on file", "bond runs out in N days" or "bond ran out"
 
 
+class Uninsured(BaseModel):
+    lease_id: UUID
+    property: str
+    unit: str
+    tenants: str
+    # none on file, expired, expires today, expires in N days, or below the minimum.
+    standing: str
+
+
 class Today(BaseModel):
     on: date
     late_rent: list[LateLease]
@@ -73,6 +82,8 @@ class Today(BaseModel):
     company_fees: list[payables.CompanyFees]
     # Trust bank accounts whose broker isn't on file, and signers' bonds running out.
     signers: list[SignerNote]
+    # Leases that require renters insurance with none current on file, or below the minimum.
+    renters_insurance: list[Uninsured]
 
 
 def months_ended(start: date, on: date) -> list[str]:
@@ -147,6 +158,21 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
         ],
         company_fees=[
             f for f in payables.held_fees(conn, session.pmc_id, day) if Decimal(f.held) > 0
+        ],
+        renters_insurance=[
+            Uninsured(
+                lease_id=lease,
+                property=prop,
+                unit=unit,
+                tenants=tenants or "",
+                standing="below the minimum" if below and standing == "current" else standing,
+            )
+            for lease, prop, unit, tenants, standing, below in conn.execute(
+                "SELECT lease_id, property, unit, tenants, standing, below_minimum"
+                " FROM trust_report_renters_insurance(%s, %s)"
+                " WHERE required AND (standing <> 'current' OR below_minimum) ORDER BY line",
+                (session.pmc_id, day),
+            ).fetchall()
         ],
         signers=[
             note

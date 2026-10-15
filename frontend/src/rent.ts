@@ -35,6 +35,18 @@ export type RentChange = {
   served_by: "in person" | "mail" | "posted" | "email" | "other";
   lease_terms: string | null;
 };
+// A lease's renters insurance on the day: what the lease asks, and the policy that counts.
+export type RentersInsurance = {
+  required: boolean;
+  minimum_liability: string | null;
+  carrier: string | null;
+  policy_number: string | null;
+  expires_on: string | null;
+  liability_limit: string | null;
+  // current, expires today, expires in N days, expired, or none on file.
+  standing: string;
+  below_minimum: boolean;
+};
 export type RentLease = {
   id: string;
   property: string;
@@ -50,6 +62,7 @@ export type RentLease = {
   open_charges: OpenCharge[];
   payments: Paid[];
   recurring: RecurringCharge[];
+  renters_insurance: RentersInsurance | null;
 };
 export type Payment = { transfers: string[]; to_owner: string; to_prepaid: string };
 // A payment the bank returned: nsf_fee is the NSF fee the lease was charged for it, if the
@@ -135,4 +148,26 @@ export function rentChangeLine(change: RentChange): string {
 export function earliestRentChange(today: Date): string {
   const months = today.getUTCDate() === 1 ? 1 : 2;
   return day(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + months, 1)));
+}
+
+// "Renters insurance required (at least $100,000.00 of liability): Carrier A RI-1 through
+// 2027-01-31", or what the lease asks with none on file, or "not required".
+export function insuranceLine(insurance: RentersInsurance): string {
+  const asks = insurance.required
+    ? `Renters insurance required${insurance.minimum_liability ? ` (at least ${money(insurance.minimum_liability)} of liability)` : ""}`
+    : "Renters insurance not required";
+  if (insurance.policy_number === null) return `${asks}: none on file`;
+  const limit = insurance.liability_limit ? `, ${money(insurance.liability_limit)} of liability` : "";
+  return `${asks}: ${insurance.carrier} ${insurance.policy_number} through ${insurance.expires_on}${limit}`;
+}
+
+// The badge for it: a policy below what the lease asks, or not current where it is required.
+export function insuranceBadge(insurance: RentersInsurance): { word: string; tone: "positive" | "caution" | "danger" | "neutral" } {
+  if (insurance.below_minimum) return { word: "below the minimum", tone: "danger" };
+  if (insurance.standing === "current") return { word: "current", tone: "positive" };
+  if (!insurance.required) return { word: insurance.standing, tone: "neutral" };
+  return {
+    word: insurance.standing,
+    tone: insurance.standing === "expired" || insurance.standing === "none on file" ? "danger" : "caution",
+  };
 }

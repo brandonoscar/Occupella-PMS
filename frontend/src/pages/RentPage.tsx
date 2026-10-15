@@ -9,8 +9,11 @@ import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { day, money } from "../money";
 import type { Bounce, Payment, RecurringCharge, RentChange, RentLease, RentRun } from "../rent";
+import { InsuranceForms } from "./InsuranceForms";
 import {
   earliestRentChange,
+  insuranceBadge,
+  insuranceLine,
   rentChangeLine,
   bounceSummary,
   chargeLabel,
@@ -159,6 +162,14 @@ function LeaseRow({ lease, refresh }: { lease: RentLease; refresh: () => void })
           ))}
         </ul>
       )}
+      {lease.renters_insurance && (
+        <p className="flex flex-wrap items-center gap-2 text-sm" data-testid="renters-insurance">
+          <span>{insuranceLine(lease.renters_insurance)}</span>
+          <Badge tone={insuranceBadge(lease.renters_insurance).tone}>
+            {insuranceBadge(lease.renters_insurance).word}
+          </Badge>
+        </p>
+      )}
       {lease.recurring.length > 0 && (
         <ul className="text-sm">
           {lease.recurring.map((r) => (
@@ -189,6 +200,7 @@ function LeaseRow({ lease, refresh }: { lease: RentLease; refresh: () => void })
           <ChargeForm lease={lease} record={record} />
           <RecurringForm lease={lease} record={record} />
           <RentChangeForm lease={lease} record={record} />
+          <InsuranceForms lease={lease} record={record} />
           <DepositForm lease={lease} record={record} />
         </div>
       </details>

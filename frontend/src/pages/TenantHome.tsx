@@ -11,7 +11,11 @@ import type { MaintenanceRequest } from "../maintenance";
 import { statusLabel, when } from "../maintenance";
 import { day, money } from "../money";
 import type { StatementData } from "../statement";
+import type { RentersInsurance } from "../rent";
+import { insuranceLine } from "../rent";
+import { PolicyForm } from "./InsuranceForms";
 import { RenewalsCard } from "./RenewalsCard";
+import { useRecord } from "./useRecord";
 
 // What the lease charges every month: its rent, and each recurring fee or credit not stopped
 // (ends_on is the first due date it is no longer charged for).
@@ -34,6 +38,8 @@ export type Lease = {
   monthly_rent: string;
   // Rent changes to come, each from the first of a month, with the day notice was given.
   rent_changes: { effective_on: string; monthly_rent: string; notice_given_on: string }[];
+  // A lease in effect: whether it requires renters insurance, and the policy on file.
+  renters_insurance: RentersInsurance | null;
   tenants: string[];
   balance_due: string;
   in_effect: boolean;
@@ -215,6 +221,11 @@ export function TenantHome({ me }: { me: Me }) {
             </Card>
           )}
 
+          {lease.renters_insurance && (
+            <InsuranceCard leaseId={lease.lease_id} insurance={lease.renters_insurance}
+              refresh={() => api.get<Lease[]>("/api/tenant/leases").then(setLeases).catch(show)} />
+          )}
+
           <RenewalsCard me={me} />
 
           <Card title="Charges and payments">
@@ -318,5 +329,27 @@ export function TenantHome({ me }: { me: Me }) {
         </>
       )}
     </Shell>
+  );
+}
+
+// The lease's renters insurance: what it asks and the policy on file, and the tenant's own policy
+// recorded here, with whatever insurer they chose.
+function InsuranceCard({ leaseId, insurance, refresh }: {
+  leaseId: string;
+  insurance: RentersInsurance;
+  refresh: () => void;
+}) {
+  const { said, error, record } = useRecord(refresh);
+  return (
+    <Card title="Renters insurance">
+      <p className="mb-4 text-base" data-testid="renters-insurance">
+        {insuranceLine(insurance)}
+        {insurance.policy_number !== null && ` (${insurance.standing})`}
+      </p>
+      <p className="mb-2 text-sm text-ink-subtle">Record your policy, from any insurer you choose.</p>
+      <PolicyForm path={`/api/tenant/leases/${leaseId}/renters-insurance`} id={leaseId} record={record} />
+      <Notice tone="info">{said}</Notice>
+      <Notice tone="error">{error}</Notice>
+    </Card>
   );
 }

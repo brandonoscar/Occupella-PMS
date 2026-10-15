@@ -518,6 +518,47 @@ class RentChange(BaseModel):
     lease_terms: str | None
 
 
+class RentersInsurance(BaseModel):
+    required: bool
+    minimum_liability: str | None
+    # The policy that counts on the day: of those started by then, the one that runs out last.
+    carrier: str | None
+    policy_number: str | None
+    expires_on: date | None
+    liability_limit: str | None
+    # current, expires today, expires in N days (30 or fewer), expired, or none on file.
+    standing: str
+    below_minimum: bool
+
+
+RENTERS_INSURANCE = """
+SELECT lease_id, required, minimum_liability, carrier, policy_number, expires_on,
+       liability_limit, standing, below_minimum
+FROM trust_report_renters_insurance(%s, %s)
+"""
+
+
+def renters_insurance(
+    conn: psycopg.Connection[Any], pmc_id: UUID, on: date
+) -> dict[UUID, RentersInsurance]:
+    """Each lease in effect on the day: what its renters insurance stands at."""
+    return {
+        lease: RentersInsurance(
+            required=required,
+            minimum_liability=None if minimum is None else cents(minimum),
+            carrier=carrier,
+            policy_number=number,
+            expires_on=expires,
+            liability_limit=None if limit is None else cents(limit),
+            standing=standing,
+            below_minimum=below,
+        )
+        for lease, required, minimum, carrier, number, expires, limit, standing, below in (
+            conn.execute(RENTERS_INSURANCE, (pmc_id, on)).fetchall()
+        )
+    }
+
+
 class RentLease(BaseModel):
     id: UUID
     property: str
@@ -533,6 +574,8 @@ class RentLease(BaseModel):
     open_charges: list[OpenCharge]
     payments: list[Paid]
     recurring: list[RecurringCharge]
+    # A lease in effect on the day: its renters insurance; None for one that isn't.
+    renters_insurance: RentersInsurance | None
 
 
 LEASES = f"""
@@ -664,6 +707,7 @@ def leases(
                 lease_terms=terms,
             )
         )
+    insured = renters_insurance(conn, pmc, day)
     found = []
     for i, prop, unit, starts, ends, rent, due, on_hold in conn.execute(
         LEASES, {"pmc": pmc, "as_of": day}
@@ -686,6 +730,7 @@ def leases(
                 open_charges=charges.get(i, []),
                 payments=payments.get(i, [])[:12],
                 recurring=recurring.get(i, []),
+                renters_insurance=insured.get(i),
             )
         )
     return found
@@ -831,6 +876,85 @@ def change_rent(session: Staff, conn: Conn, lease_id: UUID, new: NewRentChange) 
         raise HTTPException(409, refusal(refused)) from None
     assert row is not None
     return Created(id=row[0])
+
+
+Coverage = Annotated[Decimal, Field(gt=0, le=Decimal("100000000"), decimal_places=2)]
+
+
+class InsuranceTerms(BaseModel):
+    required: bool
+    # The least liability coverage the lease asks; only when it requires insurance.
+    minimum_liability: Coverage | None = None
+    starts_on: date
+
+
+@router.post("/leases/{lease_id}/renters-insurance-terms", status_code=201)
+def renters_insurance_terms(
+    session: Staff, conn: Conn, lease_id: UUID, terms: InsuranceTerms
+) -> Created:
+    """Whether the lease requires renters insurance, and the least liability it asks, from a
+    day. The tenant picks the insurer; the PMS charges nothing for it (docs/law.md)."""
+    lease_of(conn, session.pmc_id, lease_id)
+    if not terms.required and terms.minimum_liability is not None:
+        raise HTTPException(422, "a minimum is asked only of insurance the lease requires")
+    row = conn.execute(
+        "INSERT INTO trust_renters_insurance_terms (pmc_id, lease_id, required,"
+        " minimum_liability, starts_on) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+        (session.pmc_id, lease_id, terms.required, terms.minimum_liability, terms.starts_on),
+    ).fetchone()
+    assert row is not None
+    return Created(id=row[0])
+
+
+Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+
+
+class NewPolicy(BaseModel):
+    carrier: Text
+    policy_number: Annotated[
+        str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)
+    ]
+    starts_on: date
+    expires_on: date
+    liability_limit: Coverage | None = None
+    landlord_interested_party: bool = False
+
+
+def add_policy(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    lease_id: UUID,
+    policy: NewPolicy,
+    submitted_by: UUID | None = None,
+) -> Created:
+    if policy.expires_on < policy.starts_on:
+        raise HTTPException(422, "a policy runs out on or after the day it starts")
+    row = conn.execute(
+        "INSERT INTO trust_renters_insurance (pmc_id, lease_id, carrier, policy_number,"
+        " starts_on, expires_on, liability_limit, landlord_interested_party, submitted_by)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        (
+            pmc_id,
+            lease_id,
+            policy.carrier,
+            policy.policy_number,
+            policy.starts_on,
+            policy.expires_on,
+            policy.liability_limit,
+            policy.landlord_interested_party,
+            submitted_by,
+        ),
+    ).fetchone()
+    assert row is not None
+    return Created(id=row[0])
+
+
+@router.post("/leases/{lease_id}/renters-insurance", status_code=201)
+def record_policy(session: Staff, conn: Conn, lease_id: UUID, policy: NewPolicy) -> Created:
+    """A tenant's renters insurance policy for the lease, with whatever insurer they chose; a
+    renewal is a new policy."""
+    lease_of(conn, session.pmc_id, lease_id)
+    return add_policy(conn, session.pmc_id, lease_id, policy)
 
 
 class Stop(BaseModel):

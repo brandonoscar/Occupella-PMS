@@ -26,6 +26,7 @@ const LEASE: RentLease = {
   ends_on: null,
   monthly_rent: "1500.00",
   rent_changes: [],
+  renters_insurance: null,
   tenants: [
     { id: "t1", name: "Tenant 1", prepaid: "50.00", deposit: "1500.00" },
     { id: "t2", name: "Tenant 2", prepaid: "0.00", deposit: "0.00" },
@@ -252,6 +253,49 @@ describe("RentPage", () => {
         {
           effective_on: "2027-01-01", monthly_rent: "1600.00", notice_given_on: "2026-11-01",
           served_by: "in person", lease_terms: null,
+        },
+      ],
+    ]);
+  });
+
+  it("shows a lease's renters insurance, sets its terms and records a policy", async () => {
+    const insured: RentLease = {
+      ...LEASE,
+      renters_insurance: {
+        required: true, minimum_liability: "100000.00", carrier: null, policy_number: null,
+        expires_on: null, liability_limit: null, standing: "none on file", below_minimum: false,
+      },
+    };
+    const fetch = server({ "/api/rent": [insured] });
+    render(<RentPage me={ME} />);
+    const lease = await row();
+
+    const line = within(lease).getByTestId("renters-insurance");
+    expect(line.textContent).toBe(
+      "Renters insurance required (at least $100,000.00 of liability): none on filenone on file",
+    );
+    fireEvent.change(within(lease).getByLabelText("Least liability coverage (optional)"), {
+      target: { value: "200000.00" },
+    });
+    fireEvent.change(within(lease).getByLabelText("Asked from"), { target: { value: "2026-11-01" } });
+    fireEvent.click(within(lease).getByRole("button", { name: "Set insurance terms" }));
+    expect(await within(lease).findByText("Renters insurance is required from 2026-11-01.")).toBeTruthy();
+
+    fireEvent.change(within(lease).getByLabelText("Insurer"), { target: { value: "Carrier A" } });
+    fireEvent.change(within(lease).getByLabelText("Policy number"), { target: { value: "RI-1" } });
+    fireEvent.change(within(lease).getByLabelText("Policy starts"), { target: { value: "2026-11-01" } });
+    fireEvent.change(within(lease).getByLabelText("Policy runs out"), { target: { value: "2027-10-31" } });
+    fireEvent.click(within(lease).getByLabelText("The landlord is named an interested party"));
+    fireEvent.click(within(lease).getByRole("button", { name: "Record policy" }));
+    expect(await within(lease).findByText("Policy RI-1 from Carrier A recorded.")).toBeTruthy();
+
+    expect(posted(fetch)).toEqual([
+      ["/api/rent/leases/l1/renters-insurance-terms", { required: true, minimum_liability: "200000.00", starts_on: "2026-11-01" }],
+      [
+        "/api/rent/leases/l1/renters-insurance",
+        {
+          carrier: "Carrier A", policy_number: "RI-1", starts_on: "2026-11-01", expires_on: "2027-10-31",
+          liability_limit: null, landlord_interested_party: true,
         },
       ],
     ]);

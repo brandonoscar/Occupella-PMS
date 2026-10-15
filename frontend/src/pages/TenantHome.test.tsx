@@ -26,6 +26,7 @@ const lease = (id: string, inEffect: boolean): Lease => ({
   ends_on: inEffect ? null : "2026-06-30",
   monthly_rent: "1500.00",
   rent_changes: [],
+  renters_insurance: null,
   tenants: ["Tenant 1", "Tenant 2"],
   balance_due: "1500.00",
   in_effect: inEffect,
@@ -188,6 +189,41 @@ describe("TenantHome", () => {
     expect(await screen.findByText(
       "$1,500.00 a month; $1,575.00 from 2026-12-01 (notice given 2026-10-15)",
     )).toBeTruthy();
+  });
+
+  it("shows the lease's renters insurance and records the tenant's own policy", async () => {
+    const fetch = server({
+      "GET /api/tenant/leases": [{
+        ...lease("1", true),
+        renters_insurance: {
+          required: true, minimum_liability: null, carrier: "Carrier A", policy_number: "RI-1",
+          expires_on: "2026-11-30", liability_limit: null, standing: "expires in 20 days", below_minimum: false,
+        },
+      }],
+      "GET /api/tenant/requests": [],
+      "GET /api/tenant/renewals": [],
+      "GET /api/tenant/leases/1/ledger": LEDGER,
+      "POST /api/tenant/leases/1/renters-insurance": { id: "ri2" },
+    });
+    render(<TenantHome me={ME} />);
+
+    expect((await screen.findByTestId("renters-insurance")).textContent).toBe(
+      "Renters insurance required: Carrier A RI-1 through 2026-11-30 (expires in 20 days)",
+    );
+    fireEvent.change(screen.getByLabelText("Insurer"), { target: { value: "Carrier B" } });
+    fireEvent.change(screen.getByLabelText("Policy number"), { target: { value: "RI-2" } });
+    fireEvent.change(screen.getByLabelText("Policy starts"), { target: { value: "2026-12-01" } });
+    fireEvent.change(screen.getByLabelText("Policy runs out"), { target: { value: "2027-11-30" } });
+    fireEvent.change(screen.getByLabelText("Liability coverage (optional)"), { target: { value: "100000.00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record policy" }));
+
+    expect(await screen.findByText("Policy RI-2 from Carrier B recorded.")).toBeTruthy();
+    const posted = fetch.mock.calls.find(([path, init]) =>
+      init?.method === "POST" && String(path).endsWith("/renters-insurance"));
+    expect(JSON.parse(String(posted?.[1]?.body))).toEqual({
+      carrier: "Carrier B", policy_number: "RI-2", starts_on: "2026-12-01", expires_on: "2027-11-30",
+      liability_limit: "100000.00", landlord_interested_party: false,
+    });
   });
 
   it("takes no request under a lease that has ended", async () => {
