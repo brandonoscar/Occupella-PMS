@@ -9,6 +9,8 @@ from types import SimpleNamespace
 import pytest
 from people import join_as_owner, join_as_staff, join_as_tenant
 
+from pms.api.setup import SCHEDULE_E
+
 TODAY = datetime.now(UTC).date()
 LATER = TODAY + timedelta(days=30)
 
@@ -284,7 +286,13 @@ def test_a_lease_is_for_tenants_of_the_units_property_and_never_overlaps(client,
     assert [x["starts_on"] for x in unit["leases"]] == [str(TODAY)]
 
 
-def test_staff_see_only_their_own_pmc(client, staff, pmc):
+def test_staff_see_only_their_own_pmc(client, conn, staff, pmc):
+    conn.execute(
+        "INSERT INTO trust_expense_accounts (pmc_id, name, schedule_e_line)"
+        " VALUES (%s, 'Repairs', 14)",
+        (pmc.pmc_id,),
+    )
+
     seen = client.get("/api/setup").json()
 
     assert seen == {
@@ -294,6 +302,9 @@ def test_staff_see_only_their_own_pmc(client, staff, pmc):
         "accounts": [],
         "tenants": [],
         "vendors": [],
+        "expense_accounts": [],
+        # Schedule E's expense lines are every PMC's.
+        "schedule_e_lines": [{"line": n, "label": label} for n, label in SCHEDULE_E.items()],
     }
 
 

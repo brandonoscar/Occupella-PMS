@@ -325,3 +325,17 @@ operations = [
 browser = [
   "portal.spec.ts › staff offer a lease and a renewal; the signers sign on the partner's page; both become leases",
 ]
+
+[[feature]]
+id = "expense-accounts"
+statement = "Staff add expense accounts, each on its Schedule E line, and put bills and recurring bills in them (a bill's latest account is its account; a recurring bill's goes on each month it enters); an owner reads and downloads the year's income statement, by property and Schedule E line, and staff download any owner's."
+operations = [
+  "POST /api/setup/expense-accounts",
+  "POST /api/payables/bills/{bill_id}/expense-account",
+  "POST /api/payables/recurring/{recurring_id}/expense-account",
+  "GET /api/owner/income-statement",
+  "GET /api/owner/income-statement/download",
+]
+browser = [
+  "features.spec.ts › staff put bills in expense accounts on Schedule E lines, and the owner reads the year's income statement",
+]

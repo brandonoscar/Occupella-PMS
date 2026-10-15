@@ -1,10 +1,11 @@
-"""The owner portal's endpoints: an owner's properties, their statement and their year-end
-package, their documents, and the bills over their approval limit, which they approve or
-decline. For that owner only.
+"""The owner portal's endpoints: an owner's properties, their statement, their year-end
+package and income statement, their documents, and the bills over their approval limit, which
+they approve or decline. For that owner only.
 
 The owner and the PMC always come from the session, never from the request. The statement is
 trust_report_owner_statement over whole days in UTC, from the first day to the last; the
-year-end package is trust_report_owner_year_end for a calendar year.
+year-end package is trust_report_owner_year_end for a calendar year, and the income statement
+trust_report_income_statement over the same year.
 """
 
 from __future__ import annotations
@@ -128,6 +129,38 @@ def year_end_download(
 ) -> Response:
     return download(
         exports.export(year_end_table(conn, session, year), fmt), f"year-end-{year}", fmt
+    )
+
+
+def income_statement_table(
+    conn: psycopg.Connection[object], session: accounts.Session, year: int
+) -> exports.Table:
+    table = exports.run_report(
+        conn,
+        "trust_report_income_statement",
+        [session.pmc_id, session.person_id, date(year, 1, 1), date(year, 12, 31)],
+    )
+    return exports.Table(f"Income statement, {year}", table.columns, table.rows)
+
+
+@router.get("/income-statement")
+def income_statement(session: Owner, conn: Conn, year: Year) -> Rows:
+    """The year's income and expenses per property and across them, cash basis, with the
+    Schedule E lines they go on. The PMS files nothing."""
+    return Rows.of(income_statement_table(conn, session, year))
+
+
+@router.get("/income-statement/download")
+def income_statement_download(
+    session: Owner,
+    conn: Conn,
+    year: Year,
+    fmt: Annotated[Literal["csv", "xlsx", "pdf"], Query(alias="format")] = "pdf",
+) -> Response:
+    return download(
+        exports.export(income_statement_table(conn, session, year), fmt),
+        f"income-statement-{year}",
+        fmt,
     )
 
 

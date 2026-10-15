@@ -871,3 +871,94 @@ test("staff carry over what the old system paid each vendor this year, and the y
   expect(text).toContain("1200.00");
   expect(text).toContain("800.50");
 });
+
+test("staff put bills in expense accounts on Schedule E lines, and the owner reads the year's income statement", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features.expenses!;
+  await joinAsStaff(page, people.manager);
+
+  // The demo's expense accounts, and one more.
+  await section(page, "Setup");
+  const accounts = part(page, "Expense accounts");
+  await expect(accounts).toContainText("Repairs (Schedule E line 14: Repairs)");
+  await accounts.getByLabel("Expense account").fill("Insurance");
+  await accounts.getByRole("combobox", { name: "Schedule E line" }).selectOption({ label: "9: Insurance" });
+  await accounts.getByRole("button", { name: "Add expense account" }).click();
+  await expect(accounts).toContainText("Insurance (Schedule E line 9: Insurance)");
+
+  // A water bill entered in Water; a hose in none, then put in Water; both set aside.
+  await section(page, "Bills");
+  const enter = async (reference: string, amount: string, memo: string, account?: string) => {
+    await page.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Plumbing Co" });
+    await page
+      .getByRole("combobox", { name: "Owner and property", exact: true })
+      .selectOption({ label: "Demo Owner B, Aspen Row" });
+    await page.getByLabel("Vendor's reference").fill(reference);
+    await page.getByLabel("Amount", { exact: true }).fill(amount);
+    await page.getByLabel("What for", { exact: true }).fill(memo);
+    if (account) {
+      await page
+        .getByRole("combobox", { name: "Expense account", exact: true })
+        .selectOption({ label: account });
+    }
+    await page.getByRole("button", { name: "Enter bill" }).click();
+    await expect(page.getByText(`Bill ${reference} entered.`)).toBeVisible();
+  };
+  await enter("WTR-1", "45.00", "Water, last month", "Water (Schedule E line 17: Utilities)");
+  await enter("HOSE-1", "12.00", "Garden hose");
+  const bill = (reference: string) => page.getByRole("listitem", { name: `Demo Plumbing Co ${reference}` });
+  await expect(bill("WTR-1").getByTestId("expense-account")).toHaveText("In Water.");
+  await expect(bill("HOSE-1").getByTestId("expense-account")).toHaveText("In no expense account yet.");
+  await bill("HOSE-1").getByRole("combobox", { name: "Expense account, HOSE-1" }).selectOption({ label: "Water" });
+  await bill("HOSE-1").getByRole("button", { name: "Put in" }).click();
+  await expect(page.getByText("HOSE-1 is in Water.")).toBeVisible();
+  await expect(bill("HOSE-1").getByTestId("expense-account")).toHaveText("In Water.");
+  for (const reference of ["WTR-1", "HOSE-1"]) {
+    await bill(reference).getByRole("button", { name: "Set aside" }).click();
+    await expect(bill(reference).getByTestId("status")).toHaveText("set aside");
+  }
+
+  // A lawn service every month, in Landscaping, then moved to Repairs.
+  await page.getByText("Add a recurring bill").click();
+  await page.getByRole("combobox", { name: "Recurring vendor" }).selectOption({ label: "Demo Roofing Co" });
+  await page
+    .getByRole("combobox", { name: "For owner and property" })
+    .selectOption({ label: "Demo Owner B, Aspen Row" });
+  await page.getByLabel("Reference prefix").fill("LAWN");
+  await page.getByLabel("Monthly amount").fill("40.00");
+  await page.getByLabel("For", { exact: true }).fill("Lawn service");
+  await page
+    .getByRole("combobox", { name: "Recurring expense account" })
+    .selectOption({ label: "Landscaping (Schedule E line 7: Cleaning and maintenance)" });
+  await page.getByRole("button", { name: "Add recurring bill" }).click();
+  const lawn = page.getByRole("listitem", { name: "Demo Roofing Co LAWN" });
+  await expect(lawn.getByTestId("expense-account")).toHaveText("In Landscaping.");
+  await lawn.getByRole("combobox", { name: "Expense account, LAWN" }).selectOption({ label: "Repairs" });
+  await lawn.getByRole("button", { name: "Move" }).click();
+  await expect(page.getByText("LAWN is entered in Repairs from now on.")).toBeVisible();
+
+  // Staff can download any owner's income statement from the Owners page.
+  await section(page, "Owners");
+  const statement = page
+    .getByRole("listitem", { name: "Demo Owner B, Aspen Row" })
+    .getByRole("link", { name: "Demo Owner B's income statement this year (PDF)" });
+  const pdf = await page.request.get((await statement.getAttribute("href")) ?? "");
+  expect(pdf.status()).toBe(200);
+  expect((await pdf.body()).subarray(0, 4).toString()).toBe("%PDF");
+
+  // The owner reads this year's income statement: the water and hose are Utilities.
+  const owner = await (await browser.newContext()).newPage();
+  await joinPortal(owner, people.owner_b);
+  const card = owner.locator("section", { has: owner.getByRole("heading", { level: 2, name: "Income statement" }) });
+  await card.getByLabel("Year").fill(today().slice(0, 4));
+  await card.getByRole("button", { name: "Show" }).click();
+  const aspen = card.getByRole("table", { name: "Aspen Row" });
+  await expect(aspen.getByRole("row", { name: "Water $57.00" })).toBeVisible();
+  await expect(card.getByRole("list", { name: "Schedule E, Aspen Row" })).toContainText(
+    "Schedule E line 17: Utilities$57.00",
+  );
+  const csv = await owner.request.get((await card.getByRole("link", { name: "CSV" }).getAttribute("href")) ?? "");
+  expect(await csv.text()).toContain("expense: Water");
+});

@@ -41,6 +41,9 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
 The rule check_the_owner_year_end reads an owner's year-end package for a random year and
 compares each part (collected from tenants net of bounces, fees, draws, contributions, the
 balances at the year's start and end, and the 1099-MISC rents) with the model. The rule
+check_the_income_statement reads an owner's income statement over random days and compares
+each line (collected by what each charge is, the fees, net income and the Schedule E lines)
+with the model. The rule
 check_the_tenant_reports reads the delinquency report as of a random day and compares
 every lease line with the model's aging, and checks a lease's tenant ledger closes at its
 balance due. The rule check_owner_balances reads the owner balances report as of a random day
@@ -1662,6 +1665,87 @@ class RentRollMachine(RuleBasedStateMachine):
             *((name, item, amount) for item, amount in parts),
             *((None, f"all properties: {item}", amount) for item, amount in parts),
             (None, "1099-MISC rents (box 1)", collected),
+        ]
+
+    @rule(data=st.data(), role=st.sampled_from(["owner", "app", "ai"]), owner=st.integers(0, 1))
+    def check_the_income_statement(self, data, role, owner):
+        """An owner's income statement over random days (UTC), line by line, as the model has
+        it: what was collected (matched payments less what bounced back) by what each charge
+        is (rent, a recurring charge, a late fee, another charge; a lease end's adjustment is
+        what it adjusts), the management and leasing fees, net income, and the Schedule E
+        lines. The owner's one property account here, so its lines and the totals agree."""
+        account = self.owner_account[owner]
+        days = sorted({t.event_at.astimezone(UTC).date() for t in self.transfers.values()}) or [
+            BASE
+        ]
+        first = data.draw(st.sampled_from(days)) + timedelta(days=data.draw(st.integers(-3, 1)))
+        last = data.draw(st.sampled_from(days)) + timedelta(days=data.draw(st.integers(-1, 3)))
+        if last < first:
+            first, last = last, first
+        start = datetime.combine(first, time(0), UTC)
+        end = datetime.combine(last + timedelta(days=1), time(0), UTC)
+
+        def within(transfer):
+            return start <= self.transfers[transfer].event_at < end
+
+        adjusts = {a: c for c, adjustments in self.adjusted.items() for a in adjustments}
+        recurring = set(self.recurring_charged.values())
+        late = {fee for _, _, fee in self.late_fees.values()}
+
+        def part(charge_id):
+            charge_id = adjusts.get(charge_id, charge_id)
+            if self.charges[charge_id].kind == "rent":
+                return "rent"
+            if charge_id in recurring:
+                return "recurring charges"
+            return "late fees" if charge_id in late else "other charges"
+
+        income = dict.fromkeys(
+            ["rent", "recurring charges", "late fees", "NSF fees", "other charges"], Decimal(0)
+        )
+        for (charge_id, t), amount in self.matches.items():
+            if self.transfers[t].target == account and within(t):
+                income[part(charge_id)] += amount
+        for (charge_id, _, r), amount in self.reversals.items():
+            if self.transfers[r].source == account and within(r):
+                income[part(charge_id)] -= amount
+
+        def fees(ids):
+            return sum(
+                (
+                    self.transfers[t].amount
+                    for t in ids
+                    if self.transfers[t].source == account and within(t)
+                ),
+                Decimal(0),
+            )
+
+        management, leasing = fees(self.fee_transfers), fees(self.leasing_transfers)
+        collected = sum(income.values(), Decimal(0))
+        expected = [
+            *((f"income: {name}", 3, amount) for name, amount in income.items()),
+            ("total income", None, collected),
+            ("expense: management fees", 11, management),
+            ("expense: leasing fees", 8, leasing),
+            ("total expenses", None, management + leasing),
+            ("net income", None, collected - management - leasing),
+            ("Schedule E line 3: Rents received", 3, collected),
+            *([("Schedule E line 8: Commissions", 8, leasing)] if leasing else []),
+            *([("Schedule E line 11: Management fees", 11, management)] if management else []),
+        ]
+        rows = (
+            self.conns[role]
+            .execute(
+                "SELECT property, item, schedule_e, amount"
+                " FROM trust_report_income_statement(%s, %s, %s, %s) WHERE line > 3",
+                (self.pmc_id, self.pmc.owners[owner].owner_id, first, last),
+            )
+            .fetchall()
+        )
+        name = self.property_names[owner]
+        assert rows == [
+            *((name, item, line, amount) for item, line, amount in expected),
+            *((None, f"all properties: {item}", line, amount) for item, line, amount in expected),
         ]
 
     @rule(

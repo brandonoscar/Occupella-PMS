@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Bill, OwnerMoney, Recurring } from "./payables";
-import { emailNote, feeLine, heldLabel, lastMonthPeriod, nextStep, recurringLabel, statusTone } from "./payables";
+import { emailNote, feeLine, heldLabel, incomeStatementHref, lastMonthPeriod, nextStep, recurringLabel, statusTone } from "./payables";
 
 describe("payables", () => {
   it("names a bill's next step, and none once it is paid", () => {
@@ -14,7 +14,7 @@ describe("payables", () => {
     const bill: Recurring = {
       id: "r1", vendor: "Vendor 1", account: "a1", owner: "Owner 1", property: "Property 1",
       reference_prefix: "LAWN", amount: "80.00", memo: "Lawn care", day_of_month: 5,
-      starts_on: "2026-01-01", ends_on: null,
+      starts_on: "2026-01-01", ends_on: null, expense_account_id: null, expense_account: null,
     };
     expect(recurringLabel(bill)).toBe(
       "Vendor 1: $80.00 on day 5 of each month from 2026-01-01, Owner 1, Property 1 (LAWN)",
@@ -22,9 +22,15 @@ describe("payables", () => {
     expect(recurringLabel({ ...bill, ends_on: "2026-12-31" })).toContain("until 2026-12-31,");
   });
 
+  it("links an owner's income statement from the first of the year through today", () => {
+    expect(incomeStatementHref("o 1", "2026-10-15")).toBe(
+      "/api/reports/trust_report_income_statement?arg=o%201&arg=2026-01-01&arg=2026-10-15&format=pdf",
+    );
+  });
+
   it("says what an owner's account keeps back from a draw", () => {
     const owner: OwnerMoney = {
-      account: "a1", owner: "Owner 1", property: "Property 1", bank_account: "Operating",
+      account: "a1", owner_id: "o1", owner: "Owner 1", property: "Property 1", bank_account: "Operating",
       balance: "1200.00", reserve: "100.00", unpaid_bills: "300.00", available: "800.00",
       has_agreement: true,
     };

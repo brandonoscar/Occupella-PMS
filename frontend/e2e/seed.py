@@ -452,6 +452,7 @@ FEATURES = (
     "switching",
     "documents",
     "setup",
+    "expenses",
 )
 
 

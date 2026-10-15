@@ -310,9 +310,11 @@ def test_the_ai_role_writes_no_table(conn, ai_conn, table, statement):
         return
     if statement == "TRUNCATE" and kind != "table":
         statement = "DELETE"  # a view can't be truncated, by anyone
+    # A column an UPDATE may name: Postgres refuses setting a GENERATED ALWAYS identity column
+    # before it looks at privileges, which would hide the refusal this test is for.
     column = conn.execute(
         "SELECT column_name FROM information_schema.columns WHERE table_name = %s"
-        " ORDER BY ordinal_position LIMIT 1",
+        " AND identity_generation IS DISTINCT FROM 'ALWAYS' ORDER BY ordinal_position LIMIT 1",
         (table,),
     ).fetchone()[0]
     query = {

@@ -73,6 +73,12 @@ const BOOKS: Portfolio = {
     { id: "t2", name: "Tenant B", property_id: "p1", property: "Property A" },
   ],
   vendors: [{ id: "v1", name: "Vendor A" }],
+  expense_accounts: [{ id: "e1", name: "Landscaping", schedule_e_line: 7 }],
+  schedule_e_lines: [
+    { line: 7, label: "Cleaning and maintenance" },
+    { line: 14, label: "Repairs" },
+    { line: 17, label: "Utilities" },
+  ],
 };
 
 // The API: the books on GET; a POST is added, or refused with `refuse[path]`.
@@ -124,6 +130,23 @@ describe("SetupPage", () => {
     expect((await card("Tenants and leases in place")).textContent).toContain("Tenant B (Property A)");
     expect(screen.getByRole("link", { name: "Setup" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("link", { name: "Overview" }).getAttribute("aria-current")).toBe(null);
+  });
+
+  it("lists the expense accounts on their Schedule E lines and adds one", async () => {
+    const fetch = server();
+    render(<SetupPage me={ME} />);
+
+    const accounts = await card("Expense accounts");
+    expect(accounts.textContent).toContain("Landscaping (Schedule E line 7: Cleaning and maintenance)");
+    type("Expense account", "Water", accounts);
+    type("Schedule E line", "17", accounts);
+    expect(within(accounts).getByRole("option", { name: "17: Utilities" })).toBeTruthy();
+    fireEvent.click(within(accounts).getByRole("button", { name: "Add expense account" }));
+
+    await vi.waitFor(() =>
+      expect(posted(fetch)).toEqual([["/api/setup/expense-accounts", { name: "Water", schedule_e_line: 17 }]]),
+    );
+    await vi.waitFor(() => expect((within(accounts).getByLabelText("Expense account") as HTMLInputElement).value).toBe(""));
   });
 
   it("adds a bank account, an owner and a vendor, and clears the name", async () => {

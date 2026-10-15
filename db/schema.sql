@@ -2263,25 +2263,47 @@ BEGIN
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
 
-    INSERT INTO trust_bills (
-        pmc_id, vendor_id, ledger_account_id, reference, bill_date, due_on, amount, memo
+    WITH due AS (
+        SELECT r.id AS recurring_bill_id, r.pmc_id, r.vendor_id, r.ledger_account_id,
+               r.reference_prefix || '-' || to_char(d.due_on, 'YYYY-MM') AS reference,
+               d.due_on, r.amount, r.memo
+        FROM trust_recurring_bills AS r
+        LEFT JOIN trust_recurring_bill_ends AS e ON e.recurring_bill_id = r.id
+        CROSS JOIN LATERAL generate_series(
+            date_trunc('month', r.starts_on), p_through::timestamp, interval '1 month'
+        ) AS m (month)
+        CROSS JOIN LATERAL (SELECT (m.month::date + r.day_of_month - 1) AS due_on) AS d
+        WHERE r.pmc_id = p_pmc_id
+          AND d.due_on >= r.starts_on
+          AND d.due_on <= p_through
+          AND (e.ends_on IS NULL OR d.due_on < e.ends_on)
+    ),
+    entered AS (
+        INSERT INTO trust_bills (
+            pmc_id, vendor_id, ledger_account_id, reference, bill_date, due_on, amount, memo
+        )
+        SELECT d.pmc_id, d.vendor_id, d.ledger_account_id, d.reference, d.due_on, d.due_on,
+               d.amount, d.memo
+        FROM due AS d
+        ORDER BY d.recurring_bill_id, d.due_on
+        ON CONFLICT (vendor_id, reference) DO NOTHING
+        RETURNING id, pmc_id, vendor_id, reference
+    ),
+    categorized AS (
+        INSERT INTO trust_bill_expense_accounts (pmc_id, bill_id, expense_account_id)
+        SELECT b.pmc_id, b.id, c.expense_account_id
+        FROM entered AS b
+        JOIN due AS d ON d.vendor_id = b.vendor_id AND d.reference = b.reference
+        CROSS JOIN LATERAL (
+            SELECT x.expense_account_id
+            FROM trust_recurring_bill_expense_accounts AS x
+            WHERE x.recurring_bill_id = d.recurring_bill_id
+            ORDER BY x.id DESC
+            LIMIT 1
+        ) AS c
+        RETURNING bill_id
     )
-    SELECT r.pmc_id, r.vendor_id, r.ledger_account_id,
-           r.reference_prefix || '-' || to_char(d.due_on, 'YYYY-MM'),
-           d.due_on, d.due_on, r.amount, r.memo
-    FROM trust_recurring_bills AS r
-    LEFT JOIN trust_recurring_bill_ends AS e ON e.recurring_bill_id = r.id
-    CROSS JOIN LATERAL generate_series(
-        date_trunc('month', r.starts_on), p_through::timestamp, interval '1 month'
-    ) AS m (month)
-    CROSS JOIN LATERAL (SELECT (m.month::date + r.day_of_month - 1) AS due_on) AS d
-    WHERE r.pmc_id = p_pmc_id
-      AND d.due_on >= r.starts_on
-      AND d.due_on <= p_through
-      AND (e.ends_on IS NULL OR d.due_on < e.ends_on)
-    ORDER BY r.id, d.due_on
-    ON CONFLICT (vendor_id, reference) DO NOTHING;
-    GET DIAGNOSTICS v_entered = ROW_COUNT;
+    SELECT count(*)::integer INTO v_entered FROM entered;
     RETURN v_entered;
 END;
 $$;
@@ -4331,6 +4353,215 @@ BEGIN
            round(l.dr, 2),
            round(l.cr, 2),
            round(l.balance, 2)
+    FROM lines AS l
+    ORDER BY 1;
+END;
+$$;
+
+
+--
+-- Name: trust_report_income_statement(uuid, uuid, date, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_income_statement(p_pmc_id uuid, p_owner_id uuid, p_from date, p_through date) RETURNS TABLE(line integer, property text, item text, schedule_e integer, amount numeric)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+#variable_conflict use_column
+DECLARE
+    v_start timestamptz;
+    v_end timestamptz;
+BEGIN
+    IF p_from IS NULL OR p_through IS NULL OR p_through < p_from THEN
+        RAISE EXCEPTION 'trust: an income statement runs from a day through a day no earlier, not % to %',
+            p_from, p_through
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF NOT EXISTS (
+        SELECT o.id FROM trust_owners AS o WHERE o.id = p_owner_id AND o.pmc_id = p_pmc_id
+    ) THEN
+        RAISE EXCEPTION 'trust: no owner % in PMC %', p_owner_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_start := p_from::timestamp AT TIME ZONE 'UTC';
+    v_end := (p_through + 1)::timestamp AT TIME ZONE 'UTC';
+
+    RETURN QUERY
+    WITH schedule_e (n, label) AS (
+        VALUES (3, 'Rents received'), (5, 'Advertising'), (6, 'Auto and travel'),
+               (7, 'Cleaning and maintenance'), (8, 'Commissions'), (9, 'Insurance'),
+               (10, 'Legal and other professional fees'), (11, 'Management fees'),
+               (12, 'Mortgage interest paid to banks, etc.'), (13, 'Other interest'),
+               (14, 'Repairs'), (15, 'Supplies'), (16, 'Taxes'), (17, 'Utilities'),
+               (18, 'Depreciation expense or depletion'), (19, 'Other')
+    ),
+    incomes (part, label) AS (
+        VALUES (1, 'income: rent'), (2, 'income: recurring charges'), (3, 'income: late fees'),
+               (4, 'income: NSF fees'), (5, 'income: other charges')
+    ),
+    accounts AS (
+        SELECT t.ledger_account_id AS account, pr.display_name AS name
+        FROM trust_ledger_accounts AS t
+        JOIN trust_properties AS pr ON pr.id = t.property_id
+        WHERE t.pmc_id = p_pmc_id AND t.owner_id = p_owner_id AND t.kind = 'owner_property'
+    ),
+    -- What each charge's money is: rent, a recurring charge (pet rent, parking), a late fee, an
+    -- NSF fee, or another charge. A lease end's adjustment of a rent or recurring charge
+    -- (migration 0051) is what it adjusts.
+    classes AS (
+        SELECT c.id,
+               CASE
+                   WHEN coalesce(o.kind, c.kind) = 'rent' THEN 1
+                   WHEN coalesce(o.recurring_charge_id, c.recurring_charge_id) IS NOT NULL THEN 2
+                   WHEN lf.fee_charge_id IS NOT NULL THEN 3
+                   WHEN nf.fee_charge_id IS NOT NULL THEN 4
+                   ELSE 5
+               END AS part
+        FROM trust_charges AS c
+        LEFT JOIN trust_lease_end_adjustments AS adj ON adj.adjustment_charge_id = c.id
+        LEFT JOIN trust_charges AS o ON o.id = adj.charge_id
+        LEFT JOIN trust_late_fees AS lf ON lf.fee_charge_id = c.id
+        LEFT JOIN trust_nsf_fees AS nf ON nf.fee_charge_id = c.id
+        WHERE c.pmc_id = p_pmc_id
+    ),
+    -- Collected from tenants in the days: payments matched to charges, less what bounced back,
+    -- as the year-end package counts them (migration 0039).
+    collected AS (
+        SELECT tr.to_account_id AS account, k.part, cp.amount
+        FROM trust_charge_payments AS cp
+        JOIN pgledger_transfers AS tr ON tr.id = cp.transfer_id
+        JOIN classes AS k ON k.id = cp.charge_id
+        WHERE cp.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
+        UNION ALL
+        SELECT tr.from_account_id, k.part, -r.amount
+        FROM trust_payment_reversals AS r
+        JOIN pgledger_transfers AS tr ON tr.id = r.reversal_id
+        JOIN classes AS k ON k.id = r.charge_id
+        WHERE r.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
+    ),
+    fees AS (
+        SELECT f.ledger_account_id AS account, 0 AS ord, tr.amount
+        FROM trust_management_fees AS f
+        JOIN pgledger_transfers AS tr ON tr.id = f.transfer_id
+        WHERE f.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
+        UNION ALL
+        SELECT f.ledger_account_id, 1, tr.amount
+        FROM trust_leasing_fees AS f
+        JOIN pgledger_transfers AS tr ON tr.id = f.transfer_id
+        WHERE f.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
+    ),
+    -- Each bill's expense account: its latest.
+    categorized AS (
+        SELECT DISTINCT ON (x.bill_id) x.bill_id, x.expense_account_id
+        FROM trust_bill_expense_accounts AS x
+        WHERE x.pmc_id = p_pmc_id
+        ORDER BY x.bill_id, x.id DESC
+    ),
+    -- Bills, when their money left the owner's account (set aside to pay them).
+    spent AS (
+        SELECT tr.from_account_id AS account, cz.expense_account_id AS expense, tr.amount
+        FROM trust_bill_payments AS b
+        JOIN pgledger_transfers AS tr ON tr.id = b.transfer_id
+        LEFT JOIN categorized AS cz ON cz.bill_id = b.bill_id
+        WHERE b.pmc_id = p_pmc_id AND b.step = 'set_aside'
+          AND tr.event_at >= v_start AND tr.event_at < v_end
+    ),
+    -- Each account's lines: (group, order within it, item, Schedule E line, amount). Groups:
+    -- 1 income, 3 expenses. Income and the fees show even when nothing moved.
+    items AS (
+        SELECT a.account, 1 AS grp, i.part AS ord, i.label AS item, 3 AS sched,
+               coalesce((SELECT sum(c.amount) FROM collected AS c
+                         WHERE c.account = a.account AND c.part = i.part), 0) AS total
+        FROM accounts AS a
+        CROSS JOIN incomes AS i
+        UNION ALL
+        SELECT a.account, 3, f.ord,
+               CASE f.ord WHEN 0 THEN 'expense: management fees' ELSE 'expense: leasing fees' END,
+               CASE f.ord WHEN 0 THEN 11 ELSE 8 END,
+               coalesce((SELECT sum(x.amount) FROM fees AS x
+                         WHERE x.account = a.account AND x.ord = f.ord), 0)
+        FROM accounts AS a
+        CROSS JOIN (VALUES (0), (1)) AS f (ord)
+        UNION ALL
+        SELECT s.account, 3, coalesce(ea.schedule_e_line, 99),
+               CASE WHEN ea.id IS NULL THEN 'expense: bills not in an expense account'
+                    ELSE 'expense: ' || ea.name END,
+               ea.schedule_e_line,
+               sum(s.amount)
+        FROM spent AS s
+        JOIN accounts AS a ON a.account = s.account
+        LEFT JOIN trust_expense_accounts AS ea ON ea.id = s.expense
+        GROUP BY s.account, ea.id, ea.name, ea.schedule_e_line
+    ),
+    sums AS (
+        SELECT i.account,
+               coalesce(sum(i.total) FILTER (WHERE i.grp = 1), 0) AS income,
+               coalesce(sum(i.total) FILTER (WHERE i.grp = 3), 0) AS expenses
+        FROM items AS i
+        GROUP BY i.account
+    ),
+    -- The same by Schedule E line (group 6): rents received, and each expense line with money
+    -- on it; bills in no expense account are on no line until they are given one.
+    schedule AS (
+        SELECT i.account, 6 AS grp, i.sched AS ord,
+               'Schedule E line ' || i.sched || ': ' || e.label AS item, i.sched,
+               sum(i.total) AS total
+        FROM items AS i
+        JOIN schedule_e AS e ON e.n = i.sched
+        GROUP BY i.account, i.sched, e.label
+        HAVING i.sched = 3 OR sum(i.total) <> 0
+        UNION ALL
+        SELECT i.account, 6, 99, 'Schedule E: on no line, bills not in an expense account',
+               NULL::integer, sum(i.total)
+        FROM items AS i
+        WHERE i.grp = 3 AND i.sched IS NULL
+        GROUP BY i.account
+    ),
+    rows AS (
+        SELECT i.account, i.grp, i.ord, i.item, i.sched, i.total FROM items AS i
+        UNION ALL
+        SELECT s.account, 2, 0, 'total income', NULL::integer, s.income FROM sums AS s
+        UNION ALL
+        SELECT s.account, 4, 0, 'total expenses', NULL::integer, s.expenses FROM sums AS s
+        UNION ALL
+        SELECT s.account, 5, 0, 'net income', NULL::integer, s.income - s.expenses
+        FROM sums AS s
+        UNION ALL
+        SELECT h.account, h.grp, h.ord, h.item, h.sched, h.total FROM schedule AS h
+    ),
+    lines AS (
+        -- (section, property, account, group, order, item) orders the statement; names sort
+        -- by byte (COLLATE "C"), the same on every server.
+        SELECT 0 AS section, NULL::text AS name, NULL::text AS account, 0 AS grp, 1 AS ord,
+               'PMC' AS item, pmc.display_name AS label, NULL::integer AS sched,
+               NULL::numeric AS total
+        FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
+        UNION ALL
+        SELECT 0, NULL, NULL, 0, 2, 'owner', o.display_name, NULL, NULL
+        FROM trust_owners AS o WHERE o.id = p_owner_id
+        UNION ALL
+        SELECT 0, NULL, NULL, 0, 3, 'period',
+               p_from::text || ' to ' || p_through::text || ' UTC, cash basis', NULL, NULL
+        UNION ALL
+        SELECT 1, a.name, r.account, r.grp, r.ord, r.item, a.name, r.sched, r.total
+        FROM rows AS r
+        JOIN accounts AS a ON a.account = r.account
+        UNION ALL
+        SELECT 2, NULL, NULL, r.grp, r.ord, 'all properties: ' || r.item, NULL, r.sched,
+               sum(r.total)
+        FROM rows AS r
+        GROUP BY r.grp, r.ord, r.item, r.sched
+    )
+    SELECT row_number() OVER (
+               ORDER BY l.section, l.name COLLATE "C", l.account COLLATE "C", l.grp, l.ord,
+                        l.item COLLATE "C"
+           )::integer,
+           -- The PMC's, owner's and period's names sit in the property column of the first
+           -- lines.
+           l.label,
+           l.item,
+           l.sched,
+           round(l.total, 2)
     FROM lines AS l
     ORDER BY 1;
 END;
@@ -6408,6 +6639,33 @@ CREATE TABLE public.trust_bill_declines (
 
 
 --
+-- Name: trust_bill_expense_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_bill_expense_accounts (
+    id bigint NOT NULL,
+    pmc_id uuid NOT NULL,
+    bill_id uuid NOT NULL,
+    expense_account_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: trust_bill_expense_accounts_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_bill_expense_accounts ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.trust_bill_expense_accounts_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: trust_bill_payments; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -6611,6 +6869,21 @@ CREATE TABLE public.trust_emails (
     CONSTRAINT trust_emails_kind_check CHECK ((kind = 'bill_approval'::text)),
     CONSTRAINT trust_emails_subject_check CHECK (((subject <> ''::text) AND (length(subject) <= 200))),
     CONSTRAINT trust_emails_to_address_check CHECK (((to_address <> ''::text) AND (length(to_address) <= 320)))
+);
+
+
+--
+-- Name: trust_expense_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_expense_accounts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    name text NOT NULL,
+    schedule_e_line integer NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_expense_accounts_name_check CHECK (((name ~ '\S'::text) AND (length(name) <= 200))),
+    CONSTRAINT trust_expense_accounts_schedule_e_line_check CHECK (((schedule_e_line >= 5) AND (schedule_e_line <= 19)))
 );
 
 
@@ -7140,6 +7413,33 @@ CREATE TABLE public.trust_recurring_bill_ends (
 
 
 --
+-- Name: trust_recurring_bill_expense_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_recurring_bill_expense_accounts (
+    id bigint NOT NULL,
+    pmc_id uuid NOT NULL,
+    recurring_bill_id uuid NOT NULL,
+    expense_account_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: trust_recurring_bill_expense_accounts_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_recurring_bill_expense_accounts ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.trust_recurring_bill_expense_accounts_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: trust_recurring_bills; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -7663,6 +7963,14 @@ ALTER TABLE ONLY public.trust_bill_declines
 
 
 --
+-- Name: trust_bill_expense_accounts trust_bill_expense_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_expense_accounts
+    ADD CONSTRAINT trust_bill_expense_accounts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_bill_payments trust_bill_payments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -7828,6 +8136,30 @@ ALTER TABLE ONLY public.trust_emails
 
 ALTER TABLE ONLY public.trust_emails
     ADD CONSTRAINT trust_emails_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_expense_accounts trust_expense_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_expense_accounts
+    ADD CONSTRAINT trust_expense_accounts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_expense_accounts trust_expense_accounts_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_expense_accounts
+    ADD CONSTRAINT trust_expense_accounts_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_expense_accounts trust_expense_accounts_pmc_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_expense_accounts
+    ADD CONSTRAINT trust_expense_accounts_pmc_id_name_key UNIQUE (pmc_id, name);
 
 
 --
@@ -8295,6 +8627,14 @@ ALTER TABLE ONLY public.trust_recurring_bill_ends
 
 
 --
+-- Name: trust_recurring_bill_expense_accounts trust_recurring_bill_expense_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_bill_expense_accounts
+    ADD CONSTRAINT trust_recurring_bill_expense_accounts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_recurring_bills trust_recurring_bills_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -8595,6 +8935,13 @@ CREATE INDEX trust_bank_matches_bank_account_id ON public.trust_bank_matches USI
 
 
 --
+-- Name: trust_bill_expense_accounts_bill; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bill_expense_accounts_bill ON public.trust_bill_expense_accounts USING btree (bill_id, id);
+
+
+--
 -- Name: trust_bill_payments_transfer_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -8868,6 +9215,13 @@ CREATE INDEX trust_reconciliations_bank_account_id ON public.trust_reconciliatio
 
 
 --
+-- Name: trust_recurring_bill_expense_accounts_bill; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_recurring_bill_expense_accounts_bill ON public.trust_recurring_bill_expense_accounts USING btree (recurring_bill_id, id);
+
+
+--
 -- Name: trust_recurring_charges_lease_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -9092,6 +9446,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_bill_expense_accounts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bill_expense_accounts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_bill_payments trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -9180,6 +9541,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_emails FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_expense_accounts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_expense_accounts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -9376,6 +9744,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_recurring_bill_ends FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_recurring_bill_expense_accounts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_recurring_bill_expense_accounts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -9603,6 +9978,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bill
 
 
 --
+-- Name: trust_bill_expense_accounts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bill_expense_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_bill_payments trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -9670,6 +10052,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_docu
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_documents FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_expense_accounts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_expense_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -9901,6 +10290,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_reco
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_recurring_bill_ends FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_recurring_bill_expense_accounts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_recurring_bill_expense_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -10640,6 +11036,30 @@ ALTER TABLE ONLY public.trust_bill_declines
 
 
 --
+-- Name: trust_bill_expense_accounts trust_bill_expense_accounts_pmc_id_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_expense_accounts
+    ADD CONSTRAINT trust_bill_expense_accounts_pmc_id_bill_id_fkey FOREIGN KEY (pmc_id, bill_id) REFERENCES public.trust_bills(pmc_id, id);
+
+
+--
+-- Name: trust_bill_expense_accounts trust_bill_expense_accounts_pmc_id_expense_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_expense_accounts
+    ADD CONSTRAINT trust_bill_expense_accounts_pmc_id_expense_account_id_fkey FOREIGN KEY (pmc_id, expense_account_id) REFERENCES public.trust_expense_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_bill_expense_accounts trust_bill_expense_accounts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_expense_accounts
+    ADD CONSTRAINT trust_bill_expense_accounts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
 -- Name: trust_bill_payments trust_bill_payments_pmc_id_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -10965,6 +11385,14 @@ ALTER TABLE ONLY public.trust_emails
 
 ALTER TABLE ONLY public.trust_emails
     ADD CONSTRAINT trust_emails_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_expense_accounts trust_expense_accounts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_expense_accounts
+    ADD CONSTRAINT trust_expense_accounts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
 
 
 --
@@ -11768,6 +12196,30 @@ ALTER TABLE ONLY public.trust_recurring_bill_ends
 
 
 --
+-- Name: trust_recurring_bill_expense_accounts trust_recurring_bill_expense_acc_pmc_id_expense_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_bill_expense_accounts
+    ADD CONSTRAINT trust_recurring_bill_expense_acc_pmc_id_expense_account_id_fkey FOREIGN KEY (pmc_id, expense_account_id) REFERENCES public.trust_expense_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_recurring_bill_expense_accounts trust_recurring_bill_expense_acco_pmc_id_recurring_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_bill_expense_accounts
+    ADD CONSTRAINT trust_recurring_bill_expense_acco_pmc_id_recurring_bill_id_fkey FOREIGN KEY (pmc_id, recurring_bill_id) REFERENCES public.trust_recurring_bills(pmc_id, id);
+
+
+--
+-- Name: trust_recurring_bill_expense_accounts trust_recurring_bill_expense_accounts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_bill_expense_accounts
+    ADD CONSTRAINT trust_recurring_bill_expense_accounts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
 -- Name: trust_recurring_bills trust_recurring_bills_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -12137,4 +12589,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261013000048'),
     ('20261013000049'),
     ('20261013000050'),
-    ('20261013000051');
+    ('20261013000051'),
+    ('20261015000052');

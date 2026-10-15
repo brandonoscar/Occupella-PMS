@@ -83,6 +83,8 @@ class Demo:
     leases: dict[tuple[str, str], UUID] = field(default_factory=dict)
     tenants: dict[str, UUID] = field(default_factory=dict)
     vendors: dict[str, UUID] = field(default_factory=dict)
+    # Expense account name -> its id: bills go in one, for the owners' income statements.
+    expense_accounts: dict[str, UUID] = field(default_factory=dict)
     # The months: the one before last, last month, and this month's first day.
     months: tuple[date, date, date] = (date.min, date.min, date.min)
     # Last month's preparation of the operating account, waiting for the manager.
@@ -186,6 +188,12 @@ def build(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
             demo.owners[owner] = uid(setup.add_owner(s, conn, setup.NewName(name=owner)))
         for vendor in ("Demo Plumbing Co", "Demo Roofing Co"):
             demo.vendors[vendor] = uid(setup.add_vendor(s, conn, setup.NewName(name=vendor)))
+        for name, line in (("Repairs", 14), ("Landscaping", 7), ("Water", 17)):
+            demo.expense_accounts[name] = uid(
+                setup.add_expense_account(
+                    s, conn, setup.NewExpenseAccount(name=name, schedule_e_line=line)
+                )
+            )
         for owner, prop, units in PORTFOLIO:
             new = setup.NewProperty(
                 name=prop, owner_id=demo.owners[owner], bank_account_id=operating
@@ -292,6 +300,7 @@ def build(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
                 due_on=month_ago + 25 * DAY,
                 amount=D("380.00"),
                 memo="Kitchen drain, Unit 2",
+                expense_account_id=demo.expense_accounts["Repairs"],
             ),
         ).id
         payables.set_aside(s, conn, bill, payables.Day(on=month_ago + 11 * DAY))
@@ -314,6 +323,7 @@ def build(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
                 due_on=this_month - DAY,
                 amount=D("650.00"),
                 memo="Roof flashing repair",
+                expense_account_id=demo.expense_accounts["Repairs"],
             ),
         ).id
         payables.approve(

@@ -15,6 +15,9 @@ export type Bill = {
   amount: string;
   memo: string;
   work_order_id: string | null;
+  // The expense account it is in (its latest), or null while it is in none.
+  expense_account_id: string | null;
+  expense_account: string | null;
   approval_limit: string;
   approved_by: string | null;
   // Who declined it for the owner (in the portal, or as staff recorded it), and why.
@@ -54,9 +57,12 @@ export type Recurring = {
   day_of_month: number;
   starts_on: string;
   ends_on: string | null;
+  expense_account_id: string | null;
+  expense_account: string | null;
 };
 export type OwnerMoney = {
   account: string;
+  owner_id: string;
   owner: string;
   property: string;
   bank_account: string;
@@ -118,4 +124,11 @@ export function feeLine(fee: Fee): string {
 export function lastMonthPeriod(today: Date): { start: string; end: string } {
   const thisMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
   return { start: lastMonth(today).start, end: day(thisMonth) };
+}
+
+// An owner's income statement from the first of the year through today (UTC), as a PDF: every
+// property of theirs, with the Schedule E lines.
+export function incomeStatementHref(ownerId: string, today: string): string {
+  const args = [ownerId, `${today.slice(0, 4)}-01-01`, today].map((a) => `arg=${encodeURIComponent(a)}`);
+  return `/api/reports/trust_report_income_statement?${args.join("&")}&format=pdf`;
 }

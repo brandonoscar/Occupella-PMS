@@ -7,7 +7,8 @@ import { applicationLine, billLine, daysBetween, lateLine, monthEndLine, monthLa
 const BILL: Bill = {
   id: "b1", vendor: "Vendor A", reference: "INV-1", account: "a1", owner: "Owner A",
   property: "Property 1", bill_date: "2026-10-01", due_on: "2026-10-16", amount: "1200.00",
-  memo: "Repair", work_order_id: null, approval_limit: "500.00", approved_by: null,
+  memo: "Repair", work_order_id: null, expense_account_id: null, expense_account: null,
+  approval_limit: "500.00", approved_by: null,
   declined_by: null, decline_reason: null, owner_email: null, status: "needs approval",
 };
 

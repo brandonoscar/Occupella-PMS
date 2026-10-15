@@ -11,6 +11,7 @@ import type { StatementData } from "../statement";
 import { describePosting, group, periodLabel } from "../statement";
 import { OwnerBills } from "./OwnerBills";
 import { OwnerDocuments } from "./OwnerDocuments";
+import { OwnerIncomeStatement } from "./OwnerIncomeStatement";
 import { OwnerYearEnd } from "./OwnerYearEnd";
 
 type Property = { account_id: string; property_id: string; name: string; bank: string; balance: string };
@@ -159,6 +160,7 @@ export function OwnerHome({ me }: { me: Me }) {
         )}
       </Card>
       <OwnerYearEnd />
+      <OwnerIncomeStatement />
       <OwnerDocuments />
     </Shell>
   );

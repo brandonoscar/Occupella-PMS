@@ -365,6 +365,18 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and the year's 1099-MISC rents (everything collected from tenants). It files nothing, holds
   no tax IDs and applies no threshold. Owners read and download it in the portal
   (`/api/owner/year-end`), with the year's whole statement.
+- Expense accounts and the income statement (migration 0052): a PMC's expense accounts
+  (`trust_expense_accounts`, a name once per PMC) each sit on an expense line of Schedule E
+  (5 to 19; `SCHEDULE_E` in `src/pms/api/setup.py` holds the labels the report uses). A bill's
+  latest row in `trust_bill_expense_accounts` is its account (a correction is a new row), and a
+  recurring bill's latest goes on each month `trust_enter_recurring_bills` enters. It describes
+  money already moved and moves none. `trust_report_income_statement` sums an owner's property
+  accounts over days (UTC), cash basis: collected from tenants (as the year-end counts it) by
+  what each charge is (rent, recurring charges, late fees, NSF fees, other; a lease end's
+  adjustment is what it adjusts), management fees (line 11), leasing fees (line 8), bills set
+  aside by expense account (those in none on no line), net income, then by Schedule E line. It
+  files nothing. Owners read and download a year's in the portal (`/api/owner/income-statement`);
+  staff download any owner's from the owners page.
 
 ## Run the checks
 

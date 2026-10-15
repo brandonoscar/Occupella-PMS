@@ -1,7 +1,7 @@
 """Staff set up their PMC's books: trust bank accounts, owners, properties and the owner accounts
-that hold each owner's money for a property, units, tenants, vendors, management agreements,
-late fee and NSF fee terms, and leases of tenants already in place (a new tenant's lease comes
-through a lease offer, offers.py).
+that hold each owner's money for a property, units, tenants, vendors, expense accounts (each on
+its line of Schedule E), management agreements, late fee and NSF fee terms, and leases of
+tenants already in place (a new tenant's lease comes through a lease offer, offers.py).
 
 Every write is a plain insert the app role may make, or one of the database's own write paths
 (trust_open_ledger_account, trust_open_lease), so the database's rules hold whoever calls: a
@@ -33,6 +33,26 @@ Money = Annotated[Decimal, Field(ge=0, le=Decimal("10000000"), decimal_places=2)
 Rent = Annotated[Decimal, Field(gt=0, le=Decimal("1000000"), decimal_places=2)]
 Percent = Annotated[Decimal, Field(ge=0, le=100, decimal_places=4)]
 BankKind = Literal["operating", "security_deposit"]
+
+# Schedule E (Form 1040), Part I: the lines an expense account may be on, as
+# trust_report_income_statement labels them (tests/api/test_expense_accounts.py reads both).
+SCHEDULE_E = {
+    5: "Advertising",
+    6: "Auto and travel",
+    7: "Cleaning and maintenance",
+    8: "Commissions",
+    9: "Insurance",
+    10: "Legal and other professional fees",
+    11: "Management fees",
+    12: "Mortgage interest paid to banks, etc.",
+    13: "Other interest",
+    14: "Repairs",
+    15: "Supplies",
+    16: "Taxes",
+    17: "Utilities",
+    18: "Depreciation expense or depletion",
+    19: "Other",
+}
 
 # The records a request may name, and the table each lives in.
 TABLES = {
@@ -120,6 +140,15 @@ class Tenant(Named):
     property: str
 
 
+class ExpenseAccount(Named):
+    schedule_e_line: int
+
+
+class ScheduleELine(BaseModel):
+    line: int
+    label: str
+
+
 class Portfolio(BaseModel):
     bank_accounts: list[BankAccount]
     owners: list[Named]
@@ -127,6 +156,8 @@ class Portfolio(BaseModel):
     accounts: list[OwnerAccount]
     tenants: list[Tenant]
     vendors: list[Named]
+    expense_accounts: list[ExpenseAccount]
+    schedule_e_lines: list[ScheduleELine]
 
 
 class Created(BaseModel):
@@ -285,6 +316,15 @@ def portfolio(session: Staff, conn: Conn) -> Portfolio:
         accounts=accounts,
         tenants=tenants,
         vendors=named(conn, "trust_vendors", pmc),
+        expense_accounts=[
+            ExpenseAccount(id=i, name=n, schedule_e_line=line)
+            for i, n, line in conn.execute(
+                "SELECT id, name, schedule_e_line FROM trust_expense_accounts WHERE pmc_id = %s"
+                ' ORDER BY name COLLATE "C", id',
+                (pmc,),
+            ).fetchall()
+        ],
+        schedule_e_lines=[ScheduleELine(line=n, label=label) for n, label in SCHEDULE_E.items()],
     )
 
 
@@ -365,6 +405,26 @@ def add_vendor(session: Staff, conn: Conn, new: NewName) -> Created:
             (session.pmc_id, new.name),
         )
     )
+
+
+class NewExpenseAccount(BaseModel):
+    name: Name
+    schedule_e_line: Annotated[int, Field(ge=5, le=19)]
+
+
+@router.post("/expense-accounts", status_code=201)
+def add_expense_account(session: Staff, conn: Conn, new: NewExpenseAccount) -> Created:
+    """An account bills go in (Repairs, Landscaping, Water), on the line of Schedule E its
+    expenses are reported on."""
+    with refusals("the company has an expense account of that name already"):
+        return Created(
+            id=insert(
+                conn,
+                "INSERT INTO trust_expense_accounts (pmc_id, name, schedule_e_line)"
+                " VALUES (%s, %s, %s) RETURNING id",
+                (session.pmc_id, new.name, new.schedule_e_line),
+            )
+        )
 
 
 class NewProperty(BaseModel):

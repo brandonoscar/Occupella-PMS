@@ -32,6 +32,15 @@ const BOOKS: Portfolio = {
     { id: "v1", name: "Vendor 1" },
     { id: "v2", name: "Vendor 2" },
   ],
+  expense_accounts: [
+    { id: "e1", name: "Repairs", schedule_e_line: 14 },
+    { id: "e2", name: "Water", schedule_e_line: 17 },
+  ],
+  schedule_e_lines: [
+    { line: 7, label: "Cleaning and maintenance" },
+    { line: 14, label: "Repairs" },
+    { line: 17, label: "Utilities" },
+  ],
 };
 
 const BILL: Bill = {
@@ -46,6 +55,8 @@ const BILL: Bill = {
   amount: "750.00",
   memo: "Roof repair",
   work_order_id: null,
+  expense_account_id: null,
+  expense_account: null,
   approval_limit: "500.00",
   approved_by: null,
   declined_by: null,
@@ -64,7 +75,7 @@ const RECURRING: Recurring[] = [
   {
     id: "r1", vendor: "Vendor 2", account: "a1", owner: "Owner 1", property: "Property 1",
     reference_prefix: "LAWN", amount: "80.00", memo: "Lawn care", day_of_month: 5,
-    starts_on: "2026-01-01", ends_on: null,
+    starts_on: "2026-01-01", ends_on: null, expense_account_id: null, expense_account: null,
   },
 ];
 
@@ -149,7 +160,8 @@ describe("BillsPage", () => {
 
     const paid = await bill("Vendor 1 INV-4");
     expect(within(paid).getByTestId("status").textContent).toBe("paid");
-    expect(within(paid).queryByRole("button")).toBeNull();
+    // No step is left; a paid bill can still be put in an expense account.
+    expect(within(paid).queryAllByRole("button").map((b) => b.textContent)).toEqual(["Put in"]);
   });
 
   it("enters a bill against the chosen vendor and owner", async () => {
@@ -176,6 +188,37 @@ describe("BillsPage", () => {
         },
       ],
     ]);
+  });
+
+  it("enters a bill in an expense account, and puts another in one", async () => {
+    const fetch = server({ "/api/payables/bills": { id: "b9" } });
+    render(<BillsPage me={ME} />);
+    const second = await bill("Vendor 1 INV-2");
+    expect(within(second).getByTestId("expense-account").textContent).toBe("In no expense account yet.");
+
+    fireEvent.change(screen.getByLabelText("Vendor's reference"), { target: { value: "INV-9" } });
+    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "120.00" } });
+    fireEvent.change(screen.getByLabelText("What for"), { target: { value: "Plumbing" } });
+    fireEvent.change(screen.getByLabelText("Expense account"), { target: { value: "e1" } });
+    expect(
+      within(screen.getByLabelText("Expense account")).getByRole("option", {
+        name: "Repairs (Schedule E line 14: Repairs)",
+      }),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Enter bill" }));
+    expect(await screen.findByText("Bill INV-9 entered.")).toBeTruthy();
+    // The next bill starts in no expense account, not the last one's.
+    expect((screen.getByLabelText("Expense account") as HTMLSelectElement).value).toBe("");
+
+    const putIn = within(second).getByRole("button", { name: "Put in" });
+    expect((putIn as HTMLButtonElement).disabled).toBe(true);  // nothing chosen yet
+    fireEvent.change(within(second).getByLabelText("Expense account, INV-2"), { target: { value: "e2" } });
+    fireEvent.click(putIn);
+    expect(await screen.findByText("INV-2 is in Water.")).toBeTruthy();
+
+    const calls = posted(fetch);
+    expect(calls[0]?.[1]).toMatchObject({ reference: "INV-9", expense_account_id: "e1" });
+    expect(calls[1]).toEqual(["/api/payables/bills/b2/expense-account", { expense_account_id: "e2" }]);
   });
 
   it("records the owner's approval, sets a bill aside and pays one", async () => {
@@ -324,6 +367,29 @@ describe("BillsPage", () => {
         },
       ],
     ]);
+  });
+
+  it("adds a recurring bill in an expense account, and moves one to another", async () => {
+    const fetch = server();
+    render(<BillsPage me={ME} />);
+    const lawn = await screen.findByRole("listitem", { name: "Vendor 2 LAWN" });
+    expect(within(lawn).getByTestId("expense-account").textContent).toBe("In no expense account yet.");
+
+    fireEvent.change(within(lawn).getByLabelText("Expense account, LAWN"), { target: { value: "e1" } });
+    fireEvent.click(within(lawn).getByRole("button", { name: "Put in" }));
+    expect(await screen.findByText("LAWN is entered in Repairs from now on.")).toBeTruthy();
+
+    fireEvent.click(screen.getByText("Add a recurring bill"));
+    fireEvent.change(screen.getByLabelText("Reference prefix"), { target: { value: "POOL" } });
+    fireEvent.change(screen.getByLabelText("Monthly amount"), { target: { value: "60.00" } });
+    fireEvent.change(screen.getByLabelText("For"), { target: { value: "Pool care" } });
+    fireEvent.change(screen.getByLabelText("Recurring expense account"), { target: { value: "e2" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add recurring bill" }));
+    expect(await screen.findByText("POOL is entered each month.")).toBeTruthy();
+
+    const calls = posted(fetch);
+    expect(calls[0]).toEqual(["/api/payables/recurring/r1/expense-account", { expense_account_id: "e1" }]);
+    expect(calls[1]?.[1]).toMatchObject({ reference_prefix: "POOL", expense_account_id: "e2" });
   });
 
   it("says when every bill is paid, and when there is nothing to bill yet", async () => {
