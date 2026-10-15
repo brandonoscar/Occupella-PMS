@@ -94,6 +94,10 @@ TABLES = {
     "trust_journal_entries": {"SELECT"},
     "trust_journal_entry_lines": {"SELECT"},
     "trust_journal_entry_decisions": {"SELECT"},
+    # Budgets (migration 0055): staff enter a month's budget; a change is a new row, so the
+    # latest row is the budget and nothing is updated. The ids order the rows.
+    "trust_budgets": {"SELECT", "INSERT"},
+    "trust_budgets_id_seq": set(),
     "trust_listing_removals": {"SELECT", "INSERT"},
     "trust_lease_end_adjustments": {"SELECT"},  # written only by trust_end_lease
     "trust_applications": {"SELECT", "INSERT"},
@@ -266,6 +270,14 @@ FUNCTIONS = {
     "trust_report_deposit_return(uuid,uuid)": {"trust_app", "trust_ai_agent"},
     "trust_report_owner_year_end(uuid,uuid,integer)": {"trust_app", "trust_ai_agent"},
     "trust_report_income_statement(uuid,uuid,date,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_balance_sheet(uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_budget_vs_actual(uuid,uuid,date,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_cash_flow(uuid,date,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_vacancy(uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_work_orders(uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_tenant_directory(uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_owner_directory(uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_vendor_directory(uuid,date)": {"trust_app", "trust_ai_agent"},
     # pgledger's posting functions take no idempotency key, so a retried request could post
     # twice: only the owner calls them (trust_post_transfers does, as the owner).
     "pgledger_create_transfer(text,text,numeric,timestamptz,jsonb)": set(),
@@ -318,6 +330,7 @@ FUNCTIONS = {
     "trust_name_document_uploader()": {"PUBLIC"},
     "trust_name_document_remover()": {"PUBLIC"},
     "trust_check_document_file()": {"PUBLIC"},
+    "trust_check_budget()": {"PUBLIC"},
     "trust_check_document_has_file()": {"PUBLIC"},
     "trust_check_recurring_charge_amount()": {"PUBLIC"},
 }

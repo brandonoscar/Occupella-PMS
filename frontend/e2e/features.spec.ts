@@ -775,7 +775,14 @@ test("staff download every report the overview offers, and every staff report in
   await section(page, "Overview");
   await downloads(page, "Rent roll (PDF)", PDF);
   await downloads(page, "Trial balance (Excel)", XLSX);
+  await downloads(page, "Balance sheet (PDF)", PDF);
+  await downloads(page, "Cash flow, last month (Excel)", XLSX);
+  await downloads(page, "Vacancy (PDF)", PDF);
+  await downloads(page, "Work orders (Excel)", XLSX);
   await downloads(page, "Leases ending in 90 days (Excel)", XLSX);
+  await downloads(page, "Tenant directory (Excel)", XLSX);
+  await downloads(page, "Owner directory (Excel)", XLSX);
+  await downloads(page, "Vendor directory (Excel)", XLSX);
   await downloads(page, "Whole ledger (CSV, zip)", "application/zip");
 
   // The reports the API exports for staff (the AI reads the same), each as CSV, Excel and PDF.
@@ -791,6 +798,13 @@ test("staff download every report the overview offers, and every staff report in
     ["general_ledger", [firstOfMonthsAgo(2), day]],
     ["audit_log", [firstOfMonthsAgo(2), day]],
     ["vendor_payments", [day.slice(0, 4)]],
+    ["balance_sheet", [day]],
+    ["cash_flow", [firstOfMonthsAgo(2), day]],
+    ["vacancy", [day]],
+    ["work_orders", [day]],
+    ["tenant_directory", [day]],
+    ["owner_directory", [day]],
+    ["vendor_directory", [day]],
   ];
   for (const [report, args] of reports) {
     for (const [format, type] of [["csv", CSV], ["xlsx", XLSX], ["pdf", PDF]] as const) {
@@ -1017,4 +1031,33 @@ test("a bookkeeper proposes journal entries; the manager posts one, the ledger r
   await page.reload();
   await expect(entry(page, "Birch Flats rent deposited as Aspen Row").getByTestId("status")).toHaveText("posted");
   await expect(entry(page, "Typed an extra zero")).toContainText("Declined by Demo Manager: An extra zero.");
+});
+
+test("staff budget an owner's property for the year, line by line, and download it against what happened", async ({ page }) => {
+  const people = seed.features.budgets!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Budgets");
+  const year = Number(today().slice(0, 4));
+  await page.getByRole("combobox", { name: "Owner and property" }).selectOption({ label: "Demo Owner B, Aspen Row" });
+  const rent = page.getByRole("row", { name: /^Income: rent/ });
+  await expect(rent).toContainText("Not budgeted");
+
+  await rent.getByLabel("Income: rent, a year").fill("24000");
+  await rent.getByRole("button", { name: "Save income: rent" }).click();
+  await expect(page.getByText(`Income: rent: 12 months changed in ${year}.`)).toBeVisible();
+  await expect(rent).toContainText("$2,000.00 a month");
+
+  const repairs = page.getByRole("row", { name: /^Expense: Repairs/ });
+  await repairs.getByLabel("Expense: Repairs, a year").fill("1000");
+  await repairs.getByRole("button", { name: "Save expense: repairs" }).click();
+  await expect(page.getByText(`Expense: Repairs: 12 months changed in ${year}.`)).toBeVisible();
+  await expect(repairs).toContainText("Varies by month");
+  // Saving the same again changes nothing.
+  await repairs.getByRole("button", { name: "Save expense: repairs" }).click();
+  await expect(page.getByText(`Expense: Repairs: 0 months changed in ${year}.`)).toBeVisible();
+
+  await downloads(page, `Demo Owner B's budget against actual, ${year} (Excel)`, XLSX);
+  const href = (await page.getByRole("link", { name: /budget against actual/ }).getAttribute("href")) ?? "";
+  const csv = await page.request.get(href.replace("format=xlsx", "format=csv"));
+  expect(await csv.text()).toContain("Aspen Row,income: rent,24000.00,");
 });

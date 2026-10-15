@@ -353,6 +353,35 @@ def test_the_terms_in_force_on_the_rents_due_date_apply(conn, pmc):
     ]
 
 
+def test_one_run_charges_what_a_run_every_day_would(conn, pmc):
+    """A late fee is open like any charge, so a credit comes off it before a later rent. One run
+    reaching two rents of a lease takes them in the order their grace ends, whatever their ids,
+    so it charges what two runs a month apart would."""
+    property_id = pmc.owners[0].property_id
+    add_late_fee_policy(conn, pmc.pmc_id, property_id, JAN_1, 5, "50", "10")
+    fees = []
+    for name, runs in (("Unit 1", [date(2026, 3, 10)]), ("Unit 2", [FEB_1.replace(day=10)])):
+        lease = lease_on(conn, pmc, JAN_1, name=name)
+        # March's rent has the smaller id, so a run in id order would reach it first.
+        rents = {}
+        for due_on, first in ((MAR_1, "0"), (FEB_1, "f")):
+            rents[due_on] = conn.execute(
+                "INSERT INTO trust_charges (id, pmc_id, lease_id, due_on, kind, amount)"
+                " VALUES (%s, %s, %s, %s, 'rent', %s) RETURNING id",
+                (f"{first * 8}-0000-4000-8000-{name[-1] * 12}", pmc.pmc_id, lease, due_on, RENT),
+            ).fetchone()[0]
+        # A concession due March 2: by March's late day it has paid February's rent and 100.00
+        # more, which goes to February's late fee (due Feb 7) before March's rent.
+        charge(conn, pmc.pmc_id, lease, date(2026, 3, 2), "1600.00", "credit")
+        for as_of in [*runs, date(2026, 3, 10)]:
+            assess_late_fees(conn, pmc.pmc_id, as_of)
+        fees.append([late_fees(conn, rents[due_on]) for due_on in (FEB_1, MAR_1)])
+
+    # 50.00 + 10% of 1500.00 each: the credit is gone before March's rent, in one run or two.
+    every_month = [[(RENT, Decimal("200.00"))], [(RENT, Decimal("200.00"))]]
+    assert fees == [every_month, every_month]
+
+
 def test_without_terms_nothing_is_late(conn, pmc):
     lease = lease_on(conn, pmc, JAN_1)
     charge_rent_due(conn, pmc.pmc_id, FEB_1)

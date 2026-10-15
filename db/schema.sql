@@ -784,6 +784,7 @@ CREATE FUNCTION public.trust_assess_late_fees(p_pmc_id uuid, p_as_of date) RETUR
     AS $$
 DECLARE
     v_rent record;
+    v_due uuid[] := '{}'::uuid[];
     v_cutoff timestamptz;
     v_unpaid numeric;
     v_fee numeric;
@@ -800,15 +801,16 @@ BEGIN
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
 
+    -- The rents past their grace without a late fee, locked one by one in id order: one lock
+    -- order for every run, so two at once can't deadlock.
     FOR v_rent IN
-        SELECT c.id, c.lease_id, c.due_on, c.amount, p.id AS policy_id, p.grace_days,
-               p.flat_fee, p.percent, p.maximum
+        SELECT c.id
         FROM trust_charges AS c
         JOIN trust_leases AS l ON l.id = c.lease_id
         JOIN trust_units AS u ON u.id = l.unit_id
         -- The terms in force on the rent's due date: the latest starting on or before it.
         JOIN LATERAL (
-            SELECT t.id, t.grace_days, t.flat_fee, t.percent, t.maximum
+            SELECT t.grace_days
             FROM trust_late_fee_policies AS t
             WHERE t.property_id = u.property_id AND t.starts_on <= c.due_on
             ORDER BY t.starts_on DESC
@@ -819,16 +821,36 @@ BEGIN
           AND NOT EXISTS (
               SELECT f.rent_charge_id FROM trust_late_fees AS f WHERE f.rent_charge_id = c.id
           )
-        ORDER BY c.id  -- one lock order for every run, so two at once can't deadlock
+        ORDER BY c.id
     LOOP
         PERFORM c.id FROM trust_charges AS c WHERE c.id = v_rent.id FOR NO KEY UPDATE;
         CONTINUE WHEN EXISTS (
             SELECT f.rent_charge_id FROM trust_late_fees AS f WHERE f.rent_charge_id = v_rent.id
         );
+        v_due := v_due || v_rent.id;
+    END LOOP;
 
+    -- Then each, in the order its grace ends, as a run every day would reach them.
+    FOR v_rent IN
+        SELECT c.id, c.lease_id, c.due_on, p.id AS policy_id, p.grace_days, p.flat_fee,
+               p.percent, p.maximum
+        FROM trust_charges AS c
+        JOIN trust_leases AS l ON l.id = c.lease_id
+        JOIN trust_units AS u ON u.id = l.unit_id
+        JOIN LATERAL (
+            SELECT t.id, t.grace_days, t.flat_fee, t.percent, t.maximum
+            FROM trust_late_fee_policies AS t
+            WHERE t.property_id = u.property_id AND t.starts_on <= c.due_on
+            ORDER BY t.starts_on DESC
+            LIMIT 1
+        ) AS p ON true
+        WHERE c.id = ANY (v_due)
+        ORDER BY c.due_on + p.grace_days, c.due_on, c.id
+    LOOP
         v_cutoff := (v_rent.due_on + v_rent.grace_days + 1)::timestamp AT TIME ZONE 'UTC';
         -- What is open of it then: payments and bounces dated before then, and the lease's
-        -- credits due by its last day of grace, oldest charges first.
+        -- credits due by its last day of grace, oldest charges first (the fees this run charged
+        -- for the rents whose grace ended before its own among them).
         SELECT o.open INTO v_unpaid
         FROM trust_open_charges(p_pmc_id, v_rent.lease_id, v_cutoff) AS o
         WHERE o.charge_id = v_rent.id;
@@ -1514,6 +1536,29 @@ BEGIN
                 'the portal', v_bill.reference
                 USING ERRCODE = 'check_violation';
         END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_budget(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_budget() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT t.ledger_account_id FROM trust_ledger_accounts AS t
+        WHERE t.ledger_account_id = NEW.ledger_account_id AND t.pmc_id = NEW.pmc_id
+          AND t.kind = 'owner_property'
+    ) THEN
+        RAISE EXCEPTION 'trust: % is not an owner''s property account in PMC %',
+            NEW.ledger_account_id, NEW.pmc_id
+            USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
 END;
@@ -3908,6 +3953,105 @@ $$;
 
 
 --
+-- Name: trust_report_balance_sheet(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_balance_sheet(p_pmc_id uuid, p_as_of date) RETURNS TABLE(line integer, section text, bank text, item text, amount numeric)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+#variable_conflict use_column
+DECLARE
+    v_cutoff timestamptz := (p_as_of + 1)::timestamp AT TIME ZONE 'UTC';
+BEGIN
+    IF p_as_of IS NULL THEN
+        RAISE EXCEPTION 'trust: a balance sheet is as of a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF NOT EXISTS (SELECT pmc.pmc_id FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id) THEN
+        RAISE EXCEPTION 'trust: no PMC %', p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    RETURN QUERY
+    WITH balances AS (
+        SELECT t.bank_account_id, t.kind,
+               coalesce((
+                   SELECT sum(e.amount)
+                   FROM pgledger_entries AS e
+                   JOIN pgledger_transfers AS tr ON tr.id = e.transfer_id
+                   WHERE e.account_id = t.ledger_account_id AND tr.event_at < v_cutoff
+               ), 0.00) AS balance
+        FROM trust_ledger_accounts AS t
+        WHERE t.pmc_id = p_pmc_id
+    ),
+    -- What a trust bank account holds, by kind, in this order.
+    kinds (kind, step, label) AS (
+        VALUES ('owner_property', 1, 'owners'' funds'),
+               ('tenant_deposit', 2, 'tenants'' security deposits'),
+               ('prepaid_rent', 3, 'tenants'' prepaid rent'),
+               ('vendor_payable', 4, 'set aside for vendors'' bills'),
+               ('pmc_income', 5, 'the company''s fees not yet taken')
+    ),
+    banks AS (
+        -- Book cash is what the bank holds: the cash account's balance runs below zero as
+        -- money arrives.
+        SELECT b.id, b.display_name || ' (' || b.kind || ')' AS name,
+               -coalesce(sum(x.balance) FILTER (WHERE x.kind = 'bank_cash'), 0.00) AS cash,
+               coalesce(sum(x.balance) FILTER (WHERE x.kind <> 'bank_cash'), 0.00) AS held
+        FROM trust_bank_accounts AS b
+        LEFT JOIN balances AS x ON x.bank_account_id = b.id
+        WHERE b.pmc_id = p_pmc_id
+        GROUP BY b.id, b.display_name, b.kind
+    ),
+    lines AS (
+        SELECT 0 AS part, NULL::text AS bank_name, NULL::uuid AS bank_id, 0 AS step,
+               'PMC' AS part_name, pmc.display_name AS label, NULL::numeric AS value
+        FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
+        UNION ALL
+        SELECT 0, NULL, NULL, 1, 'as of', to_char(p_as_of, 'YYYY-MM-DD') || ', end of day UTC',
+               NULL
+        UNION ALL
+        SELECT 1, b.name, b.id, 0, 'assets', 'cash in the bank, by the books', b.cash
+        FROM banks AS b
+        UNION ALL
+        SELECT 1, b.name, b.id, 10 + k.step, 'held in trust', k.label, sum(x.balance)
+        FROM banks AS b
+        JOIN balances AS x ON x.bank_account_id = b.id
+        JOIN kinds AS k ON k.kind = x.kind
+        GROUP BY b.name, b.id, k.step, k.label
+        UNION ALL
+        SELECT 1, b.name, b.id, 20, 'held in trust', 'total held in trust', b.held
+        FROM banks AS b
+        UNION ALL
+        SELECT 1, b.name, b.id, 21, 'difference', 'cash less what is held', b.cash - b.held
+        FROM banks AS b
+        UNION ALL
+        SELECT 2, NULL, NULL, 0, 'all trust bank accounts', 'cash in the bank, by the books',
+               coalesce((SELECT sum(b.cash) FROM banks AS b), 0.00)
+        UNION ALL
+        SELECT 2, NULL, NULL, 10 + k.step, 'all trust bank accounts', k.label, sum(x.balance)
+        FROM balances AS x
+        JOIN kinds AS k ON k.kind = x.kind
+        GROUP BY k.step, k.label
+        UNION ALL
+        SELECT 2, NULL, NULL, 20, 'all trust bank accounts', 'total held in trust',
+               coalesce((SELECT sum(b.held) FROM banks AS b), 0.00)
+        UNION ALL
+        SELECT 2, NULL, NULL, 21, 'all trust bank accounts', 'cash less what is held',
+               coalesce((SELECT sum(b.cash - b.held) FROM banks AS b), 0.00)
+    )
+    SELECT (row_number() OVER (
+                ORDER BY l.part, l.bank_name COLLATE "C", l.bank_id, l.step
+            ))::integer,
+           l.part_name, l.bank_name, l.label, l.value
+    FROM lines AS l
+    ORDER BY 1;
+END;
+$$;
+
+
+--
 -- Name: trust_report_bank_reconciliation(uuid, uuid, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4065,6 +4209,309 @@ BEGIN
            )::integer,
            i.item, i.detail, i.amount
     FROM items AS i
+    ORDER BY 1;
+END;
+$$;
+
+
+--
+-- Name: trust_report_budget_vs_actual(uuid, uuid, date, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_budget_vs_actual(p_pmc_id uuid, p_owner_id uuid, p_from date, p_through date) RETURNS TABLE(line integer, property text, item text, budget numeric, actual numeric, actual_less_budget numeric)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+#variable_conflict use_column
+BEGIN
+    -- The income statement checks the PMC, the owner and the days, and says what is wrong.
+    RETURN QUERY
+    WITH statement AS (
+        SELECT s.line AS n, s.property AS place, s.item AS what, s.amount
+        FROM trust_report_income_statement(p_pmc_id, p_owner_id, p_from, p_through) AS s
+    ),
+    accounts AS (
+        SELECT t.ledger_account_id, pr.display_name AS place
+        FROM trust_ledger_accounts AS t
+        JOIN trust_properties AS pr ON pr.id = t.property_id
+        WHERE t.pmc_id = p_pmc_id AND t.owner_id = p_owner_id AND t.kind = 'owner_property'
+    ),
+    -- Each line's budget for each month that starts within the days: its latest row.
+    latest AS (
+        SELECT DISTINCT ON (b.ledger_account_id, b.month, b.line, b.expense_account_id)
+               b.ledger_account_id, b.line AS kind, b.expense_account_id, b.amount
+        FROM trust_budgets AS b
+        WHERE b.pmc_id = p_pmc_id AND b.month >= p_from AND b.month <= p_through
+          AND b.ledger_account_id IN (SELECT a.ledger_account_id FROM accounts AS a)
+        ORDER BY b.ledger_account_id, b.month, b.line, b.expense_account_id, b.id DESC
+    ),
+    budgeted AS (
+        SELECT a.place,
+               CASE WHEN l.kind IN ('rent', 'recurring charges', 'late fees', 'NSF fees',
+                                    'other charges') THEN 'income: ' || l.kind
+                    WHEN l.kind = 'expense account' THEN 'expense: ' || e.name
+                    ELSE 'expense: ' || l.kind END AS what,
+               sum(l.amount) AS amount
+        FROM latest AS l
+        JOIN accounts AS a ON a.ledger_account_id = l.ledger_account_id
+        LEFT JOIN trust_expense_accounts AS e ON e.id = l.expense_account_id
+        GROUP BY 1, 2
+    ),
+    happened AS (
+        SELECT s.place, s.what, s.amount FROM statement AS s
+        WHERE s.place IS NOT NULL AND (s.what LIKE 'income: %' OR s.what LIKE 'expense: %')
+    ),
+    items AS (
+        SELECT coalesce(h.place, b.place) AS place, coalesce(h.what, b.what) AS what,
+               coalesce(b.amount, 0.00) AS budget, coalesce(h.amount, 0.00) AS actual
+        FROM happened AS h
+        FULL JOIN budgeted AS b ON b.place = h.place AND b.what = h.what
+    ),
+    -- Income in the statement's order, then the fees, each expense account by name, and bills
+    -- in none last.
+    sorted AS (
+        SELECT i.*,
+               CASE i.what
+                   WHEN 'income: rent' THEN 1
+                   WHEN 'income: recurring charges' THEN 2
+                   WHEN 'income: late fees' THEN 3
+                   WHEN 'income: NSF fees' THEN 4
+                   WHEN 'income: other charges' THEN 5
+                   WHEN 'expense: management fees' THEN 11
+                   WHEN 'expense: leasing fees' THEN 12
+                   WHEN 'expense: bills not in an expense account' THEN 14
+                   ELSE 13
+               END AS step
+        FROM items AS i
+    ),
+    places AS (
+        SELECT DISTINCT s.place FROM sorted AS s
+    ),
+    lines AS (
+        -- The statement's own heading: the PMC, the owner and the days.
+        SELECT 0 AS part, NULL::text AS place, s.n AS step, NULL::text AS name,
+               s.place AS label, s.what, NULL::numeric AS budget, NULL::numeric AS actual
+        FROM statement AS s
+        WHERE s.what IN ('PMC', 'owner', 'period')
+        UNION ALL
+        SELECT 0, NULL, 4, NULL, 'budgets of the months that start within these days',
+               'budget', NULL, NULL
+        UNION ALL
+        SELECT 1, s.place, s.step, s.what, s.place, s.what, s.budget, s.actual
+        FROM sorted AS s
+        UNION ALL
+        SELECT 1, p.place, 6, NULL, p.place, 'total income',
+               coalesce(sum(s.budget) FILTER (WHERE s.step < 10), 0.00),
+               coalesce(sum(s.actual) FILTER (WHERE s.step < 10), 0.00)
+        FROM places AS p JOIN sorted AS s ON s.place = p.place
+        GROUP BY p.place
+        UNION ALL
+        SELECT 1, p.place, 15, NULL, p.place, 'total expenses',
+               coalesce(sum(s.budget) FILTER (WHERE s.step > 10), 0.00),
+               coalesce(sum(s.actual) FILTER (WHERE s.step > 10), 0.00)
+        FROM places AS p JOIN sorted AS s ON s.place = p.place
+        GROUP BY p.place
+        UNION ALL
+        SELECT 1, p.place, 16, NULL, p.place, 'net income',
+               coalesce(sum(CASE WHEN s.step < 10 THEN s.budget ELSE -s.budget END), 0.00),
+               coalesce(sum(CASE WHEN s.step < 10 THEN s.actual ELSE -s.actual END), 0.00)
+        FROM places AS p JOIN sorted AS s ON s.place = p.place
+        GROUP BY p.place
+        UNION ALL
+        SELECT 2, NULL, s.step, s.what, NULL, 'all properties: ' || s.what, sum(s.budget),
+               sum(s.actual)
+        FROM sorted AS s
+        GROUP BY s.step, s.what
+        UNION ALL
+        SELECT 2, NULL, 6, NULL, NULL, 'all properties: total income',
+               coalesce(sum(s.budget) FILTER (WHERE s.step < 10), 0.00),
+               coalesce(sum(s.actual) FILTER (WHERE s.step < 10), 0.00)
+        FROM sorted AS s
+        UNION ALL
+        SELECT 2, NULL, 15, NULL, NULL, 'all properties: total expenses',
+               coalesce(sum(s.budget) FILTER (WHERE s.step > 10), 0.00),
+               coalesce(sum(s.actual) FILTER (WHERE s.step > 10), 0.00)
+        FROM sorted AS s
+        UNION ALL
+        SELECT 2, NULL, 16, NULL, NULL, 'all properties: net income',
+               coalesce(sum(CASE WHEN s.step < 10 THEN s.budget ELSE -s.budget END), 0.00),
+               coalesce(sum(CASE WHEN s.step < 10 THEN s.actual ELSE -s.actual END), 0.00)
+        FROM sorted AS s
+    )
+    SELECT (row_number() OVER (
+                ORDER BY l.part, l.place COLLATE "C", l.step, l.name COLLATE "C"
+            ))::integer,
+           l.label, l.what, l.budget, l.actual, l.actual - l.budget
+    FROM lines AS l
+    ORDER BY 1;
+END;
+$$;
+
+
+--
+-- Name: trust_report_cash_flow(uuid, date, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_cash_flow(p_pmc_id uuid, p_from date, p_through date) RETURNS TABLE(line integer, section text, bank text, item text, amount numeric)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+#variable_conflict use_column
+DECLARE
+    v_start timestamptz := p_from::timestamp AT TIME ZONE 'UTC';
+    v_end timestamptz := (p_through + 1)::timestamp AT TIME ZONE 'UTC';
+BEGIN
+    IF p_from IS NULL OR p_through IS NULL OR p_through < p_from THEN
+        RAISE EXCEPTION 'trust: cash flow is over days, from one through another no earlier'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF NOT EXISTS (SELECT pmc.pmc_id FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id) THEN
+        RAISE EXCEPTION 'trust: no PMC %', p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    RETURN QUERY
+    WITH cash AS (
+        SELECT t.ledger_account_id AS id, b.id AS bank_id,
+               b.display_name || ' (' || b.kind || ')' AS name
+        FROM trust_ledger_accounts AS t
+        JOIN trust_bank_accounts AS b ON b.id = t.bank_account_id
+        WHERE t.pmc_id = p_pmc_id AND t.kind = 'bank_cash'
+    ),
+    -- Book cash at a moment: what the bank held, by the books, just before it.
+    opening AS (
+        SELECT c.bank_id,
+               -coalesce((
+                   SELECT sum(e.amount)
+                   FROM pgledger_entries AS e
+                   JOIN pgledger_transfers AS tr ON tr.id = e.transfer_id
+                   WHERE e.account_id = c.id AND tr.event_at < v_start
+               ), 0.00) AS amount
+        FROM cash AS c
+    ),
+    -- Each transfer in the days that moved a bank's cash: in when money came into the bank
+    -- (from its cash account to what holds it), out when it left. A move between two banks'
+    -- cash is out of one and into the other.
+    moves AS (
+        SELECT c.bank_id, tr.id AS transfer_id, tr.amount,
+               tr.from_account_id = c.id AS came_in,
+               o.kind AS other_kind
+        FROM cash AS c
+        JOIN pgledger_transfers AS tr
+          ON (tr.from_account_id = c.id OR tr.to_account_id = c.id)
+         AND tr.event_at >= v_start AND tr.event_at < v_end
+        JOIN trust_ledger_accounts AS o
+          ON o.ledger_account_id = CASE WHEN tr.from_account_id = c.id
+                                        THEN tr.to_account_id ELSE tr.from_account_id END
+    ),
+    named AS (
+        SELECT m.bank_id, m.amount, m.came_in,
+               CASE
+                   WHEN m.other_kind = 'bank_cash' THEN 7
+                   WHEN m.came_in AND EXISTS (
+                       SELECT o.bank_account_id FROM trust_opening_balances AS o
+                       WHERE m.transfer_id = ANY (o.transfer_ids)
+                   ) THEN 1
+                   WHEN m.came_in AND EXISTS (
+                       SELECT x.transfer_id FROM trust_owner_contributions AS x
+                       WHERE x.transfer_id = m.transfer_id
+                   ) THEN 3
+                   WHEN m.came_in AND m.other_kind = 'owner_property' THEN 2
+                   WHEN m.came_in AND m.other_kind = 'prepaid_rent' THEN 4
+                   WHEN m.came_in AND m.other_kind = 'tenant_deposit' THEN 5
+                   WHEN m.came_in THEN 6
+                   WHEN m.other_kind = 'vendor_payable' THEN 11
+                   WHEN m.other_kind = 'owner_property' AND EXISTS (
+                       SELECT x.transfer_id FROM trust_owner_draws AS x
+                       WHERE x.transfer_id = m.transfer_id
+                   ) THEN 12
+                   WHEN m.other_kind = 'owner_property' THEN 13
+                   WHEN m.other_kind = 'prepaid_rent' THEN 14
+                   WHEN m.other_kind = 'tenant_deposit' THEN 15
+                   WHEN m.other_kind = 'pmc_income' THEN 16
+                   ELSE 17
+               END AS step
+        FROM moves AS m
+    ),
+    labels (step, label) AS (
+        VALUES (1, 'in: opening balances carried over'),
+               (2, 'in: received for owners'),
+               (3, 'in: owner contributions'),
+               (4, 'in: received as prepaid rent'),
+               (5, 'in: security deposits received'),
+               (6, 'in: other'),
+               (7, 'moved between trust bank accounts'),
+               (11, 'out: bills paid'),
+               (12, 'out: owner draws'),
+               (13, 'out: paid back from owners'' accounts (returned payments, other)'),
+               (14, 'out: paid back from prepaid rent'),
+               (15, 'out: security deposits paid out (returned, or kept for owners)'),
+               (16, 'out: fees paid to the company'),
+               (17, 'out: other')
+    ),
+    sums AS (
+        -- A move between banks is signed: in is more, out is less.
+        SELECT n.bank_id, n.step,
+               sum(CASE WHEN n.came_in OR n.step <> 7 THEN n.amount ELSE -n.amount END) AS amount
+        FROM named AS n
+        GROUP BY n.bank_id, n.step
+    ),
+    totals AS (
+        SELECT c.bank_id, c.name, op.amount AS opening,
+               coalesce((SELECT sum(n.amount) FROM named AS n
+                         WHERE n.bank_id = c.bank_id AND n.came_in), 0.00) AS money_in,
+               coalesce((SELECT sum(n.amount) FROM named AS n
+                         WHERE n.bank_id = c.bank_id AND NOT n.came_in), 0.00) AS money_out
+        FROM cash AS c
+        JOIN opening AS op ON op.bank_id = c.bank_id
+    ),
+    lines AS (
+        SELECT 0 AS part, NULL::text AS bank_name, NULL::uuid AS bank_id, 0 AS step,
+               'PMC' AS part_name, pmc.display_name AS label, NULL::numeric AS value
+        FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
+        UNION ALL
+        SELECT 0, NULL, NULL, 1, 'period',
+               to_char(p_from, 'YYYY-MM-DD') || ' to ' || to_char(p_through, 'YYYY-MM-DD')
+               || ' UTC', NULL
+        UNION ALL
+        SELECT 1, t.name, t.bank_id, 0, 'cash', 'opening cash, by the books', t.opening
+        FROM totals AS t
+        UNION ALL
+        SELECT 1, t.name, t.bank_id, s.step, 'cash', l.label, s.amount
+        FROM totals AS t
+        JOIN sums AS s ON s.bank_id = t.bank_id
+        JOIN labels AS l ON l.step = s.step
+        UNION ALL
+        SELECT 1, t.name, t.bank_id, 30, 'cash', 'total in', t.money_in FROM totals AS t
+        UNION ALL
+        SELECT 1, t.name, t.bank_id, 31, 'cash', 'total out', t.money_out FROM totals AS t
+        UNION ALL
+        SELECT 1, t.name, t.bank_id, 32, 'cash', 'closing cash, by the books',
+               t.opening + t.money_in - t.money_out
+        FROM totals AS t
+        UNION ALL
+        SELECT 2, NULL, NULL, 0, 'all trust bank accounts', 'opening cash, by the books',
+               coalesce((SELECT sum(t.opening) FROM totals AS t), 0.00)
+        UNION ALL
+        SELECT 2, NULL, NULL, s.step, 'all trust bank accounts', l.label, sum(s.amount)
+        FROM sums AS s
+        JOIN labels AS l ON l.step = s.step
+        GROUP BY s.step, l.label
+        UNION ALL
+        SELECT 2, NULL, NULL, 30, 'all trust bank accounts', 'total in',
+               coalesce((SELECT sum(t.money_in) FROM totals AS t), 0.00)
+        UNION ALL
+        SELECT 2, NULL, NULL, 31, 'all trust bank accounts', 'total out',
+               coalesce((SELECT sum(t.money_out) FROM totals AS t), 0.00)
+        UNION ALL
+        SELECT 2, NULL, NULL, 32, 'all trust bank accounts', 'closing cash, by the books',
+               coalesce((SELECT sum(t.opening + t.money_in - t.money_out) FROM totals AS t), 0.00)
+    )
+    SELECT (row_number() OVER (
+                ORDER BY l.part, l.bank_name COLLATE "C", l.bank_id, l.step
+            ))::integer,
+           l.part_name, l.bank_name, l.label, l.value
+    FROM lines AS l
     ORDER BY 1;
 END;
 $$;
@@ -4968,6 +5415,83 @@ $$;
 
 
 --
+-- Name: trust_report_owner_directory(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_owner_directory(p_pmc_id uuid, p_as_of date) RETURNS TABLE(line integer, item text, owner text, property text, bank text, fee_percent numeric, minimum_fee numeric, flat_fee numeric, reserve numeric, approval_limit numeric, balance numeric)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+#variable_conflict use_column
+DECLARE
+    v_cutoff timestamptz := (p_as_of + 1)::timestamp AT TIME ZONE 'UTC';
+BEGIN
+    IF p_as_of IS NULL THEN
+        RAISE EXCEPTION 'trust: an owner directory is as of a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF NOT EXISTS (SELECT pmc.pmc_id FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id) THEN
+        RAISE EXCEPTION 'trust: no PMC %', p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    RETURN QUERY
+    WITH accounts AS (
+        SELECT o.id AS owner_id, o.display_name AS who, pr.display_name AS place,
+               b.display_name || ' (' || b.kind || ')' AS bank_name, t.ledger_account_id,
+               -- The agreement in force on the day, as the fee and draw functions take it.
+               (SELECT a FROM trust_management_agreements AS a
+                WHERE a.ledger_account_id = t.ledger_account_id AND a.starts_on <= p_as_of
+                ORDER BY a.starts_on DESC
+                LIMIT 1) AS terms,
+               coalesce((
+                   SELECT sum(e.amount)
+                   FROM pgledger_entries AS e
+                   JOIN pgledger_transfers AS tr ON tr.id = e.transfer_id
+                   WHERE e.account_id = t.ledger_account_id AND tr.event_at < v_cutoff
+               ), 0.00) AS held
+        FROM trust_owners AS o
+        JOIN trust_ledger_accounts AS t ON t.owner_id = o.id AND t.kind = 'owner_property'
+        JOIN trust_properties AS pr ON pr.id = t.property_id
+        JOIN trust_bank_accounts AS b ON b.id = t.bank_account_id
+        WHERE o.pmc_id = p_pmc_id
+    ),
+    lines AS (
+        SELECT 0 AS part, NULL::text AS who, NULL::uuid AS owner_id, NULL::text AS place,
+               NULL::text AS account_id, 'PMC' AS what, pmc.display_name AS label,
+               NULL::text AS bank_name, NULL::trust_management_agreements AS terms,
+               NULL::numeric AS held
+        FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
+        UNION ALL
+        SELECT 0, NULL, NULL, NULL, NULL, 'as of',
+               to_char(p_as_of, 'YYYY-MM-DD') || ', end of day UTC', NULL, NULL, NULL
+        UNION ALL
+        -- No agreement in force leaves its terms empty: unknown, not zero.
+        SELECT 1, x.who, x.owner_id, x.place, x.ledger_account_id,
+               CASE WHEN x.terms IS NULL THEN 'property, no agreement in force' ELSE 'property'
+               END,
+               x.who, x.bank_name, x.terms, x.held
+        FROM accounts AS x
+        UNION ALL
+        SELECT 1, o.display_name, o.id, NULL, NULL, 'owner, no property account',
+               o.display_name, NULL, NULL, NULL
+        FROM trust_owners AS o
+        WHERE o.pmc_id = p_pmc_id
+          AND NOT EXISTS (SELECT x.owner_id FROM accounts AS x WHERE x.owner_id = o.id)
+    )
+    SELECT (row_number() OVER (
+                ORDER BY l.part, l.who COLLATE "C", l.owner_id, l.place COLLATE "C",
+                         l.account_id
+            ))::integer,
+           l.what, l.label, l.place, l.bank_name, (l.terms).fee_percent, (l.terms).minimum_fee,
+           (l.terms).flat_fee, (l.terms).reserve, (l.terms).approval_limit, l.held
+    FROM lines AS l
+    ORDER BY 1;
+END;
+$$;
+
+
+--
 -- Name: trust_report_owner_statement(uuid, uuid, timestamp with time zone, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5493,6 +6017,83 @@ $$;
 
 
 --
+-- Name: trust_report_tenant_directory(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_tenant_directory(p_pmc_id uuid, p_as_of date) RETURNS TABLE(line integer, item text, tenant text, property text, unit text, lease_starts date, lease_ends date, monthly_rent numeric, co_tenants text)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+#variable_conflict use_column
+BEGIN
+    IF p_as_of IS NULL THEN
+        RAISE EXCEPTION 'trust: a tenant directory is as of a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF NOT EXISTS (SELECT pmc.pmc_id FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id) THEN
+        RAISE EXCEPTION 'trust: no PMC %', p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    RETURN QUERY
+    WITH tenants AS (
+        SELECT t.id, t.display_name AS who, coalesce(lp.display_name, tp.display_name) AS place,
+               lu.display_name AS unit_name, l.lease_id, l.starts_on, l.ends_on, l.rent,
+               coalesce(l.standing, 4) AS standing
+        FROM trust_tenants AS t
+        JOIN trust_properties AS tp ON tp.id = t.property_id
+        -- Their lease in effect on the day; or else the next one; or else the last one.
+        LEFT JOIN LATERAL (
+            SELECT l.id AS lease_id, l.unit_id, l.starts_on, l.ends_on, l.monthly_rent AS rent,
+                   CASE WHEN l.starts_on <= p_as_of
+                             AND (l.ends_on IS NULL OR l.ends_on >= p_as_of) THEN 1
+                        WHEN l.starts_on > p_as_of THEN 2
+                        ELSE 3 END AS standing
+            FROM trust_lease_tenants AS lt
+            JOIN trust_leases AS l ON l.id = lt.lease_id
+            WHERE lt.tenant_id = t.id
+            ORDER BY standing,
+                     CASE WHEN l.starts_on > p_as_of THEN l.starts_on - p_as_of
+                          WHEN l.ends_on < p_as_of THEN p_as_of - l.ends_on
+                          ELSE 0 END,
+                     l.starts_on, l.id
+            LIMIT 1
+        ) AS l ON true
+        LEFT JOIN trust_units AS lu ON lu.id = l.unit_id
+        LEFT JOIN trust_properties AS lp ON lp.id = lu.property_id
+        WHERE t.pmc_id = p_pmc_id
+    ),
+    lines AS (
+        SELECT 0 AS part, NULL::text AS place, NULL::text AS unit_name, NULL::text AS who,
+               NULL::uuid AS tenant_id, 0 AS step, 'PMC' AS what, pmc.display_name AS label,
+               NULL::date AS starts_on, NULL::date AS ends_on, NULL::numeric AS rent,
+               NULL::text AS others
+        FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
+        UNION ALL
+        SELECT 0, NULL, NULL, NULL, NULL, 1, 'as of',
+               to_char(p_as_of, 'YYYY-MM-DD') || ', end of day UTC', NULL, NULL, NULL, NULL
+        UNION ALL
+        SELECT 1, x.place, x.unit_name, x.who, x.id, 0,
+               (ARRAY['current lease', 'next lease', 'last lease', 'no lease'])[x.standing],
+               x.who, x.starts_on, x.ends_on, x.rent,
+               (SELECT string_agg(o.display_name, ', ' ORDER BY o.display_name COLLATE "C", o.id)
+                FROM trust_lease_tenants AS lt
+                JOIN trust_tenants AS o ON o.id = lt.tenant_id
+                WHERE lt.lease_id = x.lease_id AND lt.tenant_id <> x.id)
+        FROM tenants AS x
+    )
+    SELECT (row_number() OVER (
+                ORDER BY l.part, l.place COLLATE "C", l.unit_name COLLATE "C" NULLS LAST,
+                         l.who COLLATE "C", l.tenant_id, l.step
+            ))::integer,
+           l.what, l.label, l.place, l.unit_name, l.starts_on, l.ends_on, l.rent, l.others
+    FROM lines AS l
+    ORDER BY 1;
+END;
+$$;
+
+
+--
 -- Name: trust_report_tenant_ledger(uuid, uuid, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5912,6 +6513,182 @@ $$;
 
 
 --
+-- Name: trust_report_vacancy(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_vacancy(p_pmc_id uuid, p_as_of date) RETURNS TABLE(line integer, item text, property text, unit text, vacant_since date, days_vacant integer, last_rent numeric, next_lease_starts date)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+#variable_conflict use_column
+BEGIN
+    IF p_as_of IS NULL THEN
+        RAISE EXCEPTION 'trust: vacancy is as of a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF NOT EXISTS (SELECT pmc.pmc_id FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id) THEN
+        RAISE EXCEPTION 'trust: no PMC %', p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    RETURN QUERY
+    WITH units AS (
+        SELECT u.id, pr.display_name AS place, u.display_name AS unit_name,
+               EXISTS (
+                   SELECT l.id FROM trust_leases AS l
+                   WHERE l.unit_id = u.id AND l.starts_on <= p_as_of
+                     AND (l.ends_on IS NULL OR l.ends_on >= p_as_of)
+               ) AS occupied,
+               last.ends_on + 1 AS since,
+               last.monthly_rent AS rent,
+               (SELECT min(l.starts_on) FROM trust_leases AS l
+                WHERE l.unit_id = u.id AND l.starts_on > p_as_of) AS next_start
+        FROM trust_units AS u
+        JOIN trust_properties AS pr ON pr.id = u.property_id
+        LEFT JOIN LATERAL (
+            SELECT l.ends_on, l.monthly_rent FROM trust_leases AS l
+            WHERE l.unit_id = u.id AND l.ends_on < p_as_of
+            ORDER BY l.ends_on DESC
+            LIMIT 1
+        ) AS last ON true
+        WHERE u.pmc_id = p_pmc_id
+    ),
+    counted AS (
+        SELECT count(*) AS total, count(*) FILTER (WHERE o.occupied) AS occupied FROM units AS o
+    ),
+    lines AS (
+        SELECT 0 AS part, NULL::text AS place, NULL::text AS unit_name, NULL::uuid AS unit_id,
+               0 AS step, 'PMC' AS what, pmc.display_name AS label, NULL::date AS since,
+               NULL::integer AS days, NULL::numeric AS rent, NULL::date AS next_start
+        FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
+        UNION ALL
+        SELECT 0, NULL, NULL, NULL, 1, 'as of',
+               to_char(p_as_of, 'YYYY-MM-DD') || ', end of day UTC', NULL, NULL, NULL, NULL
+        UNION ALL
+        -- A unit never leased has no day it became vacant: unknown, not zero.
+        SELECT 1, o.place, o.unit_name, o.id, 0, 'vacant', o.place, o.since,
+               p_as_of - o.since + 1, o.rent, o.next_start
+        FROM units AS o
+        WHERE NOT o.occupied
+        UNION ALL
+        SELECT 2, NULL, NULL, NULL, 0, 'total',
+               CASE WHEN c.total = 0 THEN 'no units'
+                    ELSE c.total || ' units: ' || c.occupied || ' occupied, '
+                         || (c.total - c.occupied) || ' vacant ('
+                         || round(100.0 * c.occupied / c.total, 1) || '% occupied)'
+               END,
+               NULL, NULL, NULL, NULL
+        FROM counted AS c
+    )
+    SELECT (row_number() OVER (
+                ORDER BY l.part, l.place COLLATE "C", l.unit_name COLLATE "C", l.unit_id, l.step
+            ))::integer,
+           l.what, l.label, l.unit_name, l.since, l.days, l.rent, l.next_start
+    FROM lines AS l
+    ORDER BY 1;
+END;
+$$;
+
+
+--
+-- Name: trust_report_vendor_directory(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_vendor_directory(p_pmc_id uuid, p_as_of date) RETURNS TABLE(line integer, item text, vendor text, w9_on_file text, open_work_orders integer, unpaid_bills integer, unpaid numeric, paid_this_year numeric, last_paid_on date)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+#variable_conflict use_column
+DECLARE
+    v_cutoff timestamptz := (p_as_of + 1)::timestamp AT TIME ZONE 'UTC';
+    v_year_start timestamptz := date_trunc('year', p_as_of::timestamp) AT TIME ZONE 'UTC';
+BEGIN
+    IF p_as_of IS NULL THEN
+        RAISE EXCEPTION 'trust: a vendor directory is as of a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF NOT EXISTS (SELECT pmc.pmc_id FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id) THEN
+        RAISE EXCEPTION 'trust: no PMC %', p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    RETURN QUERY
+    WITH paid AS (
+        -- Each bill paid by the end of the day, and when the bank paid it.
+        SELECT b.vendor_id, b.amount, tr.event_at
+        FROM trust_bills AS b
+        JOIN trust_bill_payments AS p ON p.bill_id = b.id AND p.step = 'paid'
+        JOIN pgledger_transfers AS tr ON tr.id = p.transfer_id
+        WHERE b.pmc_id = p_pmc_id AND tr.event_at < v_cutoff
+    ),
+    unpaid AS (
+        -- Entered by the day, not paid by its end and not declined by then.
+        SELECT b.vendor_id, b.amount
+        FROM trust_bills AS b
+        WHERE b.pmc_id = p_pmc_id AND b.bill_date <= p_as_of
+          AND NOT EXISTS (
+              SELECT p.bill_id FROM trust_bill_payments AS p
+              JOIN pgledger_transfers AS tr ON tr.id = p.transfer_id
+              WHERE p.bill_id = b.id AND p.step = 'paid' AND tr.event_at < v_cutoff
+          )
+          AND NOT EXISTS (
+              SELECT d.bill_id FROM trust_bill_declines AS d
+              WHERE d.bill_id = b.id AND d.declined_on <= p_as_of
+          )
+    ),
+    assigned AS (
+        -- Each work order open at the day's end, and the vendor it was last assigned to.
+        SELECT (SELECT s.vendor_id FROM trust_work_order_steps AS s
+                WHERE s.work_order_id = w.id AND s.step = 'assigned' AND s.taken_at < v_cutoff
+                ORDER BY s.taken_at DESC, s.created_at DESC, s.id DESC
+                LIMIT 1) AS vendor_id
+        FROM trust_work_orders AS w
+        WHERE w.pmc_id = p_pmc_id AND w.opened_at < v_cutoff
+          AND NOT EXISTS (
+              SELECT s.work_order_id FROM trust_work_order_steps AS s
+              WHERE s.work_order_id = w.id AND s.step IN ('completed', 'cancelled')
+                AND s.taken_at < v_cutoff
+          )
+    ),
+    lines AS (
+        SELECT 0 AS part, NULL::text AS who, NULL::uuid AS vendor_id, 'PMC' AS what,
+               pmc.display_name AS label, NULL::text AS w9, NULL::integer AS orders,
+               NULL::integer AS bills, NULL::numeric AS owed, NULL::numeric AS year_paid,
+               NULL::date AS last_paid
+        FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
+        UNION ALL
+        SELECT 0, NULL, NULL, 'as of', to_char(p_as_of, 'YYYY-MM-DD') || ', end of day UTC',
+               NULL, NULL, NULL, NULL, NULL, NULL
+        UNION ALL
+        SELECT 1, v.display_name, v.id, 'vendor', v.display_name,
+               -- A W-9 kept by the day's end and not removed by then.
+               CASE WHEN EXISTS (
+                   SELECT d.id FROM trust_documents AS d
+                   WHERE d.vendor_id = v.id AND d.kind = 'w9' AND d.created_at < v_cutoff
+                     AND NOT EXISTS (
+                         SELECT r.document_id FROM trust_document_removals AS r
+                         WHERE r.document_id = d.id AND r.created_at < v_cutoff
+                     )
+               ) THEN 'yes' ELSE 'no' END,
+               (SELECT count(*) FROM assigned AS a WHERE a.vendor_id = v.id)::integer,
+               (SELECT count(*) FROM unpaid AS u WHERE u.vendor_id = v.id)::integer,
+               coalesce((SELECT sum(u.amount) FROM unpaid AS u WHERE u.vendor_id = v.id), 0.00),
+               coalesce((SELECT sum(p.amount) FROM paid AS p
+                         WHERE p.vendor_id = v.id AND p.event_at >= v_year_start), 0.00),
+               (SELECT max((p.event_at AT TIME ZONE 'UTC')::date) FROM paid AS p
+                WHERE p.vendor_id = v.id)
+        FROM trust_vendors AS v
+        WHERE v.pmc_id = p_pmc_id
+    )
+    SELECT (row_number() OVER (ORDER BY l.part, l.who COLLATE "C", l.vendor_id))::integer,
+           l.what, l.label, l.w9, l.orders, l.bills, l.owed, l.year_paid, l.last_paid
+    FROM lines AS l
+    ORDER BY 1;
+END;
+$$;
+
+
+--
 -- Name: trust_report_vendor_payments(uuid, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5988,6 +6765,97 @@ BEGIN
            l.label,
            l.payments,
            round(l.total, 2)
+    FROM lines AS l
+    ORDER BY 1;
+END;
+$$;
+
+
+--
+-- Name: trust_report_work_orders(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_work_orders(p_pmc_id uuid, p_as_of date) RETURNS TABLE(line integer, item text, property text, unit text, summary text, opened_on date, status text, vendor text, days_open integer, billed numeric)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+#variable_conflict use_column
+DECLARE
+    v_cutoff timestamptz := (p_as_of + 1)::timestamp AT TIME ZONE 'UTC';
+BEGIN
+    IF p_as_of IS NULL THEN
+        RAISE EXCEPTION 'trust: work orders are as of a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF NOT EXISTS (SELECT pmc.pmc_id FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id) THEN
+        RAISE EXCEPTION 'trust: no PMC %', p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    RETURN QUERY
+    WITH orders AS (
+        SELECT w.id, pr.display_name AS place, u.display_name AS unit_name, w.summary AS what,
+               (w.opened_at AT TIME ZONE 'UTC')::date AS opened,
+               coalesce(last.step, 'open') AS state,
+               (last.taken_at AT TIME ZONE 'UTC')::date AS last_on,
+               coalesce(last.step IN ('completed', 'cancelled'), false) AS closed,
+               (SELECT v.display_name
+                FROM trust_work_order_steps AS s
+                JOIN trust_vendors AS v ON v.id = s.vendor_id
+                WHERE s.work_order_id = w.id AND s.step = 'assigned' AND s.taken_at < v_cutoff
+                ORDER BY s.taken_at DESC, s.created_at DESC, s.id DESC
+                LIMIT 1) AS vendor_name,
+               -- Bills entered for it by the day and not declined by then.
+               coalesce((
+                   SELECT sum(b.amount) FROM trust_bills AS b
+                   WHERE b.work_order_id = w.id AND b.bill_date <= p_as_of
+                     AND NOT EXISTS (
+                         SELECT d.bill_id FROM trust_bill_declines AS d
+                         WHERE d.bill_id = b.id AND d.declined_on <= p_as_of
+                     )
+               ), 0.00) AS billed_total
+        FROM trust_work_orders AS w
+        JOIN trust_properties AS pr ON pr.id = w.property_id
+        LEFT JOIN trust_units AS u ON u.id = w.unit_id
+        LEFT JOIN LATERAL (
+            SELECT s.step, s.taken_at FROM trust_work_order_steps AS s
+            WHERE s.work_order_id = w.id AND s.taken_at < v_cutoff
+            ORDER BY s.taken_at DESC, s.created_at DESC, s.id DESC
+            LIMIT 1
+        ) AS last ON true
+        WHERE w.pmc_id = p_pmc_id AND w.opened_at < v_cutoff
+    ),
+    lines AS (
+        SELECT 0 AS part, 0 AS step, NULL::date AS opened, NULL::text AS place,
+               NULL::uuid AS order_id, 'PMC' AS what, pmc.display_name AS label,
+               NULL::text AS unit_name, NULL::text AS about, NULL::text AS state,
+               NULL::text AS vendor_name, NULL::integer AS days, NULL::numeric AS billed_total
+        FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
+        UNION ALL
+        SELECT 0, 1, NULL, NULL, NULL, 'as of',
+               to_char(p_as_of, 'YYYY-MM-DD') || ', end of day UTC', NULL, NULL, NULL, NULL,
+               NULL, NULL
+        UNION ALL
+        -- Open ones first, oldest first; then the closed ones.
+        SELECT 1, CASE WHEN o.closed THEN 1 ELSE 0 END, o.opened, o.place, o.id,
+               CASE WHEN o.closed THEN 'closed' ELSE 'open' END, o.place, o.unit_name, o.what,
+               o.state, o.vendor_name,
+               CASE WHEN o.closed THEN o.last_on ELSE p_as_of END - o.opened, o.billed_total
+        FROM orders AS o
+        UNION ALL
+        SELECT 2, 0, NULL, NULL, NULL, 'total', NULL, NULL,
+               count(*) FILTER (WHERE NOT o.closed) || ' open ('
+               || count(*) FILTER (WHERE o.state = 'assigned') || ' assigned), '
+               || count(*) FILTER (WHERE o.state = 'completed') || ' completed, '
+               || count(*) FILTER (WHERE o.state = 'cancelled') || ' cancelled',
+               NULL, NULL, NULL, coalesce(sum(o.billed_total), 0.00)
+        FROM orders AS o
+    )
+    SELECT (row_number() OVER (
+                ORDER BY l.part, l.step, l.opened, l.place COLLATE "C", l.order_id
+            ))::integer,
+           l.what, l.label, l.unit_name, l.about, l.opened, l.state, l.vendor_name, l.days,
+           l.billed_total
     FROM lines AS l
     ORDER BY 1;
 END;
@@ -6850,6 +7718,40 @@ CREATE TABLE public.trust_bill_payments (
     transfer_id text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_bill_payments_step_check CHECK ((step = ANY (ARRAY['set_aside'::text, 'paid'::text])))
+);
+
+
+--
+-- Name: trust_budgets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_budgets (
+    id bigint NOT NULL,
+    pmc_id uuid NOT NULL,
+    ledger_account_id text NOT NULL,
+    month date NOT NULL,
+    line text NOT NULL,
+    expense_account_id uuid,
+    amount numeric NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_budgets_amount_check CHECK (((amount >= (0)::numeric) AND (amount = round(amount, 2)) AND (amount <= (100000000)::numeric))),
+    CONSTRAINT trust_budgets_check CHECK (((line = 'expense account'::text) = (expense_account_id IS NOT NULL))),
+    CONSTRAINT trust_budgets_line_check CHECK ((line = ANY (ARRAY['rent'::text, 'recurring charges'::text, 'late fees'::text, 'NSF fees'::text, 'other charges'::text, 'management fees'::text, 'leasing fees'::text, 'expense account'::text, 'bills not in an expense account'::text]))),
+    CONSTRAINT trust_budgets_month_check CHECK ((month = (date_trunc('month'::text, (month)::timestamp with time zone))::date))
+);
+
+
+--
+-- Name: trust_budgets_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_budgets ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.trust_budgets_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
 );
 
 
@@ -8214,6 +9116,14 @@ ALTER TABLE ONLY public.trust_bills
 
 
 --
+-- Name: trust_budgets trust_budgets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_budgets
+    ADD CONSTRAINT trust_budgets_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_charge_payments trust_charge_payments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -9206,6 +10116,13 @@ CREATE INDEX trust_bills_work_order_id ON public.trust_bills USING btree (work_o
 
 
 --
+-- Name: trust_budgets_account_month; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_budgets_account_month ON public.trust_budgets USING btree (ledger_account_id, month);
+
+
+--
 -- Name: trust_charge_payments_transfer_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -9707,6 +10624,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bills FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_budgets trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_budgets FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -10270,6 +11194,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bill
 
 
 --
+-- Name: trust_budgets trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_budgets FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_charge_payments trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -10750,6 +11681,13 @@ CREATE TRIGGER trust_bill_decision BEFORE INSERT ON public.trust_bill_approvals 
 --
 
 CREATE TRIGGER trust_bill_decision BEFORE INSERT ON public.trust_bill_declines FOR EACH ROW EXECUTE FUNCTION public.trust_check_bill_decision();
+
+
+--
+-- Name: trust_budgets trust_budget_account; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_budget_account BEFORE INSERT ON public.trust_budgets FOR EACH ROW EXECUTE FUNCTION public.trust_check_budget();
 
 
 --
@@ -11405,6 +12343,30 @@ ALTER TABLE ONLY public.trust_bills
 
 ALTER TABLE ONLY public.trust_bills
     ADD CONSTRAINT trust_bills_pmc_id_work_order_id_fkey FOREIGN KEY (pmc_id, work_order_id) REFERENCES public.trust_work_orders(pmc_id, id);
+
+
+--
+-- Name: trust_budgets trust_budgets_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_budgets
+    ADD CONSTRAINT trust_budgets_ledger_account_id_fkey FOREIGN KEY (ledger_account_id) REFERENCES public.trust_ledger_accounts(ledger_account_id);
+
+
+--
+-- Name: trust_budgets trust_budgets_pmc_id_expense_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_budgets
+    ADD CONSTRAINT trust_budgets_pmc_id_expense_account_id_fkey FOREIGN KEY (pmc_id, expense_account_id) REFERENCES public.trust_expense_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_budgets trust_budgets_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_budgets
+    ADD CONSTRAINT trust_budgets_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
 
 
 --
@@ -12955,4 +13917,7 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261013000050'),
     ('20261013000051'),
     ('20261015000052'),
-    ('20261015000053');
+    ('20261015000053'),
+    ('20261015000054'),
+    ('20261015000055'),
+    ('20261015000056');

@@ -115,7 +115,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   PMC over from another system at `/switching` (`src/pms/api/switching.py`), see and change
   staff roles at `/staff` (`src/pms/api/staff.py`), handle move-outs at `/move-out`
   (`src/pms/api/moveout.py`), keep documents at `/documents` (`src/pms/api/documents.py`), and
-  correct the books with journal entries at `/journal` (`src/pms/api/journal.py`).
+  correct the books with journal entries at `/journal` (`src/pms/api/journal.py`), and budget
+  each owner's property at `/budgets` (`src/pms/api/budgets.py`).
   npm packages are pinned exactly and their
   licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
   owner only: no request names an owner, a property or a PMC, and a bill named in a path is
@@ -231,8 +232,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   month charges the new lease its days. The run and an end wait for each other. A property's
   late fee terms (grace days, flat, percent of unpaid,
   cap) are in force from a date; `trust_assess_late_fees` charges a rent still open at the
-  end of its last grace day (UTC) one late fee under the terms in force on its due date. READ
-  COMMITTED. What is open of a charge (`trust_open_charges`, migration 0049) is its amount less
+  end of its last grace day (UTC) one late fee under the terms in force on its due date, reaching
+  its rents in the order their grace ends so one run charges what a run every day would (a late
+  fee is an open charge too; migration 0056). READ COMMITTED. What is open of a charge (`trust_open_charges`, migration 0049) is its amount less
   payments matched, plus what bounced, less its share of the lease's credits, which come off
   the oldest open charges first (by due date, then id), as the delinquency report counts them. A property's NSF fee is in force from a date too (migration 0044, 0 charges
   none); `trust_charge_nsf_fee` charges the lease of a returned payment (postings under one key
@@ -387,6 +389,20 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   it is posted. Posting keeps every trust rule above or moves nothing. Every step names a staff
   member (the command line can't take one); entries, lines and decisions are append-only, and the
   AI only reads them. Entries waiting show on `/today`.
+- More reports (migration 0054), each read only and on the overview's downloads: the balance
+  sheet (`trust_report_balance_sheet`: each trust bank account's cash by the books against what
+  it holds by kind, at a day's end), cash flow (`trust_report_cash_flow`: each one's cash over
+  days, every move of it in or out once, by what it was), vacancy (units with no lease in
+  effect, since when; never leased is unknown), work orders (status and vendor as of a day,
+  days open, billed), and directories of tenants, owners and vendors (names and what they are
+  to the company on a day; the PMS keeps no other contact data).
+- Budgets (migration 0055): a month's budget of an owner's property account on one of the
+  income statement's lines (each income class, the management and leasing fees, an expense
+  account, bills in none; `trust_budgets`, append-only, a line's latest row counting). Staff
+  set a line's year at `/budgets` (`src/pms/api/budgets.py`), spread over its months to the
+  cent; a month left as it was writes nothing. `trust_report_budget_vs_actual` lays an owner's
+  budget for the months that start within some days beside their income statement. A budget
+  moves no money.
 
 ## Run the checks
 

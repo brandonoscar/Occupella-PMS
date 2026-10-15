@@ -7,7 +7,7 @@ import { Button, LinkButton } from "../components/Button";
 import { Notice } from "../components/Notice";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
-import { day } from "../money";
+import { staffDownloads } from "../reports";
 import { LeasingCard } from "./LeasingCard";
 import { MaintenanceCard } from "./MaintenanceCard";
 import { OffersCard } from "./OffersCard";
@@ -46,7 +46,6 @@ export function StaffHome({ me }: { me: Me }) {
   const [disabling, setDisabling] = useState<string | null>(null);
   // Counts the leasing card's changes, so the offers card sees a new approval.
   const [decided, setDecided] = useState(0);
-  const today = day(new Date());
 
   function refresh() {
     api
@@ -90,18 +89,11 @@ export function StaffHome({ me }: { me: Me }) {
       <PageHeader title={me.pmc_name} description="Reports to download, who can sign in, maintenance requests, leasing and lease offers." />
       <Card title="Downloads">
         <div className="flex flex-wrap gap-2">
-          <LinkButton href={`/api/reports/trust_report_rent_roll?arg=${today}&format=pdf`}>
-            Rent roll (PDF)
-          </LinkButton>
-          <LinkButton href={`/api/reports/trust_report_trial_balance?arg=${today}&format=xlsx`}>
-            Trial balance (Excel)
-          </LinkButton>
-          <LinkButton
-            href={`/api/reports/trust_report_lease_expirations?arg=${today}&format=xlsx`}
-          >
-            Leases ending in 90 days (Excel)
-          </LinkButton>
-          <LinkButton href="/api/ledger.zip">Whole ledger (CSV, zip)</LinkButton>
+          {staffDownloads(new Date()).map((download) => (
+            <LinkButton key={download.label} href={download.href}>
+              {download.label}
+            </LinkButton>
+          ))}
         </div>
       </Card>
       <Card title="People who can sign in">

@@ -453,6 +453,7 @@ FEATURES = (
     "documents",
     "setup",
     "expenses",
+    "budgets",
     "journal",
 )
 

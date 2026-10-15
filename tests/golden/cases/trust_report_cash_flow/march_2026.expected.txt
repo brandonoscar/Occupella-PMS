@@ -1,0 +1,32 @@
+line	section	bank	item	amount
+1	PMC	NULL	Golden PMC	NULL
+2	period	NULL	2026-03-01 to 2026-03-31 UTC	NULL
+3	cash	Golden operating trust account (operating)	opening cash, by the books	3900.00
+4	cash	Golden operating trust account (operating)	in: received for owners	2000.00
+5	cash	Golden operating trust account (operating)	in: owner contributions	500.00
+6	cash	Golden operating trust account (operating)	in: received as prepaid rent	300.00
+7	cash	Golden operating trust account (operating)	moved between trust bank accounts	100.00
+8	cash	Golden operating trust account (operating)	out: bills paid	400.00
+9	cash	Golden operating trust account (operating)	out: owner draws	1000.00
+10	cash	Golden operating trust account (operating)	out: paid back from owners' accounts (returned payments, other)	100.00
+11	cash	Golden operating trust account (operating)	total in	2900.00
+12	cash	Golden operating trust account (operating)	total out	1500.00
+13	cash	Golden operating trust account (operating)	closing cash, by the books	5300.00
+14	cash	Golden security deposit account (security_deposit)	opening cash, by the books	3500.00
+15	cash	Golden security deposit account (security_deposit)	moved between trust bank accounts	-100.00
+16	cash	Golden security deposit account (security_deposit)	out: security deposits paid out (returned, or kept for owners)	200.00
+17	cash	Golden security deposit account (security_deposit)	total in	0.00
+18	cash	Golden security deposit account (security_deposit)	total out	300.00
+19	cash	Golden security deposit account (security_deposit)	closing cash, by the books	3200.00
+20	all trust bank accounts	NULL	opening cash, by the books	7400.00
+21	all trust bank accounts	NULL	in: received for owners	2000.00
+22	all trust bank accounts	NULL	in: owner contributions	500.00
+23	all trust bank accounts	NULL	in: received as prepaid rent	300.00
+24	all trust bank accounts	NULL	moved between trust bank accounts	0.00
+25	all trust bank accounts	NULL	out: bills paid	400.00
+26	all trust bank accounts	NULL	out: owner draws	1000.00
+27	all trust bank accounts	NULL	out: paid back from owners' accounts (returned payments, other)	100.00
+28	all trust bank accounts	NULL	out: security deposits paid out (returned, or kept for owners)	200.00
+29	all trust bank accounts	NULL	total in	2900.00
+30	all trust bank accounts	NULL	total out	1800.00
+31	all trust bank accounts	NULL	closing cash, by the books	8500.00
