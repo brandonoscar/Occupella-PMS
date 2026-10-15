@@ -278,6 +278,14 @@ def test_an_entry_says_what_it_is_for(app_conn, pmc, bookkeeper, memo, match):
         propose_entry(app_conn, pmc.pmc_id, bookkeeper, FEB_10, memo, move(pmc))
 
 
+def test_an_entry_is_dated_a_day(conn, app_conn, pmc, bookkeeper):
+    with refused("dated a day; none was given", psycopg.errors.InvalidParameterValue):
+        propose_entry(app_conn, pmc.pmc_id, bookkeeper, None, MEMO, move(pmc))
+    assert conn.execute(
+        "SELECT count(*) FROM trust_journal_entries WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone() == (0,)
+
+
 def test_an_entry_that_would_take_an_owner_below_zero_is_not_posted(
     conn, app_conn, pmc, bookkeeper, manager
 ):
