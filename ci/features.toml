@@ -341,6 +341,19 @@ browser = [
 ]
 
 [[feature]]
+id = "custom-roles"
+statement = "An admin makes custom roles, each allowing areas of the work, and gives them to staff; a staff member with custom roles changes only what one of them allows (the API refuses any other change, saying which area) and still sees every page; one with none works everywhere. Only an admin changes a custom role."
+operations = [
+  "GET /api/custom-roles",
+  "POST /api/custom-roles",
+  "POST /api/custom-roles/{role_id}/areas",
+  "POST /api/custom-roles/{role_id}/staff",
+]
+browser = [
+  "features.spec.ts › an admin makes a custom role and gives it: its holder changes only what it allows, and still sees everything",
+]
+
+[[feature]]
 id = "budgets"
 statement = "Staff budget each owner's property for a year on the income statement's own lines (each income class, the management and leasing fees, each expense account, bills in none), a year spread over its months to the cent; a line's latest row is its budget and an unchanged month writes nothing. The owner's budget against what happened downloads like every report."
 operations = [

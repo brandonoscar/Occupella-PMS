@@ -41,6 +41,7 @@ from pydantic import BaseModel, Field
 from pms import accounts, email, exports
 from pms.api import (
     budgets,
+    custom_roles,
     documents,
     fake_esign,
     journal,
@@ -147,6 +148,9 @@ class Me(BaseModel):
     pmc_name: str
     # A staff member's roles (staff.ROLES); none for an owner or a tenant.
     roles: list[str]
+    # The areas a staff member may change (deps.AREAS): every one unless their custom roles
+    # say otherwise; none for an owner or a tenant.
+    areas: list[str]
 
 
 class InviteLink(BaseModel):
@@ -261,6 +265,7 @@ def create_app(settings: Settings) -> FastAPI:
             pmc_id=session.pmc_id,
             pmc_name=pmc_name,
             roles=staff.roles_of(conn, session) if session.kind == "staff" else [],
+            areas=custom_roles.areas_of(conn, session) if session.kind == "staff" else [],
         )
 
     @app.get("/health")
@@ -358,6 +363,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(reconcile.router)
     app.include_router(journal.router)
     app.include_router(budgets.router)
+    app.include_router(custom_roles.router)
     app.include_router(switching.router)
     app.include_router(staff.router)
     app.include_router(moveout.router)

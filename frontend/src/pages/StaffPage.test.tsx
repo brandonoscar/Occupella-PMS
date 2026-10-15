@@ -26,7 +26,10 @@ const MEMBERS: Member[] = [
 
 function server(refuse: Record<string, string> = {}) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
-    if (init?.method !== "POST") return new Response(JSON.stringify(MEMBERS), { status: 200 });
+    if (init?.method !== "POST") {
+      const body = path === "/api/custom-roles" ? { areas: [], roles: [] } : MEMBERS;
+      return new Response(JSON.stringify(body), { status: 200 });
+    }
     if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
     return path.endsWith("/roles")
       ? new Response(null, { status: 204 })

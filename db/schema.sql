@@ -2787,6 +2787,21 @@ $$;
 
 
 --
+-- Name: trust_name_custom_role_changer(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_name_custom_role_changer() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    NEW.changed_by := nullif(current_setting('trust.staff_id', true), '')::uuid;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_name_document_remover(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7262,6 +7277,33 @@ $$;
 
 
 --
+-- Name: trust_staff_may(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_staff_may(p_pmc_id uuid, p_staff_id uuid, p_area text) RETURNS boolean
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    WITH held AS (
+        SELECT DISTINCT ON (s.role_id) s.role_id, s.granted
+        FROM trust_staff_custom_roles AS s
+        WHERE s.pmc_id = p_pmc_id AND s.staff_id = p_staff_id
+        ORDER BY s.role_id, s.id DESC
+    )
+    SELECT NOT EXISTS (SELECT h.role_id FROM held AS h WHERE h.granted)
+        OR EXISTS (
+            SELECT h.role_id FROM held AS h
+            WHERE h.granted AND coalesce((
+                SELECT a.granted FROM trust_custom_role_areas AS a
+                WHERE a.role_id = h.role_id AND a.area = p_area
+                ORDER BY a.id DESC
+                LIMIT 1
+            ), false)
+        )
+$$;
+
+
+--
 -- Name: trust_unmatch_bank_lines(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7785,6 +7827,50 @@ CREATE TABLE public.trust_charges (
     recurring_charge_id uuid,
     CONSTRAINT trust_charges_amount_check CHECK ((amount > (0)::numeric)),
     CONSTRAINT trust_charges_kind_check CHECK ((kind = ANY (ARRAY['rent'::text, 'fee'::text, 'credit'::text])))
+);
+
+
+--
+-- Name: trust_custom_role_areas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_custom_role_areas (
+    id bigint NOT NULL,
+    pmc_id uuid NOT NULL,
+    role_id uuid NOT NULL,
+    area text NOT NULL,
+    granted boolean NOT NULL,
+    changed_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_custom_role_areas_area_check CHECK ((area = ANY (ARRAY['rent'::text, 'bills'::text, 'owners'::text, 'budgets'::text, 'journal'::text, 'month-end'::text, 'switching'::text, 'setup'::text, 'move-out'::text, 'documents'::text, 'leasing'::text, 'maintenance'::text, 'people'::text])))
+);
+
+
+--
+-- Name: trust_custom_role_areas_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_custom_role_areas ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.trust_custom_role_areas_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: trust_custom_roles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_custom_roles (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    name text NOT NULL,
+    changed_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_custom_roles_name_check CHECK (((name ~ '\S'::text) AND (length(name) <= 100)))
 );
 
 
@@ -8688,6 +8774,35 @@ CREATE TABLE public.trust_staff (
 
 
 --
+-- Name: trust_staff_custom_roles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_staff_custom_roles (
+    id bigint NOT NULL,
+    pmc_id uuid NOT NULL,
+    staff_id uuid NOT NULL,
+    role_id uuid NOT NULL,
+    granted boolean NOT NULL,
+    changed_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: trust_staff_custom_roles_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_staff_custom_roles ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.trust_staff_custom_roles_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: trust_staff_roles; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9145,6 +9260,38 @@ ALTER TABLE ONLY public.trust_charges
 
 ALTER TABLE ONLY public.trust_charges
     ADD CONSTRAINT trust_charges_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_custom_role_areas trust_custom_role_areas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_custom_role_areas
+    ADD CONSTRAINT trust_custom_role_areas_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_custom_roles trust_custom_roles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_custom_roles
+    ADD CONSTRAINT trust_custom_roles_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_custom_roles trust_custom_roles_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_custom_roles
+    ADD CONSTRAINT trust_custom_roles_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_custom_roles trust_custom_roles_pmc_id_name_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_custom_roles
+    ADD CONSTRAINT trust_custom_roles_pmc_id_name_key UNIQUE (pmc_id, name);
 
 
 --
@@ -9892,6 +10039,14 @@ ALTER TABLE ONLY public.trust_signatures
 
 
 --
+-- Name: trust_staff_custom_roles trust_staff_custom_roles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_staff_custom_roles
+    ADD CONSTRAINT trust_staff_custom_roles_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_staff trust_staff_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -10148,6 +10303,13 @@ CREATE UNIQUE INDEX trust_charges_one_per_recurring_due_date ON public.trust_cha
 --
 
 CREATE UNIQUE INDEX trust_charges_one_rent_per_due_date ON public.trust_charges USING btree (lease_id, due_on) WHERE (kind = 'rent'::text);
+
+
+--
+-- Name: trust_custom_role_areas_role; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_custom_role_areas_role ON public.trust_custom_role_areas USING btree (role_id, area);
 
 
 --
@@ -10410,6 +10572,13 @@ CREATE INDEX trust_sessions_login ON public.trust_sessions USING btree (login_id
 
 
 --
+-- Name: trust_staff_custom_roles_staff; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_staff_custom_roles_staff ON public.trust_staff_custom_roles USING btree (staff_id, role_id);
+
+
+--
 -- Name: trust_staff_roles_pmc_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -10445,6 +10614,20 @@ CREATE TRIGGER trust_account_in_its_bank BEFORE INSERT ON public.trust_ledger_ac
 
 
 --
+-- Name: trust_custom_role_areas trust_admin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_admin BEFORE INSERT ON public.trust_custom_role_areas FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('admin', 'change a custom role');
+
+
+--
+-- Name: trust_custom_roles trust_admin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_admin BEFORE INSERT ON public.trust_custom_roles FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('admin', 'change a custom role');
+
+
+--
 -- Name: trust_invites trust_admin; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -10456,6 +10639,13 @@ CREATE TRIGGER trust_admin BEFORE INSERT ON public.trust_invites FOR EACH ROW EX
 --
 
 CREATE TRIGGER trust_admin BEFORE UPDATE OF disabled_at ON public.trust_logins FOR EACH ROW WHEN ((old.kind = 'staff'::text)) EXECUTE FUNCTION public.trust_check_staff_role('admin', 'disable a staff login');
+
+
+--
+-- Name: trust_staff_custom_roles trust_admin; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_admin BEFORE INSERT ON public.trust_staff_custom_roles FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('admin', 'change a custom role');
 
 
 --
@@ -10645,6 +10835,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_charges FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_custom_role_areas trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_custom_role_areas FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_custom_roles trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_custom_roles FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -10984,6 +11188,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_staff_custom_roles trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_staff_custom_roles FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_staff_roles trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -11212,6 +11423,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_char
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_charges FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_custom_role_areas trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_custom_role_areas FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_custom_roles trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_custom_roles FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -11579,6 +11804,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_staf
 
 
 --
+-- Name: trust_staff_custom_roles trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_staff_custom_roles FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_staff_roles trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -11688,6 +11920,27 @@ CREATE TRIGGER trust_bill_decision BEFORE INSERT ON public.trust_bill_declines F
 --
 
 CREATE TRIGGER trust_budget_account BEFORE INSERT ON public.trust_budgets FOR EACH ROW EXECUTE FUNCTION public.trust_check_budget();
+
+
+--
+-- Name: trust_custom_role_areas trust_changed_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_changed_by BEFORE INSERT ON public.trust_custom_role_areas FOR EACH ROW EXECUTE FUNCTION public.trust_name_custom_role_changer();
+
+
+--
+-- Name: trust_custom_roles trust_changed_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_changed_by BEFORE INSERT ON public.trust_custom_roles FOR EACH ROW EXECUTE FUNCTION public.trust_name_custom_role_changer();
+
+
+--
+-- Name: trust_staff_custom_roles trust_changed_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_changed_by BEFORE INSERT ON public.trust_staff_custom_roles FOR EACH ROW EXECUTE FUNCTION public.trust_name_custom_role_changer();
 
 
 --
@@ -12415,6 +12668,46 @@ ALTER TABLE ONLY public.trust_charges
 
 ALTER TABLE ONLY public.trust_charges
     ADD CONSTRAINT trust_charges_recurring_charge_fkey FOREIGN KEY (pmc_id, lease_id, recurring_charge_id, kind) REFERENCES public.trust_recurring_charges(pmc_id, lease_id, id, kind);
+
+
+--
+-- Name: trust_custom_role_areas trust_custom_role_areas_pmc_id_changed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_custom_role_areas
+    ADD CONSTRAINT trust_custom_role_areas_pmc_id_changed_by_fkey FOREIGN KEY (pmc_id, changed_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_custom_role_areas trust_custom_role_areas_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_custom_role_areas
+    ADD CONSTRAINT trust_custom_role_areas_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_custom_role_areas trust_custom_role_areas_pmc_id_role_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_custom_role_areas
+    ADD CONSTRAINT trust_custom_role_areas_pmc_id_role_id_fkey FOREIGN KEY (pmc_id, role_id) REFERENCES public.trust_custom_roles(pmc_id, id);
+
+
+--
+-- Name: trust_custom_roles trust_custom_roles_pmc_id_changed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_custom_roles
+    ADD CONSTRAINT trust_custom_roles_pmc_id_changed_by_fkey FOREIGN KEY (pmc_id, changed_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_custom_roles trust_custom_roles_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_custom_roles
+    ADD CONSTRAINT trust_custom_roles_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
 
 
 --
@@ -13698,6 +13991,30 @@ ALTER TABLE ONLY public.trust_signatures
 
 
 --
+-- Name: trust_staff_custom_roles trust_staff_custom_roles_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_staff_custom_roles
+    ADD CONSTRAINT trust_staff_custom_roles_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_staff_custom_roles trust_staff_custom_roles_pmc_id_role_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_staff_custom_roles
+    ADD CONSTRAINT trust_staff_custom_roles_pmc_id_role_id_fkey FOREIGN KEY (pmc_id, role_id) REFERENCES public.trust_custom_roles(pmc_id, id);
+
+
+--
+-- Name: trust_staff_custom_roles trust_staff_custom_roles_pmc_id_staff_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_staff_custom_roles
+    ADD CONSTRAINT trust_staff_custom_roles_pmc_id_staff_id_fkey FOREIGN KEY (pmc_id, staff_id) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_staff trust_staff_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13920,4 +14237,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261015000053'),
     ('20261015000054'),
     ('20261015000055'),
-    ('20261015000056');
+    ('20261015000056'),
+    ('20261015000057');

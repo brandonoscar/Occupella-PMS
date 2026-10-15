@@ -1061,3 +1061,40 @@ test("staff budget an owner's property for the year, line by line, and download 
   const csv = await page.request.get(href.replace("format=xlsx", "format=csv"));
   expect(await csv.text()).toContain("Aspen Row,income: rent,24000.00,");
 });
+
+test("an admin makes a custom role and gives it: its holder changes only what it allows, and still sees everything", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["custom-roles"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Staff");
+  await page.getByLabel("New role").fill("Leasing agent");
+  await page.getByRole("button", { name: "Make role" }).click();
+  await expect(page.getByText("Made Leasing agent: choose what it may change, then who holds it.")).toBeVisible();
+  const role = page.getByRole("listitem", { name: "Leasing agent" });
+  await role.getByLabel("Leasing agent: leasing").click();
+  await expect(page.getByText("Leasing agent may now change leasing.")).toBeVisible();
+  await role.getByLabel("Leasing agent: documents").click();
+  await expect(role).toContainText("Leasing agent may change: documents, leasing.");
+  await expect(role.getByLabel("Leasing agent: documents")).toBeChecked();
+  await role.getByLabel("Demo Bookkeeper holds Leasing agent").click();
+  await expect(page.getByText("Demo Bookkeeper now holds Leasing agent.")).toBeVisible();
+
+  // The bookkeeper sees the bills, and may not enter one.
+  const bookkeeper = await (await browser.newContext()).newPage();
+  await joinAsStaff(bookkeeper, people.bookkeeper);
+  await section(bookkeeper, "Bills");
+  await bookkeeper.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Plumbing Co" });
+  await bookkeeper.getByLabel("Vendor's reference").fill("PLB-4001");
+  await bookkeeper.getByLabel("Amount", { exact: true }).fill("80.00");
+  await bookkeeper.getByLabel("What for").fill("Drain");
+  await bookkeeper.getByRole("button", { name: "Enter bill" }).click();
+  await expect(bookkeeper.getByRole("alert")).toHaveText("your roles don't let you change bills: an admin can add it");
+
+  // Once the role allows bills too, they may.
+  await role.getByLabel("Leasing agent: bills").click();
+  await expect(page.getByText("Leasing agent may now change bills.")).toBeVisible();
+  await bookkeeper.getByRole("button", { name: "Enter bill" }).click();
+  await expect(bookkeeper.getByText("Bill PLB-4001 entered.")).toBeVisible();
+});
