@@ -113,16 +113,75 @@ def current(request: Request, conn: Conn) -> accounts.Session:
 Current = Annotated[accounts.Session, Depends(current)]
 
 
+# The areas of staff work a custom role may allow (migration 0057), as staff read them.
+AREAS = {
+    "rent": "rent",
+    "bills": "bills",
+    "owners": "owners' money",
+    "budgets": "budgets",
+    "journal": "the journal",
+    "month-end": "month-end",
+    "switching": "switching",
+    "setup": "setup",
+    "move-out": "move-out",
+    "documents": "documents",
+    "leasing": "leasing",
+    "maintenance": "maintenance",
+    "people": "who can sign in",
+}
+# The paths that change each area. A staff request that changes anything under one of them
+# needs the area (tests/api/test_custom_roles.py checks every staff write is here or is said
+# not to be an area's).
+AREA_PATHS = (
+    ("/api/rent/", "rent"),
+    ("/api/payables/bills", "bills"),
+    ("/api/payables/recurring", "bills"),
+    ("/api/payables/management-fees", "owners"),
+    ("/api/payables/leasing-fees", "owners"),
+    ("/api/payables/draws", "owners"),
+    ("/api/payables/contributions", "owners"),
+    ("/api/budgets", "budgets"),
+    ("/api/journal", "journal"),
+    ("/api/reconcile/", "month-end"),
+    ("/api/switching/", "switching"),
+    ("/api/setup/", "setup"),
+    ("/api/move-out/", "move-out"),
+    ("/api/documents", "documents"),
+    ("/api/leasing/", "leasing"),
+    ("/api/maintenance/", "maintenance"),
+    ("/api/invites", "people"),
+)
+READS = ("GET", "HEAD", "OPTIONS")
+
+
+def area_of(path: str) -> str | None:
+    return next((area for prefix, area in AREA_PATHS if path.startswith(prefix)), None)
+
+
+def may(conn: psycopg.Connection[Any], session: accounts.Session, area: str) -> bool:
+    row = conn.execute(
+        "SELECT trust_staff_may(%s, %s, %s)", (session.pmc_id, session.person_id, area)
+    ).fetchone()
+    return bool(row and row[0])
+
+
 def _only(kind: str, who: str) -> Any:
-    def check(session: Current) -> accounts.Session:
+    def check(request: Request, session: Current, conn: Conn) -> accounts.Session:
         if session.kind != kind:
             raise HTTPException(403, f"only {who} may do this")
+        area = None if request.method in READS else area_of(request.url.path)
+        if kind == "staff" and area is not None and not may(conn, session, area):
+            raise HTTPException(
+                403, f"your roles don't let you change {AREAS[area]}: an admin can add it"
+            )
         return session
 
     return check
 
 
-Staff = Annotated[accounts.Session, Depends(_only("staff", "the PMC's staff"))]
+# Every staff request passes this check, and every staff write its area's.
+staff_only = _only("staff", "the PMC's staff")
+Staff = Annotated[accounts.Session, Depends(staff_only)]
 Owner = Annotated[accounts.Session, Depends(_only("owner", "an owner"))]
 Tenant = Annotated[accounts.Session, Depends(_only("tenant", "a tenant"))]
 

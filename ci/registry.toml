@@ -1003,3 +1003,14 @@ tests = [
   "tests/test_budget_lines.py::test_the_report_is_the_owners_and_says_what_is_wrong",
   "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
 ]
+
+[[invariant]]
+id = "custom-roles-limit-what-staff-change"
+statement = "A staff member who holds no custom role may change every area of the work; one who holds custom roles may change only the areas one of them allows (each role's and each holding's latest row counting), and the API checks it on every staff write, every one of which is some area's or an admin's own. Only an admin changes a custom role, an area or who holds one; all are append-only and name who made them."
+tests = [
+  "tests/properties/test_custom_roles_properties.py::test_custom_roles_decide_what_each_staff_member_may_change",
+  "tests/test_custom_role_areas.py::test_a_staff_member_with_roles_may_change_what_one_of_them_allows",
+  "tests/test_custom_role_areas.py::test_only_an_admin_changes_a_custom_role",
+  "tests/api/test_custom_roles.py::test_every_staff_write_is_in_an_area_or_said_not_to_be",
+  "tests/api/test_custom_roles.py::test_a_role_limits_what_its_staff_change_and_not_what_they_see",
+]

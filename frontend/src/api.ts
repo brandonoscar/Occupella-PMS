@@ -20,6 +20,9 @@ export type Me = {
   pmc_name: string;
   // A staff member's roles (src/pms/api/staff.py); none for an owner or a tenant.
   roles?: Role[];
+  // The areas a staff member may change (src/pms/api/deps.py AREAS): every one unless their
+  // custom roles say otherwise.
+  areas?: string[];
 };
 export type Role = "admin" | "approve" | "disburse";
 

@@ -336,6 +336,15 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`trust_approve_bank_reconciliation` takes the preparation), on the figures prepared; the app
   can't call `trust_approve_reconciliation` itself. On upgrade every staff member holds every
   role.
+- Custom roles (migration 0057): an admin names roles, each allowing areas of the work (rent,
+  bills, owners' money, budgets, journal, month-end, switching, setup, move-out, documents,
+  leasing, maintenance, who can sign in), and gives them to staff (`trust_custom_roles`,
+  `trust_custom_role_areas`, `trust_staff_custom_roles`; append-only, latest row holding, only
+  an admin changing them). `trust_staff_may` says whether a staff member may change an area:
+  always with no custom role, else when one of theirs allows it. The API asks on every staff
+  write (`AREA_PATHS` in `src/pms/api/deps.py`; a test checks every staff write is some
+  area's or an admin's own); reads stay open, so every staff member still sees every page.
+  The three roles above are unchanged.
 - Move-out (migration 0035): once a lease has ended, `trust_return_deposit` returns its
   tenants' deposits once per lease (same request key again returns the same): what the lease owes
   (`trust_lease_owed`), or all the deposits if less, is kept for the owner's account and matched

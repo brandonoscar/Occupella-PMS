@@ -454,6 +454,7 @@ FEATURES = (
     "setup",
     "expenses",
     "budgets",
+    "custom-roles",
     "journal",
 )
 

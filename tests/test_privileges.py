@@ -98,6 +98,13 @@ TABLES = {
     # latest row is the budget and nothing is updated. The ids order the rows.
     "trust_budgets": {"SELECT", "INSERT"},
     "trust_budgets_id_seq": set(),
+    # Custom roles (migration 0057): an admin's inserts; the latest row of each holds, so a
+    # change is an insert too. The ids order the rows.
+    "trust_custom_roles": {"SELECT", "INSERT"},
+    "trust_custom_role_areas": {"SELECT", "INSERT"},
+    "trust_custom_role_areas_id_seq": set(),
+    "trust_staff_custom_roles": {"SELECT", "INSERT"},
+    "trust_staff_custom_roles_id_seq": set(),
     "trust_listing_removals": {"SELECT", "INSERT"},
     "trust_lease_end_adjustments": {"SELECT"},  # written only by trust_end_lease
     "trust_applications": {"SELECT", "INSERT"},
@@ -231,6 +238,8 @@ FUNCTIONS = {
     # role triggers run with its rights when it writes. They read and write nothing else.
     "trust_staff_holds(uuid,uuid,text)": {"trust_app"},
     "trust_require_role(uuid,uuid,text,text)": {"trust_app"},
+    # Whether a staff member's custom roles let them change an area: the app asks on every write.
+    "trust_staff_may(uuid,uuid,text)": {"trust_app"},
     # Helpers the fee, draw and bill functions call as the owner: nobody else.
     "trust_lock_owner_account(uuid,text)": set(),
     "trust_agreement_on(text,date)": set(),
@@ -331,6 +340,7 @@ FUNCTIONS = {
     "trust_name_document_remover()": {"PUBLIC"},
     "trust_check_document_file()": {"PUBLIC"},
     "trust_check_budget()": {"PUBLIC"},
+    "trust_name_custom_role_changer()": {"PUBLIC"},
     "trust_check_document_has_file()": {"PUBLIC"},
     "trust_check_recurring_charge_amount()": {"PUBLIC"},
 }
