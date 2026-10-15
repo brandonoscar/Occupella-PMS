@@ -1,6 +1,14 @@
 // The switching tool as the API sends it (src/pms/api/switching.py), and how it reads.
 
-export type RosterKind = "owners" | "vendors" | "properties" | "units" | "tenants" | "leases" | "charges";
+export type RosterKind =
+  | "owners"
+  | "vendors"
+  | "properties"
+  | "units"
+  | "tenants"
+  | "leases"
+  | "charges"
+  | "bills";
 export type TieOutRow = { line: number; item: string; detail: string | null; amount: string | null };
 export type Cutover = {
   bank_account_id: string;
@@ -22,6 +30,15 @@ export const ROSTER: { kind: RosterKind; label: string; columns: string }[] = [
   { kind: "tenants", label: "Tenants", columns: "Property, Tenant" },
   { kind: "leases", label: "Leases in place", columns: "Property, Unit, Tenants (separated by ;), Starts on, Ends on, Monthly rent" },
   { kind: "charges", label: "Unpaid charges", columns: "Property, Unit, Due on, Amount, Kind (rent or fee), Memo" },
+  {
+    kind: "bills",
+    label: "Unpaid bills",
+    columns:
+      "Vendor, Owner, Property, Reference, Bill date, Due on, Amount, Memo, and Approved by and " +
+      "Approved on for a bill the owner approved there (Bank account if there are several). A bill " +
+      "the old system set aside but didn't pay: carry its money over on the owner's line and " +
+      "the bill here",
+  },
 ];
 
 export const BALANCE_COLUMNS =

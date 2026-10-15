@@ -181,7 +181,7 @@ browser = [
 
 [[feature]]
 id = "switching"
-statement = "Staff bring a company over from another system: import its roster, open an account with its old balances and the checks not cleared, sign off the tie-out, match the opening to the first statement, and carry over what the old system paid each vendor this year."
+statement = "Staff bring a company over from another system: import its roster, open an account with its old balances and the checks not cleared, sign off the tie-out, match the opening to the first statement, carry over what the old system paid each vendor this year, and the bills it had not paid, which draws hold back."
 operations = [
   "GET /api/switching",
   "POST /api/switching/import",
@@ -194,6 +194,7 @@ operations = [
 browser = [
   "portal.spec.ts › staff bring a roster in, open an account with its old balances and a check not cleared, sign off and match the opening",
   "features.spec.ts › staff carry over what the old system paid each vendor this year, and the year's vendor payments count it",
+  "features.spec.ts › staff carry over the old system's unpaid bills, once, and draws hold them back",
 ]
 
 [[feature]]

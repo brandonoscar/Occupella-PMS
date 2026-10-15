@@ -4,11 +4,11 @@ what the old system paid each vendor in the cutover's year. Every file here is s
 
 import json
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from helpers import make_pmc
+from helpers import add_agreement, make_pmc, post
 from people import join_as_owner, join_as_staff, join_as_tenant
 
 from pms.api import switching
@@ -266,6 +266,168 @@ def test_properties_name_their_trust_bank_account_when_there_are_several(client,
 def test_a_file_has_at_most_so_many_rows(client, staff, monkeypatch):
     monkeypatch.setattr(switching, "MAX_ROWS", 1)
     refused(imported(client, "owners", "Name", "Owner A", "Owner B"), 422, "at most 1 rows")
+
+
+# --- unpaid bills carried over ---------------------------------------------------------------
+
+BILLS = "Vendor,Owner,Property,Reference,Bill date,Due on,Amount,Memo,Approved by,Approved on"
+
+
+def owner_account(conn, pmc, owner):
+    return conn.execute(
+        "SELECT a.ledger_account_id FROM trust_ledger_accounts AS a"
+        " JOIN trust_owners AS o ON o.id = a.owner_id WHERE o.pmc_id = %s AND o.display_name = %s",
+        (pmc.pmc_id, owner),
+    ).fetchone()[0]
+
+
+def test_unpaid_bills_come_over_and_hold_back_draws(client, conn, staff, pmc):
+    roster(client)
+    account = owner_account(conn, pmc, "Owner A")
+    add_agreement(conn, pmc.pmc_id, account, date(2025, 1, 1), approval_limit="500")
+    post(conn, pmc.pmc_id, "rent-a", [(pmc.operating_cash, account, Decimal("2000.00"))])
+    lines = (
+        BILLS,
+        "Vendor A,Owner A,Property A,INV-1,2025-12-20,2026-01-20,300.00,Gutters,,",
+        "Vendor A,Owner A,Property A,INV-2,2025-12-28,2026-01-28,700.00,Roof,Owner A,2025-12-29",
+        "Vendor A,Owner A,Property A,INV-3,2025-12-30,2026-02-01,650.00,Boiler,,",
+    )
+
+    assert ok(imported(client, "bills", *lines)) == {"added": 3, "kept": 0}
+    # Sent again, nothing is added twice.
+    assert ok(imported(client, "bills", *lines)) == {"added": 0, "kept": 3}
+
+    bills = {b["reference"]: b for b in ok(client.get("/api/payables/bills"))}
+    assert {
+        r: (b["bill_date"], b["due_on"], b["amount"], b["status"]) for r, b in bills.items()
+    } == {
+        "INV-1": ("2025-12-20", "2026-01-20", "300.00", "to set aside"),
+        "INV-2": ("2025-12-28", "2026-01-28", "700.00", "to set aside"),
+        "INV-3": ("2025-12-30", "2026-02-01", "650.00", "needs approval"),
+    }
+    assert bills["INV-2"]["approved_by"] == "Owner A"
+    (owner,) = [o for o in ok(client.get("/api/payables/owners")) if o["account"] == account]
+    assert (owner["balance"], owner["unpaid_bills"], owner["available"]) == (
+        "2000.00",
+        "1650.00",
+        "350.00",
+    )
+    # A draw takes no more than what the bills leave.
+    refused(
+        client.post(
+            "/api/payables/draws",
+            json={
+                "request_id": str(uuid.uuid4()),
+                "account": account,
+                "amount": "350.01",
+                "on": str(TODAY),
+            },
+        ),
+        409,
+        "$1,650.00 of unpaid bills",
+    )
+
+
+def test_an_unpaid_bill_over_the_limit_asks_its_owner_as_a_new_one_does(
+    client, other_client, conn, app_conn, staff, pmc
+):
+    account = pmc.owners[0].account
+    names = conn.execute(
+        "SELECT o.display_name, p.display_name, v.display_name FROM trust_owners AS o,"
+        " trust_properties AS p, trust_vendors AS v WHERE o.id = %s AND p.id = %s AND v.id = %s",
+        (pmc.owners[0].owner_id, pmc.owners[0].property_id, pmc.vendor_id),
+    ).fetchone()
+    add_agreement(conn, pmc.pmc_id, account, date(2025, 1, 1), approval_limit="100")
+    join_as_owner(other_client, app_conn, pmc)  # the owner can sign in, so is emailed
+    owner, prop, vendor = names
+
+    ok(
+        imported(
+            client,
+            "bills",
+            BILLS,
+            f"{vendor},{owner},{prop},INV-9,2025-12-20,2026-01-20,250.00,Fence,,",
+        )
+    )
+
+    assert conn.execute(
+        "SELECT e.subject FROM trust_emails AS e JOIN trust_bills AS b ON b.id = e.bill_id"
+        " WHERE b.pmc_id = %s AND b.reference = 'INV-9'",
+        (pmc.pmc_id,),
+    ).fetchall() == [(f"A bill waits for your approval: {vendor}, $250.00",)]
+
+
+@pytest.mark.parametrize(
+    ("line", "why"),
+    [
+        ("Vendor Z,Owner A,Property A,INV-1,2025-12-20,2026-01-20,10.00,Gutters,,", "no vendor"),
+        ("Vendor A,Owner Z,Property A,INV-1,2025-12-20,2026-01-20,10.00,Gutters,,", "no owner"),
+        (
+            "Vendor A,Owner A,Property Z,INV-1,2025-12-20,2026-01-20,10.00,Gutters,,",
+            "no property",
+        ),
+        ("Vendor A,Owner A,Property A,INV-1,2025-12-20,2026-01-20,0.00,Gutters,,", "more than 0"),
+        ("Vendor A,Owner A,Property A,INV-1,2025-12-20,2025-12-19,10.00,Gutters,,", "on or after"),
+        ("Vendor A,Owner A,Property A,,2025-12-20,2026-01-20,10.00,Gutters,,", "no reference"),
+        ("Vendor A,Owner A,Property A,INV-1,2025-12-20,2026-01-20,10.00,,,", "no memo"),
+        (
+            "Vendor A,Owner A,Property A,INV-1,2025-12-20,2026-01-20,10.00,Gutters,Owner A,",
+            "no approved on",
+        ),
+        (
+            "Vendor A,Owner A,Property A,INV-1,2025-12-20,2026-01-20,10.00,Gutters,,2025-12-21",
+            "approved by",
+        ),
+        (
+            "Vendor A,Owner A,Property A,INV-0,2025-12-20,2026-01-20,99.00,Gutters,,",
+            "another bill with that reference",
+        ),
+        ("Vendor A,Owner A,Property A,INV-1,someday,2026-01-20,10.00,Gutters,,", "line 3"),
+    ],
+)
+def test_a_bills_file_that_cant_go_in_says_where_and_why_and_adds_nothing(
+    client, conn, staff, pmc, line, why
+):
+    roster(client)
+    ok(
+        imported(
+            client,
+            "bills",
+            BILLS,
+            "Vendor A,Owner A,Property A,INV-0,2025-12-01,2025-12-31,5.00,Lock,,",
+        )
+    )
+
+    refused(
+        imported(
+            client,
+            "bills",
+            BILLS,
+            "Vendor A,Owner B,Property A,INV-5,2025-12-20,2026-01-20,10.00,Paint,,",
+            line,
+        ),
+        422,
+        why,
+    )
+    assert conn.execute(
+        "SELECT reference FROM trust_bills WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchall() == [("INV-0",)]
+
+
+def test_a_bill_names_an_owner_with_an_account_for_the_property(client, conn, staff, pmc):
+    roster(client)
+    ok(imported(client, "owners", "Name", "Owner C"))
+
+    refused(
+        imported(
+            client,
+            "bills",
+            BILLS,
+            "Vendor A,Owner C,Property A,INV-1,2025-12-20,2026-01-20,10.00,Gutters,,",
+        ),
+        422,
+        "line 2: that owner has no account for that property",
+    )
 
 
 # --- opening balances, items and the sign-off --------------------------------------------------

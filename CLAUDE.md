@@ -337,6 +337,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   matches the first statement's balance brought forward to the opening balances less those
   items; each item clears once, by a later bank line, only after that, and the opening match is
   not undone while one is cleared. A statement starts no earlier than its account's cutover.
+  The vendors' bills the old system had not paid come over from a CSV file as ordinary bills
+  with their old references and dates, once, so draws hold them back from the first day; one
+  over the owner's limit keeps the old system's approval or waits for the owner
+  (`src/pms/api/switching.py`, `docs/law.md`).
 - Staff roles (migration 0034): admin (changes roles; invites and disables staff logins),
   approve (approves a reconciliation, signs off a cutover, posts a journal entry) and disburse
   (pays a bill, an owner draw). The database refuses those writes to a named staff member
