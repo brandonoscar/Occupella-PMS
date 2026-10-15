@@ -21,12 +21,12 @@ const ME: Me = {
 
 const OWNERS: OwnerMoney[] = [
   {
-    account: "a1", owner: "Owner 1", property: "Property 1", bank_account: "Operating",
+    account: "a1", owner_id: "o1", owner: "Owner 1", property: "Property 1", bank_account: "Operating",
     balance: "1200.00", reserve: "100.00", unpaid_bills: "300.00", available: "800.00",
     has_agreement: true,
   },
   {
-    account: "a2", owner: "Owner 2", property: "Property 2", bank_account: "Operating",
+    account: "a2", owner_id: "o2", owner: "Owner 2", property: "Property 2", bank_account: "Operating",
     balance: "0.00", reserve: "0.00", unpaid_bills: "0.00", available: "0.00",
     has_agreement: false,
   },
@@ -53,6 +53,8 @@ const BOOKS: Portfolio = {
   accounts: [account(1, "pr1"), account(3, "pr1"), account(2, "pr2")],
   tenants: [],
   vendors: [],
+  expense_accounts: [],
+  schedule_e_lines: [],
 };
 
 function server(answers: Record<string, unknown> = {}, refuse: Record<string, string> = {}) {
@@ -85,6 +87,10 @@ describe("OwnersPage", () => {
     expect(first.textContent).not.toContain("No management agreement");
     const second = await owner("Owner 2, Property 2");
     expect(second.textContent).toContain("No management agreement: no reserve is kept and no fee is taken.");
+    const statement = within(first).getByRole("link", { name: "Owner 1's income statement this year (PDF)" });
+    expect(statement.getAttribute("href")).toMatch(
+      /^\/api\/reports\/trust_report_income_statement\?arg=o1&arg=\d{4}-01-01&arg=\d{4}-\d{2}-\d{2}&format=pdf$/,
+    );
   });
 
   it("records a draw of everything available once per request, then a contribution", async () => {

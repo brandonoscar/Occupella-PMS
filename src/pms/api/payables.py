@@ -95,6 +95,9 @@ class Bill(BaseModel):
     amount: str
     memo: str
     work_order_id: UUID | None
+    # The expense account it is in (its latest), if it is in one.
+    expense_account_id: UUID | None = None
+    expense_account: str | None = None
     approval_limit: str
     approved_by: str | None
     # Who declined it for the owner (the owner in the portal, or as staff recorded it), and why.
@@ -108,7 +111,7 @@ class Bill(BaseModel):
 BILLS = (
     """
 SELECT b.id, v.display_name, b.reference, b.ledger_account_id, o.display_name, p.display_name,
-       b.bill_date, b.due_on, b.amount, b.memo, b.work_order_id,
+       b.bill_date, b.due_on, b.amount, b.memo, b.work_order_id, ex.id, ex.name,
        coalesce((SELECT g.approval_limit FROM trust_management_agreements AS g
                  WHERE g.ledger_account_id = b.ledger_account_id AND g.starts_on <= b.bill_date
                  ORDER BY g.starts_on DESC LIMIT 1), 0),
@@ -127,6 +130,11 @@ JOIN trust_properties AS p ON p.id = a.property_id
 LEFT JOIN trust_bill_approvals AS ap ON ap.bill_id = b.id
 LEFT JOIN trust_bill_declines AS dc ON dc.bill_id = b.id
 LEFT JOIN trust_emails AS em ON em.kind = 'bill_approval' AND em.bill_id = b.id
+LEFT JOIN LATERAL (
+    SELECT e.id, e.name FROM trust_bill_expense_accounts AS x
+    JOIN trust_expense_accounts AS e ON e.id = x.expense_account_id
+    WHERE x.bill_id = b.id ORDER BY x.id DESC LIMIT 1
+) AS ex ON true
 WHERE b.pmc_id = %s
 ORDER BY b.due_on, b.bill_date, v.display_name COLLATE "C", b.reference COLLATE "C", b.id
 """
@@ -166,6 +174,8 @@ def bills(
         amount,
         memo,
         order,
+        expense_id,
+        expense,
         limit,
         approved_by,
         declined_by,
@@ -192,6 +202,8 @@ def bills(
                 amount=cents(amount),
                 memo=memo,
                 work_order_id=order,
+                expense_account_id=expense_id,
+                expense_account=expense,
                 approval_limit=cents(limit),
                 approved_by=approved_by,
                 declined_by=declined_by,
@@ -212,10 +224,21 @@ class NewBill(BaseModel):
     amount: Amount
     memo: Text
     work_order_id: UUID | None = None
+    expense_account_id: UUID | None = None
 
 
 class Created(BaseModel):
     id: UUID
+
+
+def expense_account_of(conn: psycopg.Connection[Any], pmc_id: UUID, account: UUID) -> None:
+    if (
+        conn.execute(
+            "SELECT 1 FROM trust_expense_accounts WHERE pmc_id = %s AND id = %s", (pmc_id, account)
+        ).fetchone()
+        is None
+    ):
+        raise HTTPException(404, "no such expense account")
 
 
 def vendor_of(conn: psycopg.Connection[Any], pmc_id: UUID, vendor: UUID) -> None:
@@ -233,6 +256,8 @@ def enter_bill(session: Staff, conn: Conn, new: NewBill) -> Created:
     """A vendor's bill against an owner's property account, once per vendor reference."""
     vendor_of(conn, session.pmc_id, new.vendor_id)
     owner_account(conn, session.pmc_id, new.account)
+    if new.expense_account_id is not None:
+        expense_account_of(conn, session.pmc_id, new.expense_account_id)
     if new.due_on < new.bill_date:
         raise HTTPException(422, "a bill is due on or after its date")
     try:
@@ -258,10 +283,33 @@ def enter_bill(session: Staff, conn: Conn, new: NewBill) -> Created:
     except (psycopg.errors.CheckViolation, psycopg.errors.ForeignKeyViolation) as refused:
         # a work order of another property, a cancelled one, or none of this PMC's
         raise HTTPException(409, refusal(refused)) from None
+    if new.expense_account_id is not None:
+        put_in(conn, session.pmc_id, bill, new.expense_account_id)
     # Over the owner's limit: the email asking them to decide it, which goes out once this
     # commits (ADR 0004).
     email.write_bill_approval(conn, session.pmc_id, bill, outbox.PUBLIC_URL.get())
     return Created(id=bill)
+
+
+def put_in(conn: psycopg.Connection[Any], pmc_id: UUID, bill: UUID, account: UUID) -> None:
+    conn.execute(
+        "INSERT INTO trust_bill_expense_accounts (pmc_id, bill_id, expense_account_id)"
+        " VALUES (%s, %s, %s)",
+        (pmc_id, bill, account),
+    )
+
+
+class InAccount(BaseModel):
+    expense_account_id: UUID
+
+
+@router.post("/bills/{bill_id}/expense-account", status_code=201)
+def bill_expense_account(session: Staff, conn: Conn, bill_id: UUID, put: InAccount) -> None:
+    """Puts a bill in an expense account: one entered before it had one, or one in the wrong
+    account. Its latest is its account; the earlier rows stay, as every row does."""
+    bill_of(conn, session.pmc_id, bill_id)
+    expense_account_of(conn, session.pmc_id, put.expense_account_id)
+    put_in(conn, session.pmc_id, bill_id, put.expense_account_id)
 
 
 def bill_of(conn: psycopg.Connection[Any], pmc_id: UUID, bill: UUID) -> None:
@@ -407,6 +455,8 @@ class Recurring(BaseModel):
     day_of_month: int
     starts_on: date
     ends_on: date | None
+    expense_account_id: UUID | None = None
+    expense_account: str | None = None
 
 
 @router.get("/recurring")
@@ -424,17 +474,37 @@ def recurring(session: Staff, conn: Conn) -> list[Recurring]:
             day_of_month=day_of_month,
             starts_on=starts,
             ends_on=ends,
+            expense_account_id=expense_id,
+            expense_account=expense,
         )
-        for i, vendor, account, owner, prop, prefix, amount, memo, day_of_month, starts, ends in (
+        for (
+            i,
+            vendor,
+            account,
+            owner,
+            prop,
+            prefix,
+            amount,
+            memo,
+            day_of_month,
+            starts,
+            ends,
+            expense_id,
+            expense,
+        ) in (
             conn.execute(
                 "SELECT r.id, v.display_name, r.ledger_account_id, o.display_name,"
                 " p.display_name, r.reference_prefix, r.amount, r.memo, r.day_of_month,"
-                " r.starts_on, e.ends_on FROM trust_recurring_bills AS r"
+                " r.starts_on, e.ends_on, ex.id, ex.name FROM trust_recurring_bills AS r"
                 " JOIN trust_vendors AS v ON v.id = r.vendor_id"
                 " JOIN trust_ledger_accounts AS a ON a.ledger_account_id = r.ledger_account_id"
                 " JOIN trust_owners AS o ON o.id = a.owner_id"
                 " JOIN trust_properties AS p ON p.id = a.property_id"
                 " LEFT JOIN trust_recurring_bill_ends AS e ON e.recurring_bill_id = r.id"
+                " LEFT JOIN LATERAL (SELECT x.id, x.name"
+                "  FROM trust_recurring_bill_expense_accounts AS y"
+                "  JOIN trust_expense_accounts AS x ON x.id = y.expense_account_id"
+                "  WHERE y.recurring_bill_id = r.id ORDER BY y.id DESC LIMIT 1) AS ex ON true"
                 ' WHERE r.pmc_id = %s ORDER BY v.display_name COLLATE "C",'
                 ' r.reference_prefix COLLATE "C", r.id',
                 (session.pmc_id,),
@@ -453,6 +523,7 @@ class NewRecurring(BaseModel):
     memo: Text
     day_of_month: Annotated[int, Field(ge=1, le=28)]
     starts_on: date
+    expense_account_id: UUID | None = None
 
 
 @router.post("/recurring", status_code=201)
@@ -460,8 +531,10 @@ def add_recurring(session: Staff, conn: Conn, new: NewRecurring) -> Created:
     """A bill that comes every month on a day (1 to 28), from a first day."""
     vendor_of(conn, session.pmc_id, new.vendor_id)
     owner_account(conn, session.pmc_id, new.account)
+    if new.expense_account_id is not None:
+        expense_account_of(conn, session.pmc_id, new.expense_account_id)
     try:
-        return Created(
+        recurring = Created(
             id=one(
                 conn,
                 "INSERT INTO trust_recurring_bills (pmc_id, vendor_id, ledger_account_id,"
@@ -483,6 +556,41 @@ def add_recurring(session: Staff, conn: Conn, new: NewRecurring) -> Created:
         raise HTTPException(
             409, "this vendor has a recurring bill with that reference already"
         ) from None
+    if new.expense_account_id is not None:
+        recurring_put_in(conn, session.pmc_id, recurring.id, new.expense_account_id)
+    return recurring
+
+
+def recurring_of(conn: psycopg.Connection[Any], pmc_id: UUID, recurring: UUID) -> None:
+    if (
+        conn.execute(
+            "SELECT 1 FROM trust_recurring_bills WHERE pmc_id = %s AND id = %s",
+            (pmc_id, recurring),
+        ).fetchone()
+        is None
+    ):
+        raise HTTPException(404, "no such recurring bill")
+
+
+def recurring_put_in(
+    conn: psycopg.Connection[Any], pmc_id: UUID, recurring: UUID | str, account: UUID
+) -> None:
+    conn.execute(
+        "INSERT INTO trust_recurring_bill_expense_accounts"
+        " (pmc_id, recurring_bill_id, expense_account_id) VALUES (%s, %s, %s)",
+        (pmc_id, recurring, account),
+    )
+
+
+@router.post("/recurring/{recurring_id}/expense-account", status_code=201)
+def recurring_expense_account(
+    session: Staff, conn: Conn, recurring_id: UUID, put: InAccount
+) -> None:
+    """Puts a recurring bill in an expense account: each month's bill entered from now on is
+    in it. Bills entered before keep theirs; put each in one as a bill."""
+    recurring_of(conn, session.pmc_id, recurring_id)
+    expense_account_of(conn, session.pmc_id, put.expense_account_id)
+    recurring_put_in(conn, session.pmc_id, recurring_id, put.expense_account_id)
 
 
 class End(BaseModel):
@@ -492,14 +600,7 @@ class End(BaseModel):
 @router.post("/recurring/{recurring_id}/end", status_code=201)
 def end_recurring(session: Staff, conn: Conn, recurring_id: UUID, end: End) -> None:
     """Stops a recurring bill: no month after the day is entered."""
-    if (
-        conn.execute(
-            "SELECT 1 FROM trust_recurring_bills WHERE pmc_id = %s AND id = %s",
-            (session.pmc_id, recurring_id),
-        ).fetchone()
-        is None
-    ):
-        raise HTTPException(404, "no such recurring bill")
+    recurring_of(conn, session.pmc_id, recurring_id)
     try:
         conn.execute(
             "INSERT INTO trust_recurring_bill_ends (pmc_id, recurring_bill_id, ends_on)"
@@ -564,6 +665,7 @@ def emails(session: Staff, conn: Conn) -> list[OutboxEmail]:
 
 class OwnerMoney(BaseModel):
     account: str
+    owner_id: UUID
     owner: str
     property: str
     bank_account: str
@@ -576,7 +678,7 @@ class OwnerMoney(BaseModel):
 
 
 OWNERS = """
-SELECT a.ledger_account_id, o.display_name, p.display_name, b.display_name, l.balance,
+SELECT a.ledger_account_id, o.id, o.display_name, p.display_name, b.display_name, l.balance,
        coalesce(g.reserve, 0),
        -- Bills dated by today and not set aside by then (trust_unpaid_bills, which the app
        -- may not call, written out).
@@ -612,6 +714,7 @@ def owners(session: Staff, conn: Conn) -> list[OwnerMoney]:
     return [
         OwnerMoney(
             account=account,
+            owner_id=owner_id,
             owner=owner,
             property=prop,
             bank_account=bank,
@@ -621,7 +724,7 @@ def owners(session: Staff, conn: Conn) -> list[OwnerMoney]:
             available=cents(max(held - reserve - bills_, Decimal(0))),
             has_agreement=agreed,
         )
-        for account, owner, prop, bank, held, reserve, bills_, agreed in conn.execute(
+        for account, owner_id, owner, prop, bank, held, reserve, bills_, agreed in conn.execute(
             OWNERS, {"pmc": session.pmc_id, "today": today()}
         ).fetchall()
     ]

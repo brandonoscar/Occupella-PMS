@@ -82,6 +82,13 @@ TABLES = {
     "trust_application_links": {"SELECT", "INSERT"},
     "trust_application_link_closings": {"SELECT", "INSERT"},
     "trust_listings": {"SELECT", "INSERT"},
+    # Expense accounts (migration 0052): staff add accounts and put bills in them; a bill's
+    # latest row is its account, so a correction is an insert too. The ids order the rows.
+    "trust_expense_accounts": {"SELECT", "INSERT"},
+    "trust_bill_expense_accounts": {"SELECT", "INSERT"},
+    "trust_bill_expense_accounts_id_seq": set(),
+    "trust_recurring_bill_expense_accounts": {"SELECT", "INSERT"},
+    "trust_recurring_bill_expense_accounts_id_seq": set(),
     "trust_listing_removals": {"SELECT", "INSERT"},
     "trust_lease_end_adjustments": {"SELECT"},  # written only by trust_end_lease
     "trust_applications": {"SELECT", "INSERT"},
@@ -249,6 +256,7 @@ FUNCTIONS = {
     "trust_report_cutover(uuid,uuid)": {"trust_app", "trust_ai_agent"},
     "trust_report_deposit_return(uuid,uuid)": {"trust_app", "trust_ai_agent"},
     "trust_report_owner_year_end(uuid,uuid,integer)": {"trust_app", "trust_ai_agent"},
+    "trust_report_income_statement(uuid,uuid,date,date)": {"trust_app", "trust_ai_agent"},
     # pgledger's posting functions take no idempotency key, so a retried request could post
     # twice: only the owner calls them (trust_post_transfers does, as the owner).
     "pgledger_create_transfer(text,text,numeric,timestamptz,jsonb)": set(),

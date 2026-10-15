@@ -10,7 +10,8 @@ import { Card, PageHeader, Shell } from "../components/Shell";
 import { day, money } from "../money";
 import type { Bill, OutboxEmail, Recurring } from "../payables";
 import { emailNote, nextStep, recurringLabel, statusTone } from "../payables";
-import type { Portfolio } from "../setup";
+import type { ExpenseAccount, Portfolio } from "../setup";
+import { expenseAccountLabel } from "../setup";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
@@ -66,7 +67,7 @@ export function BillsPage({ me }: { me: Me }) {
         ) : (
           <ul className="flex flex-col divide-y divide-line">
             {bills.map((bill) => (
-              <BillRow key={bill.id} bill={bill} refresh={refresh} say={setDone} />
+              <BillRow key={bill.id} bill={bill} books={books} refresh={refresh} say={setDone} />
             ))}
           </ul>
         )}
@@ -86,6 +87,7 @@ function EnterBillCard({ books, refresh }: { books: Portfolio; refresh: () => vo
   const [due, setDue] = useState(day(new Date()));
   const [amount, setAmount] = useState("");
   const [memo, setMemo] = useState("");
+  const [expense, setExpense] = useState("");
   if (books.vendors.length === 0 || books.accounts.length === 0) {
     return (
       <Card title="Enter a bill">
@@ -101,11 +103,14 @@ function EnterBillCard({ books, refresh }: { books: Portfolio; refresh: () => vo
           event.preventDefault();
           const body = {
             vendor_id: vendor, account, reference, bill_date: dated, due_on: due, amount, memo,
+            ...(expense ? { expense_account_id: expense } : {}),
           };
           if (await record("/api/payables/bills", body, () => `Bill ${reference} entered.`)) {
+            // The vendor and owner stay for the next bill; what it is for is each bill's own.
             setReference("");
             setAmount("");
             setMemo("");
+            setExpense("");
           }
         }}
       >
@@ -134,6 +139,7 @@ function EnterBillCard({ books, refresh }: { books: Portfolio; refresh: () => vo
           onChange={(e) => setAmount(e.target.value)} />
         <Field label="What for" id="bill-memo" required maxLength={200} value={memo}
           onChange={(e) => setMemo(e.target.value)} />
+        <ExpenseAccountSelect books={books} id="bill-expense" value={expense} onChange={setExpense} />
         <Button type="submit">Enter bill</Button>
       </form>
       <Notice tone="info">{said}</Notice>
@@ -142,13 +148,15 @@ function EnterBillCard({ books, refresh }: { books: Portfolio; refresh: () => vo
   );
 }
 
-function BillRow({ bill, refresh, say }: {
+function BillRow({ bill, books, refresh, say }: {
   bill: Bill;
+  books: Portfolio | null;
   refresh: () => void;
   say: (said: string) => void;
 }) {
   const { error, record } = useRecord(refresh, say);
   const step = nextStep(bill.status);
+  const accounts = books?.expense_accounts ?? [];
   return (
     <li className="flex flex-col gap-2 py-4" aria-label={`${bill.vendor} ${bill.reference}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -171,6 +179,13 @@ function BillRow({ bill, refresh, say }: {
         <p className="text-sm text-ink-subtle">
           Declined by {bill.declined_by}: {bill.decline_reason}. It is never paid from the owner's money.
         </p>
+      )}
+      {/* A declined bill is never paid: it is no expense of the owner's. */}
+      {books && accounts.length > 0 && bill.status !== "declined" && (
+        <MoveToAccount books={books} what={bill.reference} current={bill.expense_account}
+          onMove={(chosen) =>
+            record(`/api/payables/bills/${bill.id}/expense-account`, { expense_account_id: chosen.id },
+              () => `${bill.reference} is in ${chosen.name}.`)} />
       )}
       {step === "Record approval" ? (
         <>
@@ -283,7 +298,7 @@ function RecurringCard({
       ) : (
         <ul className="flex flex-col gap-2">
           {recurring.map((bill) => (
-            <RecurringLine key={bill.id} bill={bill} record={record} />
+            <RecurringLine key={bill.id} bill={bill} books={books} record={record} />
           ))}
         </ul>
       )}
@@ -314,11 +329,12 @@ function RecurringCard({
 }
 
 // A recurring bill; stopping it asks for its last day first.
-function RecurringLine({ bill, record }: { bill: Recurring; record: Recorder }) {
+function RecurringLine({ bill, books, record }: { bill: Recurring; books: Portfolio; record: Recorder }) {
   const [asking, setAsking] = useState(false);
   const [on, setOn] = useState(day(new Date()));
   return (
-    <li className="flex min-h-8 flex-wrap items-center gap-3 text-sm">
+    <li className="flex min-h-8 flex-wrap items-center gap-3 text-sm"
+      aria-label={`${bill.vendor} ${bill.reference_prefix}`}>
       <span>{recurringLabel(bill)}</span>
       {bill.ends_on === null &&
         (asking ? (
@@ -344,6 +360,13 @@ function RecurringLine({ bill, record }: { bill: Recurring; record: Recorder }) 
             Stop
           </Button>
         ))}
+      {books.expense_accounts.length > 0 && (
+        <MoveToAccount books={books} what={bill.reference_prefix} current={bill.expense_account}
+          onMove={(chosen) =>
+            record(`/api/payables/recurring/${bill.id}/expense-account`,
+              { expense_account_id: chosen.id },
+              () => `${bill.reference_prefix} is entered in ${chosen.name} from now on.`)} />
+      )}
     </li>
   );
 }
@@ -356,6 +379,7 @@ function NewRecurringForm({ books, record }: { books: Portfolio; record: Recorde
   const [memo, setMemo] = useState("");
   const [dayOfMonth, setDayOfMonth] = useState("1");
   const [starts, setStarts] = useState(day(new Date()));
+  const [expense, setExpense] = useState("");
   return (
     <form
       className="flex flex-wrap items-end gap-3"
@@ -364,6 +388,7 @@ function NewRecurringForm({ books, record }: { books: Portfolio; record: Recorde
         const body = {
           vendor_id: vendor, account, reference_prefix: prefix, amount, memo,
           day_of_month: Number(dayOfMonth), starts_on: starts,
+          ...(expense ? { expense_account_id: expense } : {}),
         };
         if (await record("/api/payables/recurring", body, () => `${prefix} is entered each month.`)) {
           setPrefix("");
@@ -398,6 +423,8 @@ function NewRecurringForm({ books, record }: { books: Portfolio; record: Recorde
         value={dayOfMonth} onChange={(e) => setDayOfMonth(e.target.value)} />
       <Field label="First day" id="recurring-starts" type="date" required value={starts}
         onChange={(e) => setStarts(e.target.value)} />
+      <ExpenseAccountSelect books={books} id="recurring-expense" label="Recurring expense account"
+        value={expense} onChange={setExpense} />
       <Button type="submit" variant="secondary">Add recurring bill</Button>
     </form>
   );
@@ -424,5 +451,63 @@ function OutboxCard({ emails }: { emails: OutboxEmail[] }) {
         </ul>
       )}
     </Card>
+  );
+}
+
+// The expense account a new bill goes in; none is a choice, and the bill can be put in one later.
+function ExpenseAccountSelect({ books, id, label = "Expense account", value, onChange }: {
+  books: Portfolio;
+  id: string;
+  label?: string;
+  value: string;
+  onChange: (id: string) => void;
+}) {
+  if (books.expense_accounts.length === 0) return null;
+  return (
+    <Select label={label} id={id} value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">None yet</option>
+      {books.expense_accounts.map((a) => (
+        <option key={a.id} value={a.id}>
+          {expenseAccountLabel(a, books.schedule_e_lines)}
+        </option>
+      ))}
+    </Select>
+  );
+}
+
+// The account a bill (or recurring bill) is in, and a quiet way to put it in another.
+function MoveToAccount({ books, what, current, onMove }: {
+  books: Portfolio;
+  what: string;
+  current: string | null;
+  onMove: (chosen: ExpenseAccount) => void;
+}) {
+  const [chosen, setChosen] = useState("");
+  const account = books.expense_accounts.find((a) => a.id === chosen);
+  return (
+    <form
+      className="flex flex-wrap items-center gap-2 text-sm"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (account) onMove(account);
+      }}
+    >
+      <span className="text-ink-muted" data-testid="expense-account">
+        {current ? `In ${current}.` : "In no expense account yet."}
+      </span>
+      <select aria-label={`Expense account, ${what}`} value={chosen}
+        onChange={(e) => setChosen(e.target.value)}
+        className="h-8 rounded-sm border border-line-strong bg-sunken px-2 text-sm text-ink">
+        <option value="">{current ? "Move to" : "Put in"}</option>
+        {books.expense_accounts.map((a) => (
+          <option key={a.id} value={a.id}>
+            {a.name}
+          </option>
+        ))}
+      </select>
+      <Button type="submit" variant="ghost" size="sm" disabled={!account}>
+        {current ? "Move" : "Put in"}
+      </Button>
+    </form>
   );
 }

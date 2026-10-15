@@ -175,7 +175,10 @@ tenant's deposit against the deposit account's cash) and `trust_report_general_l
 ledger account over a period: its opening balance, every entry with the balance after it, and
 its closing balance) and `trust_report_audit_log` (each change to the PMC's records and ledger
 over a period, with who made it) and `trust_report_vendor_payments` (what each vendor was paid in
-a calendar year, for 1099 preparation; it files nothing). Run it with
+a calendar year, for 1099 preparation; it files nothing) and
+`trust_report_income_statement` (an owner's income and expenses over days, cash basis, per
+property and across them: collected by what it paid, the fees, each expense account's bills, net
+income, and the Schedule E lines). Run it with
 `pytest tests/golden`, and update deliberately with `pytest tests/golden --update-goldens`.
 
 **coverage.yml** (PRs and main): Python coverage (coverage.py) and coverage of the PL/pgSQL

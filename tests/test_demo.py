@@ -104,6 +104,27 @@ def test_the_owner_with_three_properties_has_them_on_one_statement(conn, built):
     assert [b for _, item, _, b in rows if item == "all properties: closing balance"] == [750]
 
 
+def test_the_owners_bills_show_on_their_income_statement_as_repairs(conn, built):
+    month_ago, _, this_month = built.months
+    rows = report(
+        conn,
+        "SELECT property, item, schedule_e, amount"
+        " FROM trust_report_income_statement(%s, %s, %s, %s)",
+        built.pmc_id,
+        built.owners["Demo Owner A"],
+        month_ago,
+        this_month,
+    )
+
+    # The kitchen drain at Elm Court and the roof at Cedar House, both in Repairs.
+    assert [(p, amount) for p, item, _, amount in rows if item.endswith("expense: Repairs")] == [
+        ("Cedar House", Decimal("650.00")),
+        ("Elm Court", Decimal("380.00")),
+        (None, Decimal("1030.00")),
+    ]
+    assert ("Elm Court", "Schedule E line 14: Repairs", 14, Decimal("380.00")) in rows
+
+
 def test_two_months_of_the_work_staff_do(conn, built):
     month_ago, last_month, this_month = built.months
     count = lambda query: conn.execute(query, (built.pmc_id,)).fetchone()[0]  # noqa: E731

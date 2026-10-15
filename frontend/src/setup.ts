@@ -45,6 +45,10 @@ export type LateFees = {
 export type NsfFee = { starts_on: string; fee: string };
 export type Property = Named & { units: Unit[]; late_fees: LateFees | null; nsf_fee: NsfFee | null };
 export type Tenant = Named & { property_id: string; property: string };
+// An account bills go in, on the line of Schedule E (Form 1040) its expenses are reported on.
+export type ExpenseAccount = Named & { schedule_e_line: number };
+export type ScheduleELine = { line: number; label: string };
+
 export type Portfolio = {
   bank_accounts: BankAccount[];
   owners: Named[];
@@ -52,7 +56,15 @@ export type Portfolio = {
   accounts: OwnerAccount[];
   tenants: Tenant[];
   vendors: Named[];
+  expense_accounts: ExpenseAccount[];
+  schedule_e_lines: ScheduleELine[];
 };
+
+// "Repairs (Schedule E line 14: Repairs)": an expense account and where it is reported.
+export function expenseAccountLabel(account: ExpenseAccount, lines: ScheduleELine[]): string {
+  const line = lines.find((l) => l.line === account.schedule_e_line);
+  return `${account.name} (Schedule E line ${account.schedule_e_line}${line ? `: ${line.label}` : ""})`;
+}
 
 export function kindLabel(kind: BankKind): string {
   return kind === "operating" ? "Operating" : "Security deposit";

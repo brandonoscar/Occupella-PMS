@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
-import { Button } from "../components/Button";
+import { Button, LinkButton } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { day, money } from "../money";
 import type { Fee, OwnerMoney } from "../payables";
-import { feeLine, heldLabel, lastMonthPeriod } from "../payables";
+import { feeLine, heldLabel, incomeStatementHref, lastMonthPeriod } from "../payables";
 import { requestId } from "../rent";
 import type { Portfolio } from "../setup";
 import { STAFF_NAV } from "./staffNav";
@@ -74,6 +74,11 @@ function OwnerRow({ owner, refresh }: { owner: OwnerMoney; refresh: () => void }
           No management agreement: no reserve is kept and no fee is taken.
         </p>
       )}
+      <div>
+        <LinkButton href={incomeStatementHref(owner.owner_id, day(new Date()))}>
+          {owner.owner}'s income statement this year (PDF)
+        </LinkButton>
+      </div>
       <details>
         <summary>
           Record for {owner.owner}, {owner.property}

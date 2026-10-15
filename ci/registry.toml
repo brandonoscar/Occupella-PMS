@@ -680,6 +680,17 @@ tests = [
 ]
 
 [[report]]
+id = "income-statement"
+statement = "An owner's income statement over days (UTC), cash basis: per property and across them, what was collected from tenants (matched payments less what bounced back) by what it paid (rent, recurring charges, late fees, NSF fees, other charges; a lease end's adjustment is what it adjusts), the management fees (Schedule E line 11) and leasing fees (line 8), the bills set aside by their latest expense account and those in none, total expenses and net income; then the same by Schedule E line. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_income_statement.py::test_what_was_collected_is_income_by_what_it_paid",
+  "tests/test_income_statement.py::test_expenses_are_the_fees_and_each_expense_accounts_bills",
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+  "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
+]
+
+[[report]]
 id = "three-way-reconciliation"
 statement = "Three-way reconciliation report (bank statement, trust journal and beneficiary ledgers of one approved reconciliation, with every difference listed), and what had not cleared the bank by the period's last day (UTC): the deposits in transit and outstanding withdrawals added to the statement balance, each of them and each bank line the books lack listed, as the bank reconciliation of that day shows them from the imported statements, or said to be not known when no imported statement covers that day. Compared to a checked-in golden file."
 tests = [
@@ -896,6 +907,19 @@ tests = [
   "tests/test_documents.py::test_the_ai_knows_a_document_exists_and_never_reads_it",
   "tests/api/test_documents_api.py::test_an_owner_reads_their_own_documents_only",
   "tests/properties/test_document_properties.py::test_documents_are_their_files_and_their_bytes_stay_out_of_the_log",
+]
+
+[[invariant]]
+id = "a-bill-is-its-latest-expense-account"
+statement = "An expense account is its PMC's, on one expense line of Schedule E (5 to 19), and a PMC names each once. A bill or recurring bill is put only in an expense account of its own PMC; its latest row is its account, and the rows are append-only. Each month's bill a recurring bill enters is in the recurring bill's latest account then, once, and a retry enters nothing more. trust_ai_agent reads them and writes none."
+tests = [
+  "tests/test_income_statement.py::test_a_bills_latest_expense_account_is_its_account",
+  "tests/test_income_statement.py::test_a_bill_is_put_only_in_an_expense_account_of_its_own_pmc",
+  "tests/test_income_statement.py::test_an_expense_account_is_on_an_expense_line_of_schedule_e",
+  "tests/test_income_statement.py::test_two_expense_accounts_of_a_pmc_take_two_names",
+  "tests/test_income_statement.py::test_each_month_a_recurring_bill_enters_is_in_its_latest_expense_account",
+  "tests/test_income_statement.py::test_the_ai_reads_it_and_writes_none_of_it",
+  "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
 ]
 
 [[report]]

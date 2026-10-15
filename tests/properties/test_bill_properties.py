@@ -24,6 +24,12 @@ old system paid a vendor in a year before a cutover is carried over once per ven
 The rule check_vendor_payments reads what each vendor was paid in a year, here and carried
 over, and compares it with the model.
 
+Bills and recurring bills are put in expense accounts at random, again and again: a bill's
+latest is its account, and each month's bill a recurring bill enters is in the recurring bill's
+latest account then. The rule check_the_expenses reads an owner's income statement over random
+days and compares every expense line (each expense account's bills set aside in the days, those
+in none, the total and net income) with the model.
+
 The rules check_owner_balances and check_unpaid_bills read the owner balances and unpaid bills
 reports as of a random day, as any role including the AI's, and compare every line with the
 model. The AI's
@@ -155,6 +161,22 @@ class BillMachine(RuleBasedStateMachine):
         self.recurring: dict[UUID, Recurring] = {}
         # (vendor index, year) -> (paid before, amount) the old system paid it that year
         self.carried: dict[tuple[int, int], tuple[date, Decimal]] = {}
+        # Expense accounts (id, name, Schedule E line), and the latest of each bill and
+        # recurring bill, by its place in that list.
+        self.expense_accounts = [
+            (
+                owner_conn.execute(
+                    "INSERT INTO trust_expense_accounts (pmc_id, name, schedule_e_line)"
+                    " VALUES (%s, %s, %s) RETURNING id",
+                    (self.pmc_id, name, line),
+                ).fetchone()[0],
+                name,
+                line,
+            )
+            for name, line in [("Water", 17), ("Repairs", 14), ("Gutters", 14)]
+        ]
+        self.bill_account: dict[UUID, int] = {}
+        self.recurring_account: dict[UUID, int] = {}
 
     # --- the model -----------------------------------------------------------------------
 
@@ -615,8 +637,8 @@ class BillMachine(RuleBasedStateMachine):
         """Each month's bill of every recurring bill due by `through`, once: none twice, none
         under a reference a bill of the vendor already has."""
         through_on = BASE + timedelta(days=through)
-        new: dict[tuple[int, str], tuple[Recurring, date]] = {}
-        for recurring in self.recurring.values():
+        new: dict[tuple[int, str], tuple[UUID, Recurring, date]] = {}
+        for recurring_id, recurring in self.recurring.items():
             month = recurring.starts_on.replace(day=1)
             while month <= through_on:
                 due = month + timedelta(days=recurring.day_of_month - 1)
@@ -627,7 +649,7 @@ class BillMachine(RuleBasedStateMachine):
                     and (recurring.ends_on is None or due < recurring.ends_on)
                     and not any((b.vendor, b.reference) == key for b in self.bills.values())
                 ):
-                    new[key] = (recurring, due)
+                    new[key] = (recurring_id, recurring, due)
                 month = (month + timedelta(days=32)).replace(day=1)
 
         assert enter_recurring_bills(self.conns[role], self.pmc_id, through_on) == len(new)
@@ -641,10 +663,97 @@ class BillMachine(RuleBasedStateMachine):
         }
         # In a fixed order: the rules draw bills by their place in self.bills, and the
         # database's order follows random ids, which Hypothesis can't replay.
-        for (vendor, reference), (recurring, due) in sorted(new.items()):
-            self.bills[stored[(vendor, reference)]] = Bill(
+        for (vendor, reference), (recurring_id, recurring, due) in sorted(new.items()):
+            bill_id = stored[(vendor, reference)]
+            self.bills[bill_id] = Bill(
                 recurring.account, vendor, reference, due, recurring.amount, due
             )
+            if recurring_id in self.recurring_account:
+                self.bill_account[bill_id] = self.recurring_account[recurring_id]
+
+    # --- expense accounts and the income statement -------------------------------------------
+
+    @precondition(lambda self: self.bills)
+    @rule(data=st.data(), role=ROLES, account=st.integers(0, 2))
+    def put_a_bill_in_an_expense_account(self, data, role, account):
+        """Any bill, set aside or not, paid or not: its latest account is what it is."""
+        bill_id = data.draw(st.sampled_from(list(self.bills)))
+        self.conns[role].execute(
+            "INSERT INTO trust_bill_expense_accounts (pmc_id, bill_id, expense_account_id)"
+            " VALUES (%s, %s, %s)",
+            (self.pmc_id, bill_id, self.expense_accounts[account][0]),
+        )
+        self.bill_account[bill_id] = account
+
+    @precondition(lambda self: self.recurring)
+    @rule(data=st.data(), role=ROLES, account=st.integers(0, 2))
+    def put_a_recurring_bill_in_an_expense_account(self, data, role, account):
+        recurring_id = data.draw(st.sampled_from(list(self.recurring)))
+        self.conns[role].execute(
+            "INSERT INTO trust_recurring_bill_expense_accounts"
+            " (pmc_id, recurring_bill_id, expense_account_id) VALUES (%s, %s, %s)",
+            (self.pmc_id, recurring_id, self.expense_accounts[account][0]),
+        )
+        self.recurring_account[recurring_id] = account
+
+    @rule(
+        role=st.sampled_from(["owner", "app", "ai"]),
+        owner=st.integers(0, 1),
+        first=st.integers(-3, 125),
+        length=st.integers(0, 130),
+    )
+    def check_the_expenses(self, role, owner, first, length):
+        """An owner's income statement over random days: each expense account's bills set
+        aside in them (by their latest account), those in none, the total and net income (no
+        payment here is matched to a charge, so nothing is income)."""
+        account = self.owner_account[owner]
+        start_on = BASE + timedelta(days=first)
+        last_on = start_on + timedelta(days=length)
+        spent: dict[int | None, Decimal] = {}
+        for bill_id, (_, when) in self.set_aside.items():
+            bill = self.bills[bill_id]
+            if bill.account == account and end_of(start_on - timedelta(days=1)) <= when < end_of(
+                last_on
+            ):
+                kind = self.bill_account.get(bill_id)
+                spent[kind] = spent.get(kind, Decimal(0)) + bill.amount
+        named = sorted(
+            (
+                (self.expense_accounts[kind][2], self.expense_accounts[kind][1], amount)
+                for kind, amount in spent.items()
+                if kind is not None
+            ),
+        )
+        total = sum(spent.values(), Decimal(0))
+        expected = [
+            ("expense: management fees", 11, Decimal(0)),
+            ("expense: leasing fees", 8, Decimal(0)),
+            *((f"expense: {name}", line, amount) for line, name, amount in named),
+            *(
+                [("expense: bills not in an expense account", None, spent[None])]
+                if None in spent
+                else []
+            ),
+            ("total expenses", None, total),
+            ("net income", None, -total),
+        ]
+        rows = (
+            self.conns[role]
+            .execute(
+                "SELECT item, schedule_e, amount FROM trust_report_income_statement(%s, %s, %s, %s)"
+                " WHERE property = %s AND (item LIKE 'expense: %%' OR item IN"
+                " ('total expenses', 'net income')) ORDER BY line",
+                (
+                    self.pmc_id,
+                    self.pmc.owners[owner].owner_id,
+                    start_on,
+                    last_on,
+                    f"Property {owner + 1}",
+                ),
+            )
+            .fetchall()
+        )
+        assert rows == expected
 
     @rule(
         data=st.data(),
