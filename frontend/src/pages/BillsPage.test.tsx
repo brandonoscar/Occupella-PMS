@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { Bill, OutboxEmail, Recurring } from "../payables";
@@ -93,6 +93,7 @@ function server(
   answers: Record<string, unknown> = {},
   refuse: Record<string, string> = {},
   bills: Bill[] = BILLS,
+  posting: (path: string) => void = () => undefined,
 ) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method !== "POST") {
@@ -103,6 +104,7 @@ function server(
       return new Response(JSON.stringify(body), { status: 200 });
     }
     if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
+    posting(path);
     return new Response(JSON.stringify(answers[path] ?? {}), { status: 201 });
   });
   vi.stubGlobal("fetch", fetch);
@@ -115,6 +117,12 @@ const posted = (fetch: ReturnType<typeof server>) =>
     .map(([path, init]) => [path, JSON.parse(String(init?.body))]);
 
 const bill = (name: string) => screen.findByRole("listitem", { name });
+// What a bill's step did is said above the list, not in its row, which the step may remove.
+const said = async (text: string) => {
+  const line = await screen.findByText(text);
+  expect(line.closest("li")).toBeNull();
+  return line;
+};
 
 describe("BillsPage", () => {
   it("lists the bills not paid yet, each with its next step", async () => {
@@ -178,17 +186,17 @@ describe("BillsPage", () => {
     fireEvent.change(within(first).getByLabelText("Approved by"), { target: { value: "Owner 1" } });
     fireEvent.change(within(first).getByLabelText("Approved on"), { target: { value: "2026-10-03" } });
     fireEvent.click(within(first).getByRole("button", { name: "Record approval" }));
-    expect(await within(first).findByText("The owner's approval of INV-1 is recorded.")).toBeTruthy();
+    expect(await said("The owner's approval of INV-1 is recorded.")).toBeTruthy();
 
     const second = await bill("Vendor 1 INV-2");
     fireEvent.change(within(second).getByLabelText("Set aside on"), { target: { value: "2026-10-04" } });
     fireEvent.click(within(second).getByRole("button", { name: "Set aside" }));
-    expect(await within(second).findByText("$200.00 is set aside for INV-2.")).toBeTruthy();
+    expect(await said("$200.00 is set aside for INV-2.")).toBeTruthy();
 
     const third = await bill("Vendor 1 INV-3");
     fireEvent.change(within(third).getByLabelText("Paid on"), { target: { value: "2026-10-05" } });
     fireEvent.click(within(third).getByRole("button", { name: "Pay" }));
-    expect(await within(third).findByText("INV-3 is paid.")).toBeTruthy();
+    expect(await said("INV-3 is paid.")).toBeTruthy();
 
     expect(posted(fetch)).toEqual([
       ["/api/payables/bills/b1/approval", { approved_on: "2026-10-03", approved_by: "Owner 1" }],
@@ -197,8 +205,12 @@ describe("BillsPage", () => {
     ]);
   });
 
-  it("records the owner's decline behind its own button", async () => {
-    const fetch = server();
+  it("records the owner's decline behind its own button, and says so once the bill leaves the list", async () => {
+    // Declined, the bill is no longer one still to pay: the refresh takes it off the list.
+    const open = [...BILLS];
+    const fetch = server({}, {}, open, (path) => {
+      if (path.endsWith("/decline")) open.splice(0, 1);
+    });
     render(<BillsPage me={ME} />);
 
     const first = await bill("Vendor 1 INV-1");
@@ -208,7 +220,9 @@ describe("BillsPage", () => {
     fireEvent.change(within(first).getByLabelText("Declined on"), { target: { value: "2026-10-03" } });
     fireEvent.change(within(first).getByLabelText("Why"), { target: { value: "Get a second quote" } });
     fireEvent.click(within(first).getByRole("button", { name: "Record decline" }));
-    expect(await within(first).findByText("The owner's decline of INV-1 is recorded.")).toBeTruthy();
+    expect(await said("The owner's decline of INV-1 is recorded.")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("listitem", { name: "Vendor 1 INV-1" })).toBeNull());
+    expect(screen.getByText("The owner's decline of INV-1 is recorded.")).toBeTruthy();
 
     expect(posted(fetch)).toEqual([
       [

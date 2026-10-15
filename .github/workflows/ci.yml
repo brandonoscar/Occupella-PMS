@@ -93,5 +93,9 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           GITHUB_TOKEN: ${{ github.token }}
         run: python -m tools.check_registry --check-issues --base "$BASE_SHA"
+      - name: Every API operation belongs to a feature with browser tests (ci/features.toml)
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python -m tools.check_features --base "$BASE_SHA"
       - name: Unit and example tests (fresh database, every migration; no skips)
         run: pytest -v --ignore=tests/properties -p no:cacheprovider

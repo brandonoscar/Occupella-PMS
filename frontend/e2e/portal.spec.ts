@@ -234,6 +234,9 @@ test("staff offer a lease and a renewal; the signers sign on the partner's page;
   await page.getByRole("button", { name: "Send for signing" }).click();
   const renewal = page.getByRole("listitem", { name: "Offer for E2E Unit 3" });
   await expect(renewal).toContainText("Signed by 0 of 1.");
+  // Staff can show each signer's link again.
+  await renewal.getByRole("button", { name: "Signing links" }).click();
+  await expect(renewal.getByTestId("signing-link")).toContainText("/esign#");
 
   const tenant = await (await browser.newContext()).newPage();
   await tenant.goto(`/invite#${seed.renewer_invite}`);
@@ -242,6 +245,10 @@ test("staff offer a lease and a renewal; the signers sign on the partner's page;
   await tenant.getByRole("button", { name: "Set password" }).click();
   const offered = tenant.getByRole("listitem", { name: "Renewal of E2E Unit 3" });
   await expect(offered).toContainText(`${day(60)} to month to month, $1,000.00 a month`);
+  const read = await tenant.request.get(
+    (await offered.getByRole("link", { name: "Read the lease (PDF)" }).getAttribute("href")) ?? "",
+  );
+  expect(await read.body()).toEqual(document.buffer);
   await offered.getByRole("button", { name: "Sign" }).click();
   await tenant.getByLabel("Type your name as it is on the lease").fill("Renewer E2E");
   await tenant.getByRole("button", { name: "Sign" }).click();
@@ -332,10 +339,12 @@ test("staff record a tenant's payment, the rest held as prepaid rent, and then i
   // A bounce is asked for, with the day it came back (today by default), before it is recorded.
   await lease.getByRole("button", { name: "It bounced" }).click();
   await lease.getByRole("button", { name: "Record the bounce" }).click();
-  await expect(lease).toContainText("The $800.00 payment is owed again.");
+  // The whole $1,000.00 comes back: the $800.00 it paid is owed again, and its $200.00 of
+  // prepaid rent is gone.
+  await expect(lease).toContainText("The $1,000.00 payment bounced and is undone.");
   await expect(lease.getByTestId("owed")).toHaveText("Owes $800.00");
   await expect(lease).toContainText("Payer E2E: prepaid $0.00");
-  await expect(lease.getByText("Bounced")).toBeVisible();
+  await expect(lease.getByText("Bounced", { exact: true })).toBeVisible();
 });
 
 test("staff enter a vendor's bill, record the owner's approval, set it aside and pay it, then draw the rest", async ({
@@ -490,6 +499,18 @@ test("staff import last month's statement, match it to the books and prepare it;
   const prepare = page.getByRole("button", { name: `Prepare through ${iso(last)}` });
   await expect(prepare).toBeDisabled();
 
+  await page.getByLabel(`${sixth} Deposit (D-1): $2,750.00`).check();
+  await page.getByLabel(`${fifth} Rent: $1,500.00`).check();
+  await page.getByLabel(`${fifth} Rent: $1,250.00`).check();
+  await page.getByRole("button", { name: "Match these" }).click();
+  await expect(page.getByText("Matched.")).toBeVisible();
+
+  // A match made by mistake is undone, its line and transfers open again, and matched anew.
+  const matches = page.getByRole("table", { name: "Matches" });
+  await matches.getByRole("row", { name: /\(D-1\)/ }).getByRole("button", { name: "Undo" }).click();
+  await expect(page.getByText("Match undone.")).toBeVisible();
+  await expect(matches.getByRole("row", { name: /\(D-1\)/ })).toHaveCount(0);
+  await expect(prepare).toBeDisabled();
   await page.getByLabel(`${sixth} Deposit (D-1): $2,750.00`).check();
   await page.getByLabel(`${fifth} Rent: $1,500.00`).check();
   await page.getByLabel(`${fifth} Rent: $1,250.00`).check();

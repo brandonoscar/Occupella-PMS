@@ -102,6 +102,7 @@ fi
 step "standing rule" python -m tools.check_pr_rules --base "$base" --head HEAD
 step "thresholds" python -m tools.check_thresholds --base "$base"
 step "registry" python -m tools.check_registry --check-issues --base "$base"
+step "feature registry" python -m tools.check_features --base "$base"
 # licenses.yml
 step "licenses" python -m tools.check_licenses
 # db.yml, on a throwaway database
@@ -140,7 +141,7 @@ if command -v npm >/dev/null; then
 else
   skip "portal" "npm is not installed; CI's e2e job runs it"
 fi
-skip "portal in a browser" "needs the API serving a build on a seeded database; CI's e2e job runs it"
+skip "portal in a browser" "needs the API serving a build on a seeded database; CI's e2e job runs it, then checks every feature in ci/features.toml against the run"
 # security.yml
 if command -v gitleaks >/dev/null; then
   step "gitleaks on this branch" gitleaks git --config .gitleaks.toml --redact --no-banner \

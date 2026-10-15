@@ -253,7 +253,28 @@ def test_a_payment_pays_what_is_owed_oldest_first_and_holds_the_rest_as_prepaid_
         "Check 101",
         False,
     )
-    assert latest["amount"] == "1050.00"
+    # The whole $1,200.00 that came in, not only the $1,050.00 that paid charges.
+    assert latest["amount"] == "1200.00"
+
+
+def test_a_payment_all_of_it_prepaid_rent_is_listed_and_bounces(client, conn, staff, home):
+    # Nothing is owed: the whole payment is the tenant's prepaid rent, matched to no charge.
+    payment = ok(pay(client, home, "300.00", reference="Money order 7"))
+    assert (payment["to_owner"], payment["to_prepaid"]) == ("0.00", "300.00")
+    (listed,) = lease_row(client, home)["payments"]
+    assert (listed["amount"], listed["reference"], listed["bounced"]) == (
+        "300.00",
+        "Money order 7",
+        False,
+    )
+
+    ok(call(client, f"payments/{listed['transfer_id']}/bounce", on=TODAY))
+
+    row = lease_row(client, home)
+    (listed,) = row["payments"]
+    assert listed["bounced"] is True
+    assert row["tenants"][0]["prepaid"] == "0.00"
+    assert set(bank_sums(conn, home.pmc.pmc_id).values()) == {Decimal(0)}
 
 
 def test_a_credit_comes_off_what_is_owed(client, conn, staff, home):
@@ -355,8 +376,7 @@ def test_a_payment_the_owner_was_paid_out_of_cannot_bounce_into_the_negative(
 
     answer = call(client, f"payments/{payment}/bounce", on=TODAY)
 
-    refused(answer, 409)
-    assert "below zero" in answer.json()["detail"]
+    refused(answer, 409, "not enough money: the owner's account would be $1,500.00 short")
     assert lease_row(client, home)["owed"] == "0.00"
 
 

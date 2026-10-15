@@ -16,6 +16,7 @@ Invariants checked after every step (ci/registry.toml maps them to this test):
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
 
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -83,8 +84,9 @@ class PayablesMachine(RuleBasedStateMachine):
         with self.conn.transaction():
             return endpoint(self.session, self.conn, *args)
 
-    def refused(self, match, endpoint, *args):
-        with pytest.raises(HTTPException, match=match) as raised:
+    def refused(self, said, endpoint, *args):
+        """Refused with 409, saying exactly what the model says, in words."""
+        with pytest.raises(HTTPException, match=f"^409: {re.escape(said)}$") as raised:
             self.call(endpoint, *args)
         assert raised.value.status_code == 409
 
@@ -122,7 +124,9 @@ class PayablesMachine(RuleBasedStateMachine):
         step = payables.Day(on=TODAY)
         if bill.amount > self.held:
             event("set aside: refused, not enough money")
-            self.refused("below zero", payables.set_aside, bill.id, step)
+            short = bill.amount - self.held
+            said = f"not enough money: the owner's account would be ${short:,.2f} short"
+            self.refused(said, payables.set_aside, bill.id, step)
             return
         event("set aside")
         self.call(payables.set_aside, bill.id, step)
@@ -145,7 +149,16 @@ class PayablesMachine(RuleBasedStateMachine):
         available = self.available()
         if available == 0 or (amount is not None and amount > available):
             event("draw: refused, more than is available")
-            self.refused("available to draw", payables.draw, new)
+            held = f"the ${RESERVE:,.2f} reserve"
+            if self.unpaid() > 0:
+                held += f" and ${self.unpaid():,.2f} of unpaid bills"
+            said = (
+                f"nothing is available to draw: what the account holds is kept for {held}"
+                if available == 0
+                else f"only ${available:,.2f} is available to draw (the balance less {held});"
+                f" ${amount:,.2f} is more than that"
+            )
+            self.refused(said, payables.draw, new)
             return
         event("draw: everything available" if amount is None else "draw: an amount")
         taken = Decimal(self.call(payables.draw, new).amount)

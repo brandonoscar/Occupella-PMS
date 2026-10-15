@@ -3,7 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { OwnerMoney } from "../payables";
 import type { Portfolio } from "../setup";
-import { OwnersPage } from "./OwnersPage";
+import { OwnersPage, leasingFeeSaid } from "./OwnersPage";
 
 afterEach(() => {
   cleanup();
@@ -210,5 +210,12 @@ describe("OwnersPage", () => {
     );
     render(<OwnersPage me={ME} />);
     expect((await screen.findAllByRole("alert"))[0]?.textContent).toBe("sign in first");
+  });
+
+  it("says so when the agreement takes no leasing fee, rather than that $0.00 was taken", () => {
+    expect(leasingFeeSaid("750.00")).toBe("A leasing fee of $750.00 is taken.");
+    expect(leasingFeeSaid("0.00")).toBe(
+      "No leasing fee: the owner's agreement in force takes none, so none is due for this lease.",
+    );
   });
 });

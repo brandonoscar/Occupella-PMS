@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field, StringConstraints
 
 from pms import exports
-from pms.api.deps import Conn, Staff
+from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/move-out")
 
@@ -30,10 +30,6 @@ Memo = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max
 
 def cents(value: Decimal) -> str:
     return exports.text(Decimal(value).quantize(Decimal("0.01")))
-
-
-def reason(refused: psycopg.Error) -> str:
-    return str(refused).splitlines()[0].removeprefix("trust: ")
 
 
 def returned(conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID) -> bool:
@@ -179,7 +175,7 @@ def end(session: Staff, conn: Conn, lease_id: UUID, body: End) -> None:
     try:
         conn.execute("SELECT trust_end_lease(%s, %s, %s)", (session.pmc_id, lease_id, body.ends_on))
     except psycopg.errors.CheckViolation as refused:  # before it starts
-        raise HTTPException(422, reason(refused)) from None
+        raise HTTPException(422, refusal(refused)) from None
 
 
 class Deduction(BaseModel):
@@ -241,8 +237,8 @@ def return_deposit(session: Staff, conn: Conn, lease_id: UUID, body: Return) -> 
             ),
         ).fetchone()
     except psycopg.errors.InvalidParameterValue as bad:  # not the property's owner account
-        raise HTTPException(422, reason(bad)) from None
+        raise HTTPException(422, refusal(bad)) from None
     except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
     assert back is not None
     return Returned(returned=cents(back[0]))

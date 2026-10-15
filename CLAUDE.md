@@ -41,8 +41,9 @@ and ask the founder.
 3. A new migration is covered by db.yml (squawk, apply from empty, down/up, drift, and an
    upgrade of a database that already holds money).
 4. A new report or statement gets a golden case (`tests/golden/cases/<function>/`).
-5. A new API endpoint gets API tests for the success path, auth failure and bad input. Portal
-   code (`frontend/src`) gets a vitest test next to it or a browser test in `frontend/e2e/`.
+5. A new API endpoint gets API tests for the success path, auth failure and bad input, and a
+   feature in `ci/features.toml` claims it with a browser test that calls it. Portal code
+   (`frontend/src`) gets a vitest test next to it or a browser test in `frontend/e2e/`.
 6. A new feature area that no workflow covers gets a workflow added or extended in the same PR.
 7. Never weaken a check, lower a threshold or skip a test to get green. If something can't pass
    yet, open an issue and link it: in `ci/registry.toml` (`pending`), or as a strict xfail whose
@@ -52,7 +53,8 @@ and ask the founder.
 
 CI enforces most of this (`docs/CI.md`): diff coverage on changed lines, `tools/check_pr_rules.py`
 for tests-with-code, `tools/check_thresholds.py` for floors, `tools/check_registry.py` for every
-required invariant, report and self-host step.
+required invariant, report and self-host step, and `tools/check_features.py` for every feature:
+each API operation belongs to one, and e2e fails a feature whose browser tests stop calling it.
 
 ## Conventions
 
@@ -70,11 +72,14 @@ required invariant, report and self-host step.
   the audit log. Every endpoint gets tests in `tests/api/` for success, a caller who isn't
   allowed and bad input. A report's PMC always comes from the session (every report takes
   `p_pmc_id` first; a test pins it). Changes must be JSON from the app's own origin, and the
-  session cookie is HttpOnly and SameSite=Strict.
+  session cookie is HttpOnly and SameSite=Strict. A refusal from the database reaches people in
+  words, without internal ids (`deps.refusal`: an account short of money, a draw over what is
+  available, the last admin).
 - Logins (`src/pms/accounts.py`, migration 0028): staff invite a staff member, owner or tenant
   by email; the link carries a token kept only as its SHA-256, in the URL fragment. Accepting
   sets an argon2id password (and for staff an authenticator, TOTP); a new invite resets a
-  password. `trust_login_secrets` is never audited. The first staff member, their first admin
+  password. Staff disable a login from the overview, for good: its sessions end and it takes no
+  new invite. `trust_login_secrets` is never audited. The first staff member, their first admin
   role and their invite come from `python -m pms.admin`. A demo PMC to show the PMS with
   comes from `python -m pms.demo` (`src/pms/demo.py`): synthetic, built through the API's own
   route functions as its staff, with last month's reconciliation waiting for approval.
@@ -290,7 +295,8 @@ required invariant, report and self-host step.
   (`trust_open_charges`, so a credit counts), and the rest is
   the first tenant's prepaid rent; prepaid rent is used the same way. Each record carries a
   request id the page makes (its key in `trust_post_transfers`), so sending it again records
-  nothing new. A bounce moves back what the payment moved, reverses its matches and charges
+  nothing new. The page lists each payment as it came in (its whole amount, prepaid rent
+  included), and a bounce moves back what the payment moved, reverses its matches and charges
   the property's NSF fee, once. A
   lease's rent work takes an advisory lock on the lease. The PMS records what the bank did;
   it sends no money.

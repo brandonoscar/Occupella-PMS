@@ -28,6 +28,8 @@ export function BillsPage({ me }: { me: Me }) {
   const [outbox, setOutbox] = useState<OutboxEmail[]>([]);
   const [books, setBooks] = useState<Portfolio | null>(null);
   const [error, setError] = useState("");
+  // What a bill's step did: said here, as the step may take the bill off the list.
+  const [done, setDone] = useState("");
   const failed = (why: unknown) => setError(why instanceof ApiError ? why.detail : String(why));
 
   function refresh() {
@@ -52,6 +54,11 @@ export function BillsPage({ me }: { me: Me }) {
             <option value="all">All bills</option>
           </Select>
         </div>
+        {done && (
+          <div className="mb-2">
+            <Notice tone="info">{done}</Notice>
+          </div>
+        )}
         {bills === null ? (
           <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
         ) : bills.length === 0 ? (
@@ -59,7 +66,7 @@ export function BillsPage({ me }: { me: Me }) {
         ) : (
           <ul className="flex flex-col divide-y divide-line">
             {bills.map((bill) => (
-              <BillRow key={bill.id} bill={bill} refresh={refresh} />
+              <BillRow key={bill.id} bill={bill} refresh={refresh} say={setDone} />
             ))}
           </ul>
         )}
@@ -135,8 +142,12 @@ function EnterBillCard({ books, refresh }: { books: Portfolio; refresh: () => vo
   );
 }
 
-function BillRow({ bill, refresh }: { bill: Bill; refresh: () => void }) {
-  const { said, error, record } = useRecord(refresh);
+function BillRow({ bill, refresh, say }: {
+  bill: Bill;
+  refresh: () => void;
+  say: (said: string) => void;
+}) {
+  const { error, record } = useRecord(refresh, say);
   const step = nextStep(bill.status);
   return (
     <li className="flex flex-col gap-2 py-4" aria-label={`${bill.vendor} ${bill.reference}`}>
@@ -169,7 +180,6 @@ function BillRow({ bill, refresh }: { bill: Bill; refresh: () => void }) {
       ) : step ? (
         <StepForm bill={bill} step={step} record={record} />
       ) : null}
-      <Notice tone="info">{said}</Notice>
       <Notice tone="error">{error}</Notice>
     </li>
   );

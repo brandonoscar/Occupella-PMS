@@ -54,10 +54,11 @@ export function requestId(): string {
   return crypto.randomUUID();
 }
 
-// What recording a returned payment did, in a line.
+// What recording a returned payment did, in a line. A bounce undoes the whole payment: what it
+// paid of the lease's charges is owed again, and what it held as prepaid rent is gone.
 export function bounceSummary(amount: string, bounce: Bounce): string {
-  const fee = bounce.nsf_fee === null ? "" : `, with a ${money(bounce.nsf_fee)} NSF fee`;
-  return `The ${money(amount)} payment is owed again${fee}.`;
+  const fee = bounce.nsf_fee === null ? "" : `; a ${money(bounce.nsf_fee)} NSF fee is charged`;
+  return `The ${money(amount)} payment bounced and is undone${fee}.`;
 }
 
 // What a recorded payment did, in a line.

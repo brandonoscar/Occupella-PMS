@@ -15,7 +15,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, StringConstraints
 
 from pms import accounts
-from pms.api.deps import Conn, Staff
+from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/staff")
 
@@ -99,4 +99,4 @@ def change(session: Staff, conn: Conn, staff_id: UUID, body: RoleChange) -> None
             (session.pmc_id, staff_id, body.role, body.granted),
         )
     except psycopg.errors.CheckViolation as refused:
-        raise HTTPException(409, str(refused).splitlines()[0].removeprefix("trust: ")) from None
+        raise HTTPException(409, refusal(refused)) from None

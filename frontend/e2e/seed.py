@@ -7,8 +7,10 @@ Last month's rent goes to the owner's two properties, so the statement the owner
 first (last month) has postings. A second owner's property has a tenant on a lease, with last
 month's rent paid, this month's due and a maintenance request; a vacant unit there has an open
 application link. For lease offers, another vacant unit has an approved application, and a
-third unit a tenant on a month-to-month lease to renew. Last, the demo PMC (src/pms/demo.py),
-with invites for its manager and its owner of three properties. Every name is synthetic.
+third unit a tenant on a month-to-month lease to renew. Then the demo PMC (src/pms/demo.py),
+with invites for its manager and its owner of three properties. Last, a demo PMC of its own for
+each feature test (frontend/e2e/features.spec.ts), so each starts from the same books and none
+sees another's changes. Every name is synthetic.
 """
 
 import json
@@ -16,6 +18,7 @@ import os
 import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import psycopg
 
@@ -429,7 +432,47 @@ def main() -> None:
             f"demo-owner.{tag}@example.com",
             None,
         ).token
+        seeded["features"] = {name: feature_pmc(app, tag, name) for name in FEATURES}
     print(json.dumps(seeded))
+
+
+# The feature tests (frontend/e2e/features.spec.ts), each on a demo PMC of its own.
+FEATURES = (
+    "rent",
+    "recurring",
+    "bills",
+    "recurring-bills",
+    "owners",
+    "roles",
+    "owner-portal",
+    "tenant-portal",
+    "listings",
+    "downloads",
+    "move-out",
+    "switching",
+    "documents",
+    "setup",
+)
+
+
+def feature_pmc(app: psycopg.Connection[Any], tag: str, name: str) -> dict[str, Any]:
+    """A demo PMC and invites (with their emails) for its people: the manager (admin, approve,
+    disburse), the bookkeeper (no role), both owners and two tenants."""
+    made = demo.build(app)
+    people = {
+        "manager": ("staff", made.manager),
+        "bookkeeper": ("staff", made.bookkeeper),
+        "owner_a": ("owner", made.owners["Demo Owner A"]),
+        "owner_b": ("owner", made.owners["Demo Owner B"]),
+        "taylor": ("tenant", made.tenants["Taylor Demo"]),
+        "drew": ("tenant", made.tenants["Drew Sample"]),
+    }
+    emails = {who: f"{name}-{who}.{tag}@example.com" for who in people}
+    invites = {
+        who: accounts.create_invite(app, made.pmc_id, kind, person, emails[who], None).token
+        for who, (kind, person) in people.items()
+    }
+    return {"pmc_id": str(made.pmc_id), "emails": emails, **invites}
 
 
 if __name__ == "__main__":

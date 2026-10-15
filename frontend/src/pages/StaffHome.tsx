@@ -18,6 +18,7 @@ type Person = {
   person_id: string;
   name: string;
   email: string | null;
+  login_id: string | null;
   status: "no login" | "invited" | "active" | "disabled";
 };
 
@@ -33,12 +34,16 @@ export const LOGIN: Record<Person["status"], { label: string; tone: BadgeTone }>
 const ROLE: Record<Person["kind"], string> = { staff: "Staff", owner: "Owner", tenant: "Tenant" };
 
 // Staff invite the PMC's owners and tenants (and each other) and download reports. Each invite
-// link is shown once, to copy and send yourself: the PMS sends no email yet.
+// link is shown once, to copy and send yourself: the PMS sends no email yet. A login is
+// disabled for good (no new invite brings it back), so Disable asks before it does anything.
 export function StaffHome({ me }: { me: Me }) {
   const [people, setPeople] = useState<Person[] | null>(null);
   const [emails, setEmails] = useState<Record<string, string>>({});
   const [links, setLinks] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
+  const [done, setDone] = useState("");
+  // The person whose login staff asked to disable, waiting for them to say yes.
+  const [disabling, setDisabling] = useState<string | null>(null);
   // Counts the leasing card's changes, so the offers card sees a new approval.
   const [decided, setDecided] = useState(0);
   const today = day(new Date());
@@ -51,8 +56,22 @@ export function StaffHome({ me }: { me: Me }) {
   }
   useEffect(refresh, []);
 
+  async function disable(person: Person) {
+    setError("");
+    setDone("");
+    try {
+      await api.post(`/api/logins/${person.login_id}/disable`);
+      setDisabling(null);
+      setDone(`${person.name}'s login is disabled; they are signed out.`);
+      refresh();
+    } catch (failed) {
+      setError(failed instanceof ApiError ? failed.detail : String(failed));
+    }
+  }
+
   async function invite(person: Person) {
     setError("");
+    setDone("");
     try {
       const link = await api.post<Link>("/api/invites", {
         kind: person.kind,
@@ -87,6 +106,7 @@ export function StaffHome({ me }: { me: Me }) {
       </Card>
       <Card title="People who can sign in">
         <Notice tone="error">{error}</Notice>
+        <Notice tone="info">{done}</Notice>
         {people === null ? (
           <Notice tone="info">Loading</Notice>
         ) : (
@@ -123,9 +143,29 @@ export function StaffHome({ me }: { me: Me }) {
                     </td>
                     <td className="text-right">
                       {person.person_id !== me.person_id && person.status !== "disabled" && (
-                        <Button variant="secondary" size="sm" onClick={() => invite(person)}>
-                          {person.status === "no login" ? "Invite" : "New invite"}
-                        </Button>
+                        <span className="inline-flex gap-2">
+                          <Button variant="secondary" size="sm" onClick={() => invite(person)}>
+                            {person.status === "no login" ? "Invite" : "New invite"}
+                          </Button>
+                          {person.login_id && disabling !== person.person_id && (
+                            <Button variant="ghost" size="sm" onClick={() => setDisabling(person.person_id)}>
+                              Disable
+                            </Button>
+                          )}
+                        </span>
+                      )}
+                      {disabling === person.person_id && (
+                        <div className="mt-2 flex flex-wrap items-center justify-end gap-2 text-left">
+                          <span className="text-sm text-ink-muted">
+                            {person.name} can't sign in again, and is signed out now.
+                          </span>
+                          <Button variant="secondary" size="sm" onClick={() => disable(person)}>
+                            Disable login
+                          </Button>
+                          <Button variant="ghost" size="sm" onClick={() => setDisabling(null)}>
+                            Cancel
+                          </Button>
+                        </div>
                       )}
                       {links[person.person_id] && (
                         <p className="mt-2 ml-auto max-w-xs text-left font-mono text-xs break-all text-ink-muted">

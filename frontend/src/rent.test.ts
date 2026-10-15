@@ -25,10 +25,10 @@ describe("rent", () => {
   });
   it("says what a bounce did, with its NSF fee when there is one", () => {
     expect(bounceSummary("1500.00", { transfers: ["r"], nsf_fee: null })).toBe(
-      "The $1,500.00 payment is owed again.",
+      "The $1,500.00 payment bounced and is undone.",
     );
     expect(bounceSummary("1500.00", { transfers: ["r", "s"], nsf_fee: "35.00" })).toBe(
-      "The $1,500.00 payment is owed again, with a $35.00 NSF fee.",
+      "The $1,500.00 payment bounced and is undone; a $35.00 NSF fee is charged.",
     );
   });
   it("reads what a lease owes", () => {

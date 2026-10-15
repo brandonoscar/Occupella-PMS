@@ -24,7 +24,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from pms import accounts, exports
-from pms.api.deps import Conn, Staff, Tenant
+from pms.api.deps import Conn, Staff, Tenant, refusal
 from pms.leasing import esign
 
 router = APIRouter()
@@ -270,7 +270,7 @@ def make_offer(
             ),
         ).fetchone()
     except psycopg.errors.CheckViolation as refused:
-        raise HTTPException(409, str(refused).splitlines()[0].removeprefix("trust: ")) from None
+        raise HTTPException(409, refusal(refused)) from None
     assert row is not None
     offer_id = row[0]
     with conn.cursor() as cur:
@@ -425,7 +425,7 @@ def complete(request: Request, session: Staff, conn: Conn, offer_id: UUID) -> Of
             (session.pmc_id, offer_id, session.person_id),
         )
     except (psycopg.errors.CheckViolation, psycopg.errors.ExclusionViolation) as refused:
-        raise HTTPException(409, str(refused).splitlines()[0].removeprefix("trust: ")) from None
+        raise HTTPException(409, refusal(refused)) from None
     return offer_of(conn, session.pmc_id, offer_id)
 
 

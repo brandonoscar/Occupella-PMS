@@ -168,7 +168,7 @@ describe("RentPage", () => {
     });
     fireEvent.click(within(lease).getByRole("button", { name: "Record the bounce" }));
     expect(
-      await within(lease).findByText("The $1,500.00 payment is owed again, with a $35.00 NSF fee."),
+      await within(lease).findByText("The $1,500.00 payment bounced and is undone; a $35.00 NSF fee is charged."),
     ).toBeTruthy();
 
     const calls = posted(fetch);

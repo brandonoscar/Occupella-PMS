@@ -78,6 +78,15 @@ jobs:
         run: |
           docker run --rm --network host --ipc host -v "$PWD/frontend:/w" -w /w -e CI=1 \
             "$PLAYWRIGHT_IMAGE" npx playwright test
+      - name: Every feature verified in this run (ci/features.toml)
+        run: |
+          # Playwright's own list of the browser tests, and the API's access log of the run: each
+          # feature's tests exist, every test belongs to a feature, every operation a feature
+          # claims was called, and no request was answered with a server error.
+          docker run --rm -v "$PWD/frontend:/w" -w /w "$PLAYWRIGHT_IMAGE" \
+            npx playwright test --list --reporter=json > "$RUNNER_TEMP/browser-tests.json"
+          python -m tools.check_features --browser-tests "$RUNNER_TEMP/browser-tests.json" \
+            --api-log "$RUNNER_TEMP/api.log"
       - name: Keep the report and the API's log
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

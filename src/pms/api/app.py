@@ -59,7 +59,7 @@ from pms.api import (
     tenant,
     today,
 )
-from pms.api.deps import COOKIE, Conn, Current, Staff, download
+from pms.api.deps import COOKIE, Conn, Current, Staff, download, refusal
 from pms.leasing import esign, screening
 
 HEALTH_TIMEOUT = 2.0  # seconds to wait for a database connection before answering 503
@@ -234,7 +234,7 @@ def create_app(settings: Settings) -> FastAPI:
     @app.exception_handler(psycopg.errors.InsufficientPrivilege)
     async def not_allowed(request: Request, error: psycopg.Error) -> JSONResponse:
         # A staff member without the role a write takes (the transaction is rolled back).
-        reason = str(error).splitlines()[0].removeprefix("trust: ")
+        reason = refusal(error)
         return JSONResponse({"detail": reason}, 403)
 
     def signed_in(response: Response, signed: accounts.Signed, conn: Conn) -> Me:

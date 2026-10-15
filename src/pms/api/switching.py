@@ -26,7 +26,7 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, StringConstraints
 
 from pms import exports, statements
-from pms.api.deps import Conn, Staff
+from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/switching")
 
@@ -37,10 +37,6 @@ CENT = Decimal("0.01")
 
 def cents(value: Decimal) -> str:
     return exports.text(Decimal(value).quantize(CENT))
-
-
-def reason(refused: psycopg.Error) -> str:
-    return str(refused).splitlines()[0].removeprefix("trust: ")
 
 
 def one(conn: psycopg.Connection[Any], query: str, params: tuple[Any, ...]) -> Any:
@@ -323,7 +319,7 @@ def import_lease(names: Names, row: Row) -> None:
                 (pmc, unit, starts, ends, rent, tenants),
             )
     except psycopg.errors.ExclusionViolation as refused:
-        raise Bad(f"line {row.line}: {reason(refused)}") from None
+        raise Bad(f"line {row.line}: {refusal(refused)}") from None
     names.added += 1
 
 
@@ -364,7 +360,7 @@ def import_charge(names: Names, row: Row) -> None:
                 (pmc, lease, due, kind, amount, memo),
             )
     except (psycopg.errors.UniqueViolation, psycopg.errors.CheckViolation) as refused:
-        raise Bad(f"line {row.line}: {reason(refused)}") from None
+        raise Bad(f"line {row.line}: {refusal(refused)}") from None
     names.added += 1
 
 
@@ -468,7 +464,7 @@ def ledger_account(names: Names, bank: UUID, row: Row) -> str:
                 )
             )
     except psycopg.errors.CheckViolation as refused:  # a deposit in an operating account
-        raise Bad(f"line {row.line}: {reason(refused)}") from None
+        raise Bad(f"line {row.line}: {refusal(refused)}") from None
 
 
 class Opened(BaseModel):
@@ -512,9 +508,9 @@ def open_balances(session: Staff, conn: Conn, new: Opening) -> Opened:
             ),
         )
     except psycopg.errors.InvalidParameterValue as bad:  # an amount, a date still to come
-        raise HTTPException(422, reason(bad)) from None
+        raise HTTPException(422, refusal(bad)) from None
     except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
     return Opened(accounts=len(balances))
 
 
@@ -607,7 +603,7 @@ def carry_items(session: Staff, conn: Conn, new: Items) -> Counted:
                         ),
                     )
             except psycopg.errors.CheckViolation as refused:  # no opening, signed off, too late
-                raise HTTPException(409, f"line {row.line}: {reason(refused)}") from None
+                raise HTTPException(409, f"line {row.line}: {refusal(refused)}") from None
             added += 1
     except Bad as bad:
         raise HTTPException(422, str(bad)) from None
@@ -629,7 +625,7 @@ def sign_off(session: Staff, conn: Conn, new: SignOff) -> None:
             (session.pmc_id, new.bank_account_id, session.person_id),
         )
     except psycopg.errors.CheckViolation as refused:  # no opening balances, signed off
-        raise HTTPException(409, reason(refused)) from None
+        raise HTTPException(409, refusal(refused)) from None
 
 
 # --- where each trust bank account stands ---------------------------------------------------------
