@@ -61,7 +61,7 @@ Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 from dataclasses import dataclass, replace
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import psycopg
 import pytest
@@ -1551,7 +1551,9 @@ class RentRollMachine(RuleBasedStateMachine):
         self.assess(role, late_day + timedelta(days=data.draw(st.integers(0, 5))))
 
     def assess(self, role, as_of):
-        expected = {}
+        """The late fee run: the rents past their grace, in the order their grace ends (then by
+        due date, then id), each seeing the fees charged before it, as a run every day would."""
+        due = []
         for charge_id, rent in self.charges.items():
             if rent.kind != "rent" or charge_id in self.late_fees:
                 continue
@@ -1559,6 +1561,19 @@ class RentRollMachine(RuleBasedStateMachine):
             if terms is None or rent.due_on + timedelta(days=terms.grace) >= as_of:
                 continue
             late_day = rent.due_on + timedelta(days=terms.grace + 1)
+            due.append((late_day, rent.due_on, charge_id, terms))
+
+        assessed = assess_late_fees(self.conns[role], self.pmc_id, as_of)
+        # The fee charges the run made, by rent, so the model orders them by the same ids; a
+        # rent the run left alone gets an id of its own, and the late fee check tells them apart.
+        fee_ids = dict(
+            self.conn.execute(
+                "SELECT rent_charge_id, fee_charge_id FROM trust_late_fees WHERE pmc_id = %s",
+                (self.pmc_id,),
+            ).fetchall()
+        )
+        charged = 0
+        for late_day, _, charge_id, terms in sorted(due, key=lambda d: d[:3]):
             unpaid = self.open_by(charge_id, datetime.combine(late_day, time(0), tzinfo=UTC))
             if unpaid <= 0:
                 continue
@@ -1566,16 +1581,15 @@ class RentRollMachine(RuleBasedStateMachine):
             if terms.maximum is not None:
                 fee = min(fee, terms.maximum)
             if fee > 0:
-                expected[charge_id] = (unpaid, fee, late_day)
+                fee_id = fee_ids.get(charge_id) or uuid4()
+                self.late_fees[charge_id] = (unpaid, fee, fee_id)
+                # Its fee is open from now on: the lease's credits may come off it before the
+                # rents whose grace ends later.
+                lease_id = self.charges[charge_id].lease_id
+                self.charges[fee_id] = Charge(lease_id, late_day, "fee", fee)
+                charged += 1
 
-        assert assess_late_fees(self.conns[role], self.pmc_id, as_of) == len(expected)
-
-        for rent_id, (unpaid, fee, late_day) in expected.items():
-            (fee_id,) = self.conn.execute(
-                "SELECT fee_charge_id FROM trust_late_fees WHERE rent_charge_id = %s", (rent_id,)
-            ).fetchone()
-            self.late_fees[rent_id] = (unpaid, fee, fee_id)
-            self.charges[fee_id] = Charge(self.charges[rent_id].lease_id, late_day, "fee", fee)
+        assert assessed == charged
 
     # --- rules: the reports --------------------------------------------------------------
 

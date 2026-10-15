@@ -784,6 +784,7 @@ CREATE FUNCTION public.trust_assess_late_fees(p_pmc_id uuid, p_as_of date) RETUR
     AS $$
 DECLARE
     v_rent record;
+    v_due uuid[] := '{}'::uuid[];
     v_cutoff timestamptz;
     v_unpaid numeric;
     v_fee numeric;
@@ -800,15 +801,16 @@ BEGIN
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
 
+    -- The rents past their grace without a late fee, locked one by one in id order: one lock
+    -- order for every run, so two at once can't deadlock.
     FOR v_rent IN
-        SELECT c.id, c.lease_id, c.due_on, c.amount, p.id AS policy_id, p.grace_days,
-               p.flat_fee, p.percent, p.maximum
+        SELECT c.id
         FROM trust_charges AS c
         JOIN trust_leases AS l ON l.id = c.lease_id
         JOIN trust_units AS u ON u.id = l.unit_id
         -- The terms in force on the rent's due date: the latest starting on or before it.
         JOIN LATERAL (
-            SELECT t.id, t.grace_days, t.flat_fee, t.percent, t.maximum
+            SELECT t.grace_days
             FROM trust_late_fee_policies AS t
             WHERE t.property_id = u.property_id AND t.starts_on <= c.due_on
             ORDER BY t.starts_on DESC
@@ -819,16 +821,36 @@ BEGIN
           AND NOT EXISTS (
               SELECT f.rent_charge_id FROM trust_late_fees AS f WHERE f.rent_charge_id = c.id
           )
-        ORDER BY c.id  -- one lock order for every run, so two at once can't deadlock
+        ORDER BY c.id
     LOOP
         PERFORM c.id FROM trust_charges AS c WHERE c.id = v_rent.id FOR NO KEY UPDATE;
         CONTINUE WHEN EXISTS (
             SELECT f.rent_charge_id FROM trust_late_fees AS f WHERE f.rent_charge_id = v_rent.id
         );
+        v_due := v_due || v_rent.id;
+    END LOOP;
 
+    -- Then each, in the order its grace ends, as a run every day would reach them.
+    FOR v_rent IN
+        SELECT c.id, c.lease_id, c.due_on, p.id AS policy_id, p.grace_days, p.flat_fee,
+               p.percent, p.maximum
+        FROM trust_charges AS c
+        JOIN trust_leases AS l ON l.id = c.lease_id
+        JOIN trust_units AS u ON u.id = l.unit_id
+        JOIN LATERAL (
+            SELECT t.id, t.grace_days, t.flat_fee, t.percent, t.maximum
+            FROM trust_late_fee_policies AS t
+            WHERE t.property_id = u.property_id AND t.starts_on <= c.due_on
+            ORDER BY t.starts_on DESC
+            LIMIT 1
+        ) AS p ON true
+        WHERE c.id = ANY (v_due)
+        ORDER BY c.due_on + p.grace_days, c.due_on, c.id
+    LOOP
         v_cutoff := (v_rent.due_on + v_rent.grace_days + 1)::timestamp AT TIME ZONE 'UTC';
         -- What is open of it then: payments and bounces dated before then, and the lease's
-        -- credits due by its last day of grace, oldest charges first.
+        -- credits due by its last day of grace, oldest charges first (the fees this run charged
+        -- for the rents whose grace ended before its own among them).
         SELECT o.open INTO v_unpaid
         FROM trust_open_charges(p_pmc_id, v_rent.lease_id, v_cutoff) AS o
         WHERE o.charge_id = v_rent.id;
@@ -13897,4 +13919,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261015000052'),
     ('20261015000053'),
     ('20261015000054'),
-    ('20261015000055');
+    ('20261015000055'),
+    ('20261015000056');

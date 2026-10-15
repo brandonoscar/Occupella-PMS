@@ -232,8 +232,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   month charges the new lease its days. The run and an end wait for each other. A property's
   late fee terms (grace days, flat, percent of unpaid,
   cap) are in force from a date; `trust_assess_late_fees` charges a rent still open at the
-  end of its last grace day (UTC) one late fee under the terms in force on its due date. READ
-  COMMITTED. What is open of a charge (`trust_open_charges`, migration 0049) is its amount less
+  end of its last grace day (UTC) one late fee under the terms in force on its due date, reaching
+  its rents in the order their grace ends so one run charges what a run every day would (a late
+  fee is an open charge too; migration 0056). READ COMMITTED. What is open of a charge (`trust_open_charges`, migration 0049) is its amount less
   payments matched, plus what bounced, less its share of the lease's credits, which come off
   the oldest open charges first (by due date, then id), as the delinquency report counts them. A property's NSF fee is in force from a date too (migration 0044, 0 charges
   none); `trust_charge_nsf_fee` charges the lease of a returned payment (postings under one key
