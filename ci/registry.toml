@@ -991,3 +991,14 @@ tests = [
   "tests/test_more_reports.py::test_a_w9_counts_from_the_day_it_was_kept_until_the_day_it_was_removed",
   "tests/test_more_reports.py::test_each_report_runs_for_the_app_and_the_ai_on_its_own_pmc_only",
 ]
+
+[[report]]
+id = "budget-vs-actual"
+statement = "An owner's budget against their income statement over days (UTC): per property and across them, each line's budget (each month's latest budget row, for the months that start within the days), what the income statement has for it, and the difference; then total income, total expenses and net income. With no budget every budget is 0.00 and every actual is the statement's. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_budget_lines.py::test_a_lines_latest_row_is_its_budget",
+  "tests/test_budget_lines.py::test_the_report_counts_the_months_that_start_within_its_days",
+  "tests/test_budget_lines.py::test_the_report_is_the_owners_and_says_what_is_wrong",
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+]

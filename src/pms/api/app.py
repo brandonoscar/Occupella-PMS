@@ -40,6 +40,7 @@ from pydantic import BaseModel, Field
 
 from pms import accounts, email, exports
 from pms.api import (
+    budgets,
     documents,
     fake_esign,
     journal,
@@ -356,6 +357,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(payables.router)
     app.include_router(reconcile.router)
     app.include_router(journal.router)
+    app.include_router(budgets.router)
     app.include_router(switching.router)
     app.include_router(staff.router)
     app.include_router(moveout.router)

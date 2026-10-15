@@ -5,6 +5,7 @@ import { Notice } from "./components/Notice";
 import { ApplicationStatusPage } from "./pages/ApplicationStatusPage";
 import { ApplyPage } from "./pages/ApplyPage";
 import { BillsPage } from "./pages/BillsPage";
+import { BudgetsPage } from "./pages/BudgetsPage";
 import { ESignPage } from "./pages/ESignPage";
 import { InvitePage } from "./pages/InvitePage";
 import { ListingsPage } from "./pages/ListingsPage";
@@ -63,6 +64,7 @@ function Home({ path }: { path: string }) {
     if (path === "/rent") return <RentPage me={me} />;
     if (path === "/bills") return <BillsPage me={me} />;
     if (path === "/owners") return <OwnersPage me={me} />;
+    if (path === "/budgets") return <BudgetsPage me={me} />;
     if (path === "/move-out") return <MoveOutPage me={me} />;
     if (path === "/documents") return <DocumentsPage me={me} />;
     if (path === "/reconcile") return <ReconcilePage me={me} />;

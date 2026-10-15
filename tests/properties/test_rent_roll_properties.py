@@ -1747,6 +1747,22 @@ class RentRollMachine(RuleBasedStateMachine):
             *((name, item, line, amount) for item, line, amount in expected),
             *((None, f"all properties: {item}", line, amount) for item, line, amount in expected),
         ]
+        # With no budget, the budget against actual is every line of it at a budget of 0.00, and
+        # each line's actual is the statement's.
+        against = (
+            self.conns[role]
+            .execute(
+                "SELECT property, item, budget, actual, actual_less_budget"
+                " FROM trust_report_budget_vs_actual(%s, %s, %s, %s) WHERE line > 4",
+                (self.pmc_id, self.pmc.owners[owner].owner_id, first, last),
+            )
+            .fetchall()
+        )
+        lines = [(i, amount) for i, _, amount in expected if not i.startswith("Schedule E")]
+        assert against == [
+            *((name, item, 0, amount, amount) for item, amount in lines),
+            *((None, f"all properties: {item}", 0, amount, amount) for item, amount in lines),
+        ]
 
     @rule(
         role=st.sampled_from(["owner", "app", "ai"]), day=st.integers(min_value=-5, max_value=640)

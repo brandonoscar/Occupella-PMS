@@ -115,7 +115,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   PMC over from another system at `/switching` (`src/pms/api/switching.py`), see and change
   staff roles at `/staff` (`src/pms/api/staff.py`), handle move-outs at `/move-out`
   (`src/pms/api/moveout.py`), keep documents at `/documents` (`src/pms/api/documents.py`), and
-  correct the books with journal entries at `/journal` (`src/pms/api/journal.py`).
+  correct the books with journal entries at `/journal` (`src/pms/api/journal.py`), and budget
+  each owner's property at `/budgets` (`src/pms/api/budgets.py`).
   npm packages are pinned exactly and their
   licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
   owner only: no request names an owner, a property or a PMC, and a bill named in a path is
@@ -394,6 +395,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   effect, since when; never leased is unknown), work orders (status and vendor as of a day,
   days open, billed), and directories of tenants, owners and vendors (names and what they are
   to the company on a day; the PMS keeps no other contact data).
+- Budgets (migration 0055): a month's budget of an owner's property account on one of the
+  income statement's lines (each income class, the management and leasing fees, an expense
+  account, bills in none; `trust_budgets`, append-only, a line's latest row counting). Staff
+  set a line's year at `/budgets` (`src/pms/api/budgets.py`), spread over its months to the
+  cent; a month left as it was writes nothing. `trust_report_budget_vs_actual` lays an owner's
+  budget for the months that start within some days beside their income statement. A budget
+  moves no money.
 
 ## Run the checks
 
