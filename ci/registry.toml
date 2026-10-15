@@ -1014,3 +1014,23 @@ tests = [
   "tests/api/test_custom_roles.py::test_every_staff_write_is_in_an_area_or_said_not_to_be",
   "tests/api/test_custom_roles.py::test_a_role_limits_what_its_staff_change_and_not_what_they_see",
 ]
+
+[[report]]
+id = "vendor-insurance"
+statement = "Each vendor's insurance on a day: per coverage, of the policies started by then, the one that expires last (a policy running then before any that ran out), with its standing (expired, expires today, expires in N days up to 30, else current); a vendor with none started is listed with no insurance on file. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_vendor_insurance_and_inspections.py::test_a_vendor_is_covered_by_the_policy_running_on_the_day",
+  "tests/test_vendor_insurance_and_inspections.py::test_vendor_insurance_needs_a_day_and_a_known_pmc",
+  "tests/properties/test_vendor_insurance_properties.py::test_a_vendors_coverage_is_the_policy_running_on_the_day_else_the_latest_to_run_out",
+]
+
+[[report]]
+id = "inspection"
+statement = "A lease's latest move-in and move-out inspections (by the day each was done, then as recorded) side by side: each room once whatever its case, named as the move-in names it, in the move-in's order then the move-out's; changed only when both name it, and then exactly when the conditions differ; each side's note. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_vendor_insurance_and_inspections.py::test_the_latest_inspection_of_each_kind_counts",
+  "tests/test_vendor_insurance_and_inspections.py::test_a_lease_with_no_inspection_says_so",
+  "tests/properties/test_vendor_insurance_properties.py::test_an_inspection_report_lays_the_latest_of_each_kind_side_by_side",
+]

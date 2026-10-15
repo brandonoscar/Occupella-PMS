@@ -7,7 +7,7 @@ import { Notice } from "../components/Notice";
 import { PageHeader, Shell } from "../components/Shell";
 import { navigate } from "../router";
 import type { Today } from "../today";
-import { applicationLine, billLine, journalLine, lateLine, monthEndLine, offerLine } from "../today";
+import { applicationLine, billLine, insuranceLine, journalLine, lateLine, monthEndLine, offerLine } from "../today";
 import { STAFF_NAV } from "./staffNav";
 
 type Group = { title: string; go: string; goLabel: string; lines: string[] };
@@ -39,6 +39,8 @@ export function TodayPage({ me }: { me: Me }) {
           lines: today.unsigned_offers.map(offerLine) },
         { title: "Journal entries waiting", go: "/journal", goLabel: "Journal",
           lines: today.journal_waiting.map(journalLine) },
+        { title: "Vendor insurance", go: "/vendors", goLabel: "Vendors",
+          lines: today.vendor_insurance.map(insuranceLine) },
       ].filter((group) => group.lines.length > 0)
     : [];
   const count = groups.reduce((sum, group) => sum + group.lines.length, 0);
@@ -58,7 +60,7 @@ export function TodayPage({ me }: { me: Me }) {
         !error && <Notice tone="info">Loading</Notice>
       ) : groups.length === 0 ? (
         <EmptyState icon={CircleCheck} title="Nothing is late or waiting."
-          body="Late rent, bills due this week, month-end, applications, unsigned offers and journal entries waiting show here." />
+          body="Late rent, bills due this week, month-end, applications, unsigned offers, journal entries waiting and vendor insurance running out show here." />
       ) : (
         <div className="divide-y divide-line rounded-md border border-card-edge">
           {groups.map((group) => (

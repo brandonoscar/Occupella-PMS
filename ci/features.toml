@@ -376,3 +376,25 @@ operations = [
 browser = [
   "features.spec.ts › a bookkeeper proposes journal entries; the manager posts one, the ledger refuses one that is too much, and the manager declines it",
 ]
+
+[[feature]]
+id = "vendor-insurance"
+statement = "Staff record each vendor's insurance policies (a renewal is a new policy) and see, for every vendor, the W-9 on file and each coverage as it stands today: current, expiring within 30 days, or expired; Today lists what is not current, and the vendor insurance report downloads like every report."
+operations = [
+  "GET /api/vendors",
+  "POST /api/vendors/{vendor_id}/insurance",
+]
+browser = [
+  "features.spec.ts › staff record a vendor's insurance, see it running out on Today, and record the renewal",
+]
+
+[[feature]]
+id = "inspections"
+statement = "Staff record a lease's move-in and move-out inspections room by room (each room once, its condition and a note), and download the latest two side by side, each room's change marked."
+operations = [
+  "GET /api/inspections",
+  "POST /api/inspections",
+]
+browser = [
+  "features.spec.ts › staff record a lease's move-in and move-out inspections room by room, and download them side by side",
+]

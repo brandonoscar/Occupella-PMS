@@ -43,6 +43,8 @@ def same_in_excel(value, read):
     """What a report value reads back as from Excel."""
     if value is None or isinstance(value, str):
         return read == value
+    if isinstance(value, uuid.UUID):
+        return read == str(value)
     if isinstance(value, Decimal):
         return Decimal(str(read)) == value
     if isinstance(value, datetime):

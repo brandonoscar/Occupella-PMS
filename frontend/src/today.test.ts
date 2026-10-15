@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { Application } from "./leasing";
 import type { Offer } from "./offers";
 import type { Bill } from "./payables";
-import { applicationLine, billLine, daysBetween, journalLine, lateLine, monthEndLine, monthLabel, offerLine } from "./today";
+import {
+  applicationLine, billLine, daysBetween, insuranceLine, journalLine, lateLine, monthEndLine, monthLabel, offerLine,
+} from "./today";
 
 const BILL: Bill = {
   id: "b1", vendor: "Vendor A", reference: "INV-1", account: "a1", owner: "Owner A",
@@ -91,5 +93,12 @@ describe("today", () => {
     expect(journalLine(entry)).toBe(
       "Rent deposited to the wrong property: $25.00, dated 2026-10-10, proposed by Bookkeeper 1",
     );
+  });
+
+  it("reads a vendor's insurance that ran out or is running out", () => {
+    expect(insuranceLine({
+      vendor_id: "v1", vendor: "Vendor 1", coverage: "general liability", expires_on: "2026-07-15",
+      standing: "expires in 15 days",
+    })).toBe("Vendor 1, general liability: expires in 15 days (2026-07-15)");
   });
 });

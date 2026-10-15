@@ -1,0 +1,9 @@
+line	item	vendor	vendor_id	coverage	carrier	policy_number	starts_on	expires_on	limit_amount	standing
+1	PMC	Golden PMC	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+2	as of	2026-06-30	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+3	policy	Vendor 1	<uuid1>	general liability	Carrier A	GL-1	2025-07-01	2026-06-30	2000000.00	expires today
+4	policy	Vendor 1	<uuid1>	workers compensation	Carrier B	WC-1	2026-01-01	2026-12-31	1000000.00	current
+5	policy	Vendor 2	<uuid2>	commercial auto	Carrier C	AU-1	2025-01-01	2026-05-31	NULL	expired
+6	policy	Vendor 2	<uuid2>	general liability	Carrier A	GL-2	2026-06-01	2026-07-15	500000.00	expires in 15 days
+7	no insurance on file	Vendor 3	<uuid3>	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+8	no insurance on file	Vendor 4	<uuid4>	NULL	NULL	NULL	NULL	NULL	NULL	NULL

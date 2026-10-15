@@ -10,13 +10,14 @@ import { Card, PageHeader, Shell } from "../components/Shell";
 import { day, money } from "../money";
 import type { MoveOut } from "../moveout";
 import { chargeLabel, hasEnded, leaseLabel, moveOutStatus, preview } from "../moveout";
+import { InspectionsPanel } from "./InspectionsPanel";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 
-// Staff's move-outs: end the lease, charge what the tenants owe for cleaning or damage, and
-// return their deposits. The return keeps what the lease owes for the owner and gives the rest
-// back; the statement for the tenants is a report. It records what the bank paid; the PMS moves
-// no money itself.
+// Staff's move-outs: end the lease, inspect it on the way in and out, charge what the tenants
+// owe for cleaning or damage, and return their deposits. The return keeps what the lease owes
+// for the owner and gives the rest back; the statement for the tenants is a report. It records
+// what the bank paid; the PMS moves no money itself.
 export function MoveOutPage({ me }: { me: Me }) {
   const [leases, setLeases] = useState<MoveOut[] | null>(null);
   const [error, setError] = useState("");
@@ -109,6 +110,7 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
           Lease {lease.starts_on} to {lease.ends_on ?? "month to month"} · owes {money(lease.owed)} ·
           deposits held {money(lease.held)}
         </p>
+        <InspectionsPanel leaseId={id} label={leaseLabel(lease)} />
         {lease.settled ? (
           <div className="flex flex-wrap items-center gap-3">
             <p className="text-sm" aria-label={`Returned, ${leaseLabel(lease)}`}>

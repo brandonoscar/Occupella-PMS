@@ -105,6 +105,11 @@ TABLES = {
     "trust_custom_role_areas_id_seq": set(),
     "trust_staff_custom_roles": {"SELECT", "INSERT"},
     "trust_staff_custom_roles_id_seq": set(),
+    # Vendor insurance and inspections (migration 0058): staff record them; a renewal or a
+    # redone inspection is a new row.
+    "trust_vendor_insurance": {"SELECT", "INSERT"},
+    "trust_inspections": {"SELECT", "INSERT"},
+    "trust_inspection_items": {"SELECT", "INSERT"},
     "trust_listing_removals": {"SELECT", "INSERT"},
     "trust_lease_end_adjustments": {"SELECT"},  # written only by trust_end_lease
     "trust_applications": {"SELECT", "INSERT"},
@@ -281,6 +286,8 @@ FUNCTIONS = {
     "trust_report_income_statement(uuid,uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_balance_sheet(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_budget_vs_actual(uuid,uuid,date,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_vendor_insurance(uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_inspection(uuid,uuid)": {"trust_app", "trust_ai_agent"},
     "trust_report_cash_flow(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_vacancy(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_work_orders(uuid,date)": {"trust_app", "trust_ai_agent"},
@@ -341,6 +348,7 @@ FUNCTIONS = {
     "trust_check_document_file()": {"PUBLIC"},
     "trust_check_budget()": {"PUBLIC"},
     "trust_name_custom_role_changer()": {"PUBLIC"},
+    "trust_name_recorder()": {"PUBLIC"},
     "trust_check_document_has_file()": {"PUBLIC"},
     "trust_check_recurring_charge_amount()": {"PUBLIC"},
 }

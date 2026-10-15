@@ -185,7 +185,9 @@ over days, from opening to closing, by what came in and went out) and `trust_rep
 order's status, vendor, days open and what was billed) and `trust_report_tenant_directory`,
 `trust_report_owner_directory` and `trust_report_vendor_directory` (who each is to the company
 on a day) and `trust_report_budget_vs_actual` (an owner's budget beside their income statement,
-line by line). Run it with
+line by line) and `trust_report_vendor_insurance` (each vendor's coverage on a day and how it
+stands) and `trust_report_inspection` (a lease's move-in and move-out inspections side by side).
+Run it with
 `pytest tests/golden`, and update deliberately with `pytest tests/golden --update-goldens`.
 
 **coverage.yml** (PRs and main): Python coverage (coverage.py) and coverage of the PL/pgSQL

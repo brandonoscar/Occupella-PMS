@@ -183,6 +183,7 @@ def test_a_quiet_day_shows_nothing(client, staff):
         "applications": [],
         "unsigned_offers": [],
         "journal_waiting": [],
+        "vendor_insurance": [],
     }
 
 

@@ -23,6 +23,7 @@ import { StaffPage } from "./pages/StaffPage";
 import { SwitchPage } from "./pages/SwitchPage";
 import { TenantHome } from "./pages/TenantHome";
 import { TodayPage } from "./pages/TodayPage";
+import { VendorsPage } from "./pages/VendorsPage";
 import { navigate, usePath } from "./router";
 
 export function App() {
@@ -67,6 +68,7 @@ function Home({ path }: { path: string }) {
     if (path === "/budgets") return <BudgetsPage me={me} />;
     if (path === "/move-out") return <MoveOutPage me={me} />;
     if (path === "/documents") return <DocumentsPage me={me} />;
+    if (path === "/vendors") return <VendorsPage me={me} />;
     if (path === "/reconcile") return <ReconcilePage me={me} />;
     if (path === "/journal") return <JournalPage me={me} />;
     if (path === "/switching") return <SwitchPage me={me} />;
