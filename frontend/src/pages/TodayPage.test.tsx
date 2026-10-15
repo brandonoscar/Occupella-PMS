@@ -16,7 +16,7 @@ const ME: Me = {
 
 const QUIET: Today = {
   on: "2026-10-13", late_rent: [], bills_due: [], unreconciled: [], applications: [], unsigned_offers: [],
-  journal_waiting: [], vendor_insurance: [],
+  journal_waiting: [], vendor_insurance: [], company_fees: [],
 };
 
 function server(answer: Today | { detail: string }, status = 200) {
@@ -98,6 +98,25 @@ describe("TodayPage", () => {
     const insurance = await screen.findByRole("region", { name: "Vendor insurance" });
     expect(within(insurance).getByText("Vendor 1, commercial auto: expired (2026-05-31)")).toBeTruthy();
     expect(within(insurance).getByRole("link", { name: "Open Vendors" }).getAttribute("href")).toBe("/vendors");
+  });
+
+  it("lists the company's fees left in trust, with the day to take them out by", async () => {
+    server({ ...QUIET, company_fees: [
+      { bank_account_id: "b1", bank_account: "Operating trust", held: "150.00", since: "2026-09-10",
+        days_held: 33, take_by: "2026-10-05" },
+      { bank_account_id: "b2", bank_account: "Second trust", held: "20.00", since: "2026-10-01",
+        days_held: 12, take_by: "2026-10-26" },
+    ] });
+    render(<TodayPage me={ME} />);
+
+    const fees = await screen.findByRole("region", { name: "Company fees in trust" });
+    expect(within(fees).getByText(
+      "Operating trust: $150.00 of the company's fees, the oldest since 2026-09-10 (33 days); past 2026-10-05 to take them out",
+    )).toBeTruthy();
+    expect(within(fees).getByText(
+      "Second trust: $20.00 of the company's fees, the oldest since 2026-10-01 (12 days); take them out by 2026-10-26",
+    )).toBeTruthy();
+    expect(within(fees).getByRole("link", { name: "Open Owners" }).getAttribute("href")).toBe("/owners");
   });
 
   it("says so in one line on a quiet day", async () => {

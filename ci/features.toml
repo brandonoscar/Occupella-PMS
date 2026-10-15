@@ -151,6 +151,17 @@ browser = [
 ]
 
 [[feature]]
+id = "company-fees"
+statement = "Staff see the company's earned fees still in each trust bank account, since when the oldest waited and the day to take them out by (25 days, the strictest state deadline found), on the owners page and on Today, and take them out to the company once per request, never more than is there."
+operations = [
+  "GET /api/payables/company-fees",
+  "POST /api/payables/company-fees",
+]
+browser = [
+  "features.spec.ts › staff see the company's fees left in trust on Today and take them out to the company, once",
+]
+
+[[feature]]
 id = "month-end"
 statement = "Staff import a bank statement, match its lines to the books (the sure ones at once), undo a match, prepare the month when nothing is missing, and another staff member who may approve approves it, closing the account through it."
 operations = [

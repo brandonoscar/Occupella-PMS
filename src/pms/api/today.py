@@ -1,6 +1,6 @@
 """Staff's day at a glance (/today): late rent, bills due, months not reconciled, applications
 waiting for a decision, lease offers waiting for signatures, journal entries waiting to be
-posted and vendor insurance expired or running out.
+posted, vendor insurance expired or running out, and the company's earned fees still in trust.
 
 Read only. Each part comes from the route of the page that does that work (rent, bills,
 month-end, leasing, the journal, vendors), so the two never disagree; this only picks out what needs
@@ -61,6 +61,8 @@ class Today(BaseModel):
     unsigned_offers: list[offers.OfferOut]  # sent to sign, not signed by everyone
     journal_waiting: list[journal.Entry]  # proposed, not yet posted or declined
     vendor_insurance: list[Lapsing]  # expired, or expiring within 30 days
+    # The company's earned fees still in a trust bank account, to take out (commingling).
+    company_fees: list[payables.CompanyFees]
 
 
 def months_ended(start: date, on: date) -> list[str]:
@@ -132,5 +134,8 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
         ],
         journal_waiting=[
             e for e in journal.journal(session, conn).entries if e.status == "waiting"
+        ],
+        company_fees=[
+            f for f in payables.held_fees(conn, session.pmc_id, day) if Decimal(f.held) > 0
         ],
     )

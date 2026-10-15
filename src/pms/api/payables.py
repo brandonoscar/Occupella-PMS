@@ -1,17 +1,18 @@
 """Staff's bills and owners' money: vendor bills (entered, approved by the owner when over the
 agreement's limit, set aside from the owner's account, paid), monthly recurring bills, the
-PMC's management and leasing fees, owner draws and owner contributions.
+PMC's management and leasing fees, owner draws and owner contributions, and the company's
+earned fees taken out of trust.
 
 Every step goes through the database's write paths (trust_set_aside_bill, trust_pay_bill,
 trust_enter_recurring_bills, trust_post_management_fee, trust_post_leasing_fee,
-trust_draw_owner, trust_record_owner_contribution), each once per bill, period, lease or
-request key, so a retry does nothing twice. A draw or a bill payment records what the bank
-paid out; the PMS sends no money itself.
+trust_draw_owner, trust_record_owner_contribution, trust_withdraw_pmc_fees), each once per
+bill, period, lease or request key, so a retry does nothing twice. A draw, a bill payment or
+the company's fees taken out record what the bank paid out; the PMS sends no money itself.
 """
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -874,3 +875,131 @@ def contribute(session: Staff, conn: Conn, new: Contribution) -> Moved:
     except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
         raise HTTPException(409, refusal(refused)) from None
     return Moved(transfer_id=moved)
+
+
+# --- the company's fees -----------------------------------------------------------------------
+
+
+class CompanyFees(BaseModel):
+    bank_account_id: UUID
+    bank_account: str
+    # The company's earned fees still in the trust bank account at the day's end.
+    held: str
+    # The day the oldest of them was taken from an owner (they come out oldest first), and how
+    # many days it has been there: earned fees left in trust are the company's own money mixed
+    # with its clients' (commingling).
+    since: date | None
+    days_held: int | None
+    # The day to take them out by: TAKE_WITHIN after the oldest came in.
+    take_by: date | None
+
+
+# Earned fees are the company's own money: every state forbids mixing them with what it holds
+# for others (commingling). The strictest deadline found to take them out is California's,
+# 25 days (10 CCR 2835); Texas gives 30 (22 TAC 535.146), Oregon a month, and West Virginia
+# forbids commingling with no number of days (W. Va. Code 30-40-18(f)). Taking them out within
+# 25 days meets each of them.
+TAKE_WITHIN = timedelta(days=25)
+
+
+COMPANY_FEES = """
+WITH moves AS (
+    SELECT a.ledger_account_id, e.id, e.amount, tr.event_at
+    FROM trust_ledger_accounts AS a
+    JOIN pgledger_entries AS e ON e.account_id = a.ledger_account_id
+    JOIN pgledger_transfers AS tr ON tr.id = e.transfer_id
+    WHERE a.pmc_id = %(pmc)s AND a.kind = 'pmc_income'
+      AND tr.event_at < (%(on)s + 1)::timestamp AT TIME ZONE 'UTC'
+),
+taken AS (
+    SELECT m.ledger_account_id, -sum(m.amount) AS amount
+    FROM moves AS m WHERE m.amount < 0
+    GROUP BY m.ledger_account_id
+),
+earned AS (
+    SELECT m.ledger_account_id, m.event_at,
+           sum(m.amount) OVER (
+               PARTITION BY m.ledger_account_id ORDER BY m.event_at, m.id
+           ) AS through
+    FROM moves AS m WHERE m.amount > 0
+)
+SELECT b.id, b.display_name,
+       coalesce((SELECT sum(m.amount) FROM moves AS m
+                 WHERE m.ledger_account_id = a.ledger_account_id), 0),
+       (SELECT min(x.event_at) FROM earned AS x
+        WHERE x.ledger_account_id = a.ledger_account_id
+          AND x.through > coalesce((SELECT t.amount FROM taken AS t
+                                    WHERE t.ledger_account_id = a.ledger_account_id), 0))
+FROM trust_ledger_accounts AS a
+JOIN trust_bank_accounts AS b ON b.id = a.bank_account_id
+WHERE a.pmc_id = %(pmc)s AND a.kind = 'pmc_income'
+ORDER BY b.display_name COLLATE "C", b.id
+"""
+
+
+def held_fees(conn: psycopg.Connection[Any], pmc_id: UUID, on: date) -> list[CompanyFees]:
+    found = []
+    for bank, name, held, oldest in conn.execute(
+        COMPANY_FEES, {"pmc": pmc_id, "on": on}
+    ).fetchall():
+        since = oldest.astimezone(UTC).date() if held > 0 and oldest is not None else None
+        found.append(
+            CompanyFees(
+                bank_account_id=bank,
+                bank_account=name,
+                held=cents(held),
+                since=since,
+                days_held=(on - since).days if since is not None else None,
+                take_by=since + TAKE_WITHIN if since is not None else None,
+            )
+        )
+    return found
+
+
+@router.get("/company-fees")
+def company_fees(
+    session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
+) -> list[CompanyFees]:
+    """The company's earned fees in each operating trust bank account at a day's end (today,
+    UTC, by default), and since when the oldest has waited to be taken out."""
+    return held_fees(conn, session.pmc_id, on or today())
+
+
+class FeeWithdrawal(BaseModel):
+    # Made by the page once per withdrawal, so sending it again takes nothing twice.
+    request_id: UUID
+    bank_account_id: UUID
+    # Leave out to take everything the fee account holds.
+    amount: Amount | None = None
+    on: date
+
+
+@router.post("/company-fees", status_code=201)
+def take_company_fees(session: Staff, conn: Conn, new: FeeWithdrawal) -> Taken:
+    """Records the company's earned fees paid out of a trust bank account to the company's own
+    account: at most what the fee account holds."""
+    not_after_today(new.on)
+    if (
+        conn.execute(
+            "SELECT 1 FROM trust_ledger_accounts"
+            " WHERE pmc_id = %s AND bank_account_id = %s AND kind = 'pmc_income'",
+            (session.pmc_id, new.bank_account_id),
+        ).fetchone()
+        is None
+    ):
+        raise HTTPException(404, "no trust bank account of the company holds its fees by that id")
+    try:
+        taken = one(
+            conn,
+            "SELECT trust_withdraw_pmc_fees(%s, %s, %s, %s, %s)",
+            (
+                session.pmc_id,
+                new.bank_account_id,
+                f"company-fees/{new.request_id}",
+                new.amount,
+                at(new.on),
+            ),
+        )
+    except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
+        raise HTTPException(409, refusal(refused)) from None
+    return Taken(amount=cents(taken))

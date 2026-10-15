@@ -4,7 +4,8 @@ import { entryTotal } from "./journal";
 import type { Application } from "./leasing";
 import { money } from "./money";
 import type { Offer } from "./offers";
-import type { Bill } from "./payables";
+import type { Bill, CompanyFees } from "./payables";
+import { companyFeesLabel } from "./payables";
 
 export type LateLease = {
   lease_id: string;
@@ -30,6 +31,7 @@ export type Today = {
   unsigned_offers: Offer[];
   journal_waiting: JournalEntry[];
   vendor_insurance: Lapsing[];
+  company_fees: CompanyFees[];
 };
 export type Lapsing = {
   vendor_id: string;
@@ -103,4 +105,11 @@ export function journalLine(entry: JournalEntry): string {
 // "Vendor 1, general liability: expires in 15 days (2026-07-15)".
 export function insuranceLine(policy: Lapsing): string {
   return `${policy.vendor}, ${policy.coverage}: ${policy.standing} (${policy.expires_on})`;
+}
+
+// "Operating trust: $150.00 of the company's fees, the oldest since 2026-09-20 (25 days); take
+// them out by 2026-10-15" (or "past 2026-10-15").
+export function companyFeesLine(fees: CompanyFees, on: string): string {
+  const by = fees.take_by === null ? "" : fees.take_by < on ? `; past ${fees.take_by} to take them out` : `; take them out by ${fees.take_by}`;
+  return `${fees.bank_account}: ${companyFeesLabel(fees)}${by}`;
 }

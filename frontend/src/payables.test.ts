@@ -1,8 +1,32 @@
 import { describe, expect, it } from "vitest";
-import type { Bill, OwnerMoney, Recurring } from "./payables";
-import { emailNote, feeLine, heldLabel, incomeStatementHref, lastMonthPeriod, nextStep, recurringLabel, statusTone } from "./payables";
+import type { Bill, CompanyFees, OwnerMoney, Recurring } from "./payables";
+import {
+  companyFeesDue,
+  companyFeesLabel,
+  emailNote,
+  feeLine,
+  heldLabel,
+  incomeStatementHref,
+  lastMonthPeriod,
+  nextStep,
+  recurringLabel,
+  statusTone,
+} from "./payables";
 
 describe("payables", () => {
+  it("reads the company's fees in trust and the day to take them out by", () => {
+    const held: CompanyFees = {
+      bank_account_id: "b1", bank_account: "Operating", held: "1234.50", since: "2026-10-01",
+      days_held: 1, take_by: "2026-10-26",
+    };
+    expect(companyFeesLabel(held)).toBe("$1,234.50 of the company's fees, the oldest since 2026-10-01 (1 day)");
+    expect(companyFeesDue(held, "2026-10-26")).toEqual({ word: "take out by 2026-10-26", late: false });
+    expect(companyFeesDue(held, "2026-10-27")).toEqual({ word: "take out: past 2026-10-26", late: true });
+    const none = { ...held, held: "0.00", since: null, days_held: null, take_by: null };
+    expect(companyFeesLabel(none)).toBe("None of the company's fees is held here.");
+    expect(companyFeesDue(none, "2026-10-27")).toBeNull();
+  });
+
   it("names a bill's next step, and none once it is paid", () => {
     expect(nextStep("needs approval")).toBe("Record approval");
     expect(nextStep("to set aside")).toBe("Set aside");

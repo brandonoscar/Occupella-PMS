@@ -40,6 +40,11 @@ TOO_MUCH = re.compile(
     rf"^{NUMBER} is available to draw from \S+ \(its balance less a reserve of {NUMBER} and"
     rf" unpaid bills of {NUMBER}\); {NUMBER} is too much$"
 )
+# trust_withdraw_pmc_fees' refusals (migration 0059) name the fee account and request key.
+FEES_TOO_MUCH = re.compile(rf"^{NUMBER} of the company's fees is in \S+; {NUMBER} is too much$")
+FEES_KEY_USED = re.compile(
+    rf"^request key \S+ already took {NUMBER} of the company's fees from \S+$"
+)
 
 # trust_staff_roles' check (migration 0034) names the staff member by their id.
 LAST_ADMIN = re.compile(r"^staff member \S+ is the PMC's last admin$")
@@ -83,6 +88,20 @@ def refusal(error: psycopg.Error) -> str:
         return (
             f"only {dollars(available)} is available to draw (the balance less {held});"
             f" {dollars(asked)} is more than that"
+        )
+    fees = FEES_TOO_MUCH.match(text)
+    if fees is not None:
+        held, asked = fees.groups()
+        if Decimal(held) <= 0:
+            return "none of the company's fees is in this trust bank account to take"
+        return (
+            f"only {dollars(held)} of the company's fees is in this trust bank account;"
+            f" {dollars(asked)} is more than that"
+        )
+    used = FEES_KEY_USED.match(text)
+    if used is not None:
+        return (
+            f"this request already took {dollars(used[1])} of the company's fees: start a new one"
         )
     return text
 
@@ -140,6 +159,7 @@ AREA_PATHS = (
     ("/api/payables/leasing-fees", "owners"),
     ("/api/payables/draws", "owners"),
     ("/api/payables/contributions", "owners"),
+    ("/api/payables/company-fees", "owners"),
     ("/api/budgets", "budgets"),
     ("/api/journal", "journal"),
     ("/api/reconcile/", "month-end"),

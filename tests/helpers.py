@@ -387,6 +387,21 @@ def draw_owner(connection, pmc_id, account, request_key, amount, event_at):
     )
 
 
+def withdraw_pmc_fees(connection, pmc_id, bank_account_id, request_key, amount, event_at):
+    """Take `amount` (None: everything) of the company's fees out of a trust bank account."""
+    return _one(
+        connection,
+        "SELECT trust_withdraw_pmc_fees(%s, %s, %s, %s, %s)",
+        (
+            pmc_id,
+            bank_account_id,
+            request_key,
+            None if amount is None else Decimal(amount),
+            event_at,
+        ),
+    )
+
+
 def enter_bill(
     connection,
     pmc_id,
