@@ -7554,6 +7554,89 @@ $$;
 
 
 --
+-- Name: trust_withdraw_pmc_fees(uuid, uuid, text, numeric, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_withdraw_pmc_fees(p_pmc_id uuid, p_bank_account_id uuid, p_request_key text, p_amount numeric, p_event_at timestamp with time zone) RETURNS numeric
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_fees text;
+    v_cash text;
+    v_taken trust_pmc_fee_withdrawals;
+    v_held numeric;
+    v_transfer_id text;
+BEGIN
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'trust: take the company''s fees at READ COMMITTED, not %',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
+    IF coalesce(p_request_key, '') = '' THEN
+        RAISE EXCEPTION 'trust: taking the company''s fees needs a request key, so a retry '
+            'can''t pay twice'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF p_amount <= 0 THEN
+        RAISE EXCEPTION 'trust: taking the company''s fees pays a positive amount, not %',
+            p_amount
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    -- The fee account of the trust bank account, locked so two withdrawals wait for each other
+    -- and the second reads the balance the first left.
+    SELECT t.ledger_account_id INTO v_fees
+    FROM trust_ledger_accounts AS t
+    WHERE t.bank_account_id = p_bank_account_id AND t.pmc_id = p_pmc_id
+      AND t.kind = 'pmc_income'
+    FOR NO KEY UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: trust bank account % of PMC % holds no fee account of the '
+            'company', p_bank_account_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    SELECT w.* INTO v_taken
+    FROM trust_pmc_fee_withdrawals AS w
+    WHERE w.pmc_id = p_pmc_id AND w.request_key = p_request_key;
+    IF FOUND THEN
+        IF v_taken.ledger_account_id <> v_fees
+            OR v_taken.amount <> coalesce(p_amount, v_taken.amount) THEN
+            RAISE EXCEPTION 'trust: request key % already took % of the company''s fees from %',
+                p_request_key, round(v_taken.amount, 2), v_taken.ledger_account_id
+                USING ERRCODE = 'unique_violation',
+                      HINT = 'Use a new key for a new withdrawal; resend a key only to retry.';
+        END IF;
+        RETURN v_taken.amount;  -- a retry: the original withdrawal
+    END IF;
+
+    SELECT a.balance INTO v_held FROM pgledger_accounts AS a WHERE a.id = v_fees;
+    IF v_held <= 0 OR coalesce(p_amount, v_held) > v_held THEN
+        RAISE EXCEPTION 'trust: % of the company''s fees is in %; % is too much',
+            round(v_held, 2), v_fees, round(coalesce(p_amount, v_held), 2)
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    SELECT t.ledger_account_id INTO v_cash
+    FROM trust_ledger_accounts AS t
+    WHERE t.bank_account_id = p_bank_account_id AND t.kind = 'bank_cash';
+    SELECT t.id INTO v_transfer_id
+    FROM pgledger_create_transfers(
+        ARRAY[(v_fees, v_cash, coalesce(p_amount, v_held))::transfer_request],
+        p_event_at,
+        jsonb_build_object('memo', 'Company fees taken out of trust')
+    ) AS t;
+
+    INSERT INTO trust_pmc_fee_withdrawals (pmc_id, request_key, ledger_account_id, amount,
+                                           transfer_id)
+    VALUES (p_pmc_id, p_request_key, v_fees, coalesce(p_amount, v_held), v_transfer_id);
+    RETURN coalesce(p_amount, v_held);
+END;
+$$;
+
+
+--
 -- Name: ulid_to_uuid(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8740,6 +8823,22 @@ CREATE TABLE public.trust_payment_reversals (
     amount numeric NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_payment_reversals_amount_check CHECK ((amount > (0)::numeric))
+);
+
+
+--
+-- Name: trust_pmc_fee_withdrawals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_pmc_fee_withdrawals (
+    pmc_id uuid NOT NULL,
+    request_key text NOT NULL,
+    ledger_account_id text NOT NULL,
+    amount numeric NOT NULL,
+    transfer_id text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_pmc_fee_withdrawals_amount_check CHECK ((amount > (0)::numeric)),
+    CONSTRAINT trust_pmc_fee_withdrawals_request_key_check CHECK ((request_key <> ''::text))
 );
 
 
@@ -10133,6 +10232,14 @@ ALTER TABLE ONLY public.trust_payment_reversals
 
 
 --
+-- Name: trust_pmc_fee_withdrawals trust_pmc_fee_withdrawals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_pmc_fee_withdrawals
+    ADD CONSTRAINT trust_pmc_fee_withdrawals_pkey PRIMARY KEY (pmc_id, request_key);
+
+
+--
 -- Name: trust_pmcs trust_pmcs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -10792,6 +10899,20 @@ CREATE INDEX trust_payment_reversals_reversal_id ON public.trust_payment_reversa
 
 
 --
+-- Name: trust_pmc_fee_withdrawals_ledger_account_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_pmc_fee_withdrawals_ledger_account_id ON public.trust_pmc_fee_withdrawals USING btree (ledger_account_id);
+
+
+--
+-- Name: trust_pmc_fee_withdrawals_transfer_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_pmc_fee_withdrawals_transfer_id ON public.trust_pmc_fee_withdrawals USING btree (transfer_id);
+
+
+--
 -- Name: trust_reconciliation_preparations_bank_account_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -11398,6 +11519,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_reversals FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_pmc_fee_withdrawals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_pmc_fee_withdrawals FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -12010,6 +12138,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_paym
 
 
 --
+-- Name: trust_pmc_fee_withdrawals trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_pmc_fee_withdrawals FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_pmcs trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -12329,6 +12464,13 @@ CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_deposit_returns FOR 
 --
 
 CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_owner_draws FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('disburse', 'pay out money');
+
+
+--
+-- Name: trust_pmc_fee_withdrawals trust_disburse; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_pmc_fee_withdrawals FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('disburse', 'pay out money');
 
 
 --
@@ -14116,6 +14258,30 @@ ALTER TABLE ONLY public.trust_payment_reversals
 
 
 --
+-- Name: trust_pmc_fee_withdrawals trust_pmc_fee_withdrawals_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_pmc_fee_withdrawals
+    ADD CONSTRAINT trust_pmc_fee_withdrawals_ledger_account_id_fkey FOREIGN KEY (ledger_account_id) REFERENCES public.trust_ledger_accounts(ledger_account_id);
+
+
+--
+-- Name: trust_pmc_fee_withdrawals trust_pmc_fee_withdrawals_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_pmc_fee_withdrawals
+    ADD CONSTRAINT trust_pmc_fee_withdrawals_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_pmc_fee_withdrawals trust_pmc_fee_withdrawals_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_pmc_fee_withdrawals
+    ADD CONSTRAINT trust_pmc_fee_withdrawals_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
 -- Name: trust_properties trust_properties_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14628,4 +14794,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261015000055'),
     ('20261015000056'),
     ('20261015000057'),
-    ('20261015000058');
+    ('20261015000058'),
+    ('20261015000059');

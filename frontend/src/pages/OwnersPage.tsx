@@ -7,8 +7,16 @@ import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { day, money } from "../money";
-import type { Fee, OwnerMoney } from "../payables";
-import { feeLine, heldLabel, incomeStatementHref, lastMonthPeriod } from "../payables";
+import { Badge } from "../components/Badge";
+import type { CompanyFees, Fee, OwnerMoney } from "../payables";
+import {
+  companyFeesDue,
+  companyFeesLabel,
+  feeLine,
+  heldLabel,
+  incomeStatementHref,
+  lastMonthPeriod,
+} from "../payables";
 import { requestId } from "../rent";
 import type { Portfolio } from "../setup";
 import { STAFF_NAV } from "./staffNav";
@@ -16,16 +24,19 @@ import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
 
 // Staff's work on owners' money: what each owner's property account holds and may pay out,
-// owner draws and contributions as the bank recorded them, and the management and leasing
-// fees the agreements take. The PMS sends no money itself.
+// owner draws and contributions as the bank recorded them, the management and leasing fees the
+// agreements take, and those fees taken out of trust to the company. The PMS sends no money
+// itself.
 export function OwnersPage({ me }: { me: Me }) {
   const [owners, setOwners] = useState<OwnerMoney[] | null>(null);
+  const [companyFees, setCompanyFees] = useState<CompanyFees[] | null>(null);
   const [books, setBooks] = useState<Portfolio | null>(null);
   const [error, setError] = useState("");
   const failed = (why: unknown) => setError(why instanceof ApiError ? why.detail : String(why));
 
   function refresh() {
     api.get<OwnerMoney[]>("/api/payables/owners").then(setOwners).catch(failed);
+    api.get<CompanyFees[]>("/api/payables/company-fees").then(setCompanyFees).catch(failed);
   }
   useEffect(refresh, []);
   useEffect(() => {
@@ -34,7 +45,7 @@ export function OwnersPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Owners" description="What each owner's properties hold, draws and contributions, and the management and leasing fees." />
+      <PageHeader title="Owners" description="What each owner's properties hold, draws and contributions, the management and leasing fees, and the company's fees taken out of trust." />
       <Card title="Owners' money">
         {owners === null ? (
           <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
@@ -49,6 +60,7 @@ export function OwnersPage({ me }: { me: Me }) {
         )}
       </Card>
       <FeesCard refresh={refresh} />
+      {companyFees !== null && <CompanyFeesCard fees={companyFees} refresh={refresh} />}
       {books && <LeasingFeeCard books={books} refresh={refresh} />}
     </Shell>
   );
@@ -195,6 +207,68 @@ function FeesCard({ refresh }: { refresh: () => void }) {
       )}
       <Notice tone="error">{error}</Notice>
     </Card>
+  );
+}
+
+// The company's earned fees still in each operating trust bank account, and taking them out to
+// the company's own account. Left in trust they mix the company's money with its clients'.
+function CompanyFeesCard({ fees, refresh }: { fees: CompanyFees[]; refresh: () => void }) {
+  const today = day(new Date());
+  return (
+    <Card title="Company fees in trust">
+      <p className="mb-4 text-sm text-ink-muted">
+        Fees the company has earned are its own money: take them out of trust, by 25 days after
+        the oldest came in, so they don't mix with the money held for owners and tenants.
+      </p>
+      {fees.length === 0 ? (
+        <Notice tone="info">No operating trust bank account yet. Add one in Setup.</Notice>
+      ) : (
+        <ul className="flex flex-col divide-y divide-line">
+          {fees.map((held) => (
+            <CompanyFeesRow key={held.bank_account_id} fees={held} today={today} refresh={refresh} />
+          ))}
+        </ul>
+      )}
+    </Card>
+  );
+}
+
+function CompanyFeesRow({ fees, today, refresh }: { fees: CompanyFees; today: string; refresh: () => void }) {
+  const { said, error, record } = useRecord(refresh);
+  const [id, setId] = useState(requestId);
+  const [amount, setAmount] = useState("");
+  const [on, setOn] = useState(today);
+  const due = companyFeesDue(fees, today);
+  return (
+    <li className="flex flex-col gap-2 py-4" aria-label={fees.bank_account}>
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <p className="font-medium">{fees.bank_account}</p>
+        {due && <Badge tone={due.late ? "danger" : "caution"}>{due.word}</Badge>}
+      </div>
+      <p className="text-sm text-ink-subtle" data-testid="company-fees">{companyFeesLabel(fees)}</p>
+      {fees.since !== null && (
+        <form
+          className="flex flex-wrap items-end gap-3"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            const body = { request_id: id, bank_account_id: fees.bank_account_id, amount: amount || null, on };
+            const taken = (out: { amount: string }) => `${money(out.amount)} of the company's fees taken out.`;
+            if (await record("/api/payables/company-fees", body, taken)) {
+              setId(requestId());
+              setAmount("");
+            }
+          }}
+        >
+          <Field label="Amount (leave empty for all)" id={`company-fees-${fees.bank_account_id}`}
+            inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
+          <Field label="Paid out on" id={`company-fees-on-${fees.bank_account_id}`} type="date"
+            required value={on} onChange={(e) => setOn(e.target.value)} />
+          <Button type="submit">Take out company fees</Button>
+        </form>
+      )}
+      <Notice tone="info">{said}</Notice>
+      <Notice tone="error">{error}</Notice>
+    </li>
   );
 }
 

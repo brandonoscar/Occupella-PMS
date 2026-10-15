@@ -4,7 +4,8 @@ Free trust-accounting PMS for property management companies (PMCs). Built standa
 merged into Occupella later, so it follows Occupella's conventions from day one. Phase 0 built
 the ledger schema and its tests; the app (exports, portals, leasing) now grows on top of it.
 Background: AgenticHelixis `docs/decisions/ADR-free-pms-placement.md` and
-`docs/research/free-pms-gaps.md`. CI: `docs/CI.md`.
+`docs/research/free-pms-gaps.md`. CI: `docs/CI.md`. The law each feature follows, the floor
+every state shares and the strictest state found: `docs/law.md` (founder, 2026-10-15).
 
 ## Hard rules
 
@@ -162,7 +163,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   reversing transfer.
 - The app role `trust_app` only reads ledger tables. It writes through `trust_post_transfers`,
   `trust_open_ledger_account`, `trust_open_vendor_account`, `trust_open_lease`, `trust_end_lease`, `trust_apply_payment`, `trust_reverse_payment`,
-  `trust_post_management_fee`, `trust_post_leasing_fee`, `trust_draw_owner`,
+  `trust_post_management_fee`, `trust_post_leasing_fee`, `trust_draw_owner`, `trust_withdraw_pmc_fees`,
   `trust_set_aside_bill`, `trust_pay_bill`, `trust_assess_late_fees`, `trust_charge_nsf_fee`,
   `trust_post_opening_balances`, `trust_record_owner_contribution`,
   `trust_complete_lease_offer`, `trust_match_bank_lines`, `trust_unmatch_bank_lines`,
@@ -210,6 +211,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   or the minimum, plus a flat fee, into the PMC's fee account, once per period;
   `trust_post_leasing_fee` once per lease; `trust_draw_owner` pays out the balance above the
   reserve and unpaid bills, once per request key. All at READ COMMITTED.
+- The company's fees out of trust (migration 0059, `docs/law.md`): earned fees left in trust are
+  commingling, which every state forbids. `trust_withdraw_pmc_fees` pays a trust bank account's
+  fee account out through its cash to the company, never more than it holds, once per request
+  key, by staff who hold disburse (`trust_pmc_fee_withdrawals`, append-only). The owners page and
+  Today show what each holds, since when the oldest waited and the day to take it out by, 25
+  days after (California's deadline, the strictest found). No account holds the broker's own
+  money in trust.
 - Vendor bills: entered once per vendor reference against an owner's property account. A bill
   over the approval limit of the agreement in force on its date (0 without one) needs the
   owner's approval recorded first. `trust_set_aside_bill` moves its amount from the owner's

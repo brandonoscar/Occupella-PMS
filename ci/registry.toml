@@ -232,6 +232,19 @@ tests = [
 ]
 
 [[invariant]]
+id = "company-fees-taken-out-of-trust"
+statement = "The company takes its earned fees out of a trust bank account only from its fee account there, never more than it holds and never an owner's or tenant's money, once per request key, by a staff member who may disburse; the account still ties out, and the pages show what is held and since when."
+tests = [
+  "tests/properties/test_payables_properties.py::test_payables_invariants_hold_under_random_bills_contributions_and_draws",
+  "tests/test_company_fees.py::test_the_company_takes_out_everything_its_fee_account_holds",
+  "tests/test_company_fees.py::test_a_set_amount_is_taken_and_never_more_than_is_there",
+  "tests/test_company_fees.py::test_a_withdrawal_retried_with_its_key_returns_the_original",
+  "tests/test_company_fees.py::test_two_withdrawals_at_once_cannot_take_more_than_is_there",
+  "tests/test_company_fees.py::test_taking_the_companys_fees_takes_a_staff_member_who_may_disburse",
+  "tests/api/test_company_fees_api.py::test_staff_take_the_companys_fees_out_oldest_first_and_once",
+]
+
+[[invariant]]
 id = "bill-set-aside-once-with-approval"
 statement = "A vendor's bill is entered once per vendor reference, against an owner's property account of its PMC; its money is set aside once, from that owner's account to the vendor's, and only with the owner's approval when it is over the approval limit in force on its date. A retry returns the original transfer."
 tests = [

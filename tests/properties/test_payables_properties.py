@@ -1,9 +1,10 @@
 """Property-based tests for staff's payables and owners' money (src/pms/api/payables.py).
 
 Hypothesis enters bills against an owner's property account (some dated ahead), sets them
-aside and pays them, records owner contributions and draws (some sent again), in random order.
-A model predicts what the owner's account holds, what its unpaid bills are and what a draw may
-take; the database and the owners page must agree after every step.
+aside and pays them, records owner contributions and draws (some sent again), takes management
+fees and takes the company's fees out of trust (some sent again), in random order. A model
+predicts what the owner's account holds, what its unpaid bills are, what a draw may take and
+what the company's fee account holds; the database and the pages must agree after every step.
 
 Invariants checked after every step (ci/registry.toml maps them to this test):
   - the owners page shows as available exactly what a draw of everything takes, and a draw of
@@ -11,6 +12,8 @@ Invariants checked after every step (ci/registry.toml maps them to this test):
   - its unpaid bills are the database's own (trust_unpaid_bills), which a draw keeps back;
   - a bill is set aside only from money the owner holds, and paid once it was;
   - sending a draw again pays nothing twice;
+  - the company takes out at most the fees its fee account holds, never an owner's money, and
+    sending a withdrawal again takes nothing twice;
   - every trust bank account ties out.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
@@ -42,6 +45,7 @@ from pms.api import payables
 TODAY = datetime.now(UTC).date()
 CENTS = st.integers(min_value=1, max_value=300_000).map(lambda c: Decimal(c) / 100)
 RESERVE = Decimal("100.00")
+FEE = Decimal("25.00")  # each period's management fee: the agreement's minimum
 
 
 @dataclass
@@ -67,12 +71,18 @@ class PayablesMachine(RuleBasedStateMachine):
             self.account,
             TODAY - timedelta(days=30),
             reserve=str(RESERVE),
+            minimum_fee=str(FEE),
             approval_limit="10000000",
         )
+        self.bank = pmc.operating_bank_id
+        self.pmc_income = pmc.pmc_income
         # Model
         self.held = Decimal(0)
         self.bills: list[Bill] = []
         self.draws: list[tuple[uuid.UUID, Decimal | None, Decimal]] = []
+        self.periods = 0
+        self.company = Decimal(0)  # the company's fees in the trust bank account
+        self.withdrawals: list[tuple[uuid.UUID, Decimal | None, Decimal]] = []
 
     def unpaid(self):
         return sum((b.amount for b in self.bills if not b.aside and not b.dated_ahead), Decimal(0))
@@ -173,6 +183,61 @@ class PayablesMachine(RuleBasedStateMachine):
         new = payables.Draw(request_id=request, account=self.account, amount=amount, on=TODAY)
         assert Decimal(self.call(payables.draw, new).amount) == taken
 
+    # --- the company's fees ------------------------------------------------------------------
+
+    @precondition(lambda self: self.periods < 25)
+    @rule()
+    def take_a_management_fee(self):
+        # One day's period at a time, each after the agreement starts and none overlapping.
+        start = TODAY - timedelta(days=29 - self.periods)
+        self.periods += 1
+        run = payables.FeeRun(
+            period_start=start, period_end=start + timedelta(days=1), on=TODAY, account=self.account
+        )
+        (fee,) = self.call(payables.management_fees, run)
+        if self.held < FEE:
+            event("management fee: refused, not enough money")
+            assert (fee.fee, fee.refused) == (
+                None,
+                f"not enough money: the owner's account would be ${FEE - self.held:,.2f} short",
+            )
+            return
+        event("management fee")
+        assert Decimal(fee.fee) == FEE
+        self.held -= FEE
+        self.company += FEE
+
+    @rule(amount=st.none() | CENTS)
+    def take_the_companys_fees_out(self, amount):
+        request = uuid.uuid4()
+        new = payables.FeeWithdrawal(
+            request_id=request, bank_account_id=self.bank, amount=amount, on=TODAY
+        )
+        if self.company == 0 or (amount is not None and amount > self.company):
+            event("company fees: refused, more than is there")
+            said = (
+                "none of the company's fees is in this trust bank account to take"
+                if self.company == 0
+                else f"only ${self.company:,.2f} of the company's fees is in this trust bank"
+                f" account; ${amount:,.2f} is more than that"
+            )
+            self.refused(said, payables.take_company_fees, new)
+            return
+        event("company fees: everything" if amount is None else "company fees: an amount")
+        taken = Decimal(self.call(payables.take_company_fees, new).amount)
+        assert taken == (self.company if amount is None else amount)
+        self.company -= taken
+        self.withdrawals.append((request, amount, taken))
+
+    @precondition(lambda self: self.withdrawals)
+    @rule(data=st.data())
+    def send_a_withdrawal_again(self, data):
+        request, amount, taken = data.draw(st.sampled_from(self.withdrawals))
+        new = payables.FeeWithdrawal(
+            request_id=request, bank_account_id=self.bank, amount=amount, on=TODAY
+        )
+        assert Decimal(self.call(payables.take_company_fees, new).amount) == taken
+
     # --- invariants -------------------------------------------------------------------------
 
     @invariant()
@@ -186,6 +251,14 @@ class PayablesMachine(RuleBasedStateMachine):
         assert Decimal(row.available) == self.available()
         assert Decimal(row.reserve) == RESERVE
         assert set(bank_sums(self.conn, self.session.pmc_id).values()) == {Decimal(0)}
+
+    @invariant()
+    def the_companys_fees_are_the_model_and_the_database(self):
+        (fees,) = [
+            f for f in self.call(payables.company_fees, None) if f.bank_account_id == self.bank
+        ]
+        assert Decimal(fees.held) == self.company == balance(self.conn, self.pmc_income)
+        assert (fees.since is None) == (self.company == 0)
 
     @invariant()
     def bill_statuses_follow_their_steps(self):

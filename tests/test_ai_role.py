@@ -201,6 +201,10 @@ WRITES = {
         "SELECT trust_draw_owner(%s, %s, 'ai-draw', NULL, now())",
         (pmc.pmc_id, pmc.owners[0].account),
     ),
+    "take the company's fees": lambda c, pmc, *_: c.execute(
+        "SELECT trust_withdraw_pmc_fees(%s, %s, 'ai-fees', NULL, now())",
+        (pmc.pmc_id, pmc.operating_bank_id),
+    ),
     "enter a bill": lambda c, pmc, *_: enter_bill(
         c, pmc.pmc_id, pmc.vendor_id, pmc.owners[0].account, "AI-1", FEB, FEB, "1.00"
     ),

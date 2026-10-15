@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
-import type { OwnerMoney } from "../payables";
+import type { CompanyFees, OwnerMoney } from "../payables";
 import type { Portfolio } from "../setup";
 import { OwnersPage, leasingFeeSaid } from "./OwnersPage";
 
@@ -32,6 +32,15 @@ const OWNERS: OwnerMoney[] = [
   },
 ];
 
+const COMPANY_FEES: CompanyFees[] = [
+  { bank_account_id: "b1", bank_account: "Operating", held: "150.00", since: "2000-01-01", days_held: 40,
+    take_by: "2000-01-26" },
+  { bank_account_id: "b2", bank_account: "Second operating", held: "20.00", since: "2998-12-07",
+    days_held: 0, take_by: "2999-01-01" },
+  { bank_account_id: "b3", bank_account: "Third operating", held: "0.00", since: null, days_held: null,
+    take_by: null },
+];
+
 const account = (n: number, property: string) => ({
   account: `a${n}`, owner_id: `o${n}`, owner: `Owner ${n}`, property_id: property,
   property: property === "pr1" ? "Property 1" : "Property 2", bank_account: "Operating",
@@ -60,7 +69,8 @@ const BOOKS: Portfolio = {
 function server(answers: Record<string, unknown> = {}, refuse: Record<string, string> = {}) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method !== "POST") {
-      return new Response(JSON.stringify(path === "/api/setup" ? BOOKS : OWNERS), { status: 200 });
+      const read = path === "/api/setup" ? BOOKS : path === "/api/payables/company-fees" ? COMPANY_FEES : OWNERS;
+      return new Response(JSON.stringify(read), { status: 200 });
     }
     if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
     return new Response(JSON.stringify(answers[path] ?? {}), { status: 201 });
@@ -125,6 +135,50 @@ describe("OwnersPage", () => {
     expect(contribution?.[1]).toMatchObject({
       account: "a1", amount: "250.00", on: "2026-10-11", memo: "Roof repair",
     });
+  });
+
+  it("lists the company's fees in trust and takes them out once per request", async () => {
+    const fetch = server({ "/api/payables/company-fees": { amount: "150.00" } });
+    render(<OwnersPage me={ME} />);
+    const operating = await screen.findByRole("listitem", { name: "Operating" });
+
+    expect(within(operating).getByTestId("company-fees").textContent).toBe(
+      "$150.00 of the company's fees, the oldest since 2000-01-01 (40 days)",
+    );
+    const late = within(operating).getByText("take out: past 2000-01-26");
+    expect(late.closest("[data-tone]")?.getAttribute("data-tone")).toBe("danger");
+    const second = screen.getByRole("listitem", { name: "Second operating" });
+    const due = within(second).getByText("take out by 2999-01-01");
+    expect(due.closest("[data-tone]")?.getAttribute("data-tone")).toBe("caution");
+    // Nothing held: nothing to take out, and no day to take it by.
+    const third = screen.getByRole("listitem", { name: "Third operating" });
+    expect(third.textContent).toContain("None of the company's fees is held here.");
+    expect(within(third).queryByRole("button")).toBeNull();
+
+    fireEvent.change(within(operating).getByLabelText("Paid out on"), { target: { value: "2026-10-12" } });
+    fireEvent.click(within(operating).getByRole("button", { name: "Take out company fees" }));
+    expect(await within(operating).findByText("$150.00 of the company's fees taken out.")).toBeTruthy();
+    fireEvent.change(within(operating).getByLabelText("Amount (leave empty for all)"), {
+      target: { value: "10.00" },
+    });
+    fireEvent.click(within(operating).getByRole("button", { name: "Take out company fees" }));
+    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(2));
+
+    const [all, some] = posted(fetch) as [string, Record<string, unknown>][];
+    expect(all?.[0]).toBe("/api/payables/company-fees");
+    expect(all?.[1]).toMatchObject({ bank_account_id: "b1", amount: null, on: "2026-10-12" });
+    expect(some?.[1]).toMatchObject({ bank_account_id: "b1", amount: "10.00" });
+    expect(some?.[1].request_id).not.toBe(all?.[1].request_id);
+  });
+
+  it("shows why taking out the company's fees was refused", async () => {
+    server({}, { "/api/payables/company-fees": "Clerk 1 may not pay out money (the disburse role)" });
+    render(<OwnersPage me={ME} />);
+    const operating = await screen.findByRole("listitem", { name: "Operating" });
+
+    fireEvent.click(within(operating).getByRole("button", { name: "Take out company fees" }));
+
+    expect(await within(operating).findByText("Clerk 1 may not pay out money (the disburse role)")).toBeTruthy();
   });
 
   it("shows why a draw was refused on its owner", async () => {

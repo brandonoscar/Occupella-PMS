@@ -45,6 +45,7 @@ TABLES = {
     "trust_management_fees": {"SELECT"},  # written only by trust_post_management_fee
     "trust_leasing_fees": {"SELECT"},  # written only by trust_post_leasing_fee
     "trust_owner_draws": {"SELECT"},  # written only by trust_draw_owner
+    "trust_pmc_fee_withdrawals": {"SELECT"},  # written only by trust_withdraw_pmc_fees
     "trust_bills": {"SELECT", "INSERT"},
     "trust_bill_approvals": {"SELECT", "INSERT"},
     "trust_bill_declines": {"SELECT", "INSERT"},
@@ -213,6 +214,7 @@ FUNCTIONS = {
     "trust_post_management_fee(uuid,text,date,date,timestamptz)": {"trust_app"},
     "trust_post_leasing_fee(uuid,uuid,text,timestamptz)": {"trust_app"},
     "trust_draw_owner(uuid,text,text,numeric,timestamptz)": {"trust_app"},
+    "trust_withdraw_pmc_fees(uuid,uuid,text,numeric,timestamptz)": {"trust_app"},
     "trust_set_aside_bill(uuid,uuid,timestamptz)": {"trust_app"},
     "trust_pay_bill(uuid,uuid,timestamptz)": {"trust_app"},
     "trust_charge_rent_due(uuid,date)": {"trust_app"},
@@ -366,6 +368,7 @@ SECURITY_DEFINER = {
     "trust_post_management_fee(uuid,text,date,date,timestamptz)",
     "trust_post_leasing_fee(uuid,uuid,text,timestamptz)",
     "trust_draw_owner(uuid,text,text,numeric,timestamptz)",
+    "trust_withdraw_pmc_fees(uuid,uuid,text,numeric,timestamptz)",
     "trust_set_aside_bill(uuid,uuid,timestamptz)",
     "trust_pay_bill(uuid,uuid,timestamptz)",
     "trust_assess_late_fees(uuid,date)",

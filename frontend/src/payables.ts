@@ -132,3 +132,29 @@ export function incomeStatementHref(ownerId: string, today: string): string {
   const args = [ownerId, `${today.slice(0, 4)}-01-01`, today].map((a) => `arg=${encodeURIComponent(a)}`);
   return `/api/reports/trust_report_income_statement?${args.join("&")}&format=pdf`;
 }
+
+// The company's earned fees still in a trust bank account at a day's end: since when the oldest
+// waited, and the day to take them out by (25 days after it, the strictest deadline found).
+export type CompanyFees = {
+  bank_account_id: string;
+  bank_account: string;
+  held: string;
+  since: string | null;
+  days_held: number | null;
+  take_by: string | null;
+};
+
+// "$150.00 of the company's fees, the oldest since 2026-09-20 (5 days)", or that none is held.
+export function companyFeesLabel(fees: CompanyFees): string {
+  if (fees.since === null) return "None of the company's fees is held here.";
+  const days = fees.days_held === 1 ? "1 day" : `${fees.days_held} days`;
+  return `${money(fees.held)} of the company's fees, the oldest since ${fees.since} (${days})`;
+}
+
+// Whether the oldest is past the day to take it out by ("late"), or not yet.
+export function companyFeesDue(fees: CompanyFees, on: string): { word: string; late: boolean } | null {
+  if (fees.take_by === null) return null;
+  return fees.take_by < on
+    ? { word: `take out: past ${fees.take_by}`, late: true }
+    : { word: `take out by ${fees.take_by}`, late: false };
+}

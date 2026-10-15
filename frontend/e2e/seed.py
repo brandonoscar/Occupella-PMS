@@ -458,6 +458,7 @@ FEATURES = (
     "journal",
     "vendors",
     "inspections",
+    "company-fees",
 )
 
 

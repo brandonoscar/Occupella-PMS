@@ -1192,3 +1192,47 @@ test("staff record a lease's move-in and move-out inspections room by room, and 
   expect(csv).toContain("room,Bathroom,good,good,false,");
   expect(csv).toContain("room,Hallway,,missing,,move-out: Smoke detector gone");
 });
+
+test("staff see the company's fees left in trust on Today and take them out to the company, once", async ({
+  page,
+}) => {
+  const people = seed.features["company-fees"]!;
+  await joinAsStaff(page, people.manager);
+
+  // The demo took two months of management fees and left them in trust: Today says so, with
+  // the day they were to be taken out by.
+  await section(page, "Today");
+  const waiting = page.getByRole("region", { name: "Company fees in trust" });
+  await expect(waiting).toContainText("Demo operating trust account: $");
+  await expect(waiting).toContainText("of the company's fees, the oldest since");
+  await waiting.getByRole("link", { name: "Open Owners" }).click();
+
+  const operating = page.getByRole("listitem", { name: "Demo operating trust account" });
+  const held = operating.getByTestId("company-fees");
+  await expect(held).toContainText("of the company's fees, the oldest since");
+  const before = Number(((await held.textContent()) ?? "").match(/^\$([\d,]+\.\d\d)/)?.[1]?.replace(/,/g, ""));
+  expect(before).toBeGreaterThan(10);
+  await expect(operating.getByText(/^take out/)).toBeVisible();
+
+  // More than is there is refused, in words; $10.00 comes out, then the rest.
+  const asked = (before + 0.01).toFixed(2);
+  await operating.getByLabel("Amount (leave empty for all)").fill(asked);
+  await operating.getByRole("button", { name: "Take out company fees" }).click();
+  await expect(operating.getByRole("alert")).toHaveText(
+    `only $${before.toLocaleString("en-US", { minimumFractionDigits: 2 })} of the company's fees is in this trust bank account; $${Number(asked).toLocaleString("en-US", { minimumFractionDigits: 2 })} is more than that`,
+  );
+  await operating.getByLabel("Amount (leave empty for all)").fill("10.00");
+  await operating.getByRole("button", { name: "Take out company fees" }).click();
+  await expect(operating).toContainText("$10.00 of the company's fees taken out.");
+  const rest = (before - 10).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  await expect(held).toContainText(`$${rest} of the company's fees`);
+  await operating.getByRole("button", { name: "Take out company fees" }).click();
+  await expect(operating).toContainText(`$${rest} of the company's fees taken out.`);
+  await expect(held).toHaveText("None of the company's fees is held here.");
+  await expect(operating.getByRole("button", { name: "Take out company fees" })).toHaveCount(0);
+
+  // Nothing waits on Today any more.
+  await section(page, "Today");
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Company fees in trust" })).toHaveCount(0);
+});

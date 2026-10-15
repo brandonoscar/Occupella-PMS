@@ -8,4 +8,17 @@
 # value = "<the exact text the check flagged>"
 # reason = "<why this isn't anyone's real data>"
 
-allow = []
+[[allow]]
+path = "db/migrations/20261015000059_company_fees_out_of_trust.sql"
+value = "863-025-0027"
+reason = "Oregon Administrative Rule 863-025-0027 (trust accounts), cited as the law the migration follows; a rule number, not a phone number."
+
+[[allow]]
+path = "docs/law.md"
+value = "863-025-0027"
+reason = "Oregon Administrative Rule 863-025-0027 (trust accounts), cited in the legal basis; a rule number, not a phone number."
+
+[[allow]]
+path = "docs/law.md"
+value = "863-025-0025"
+reason = "Oregon Administrative Rule 863-025-0025 (clients' trust accounts), cited in the legal basis; a rule number, not a phone number."
