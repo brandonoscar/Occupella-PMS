@@ -775,7 +775,14 @@ test("staff download every report the overview offers, and every staff report in
   await section(page, "Overview");
   await downloads(page, "Rent roll (PDF)", PDF);
   await downloads(page, "Trial balance (Excel)", XLSX);
+  await downloads(page, "Balance sheet (PDF)", PDF);
+  await downloads(page, "Cash flow, last month (Excel)", XLSX);
+  await downloads(page, "Vacancy (PDF)", PDF);
+  await downloads(page, "Work orders (Excel)", XLSX);
   await downloads(page, "Leases ending in 90 days (Excel)", XLSX);
+  await downloads(page, "Tenant directory (Excel)", XLSX);
+  await downloads(page, "Owner directory (Excel)", XLSX);
+  await downloads(page, "Vendor directory (Excel)", XLSX);
   await downloads(page, "Whole ledger (CSV, zip)", "application/zip");
 
   // The reports the API exports for staff (the AI reads the same), each as CSV, Excel and PDF.
@@ -791,6 +798,13 @@ test("staff download every report the overview offers, and every staff report in
     ["general_ledger", [firstOfMonthsAgo(2), day]],
     ["audit_log", [firstOfMonthsAgo(2), day]],
     ["vendor_payments", [day.slice(0, 4)]],
+    ["balance_sheet", [day]],
+    ["cash_flow", [firstOfMonthsAgo(2), day]],
+    ["vacancy", [day]],
+    ["work_orders", [day]],
+    ["tenant_directory", [day]],
+    ["owner_directory", [day]],
+    ["vendor_directory", [day]],
   ];
   for (const [report, args] of reports) {
     for (const [format, type] of [["csv", CSV], ["xlsx", XLSX], ["pdf", PDF]] as const) {

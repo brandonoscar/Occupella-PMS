@@ -944,3 +944,50 @@ tests = [
   "tests/test_move_out.py::test_a_deposit_pays_what_the_lease_owes_and_the_rest_goes_back",
   "tests/api/test_moveout.py::test_a_move_out_ends_the_lease_charges_damage_and_returns_the_rest",
 ]
+
+[[report]]
+id = "balance-sheet"
+statement = "A balance sheet of the trust at a day's end (UTC): per trust bank account its cash by the books against what it holds by kind (owners' funds, security deposits, prepaid rent, set aside for vendors, the company's fees), their total and the difference, which is zero when it ties out; then across every trust bank account. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+  "tests/test_more_reports.py::test_the_balance_sheet_counts_through_the_end_of_its_day",
+]
+
+[[report]]
+id = "cash-flow"
+statement = "Cash flow over days (UTC): per trust bank account its book cash at the start, every transfer that moved its cash in the days counted once, in or out, by what it was (received for owners, contributions, prepaid rent, deposits, opening balances; bills paid, draws, money paid back, deposits paid out, fees; a move between trust bank accounts), and closing cash = opening + in - out; then across them. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
+  "tests/test_more_reports.py::test_cash_flow_counts_its_first_day_and_not_the_day_after",
+  "tests/test_more_reports.py::test_cash_flow_names_opening_balances_draws_bills_and_fees",
+]
+
+[[report]]
+id = "vacancy"
+statement = "Vacancy at a day's end: each unit with no lease in effect, since the day after its last lease ended (unknown if never leased), its last rent and the next lease booked; then units, occupied, vacant and occupancy. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_more_reports.py::test_a_lease_ending_on_the_day_keeps_its_unit_occupied_that_day",
+  "tests/test_more_reports.py::test_a_company_with_no_units_says_so",
+]
+
+[[report]]
+id = "work-orders"
+statement = "Work orders at a day's end: each opened by then, open ones first, with its status and last assigned vendor as of the day, days open (to its close or the day) and the bills entered for it and not declined; then the counts. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_more_reports.py::test_a_work_orders_status_and_vendor_are_as_of_the_day",
+]
+
+[[report]]
+id = "directories"
+statement = "Directories at a day: each tenant with their lease in effect (else the next, else the last) and who else is on it; each owner's property accounts with the agreement in force and the balance (no agreement: unknown, not zero); each vendor with a W-9 kept and not removed by then, open work orders, unpaid bills, paid this calendar year and last paid. Names only: the PMS keeps no other contact data. Compared to checked-in golden files."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_more_reports.py::test_a_tenants_last_lease_is_their_latest_and_their_next_is_the_soonest",
+  "tests/test_more_reports.py::test_a_vendor_paid_last_year_shows_when_but_not_in_this_years_total",
+  "tests/test_more_reports.py::test_a_w9_counts_from_the_day_it_was_kept_until_the_day_it_was_removed",
+  "tests/test_more_reports.py::test_each_report_runs_for_the_app_and_the_ai_on_its_own_pmc_only",
+]

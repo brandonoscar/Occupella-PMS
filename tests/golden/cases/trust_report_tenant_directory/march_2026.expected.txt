@@ -1,0 +1,8 @@
+line	item	tenant	property	unit	lease_starts	lease_ends	monthly_rent	co_tenants
+1	PMC	Golden PMC	NULL	NULL	NULL	NULL	NULL	NULL
+2	as of	2026-03-31, end of day UTC	NULL	NULL	NULL	NULL	NULL	NULL
+3	next lease	Tenant 3	Property 1	Unit A	2026-04-15	NULL	1300.00	NULL
+4	current lease	Tenant 1	Property 1	Unit B	2026-01-01	2026-12-31	1500.00	Tenant 2
+5	current lease	Tenant 2	Property 1	Unit B	2026-01-01	2026-12-31	1500.00	Tenant 1
+6	current lease	Tenant 4	Property 2	House	2025-06-01	NULL	2000.00	NULL
+7	no lease	Tenant 5	Property 2	NULL	NULL	NULL	NULL	NULL

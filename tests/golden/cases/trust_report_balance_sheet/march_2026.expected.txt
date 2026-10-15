@@ -1,0 +1,22 @@
+line	section	bank	item	amount
+1	PMC	NULL	Golden PMC	NULL
+2	as of	NULL	2026-03-31, end of day UTC	NULL
+3	assets	Golden operating trust account (operating)	cash in the bank, by the books	5300.00
+4	held in trust	Golden operating trust account (operating)	owners' funds	4850.00
+5	held in trust	Golden operating trust account (operating)	tenants' prepaid rent	300.00
+6	held in trust	Golden operating trust account (operating)	set aside for vendors' bills	0.00
+7	held in trust	Golden operating trust account (operating)	the company's fees not yet taken	150.00
+8	held in trust	Golden operating trust account (operating)	total held in trust	5300.00
+9	difference	Golden operating trust account (operating)	cash less what is held	0.00
+10	assets	Golden security deposit account (security_deposit)	cash in the bank, by the books	3200.00
+11	held in trust	Golden security deposit account (security_deposit)	tenants' security deposits	3200.00
+12	held in trust	Golden security deposit account (security_deposit)	total held in trust	3200.00
+13	difference	Golden security deposit account (security_deposit)	cash less what is held	0.00
+14	all trust bank accounts	NULL	cash in the bank, by the books	8500.00
+15	all trust bank accounts	NULL	owners' funds	4850.00
+16	all trust bank accounts	NULL	tenants' security deposits	3200.00
+17	all trust bank accounts	NULL	tenants' prepaid rent	300.00
+18	all trust bank accounts	NULL	set aside for vendors' bills	0.00
+19	all trust bank accounts	NULL	the company's fees not yet taken	150.00
+20	all trust bank accounts	NULL	total held in trust	8500.00
+21	all trust bank accounts	NULL	cash less what is held	0.00

@@ -387,6 +387,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   it is posted. Posting keeps every trust rule above or moves nothing. Every step names a staff
   member (the command line can't take one); entries, lines and decisions are append-only, and the
   AI only reads them. Entries waiting show on `/today`.
+- More reports (migration 0054), each read only and on the overview's downloads: the balance
+  sheet (`trust_report_balance_sheet`: each trust bank account's cash by the books against what
+  it holds by kind, at a day's end), cash flow (`trust_report_cash_flow`: each one's cash over
+  days, every move of it in or out once, by what it was), vacancy (units with no lease in
+  effect, since when; never leased is unknown), work orders (status and vendor as of a day,
+  days open, billed), and directories of tenants, owners and vendors (names and what they are
+  to the company on a day; the PMS keeps no other contact data).
 
 ## Run the checks
 

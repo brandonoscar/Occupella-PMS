@@ -25,6 +25,9 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     another with no gap or overlap;
   - every security deposit sits in the security-deposit trust account, which holds nothing
     else, so its cash is exactly the deposits held; no account opens in the wrong kind;
+  - the balance sheet and cash flow of any day agree with the model: each trust bank account's
+    cash is what it holds, by kind, and its cash flow runs from the opening to the closing cash
+    the model has, every move of its cash in or out once;
   - the three-way reconciliation report of every approved period agrees with the model: its
     trust journal is the book balance approved, its ledgers add up to that and list in byte
     order, and its only difference is the statement's;
@@ -601,6 +604,81 @@ class LedgerMachine(RuleBasedStateMachine):
             ("book cash", -held[self.pmc.deposit_cash]),
             ("total held", deposit),
         ]
+
+    @rule(
+        role=st.sampled_from(["owner", "app", "ai"]),
+        back=st.timedeltas(min_value=timedelta(days=-2), max_value=timedelta(days=120)),
+        span=st.integers(min_value=0, max_value=60),
+    )
+    def check_the_balance_sheet_and_cash_flow(self, role, back, span):
+        """As of a day, each trust bank account's cash against what it holds by kind, as the
+        model has them; and over days up to it, its cash from opening to closing, every move
+        of its cash counted once, in or out."""
+        through = (self.now - back).date()
+        start = through - timedelta(days=span)
+        start_at = datetime.combine(start, datetime.min.time(), tzinfo=UTC)
+        cutoff = datetime.combine(through + timedelta(days=1), datetime.min.time(), tzinfo=UTC)
+        held = dict.fromkeys(self.accounts, Decimal(0))
+        opening = dict.fromkeys(self.bank_id, Decimal(0))
+        moved_in = dict.fromkeys(self.bank_id, Decimal(0))
+        moved_out = dict.fromkeys(self.bank_id, Decimal(0))
+        for _, (source, target, amount), when in self.posted:
+            if when < cutoff:
+                held[source] -= amount
+                held[target] += amount
+            for cash in self.bank_id:
+                if cash not in (source, target):
+                    continue
+                if when < start_at:
+                    opening[cash] += amount if source == cash else -amount
+                elif when < cutoff:
+                    (moved_in if source == cash else moved_out)[cash] += amount
+        sheet = (
+            self.conns[role]
+            .execute(
+                "SELECT section, bank, item, amount FROM trust_report_balance_sheet(%s, %s)"
+                " WHERE section NOT IN ('PMC', 'as of')",
+                (self.pmc_id, through),
+            )
+            .fetchall()
+        )
+        flow = (
+            self.conns[role]
+            .execute(
+                "SELECT bank, item, amount FROM trust_report_cash_flow(%s, %s, %s)"
+                " WHERE section NOT IN ('PMC', 'period')",
+                (self.pmc_id, start, through),
+            )
+            .fetchall()
+        )
+        labels = {
+            "owner_property": "owners' funds",
+            "tenant_deposit": "tenants' security deposits",
+            "prepaid_rent": "tenants' prepaid rent",
+            "vendor_payable": "set aside for vendors' bills",
+            "pmc_income": "the company's fees not yet taken",
+        }
+        for cash, name in [
+            (self.pmc.operating_cash, "Synthetic operating trust account (operating)"),
+            (self.pmc.deposit_cash, "Synthetic security_deposit trust account (security_deposit)"),
+        ]:
+            mine = {item: amount for _, bank, item, amount in sheet if bank == name}
+            inside = [a for a in self.accounts if self.bank[a] == cash and a != cash]
+            by_kind: dict[str, Decimal] = {}
+            for account in inside:
+                label = labels[self.kinds[account]]
+                by_kind[label] = by_kind.get(label, Decimal(0)) + held[account]
+            assert mine == {
+                "cash in the bank, by the books": -held[cash],
+                **by_kind,
+                "total held in trust": sum((held[a] for a in inside), Decimal(0)),
+                "cash less what is held": Decimal(0),  # every trust bank account ties out
+            }
+            lines = {item: amount for bank, item, amount in flow if bank == name}
+            assert lines["opening cash, by the books"] == opening[cash]
+            assert (lines["total in"], lines["total out"]) == (moved_in[cash], moved_out[cash])
+            assert lines["closing cash, by the books"] == -held[cash]
+        assert sheet[-1] == ("all trust bank accounts", None, "cash less what is held", 0)
 
     @rule(data=st.data(), path=st.sampled_from(["with a key", "through pgledger"]), back=BACK)
     def the_ai_role_cannot_post(self, data, path, back):

@@ -20,7 +20,7 @@ const ME: Me = {
 };
 
 describe("StaffHome", () => {
-  it("downloads today's rent roll, trial balance and leases ending in the next 90 days", async () => {
+  it("downloads today's reports and the whole ledger", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
     render(<StaffHome me={ME} />);
     const today = day(new Date());
@@ -34,6 +34,8 @@ describe("StaffHome", () => {
     expect(href("Leases ending in 90 days (Excel)")).toBe(
       `/api/reports/trust_report_lease_expirations?arg=${today}&format=xlsx`,
     );
+    expect(href("Balance sheet (PDF)")).toBe(`/api/reports/trust_report_balance_sheet?arg=${today}&format=pdf`);
+    expect(screen.getAllByRole("link").map((link) => link.textContent)).toContain("Vendor directory (Excel)");
     expect(href("Whole ledger (CSV, zip)")).toBe("/api/ledger.zip");
   });
 
