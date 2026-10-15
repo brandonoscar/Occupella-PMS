@@ -30,7 +30,9 @@ portal, the tenant portal and leasing basics, with the API and logins they need.
 2026-10-12 (`docs/adr/0003-staff-back-office.md`): the staff back office for the accounting,
 bank statement import, a switching tool, staff roles, move-out and documents. Since
 2026-10-13 (`docs/adr/0004-email.md`): one email, to a rental owner when a bill waits for
-their approval. Still out of scope: Stripe and online payments, bank files, 1099 filing, any
+their approval. Since 2026-10-15 (`docs/adr/0005-property-management-pages.md`): pages built
+around properties, units, leases, tenants, owners and vendors, with paged lists, edits (never
+deletes: archive) and contact details the AI never reads. Still out of scope: Stripe and online payments, bank files, 1099 filing, any
 other email, and state rules beyond the no-negative rule. If one of these looks needed, stop
 and ask the founder.
 
