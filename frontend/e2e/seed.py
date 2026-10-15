@@ -460,6 +460,7 @@ FEATURES = (
     "inspections",
     "company-fees",
     "cutover-bills",
+    "signers",
 )
 
 

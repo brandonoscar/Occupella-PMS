@@ -58,6 +58,7 @@ from pms.api import (
     reconcile,
     rent,
     setup,
+    signers,
     staff,
     switching,
     tenant,
@@ -370,6 +371,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(inspections.router)
     app.include_router(switching.router)
     app.include_router(staff.router)
+    app.include_router(signers.router)
     app.include_router(moveout.router)
     app.include_router(documents.router)
     app.include_router(today.router)

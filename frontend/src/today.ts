@@ -32,6 +32,13 @@ export type Today = {
   journal_waiting: JournalEntry[];
   vendor_insurance: Lapsing[];
   company_fees: CompanyFees[];
+  signers: SignerNote[];
+};
+export type SignerNote = {
+  bank_account_id: string;
+  bank_account: string;
+  signer: string | null;
+  standing: string;
 };
 export type Lapsing = {
   vendor_id: string;
@@ -112,4 +119,11 @@ export function insuranceLine(policy: Lapsing): string {
 export function companyFeesLine(fees: CompanyFees, on: string): string {
   const by = fees.take_by === null ? "" : fees.take_by < on ? `; past ${fees.take_by} to take them out` : `; take them out by ${fees.take_by}`;
   return `${fees.bank_account}: ${companyFeesLabel(fees)}${by}`;
+}
+
+// "Operating trust: no broker on file", or "Operating trust, Clerk 1: bond runs out in 5 days".
+export function signerNoteLine(note: SignerNote): string {
+  return note.signer === null
+    ? `${note.bank_account}: ${note.standing}`
+    : `${note.bank_account}, ${note.signer}: ${note.standing}`;
 }

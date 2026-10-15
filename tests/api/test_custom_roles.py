@@ -21,6 +21,7 @@ NOT_AN_AREA = {
     "/api/custom-roles": "makes a custom role: admin",
     "/api/custom-roles/{role_id}/areas": "changes a custom role: admin",
     "/api/custom-roles/{role_id}/staff": "gives a custom role: admin",
+    "/api/signers": "names a trust bank account's broker (admin) or its signers (the broker)",
 }
 
 

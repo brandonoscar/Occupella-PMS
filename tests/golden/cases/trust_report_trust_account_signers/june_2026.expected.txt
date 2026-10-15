@@ -1,0 +1,7 @@
+line	bank_account_id	bank_account	staff_id	signer	role	license_number	bond_amount	bond_expires_on	authorized_on	standing
+1	<uuid1>	Deposits	<uuid2>	Broker 1	broker	LIC-0001	NULL	NULL	2026-01-01	licensed
+2	<uuid1>	Deposits	<uuid3>	Clerk 2	signer	NULL	50000.00	2026-12-31	2026-01-02	bonded
+3	<uuid4>	Operating A	<uuid2>	Broker 1	broker	LIC-0001	NULL	NULL	2026-01-01	licensed
+4	<uuid4>	Operating A	<uuid3>	Clerk 2	signer	NULL	50000.00	2026-07-15	2026-01-02	bond runs out in 15 days
+5	<uuid4>	Operating A	<uuid5>	Clerk 4	signer	NULL	10000.00	2026-06-29	2026-03-01	bond ran out
+6	<uuid6>	Operating B	NULL	NULL	NULL	NULL	NULL	NULL	NULL	no broker on file

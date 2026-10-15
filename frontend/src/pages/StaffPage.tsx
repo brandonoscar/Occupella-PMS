@@ -8,6 +8,7 @@ import { Card, PageHeader, Shell } from "../components/Shell";
 import type { Member } from "../staff";
 import { ROLES, changeLabel, holds } from "../staff";
 import { CustomRolesCard } from "./CustomRolesCard";
+import { SignersCard } from "./SignersCard";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 
@@ -85,6 +86,7 @@ export function StaffPage({ me }: { me: Me }) {
         <Notice tone="error">{refused}</Notice>
       </Card>
       {members && <CustomRolesCard members={members} admin={admin} />}
+      {members && <SignersCard me={me} members={members} />}
       {admin && (
         <Card title="Add a staff member">
           <form

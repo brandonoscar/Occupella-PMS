@@ -350,6 +350,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`trust_approve_bank_reconciliation` takes the preparation), on the figures prepared; the app
   can't call `trust_approve_reconciliation` itself. On upgrade every staff member holds every
   role.
+- Trust account signers (migration 0060, `docs/law.md`): an admin names a trust bank account's
+  broker, and the broker authorizes its signers in writing (`trust_account_signers`, append-only,
+  the latest row per account and staff member holding), each licensed or bonded to a day. Once
+  an account has its broker on file, a payout from it (draw, bill paid, deposit returned, fees
+  taken out, a journal entry taking cash out) by a named staff member who isn't its broker or a
+  signer, or whose bond ran out, is refused; an account with none keeps the roles alone. One
+  broker per account, signers only while it has one (at commit). Staff see and change it at
+  `/staff` (`src/pms/api/signers.py`); Today lists accounts without a broker and bonds running out.
 - Custom roles (migration 0057): an admin names roles, each allowing areas of the work (rent,
   bills, owners' money, budgets, journal, month-end, switching, setup, move-out, documents,
   leasing, maintenance, who can sign in), and gives them to staff (`trust_custom_roles`,

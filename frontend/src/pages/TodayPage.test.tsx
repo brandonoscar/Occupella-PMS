@@ -16,7 +16,7 @@ const ME: Me = {
 
 const QUIET: Today = {
   on: "2026-10-13", late_rent: [], bills_due: [], unreconciled: [], applications: [], unsigned_offers: [],
-  journal_waiting: [], vendor_insurance: [], company_fees: [],
+  journal_waiting: [], vendor_insurance: [], company_fees: [], signers: [],
 };
 
 function server(answer: Today | { detail: string }, status = 200) {
@@ -117,6 +117,19 @@ describe("TodayPage", () => {
       "Second trust: $20.00 of the company's fees, the oldest since 2026-10-01 (12 days); take them out by 2026-10-26",
     )).toBeTruthy();
     expect(within(fees).getByRole("link", { name: "Open Owners" }).getAttribute("href")).toBe("/owners");
+  });
+
+  it("lists trust accounts with no broker on file and signers' bonds running out", async () => {
+    server({ ...QUIET, signers: [
+      { bank_account_id: "b1", bank_account: "Operating trust", signer: "Clerk 1", standing: "bond runs out in 5 days" },
+      { bank_account_id: "b2", bank_account: "Deposit trust", signer: null, standing: "no broker on file" },
+    ] });
+    render(<TodayPage me={ME} />);
+
+    const signers = await screen.findByRole("region", { name: "Trust account signers" });
+    expect(within(signers).getByText("Operating trust, Clerk 1: bond runs out in 5 days")).toBeTruthy();
+    expect(within(signers).getByText("Deposit trust: no broker on file")).toBeTruthy();
+    expect(within(signers).getByRole("link", { name: "Open Staff" }).getAttribute("href")).toBe("/staff");
   });
 
   it("says so in one line on a quiet day", async () => {

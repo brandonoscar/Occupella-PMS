@@ -162,6 +162,17 @@ browser = [
 ]
 
 [[feature]]
+id = "trust-account-signers"
+statement = "An admin names each trust bank account's broker, who authorizes signers in writing, licensed or bonded; once a broker is on file only its signers pay money out of the account, and Today lists accounts with no broker and bonds running out."
+operations = [
+  "GET /api/signers",
+  "POST /api/signers",
+]
+browser = [
+  "features.spec.ts › an admin names the broker of a trust account, who authorizes a signer; then only signers pay out of it",
+]
+
+[[feature]]
 id = "month-end"
 statement = "Staff import a bank statement, match its lines to the books (the sure ones at once), undo a match, prepare the month when nothing is missing, and another staff member who may approve approves it, closing the account through it."
 operations = [

@@ -16,6 +16,7 @@ import {
   lateLine,
   monthEndLine,
   offerLine,
+  signerNoteLine,
 } from "../today";
 import { STAFF_NAV } from "./staffNav";
 
@@ -52,6 +53,8 @@ export function TodayPage({ me }: { me: Me }) {
           lines: today.vendor_insurance.map(insuranceLine) },
         { title: "Company fees in trust", go: "/owners", goLabel: "Owners",
           lines: today.company_fees.map((fees) => companyFeesLine(fees, today.on)) },
+        { title: "Trust account signers", go: "/staff", goLabel: "Staff",
+          lines: today.signers.map(signerNoteLine) },
       ].filter((group) => group.lines.length > 0)
     : [];
   const count = groups.reduce((sum, group) => sum + group.lines.length, 0);
@@ -71,7 +74,7 @@ export function TodayPage({ me }: { me: Me }) {
         !error && <Notice tone="info">Loading</Notice>
       ) : groups.length === 0 ? (
         <EmptyState icon={CircleCheck} title="Nothing is late or waiting."
-          body="Late rent, bills due this week, month-end, applications, unsigned offers, journal entries waiting, vendor insurance running out and the company's fees left in trust show here." />
+          body="Late rent, bills due this week, month-end, applications, unsigned offers, journal entries waiting, vendor insurance running out, the company's fees left in trust and trust accounts' signers show here." />
       ) : (
         <div className="divide-y divide-line rounded-md border border-card-edge">
           {groups.map((group) => (

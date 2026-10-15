@@ -11,6 +11,7 @@ import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
@@ -1148,3 +1149,38 @@ def in_background(database_url, work):
     thread.start()
     assert ready.wait(timeout=30)
     return thread, pid[0], outcome
+
+
+def sign_for(
+    connection,
+    pmc_id,
+    bank_account_id,
+    staff_id,
+    role="signer",
+    granted=True,
+    license_number="LIC-0001",
+    bond=None,
+    on=date(2026, 1, 1),
+    by=None,
+) -> None:
+    """Name a trust bank account's broker (as the admin `by`) or authorize a signer (as its broker
+    `by`), licensed or, with `bond` (amount, the day it runs out), bonded; granted false takes it
+    away. With nobody named, as the server's command line."""
+    amount, expires = bond if bond is not None else (None, None)
+    with acting_as(connection, by):
+        connection.execute(
+            "INSERT INTO trust_account_signers (pmc_id, bank_account_id, staff_id, role, granted,"
+            " license_number, bond_amount, bond_expires_on, authorized_on)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                pmc_id,
+                bank_account_id,
+                staff_id,
+                role,
+                granted,
+                license_number if granted and bond is None else None,
+                None if amount is None else Decimal(amount),
+                expires,
+                on,
+            ),
+        )

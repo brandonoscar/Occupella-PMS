@@ -78,6 +78,7 @@ def test_report_discovery_and_missing_cases(conn, tmp_path):
         "trust_report_tenant_ledger",
         "trust_report_three_way_reconciliation",
         "trust_report_trial_balance",
+        "trust_report_trust_account_signers",
         "trust_report_unpaid_bills",
         "trust_report_vacancy",
         "trust_report_vendor_directory",

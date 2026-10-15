@@ -963,6 +963,27 @@ $$;
 
 
 --
+-- Name: trust_broker_of(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_broker_of(p_bank_account_id uuid) RETURNS uuid
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT l.staff_id
+    FROM (
+        SELECT DISTINCT ON (s.staff_id) s.staff_id, s.role, s.granted
+        FROM trust_account_signers AS s
+        WHERE s.bank_account_id = p_bank_account_id
+        ORDER BY s.staff_id, s.created_at DESC, s.id DESC
+    ) AS l
+    WHERE l.role = 'broker' AND l.granted
+    ORDER BY l.staff_id
+    LIMIT 1
+$$;
+
+
+--
 -- Name: trust_charge_nsf_fee(uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1543,6 +1564,24 @@ $$;
 
 
 --
+-- Name: trust_check_bill_payment_signer(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_bill_payment_signer() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM trust_require_signer(a.bank_account_id, (t.event_at AT TIME ZONE 'UTC')::date)
+    FROM pgledger_transfers AS t
+    JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.from_account_id
+    WHERE t.id = NEW.transfer_id;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_budget(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1617,6 +1656,32 @@ $$;
 
 
 --
+-- Name: trust_check_deposit_return_signer(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_deposit_return_signer() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bank uuid;
+BEGIN
+    FOR v_bank IN
+        SELECT DISTINCT a.bank_account_id
+        FROM trust_lease_tenants AS lt
+        JOIN trust_ledger_accounts AS a
+          ON a.tenant_id = lt.tenant_id AND a.kind = 'tenant_deposit'
+        WHERE lt.lease_id = NEW.lease_id
+        ORDER BY a.bank_account_id
+    LOOP
+        PERFORM trust_require_signer(v_bank, (NEW.returned_at AT TIME ZONE 'UTC')::date);
+    END LOOP;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_document_file(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1675,6 +1740,23 @@ $$;
 
 
 --
+-- Name: trust_check_draw_signer(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_draw_signer() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM trust_require_signer(a.bank_account_id, (t.event_at AT TIME ZONE 'UTC')::date)
+    FROM trust_ledger_accounts AS a, pgledger_transfers AS t
+    WHERE a.ledger_account_id = NEW.ledger_account_id AND t.id = NEW.transfer_id;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_hold_allowance(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1714,6 +1796,34 @@ BEGIN
             NEW.hold_id, v_starts_on, NEW.ends_on
             USING ERRCODE = 'check_violation';
     END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_journal_signer(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_journal_signer() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bank uuid;
+    v_day date;
+BEGIN
+    FOR v_bank, v_day IN
+        SELECT DISTINCT c.bank_account_id, e.event_on
+        FROM trust_journal_entry_lines AS l
+        JOIN trust_journal_entries AS e ON e.id = l.entry_id
+        JOIN trust_ledger_accounts AS c
+          ON c.ledger_account_id = l.to_account AND c.kind = 'bank_cash'
+        WHERE l.entry_id = NEW.entry_id
+        ORDER BY c.bank_account_id
+    LOOP
+        PERFORM trust_require_signer(v_bank, v_day);
+    END LOOP;
     RETURN NEW;
 END;
 $$;
@@ -1849,6 +1959,90 @@ BEGIN
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_signer_change(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_signer_change() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_by uuid := nullif(current_setting('trust.staff_id', true), '')::uuid;
+    v_was trust_account_signers;
+    v_broker uuid;
+BEGIN
+    NEW.changed_by := v_by;
+    -- Signers' changes wait for each other, account by account, and read who is on file only
+    -- once the change before them committed, so two brokers named at once can't both stand.
+    PERFORM pg_advisory_xact_lock(hashtextextended('signers of ' || NEW.bank_account_id, 0));
+    v_was := trust_signer_of(NEW.bank_account_id, NEW.staff_id);
+    v_broker := trust_broker_of(NEW.bank_account_id);
+    IF NEW.granted IS NOT TRUE AND (v_was.id IS NULL OR NOT v_was.granted OR v_was.role <> NEW.role)
+    THEN
+        RAISE EXCEPTION 'trust: % is not the % of this trust bank account; nothing to take away',
+            (SELECT s.display_name FROM trust_staff AS s WHERE s.id = NEW.staff_id), NEW.role
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.role = 'broker' THEN
+        IF v_by IS NOT NULL AND NOT trust_staff_holds(NEW.pmc_id, v_by, 'admin') THEN
+            RAISE EXCEPTION 'trust: % may not name a trust bank account''s broker (the admin role)',
+                (SELECT s.display_name FROM trust_staff AS s WHERE s.id = v_by)
+                USING ERRCODE = 'insufficient_privilege',
+                      HINT = 'An admin of the PMC names the broker.';
+        END IF;
+        IF NEW.granted AND v_broker IS NOT NULL AND v_broker <> NEW.staff_id THEN
+            RAISE EXCEPTION 'trust: this trust bank account has a broker on file; take that away '
+                'first, in the same change'
+                USING ERRCODE = 'unique_violation';
+        END IF;
+    ELSE
+        IF v_by IS NOT NULL AND v_by IS DISTINCT FROM v_broker THEN
+            RAISE EXCEPTION 'trust: only this trust bank account''s broker authorizes its signers'
+                USING ERRCODE = 'insufficient_privilege',
+                      HINT = 'The broker on file signs in and authorizes them.';
+        END IF;
+        IF NEW.granted AND NEW.staff_id = v_broker THEN
+            RAISE EXCEPTION 'trust: the broker signs this trust bank account already'
+                USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_signers_have_a_broker(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_signers_have_a_broker() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_brokers bigint;
+    v_signers bigint;
+BEGIN
+    SELECT count(*) FILTER (WHERE l.role = 'broker'), count(*) FILTER (WHERE l.role = 'signer')
+    INTO v_brokers, v_signers
+    FROM (
+        SELECT DISTINCT ON (s.staff_id) s.role, s.granted
+        FROM trust_account_signers AS s
+        WHERE s.bank_account_id = NEW.bank_account_id
+        ORDER BY s.staff_id, s.created_at DESC, s.id DESC
+    ) AS l
+    WHERE l.granted;
+    IF v_signers > 0 AND v_brokers = 0 THEN
+        RAISE EXCEPTION 'trust: a trust bank account''s signers need its broker on file'
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Name the new broker in the same change, or take the signers away.';
+    END IF;
+    RETURN NULL;
 END;
 $$;
 
@@ -6531,6 +6725,56 @@ $$;
 
 
 --
+-- Name: trust_report_trust_account_signers(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_trust_account_signers(p_pmc_id uuid, p_on date) RETURNS TABLE(line integer, bank_account_id uuid, bank_account text, staff_id uuid, signer text, role text, license_number text, bond_amount numeric, bond_expires_on date, authorized_on date, standing text)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    WITH latest AS (
+        SELECT DISTINCT ON (s.bank_account_id, s.staff_id) s.*
+        FROM trust_account_signers AS s
+        WHERE s.pmc_id = p_pmc_id AND s.authorized_on <= p_on
+        ORDER BY s.bank_account_id, s.staff_id, s.created_at DESC, s.id DESC
+    ),
+    rows AS (
+        SELECT b.id AS bank_id, b.display_name AS bank, l.staff_id, st.display_name AS signer,
+               l.role, l.license_number, l.bond_amount, l.bond_expires_on, l.authorized_on,
+               CASE
+                   WHEN l.license_number IS NOT NULL THEN 'licensed'
+                   WHEN l.bond_expires_on < p_on THEN 'bond ran out'
+                   WHEN l.bond_expires_on - p_on <= 30 THEN
+                       'bond runs out in ' || (l.bond_expires_on - p_on) || ' day'
+                       || CASE WHEN l.bond_expires_on - p_on = 1 THEN '' ELSE 's' END
+                   ELSE 'bonded'
+               END AS standing,
+               CASE l.role WHEN 'broker' THEN 0 ELSE 1 END AS rank
+        FROM trust_bank_accounts AS b
+        JOIN latest AS l ON l.bank_account_id = b.id AND l.granted
+        JOIN trust_staff AS st ON st.id = l.staff_id
+        WHERE b.pmc_id = p_pmc_id
+        UNION ALL
+        SELECT b.id, b.display_name, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+               'no broker on file', 0
+        FROM trust_bank_accounts AS b
+        WHERE b.pmc_id = p_pmc_id
+          AND NOT EXISTS (
+              SELECT 1 FROM latest AS l
+              WHERE l.bank_account_id = b.id AND l.role = 'broker' AND l.granted
+          )
+    )
+    SELECT (row_number() OVER (
+                ORDER BY r.bank COLLATE "C", r.bank_id, r.rank, r.signer COLLATE "C", r.staff_id
+            ))::integer,
+           r.bank_id, r.bank, r.staff_id, r.signer, r.role, r.license_number, r.bond_amount,
+           r.bond_expires_on, r.authorized_on, r.standing
+    FROM rows AS r
+    ORDER BY 1
+$$;
+
+
+--
 -- Name: trust_report_unpaid_bills(uuid, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7069,6 +7313,41 @@ $$;
 
 
 --
+-- Name: trust_require_signer(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_require_signer(p_bank_account_id uuid, p_day date) RETURNS void
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_staff uuid := nullif(current_setting('trust.staff_id', true), '')::uuid;
+    v_signer trust_account_signers;
+    v_name text;
+    v_account text;
+BEGIN
+    IF v_staff IS NULL OR trust_broker_of(p_bank_account_id) IS NULL THEN
+        RETURN;
+    END IF;
+    v_signer := trust_signer_of(p_bank_account_id, v_staff);
+    SELECT s.display_name INTO v_name FROM trust_staff AS s WHERE s.id = v_staff;
+    SELECT b.display_name INTO v_account FROM trust_bank_accounts AS b WHERE b.id = p_bank_account_id;
+    IF v_signer.id IS NULL OR NOT v_signer.granted THEN
+        RAISE EXCEPTION 'trust: % is not an authorized signer of %', v_name, v_account
+            USING ERRCODE = 'insufficient_privilege',
+                  HINT = 'The account''s broker authorizes its signers.';
+    END IF;
+    IF v_signer.license_number IS NULL AND v_signer.bond_expires_on < p_day THEN
+        RAISE EXCEPTION 'trust: %''s bond to sign % ran out on %', v_name, v_account,
+            v_signer.bond_expires_on
+            USING ERRCODE = 'insufficient_privilege',
+                  HINT = 'The broker records the renewed bond.';
+    END IF;
+END;
+$$;
+
+
+--
 -- Name: trust_return_deposit(uuid, uuid, text, text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7426,6 +7705,48 @@ BEGIN
     VALUES (p_bill_id, 'set_aside', p_pmc_id, v_transfer_id);
     RETURN v_transfer_id;
 END;
+$$;
+
+
+--
+-- Name: trust_account_signers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_account_signers (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    bank_account_id uuid NOT NULL,
+    staff_id uuid NOT NULL,
+    role text NOT NULL,
+    granted boolean NOT NULL,
+    license_number text,
+    bond_amount numeric,
+    bond_expires_on date,
+    authorized_on date NOT NULL,
+    changed_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_account_signers_bond_amount_check CHECK (((bond_amount > (0)::numeric) AND (bond_amount = round(bond_amount, 2)))),
+    CONSTRAINT trust_account_signers_check CHECK (((bond_amount IS NULL) = (bond_expires_on IS NULL))),
+    CONSTRAINT trust_account_signers_check1 CHECK (((NOT granted) OR (license_number IS NOT NULL) OR (bond_amount IS NOT NULL))),
+    CONSTRAINT trust_account_signers_check2 CHECK (((NOT granted) OR (role = 'signer'::text) OR (license_number IS NOT NULL))),
+    CONSTRAINT trust_account_signers_check3 CHECK ((granted OR ((license_number IS NULL) AND (bond_amount IS NULL)))),
+    CONSTRAINT trust_account_signers_license_number_check CHECK (((license_number ~ '\S'::text) AND (length(license_number) <= 50))),
+    CONSTRAINT trust_account_signers_role_check CHECK ((role = ANY (ARRAY['broker'::text, 'signer'::text])))
+);
+
+
+--
+-- Name: trust_signer_of(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_signer_of(p_bank_account_id uuid, p_staff_id uuid) RETURNS public.trust_account_signers
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT s.* FROM trust_account_signers AS s
+    WHERE s.bank_account_id = p_bank_account_id AND s.staff_id = p_staff_id
+    ORDER BY s.created_at DESC, s.id DESC
+    LIMIT 1
 $$;
 
 
@@ -9272,6 +9593,14 @@ ALTER TABLE ONLY public.schema_migrations
 
 
 --
+-- Name: trust_account_signers trust_account_signers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_account_signers
+    ADD CONSTRAINT trust_account_signers_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_adverse_actions trust_adverse_actions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -10563,6 +10892,27 @@ CREATE INDEX pgledger_transfers_to_account_id_idx ON public.pgledger_transfers U
 
 
 --
+-- Name: trust_account_signers_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_account_signers_account ON public.trust_account_signers USING btree (bank_account_id, staff_id, created_at);
+
+
+--
+-- Name: trust_account_signers_changed_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_account_signers_changed_by ON public.trust_account_signers USING btree (pmc_id, changed_by);
+
+
+--
+-- Name: trust_account_signers_staff; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_account_signers_staff ON public.trust_account_signers USING btree (pmc_id, staff_id);
+
+
+--
 -- Name: trust_application_links_unit_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -11071,6 +11421,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.p
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.pgledger_transfers FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_account_signers trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_account_signers FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -11687,6 +12044,13 @@ CREATE TRIGGER trust_approve BEFORE INSERT ON public.trust_reconciliations FOR E
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.pgledger_transfers FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_account_signers trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_account_signers FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -12558,6 +12922,55 @@ CREATE TRIGGER trust_request_work_order_unit BEFORE INSERT ON public.trust_maint
 
 
 --
+-- Name: trust_bill_payments trust_signer; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_signer BEFORE INSERT ON public.trust_bill_payments FOR EACH ROW WHEN ((new.step = 'paid'::text)) EXECUTE FUNCTION public.trust_check_bill_payment_signer();
+
+
+--
+-- Name: trust_deposit_returns trust_signer; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_signer BEFORE INSERT ON public.trust_deposit_returns FOR EACH ROW EXECUTE FUNCTION public.trust_check_deposit_return_signer();
+
+
+--
+-- Name: trust_journal_entry_decisions trust_signer; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_signer BEFORE INSERT ON public.trust_journal_entry_decisions FOR EACH ROW WHEN ((new.decision = 'posted'::text)) EXECUTE FUNCTION public.trust_check_journal_signer();
+
+
+--
+-- Name: trust_owner_draws trust_signer; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_signer BEFORE INSERT ON public.trust_owner_draws FOR EACH ROW EXECUTE FUNCTION public.trust_check_draw_signer();
+
+
+--
+-- Name: trust_pmc_fee_withdrawals trust_signer; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_signer BEFORE INSERT ON public.trust_pmc_fee_withdrawals FOR EACH ROW EXECUTE FUNCTION public.trust_check_draw_signer();
+
+
+--
+-- Name: trust_account_signers trust_signer_change; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_signer_change BEFORE INSERT ON public.trust_account_signers FOR EACH ROW EXECUTE FUNCTION public.trust_check_signer_change();
+
+
+--
+-- Name: trust_account_signers trust_signers_have_a_broker; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_signers_have_a_broker AFTER INSERT ON public.trust_account_signers DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_signers_have_a_broker();
+
+
+--
 -- Name: trust_staff_roles trust_staff_role_change; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -12615,6 +13028,38 @@ ALTER TABLE ONLY public.pgledger_transfers
 
 ALTER TABLE ONLY public.pgledger_transfers
     ADD CONSTRAINT pgledger_transfers_to_account_id_fkey FOREIGN KEY (to_account_id) REFERENCES public.pgledger_accounts(id);
+
+
+--
+-- Name: trust_account_signers trust_account_signers_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_account_signers
+    ADD CONSTRAINT trust_account_signers_pmc_id_bank_account_id_fkey FOREIGN KEY (pmc_id, bank_account_id) REFERENCES public.trust_bank_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_account_signers trust_account_signers_pmc_id_changed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_account_signers
+    ADD CONSTRAINT trust_account_signers_pmc_id_changed_by_fkey FOREIGN KEY (pmc_id, changed_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_account_signers trust_account_signers_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_account_signers
+    ADD CONSTRAINT trust_account_signers_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_account_signers trust_account_signers_pmc_id_staff_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_account_signers
+    ADD CONSTRAINT trust_account_signers_pmc_id_staff_id_fkey FOREIGN KEY (pmc_id, staff_id) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -14795,4 +15240,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261015000056'),
     ('20261015000057'),
     ('20261015000058'),
-    ('20261015000059');
+    ('20261015000059'),
+    ('20261015000060');

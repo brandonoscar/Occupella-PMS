@@ -1268,3 +1268,56 @@ test("staff carry over the old system's unpaid bills, once, and draws hold them 
   await section(page, "Bills");
   await expect(page.getByText("OLD-2", { exact: false }).first()).toBeVisible();
 });
+
+test("an admin names the broker of a trust account, who authorizes a signer; then only signers pay out of it", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features.signers!;
+  await joinAsStaff(page, people.manager);
+  // No broker on file yet: Today asks for one.
+  await section(page, "Today");
+  const waiting = page.getByRole("region", { name: "Trust account signers" });
+  await expect(waiting).toContainText("Demo operating trust account: no broker on file");
+
+  await section(page, "Staff");
+  const card = part(page, "Who signs each trust bank account");
+  const operating = card.getByRole("listitem", { name: "Demo operating trust account" });
+  await expect(operating).toContainText("No broker on file: an admin names the broker.");
+  await card.getByLabel("Trust bank account").selectOption({ label: "Demo operating trust account" });
+  await card.getByLabel("Staff member").selectOption({ label: "Demo Manager" });
+  await card.getByLabel("As").selectOption("broker");
+  await card.getByLabel("License number").fill("LIC-SYN-0001");
+  await card.getByRole("button", { name: "Record" }).click();
+  await expect(card).toContainText("Demo Manager is the broker of Demo operating trust account.");
+  await expect(operating).toContainText("Demo Manager, the broker: license LIC-SYN-0001");
+
+  // The bookkeeper is given pay-out, but signs nothing: a draw by them is refused, in words.
+  await page.getByLabel("Demo Bookkeeper: Pay out").click();
+  await expect(page.getByText("Demo Bookkeeper may now: Pay out.")).toBeVisible();
+  const bookkeeper = await browser.newPage();
+  await joinAsStaff(bookkeeper, people.bookkeeper);
+  await section(bookkeeper, "Owners");
+  const aspen = bookkeeper.getByRole("listitem", { name: "Demo Owner B, Aspen Row" });
+  await aspen.getByText("Record for Demo Owner B, Aspen Row").click();
+  await aspen.getByLabel("Contribution received", { exact: true }).fill("50.00");
+  await aspen.getByRole("button", { name: "Record contribution" }).click();
+  await expect(aspen).toContainText("$50.00 from Demo Owner B recorded.");
+  await aspen.getByLabel("Draw amount (leave empty for all available)").fill("10.00");
+  await aspen.getByRole("button", { name: "Record draw" }).click();
+  await expect(aspen.getByRole("alert")).toHaveText(
+    "Demo Bookkeeper is not an authorized signer of Demo operating trust account",
+  );
+
+  // The broker authorizes them, bonded; their draw then goes through.
+  await card.getByLabel("Staff member").selectOption({ label: "Demo Bookkeeper" });
+  await card.getByLabel("As").selectOption("signer");
+  await card.getByLabel("Or bonded for").fill("25000.00");
+  await card.getByLabel("Bond runs out").fill(daysFromToday(20));
+  await card.getByRole("button", { name: "Record" }).click();
+  await expect(card).toContainText("Demo Bookkeeper signs Demo operating trust account.");
+  await expect(operating).toContainText("bond runs out in 20 days");
+  await aspen.getByRole("button", { name: "Record draw" }).click();
+  await expect(aspen).toContainText("$10.00 paid out to Demo Owner B.");
+  await bookkeeper.close();
+});
