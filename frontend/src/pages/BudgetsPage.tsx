@@ -100,7 +100,10 @@ function BudgetTable({ budget, refresh }: { budget: Budget; refresh: () => void 
           </thead>
           <tbody>
             {budget.lines.map((line) => (
-              <BudgetRow key={`${line.line} ${line.expense_account_id ?? ""}`} budget={budget} line={line}
+              // A row starts again with what the server holds whenever that changes (another
+              // account or year, or a save), so nothing resets the box after someone types in it.
+              <BudgetRow key={`${budget.account} ${budget.year} ${line.line} ${line.expense_account_id ?? ""} ${line.year}`}
+                line={line}
                 save={(months) =>
                   record<{ changed: number }>(
                     "/api/budgets",
@@ -123,15 +126,12 @@ function BudgetTable({ budget, refresh }: { budget: Budget; refresh: () => void 
   );
 }
 
-function BudgetRow({ budget, line, save }: {
-  budget: Budget;
+function BudgetRow({ line, save }: {
   line: BudgetLine;
   save: (months: string[]) => void;
 }) {
   const [year, setYear] = useState(line.year);
   const [wrong, setWrong] = useState("");
-  // The year the server holds, whenever it changes (another account or year, or a save).
-  useEffect(() => setYear(line.year), [line.year, budget.account, budget.year]);
   const label = lineLabel(line);
   return (
     <tr className="border-t border-line">

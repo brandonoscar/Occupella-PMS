@@ -10,6 +10,7 @@ import {
   Landmark,
   Receipt,
   Settings,
+  Truck,
   UserCog,
   Users,
 } from "lucide-react";
@@ -24,6 +25,7 @@ export const STAFF_NAV: NavItem[] = [
   { href: "/owners", label: "Owners", icon: Users },
   { href: "/budgets", label: "Budgets", icon: PiggyBank },
   { href: "/move-out", label: "Move-out", icon: DoorOpen },
+  { href: "/vendors", label: "Vendors", icon: Truck },
   { href: "/documents", label: "Documents", icon: FolderOpen },
   { href: "/reconcile", label: "Month-end", icon: Landmark },
   { href: "/journal", label: "Journal", icon: BookOpen },

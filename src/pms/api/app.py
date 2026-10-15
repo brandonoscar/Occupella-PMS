@@ -44,6 +44,7 @@ from pms.api import (
     custom_roles,
     documents,
     fake_esign,
+    inspections,
     journal,
     leasing,
     listings,
@@ -61,6 +62,7 @@ from pms.api import (
     switching,
     tenant,
     today,
+    vendors,
 )
 from pms.api.deps import COOKIE, Conn, Current, Staff, download, refusal
 from pms.leasing import esign, screening
@@ -364,6 +366,8 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(journal.router)
     app.include_router(budgets.router)
     app.include_router(custom_roles.router)
+    app.include_router(vendors.router)
+    app.include_router(inspections.router)
     app.include_router(switching.router)
     app.include_router(staff.router)
     app.include_router(moveout.router)

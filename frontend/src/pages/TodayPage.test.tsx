@@ -16,7 +16,7 @@ const ME: Me = {
 
 const QUIET: Today = {
   on: "2026-10-13", late_rent: [], bills_due: [], unreconciled: [], applications: [], unsigned_offers: [],
-  journal_waiting: [],
+  journal_waiting: [], vendor_insurance: [],
 };
 
 function server(answer: Today | { detail: string }, status = 200) {
@@ -86,6 +86,18 @@ describe("TodayPage", () => {
       "Rent deposited to the wrong property: $25.00, dated 2026-10-10, proposed by Bookkeeper 1",
     )).toBeTruthy();
     expect(within(journal).getByRole("link", { name: "Open Journal" }).getAttribute("href")).toBe("/journal");
+  });
+
+  it("lists vendor insurance running out, with the way to the vendors page", async () => {
+    server({ ...QUIET, vendor_insurance: [{
+      vendor_id: "v1", vendor: "Vendor 1", coverage: "commercial auto", expires_on: "2026-05-31",
+      standing: "expired",
+    }] });
+    render(<TodayPage me={ME} />);
+
+    const insurance = await screen.findByRole("region", { name: "Vendor insurance" });
+    expect(within(insurance).getByText("Vendor 1, commercial auto: expired (2026-05-31)")).toBeTruthy();
+    expect(within(insurance).getByRole("link", { name: "Open Vendors" }).getAttribute("href")).toBe("/vendors");
   });
 
   it("says so in one line on a quiet day", async () => {

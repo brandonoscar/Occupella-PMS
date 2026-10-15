@@ -29,6 +29,14 @@ export type Today = {
   applications: Application[];
   unsigned_offers: Offer[];
   journal_waiting: JournalEntry[];
+  vendor_insurance: Lapsing[];
+};
+export type Lapsing = {
+  vendor_id: string;
+  vendor: string;
+  coverage: string;
+  expires_on: string;
+  standing: string;
 };
 
 // Whole days from one day ("YYYY-MM-DD") to another.
@@ -90,4 +98,9 @@ export function offerLine(offer: Offer): string {
 // "Rent deposited to the wrong property: $25.00, dated 2026-10-10, proposed by Bookkeeper 1".
 export function journalLine(entry: JournalEntry): string {
   return `${entry.memo}: ${money(entryTotal(entry))}, dated ${entry.event_on}, proposed by ${entry.proposed_by}`;
+}
+
+// "Vendor 1, general liability: expires in 15 days (2026-07-15)".
+export function insuranceLine(policy: Lapsing): string {
+  return `${policy.vendor}, ${policy.coverage}: ${policy.standing} (${policy.expires_on})`;
 }

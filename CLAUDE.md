@@ -115,8 +115,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   PMC over from another system at `/switching` (`src/pms/api/switching.py`), see and change
   staff roles at `/staff` (`src/pms/api/staff.py`), handle move-outs at `/move-out`
   (`src/pms/api/moveout.py`), keep documents at `/documents` (`src/pms/api/documents.py`), and
-  correct the books with journal entries at `/journal` (`src/pms/api/journal.py`), and budget
-  each owner's property at `/budgets` (`src/pms/api/budgets.py`).
+  correct the books with journal entries at `/journal` (`src/pms/api/journal.py`), budget
+  each owner's property at `/budgets` (`src/pms/api/budgets.py`), and keep vendors' insurance at
+  `/vendors` (`src/pms/api/vendors.py`); a lease's inspections are on its move-out row
+  (`src/pms/api/inspections.py`).
   npm packages are pinned exactly and their
   licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
   owner only: no request names an owner, a property or a PMC, and a bill named in a path is
@@ -412,6 +414,15 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   cent; a month left as it was writes nothing. `trust_report_budget_vs_actual` lays an owner's
   budget for the months that start within some days beside their income statement. A budget
   moves no money.
+- Vendor insurance and inspections (migration 0058): a vendor's policies
+  (`trust_vendor_insurance`: coverage, carrier, number, the days it runs, a limit; a renewal is
+  a new policy), and a lease's move-in and move-out inspections (`trust_inspections`, their
+  rooms in `trust_inspection_items`, each room once whatever its case, in one of five
+  conditions). All append-only and naming who recorded them. `trust_report_vendor_insurance`
+  gives each vendor's coverage on a day: of the policies started by then, the one that expires
+  last, standing current, expiring within 30 days or expired (a vendor with none: no insurance
+  on file); the vendors page and Today read it. `trust_report_inspection` lays a lease's latest
+  inspection of each kind side by side, each room's change marked. Neither moves money.
 
 ## Run the checks
 

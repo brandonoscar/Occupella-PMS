@@ -66,6 +66,7 @@ def test_report_discovery_and_missing_cases(conn, tmp_path):
         "trust_report_deposit_return",
         "trust_report_general_ledger",
         "trust_report_income_statement",
+        "trust_report_inspection",
         "trust_report_lease_expirations",
         "trust_report_owner_balances",
         "trust_report_owner_directory",
@@ -80,6 +81,7 @@ def test_report_discovery_and_missing_cases(conn, tmp_path):
         "trust_report_unpaid_bills",
         "trust_report_vacancy",
         "trust_report_vendor_directory",
+        "trust_report_vendor_insurance",
         "trust_report_vendor_payments",
         "trust_report_work_orders",
     ]

@@ -1,9 +1,9 @@
 """Staff's day at a glance (/today): late rent, bills due, months not reconciled, applications
-waiting for a decision, lease offers waiting for signatures and journal entries waiting to be
-posted.
+waiting for a decision, lease offers waiting for signatures, journal entries waiting to be
+posted and vendor insurance expired or running out.
 
 Read only. Each part comes from the route of the page that does that work (rent, bills,
-month-end, leasing, the journal), so the two never disagree; this only picks out what needs
+month-end, leasing, the journal, vendors), so the two never disagree; this only picks out what needs
 someone today.
 """
 
@@ -17,7 +17,7 @@ from uuid import UUID
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-from pms.api import journal, leasing, offers, payables, reconcile, rent
+from pms.api import journal, leasing, offers, payables, reconcile, rent, vendors
 from pms.api.deps import Conn, Staff
 
 router = APIRouter(prefix="/api/today")
@@ -44,6 +44,14 @@ class Unreconciled(BaseModel):
     waiting_for_approval: date | None
 
 
+class Lapsing(BaseModel):
+    vendor_id: UUID
+    vendor: str
+    coverage: str
+    expires_on: date
+    standing: str
+
+
 class Today(BaseModel):
     on: date
     late_rent: list[LateLease]
@@ -52,6 +60,7 @@ class Today(BaseModel):
     applications: list[leasing.ApplicationOut]  # not decided
     unsigned_offers: list[offers.OfferOut]  # sent to sign, not signed by everyone
     journal_waiting: list[journal.Entry]  # proposed, not yet posted or declined
+    vendor_insurance: list[Lapsing]  # expired, or expiring within 30 days
 
 
 def months_ended(start: date, on: date) -> list[str]:
@@ -108,6 +117,18 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
             o
             for o in offers.offers(session, conn, "open")
             if o.sent and any(s.signed_at is None for s in o.signers)
+        ],
+        vendor_insurance=[
+            Lapsing(
+                vendor_id=v.id,
+                vendor=v.name,
+                coverage=p.coverage,
+                expires_on=p.expires_on,
+                standing=p.standing,
+            )
+            for v in vendors.coverage(conn, session.pmc_id, day)
+            for p in v.insurance
+            if p.standing != "current"
         ],
         journal_waiting=[
             e for e in journal.journal(session, conn).entries if e.status == "waiting"

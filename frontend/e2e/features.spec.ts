@@ -1098,3 +1098,97 @@ test("an admin makes a custom role and gives it: its holder changes only what it
   await bookkeeper.getByRole("button", { name: "Enter bill" }).click();
   await expect(bookkeeper.getByText("Bill PLB-4001 entered.")).toBeVisible();
 });
+
+// A day some whole days from today (UTC).
+const daysFromToday = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
+
+test("staff record a vendor's insurance, see it running out on Today, and record the renewal", async ({ page }) => {
+  const people = seed.features.vendors!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Vendors");
+  const plumbing = page.getByRole("listitem", { name: "Demo Plumbing Co" });
+  await expect(plumbing).toContainText("No insurance on file.");
+
+  // A policy that runs out in ten days, and one that ran out yesterday.
+  const record = async (coverage: string, number: string, starts: string, expires: string) => {
+    await page.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Plumbing Co" });
+    await page.getByRole("combobox", { name: "Coverage" }).selectOption(coverage);
+    await page.getByLabel("Carrier").fill("Synthetic Mutual");
+    await page.getByLabel("Policy number").fill(number);
+    await page.getByLabel("Starts").fill(starts);
+    await page.getByLabel("Expires").fill(expires);
+    await page.getByRole("button", { name: "Record policy" }).click();
+  };
+  await record("general liability", "GL-0001", firstOfMonthsAgo(11), daysFromToday(10));
+  await expect(page.getByText("Demo Plumbing Co's general liability policy GL-0001 is recorded.")).toBeVisible();
+  await page.getByLabel("Limit (optional)").fill("1000000");
+  await record("workers compensation", "WC-0001", firstOfMonthsAgo(23), daysFromToday(-1));
+  await expect(page.getByText("Demo Plumbing Co's workers compensation policy WC-0001 is recorded.")).toBeVisible();
+  const liability = page.getByRole("listitem", { name: "Demo Plumbing Co, general liability" });
+  await expect(liability.getByTestId("standing")).toHaveText("expires in 10 days");
+  const workers = page.getByRole("listitem", { name: "Demo Plumbing Co, workers compensation" });
+  await expect(workers.getByTestId("standing")).toHaveText("expired");
+  await expect(workers).toContainText("limit $1,000,000.00");
+
+  // A policy can't expire before it starts.
+  await record("other", "OT-0001", daysFromToday(5), daysFromToday(4));
+  await expect(page.getByRole("alert")).toHaveText("check what you entered and try again");
+
+  // Today lists both; the renewal takes the place of the policy running out.
+  await section(page, "Today");
+  await expect(page.getByText(`Demo Plumbing Co, general liability: expires in 10 days (${daysFromToday(10)})`)).toBeVisible();
+  await expect(page.getByText(`Demo Plumbing Co, workers compensation: expired (${daysFromToday(-1)})`)).toBeVisible();
+  await section(page, "Vendors");
+  await record("general liability", "GL-0002", today(), daysFromToday(365));
+  await expect(page.getByText("Demo Plumbing Co's general liability policy GL-0002 is recorded.")).toBeVisible();
+  await expect(liability.getByTestId("standing")).toHaveText("current");
+  await expect(liability).toContainText("GL-0002");
+  await downloads(page, "Vendor insurance (PDF)", PDF);
+  const href = (await page.getByRole("link", { name: "Vendor insurance (PDF)" }).getAttribute("href")) ?? "";
+  const csv = await (await page.request.get(href.replace("format=pdf", "format=csv"))).text();
+  expect(csv).toContain(`Demo Plumbing Co,`);
+  expect(csv).toContain(`general liability,Synthetic Mutual,GL-0002,${today()},${daysFromToday(365)},,current`);
+  expect(csv).toContain("no insurance on file,Demo Roofing Co,");
+});
+
+test("staff record a lease's move-in and move-out inspections room by room, and download them side by side", async ({ page }) => {
+  const people = seed.features.inspections!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Move-out");
+  const lease = page.getByRole("region", { name: "Aspen Row / Unit 1: Drew Sample" });
+  await lease.getByRole("button", { name: "Inspections" }).click();
+  const panel = page.getByRole("region", { name: "Inspections, Aspen Row / Unit 1: Drew Sample" });
+  await expect(panel).toContainText("No inspection recorded yet.");
+
+  // Move-in, the day the lease started: every room good, the keys noted.
+  await panel.getByLabel("Inspected on").fill(firstOfMonthsAgo(11));
+  await panel.getByLabel("Notes", { exact: true }).fill("Two keys given");
+  await panel.getByRole("button", { name: "Record inspection" }).click();
+  await expect(panel).toContainText(`The move-in inspection of ${firstOfMonthsAgo(11)} is recorded.`);
+  await expect(panel).toContainText(`Move-in, ${firstOfMonthsAgo(11)}: 4 rooms`);
+
+  // Move-out today: the kitchen damaged, and a hallway the move-in didn't list.
+  await panel.getByRole("combobox", { name: "Inspection", exact: true }).selectOption("move-out");
+  await panel.getByLabel("Inspected on").fill(today());
+  await panel.getByRole("combobox", { name: "Room 1 condition" }).selectOption("damaged");
+  await panel.getByLabel("Room 1 note").fill("Burn on the counter");
+  await panel.getByRole("button", { name: "Add a room" }).click();
+  await panel.getByLabel("Room 5", { exact: true }).fill("kitchen");
+  await panel.getByRole("button", { name: "Record inspection" }).click();
+  await expect(panel.getByRole("alert")).toHaveText("check what you entered and try again");
+  await panel.getByLabel("Room 5", { exact: true }).fill("Hallway");
+  await panel.getByRole("combobox", { name: "Room 5 condition" }).selectOption("missing");
+  await panel.getByLabel("Room 5 note").fill("Smoke detector gone");
+  await panel.getByRole("button", { name: "Record inspection" }).click();
+  await expect(panel).toContainText(`The move-out inspection of ${today()} is recorded.`);
+  await expect(panel).toContainText(`Move-out, ${today()}: 5 rooms, 2 damaged or missing`);
+  await expect(panel).toContainText("by Demo Manager");
+
+  await downloads(page, "Inspection report (PDF)", PDF);
+  const href = (await panel.getByRole("link", { name: "Inspection report (PDF)" }).getAttribute("href")) ?? "";
+  const csv = await (await page.request.get(href.replace("format=pdf", "format=csv"))).text();
+  expect(csv).toContain(`inspected,,${firstOfMonthsAgo(11)},${today()},,`);
+  expect(csv).toContain("room,Kitchen,good,damaged,true,move-out: Burn on the counter");
+  expect(csv).toContain("room,Bathroom,good,good,false,");
+  expect(csv).toContain("room,Hallway,,missing,,move-out: Smoke detector gone");
+});

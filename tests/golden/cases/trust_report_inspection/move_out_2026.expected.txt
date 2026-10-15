@@ -1,0 +1,9 @@
+line	item	room	move_in	move_out	changed	detail
+1	PMC	Golden PMC	NULL	NULL	NULL	NULL
+2	lease	Property 1, Unit 1	NULL	NULL	NULL	Tenant 1, Tenant 2
+3	inspected	NULL	2026-01-01	2026-06-30	NULL	NULL
+4	notes	NULL	Two keys given	NULL	NULL	NULL
+5	room	Kitchen	good	damaged	True	move-out: Burn on the counter
+6	room	Living room	good	NULL	NULL	move-in: New carpet
+7	room	Bathroom	fair	fair	False	move-in: Chipped tile
+8	room	Bedroom	NULL	good	NULL	NULL
