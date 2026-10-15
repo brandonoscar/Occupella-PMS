@@ -209,7 +209,7 @@ operations = [
 ]
 browser = [
   "portal.spec.ts › staff import last month's statement, match it to the books and prepare it; another approves",
-  "portal.spec.ts › the demo opens on last month waiting for its manager, who approves it; its owner reads three properties",
+  "portal.spec.ts › the demo opens on last month waiting for its manager, who approves it and sees on Today what else waits; its owner reads three properties",
 ]
 
 [[feature]]
@@ -282,7 +282,7 @@ operations = [
 browser = [
   "features.spec.ts › an owner reads last month's statement and their year-end package, and downloads each",
   "portal.spec.ts › an owner joins from the invite, reads their statement and signs back in",
-  "portal.spec.ts › the demo opens on last month waiting for its manager, who approves it; its owner reads three properties",
+  "portal.spec.ts › the demo opens on last month waiting for its manager, who approves it and sees on Today what else waits; its owner reads three properties",
 ]
 
 [[feature]]

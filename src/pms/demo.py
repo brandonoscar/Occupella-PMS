@@ -2,12 +2,20 @@
 
 `python -m pms.demo` adds a demo PMC to the database in DATABASE_URL (already migrated) and
 prints the links to sign in with. Every step goes through the API's own route functions, as
-trust_app, naming a staff member to the audit log as a request does: the setup, two months of
-rent (a pet fee, a late fee, a bounced payment), bills, management fees, owner draws, and each
+trust_app, naming a staff member to the audit log as a request does. Its books (`books`): the
+setup, two months of rent (a pet fee, a late fee, a bounced payment), bills, management fees,
+the company's fees taken out of trust the month after (docs/law.md), owner draws, and each
 month's bank statement imported and matched to the books. The month before last is reconciled
 and approved. Last month is prepared by the bookkeeper and waits for the manager to approve it,
 with the roof repair's check not yet cleared at the bank: the three-way reconciliation the demo
 opens on. One owner has three properties, so their statement shows how one rolls up.
+
+Then something on every other page (`every_page`): the manager is each trust bank account's
+broker and the bookkeeper a bonded signer; a leasing agent holds a custom role; the vendors have
+insurance (the roofer's running out); a move-in inspection; a year's budget; renters insurance,
+on file for Cedar House and missing for Aspen Row; Cedar House's rent going up next month on a
+month's written notice; and a journal entry the bookkeeper proposed, waiting for the manager.
+Today lists what waits, last month's fees in trust among it.
 
 Every name is synthetic, and every email is at example.com. The dates follow today's: the two
 months are the two before this one.
@@ -34,7 +42,19 @@ import psycopg
 from psycopg import sql
 
 from pms import accounts
-from pms.api import payables, reconcile, rent, setup, staff
+from pms.api import (
+    budgets,
+    custom_roles,
+    inspections,
+    journal,
+    payables,
+    reconcile,
+    rent,
+    setup,
+    signers,
+    staff,
+    vendors,
+)
 
 D = Decimal
 DAY = timedelta(days=1)
@@ -65,6 +85,8 @@ TERMS = {
 }
 PET_RENT = D("35.00")
 LATE_FEE = D("50.00")
+# Cedar House's rent from next month, after a month's written notice.
+NEW_RENT = D("2300.00")
 
 
 @dataclass
@@ -91,6 +113,9 @@ class Demo:
     preparation: UUID | None = None
     # The roof repair's check: paid on last month's last day, not on its statement.
     outstanding: str = ""
+    leasing_agent: UUID | None = None
+    # The bookkeeper's journal entry, waiting for the manager to post it.
+    journal_entry: UUID | None = None
 
 
 def uid(created: setup.Created) -> UUID:
@@ -140,7 +165,17 @@ def statement_csv(lines: list[tuple[date, D, str]]) -> str:
 
 
 def build(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
-    """Builds a demo PMC on a connection acting as trust_app (autocommit), dated from today."""
+    """Builds a demo PMC on a connection acting as trust_app (autocommit), dated from today:
+    its books, and something on every other page."""
+    today = today or datetime.now(UTC).date()
+    demo = books(conn, today)
+    every_page(conn, demo, today)
+    return demo
+
+
+def books(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
+    """A demo PMC's setup and two months of its books, through last month's month-end; each
+    browser test of a feature starts from these (frontend/e2e/seed.py)."""
     today = today or datetime.now(UTC).date()
     month_ago, last_month, this_month = (first_of_month(today, n) for n in (2, 1, 0))
     with conn.transaction():
@@ -308,8 +343,17 @@ def build(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
     close_month(b, demo, manager, month_ago, last_month)
     reconcile_month(b, demo, month_ago, last_month, approve=True)
 
-    # Last month: rent (one payment bounced and paid again), a roof repair over the owner's
-    # approval limit, paid by check on the last day, fees and draws.
+    # Last month: the month before last's fees taken out of trust (docs/law.md), rent (one
+    # payment bounced and paid again), a roof repair over the owner's approval limit, paid by
+    # check on the last day, fees and draws.
+    with b.as_staff(manager) as s:
+        payables.take_company_fees(
+            s,
+            conn,
+            payables.FeeWithdrawal(
+                request_id=uuid.uuid4(), bank_account_id=operating, on=last_month + 4 * DAY
+            ),
+        )
     collect_rent(b, demo, manager, last_month, bounced=("Aspen Row", "Unit 1"))
     with b.as_staff(manager) as s:
         roof = payables.enter_bill(
@@ -341,6 +385,171 @@ def build(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
     close_month(b, demo, manager, last_month, this_month)
     reconcile_month(b, demo, last_month, this_month, approve=False, skip={demo.outstanding})
     return demo
+
+
+def every_page(conn: psycopg.Connection[Any], demo: Demo, today: date) -> None:
+    """Something on each page the books leave empty, and on Today what waits: the trust bank
+    accounts' broker and a signer, a leasing agent's custom role, vendors' insurance (the
+    roofer's running out), a move-in inspection, a year's budget, renters insurance on file
+    for one lease and missing for another, a rent change on notice, and a journal entry
+    waiting for the manager."""
+    b = Builder(conn, demo.pmc_id)
+    lease_start = first_of_month(today, 11)
+    this_month = demo.months[2]
+    staff_and_signers(b, demo, lease_start)
+    with b.as_staff(demo.manager) as s:
+        # The plumber's general liability runs a while yet; the roofer's runs out in 20 days.
+        for vendor, number, starts, expires in (
+            ("Demo Plumbing Co", "GL-DEMO-1001", lease_start, first_of_month(today, -13) - DAY),
+            ("Demo Roofing Co", "GL-DEMO-2001", today - 345 * DAY, today + 20 * DAY),
+        ):
+            vendors.record_policy(
+                s,
+                conn,
+                demo.vendors[vendor],
+                vendors.NewPolicy(
+                    coverage="general liability",
+                    carrier="Demo Casualty Co",
+                    policy_number=number,
+                    starts_on=starts,
+                    expires_on=expires,
+                    limit_amount=D("1000000.00"),
+                ),
+            )
+        inspections.record(
+            s,
+            conn,
+            inspections.NewInspection(
+                lease_id=demo.leases[("Elm Court", "Unit 1")],
+                kind="move-in",
+                inspected_on=lease_start,
+                items=[
+                    inspections.NewItem(room="Kitchen", condition="good"),
+                    inspections.NewItem(room="Living room", condition="good"),
+                    inspections.NewItem(
+                        room="Bathroom", condition="fair", note="Grout stained by the tub"
+                    ),
+                ],
+            ),
+        )
+        # Elm Court's year: its two rents each month, and a little for repairs.
+        lines: list[tuple[budgets.Line, UUID | None, D]] = [
+            ("rent", None, D("2975.00")),
+            ("expense account", demo.expense_accounts["Repairs"], D("100.00")),
+        ]
+        for budget_line, expense_account, monthly in lines:
+            budgets.set_budget(
+                s,
+                conn,
+                budgets.NewBudget(
+                    account=demo.accounts["Elm Court"],
+                    year=today.year,
+                    line=budget_line,
+                    expense_account_id=expense_account,
+                    months=[monthly] * 12,
+                ),
+            )
+        renters_insurance(b, demo, s, lease_start, today)
+        # Cedar House's rent goes up next month, on written notice given before this one.
+        rent.change_rent(
+            s,
+            conn,
+            demo.leases[("Cedar House", "House")],
+            rent.NewRentChange(
+                effective_on=first_of_month(today, -1),
+                monthly_rent=NEW_RENT,
+                notice_given_on=this_month - 10 * DAY,
+                served_by="email",
+            ),
+        )
+    # The bookkeeper proposes moving 25.00 of Elm Court's reserve to Birch Flats.
+    with b.as_staff(demo.bookkeeper) as s:
+        demo.journal_entry = journal.propose(
+            s,
+            conn,
+            journal.NewEntry(
+                event_on=this_month,
+                memo="Reserve moved to Birch Flats, as Demo Owner A asked",
+                lines=[
+                    journal.NewLine(
+                        from_account=demo.accounts["Elm Court"],
+                        to_account=demo.accounts["Birch Flats"],
+                        amount=D("25.00"),
+                    )
+                ],
+            ),
+        ).id
+
+
+def staff_and_signers(b: Builder, demo: Demo, since: date) -> None:
+    """The manager is each trust bank account's broker and the bookkeeper a bonded signer of
+    the operating one (docs/law.md); a leasing agent holds a custom role allowing leasing,
+    maintenance and documents."""
+    conn = b.conn
+    with b.as_staff(demo.manager) as s:
+        for bank in (demo.operating, demo.deposits):
+            signers.change(
+                s,
+                conn,
+                signers.Change(
+                    bank_account_id=bank,
+                    staff_id=demo.manager,
+                    role="broker",
+                    granted=True,
+                    license_number="DEMO-LIC-1",
+                    authorized_on=since,
+                ),
+            )
+        signers.change(
+            s,
+            conn,
+            signers.Change(
+                bank_account_id=demo.operating,
+                staff_id=demo.bookkeeper,
+                role="signer",
+                granted=True,
+                bond_amount=D("25000.00"),
+                bond_expires_on=date(since.year + 2, 12, 31),
+                authorized_on=since,
+            ),
+        )
+        demo.leasing_agent = staff.add(s, conn, staff.NewMember(name="Demo Leasing Agent")).id
+        role = custom_roles.create(
+            s,
+            conn,
+            custom_roles.NewRole(name="Leasing", areas=["leasing", "maintenance", "documents"]),
+        ).id
+        custom_roles.change_staff(
+            s, conn, role, custom_roles.StaffChange(staff_id=demo.leasing_agent, granted=True)
+        )
+
+
+def renters_insurance(
+    b: Builder, demo: Demo, s: accounts.Session, since: date, today: date
+) -> None:
+    """Cedar House's lease and Aspen Row's require renters insurance; Cedar House's tenants
+    have a policy on file, with an insurer of their choosing, and Aspen Row's have none."""
+    conn = b.conn
+    for unit in (("Cedar House", "House"), ("Aspen Row", "Unit 1")):
+        rent.renters_insurance_terms(
+            s,
+            conn,
+            demo.leases[unit],
+            rent.InsuranceTerms(required=True, minimum_liability=D("100000.00"), starts_on=since),
+        )
+    rent.record_policy(
+        s,
+        conn,
+        demo.leases[("Cedar House", "House")],
+        rent.NewPolicy(
+            carrier="Demo Mutual Insurance",
+            policy_number="RI-DEMO-2201",
+            starts_on=since,
+            expires_on=first_of_month(today, -3) - DAY,
+            liability_limit=D("300000.00"),
+            landlord_interested_party=True,
+        ),
+    )
 
 
 def collect_rent(
@@ -477,6 +686,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     for who, link in links.items():
         print(f"Sign in as {who}: {link}")
     print("As the manager, open Reconcile: last month waits for your approval.")
+    print("Today lists the rest that waits: a journal entry, the company's fees in trust, a")
+    print("vendor's insurance running out and a lease without renters insurance.")
     return 0
 
 

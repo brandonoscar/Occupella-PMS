@@ -83,7 +83,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   new invite. `trust_login_secrets` is never audited. The first staff member, their first admin
   role and their invite come from `python -m pms.admin`. A demo PMC to show the PMS with
   comes from `python -m pms.demo` (`src/pms/demo.py`): synthetic, built through the API's own
-  route functions as its staff, with last month's reconciliation waiting for approval.
+  route functions as its staff, with last month's reconciliation waiting for approval and
+  something on every other page (`demo.books` is its books alone, for the feature tests).
   Payments, any email but ADR 0004's and the real screening and e-sign partners are still
   out (`docs/adr/0002-portals-and-exports.md`).
 - Email (`src/pms/email.py`, migration 0042, `docs/adr/0004-email.md`): entering a bill over

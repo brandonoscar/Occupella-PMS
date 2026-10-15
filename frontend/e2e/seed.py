@@ -8,9 +8,10 @@ first (last month) has postings. A second owner's property has a tenant on a lea
 month's rent paid, this month's due and a maintenance request; a vacant unit there has an open
 application link. For lease offers, another vacant unit has an approved application, and a
 third unit a tenant on a month-to-month lease to renew. Then the demo PMC (src/pms/demo.py),
-with invites for its manager and its owner of three properties. Last, a demo PMC of its own for
-each feature test (frontend/e2e/features.spec.ts), so each starts from the same books and none
-sees another's changes. Every name is synthetic.
+with invites for its manager and its owner of three properties. Last, a demo PMC's books
+(`demo.books`, without what the demo adds to every other page) for each feature test
+(frontend/e2e/features.spec.ts), so each starts from the same books and none sees another's
+changes. Every name is synthetic.
 """
 
 import json
@@ -467,9 +468,9 @@ FEATURES = (
 
 
 def feature_pmc(app: psycopg.Connection[Any], tag: str, name: str) -> dict[str, Any]:
-    """A demo PMC and invites (with their emails) for its people: the manager (admin, approve,
-    disburse), the bookkeeper (no role), both owners and two tenants."""
-    made = demo.build(app)
+    """A demo PMC's books and invites (with their emails) for its people: the manager (admin,
+    approve, disburse), the bookkeeper (no role), both owners and two tenants."""
+    made = demo.books(app)
     people = {
         "manager": ("staff", made.manager),
         "bookkeeper": ("staff", made.bookkeeper),
