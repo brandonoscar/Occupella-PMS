@@ -885,6 +885,33 @@ def staff_named(connection, pmc_id, name, roles=()) -> UUID:
     return staff_id
 
 
+def propose_entry(connection, pmc_id, staff_id, event_on, memo, lines) -> UUID:
+    """A journal entry proposed by a staff member: lines of (from, to, amount)."""
+    rows = sql.SQL(", ").join(sql.SQL("(%s, %s, %s::numeric)::transfer_request") for _ in lines)
+    query = sql.SQL(
+        "SELECT trust_propose_journal_entry(%s, %s, %s, ARRAY[{}]::transfer_request[])"
+    ).format(rows)
+    with acting_as(connection, staff_id):
+        return _one(
+            connection,
+            query,
+            [pmc_id, event_on, memo, *(value for line in lines for value in line)],
+        )
+
+
+def post_entry(connection, pmc_id, entry_id, staff_id) -> list[str]:
+    """Post a journal entry as a staff member; its transfer ids, line by line."""
+    with acting_as(connection, staff_id):
+        return _one(connection, "SELECT trust_post_journal_entry(%s, %s)", (pmc_id, entry_id))
+
+
+def decline_entry(connection, pmc_id, entry_id, staff_id, reason="Not needed") -> None:
+    with acting_as(connection, staff_id):
+        connection.execute(
+            "SELECT trust_decline_journal_entry(%s, %s, %s)", (pmc_id, entry_id, reason)
+        )
+
+
 def import_statement(
     connection,
     pmc_id,

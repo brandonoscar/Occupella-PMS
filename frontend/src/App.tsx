@@ -12,6 +12,7 @@ import { OwnerHome } from "./pages/OwnerHome";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { MoveOutPage } from "./pages/MoveOutPage";
 import { OwnersPage } from "./pages/OwnersPage";
+import { JournalPage } from "./pages/JournalPage";
 import { ReconcilePage } from "./pages/ReconcilePage";
 import { RentPage } from "./pages/RentPage";
 import { PMC_KEY, SignInPage } from "./pages/SignInPage";
@@ -65,6 +66,7 @@ function Home({ path }: { path: string }) {
     if (path === "/move-out") return <MoveOutPage me={me} />;
     if (path === "/documents") return <DocumentsPage me={me} />;
     if (path === "/reconcile") return <ReconcilePage me={me} />;
+    if (path === "/journal") return <JournalPage me={me} />;
     if (path === "/switching") return <SwitchPage me={me} />;
     if (path === "/staff") return <StaffPage me={me} />;
     if (path === "/today") return <TodayPage me={me} />;

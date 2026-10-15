@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Application } from "./leasing";
 import type { Offer } from "./offers";
 import type { Bill } from "./payables";
-import { applicationLine, billLine, daysBetween, lateLine, monthEndLine, monthLabel, offerLine } from "./today";
+import { applicationLine, billLine, daysBetween, journalLine, lateLine, monthEndLine, monthLabel, offerLine } from "./today";
 
 const BILL: Bill = {
   id: "b1", vendor: "Vendor A", reference: "INV-1", account: "a1", owner: "Owner A",
@@ -75,6 +75,21 @@ describe("today", () => {
     expect(offerLine(offer)).toBe("Renewal of Unit 1, Property 1 from 2026-11-01: 1 of 2 signed");
     expect(offerLine({ ...offer, kind: "new lease" })).toBe(
       "New lease of Unit 1, Property 1 from 2026-11-01: 1 of 2 signed",
+    );
+  });
+
+  it("reads a journal entry waiting to be posted, its lines added to the cent", () => {
+    const entry = {
+      id: "e1", event_on: "2026-10-10", memo: "Rent deposited to the wrong property",
+      proposed_by: "Bookkeeper 1", proposed_by_me: false, proposed_at: "2026-10-10T15:00:00Z",
+      lines: [
+        { from_account: "a", to_account: "b", amount: "0.10" },
+        { from_account: "b", to_account: "c", amount: "24.90" },
+      ],
+      status: "waiting" as const, decided_by: null, decided_at: null, reason: null,
+    };
+    expect(journalLine(entry)).toBe(
+      "Rent deposited to the wrong property: $25.00, dated 2026-10-10, proposed by Bookkeeper 1",
     );
   });
 });

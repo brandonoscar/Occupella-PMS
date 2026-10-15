@@ -339,3 +339,16 @@ operations = [
 browser = [
   "features.spec.ts › staff put bills in expense accounts on Schedule E lines, and the owner reads the year's income statement",
 ]
+
+[[feature]]
+id = "journal-entries"
+statement = "A staff member proposes a journal entry between the company's ledger accounts; another who holds the approve role posts it, through the ledger's rules (a refusal says why and moves nothing), or anyone declines it with a reason. Whoever proposed an entry never posts it."
+operations = [
+  "GET /api/journal",
+  "POST /api/journal",
+  "POST /api/journal/{entry_id}/post",
+  "POST /api/journal/{entry_id}/decline",
+]
+browser = [
+  "features.spec.ts › a bookkeeper proposes journal entries; the manager posts one, the ledger refuses one that is too much, and the manager declines it",
+]

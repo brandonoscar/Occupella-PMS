@@ -77,3 +77,24 @@ def test_the_last_admin_refusal_says_what_to_do_not_whose_id():
         "trust: staff member 3f1c2b9a-0000-4000-8000-000000000001 is the PMC's last admin"
     )
     assert refusal(error) == "the company keeps an admin: give another staff member admin first"
+
+
+def test_a_tie_out_refusal_says_money_moves_with_its_cash():
+    error = psycopg.errors.CheckViolation(
+        "trust: trust bank account 3f1c2b9a-0000-4000-8000-000000000001 does not tie out"
+        " (off by -300.00)\nHINT: Money held in one trust bank account moves to another only with"
+    )
+    assert refusal(error) == (
+        "money moves to another trust bank account only with its cash: this would leave one off"
+        " by $300.00"
+    )
+
+
+def test_a_closed_period_refusal_says_to_date_it_later():
+    error = psycopg.errors.CheckViolation(
+        "trust: trust bank account 3f1c2b9a-0000-4000-8000-000000000001 is reconciled and closed"
+        " through 2026-02-01 00:00:00+00; a transfer dated 2026-01-15 00:00:00+00 can't be posted"
+    )
+    assert refusal(error) == (
+        "that day is in a period already reconciled and closed: date it in the next open one"
+    )

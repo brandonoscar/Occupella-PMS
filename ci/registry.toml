@@ -922,6 +922,20 @@ tests = [
   "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
 ]
 
+[[invariant]]
+id = "a-journal-entry-is-posted-by-another-approver"
+statement = "A journal entry moves money between ledger accounts of its own PMC, 1 to 20 lines of whole cents, and moves nothing until it is posted: once, by a staff member who holds approve and did not propose it, its lines in order as ledger transfers dated its day (the same post again returns them). Posting keeps every trust rule (no account but a bank's cash below zero, each trust bank account ties out, nothing in an approved period) or moves nothing. A declined entry is never posted, and a posted one is never declined. Every step names a staff member; entries and decisions are append-only, and trust_ai_agent reads them and writes none."
+tests = [
+  "tests/properties/test_journal_properties.py::test_journal_entries_move_money_only_when_another_approver_posts_them",
+  "tests/test_journal_entries.py::test_an_entry_posts_only_when_another_staff_member_approves_it",
+  "tests/test_journal_entries.py::test_the_staff_member_who_proposed_it_does_not_post_it",
+  "tests/test_journal_entries.py::test_posting_it_takes_the_approve_role",
+  "tests/test_journal_entries.py::test_a_declined_entry_is_never_posted",
+  "tests/test_journal_entries.py::test_an_entry_that_would_take_an_owner_below_zero_is_not_posted",
+  "tests/test_journal_entries.py::test_money_moves_to_another_trust_bank_account_only_with_its_cash",
+  "tests/test_journal_entries.py::test_the_app_writes_entries_only_through_their_functions",
+]
+
 [[report]]
 id = "deposit-return"
 statement = "The itemized statement of a lease's security deposits once returned, as staff send it to the tenants: the property and unit, the tenants and the lease's days, each tenant's deposit, what was kept for each charge, the totals, what went back to each tenant, and who returned it when. Compared to a checked-in golden file."

@@ -6,7 +6,7 @@ export type Member = { staff_id: string; name: string; roles: Role[] };
 // Each role, in the order the page shows them, and what it lets a staff member do.
 export const ROLES: { role: Role; label: string; does: string }[] = [
   { role: "admin", label: "Admin", does: "changes roles, invites and disables staff logins" },
-  { role: "approve", label: "Approve", does: "approves month-end, signs off a cutover" },
+  { role: "approve", label: "Approve", does: "approves month-end, signs off a cutover, posts journal entries" },
   { role: "disburse", label: "Pay out", does: "pays bills and owner draws" },
 ];
 
