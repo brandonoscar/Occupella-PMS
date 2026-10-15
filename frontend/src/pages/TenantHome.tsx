@@ -32,6 +32,8 @@ export type Lease = {
   starts_on: string;
   ends_on: string | null;
   monthly_rent: string;
+  // Rent changes to come, each from the first of a month, with the day notice was given.
+  rent_changes: { effective_on: string; monthly_rent: string; notice_given_on: string }[];
   tenants: string[];
   balance_due: string;
   in_effect: boolean;
@@ -157,7 +159,9 @@ export function TenantHome({ me }: { me: Me }) {
               {[
                 ["Home", `${lease.property}, ${lease.unit}`],
                 ["Term", `${lease.starts_on} to ${lease.ends_on ?? "month to month"}`],
-                ["Rent", `${money(lease.monthly_rent)} a month`],
+                ["Rent", `${money(lease.monthly_rent)} a month` + lease.rent_changes
+                  .map((c) => `; ${money(c.monthly_rent)} from ${c.effective_on} (notice given ${c.notice_given_on})`)
+                  .join("")],
                 ["On the lease", lease.tenants.join(", ")],
               ].map(([label, value]) => (
                 <div key={label}>

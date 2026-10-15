@@ -25,6 +25,7 @@ const LEASE: RentLease = {
   starts_on: "2026-01-01",
   ends_on: null,
   monthly_rent: "1500.00",
+  rent_changes: [],
   tenants: [
     { id: "t1", name: "Tenant 1", prepaid: "50.00", deposit: "1500.00" },
     { id: "t2", name: "Tenant 2", prepaid: "0.00", deposit: "0.00" },
@@ -48,7 +49,9 @@ const LEASE: RentLease = {
 // The API: the leases on GET; each POST answers with `answers[path]` (or 201 {}), or 409.
 function server(answers: Record<string, unknown> = {}, refuse: Record<string, string> = {}) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
-    if (init?.method !== "POST") return new Response(JSON.stringify([LEASE]), { status: 200 });
+    if (init?.method !== "POST") {
+      return new Response(JSON.stringify(answers[path] ?? [LEASE]), { status: 200 });
+    }
     if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
     return new Response(JSON.stringify(answers[path] ?? {}), { status: 201 });
   });
@@ -217,6 +220,49 @@ describe("RentPage", () => {
         { kind: "fee", amount: "50.00", memo: "Parking", starts_on: "2026-11-01" },
       ],
     ]);
+  });
+
+  it("shows a lease's rent changes and records one after a full month's notice", async () => {
+    const changed: RentLease = {
+      ...LEASE,
+      rent_changes: [{
+        id: "rc1", effective_on: "2026-12-01", monthly_rent: "1575.00", notice_given_on: "2026-10-15",
+        served_by: "mail", lease_terms: null,
+      }],
+    };
+    const fetch = server({ "/api/rent": [changed], "/api/rent/leases/l1/rent-changes": { id: "rc2" } });
+    render(<RentPage me={ME} />);
+    const lease = await row();
+
+    expect(within(lease).getByRole("list", { name: "Rent changes, Unit 1" }).textContent).toBe(
+      "From 2026-12-01: $1,575.00 a month (notice by mail on 2026-10-15)",
+    );
+    // A month-to-month lease names no lease term.
+    expect(within(lease).queryByLabelText("The lease term that allows it")).toBeNull();
+    fireEvent.change(within(lease).getByLabelText("New monthly rent"), { target: { value: "1600.00" } });
+    fireEvent.change(within(lease).getByLabelText("From (the first of a month)"), { target: { value: "2027-01-01" } });
+    fireEvent.change(within(lease).getByLabelText("Written notice given on"), { target: { value: "2026-11-01" } });
+    fireEvent.change(within(lease).getByLabelText("Served"), { target: { value: "in person" } });
+    fireEvent.click(within(lease).getByRole("button", { name: "Change rent" }));
+    expect(await within(lease).findByText("Rent of $1,600.00 a month from 2027-01-01 recorded.")).toBeTruthy();
+
+    expect(posted(fetch)).toEqual([
+      [
+        "/api/rent/leases/l1/rent-changes",
+        {
+          effective_on: "2027-01-01", monthly_rent: "1600.00", notice_given_on: "2026-11-01",
+          served_by: "in person", lease_terms: null,
+        },
+      ],
+    ]);
+  });
+
+  it("asks a lease with an end date for the term that allows a rent change", async () => {
+    server({ "/api/rent": [{ ...LEASE, ends_on: "2026-12-31" }] });
+    render(<RentPage me={ME} />);
+    const lease = await row();
+
+    expect(within(lease).getByLabelText("The lease term that allows it")).toBeTruthy();
   });
 
   it("shows a refusal on the lease, and a hold", async () => {

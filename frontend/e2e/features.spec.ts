@@ -1321,3 +1321,40 @@ test("an admin names the broker of a trust account, who authorizes a signer; the
   await expect(aspen).toContainText("$10.00 paid out to Demo Owner B.");
   await bookkeeper.close();
 });
+
+test("staff raise a month-to-month rent after a full month's notice, and the tenant sees it coming", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["rent-changes"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Rent");
+  const house = page.getByRole("listitem", { name: "Cedar House, House" });
+  await expect(house).toContainText("$2,250.00 a month");
+  await house.getByText("Record for House").click();
+
+  // From this month: notice was due by the first of last month, so it is refused, in words.
+  await house.getByLabel("New monthly rent").fill("2400.00");
+  await house.getByLabel("From (the first of a month)").fill(firstOfThisMonth());
+  await house.getByRole("button", { name: "Change rent" }).click();
+  await expect(house.getByRole("alert")).toHaveText(
+    `written notice of a full month comes first: for a change from ${firstOfThisMonth()}, give it by ${firstOfMonthsAgo(1)}`,
+  );
+  // From the first month a notice given today allows, it is recorded.
+  const from = dayOfMonth() === 1 ? firstOfMonthsAgo(-1) : firstOfMonthsAgo(-2);
+  await house.getByLabel("New monthly rent").fill("2400.00");
+  await house.getByLabel("From (the first of a month)").fill(from);
+  await house.getByLabel("Served").selectOption("in person");
+  await house.getByRole("button", { name: "Change rent" }).click();
+  await expect(house).toContainText(`Rent of $2,400.00 a month from ${from} recorded.`);
+  await expect(house.getByRole("list", { name: "Rent changes, House" })).toHaveText(
+    `From ${from}: $2,400.00 a month (notice in person on ${today()})`,
+  );
+  // Until then the rent in force stays.
+  await expect(house).toContainText("$2,250.00 a month");
+
+  const tenant = await browser.newPage();
+  await joinPortal(tenant, people.taylor);
+  await expect(tenant.getByText(`$2,250.00 a month; $2,400.00 from ${from} (notice given ${today()})`)).toBeVisible();
+  await tenant.close();
+});

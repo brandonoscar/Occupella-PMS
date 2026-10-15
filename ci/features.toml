@@ -102,6 +102,16 @@ browser = [
 ]
 
 [[feature]]
+id = "rent-changes"
+statement = "Staff change a lease's rent from the first of a month after written notice of a full month (a lease with an end date only as its terms allow); the rent run charges the rent in force, and the tenant sees the change coming in the portal."
+operations = [
+  "POST /api/rent/leases/{lease_id}/rent-changes",
+]
+browser = [
+  "features.spec.ts › staff raise a month-to-month rent after a full month's notice, and the tenant sees it coming",
+]
+
+[[feature]]
 id = "bills"
 statement = "Staff enter a vendor's bill; one over the owner's limit emails the owner, who approves or declines it in their portal (or staff record their answer); staff set it aside from the owner's money and pay it; a declined bill is never paid."
 operations = [

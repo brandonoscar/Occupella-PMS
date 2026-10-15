@@ -8,8 +8,10 @@ import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { day, money } from "../money";
-import type { Bounce, Payment, RecurringCharge, RentLease, RentRun } from "../rent";
+import type { Bounce, Payment, RecurringCharge, RentChange, RentLease, RentRun } from "../rent";
 import {
+  earliestRentChange,
+  rentChangeLine,
   bounceSummary,
   chargeLabel,
   owedLabel,
@@ -150,6 +152,13 @@ function LeaseRow({ lease, refresh }: { lease: RentLease; refresh: () => void })
           ))}
         </ul>
       )}
+      {lease.rent_changes.length > 0 && (
+        <ul className="text-sm" aria-label={`Rent changes, ${lease.unit}`}>
+          {lease.rent_changes.map((c) => (
+            <li key={c.id}>{rentChangeLine(c)}</li>
+          ))}
+        </ul>
+      )}
       {lease.recurring.length > 0 && (
         <ul className="text-sm">
           {lease.recurring.map((r) => (
@@ -179,6 +188,7 @@ function LeaseRow({ lease, refresh }: { lease: RentLease; refresh: () => void })
           <PaymentForm lease={lease} record={record} />
           <ChargeForm lease={lease} record={record} />
           <RecurringForm lease={lease} record={record} />
+          <RentChangeForm lease={lease} record={record} />
           <DepositForm lease={lease} record={record} />
         </div>
       </details>
@@ -375,6 +385,54 @@ function RecurringForm({ lease, record }: { lease: RentLease; record: Recorder }
       <Field label="Monthly, for" id={`recurring-memo-${lease.id}`} required maxLength={200}
         value={memo} onChange={(e) => setMemo(e.target.value)} />
       <Button type="submit" variant="secondary">Add every month</Button>
+    </form>
+  );
+}
+
+// A new monthly rent from the first of a month, after written notice of a full month. A lease
+// with an end date names the term that lets its rent change during it. A state or city may ask
+// for more notice, or cap the increase: that stays the company's to check.
+function RentChangeForm({ lease, record }: { lease: RentLease; record: Recorder }) {
+  const [from, setFrom] = useState(earliestRentChange(new Date()));
+  const [amount, setAmount] = useState("");
+  const [notice, setNotice] = useState(day(new Date()));
+  const [served, setServed] = useState<RentChange["served_by"]>("mail");
+  const [terms, setTerms] = useState("");
+  return (
+    <form
+      className="flex flex-wrap items-end gap-3"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        const body = {
+          effective_on: from, monthly_rent: amount, notice_given_on: notice, served_by: served,
+          lease_terms: terms || null,
+        };
+        const said = () => `Rent of ${money(amount)} a month from ${from} recorded.`;
+        if (await record(`/api/rent/leases/${lease.id}/rent-changes`, body, said)) {
+          setAmount("");
+          setTerms("");
+        }
+      }}
+    >
+      <Field label="New monthly rent" id={`rent-change-amount-${lease.id}`} inputMode="decimal" required
+        value={amount} onChange={(e) => setAmount(e.target.value)} />
+      <Field label="From (the first of a month)" id={`rent-change-from-${lease.id}`} type="date" required
+        value={from} onChange={(e) => setFrom(e.target.value)} />
+      <Field label="Written notice given on" id={`rent-change-notice-${lease.id}`} type="date" required
+        value={notice} onChange={(e) => setNotice(e.target.value)} />
+      <Select label="Served" id={`rent-change-served-${lease.id}`} value={served}
+        onChange={(e) => setServed(e.target.value as RentChange["served_by"])}>
+        <option value="mail">by mail</option>
+        <option value="in person">in person</option>
+        <option value="posted">posted at the unit</option>
+        <option value="email">by email</option>
+        <option value="other">another way</option>
+      </Select>
+      {lease.ends_on !== null && (
+        <Field label="The lease term that allows it" id={`rent-change-terms-${lease.id}`} required
+          maxLength={500} value={terms} onChange={(e) => setTerms(e.target.value)} />
+      )}
+      <Button type="submit" variant="secondary">Change rent</Button>
     </form>
   );
 }

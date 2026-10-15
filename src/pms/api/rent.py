@@ -15,7 +15,7 @@ Nothing here sends money anywhere: the PMS records what the bank already did.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -509,13 +509,24 @@ class RecurringCharge(BaseModel):
     ends_on: date | None  # the first due date it is no longer charged for
 
 
+class RentChange(BaseModel):
+    id: UUID
+    effective_on: date
+    monthly_rent: str
+    notice_given_on: date
+    served_by: str
+    lease_terms: str | None
+
+
 class RentLease(BaseModel):
     id: UUID
     property: str
     unit: str
     starts_on: date
     ends_on: date | None
+    # The rent in force on the day; changes recorded, past and to come, in rent_changes.
     monthly_rent: str
+    rent_changes: list[RentChange]
     tenants: list[LeaseTenant]
     owed: str
     on_hold: bool
@@ -525,7 +536,8 @@ class RentLease(BaseModel):
 
 
 LEASES = f"""
-SELECT l.id, p.display_name, u.display_name, l.starts_on, l.ends_on, l.monthly_rent, {OWED},
+SELECT l.id, p.display_name, u.display_name, l.starts_on, l.ends_on,
+       trust_rent_on(l.id, %(as_of)s), {OWED},
        EXISTS (SELECT 1 FROM trust_payment_holds AS h
                LEFT JOIN trust_payment_hold_releases AS r ON r.hold_id = h.id
                WHERE h.lease_id = l.id AND h.starts_on <= %(as_of)s
@@ -548,6 +560,14 @@ SELECT lt.lease_id, t.id, t.display_name,
 FROM trust_lease_tenants AS lt JOIN trust_tenants AS t ON t.id = lt.tenant_id
 WHERE lt.pmc_id = %s
 ORDER BY t.display_name COLLATE "C", t.id
+"""
+
+RENT_CHANGES = """
+SELECT c.lease_id, c.id, c.effective_on, c.monthly_rent, c.notice_given_on, c.served_by,
+       c.lease_terms
+FROM trust_rent_changes AS c
+WHERE c.pmc_id = %s
+ORDER BY c.effective_on, c.id
 """
 
 # Recurring charges not stopped by the day: still charged, or to be.
@@ -630,6 +650,20 @@ def leases(
                 id=r, kind=kind, memo=memo, amount=cents(amount), starts_on=starts, ends_on=ends
             )
         )
+    changes: dict[UUID, list[RentChange]] = {}
+    for lease, c, effective, monthly, notice, served, terms in conn.execute(
+        RENT_CHANGES, (pmc,)
+    ).fetchall():
+        changes.setdefault(lease, []).append(
+            RentChange(
+                id=c,
+                effective_on=effective,
+                monthly_rent=cents(monthly),
+                notice_given_on=notice,
+                served_by=served,
+                lease_terms=terms,
+            )
+        )
     found = []
     for i, prop, unit, starts, ends, rent, due, on_hold in conn.execute(
         LEASES, {"pmc": pmc, "as_of": day}
@@ -645,6 +679,7 @@ def leases(
                 starts_on=starts,
                 ends_on=ends,
                 monthly_rent=cents(rent),
+                rent_changes=changes.get(i, []),
                 tenants=tenants.get(i, []),
                 owed=cents(due),
                 on_hold=on_hold,
@@ -737,6 +772,63 @@ def add_recurring_charge(
         " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
         (session.pmc_id, lease_id, new.kind, new.amount, new.memo, new.starts_on),
     ).fetchone()
+    assert row is not None
+    return Created(id=row[0])
+
+
+class NewRentChange(BaseModel):
+    effective_on: date  # the first of a month
+    monthly_rent: Amount
+    # The day written notice was given to the tenants, and how.
+    notice_given_on: date
+    served_by: Literal["in person", "mail", "posted", "email", "other"]
+    # A lease with an end date: the lease term that lets its rent change during it.
+    lease_terms: Annotated[
+        str | None, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)
+    ] = None
+
+
+def first_of_month_before(day: date) -> date:
+    return (day.replace(day=1) - timedelta(days=1)).replace(day=1)
+
+
+@router.post("/leases/{lease_id}/rent-changes", status_code=201)
+def change_rent(session: Staff, conn: Conn, lease_id: UUID, new: NewRentChange) -> Created:
+    """The lease's rent from the first of a month on, without a renewal: after written notice of a
+    full month (given by the first of the month before), and for a lease with an end date only as
+    its terms allow (docs/law.md). The rent run charges it from that month."""
+    lease_of(conn, session.pmc_id, lease_id)
+    if new.effective_on.day != 1:
+        raise HTTPException(422, "a rent change starts on the first of a month")
+    if new.notice_given_on > today():
+        raise HTTPException(422, "notice is recorded once it was given, not before")
+    by = first_of_month_before(new.effective_on)
+    if new.notice_given_on > by:
+        raise HTTPException(
+            422,
+            f"written notice of a full month comes first: for a change from {new.effective_on},"
+            f" give it by {by}",
+        )
+    try:
+        with conn.transaction():
+            row = conn.execute(
+                "INSERT INTO trust_rent_changes (pmc_id, lease_id, effective_on, monthly_rent,"
+                " notice_given_on, served_by, lease_terms) VALUES (%s, %s, %s, %s, %s, %s, %s)"
+                " RETURNING id",
+                (
+                    session.pmc_id,
+                    lease_id,
+                    new.effective_on,
+                    new.monthly_rent,
+                    new.notice_given_on,
+                    new.served_by,
+                    new.lease_terms,
+                ),
+            ).fetchone()
+    except psycopg.errors.UniqueViolation:
+        raise HTTPException(409, "this lease's rent changes from that month already") from None
+    except psycopg.errors.CheckViolation as refused:
+        raise HTTPException(409, refusal(refused)) from None
     assert row is not None
     return Created(id=row[0])
 

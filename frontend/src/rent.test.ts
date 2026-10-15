@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { OpenCharge, RecurringCharge } from "./rent";
 import {
   bounceSummary,
+  earliestRentChange,
+  rentChangeLine,
   chargeLabel,
   owedLabel,
   owedTone,
@@ -10,6 +12,25 @@ import {
   rentRunSummary,
   requestId,
 } from "./rent";
+
+describe("rent changes", () => {
+  it("reads a change, with its notice and the lease term that allows it", () => {
+    const change = {
+      id: "rc1", effective_on: "2026-12-01", monthly_rent: "1575.00", notice_given_on: "2026-10-15",
+      served_by: "mail" as const, lease_terms: null,
+    };
+    expect(rentChangeLine(change)).toBe("From 2026-12-01: $1,575.00 a month (notice by mail on 2026-10-15)");
+    expect(rentChangeLine({ ...change, served_by: "in person", lease_terms: "Section 4" })).toBe(
+      "From 2026-12-01: $1,575.00 a month (notice in person on 2026-10-15; Section 4)",
+    );
+  });
+
+  it("starts a change no sooner than a full month's notice given today allows", () => {
+    expect(earliestRentChange(new Date("2026-10-01T12:00:00Z"))).toBe("2026-11-01");
+    expect(earliestRentChange(new Date("2026-10-02T00:00:00Z"))).toBe("2026-12-01");
+    expect(earliestRentChange(new Date("2026-12-15T00:00:00Z"))).toBe("2027-02-01");
+  });
+});
 
 describe("rent", () => {
   it("says what a payment did", () => {
