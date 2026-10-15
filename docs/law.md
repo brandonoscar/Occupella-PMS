@@ -51,3 +51,32 @@ license law forbids a broker to keep their own money mixed with what they hold f
   fee was earned on.
 - Holding back a fee an owner disputes (California 10 CCR 2835(b)): the PMS records no dispute
   yet, so don't take that fee out until it is settled.
+
+## Unpaid bills carried over at cutover
+
+**The rule.** Every state requires a record of each trust receipt and disbursement and a ledger
+for each owner, and forbids paying out more of an owner's money than that owner's balance.
+
+- West Virginia: W. Va. Code 30-40-18(a) (maintain and reconcile trust accounts; how often is
+  NOT VERIFIED) and 30-40-18(h) (records showing when money came in and from whom, when it went
+  out, and whose it is); 30-40-19(a)(28) and (29) discipline a broker who keeps no records for
+  five years or keeps them wrong.
+- California: 10 CCR 2831 (the journal), 2831.1 (a record for each owner), 2831.2 (reconciled
+  monthly), 2832.1 (no payment that takes the account below what all owners are owed without
+  every owner's written consent); records kept three years (Business and Professions Code 10148).
+- Oregon: OAR 863-025-0027 (no payment without enough money in that owner's ledger).
+- No state rule about switching software was found (NOT VERIFIED that none exists).
+
+**What the PMS does.**
+- A bill the old system had not paid comes over from the switching tool as an ordinary bill
+  against the owner's account for its property, with its old reference, bill date and due date,
+  once (the file sent again adds nothing).
+- From the first day, a draw holds it back, as it does any unpaid bill: the owner is never paid
+  money a vendor is owed.
+- One over the owner's approval limit keeps the approval the old system recorded (who and when);
+  without one, it waits for the owner and the owner is emailed, as for a new bill.
+- Every record is append-only and kept for good, past West Virginia's five years.
+
+**Left to the company.** A bill the old system had set aside but not paid: carry its money over
+on the owner's line and the bill as unpaid, then set it aside and pay it here. (Money carried
+over on a vendor's line is paid out with a journal entry.)

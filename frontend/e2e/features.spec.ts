@@ -1236,3 +1236,35 @@ test("staff see the company's fees left in trust on Today and take them out to t
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   await expect(page.getByRole("region", { name: "Company fees in trust" })).toHaveCount(0);
 });
+
+test("staff carry over the old system's unpaid bills, once, and draws hold them back", async ({ page }) => {
+  const people = seed.features["cutover-bills"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Switching");
+  const roster = part(page, "Bring the roster in");
+  await roster.getByRole("combobox", { name: "File of" }).selectOption({ label: "Unpaid bills" });
+  await expect(roster).toContainText("Approved by and Approved on");
+  // One within Demo Owner B's $300.00 limit, one over it that the owner approved there.
+  await roster.getByLabel("CSV file").setInputFiles({
+    name: "unpaid-bills.csv",
+    mimeType: "text/csv",
+    buffer: Buffer.from(
+      "Vendor,Owner,Property,Reference,Bill date,Due on,Amount,Memo,Approved by,Approved on\n" +
+        `Demo Plumbing Co,Demo Owner B,Aspen Row,OLD-1,${firstOfMonthsAgo(1)},${daysFromToday(10)},120.00,Faucet,,\n` +
+        `Demo Plumbing Co,Demo Owner B,Aspen Row,OLD-2,${firstOfMonthsAgo(1)},${daysFromToday(20)},400.00,Water heater,Demo Owner B,${firstOfMonthsAgo(1)}\n`,
+    ),
+  });
+  await roster.getByRole("button", { name: "Import" }).click();
+  await expect(roster).toContainText("2 added.");
+  // Sent again: nothing twice.
+  await roster.getByRole("button", { name: "Import" }).click();
+  await expect(roster).toContainText("0 added; 2 already here.");
+
+  // Aspen Row already held only its reserve; the bills are held back on top of it.
+  await section(page, "Owners");
+  const aspen = page.getByRole("listitem", { name: "Demo Owner B, Aspen Row" });
+  await expect(aspen).toContainText("$200.00 held, less a $200.00 reserve and $520.00 of unpaid bills");
+  await expect(aspen.getByTestId("available")).toHaveText("$0.00 available");
+  await section(page, "Bills");
+  await expect(page.getByText("OLD-2", { exact: false }).first()).toBeVisible();
+});

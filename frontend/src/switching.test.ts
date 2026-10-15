@@ -4,8 +4,11 @@ import { ROSTER, countedLabel, expectedBank } from "./switching";
 describe("switching", () => {
   it("lists the roster files in the order they go in", () => {
     expect(ROSTER.map((r) => r.kind)).toEqual([
-      "owners", "vendors", "properties", "units", "tenants", "leases", "charges",
+      "owners", "vendors", "properties", "units", "tenants", "leases", "charges", "bills",
     ]);
+    // Unpaid bills come over with their old dates, and say what to do with one set aside there.
+    expect(ROSTER.at(-1)?.columns).toContain("Approved by and Approved on");
+    expect(ROSTER.at(-1)?.columns).toContain("carry its money over on the owner's line");
   });
 
   it("says what a file added and kept", () => {

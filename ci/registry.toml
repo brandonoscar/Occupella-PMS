@@ -245,6 +245,15 @@ tests = [
 ]
 
 [[invariant]]
+id = "cutover-bills-hold-back-draws"
+statement = "A bill the old system had not paid comes over once, with its old reference and dates, against the owner's account for its property: draws hold it back from the first day, a bill over the owner's limit without the old system's approval waits for the owner, and the file sent again adds nothing."
+tests = [
+  "tests/properties/test_cutover_bills_properties.py::test_unpaid_bills_carried_over_hold_back_draws_and_wait_for_their_owner",
+  "tests/api/test_switch.py::test_unpaid_bills_come_over_and_hold_back_draws",
+  "tests/api/test_switch.py::test_an_unpaid_bill_over_the_limit_asks_its_owner_as_a_new_one_does",
+]
+
+[[invariant]]
 id = "bill-set-aside-once-with-approval"
 statement = "A vendor's bill is entered once per vendor reference, against an owner's property account of its PMC; its money is set aside once, from that owner's account to the vendor's, and only with the owner's approval when it is over the approval limit in force on its date. A retry returns the original transfer."
 tests = [

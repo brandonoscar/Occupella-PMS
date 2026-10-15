@@ -1,7 +1,8 @@
 """The switching tool: a PMC moving from another system brings its roster in from CSV files,
 opens each trust bank account with the balances it held there, lists the checks and deposits the
 bank had not cleared at the cutover, and signs off the tie-out (trust_report_cutover). What the
-old system paid each vendor in the cutover's year comes over too, for the year's 1099s.
+old system paid each vendor in the cutover's year comes over too, for the year's 1099s, and the
+vendors' bills it had not paid yet, which hold back owner draws from the first day.
 
 Each file goes in whole or not at all, and names are matched exactly within the PMC, so sending
 a file again adds nothing twice. Records go in through the same inserts and write paths staff use
@@ -25,7 +26,8 @@ from fastapi import APIRouter, HTTPException
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, StringConstraints
 
-from pms import exports, statements
+from pms import email, exports, statements
+from pms.api import outbox
 from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/switching")
@@ -231,7 +233,7 @@ class Names:
 
 # --- importing the roster ----------------------------------------------------------------------
 
-Kind = Literal["owners", "vendors", "properties", "units", "tenants", "leases", "charges"]
+Kind = Literal["owners", "vendors", "properties", "units", "tenants", "leases", "charges", "bills"]
 NEEDS: dict[str, tuple[str, ...]] = {
     "owners": ("name",),
     "vendors": ("name",),
@@ -240,6 +242,7 @@ NEEDS: dict[str, tuple[str, ...]] = {
     "tenants": ("property", "tenant"),
     "leases": ("property", "unit", "tenants", "starts on", "monthly rent"),
     "charges": ("property", "unit", "due on", "amount"),
+    "bills": ("vendor", "owner", "property", "reference", "bill date", "due on", "amount", "memo"),
 }
 
 
@@ -286,6 +289,8 @@ def import_row(names: Names, kind: str, row: Row) -> None:
         names.tenant(names.property(row.get("property"), row.line), row.get("tenant"), add=True)
     elif kind == "leases":
         import_lease(names, row)
+    elif kind == "bills":
+        import_bill(names, row)
     else:
         import_charge(names, row)
 
@@ -361,6 +366,66 @@ def import_charge(names: Names, row: Row) -> None:
             )
     except (psycopg.errors.UniqueViolation, psycopg.errors.CheckViolation) as refused:
         raise Bad(f"line {row.line}: {refusal(refused)}") from None
+    names.added += 1
+
+
+def import_bill(names: Names, row: Row) -> None:
+    """A vendor's bill the old system had not paid nor set aside: entered against the owner's
+    account for that property as staff enter one, with its old reference and dates, so draws hold
+    it back. Approved in the old system (an 'approved by' and 'approved on'), it needs no new
+    approval; over the owner's limit without one, the owner is asked as for a new bill."""
+    conn, pmc = names.conn, names.pmc
+    vendor = names.vendor(row.get("vendor"), line=row.line)
+    prop = names.property(row.get("property"), row.line)
+    owner = names.owner(row.get("owner"), line=row.line)
+    bank = names.bank(row.get("bank account", required=False), "operating", row.line)
+    account = one(
+        conn,
+        "SELECT ledger_account_id FROM trust_ledger_accounts WHERE owner_id = %s"
+        " AND property_id = %s AND bank_account_id = %s",
+        (owner, prop, bank),
+    )
+    if account is None:
+        raise Bad(
+            f"line {row.line}: that owner has no account for that property in this trust bank"
+            " account; import the properties first"
+        )
+    reference, memo = row.get("reference"), row.get("memo")
+    billed, due = row.day("bill date"), row.day("due on")
+    amount = row.money("amount")
+    if amount <= 0:
+        raise Bad(f"line {row.line}: a bill is for more than 0")
+    if billed is not None and due is not None and due < billed:
+        raise Bad(f"line {row.line}: a bill is due on or after its date")
+    approved_by = row.get("approved by", required=False)
+    approved_on = row.day("approved on", required=bool(approved_by))
+    if approved_on is not None and not approved_by:
+        raise Bad(f"line {row.line}: say who approved it in an 'approved by' column")
+    same = conn.execute(
+        "SELECT ledger_account_id, bill_date, due_on, amount, memo FROM trust_bills"
+        " WHERE pmc_id = %s AND vendor_id = %s AND reference = %s",
+        (pmc, vendor, reference),
+    ).fetchone()
+    if same is not None:
+        if tuple(same) != (account, billed, due, amount, memo):
+            raise Bad(f"line {row.line}: this vendor has another bill with that reference")
+        names.kept += 1
+        return
+    bill = one(
+        conn,
+        "INSERT INTO trust_bills (pmc_id, vendor_id, ledger_account_id, reference, bill_date,"
+        " due_on, amount, memo) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        (pmc, vendor, account, reference, billed, due, amount, memo),
+    )
+    if approved_by:
+        conn.execute(
+            "INSERT INTO trust_bill_approvals (pmc_id, bill_id, approved_on, approved_by)"
+            " VALUES (%s, %s, %s, %s)",
+            (pmc, bill, approved_on, approved_by),
+        )
+    else:
+        # Over the owner's limit: the email asking them to decide it (ADR 0004).
+        email.write_bill_approval(conn, pmc, bill, outbox.PUBLIC_URL.get())
     names.added += 1
 
 
