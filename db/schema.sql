@@ -2096,6 +2096,34 @@ $$;
 
 
 --
+-- Name: trust_decline_journal_entry(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_decline_journal_entry(p_pmc_id uuid, p_entry_id uuid, p_reason text) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_staff uuid := nullif(current_setting('trust.staff_id', true), '')::uuid;
+BEGIN
+    IF v_staff IS NULL THEN
+        RAISE EXCEPTION 'trust: name the staff member who declines the journal entry'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    PERFORM trust_lock_journal_entry(p_pmc_id, p_entry_id);
+    IF EXISTS (
+        SELECT 1 FROM trust_journal_entry_decisions AS d WHERE d.entry_id = p_entry_id
+    ) THEN
+        RAISE EXCEPTION 'trust: journal entry % was decided already', p_entry_id
+            USING ERRCODE = 'unique_violation';
+    END IF;
+    INSERT INTO trust_journal_entry_decisions (entry_id, pmc_id, decision, decided_by, reason)
+    VALUES (p_entry_id, p_pmc_id, 'declined', v_staff, p_reason);
+END;
+$$;
+
+
+--
 -- Name: trust_draw_owner(uuid, text, text, numeric, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2427,6 +2455,44 @@ BEGIN
     END IF;
     PERFORM trust_lock_owner_account(p_pmc_id, v_bill.ledger_account_id);
     RETURN v_bill;
+END;
+$$;
+
+
+--
+-- Name: trust_journal_entries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_journal_entries (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    event_on date NOT NULL,
+    memo text NOT NULL,
+    proposed_by uuid NOT NULL,
+    proposed_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_journal_entries_memo_check CHECK (((memo ~ '\S'::text) AND (length(memo) <= 500)))
+);
+
+
+--
+-- Name: trust_lock_journal_entry(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_lock_journal_entry(p_pmc_id uuid, p_entry_id uuid) RETURNS public.trust_journal_entries
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_entry trust_journal_entries;
+BEGIN
+    SELECT e.* INTO v_entry FROM trust_journal_entries AS e
+    WHERE e.id = p_entry_id AND e.pmc_id = p_pmc_id
+    FOR UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no journal entry % in PMC %', p_entry_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    RETURN v_entry;
 END;
 $$;
 
@@ -2938,6 +3004,62 @@ $$;
 
 
 --
+-- Name: trust_post_journal_entry(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_post_journal_entry(p_pmc_id uuid, p_entry_id uuid) RETURNS text[]
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_staff uuid := nullif(current_setting('trust.staff_id', true), '')::uuid;
+    v_entry trust_journal_entries;
+    v_decided trust_journal_entry_decisions;
+    v_transfers text[];
+BEGIN
+    IF v_staff IS NULL THEN
+        RAISE EXCEPTION 'trust: name the staff member who posts the journal entry'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_entry := trust_lock_journal_entry(p_pmc_id, p_entry_id);
+    SELECT d.* INTO v_decided FROM trust_journal_entry_decisions AS d
+    WHERE d.entry_id = p_entry_id;
+    IF FOUND THEN
+        IF v_decided.decision = 'declined' THEN
+            RAISE EXCEPTION 'trust: journal entry % was declined; it is never posted', p_entry_id
+                USING ERRCODE = 'check_violation';
+        END IF;
+        RETURN v_decided.transfer_ids;  -- a retry: what it posted
+    END IF;
+    IF v_staff = v_entry.proposed_by THEN
+        RAISE EXCEPTION 'trust: the staff member who proposed a journal entry does not post it'
+            USING ERRCODE = 'insufficient_privilege',
+                  HINT = 'Another staff member who holds the approve role posts it.';
+    END IF;
+
+    SELECT array_agg(t.id ORDER BY t.ordinality) INTO v_transfers
+    FROM pgledger_create_transfers(
+        ARRAY(
+            SELECT (l.from_account, l.to_account, l.amount)::transfer_request
+            FROM trust_journal_entry_lines AS l
+            WHERE l.entry_id = p_entry_id
+            ORDER BY l.line
+        ),
+        v_entry.event_on::timestamp AT TIME ZONE 'UTC',
+        jsonb_build_object(
+            'memo', 'Journal entry: ' || v_entry.memo, 'journal_entry_id', p_entry_id
+        )
+    ) WITH ORDINALITY AS t;
+
+    INSERT INTO trust_journal_entry_decisions (
+        entry_id, pmc_id, decision, decided_by, transfer_ids
+    ) VALUES (p_entry_id, p_pmc_id, 'posted', v_staff, v_transfers);
+    RETURN v_transfers;
+END;
+$$;
+
+
+--
 -- Name: trust_post_leasing_fee(uuid, uuid, text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3351,6 +3473,58 @@ BEGIN
     ) VALUES (p_pmc_id, p_bank_account_id, p_through, v_figures[1], v_figures[2], v_staff)
     RETURNING id INTO v_id;
     RETURN v_id;
+END;
+$$;
+
+
+--
+-- Name: trust_propose_journal_entry(uuid, date, text, public.transfer_request[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_propose_journal_entry(p_pmc_id uuid, p_event_on date, p_memo text, p_lines public.transfer_request[]) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_staff uuid := nullif(current_setting('trust.staff_id', true), '')::uuid;
+    v_entry uuid;
+BEGIN
+    IF v_staff IS NULL THEN
+        RAISE EXCEPTION 'trust: name the staff member who proposes the journal entry'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF p_event_on IS NULL THEN
+        RAISE EXCEPTION 'trust: a journal entry is dated a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF coalesce(cardinality(p_lines), 0) NOT BETWEEN 1 AND 20 THEN
+        RAISE EXCEPTION 'trust: a journal entry has 1 to 20 lines, not %',
+            coalesce(cardinality(p_lines), 0)
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM unnest(p_lines) AS l
+        WHERE NOT EXISTS (
+                  SELECT 1 FROM trust_ledger_accounts AS a
+                  WHERE a.ledger_account_id = l.from_account_id AND a.pmc_id = p_pmc_id)
+           OR NOT EXISTS (
+                  SELECT 1 FROM trust_ledger_accounts AS a
+                  WHERE a.ledger_account_id = l.to_account_id AND a.pmc_id = p_pmc_id)
+    ) THEN
+        RAISE EXCEPTION 'trust: a journal entry moves money between ledger accounts of its own '
+            'PMC only'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    INSERT INTO trust_journal_entries (pmc_id, event_on, memo, proposed_by)
+    VALUES (p_pmc_id, p_event_on, p_memo, v_staff)
+    RETURNING id INTO v_entry;
+    INSERT INTO trust_journal_entry_lines (
+        entry_id, pmc_id, line, from_account, to_account, amount
+    )
+    SELECT v_entry, p_pmc_id, l.n, l.from_account_id, l.to_account_id, l.amount
+    FROM unnest(p_lines) WITH ORDINALITY AS l (from_account_id, to_account_id, amount, n);
+    RETURN v_entry;
 END;
 $$;
 
@@ -6921,6 +7095,43 @@ CREATE TABLE public.trust_invites (
 
 
 --
+-- Name: trust_journal_entry_decisions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_journal_entry_decisions (
+    entry_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    decision text NOT NULL,
+    decided_by uuid NOT NULL,
+    transfer_ids text[],
+    reason text,
+    decided_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_journal_entry_decisions_check CHECK (((decision = 'posted'::text) = (transfer_ids IS NOT NULL))),
+    CONSTRAINT trust_journal_entry_decisions_check1 CHECK (((decision = 'declined'::text) = (reason IS NOT NULL))),
+    CONSTRAINT trust_journal_entry_decisions_decision_check CHECK ((decision = ANY (ARRAY['posted'::text, 'declined'::text]))),
+    CONSTRAINT trust_journal_entry_decisions_reason_check CHECK (((reason ~ '\S'::text) AND (length(reason) <= 1000))),
+    CONSTRAINT trust_journal_entry_decisions_transfer_ids_check CHECK ((cardinality(transfer_ids) > 0))
+);
+
+
+--
+-- Name: trust_journal_entry_lines; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_journal_entry_lines (
+    entry_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    line integer NOT NULL,
+    from_account text NOT NULL,
+    to_account text NOT NULL,
+    amount numeric NOT NULL,
+    CONSTRAINT trust_journal_entry_lines_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)) AND (amount <= (10000000)::numeric))),
+    CONSTRAINT trust_journal_entry_lines_check CHECK ((from_account <> to_account)),
+    CONSTRAINT trust_journal_entry_lines_line_check CHECK (((line >= 1) AND (line <= 20)))
+);
+
+
+--
 -- Name: trust_late_fee_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -8184,6 +8395,38 @@ ALTER TABLE ONLY public.trust_invites
 
 ALTER TABLE ONLY public.trust_invites
     ADD CONSTRAINT trust_invites_token_hash_key UNIQUE (token_hash);
+
+
+--
+-- Name: trust_journal_entries trust_journal_entries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_journal_entries
+    ADD CONSTRAINT trust_journal_entries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_journal_entries trust_journal_entries_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_journal_entries
+    ADD CONSTRAINT trust_journal_entries_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_journal_entry_decisions trust_journal_entry_decisions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_journal_entry_decisions
+    ADD CONSTRAINT trust_journal_entry_decisions_pkey PRIMARY KEY (entry_id);
+
+
+--
+-- Name: trust_journal_entry_lines trust_journal_entry_lines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_journal_entry_lines
+    ADD CONSTRAINT trust_journal_entry_lines_pkey PRIMARY KEY (entry_id, line);
 
 
 --
@@ -9558,6 +9801,27 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_journal_entries trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_journal_entries FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_journal_entry_decisions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_journal_entry_decisions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_journal_entry_lines trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_journal_entry_lines FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_late_fee_policies trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -9852,6 +10116,13 @@ CREATE TRIGGER trust_approve BEFORE INSERT ON public.trust_cutover_signoffs FOR 
 
 
 --
+-- Name: trust_journal_entry_decisions trust_approve; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_approve BEFORE INSERT ON public.trust_journal_entry_decisions FOR EACH ROW WHEN ((new.decision = 'posted'::text)) EXECUTE FUNCTION public.trust_check_staff_role('approve', 'post a journal entry');
+
+
+--
 -- Name: trust_reconciliations trust_approve; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -10066,6 +10337,27 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_expe
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_invites FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_journal_entries trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_journal_entries FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_journal_entry_decisions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_journal_entry_decisions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_journal_entry_lines trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_journal_entry_lines FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -11428,6 +11720,78 @@ ALTER TABLE ONLY public.trust_invites
 
 
 --
+-- Name: trust_journal_entries trust_journal_entries_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_journal_entries
+    ADD CONSTRAINT trust_journal_entries_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_journal_entries trust_journal_entries_pmc_id_proposed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_journal_entries
+    ADD CONSTRAINT trust_journal_entries_pmc_id_proposed_by_fkey FOREIGN KEY (pmc_id, proposed_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_journal_entry_decisions trust_journal_entry_decisions_pmc_id_decided_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_journal_entry_decisions
+    ADD CONSTRAINT trust_journal_entry_decisions_pmc_id_decided_by_fkey FOREIGN KEY (pmc_id, decided_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_journal_entry_decisions trust_journal_entry_decisions_pmc_id_entry_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_journal_entry_decisions
+    ADD CONSTRAINT trust_journal_entry_decisions_pmc_id_entry_id_fkey FOREIGN KEY (pmc_id, entry_id) REFERENCES public.trust_journal_entries(pmc_id, id);
+
+
+--
+-- Name: trust_journal_entry_decisions trust_journal_entry_decisions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_journal_entry_decisions
+    ADD CONSTRAINT trust_journal_entry_decisions_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_journal_entry_lines trust_journal_entry_lines_from_account_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_journal_entry_lines
+    ADD CONSTRAINT trust_journal_entry_lines_from_account_fkey FOREIGN KEY (from_account) REFERENCES public.trust_ledger_accounts(ledger_account_id);
+
+
+--
+-- Name: trust_journal_entry_lines trust_journal_entry_lines_pmc_id_entry_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_journal_entry_lines
+    ADD CONSTRAINT trust_journal_entry_lines_pmc_id_entry_id_fkey FOREIGN KEY (pmc_id, entry_id) REFERENCES public.trust_journal_entries(pmc_id, id);
+
+
+--
+-- Name: trust_journal_entry_lines trust_journal_entry_lines_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_journal_entry_lines
+    ADD CONSTRAINT trust_journal_entry_lines_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_journal_entry_lines trust_journal_entry_lines_to_account_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_journal_entry_lines
+    ADD CONSTRAINT trust_journal_entry_lines_to_account_fkey FOREIGN KEY (to_account) REFERENCES public.trust_ledger_accounts(ledger_account_id);
+
+
+--
 -- Name: trust_late_fee_policies trust_late_fee_policies_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -12590,4 +12954,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261013000049'),
     ('20261013000050'),
     ('20261013000051'),
-    ('20261015000052');
+    ('20261015000052'),
+    ('20261015000053');

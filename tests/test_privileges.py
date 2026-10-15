@@ -89,6 +89,11 @@ TABLES = {
     "trust_bill_expense_accounts_id_seq": set(),
     "trust_recurring_bill_expense_accounts": {"SELECT", "INSERT"},
     "trust_recurring_bill_expense_accounts_id_seq": set(),
+    # Journal entries (migration 0053): written only by their three functions, so a posting is
+    # always proposed by one staff member and posted by another.
+    "trust_journal_entries": {"SELECT"},
+    "trust_journal_entry_lines": {"SELECT"},
+    "trust_journal_entry_decisions": {"SELECT"},
     "trust_listing_removals": {"SELECT", "INSERT"},
     "trust_lease_end_adjustments": {"SELECT"},  # written only by trust_end_lease
     "trust_applications": {"SELECT", "INSERT"},
@@ -210,6 +215,9 @@ FUNCTIONS = {
     "trust_prepare_bank_reconciliation(uuid,uuid,date)": {"trust_app"},
     "trust_approve_bank_reconciliation(uuid,uuid)": {"trust_app"},
     "trust_return_deposit(uuid,uuid,text,text,timestamptz)": {"trust_app"},
+    "trust_propose_journal_entry(uuid,date,text,transfer_request[])": {"trust_app"},
+    "trust_post_journal_entry(uuid,uuid)": {"trust_app"},
+    "trust_decline_journal_entry(uuid,uuid,text)": {"trust_app"},
     # What a lease owes, as the deposit's return counts it: the move-out page reads it.
     "trust_lease_owed(uuid)": {"trust_app"},
     # The app approves only month-end preparations, which another staff member made: this one
@@ -224,6 +232,7 @@ FUNCTIONS = {
     "trust_agreement_on(text,date)": set(),
     "trust_post_fee(trust_ledger_accounts,numeric,timestamptz,text)": set(),
     "trust_lock_bill(uuid,uuid)": set(),
+    "trust_lock_journal_entry(uuid,uuid)": set(),
     "trust_unpaid_bills(text,date)": set(),
     # Helpers the bank matching functions call as the owner: nobody else.
     "trust_bank_cash_moved(uuid,text)": set(),
@@ -339,6 +348,9 @@ SECURITY_DEFINER = {
     "trust_prepare_bank_reconciliation(uuid,uuid,date)",
     "trust_approve_bank_reconciliation(uuid,uuid)",
     "trust_return_deposit(uuid,uuid,text,text,timestamptz)",
+    "trust_propose_journal_entry(uuid,date,text,transfer_request[])",
+    "trust_post_journal_entry(uuid,uuid)",
+    "trust_decline_journal_entry(uuid,uuid,text)",
     "trust_audit()",  # writes the audit log, which no other role may write
     "trust_check_payment_hold()",  # locks the hold's lease, which the app can't
     "trust_check_bill_decision()",  # locks the bill's owner account, which the app can't

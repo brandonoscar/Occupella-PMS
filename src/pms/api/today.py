@@ -1,8 +1,10 @@
 """Staff's day at a glance (/today): late rent, bills due, months not reconciled, applications
-waiting for a decision and lease offers waiting for signatures.
+waiting for a decision, lease offers waiting for signatures and journal entries waiting to be
+posted.
 
 Read only. Each part comes from the route of the page that does that work (rent, bills,
-month-end, leasing), so the two never disagree; this only picks out what needs someone today.
+month-end, leasing, the journal), so the two never disagree; this only picks out what needs
+someone today.
 """
 
 from __future__ import annotations
@@ -15,7 +17,7 @@ from uuid import UUID
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-from pms.api import leasing, offers, payables, reconcile, rent
+from pms.api import journal, leasing, offers, payables, reconcile, rent
 from pms.api.deps import Conn, Staff
 
 router = APIRouter(prefix="/api/today")
@@ -49,6 +51,7 @@ class Today(BaseModel):
     unreconciled: list[Unreconciled]
     applications: list[leasing.ApplicationOut]  # not decided
     unsigned_offers: list[offers.OfferOut]  # sent to sign, not signed by everyone
+    journal_waiting: list[journal.Entry]  # proposed, not yet posted or declined
 
 
 def months_ended(start: date, on: date) -> list[str]:
@@ -105,5 +108,8 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
             o
             for o in offers.offers(session, conn, "open")
             if o.sent and any(s.signed_at is None for s in o.signers)
+        ],
+        journal_waiting=[
+            e for e in journal.journal(session, conn).entries if e.status == "waiting"
         ],
     )

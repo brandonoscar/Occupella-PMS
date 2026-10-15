@@ -114,7 +114,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`src/pms/api/payables.py`), reconcile at `/reconcile` (`src/pms/api/reconcile.py`), bring a
   PMC over from another system at `/switching` (`src/pms/api/switching.py`), see and change
   staff roles at `/staff` (`src/pms/api/staff.py`), handle move-outs at `/move-out`
-  (`src/pms/api/moveout.py`), and keep documents at `/documents` (`src/pms/api/documents.py`).
+  (`src/pms/api/moveout.py`), keep documents at `/documents` (`src/pms/api/documents.py`), and
+  correct the books with journal entries at `/journal` (`src/pms/api/journal.py`).
   npm packages are pinned exactly and their
   licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
   owner only: no request names an owner, a property or a PMC, and a bill named in a path is
@@ -163,7 +164,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `trust_post_opening_balances`, `trust_record_owner_contribution`,
   `trust_complete_lease_offer`, `trust_match_bank_lines`, `trust_unmatch_bank_lines`,
   `trust_prepare_bank_reconciliation`, `trust_approve_bank_reconciliation`,
-  `trust_match_cutover_opening` and `trust_return_deposit`, which run as the table owner (`trust_charge_rent_due` and `trust_enter_recurring_bills` run with the app's own
+  `trust_match_cutover_opening`, `trust_return_deposit`, `trust_propose_journal_entry`,
+  `trust_post_journal_entry` and `trust_decline_journal_entry`, which run as the table owner (`trust_charge_rent_due` and `trust_enter_recurring_bills` run with the app's own
   grants). It can't call pgledger's posting functions: every posting it makes goes through
   `trust_post_transfers`, which takes an idempotency key, unique per PMC, so it is safe to
   retry: the same key returns the original transfers, and a different posting under it is
@@ -324,11 +326,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   items; each item clears once, by a later bank line, only after that, and the opening match is
   not undone while one is cleared. A statement starts no earlier than its account's cutover.
 - Staff roles (migration 0034): admin (changes roles; invites and disables staff logins),
-  approve (approves a reconciliation, signs off a cutover) and disburse (pays a bill, an owner
-  draw). The database refuses those writes to a named staff member without the role; one that
-  names nobody is not held to them. Roles are append-only grants and revocations
-  (`trust_staff_roles`): only an admin changes one, a change changes something, and a PMC keeps
-  an admin. One staff member prepares month-end and another who holds approve approves it
+  approve (approves a reconciliation, signs off a cutover, posts a journal entry) and disburse
+  (pays a bill, an owner draw). The database refuses those writes to a named staff member
+  without the role; one that names nobody is not held to them. Roles are append-only grants and
+  revocations (`trust_staff_roles`): only an admin changes one, a change changes something, and
+  a PMC keeps an admin. One staff member prepares month-end and another who holds approve approves it
   (`trust_approve_bank_reconciliation` takes the preparation), on the figures prepared; the app
   can't call `trust_approve_reconciliation` itself. On upgrade every staff member holds every
   role.
@@ -377,6 +379,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   aside by expense account (those in none on no line), net income, then by Schedule E line. It
   files nothing. Owners read and download a year's in the portal (`/api/owner/income-statement`);
   staff download any owner's from the owners page.
+- Journal entries (migration 0053): a correction between a PMC's ledger accounts that no other
+  write path makes. A staff member proposes one (`trust_propose_journal_entry`: a day, what it
+  corrects, 1 to 20 lines of whole cents between accounts of the PMC); another who holds approve
+  posts it (`trust_post_journal_entry`: once, its lines as ledger transfers dated its day, and the
+  same call again returns them), never whoever proposed it; anyone declines it, with why, before
+  it is posted. Posting keeps every trust rule above or moves nothing. Every step names a staff
+  member (the command line can't take one); entries, lines and decisions are append-only, and the
+  AI only reads them. Entries waiting show on `/today`.
 
 ## Run the checks
 

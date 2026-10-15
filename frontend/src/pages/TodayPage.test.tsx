@@ -16,6 +16,7 @@ const ME: Me = {
 
 const QUIET: Today = {
   on: "2026-10-13", late_rent: [], bills_due: [], unreconciled: [], applications: [], unsigned_offers: [],
+  journal_waiting: [],
 };
 
 function server(answer: Today | { detail: string }, status = 200) {
@@ -69,6 +70,22 @@ describe("TodayPage", () => {
 
     fireEvent.click(within(await screen.findByRole("region", { name: "Month-end" })).getByRole("link"));
     expect(window.location.pathname).toBe("/reconcile");
+  });
+
+  it("lists journal entries waiting to be posted, with the way to the journal", async () => {
+    server({ ...QUIET, journal_waiting: [{
+      id: "e1", event_on: "2026-10-10", memo: "Rent deposited to the wrong property",
+      proposed_by: "Bookkeeper 1", proposed_by_me: false, proposed_at: "2026-10-10T15:00:00Z",
+      lines: [{ from_account: "a", to_account: "b", amount: "25.00" }],
+      status: "waiting", decided_by: null, decided_at: null, reason: null,
+    }] });
+    render(<TodayPage me={ME} />);
+
+    const journal = await screen.findByRole("region", { name: "Journal entries waiting" });
+    expect(within(journal).getByText(
+      "Rent deposited to the wrong property: $25.00, dated 2026-10-10, proposed by Bookkeeper 1",
+    )).toBeTruthy();
+    expect(within(journal).getByRole("link", { name: "Open Journal" }).getAttribute("href")).toBe("/journal");
   });
 
   it("says so in one line on a quiet day", async () => {

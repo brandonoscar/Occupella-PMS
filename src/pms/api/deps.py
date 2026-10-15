@@ -43,6 +43,12 @@ TOO_MUCH = re.compile(
 
 # trust_staff_roles' check (migration 0034) names the staff member by their id.
 LAST_ADMIN = re.compile(r"^staff member \S+ is the PMC's last admin$")
+# The ledger's commit-time tie-out (migration 0005) and closed periods (migration 0006) name the
+# trust bank account by its id.
+TIE_OUT = re.compile(rf"^trust bank account \S+ does not tie out \(off by {NUMBER}\)$")
+CLOSED = re.compile(
+    r"^trust bank account \S+ is reconciled and closed through .*; a transfer dated"
+)
 
 
 def dollars(amount: str) -> str:
@@ -58,6 +64,14 @@ def refusal(error: psycopg.Error) -> str:
         return f"not enough money: {HOLDERS[short[1]]} would be {dollars(short[2][1:])} short"
     if LAST_ADMIN.match(text):
         return "the company keeps an admin: give another staff member admin first"
+    off = TIE_OUT.match(text)
+    if off is not None:
+        return (
+            "money moves to another trust bank account only with its cash: this would leave"
+            f" one off by {dollars(off[1].removeprefix('-'))}"
+        )
+    if CLOSED.match(text):
+        return "that day is in a period already reconciled and closed: date it in the next open one"
     draw = TOO_MUCH.match(text)
     if draw is not None:
         available, reserve, unpaid, asked = draw.groups()

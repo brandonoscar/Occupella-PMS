@@ -1,6 +1,7 @@
 """Staff's day at a glance through the API (src/pms/api/today.py): late rent, bills due within a
-week, months not reconciled, applications waiting for a decision and offers waiting for
-signatures. Each part is the work page's own answer, picked for the day."""
+week, months not reconciled, applications waiting for a decision, offers waiting for signatures
+and journal entries waiting to be posted. Each part is the work page's own answer, picked for
+the day."""
 
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -13,16 +14,20 @@ from helpers import (
     approve,
     charge,
     decline_bill,
+    decline_entry,
     enter_bill,
     import_statement,
     make_pmc,
     offer_lease,
     open_application_link,
     open_lease,
+    post_entry,
     prepare_bank,
+    propose_entry,
     record_decision,
     send_offer,
     sign_offer,
+    staff_named,
     submit_application,
     transfer_batch,
 )
@@ -140,6 +145,32 @@ def test_a_month_end_prepared_waits_for_approval(client, conn, staff, pmc):
     ) == (str(pmc.operating_bank_id), None, [last_month.strftime("%Y-%m")], str(last_day))
 
 
+def test_journal_entries_wait_until_posted_or_declined(client, conn, staff, pmc):
+    bookkeeper = staff_named(conn, pmc.pmc_id, "Bookkeeper 1")
+    move = [(pmc.operating_cash, pmc.owners[0].account, "25.00")]
+    waiting, posted, declined = (
+        propose_entry(conn, pmc.pmc_id, bookkeeper, TODAY, memo, move)
+        for memo in ("Waiting", "Posted", "Declined")
+    )
+    post_entry(conn, pmc.pmc_id, posted, staff.person_id)
+    decline_entry(conn, pmc.pmc_id, declined, staff.person_id)
+
+    (entry,) = client.get("/api/today").json()["journal_waiting"]
+
+    assert (entry["id"], entry["memo"], entry["proposed_by"], entry["lines"]) == (
+        str(waiting),
+        "Waiting",
+        "Bookkeeper 1",
+        [
+            {
+                "from_account": pmc.operating_cash,
+                "to_account": pmc.owners[0].account,
+                "amount": "25.00",
+            }
+        ],
+    )
+
+
 def test_a_quiet_day_shows_nothing(client, staff):
     answer = client.get("/api/today", params={"on": "2026-10-13"})
 
@@ -151,6 +182,7 @@ def test_a_quiet_day_shows_nothing(client, staff):
         "unreconciled": [],
         "applications": [],
         "unsigned_offers": [],
+        "journal_waiting": [],
     }
 
 

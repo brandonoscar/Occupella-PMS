@@ -42,6 +42,7 @@ from pms import accounts, email, exports
 from pms.api import (
     documents,
     fake_esign,
+    journal,
     leasing,
     listings,
     maintenance,
@@ -354,6 +355,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(rent.router)
     app.include_router(payables.router)
     app.include_router(reconcile.router)
+    app.include_router(journal.router)
     app.include_router(switching.router)
     app.include_router(staff.router)
     app.include_router(moveout.router)

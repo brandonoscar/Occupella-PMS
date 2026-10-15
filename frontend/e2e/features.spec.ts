@@ -962,3 +962,59 @@ test("staff put bills in expense accounts on Schedule E lines, and the owner rea
   const csv = await owner.request.get((await card.getByRole("link", { name: "CSV" }).getAttribute("href")) ?? "");
   expect(await csv.text()).toContain("expense: Water");
 });
+
+test("a bookkeeper proposes journal entries; the manager posts one, the ledger refuses one that is too much, and the manager declines it", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features.journal!;
+  const OPERATING = "Demo operating trust account";
+  await joinAsStaff(page, people.bookkeeper);
+  await section(page, "Journal");
+  await expect(page.getByTestId("empty-state")).toContainText("No journal entries yet");
+
+  async function propose(memo: string, amount: string) {
+    const form = part(page, "Propose an entry");
+    await form.getByLabel("What it corrects").fill(memo);
+    await form.getByLabel("Line 1 from").selectOption({ label: `${OPERATING}: Demo Owner B / Aspen Row` });
+    await form.getByLabel("Line 1 to").selectOption({ label: `${OPERATING}: Demo Owner A / Birch Flats` });
+    await form.getByLabel("Line 1 amount").fill(amount);
+    await form.getByRole("button", { name: "Propose entry" }).click();
+    await expect(
+      form.getByText(`Proposed: ${memo}. Another staff member who may approve posts it.`),
+    ).toBeVisible();
+  }
+  await propose("Birch Flats rent deposited as Aspen Row", "10.00");
+  await propose("Typed an extra zero", "1000000.00");
+  const entry = (p: Page, memo: string) => p.getByRole("listitem", { name: `${today()} ${memo}` });
+  const moved = entry(page, "Birch Flats rent deposited as Aspen Row");
+  await expect(moved.getByTestId("status")).toHaveText("waiting");
+  // Whoever proposed it doesn't post it.
+  await expect(moved.getByRole("button", { name: "Post" })).toHaveCount(0);
+  await expect(moved).toContainText("You proposed it: another staff member who may approve posts it.");
+
+  const manager = await (await browser.newContext()).newPage();
+  await joinAsStaff(manager, people.manager);
+  await section(manager, "Journal");
+  const toPost = entry(manager, "Birch Flats rent deposited as Aspen Row");
+  await expect(toPost.getByRole("row", { name: /Demo Owner B \/ Aspen Row .*Demo Owner A \/ Birch Flats \$10\.00/ })).toBeVisible();
+  await toPost.getByRole("button", { name: "Post" }).click();
+  await expect(manager.getByText("Posted: Birch Flats rent deposited as Aspen Row.")).toBeVisible();
+  await expect(toPost.getByTestId("status")).toHaveText("posted");
+  await expect(toPost).toContainText("Posted by Demo Manager.");
+
+  const tooMuch = entry(manager, "Typed an extra zero");
+  await tooMuch.getByRole("button", { name: "Post" }).click();
+  await expect(tooMuch.getByRole("alert")).toHaveText(/^not enough money: the owner's account would be \$[\d,]+\.\d\d short$/);
+  await expect(tooMuch.getByTestId("status")).toHaveText("waiting");
+  await tooMuch.getByRole("button", { name: "Decline" }).click();
+  await tooMuch.getByLabel("Why").fill("An extra zero");
+  await tooMuch.getByRole("button", { name: "Decline entry" }).click();
+  await expect(manager.getByText("Declined: Typed an extra zero.")).toBeVisible();
+  await expect(tooMuch.getByTestId("status")).toHaveText("declined");
+
+  // The bookkeeper sees what became of both.
+  await page.reload();
+  await expect(entry(page, "Birch Flats rent deposited as Aspen Row").getByTestId("status")).toHaveText("posted");
+  await expect(entry(page, "Typed an extra zero")).toContainText("Declined by Demo Manager: An extra zero.");
+});

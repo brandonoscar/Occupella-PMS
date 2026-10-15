@@ -1,4 +1,6 @@
 // Staff's day at a glance as the API sends it (src/pms/api/today.py), and how it reads.
+import type { JournalEntry } from "./journal";
+import { entryTotal } from "./journal";
 import type { Application } from "./leasing";
 import { money } from "./money";
 import type { Offer } from "./offers";
@@ -26,6 +28,7 @@ export type Today = {
   unreconciled: Unreconciled[];
   applications: Application[];
   unsigned_offers: Offer[];
+  journal_waiting: JournalEntry[];
 };
 
 // Whole days from one day ("YYYY-MM-DD") to another.
@@ -82,4 +85,9 @@ export function offerLine(offer: Offer): string {
   const signed = offer.signers.filter((s) => s.signed_at !== null).length;
   const kind = offer.kind === "renewal" ? "Renewal" : "New lease";
   return `${kind} of ${offer.unit}, ${offer.property} from ${offer.starts_on}: ${signed} of ${offer.signers.length} signed`;
+}
+
+// "Rent deposited to the wrong property: $25.00, dated 2026-10-10, proposed by Bookkeeper 1".
+export function journalLine(entry: JournalEntry): string {
+  return `${entry.memo}: ${money(entryTotal(entry))}, dated ${entry.event_on}, proposed by ${entry.proposed_by}`;
 }

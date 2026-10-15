@@ -1,5 +1,6 @@
 import {
   ArrowLeftRight,
+  BookOpen,
   Building2,
   CalendarCheck,
   DoorOpen,
@@ -23,6 +24,7 @@ export const STAFF_NAV: NavItem[] = [
   { href: "/move-out", label: "Move-out", icon: DoorOpen },
   { href: "/documents", label: "Documents", icon: FolderOpen },
   { href: "/reconcile", label: "Month-end", icon: Landmark },
+  { href: "/journal", label: "Journal", icon: BookOpen },
   { href: "/switching", label: "Switching", icon: ArrowLeftRight },
   { href: "/staff", label: "Staff", icon: UserCog },
   { href: "/setup", label: "Setup", icon: Settings },
