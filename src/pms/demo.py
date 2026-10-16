@@ -15,7 +15,7 @@ broker and the bookkeeper a bonded signer; a leasing agent holds a custom role; 
 insurance (the roofer's running out); a move-in inspection; a year's budget; renters insurance,
 on file for Cedar House and missing for Aspen Row; Cedar House's rent going up next month on a
 month's written notice; and a journal entry the bookkeeper proposed, waiting for the manager.
-Today lists what waits, last month's fees in trust among it.
+The Dashboard lists what waits, last month's fees in trust among it.
 
 Every name is synthetic, and every email is at example.com. The dates follow today's: the two
 months are the two before this one.
@@ -388,7 +388,7 @@ def books(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
 
 
 def every_page(conn: psycopg.Connection[Any], demo: Demo, today: date) -> None:
-    """Something on each page the books leave empty, and on Today what waits: the trust bank
+    """Something on each page the books leave empty, and on the Dashboard what waits: the trust bank
     accounts' broker and a signer, a leasing agent's custom role, vendors' insurance (the
     roofer's running out), a move-in inspection, a year's budget, renters insurance on file
     for one lease and missing for another, a rent change on notice, and a journal entry
@@ -685,9 +685,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"Demo PMC {demo.pmc_id}: Demo Property Management")
     for who, link in links.items():
         print(f"Sign in as {who}: {link}")
-    print("As the manager, open Reconcile: last month waits for your approval.")
-    print("Today lists the rest that waits: a journal entry, the company's fees in trust, a")
-    print("vendor's insurance running out and a lease without renters insurance.")
+    print("As the manager, open Banking: last month waits for your approval.")
+    print("The Dashboard lists the rest that waits: a journal entry, the company's fees in")
+    print("trust, a vendor's insurance running out and a lease without renters insurance.")
     return 0
 
 

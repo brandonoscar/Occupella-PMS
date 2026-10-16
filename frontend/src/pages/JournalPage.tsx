@@ -39,10 +39,7 @@ export function JournalPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader
-        title="Journal"
-        description="Corrections between ledger accounts: one staff member proposes an entry, another who may approve posts it."
-      />
+      <PageHeader title="Journal entries" />
       {journal && <ProposeCard journal={journal} refresh={refresh} />}
       <Card title="Entries">
         {done && (

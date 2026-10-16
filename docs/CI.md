@@ -260,7 +260,7 @@ staff member, who may approve, to approve, and bring a
 roster in, open an account with its old balances and a check not cleared, sign off the tie-out
 and match the opening, and keep an owner's document that the owner then downloads. The seed
 also builds the demo PMC (`src/pms/demo.py`), whose manager approves the month-end it opens on
-and sees on Today what else waits, and whose owner reads three properties.
+and sees on the Dashboard what else waits, and whose owner reads three properties.
 `frontend/e2e/features.spec.ts` then takes every feature through the browser, each test on a
 demo PMC's books of its own (`demo.books`): the rent run and late fees, a lease's
 fees, credits, monthly charges, payments, prepaid rent, deposit and bounce, bills the owner

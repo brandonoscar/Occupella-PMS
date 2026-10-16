@@ -33,7 +33,7 @@ export function SetupPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Setup" description="Trust bank accounts, owners, vendors, expense accounts, properties, units and tenants." />
+      <PageHeader title="Company setup" />
       {books === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : (

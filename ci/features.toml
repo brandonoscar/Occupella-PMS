@@ -44,11 +44,12 @@ browser = [
 ]
 
 [[feature]]
+# The Dashboard (ADR 0005); its id is the one it had as the Today page, which it grew from.
 id = "today"
-statement = "Staff see what is late or waits on them: late rent, bills due this week, month-end waiting for approval and applications waiting for a decision."
-operations = ["GET /api/today"]
+statement = "Staff open the Dashboard: what tenants owe, open work orders, leases ending in 30, 60 and 90 days, vacant units and applications waiting, each opening its page, and what needs attention: late rent, bills due this week, month-end waiting for approval, applications waiting for a decision, and the rest the work pages flag."
+operations = ["GET /api/today", "GET /api/dashboard"]
 browser = [
-  "features.spec.ts › staff charge this month's rent and its late fees, and Today shows the rent that is late",
+  "features.spec.ts › staff charge this month's rent and its late fees, and the Dashboard shows the rent that is late",
   "features.spec.ts › staff add a recurring bill, enter this month's once and stop it, and record the decline of an owner with no login",
   "features.spec.ts › staff list a vacant unit on the public page; someone applies from it, staff approve, take it off the page and close the link",
 ]
@@ -81,7 +82,7 @@ id = "rent-run"
 statement = "Staff charge every lease its rent and recurring charges for a due date, once, and the late fees of rent still open after its grace days, once."
 operations = ["GET /api/rent", "POST /api/rent/charge-rent", "POST /api/rent/late-fees"]
 browser = [
-  "features.spec.ts › staff charge this month's rent and its late fees, and Today shows the rent that is late",
+  "features.spec.ts › staff charge this month's rent and its late fees, and the Dashboard shows the rent that is late",
 ]
 
 [[feature]]
@@ -209,7 +210,7 @@ operations = [
 ]
 browser = [
   "portal.spec.ts › staff import last month's statement, match it to the books and prepare it; another approves",
-  "portal.spec.ts › the demo opens on last month waiting for its manager, who approves it and sees on Today what else waits; its owner reads three properties",
+  "portal.spec.ts › the demo opens on last month waiting for its manager, who approves it and sees on the Dashboard what else waits; its owner reads three properties",
 ]
 
 [[feature]]
@@ -282,7 +283,7 @@ operations = [
 browser = [
   "features.spec.ts › an owner reads last month's statement and their year-end package, and downloads each",
   "portal.spec.ts › an owner joins from the invite, reads their statement and signs back in",
-  "portal.spec.ts › the demo opens on last month waiting for its manager, who approves it and sees on Today what else waits; its owner reads three properties",
+  "portal.spec.ts › the demo opens on last month waiting for its manager, who approves it and sees on the Dashboard what else waits; its owner reads three properties",
 ]
 
 [[feature]]

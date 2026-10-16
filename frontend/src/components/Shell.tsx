@@ -14,6 +14,19 @@ export function Wordmark() {
 }
 
 export type NavItem = { href: string; label: string; icon?: LucideIcon };
+// A group of the menu (Rentals, Accounting...): its name over the pages in it.
+export type NavGroup = { label: string; icon: LucideIcon; items: NavItem[] };
+export type NavEntry = NavItem | NavGroup;
+
+function isGroup(entry: NavEntry): entry is NavGroup {
+  return "items" in entry;
+}
+
+// A menu link is the page shown when the path is its own or one of its pages' (/settings/staff
+// is Settings'); the Dashboard, at /, only on its own.
+export function isCurrent(href: string, path: string): boolean {
+  return href === "/" ? path === "/" : path === href || path.startsWith(`${href}/`);
+}
 
 // An owner or a tenant has one page; the rail still names it, as Occupella's always does.
 const HOME: NavItem[] = [{ href: "/", label: "Overview", icon: Home }];
@@ -28,7 +41,7 @@ export function Shell({
   children,
 }: {
   me: Me;
-  nav?: NavItem[];
+  nav?: NavEntry[];
   children: React.ReactNode;
 }) {
   const path = usePath();
@@ -81,20 +94,40 @@ export function Shell({
             <X size={16} strokeWidth={1.75} />
           </button>
         </div>
-        <nav aria-label="Sections" className="flex flex-col gap-px px-6 pt-3">
-          {items.map((item) => (
-            <RailLink
-              key={item.href}
-              item={item}
-              active={path === item.href}
-              onGo={() => {
-                setOpen(false);
-                navigate(item.href);
-              }}
-            />
-          ))}
+        <nav aria-label="Sections" className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-6 pt-3 pb-3">
+          {items.map((entry) =>
+            isGroup(entry) ? (
+              <div key={entry.label} role="group" aria-label={entry.label} className="flex flex-col gap-px pt-2">
+                <span className="flex h-7 items-center gap-2.5 pl-4 text-xs font-medium tracking-wider text-chrome-ink-muted uppercase">
+                  <entry.icon size={16} strokeWidth={1.5} aria-hidden="true" />
+                  {entry.label}
+                </span>
+                {entry.items.map((item) => (
+                  <RailLink
+                    key={item.href}
+                    item={item}
+                    inset
+                    active={isCurrent(item.href, path)}
+                    onGo={() => {
+                      setOpen(false);
+                      navigate(item.href);
+                    }}
+                  />
+                ))}
+              </div>
+            ) : (
+              <RailLink
+                key={entry.href}
+                item={entry}
+                active={isCurrent(entry.href, path)}
+                onGo={() => {
+                  setOpen(false);
+                  navigate(entry.href);
+                }}
+              />
+            ),
+          )}
         </nav>
-        <div className="flex-1" />
         <div className="border-t border-chrome-line px-6 pt-2 pb-3">
           <button type="button" onClick={signOut} className={`${RAIL_ROW} ${IDLE_ROW}`}>
             <LogOut size={16} strokeWidth={1.5} aria-hidden="true" />
@@ -154,16 +187,29 @@ function useNarrow(): boolean {
 const RAIL_ROW =
   "group relative flex h-8 w-full items-center gap-2.5 rounded-md pr-3 pl-4 text-sm font-medium" +
   " transition-colors duration-150";
+// A group's page, its text in line with the group name's (past the 16px icon and its gap).
+const INSET_ROW = RAIL_ROW.replace("pl-4", "pl-[42px]");
 const IDLE_ROW = "text-chrome-ink-muted hover:bg-chrome-raised hover:text-chrome-ink";
 const ACTIVE_ROW = "bg-chrome-raised text-chrome-ink shadow-sm";
 
-function RailLink({ item, active, onGo }: { item: NavItem; active: boolean; onGo: () => void }) {
+function RailLink({
+  item,
+  active,
+  inset = false,
+  onGo,
+}: {
+  item: NavItem;
+  active: boolean;
+  // A page of a group sits under its name, in line with the group's icon's text.
+  inset?: boolean;
+  onGo: () => void;
+}) {
   const Icon = item.icon;
   return (
     <a
       href={item.href}
       aria-current={active ? "page" : undefined}
-      className={`${RAIL_ROW} ${active ? ACTIVE_ROW : IDLE_ROW}`}
+      className={`${inset ? INSET_ROW : RAIL_ROW} ${active ? ACTIVE_ROW : IDLE_ROW}`}
       onClick={(event) => {
         // A plain click navigates in place; a click for a new tab or window is the browser's.
         if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {

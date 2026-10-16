@@ -50,7 +50,7 @@ export function BudgetsPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Budgets" description="What each owner's property should bring in and cost, against what happened." />
+      <PageHeader title="Budgets" />
       <Card title="Budget">
         {owners === null ? (
           <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>

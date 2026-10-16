@@ -6,6 +6,7 @@ import { ApplicationStatusPage } from "./pages/ApplicationStatusPage";
 import { ApplyPage } from "./pages/ApplyPage";
 import { BillsPage } from "./pages/BillsPage";
 import { BudgetsPage } from "./pages/BudgetsPage";
+import { DashboardPage } from "./pages/DashboardPage";
 import { ESignPage } from "./pages/ESignPage";
 import { InvitePage } from "./pages/InvitePage";
 import { ListingsPage } from "./pages/ListingsPage";
@@ -14,15 +15,17 @@ import { DocumentsPage } from "./pages/DocumentsPage";
 import { MoveOutPage } from "./pages/MoveOutPage";
 import { OwnersPage } from "./pages/OwnersPage";
 import { JournalPage } from "./pages/JournalPage";
+import { ApplicantsPage, DraftLeasesPage, WorkOrdersPage } from "./pages/LeasingPages";
+import { LoginsPage } from "./pages/LoginsPage";
 import { ReconcilePage } from "./pages/ReconcilePage";
+import { ReportsPage } from "./pages/ReportsPage";
 import { RentPage } from "./pages/RentPage";
 import { PMC_KEY, SignInPage } from "./pages/SignInPage";
 import { SetupPage } from "./pages/SetupPage";
-import { StaffHome } from "./pages/StaffHome";
+import { SettingsPage } from "./pages/SettingsPage";
 import { StaffPage } from "./pages/StaffPage";
 import { SwitchPage } from "./pages/SwitchPage";
 import { TenantHome } from "./pages/TenantHome";
-import { TodayPage } from "./pages/TodayPage";
 import { VendorsPage } from "./pages/VendorsPage";
 import { navigate, usePath } from "./router";
 
@@ -61,20 +64,30 @@ function Home({ path }: { path: string }) {
   if (!me) return null;
   if (me.kind === "owner") return <OwnerHome me={me} />;
   if (me.kind === "staff") {
-    if (path === "/setup") return <SetupPage me={me} />;
-    if (path === "/rent") return <RentPage me={me} />;
-    if (path === "/bills") return <BillsPage me={me} />;
-    if (path === "/owners") return <OwnersPage me={me} />;
-    if (path === "/budgets") return <BudgetsPage me={me} />;
-    if (path === "/move-out") return <MoveOutPage me={me} />;
-    if (path === "/documents") return <DocumentsPage me={me} />;
-    if (path === "/vendors") return <VendorsPage me={me} />;
-    if (path === "/reconcile") return <ReconcilePage me={me} />;
-    if (path === "/journal") return <JournalPage me={me} />;
-    if (path === "/switching") return <SwitchPage me={me} />;
-    if (path === "/staff") return <StaffPage me={me} />;
-    if (path === "/today") return <TodayPage me={me} />;
-    return <StaffHome me={me} />;
+    const page = STAFF_PAGES[path];
+    return page ? page(me) : <DashboardPage me={me} />;
   }
   return <TenantHome me={me} />;
 }
+
+// Staff's pages by path (ADR 0005's menu); any other path is the Dashboard.
+const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
+  "/rent-roll": (me) => <RentPage me={me} />,
+  "/owners": (me) => <OwnersPage me={me} />,
+  "/move-out": (me) => <MoveOutPage me={me} />,
+  "/applicants": (me) => <ApplicantsPage me={me} />,
+  "/draft-leases": (me) => <DraftLeasesPage me={me} />,
+  "/banking": (me) => <ReconcilePage me={me} />,
+  "/bills": (me) => <BillsPage me={me} />,
+  "/journal": (me) => <JournalPage me={me} />,
+  "/budgets": (me) => <BudgetsPage me={me} />,
+  "/work-orders": (me) => <WorkOrdersPage me={me} />,
+  "/vendors": (me) => <VendorsPage me={me} />,
+  "/files": (me) => <DocumentsPage me={me} />,
+  "/reports": (me) => <ReportsPage me={me} />,
+  "/settings": (me) => <SettingsPage me={me} />,
+  "/settings/staff": (me) => <StaffPage me={me} />,
+  "/settings/logins": (me) => <LoginsPage me={me} />,
+  "/settings/setup": (me) => <SetupPage me={me} />,
+  "/settings/import": (me) => <SwitchPage me={me} />,
+};

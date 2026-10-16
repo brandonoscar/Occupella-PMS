@@ -14,7 +14,7 @@ import { useRecord } from "./useRecord";
 
 // The PMC's staff and their roles. Every staff member sees who may do what; an admin adds staff
 // members and changes roles (the database refuses anyone else, and keeps one admin). Invites go
-// out from the Overview's list of people who can sign in.
+// out from Settings, Logins.
 export function StaffPage({ me }: { me: Me }) {
   const [members, setMembers] = useState<Member[] | null>(null);
   const [error, setError] = useState("");
@@ -32,7 +32,7 @@ export function StaffPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Staff" description="Who works here and what each may do." />
+      <PageHeader title="Staff and roles" />
       <Card title="Who may do what">
         <ul className="mb-4 flex flex-col gap-1 text-sm text-ink-muted">
           {ROLES.map((r) => (
@@ -93,7 +93,7 @@ export function StaffPage({ me }: { me: Me }) {
             className="flex flex-wrap items-end gap-3"
             onSubmit={async (event) => {
               event.preventDefault();
-              if (await record<{ id: string }>("/api/staff", { name }, () => `Added ${name}; invite them from the Overview.`)) {
+              if (await record<{ id: string }>("/api/staff", { name }, () => `Added ${name}; invite them from Settings, Logins.`)) {
                 setName("");
               }
             }}

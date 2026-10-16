@@ -81,7 +81,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - Logins (`src/pms/accounts.py`, migration 0028): staff invite a staff member, owner or tenant
   by email; the link carries a token kept only as its SHA-256, in the URL fragment. Accepting
   sets an argon2id password (and for staff an authenticator, TOTP); a new invite resets a
-  password. Staff disable a login from the overview, for good: its sessions end and it takes no
+  password. Staff disable a login from Settings, Logins, for good: its sessions end and it takes no
   new invite. `trust_login_secrets` is never audited. The first staff member, their first admin
   role and their invite come from `python -m pms.admin`. A demo PMC to show the PMS with
   comes from `python -m pms.demo` (`src/pms/demo.py`): synthetic, built through the API's own
@@ -110,18 +110,22 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the scale). A state (paid up, bounced, approved) is a badge (`components/Badge.tsx`), a page
   with nothing to list says so with `EmptyState`, an error comes with its icon (`Notice`), and
   mono type is only for links, keys and hashes (the same test checks it). Money stays text from
-  the database to the screen, never a float. Staff's pages have sections (`pages/staffNav.ts`);
-  they see what is late or waits on them at `/today` (`src/pms/api/today.py`: read only, each
-  part the work page's own answer), set up the books at `/setup` (`src/pms/api/setup.py`: plain inserts and the database's
-  own write paths, nothing that moves money), do the rent work at `/rent`
-  (`src/pms/api/rent.py`), pay bills and handle owners' money at `/bills` and `/owners`
-  (`src/pms/api/payables.py`), reconcile at `/reconcile` (`src/pms/api/reconcile.py`), bring a
-  PMC over from another system at `/switching` (`src/pms/api/switching.py`), see and change
-  staff roles at `/staff` (`src/pms/api/staff.py`), handle move-outs at `/move-out`
-  (`src/pms/api/moveout.py`), keep documents at `/documents` (`src/pms/api/documents.py`), and
-  correct the books with journal entries at `/journal` (`src/pms/api/journal.py`), budget
-  each owner's property at `/budgets` (`src/pms/api/budgets.py`), and keep vendors' insurance at
-  `/vendors` (`src/pms/api/vendors.py`); a lease's inspections are on its move-out row
+  the database to the screen, never a float. Staff's menu (`pages/staffNav.ts`, ADR 0005)
+  groups their pages as Buildium does. They open on the Dashboard at `/`: the company's figures
+  (`src/pms/api/dashboard.py`, each counted by its report) and what needs attention
+  (`src/pms/api/today.py`: read only, each part the work page's own answer). Rentals: the rent
+  work at `/rent-roll` (`src/pms/api/rent.py`), owners' money at `/owners`
+  (`src/pms/api/payables.py`), move-outs at `/move-out` (`src/pms/api/moveout.py`). Leasing:
+  applications and links at `/applicants`, lease offers at `/draft-leases`. Accounting:
+  reconciling at `/banking` (`src/pms/api/reconcile.py`), bills at `/bills`, journal entries at
+  `/journal` (`src/pms/api/journal.py`), budgets at `/budgets` (`src/pms/api/budgets.py`).
+  Maintenance: work orders at `/work-orders`, vendors and their insurance at `/vendors`
+  (`src/pms/api/vendors.py`). Files at `/files` (`src/pms/api/documents.py`), every download at
+  `/reports`, and Settings at `/settings`: staff roles and signers at `/settings/staff`
+  (`src/pms/api/staff.py`), logins at `/settings/logins`, the books' setup at `/settings/setup`
+  (`src/pms/api/setup.py`: plain inserts and the database's own write paths, nothing that
+  moves money), and bringing a PMC over from another system at `/settings/import`
+  (`src/pms/api/switching.py`). A lease's inspections are on its move-out row
   (`src/pms/api/inspections.py`).
   npm packages are pinned exactly and their
   licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
@@ -218,7 +222,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   commingling, which every state forbids. `trust_withdraw_pmc_fees` pays a trust bank account's
   fee account out through its cash to the company, never more than it holds, once per request
   key, by staff who hold disburse (`trust_pmc_fee_withdrawals`, append-only). The owners page and
-  Today show what each holds, since when the oldest waited and the day to take it out by, 25
+  the Dashboard show what each holds, since when the oldest waited and the day to take it out by, 25
   days after (California's deadline, the strictest found). No account holds the broker's own
   money in trust.
 - Vendor bills: entered once per vendor reference against an owner's property account. A bill
@@ -267,7 +271,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   its coverage, recorded by staff or by a tenant on the lease from the portal. Append-only; the
   PMS picks no insurer and charges nothing. `trust_report_renters_insurance` gives each lease in
   effect on a day: the policy that runs out last of those started, its standing and whether it is
-  below the minimum; the rent page, the portal and Today read it.
+  below the minimum; the rent page, the portal and the Dashboard read it.
 - Recurring charges (migration 0037): a fee a lease owes every month besides its rent (pet
   rent, parking) or a credit it gets every month (`trust_recurring_charges`, from a first due
   date; an end row stops it from a day). `trust_charge_recurring_due` charges each one in force
@@ -374,8 +378,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   an account has its broker on file, a payout from it (draw, bill paid, deposit returned, fees
   taken out, a journal entry taking cash out) by a named staff member who isn't its broker or a
   signer, or whose bond ran out, is refused; an account with none keeps the roles alone. One
-  broker per account, signers only while it has one (at commit). Staff see and change it at
-  `/staff` (`src/pms/api/signers.py`); Today lists accounts without a broker and bonds running out.
+  broker per account (the change trigger, under the account's lock), signers only while it has
+  one (at commit). Staff see and change it at `/settings/staff` (`src/pms/api/signers.py`); the
+  Dashboard lists accounts without a broker and bonds running out.
 - Custom roles (migration 0057): an admin names roles, each allowing areas of the work (rent,
   bills, owners' money, budgets, journal, month-end, switching, setup, move-out, documents,
   leasing, maintenance, who can sign in), and gives them to staff (`trust_custom_roles`,
@@ -410,7 +415,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   left, each with its renewal status as of the end of the day (UTC): none, drafted, sent,
   signed or renewed. It runs as the owner so the AI role, which never reads lease offers, gets
   that status word and nothing else of them (founder decision, 2026-10-13). Staff download it
-  from the overview.
+  from Reports.
 - Owner year-end (migration 0039): `trust_report_owner_year_end` sums each of an owner's
   property accounts over a calendar year (UTC): opening balance, collected from tenants
   (payments matched to charges, less bounces), management and leasing fees, bills set aside,
@@ -437,8 +442,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   same call again returns them), never whoever proposed it; anyone declines it, with why, before
   it is posted. Posting keeps every trust rule above or moves nothing. Every step names a staff
   member (the command line can't take one); entries, lines and decisions are append-only, and the
-  AI only reads them. Entries waiting show on `/today`.
-- More reports (migration 0054), each read only and on the overview's downloads: the balance
+  AI only reads them. Entries waiting show on the Dashboard.
+- More reports (migration 0054), each read only and on Reports: the balance
   sheet (`trust_report_balance_sheet`: each trust bank account's cash by the books against what
   it holds by kind, at a day's end), cash flow (`trust_report_cash_flow`: each one's cash over
   days, every move of it in or out once, by what it was), vacancy (units with no lease in
@@ -459,7 +464,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   conditions). All append-only and naming who recorded them. `trust_report_vendor_insurance`
   gives each vendor's coverage on a day: of the policies started by then, the one that expires
   last, standing current, expiring within 30 days or expired (a vendor with none: no insurance
-  on file); the vendors page and Today read it. `trust_report_inspection` lays a lease's latest
+  on file); the vendors page and the Dashboard read it. `trust_report_inspection` lays a lease's latest
   inspection of each kind side by side, each room's change marked. Neither moves money.
 
 ## Run the checks

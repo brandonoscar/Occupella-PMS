@@ -108,7 +108,7 @@ async function card(title: string) {
 
 describe("SetupPage", () => {
   it("shows the books as set up", async () => {
-    window.history.replaceState(null, "", "/setup");
+    window.history.replaceState(null, "", "/settings/setup");
     server();
     render(<SetupPage me={ME} />);
 
@@ -128,8 +128,9 @@ describe("SetupPage", () => {
         " owner approves bills over $500.00 (from 2026-10-01)",
     );
     expect((await card("Tenants and leases in place")).textContent).toContain("Tenant B (Property A)");
-    expect(screen.getByRole("link", { name: "Setup" }).getAttribute("aria-current")).toBe("page");
-    expect(screen.getByRole("link", { name: "Overview" }).getAttribute("aria-current")).toBe(null);
+    // Company setup is one of Settings' pages.
+    expect(screen.getByRole("link", { name: "Settings" }).getAttribute("aria-current")).toBe("page");
+    expect(screen.getByRole("link", { name: "Dashboard" }).getAttribute("aria-current")).toBe(null);
   });
 
   it("lists the expense accounts on their Schedule E lines and adds one", async () => {

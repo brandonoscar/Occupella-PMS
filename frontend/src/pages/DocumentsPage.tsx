@@ -29,7 +29,7 @@ export function DocumentsPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Documents" description="W-9s, receipts, move-out photos and owner documents." />
+      <PageHeader title="Files" />
       {library === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : (
