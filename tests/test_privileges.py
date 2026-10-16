@@ -119,6 +119,8 @@ TABLES = {
     # property joins or leaves it by an insert.
     "trust_property_groups": {"SELECT", "INSERT"},
     "trust_property_group_members": {"SELECT", "INSERT"},
+    # Notes (migration 0066): written once each; a correction is a new note.
+    "trust_notes": {"SELECT", "INSERT"},
     "trust_inspections": {"SELECT", "INSERT"},
     "trust_inspection_items": {"SELECT", "INSERT"},
     "trust_listing_removals": {"SELECT", "INSERT"},
@@ -200,6 +202,8 @@ AI_NEVER_READS = {
     "trust_email_deliveries",
     # Tenants', owners' and vendors' emails, phones and mailing addresses (ADR 0005).
     "trust_contacts",
+    # What staff write about people and their homes (ADR 0006).
+    "trust_notes",
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
 RENAMEABLE = [

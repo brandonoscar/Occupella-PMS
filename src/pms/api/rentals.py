@@ -137,6 +137,8 @@ class OwnerAccount(BaseModel):
 class LeaseLine(BaseModel):
     id: UUID
     tenants: list[str]
+    # The same tenants with their ids, each opening their own page.
+    people: list[Ref]
     starts_on: date
     ends_on: date | None
     monthly_rent: str
@@ -161,11 +163,18 @@ class Property(BaseModel):
     units: list[UnitLine]
 
 
+# A lease's (on l) tenants: their names, and their ids in the same order.
+TENANT_NAMES = """
+array(SELECT t.display_name FROM trust_lease_tenants AS lt
+      JOIN trust_tenants AS t ON t.id = lt.tenant_id WHERE lt.lease_id = l.id
+      ORDER BY t.display_name COLLATE "C", t.id),
+array(SELECT t.id FROM trust_lease_tenants AS lt
+      JOIN trust_tenants AS t ON t.id = lt.tenant_id WHERE lt.lease_id = l.id
+      ORDER BY t.display_name COLLATE "C", t.id)
+"""
+
 LEASE_LINES = f"""
-SELECT l.id, l.unit_id,
-       array(SELECT t.display_name FROM trust_lease_tenants AS lt
-             JOIN trust_tenants AS t ON t.id = lt.tenant_id WHERE lt.lease_id = l.id
-             ORDER BY t.display_name COLLATE "C", t.id),
+SELECT l.id, l.unit_id, {TENANT_NAMES},
        l.starts_on, l.ends_on, trust_rent_on(l.id, greatest(l.starts_on, %(day)s)),
        {rent.OWED}
 FROM trust_leases AS l
@@ -192,6 +201,7 @@ def lease_lines(
             LeaseLine(
                 id=i,
                 tenants=tenants,
+                people=[Ref(id=t, name=n) for t, n in zip(ids, tenants, strict=True)],
                 starts_on=starts,
                 ends_on=ends,
                 monthly_rent=rent.cents(monthly),
@@ -199,7 +209,7 @@ def lease_lines(
                 status=status_of(starts, ends, day),
             ),
         )
-        for i, unit, tenants, starts, ends, monthly, owed in conn.execute(
+        for i, unit, tenants, ids, starts, ends, monthly, owed in conn.execute(
             LEASE_LINES.format(where=where), {"pmc": pmc, "day": day, **params}
         ).fetchall()
     ]
@@ -364,6 +374,7 @@ class RentRollRow(BaseModel):
     property: Ref
     unit: Ref
     tenants: list[str]
+    people: list[Ref]
     starts_on: date
     ends_on: date | None
     monthly_rent: str
@@ -371,10 +382,7 @@ class RentRollRow(BaseModel):
 
 
 RENT_ROLL = f"""
-SELECT l.id, p.id, p.display_name, u.id, u.display_name,
-       array(SELECT t.display_name FROM trust_lease_tenants AS lt
-             JOIN trust_tenants AS t ON t.id = lt.tenant_id WHERE lt.lease_id = l.id
-             ORDER BY t.display_name COLLATE "C", t.id),
+SELECT l.id, p.id, p.display_name, u.id, u.display_name, {TENANT_NAMES},
        l.starts_on, l.ends_on, trust_rent_on(l.id, greatest(l.starts_on, %(day)s)), x.owed,
        count(*) OVER ()
 FROM trust_leases AS l
@@ -430,12 +438,13 @@ def rent_roll(
                 property=Ref(id=p, name=pn),
                 unit=Ref(id=u, name=un),
                 tenants=tenants,
+                people=[Ref(id=t, name=n) for t, n in zip(ids, tenants, strict=True)],
                 starts_on=starts,
                 ends_on=ends,
                 monthly_rent=rent.cents(monthly),
                 owed=rent.cents(Decimal(owed)),
             )
-            for i, p, pn, u, un, tenants, starts, ends, monthly, owed, _ in rows
+            for i, p, pn, u, un, tenants, ids, starts, ends, monthly, owed, _ in rows
         ],
         total=rows[0][-1] if rows else 0,
         page=page,
@@ -443,24 +452,169 @@ def rent_roll(
     )
 
 
+# Whether a tenant (on t) can sign in to the portal: no login, invited (no password set yet),
+# active, or disabled; and their login's id.
+PORTAL = """
+LEFT JOIN trust_logins AS g ON g.pmc_id = t.pmc_id AND g.tenant_id = t.id
+LEFT JOIN trust_login_secrets AS s ON s.login_id = g.id
+"""
+PORTAL_STATUS = """
+CASE WHEN g.id IS NULL THEN 'no login' WHEN g.disabled_at IS NOT NULL THEN 'disabled'
+     WHEN s.login_id IS NULL THEN 'invited' ELSE 'active' END
+"""
+Portal = Literal["no login", "invited", "active", "disabled"]
+
+
+class LeasePerson(BaseModel):
+    id: UUID
+    name: str
+    email: str | None
+    phone: str | None
+    portal: Portal
+    login_email: str | None
+
+
 class Lease(rent.RentLease):
     property_id: UUID
     unit_id: UUID
+    status: Literal["current", "future", "ended"]
+    # Each tenant on it with their contact details and whether they can sign in to the portal.
+    people: list[LeasePerson]
+
+
+LEASE_PEOPLE = f"""
+SELECT t.id, t.display_name, c.email, c.phone, {PORTAL_STATUS}, g.email
+FROM trust_lease_tenants AS lt
+JOIN trust_tenants AS t ON t.id = lt.tenant_id
+LEFT JOIN LATERAL (
+    SELECT k.email, k.phone FROM trust_contacts AS k WHERE k.tenant_id = t.id
+    ORDER BY k.created_at DESC, k.id DESC LIMIT 1
+) AS c ON true
+{PORTAL}
+WHERE lt.lease_id = %s
+ORDER BY t.display_name COLLATE "C", t.id
+"""
 
 
 @router.get("/leases/{lease_id}")
 def lease_page(session: Staff, conn: Conn, lease_id: UUID) -> Lease:
-    """One lease with everything the rent work needs: its tenants, charges, payments,
-    recurring charges, rent changes and renters insurance."""
+    """One lease with everything the rent work needs: its tenants (with their contact details
+    and portal logins), charges, payments, recurring charges, rent changes and renters
+    insurance."""
     row = conn.execute(
-        "SELECT u.id, u.property_id FROM trust_leases AS l JOIN trust_units AS u"
-        " ON u.id = l.unit_id WHERE l.pmc_id = %s AND l.id = %s",
+        "SELECT u.id, u.property_id, l.starts_on, l.ends_on FROM trust_leases AS l"
+        " JOIN trust_units AS u ON u.id = l.unit_id WHERE l.pmc_id = %s AND l.id = %s",
         (session.pmc_id, lease_id),
     ).fetchone()
     if row is None:
         raise HTTPException(404, "no such lease")
-    detail = rent.lease_detail(conn, session.pmc_id, lease_id, rent.today())
-    return Lease(**detail.model_dump(), unit_id=row[0], property_id=row[1])
+    day = rent.today()
+    detail = rent.lease_detail(conn, session.pmc_id, lease_id, day)
+    people = [
+        LeasePerson(id=i, name=n, email=e, phone=ph, portal=po, login_email=le)
+        for i, n, e, ph, po, le in conn.execute(LEASE_PEOPLE, (lease_id,)).fetchall()
+    ]
+    return Lease(
+        **detail.model_dump(),
+        unit_id=row[0],
+        property_id=row[1],
+        status=status_of(row[2], row[3], day),
+        people=people,
+    )
+
+
+LedgerKind = Literal[
+    "rent", "recurring", "late fee", "NSF fee", "fee", "credit", "payment", "bounced payment"
+]
+
+
+class LedgerLine(BaseModel):
+    on: date
+    # A charge's kind (rent, a recurring charge, a late fee, an NSF fee, another fee, a credit),
+    # or a payment, or a bounced payment.
+    kind: LedgerKind
+    memo: str | None
+    charged: str | None
+    paid: str | None
+    balance: str
+    # A payment that bounced since (its bounce is a line of its own).
+    bounced: bool
+
+
+class Ledger(BaseModel):
+    lines: list[LedgerLine]
+    balance: str
+
+
+# A lease's charges through a day, each with what it is, in the order its ledger lists them
+# (trust_report_tenant_ledger: by due date, then when entered, then id as text).
+LEDGER_CHARGES = """
+SELECT CASE
+         WHEN c.kind <> 'fee' THEN c.kind
+         WHEN EXISTS (SELECT 1 FROM trust_late_fees AS f WHERE f.fee_charge_id = c.id)
+           THEN 'late fee'
+         WHEN EXISTS (SELECT 1 FROM trust_nsf_fees AS f WHERE f.fee_charge_id = c.id)
+           THEN 'NSF fee'
+         WHEN c.recurring_charge_id IS NOT NULL THEN 'recurring'
+         ELSE 'fee'
+       END
+FROM trust_charges AS c
+WHERE c.lease_id = %(lease)s AND c.due_on <= %(day)s
+ORDER BY c.due_on, c.created_at, c.id::text
+"""
+
+# A lease's payments, in the order its ledger lists them (trust_report_tenant_ledger), each
+# with its check or reference and whether it bounced.
+LEDGER_PAYMENTS = """
+SELECT tr.metadata ->> 'reference',
+       EXISTS (SELECT 1 FROM trust_payment_reversals AS r WHERE r.transfer_id = tr.id)
+FROM trust_charge_payments AS cp
+JOIN trust_charges AS c ON c.id = cp.charge_id
+JOIN pgledger_transfers AS tr ON tr.id = cp.transfer_id
+WHERE c.lease_id = %(lease)s AND tr.event_at < (%(day)s::date + 1)::timestamp AT TIME ZONE 'UTC'
+GROUP BY tr.id, tr.event_at, tr.metadata
+ORDER BY (tr.event_at AT TIME ZONE 'UTC')::date, tr.event_at, tr.id
+"""
+
+
+@router.get("/leases/{lease_id}/ledger")
+def lease_ledger(session: Staff, conn: Conn, lease_id: UUID) -> Ledger:
+    """A lease's ledger through today: its charges, payments and bounces, oldest first, each
+    with the balance after it, as `trust_report_tenant_ledger` gives it; each charge says what it
+    is, and a payment its check or reference and whether it bounced."""
+    if (
+        conn.execute(
+            "SELECT 1 FROM trust_leases WHERE pmc_id = %s AND id = %s", (session.pmc_id, lease_id)
+        ).fetchone()
+        is None
+    ):
+        raise HTTPException(404, "no such lease")
+    day = rent.today()
+    report = conn.execute(
+        "SELECT on_date, item, detail, charged, paid, balance"
+        " FROM trust_report_tenant_ledger(%s, %s, %s) ORDER BY line",
+        (session.pmc_id, lease_id, day),
+    ).fetchall()
+    asked = {"lease": lease_id, "day": day}
+    charges = iter(row[0] for row in conn.execute(LEDGER_CHARGES, asked).fetchall())
+    payments = iter(conn.execute(LEDGER_PAYMENTS, asked).fetchall())
+    lines = []
+    for on, item, memo, charged, paid, balance in report[1:-1]:
+        reference, bounced = next(payments) if item == "payment" else (None, False)
+        kind = item if item in ("payment", "bounced payment") else next(charges)
+        lines.append(
+            LedgerLine(
+                on=on,
+                kind=kind,
+                memo=memo or reference,
+                charged=None if not charged else rent.cents(charged),
+                paid=None if not paid else rent.cents(paid),
+                balance=rent.cents(balance),
+                bounced=bounced,
+            )
+        )
+    owed = report[-1][3] - report[-1][4]
+    return Ledger(lines=lines, balance=rent.cents(owed))
 
 
 # --- search ------------------------------------------------------------------------------------

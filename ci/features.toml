@@ -109,7 +109,7 @@ browser = [
 
 [[feature]]
 id = "people"
-statement = "Staff find a tenant or an owner a page at a time and open their page (a tenant's leases and the money held for them; an owner's property accounts); keep a tenant's, owner's or vendor's email, phones and mailing address, which the AI never reads; rename a tenant or owner, and archive one only while nothing is open on them, or bring them back; and find an owner by search."
+statement = "Staff find a tenant or an owner a page at a time (a tenant with their balance and whether they can sign in to the portal) and open their page (a tenant's leases and the money held for them; an owner's property accounts); keep a tenant's, owner's or vendor's email, phones and mailing address, which the AI never reads; rename a tenant or owner, and archive one only while nothing is open on them, or bring them back; and find an owner by search."
 operations = [
   "GET /api/tenants",
   "GET /api/tenants/{tenant_id}",
@@ -124,6 +124,14 @@ operations = [
 ]
 browser = [
   "features.spec.ts › staff find a tenant and an owner, keep their contact details and a vendor's, rename them, and archive only what has nothing open",
+]
+
+[[feature]]
+id = "notes"
+statement = "Staff write notes on a lease or a tenant from its Notes tab, kept for good with who wrote them and when, newest first; the AI never reads them."
+operations = ["GET /api/notes", "POST /api/notes"]
+browser = [
+  "features.spec.ts › staff find a property, rename it and a unit, archive a vacant unit but not a property with a lease, and search for a tenant",
 ]
 
 [[feature]]
@@ -159,9 +167,10 @@ browser = [
 
 [[feature]]
 id = "rent-work"
-statement = "On a lease's own page, staff add a fee, a credit or a monthly charge to it and stop one; record a tenant's payment (what the lease owes to the owner, the rest prepaid rent), use prepaid rent, take a deposit, and record a bounce, which undoes the payment and charges the NSF fee."
+statement = "On a lease's own page (its balance due at the top, then Summary, Ledger, Tenants, Files and Notes), staff add a fee, a credit or a monthly charge to it and stop one; record a tenant's payment (what the lease owes to the owner, the rest prepaid rent), use prepaid rent, take a deposit, and record a bounce, which undoes the payment and charges the NSF fee; and read its ledger, each charge, payment and bounce with the balance after it."
 operations = [
   "GET /api/leases/{lease_id}",
+  "GET /api/leases/{lease_id}/ledger",
   "POST /api/rent/leases/{lease_id}/charges",
   "POST /api/rent/leases/{lease_id}/recurring-charges",
   "POST /api/rent/recurring-charges/{recurring_id}/stop",

@@ -1,6 +1,7 @@
 // Rentals as the API sends them (src/pms/api/rentals.py): pages of properties and leases, a
 // property, a unit, and search results; and how they read.
 import { money, usDate } from "./money";
+import type { RentLease } from "./rent";
 
 export type Paged<T> = { items: T[]; total: number; page: number; per_page: number };
 export type Ref = { id: string; name: string };
@@ -18,6 +19,8 @@ export type LeaseStatus = "current" | "future" | "ended";
 export type LeaseLine = {
   id: string;
   tenants: string[];
+  // The same tenants with their ids, each opening their own page.
+  people: Ref[];
   starts_on: string;
   ends_on: string | null;
   monthly_rent: string;
@@ -46,6 +49,7 @@ export type RentRollRow = {
   property: Ref;
   unit: Ref;
   tenants: string[];
+  people: Ref[];
   starts_on: string;
   ends_on: string | null;
   monthly_rent: string;
@@ -103,3 +107,53 @@ export const LEASE_STATUS: Record<LeaseStatus, { word: string; tone: "positive" 
 export function rentLabel(monthly: string): string {
   return `${money(monthly)} a month`;
 }
+
+// Whether a tenant can sign in to the portal (src/pms/api/rentals.py PORTAL_STATUS).
+export type Portal = "no login" | "invited" | "active" | "disabled";
+export const PORTAL: Record<Portal, { word: string; tone: "positive" | "info" | "neutral" }> = {
+  active: { word: "Active", tone: "positive" },
+  invited: { word: "Invited", tone: "info" },
+  "no login": { word: "None", tone: "neutral" },
+  disabled: { word: "Disabled", tone: "neutral" },
+};
+
+export type LeasePerson = {
+  id: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+  portal: Portal;
+  login_email: string | null;
+};
+
+// A lease's own page (GET /api/leases/{id}): its rent work, where it stands and its people.
+export type LeaseDetail = RentLease & {
+  property_id: string;
+  unit_id: string;
+  status: LeaseStatus;
+  people: LeasePerson[];
+};
+
+export type LedgerKind =
+  | "rent" | "recurring" | "late fee" | "NSF fee" | "fee" | "credit" | "payment" | "bounced payment";
+export const LEDGER_KIND: Record<LedgerKind, string> = {
+  rent: "Rent",
+  recurring: "Monthly charge",
+  "late fee": "Late fee",
+  "NSF fee": "NSF fee",
+  fee: "Charge",
+  credit: "Credit",
+  payment: "Payment",
+  "bounced payment": "Bounced payment",
+};
+export type LedgerLine = {
+  on: string;
+  kind: LedgerKind;
+  memo: string | null;
+  charged: string | null;
+  paid: string | null;
+  balance: string;
+  bounced: boolean;
+};
+// A lease's ledger through today (GET /api/leases/{id}/ledger).
+export type Ledger = { lines: LedgerLine[]; balance: string };

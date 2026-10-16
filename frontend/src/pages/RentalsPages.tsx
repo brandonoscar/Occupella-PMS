@@ -9,15 +9,13 @@ import { Pager } from "../components/Pager";
 import { ListBar } from "../components/ListBar";
 import { RecordActions } from "../components/RecordActions";
 import { Card, PageHeader, Shell } from "../components/Shell";
+import { TenantLinks } from "../components/TenantLinks";
 import { Wide } from "../components/Wide";
 import { money } from "../money";
 import { scopeParams, useScope } from "../scope";
-import type { RentLease } from "../rent";
 import type { Paged, Property, PropertyRow, Unit } from "../rentals";
-import { LEASE_STATUS, occupancy, rentLabel, termLabel, unitState } from "../rentals";
+import { LEASE_STATUS, occupancy, termLabel, unitState } from "../rentals";
 import { GoLink } from "./NeedsAttention";
-import { LeaseRow } from "./RentPage";
-import { FilesCard } from "./FilesCard";
 import { STAFF_NAV } from "./staffNav";
 import { Said } from "../components/Said";
 
@@ -161,7 +159,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
                       <tr key={unit.id} aria-label={unit.name}>
                         <td><RecordLink href={`/units/${unit.id}`}>{unit.name}</RecordLink></td>
                         <td><Badge tone={unitState(unit).tone}>{unitState(unit).word}</Badge></td>
-                        <td className="text-ink-muted">{unit.lease?.tenants.join(", ")}</td>
+                        <td>{unit.lease && <TenantLinks people={unit.lease.people} />}</td>
                         <td className="text-right">{unit.lease && money(unit.lease.monthly_rent)}</td>
                         <td className="text-right">{unit.lease && money(unit.lease.owed)}</td>
                         <td className="text-right">
@@ -226,8 +224,8 @@ export function UnitPage({ me, id }: { me: Me; id: string }) {
                   <tbody>
                     {unit.leases.map((lease) => (
                       <tr key={lease.id} aria-label={lease.tenants.join(", ")}>
-                        <td><RecordLink href={`/leases/${lease.id}`}>{lease.tenants.join(", ")}</RecordLink></td>
-                        <td>{termLabel(lease)}</td>
+                        <td><TenantLinks people={lease.people} /></td>
+                        <td><RecordLink href={`/leases/${lease.id}`}>{termLabel(lease)}</RecordLink></td>
                         <td><Badge tone={LEASE_STATUS[lease.status].tone}>{LEASE_STATUS[lease.status].word}</Badge></td>
                         <td className="text-right">{money(lease.monthly_rent)}</td>
                         <td className="text-right">{money(lease.owed)}</td>
@@ -244,39 +242,3 @@ export function UnitPage({ me, id }: { me: Me; id: string }) {
   );
 }
 
-type LeaseDetail = RentLease & { property_id: string; unit_id: string };
-
-// A lease and all of its rent work (ADR 0005): its charges, payments, recurring charges, rent
-// changes and renters insurance, with the forms to record each; move-out once it has ended.
-export function LeasePage({ me, id }: { me: Me; id: string }) {
-  const [lease, setLease] = useState<LeaseDetail | null>(null);
-  const [error, setError] = useState("");
-
-  function refresh() {
-    api.get<LeaseDetail>(`/api/leases/${id}`).then(setLease).catch((failed) => setError(detail(failed)));
-  }
-  useEffect(refresh, [id]);
-
-  return (
-    <Shell me={me} nav={STAFF_NAV}>
-      {lease === null ? (
-        <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
-      ) : (
-        <>
-          <PageHeader title={`${lease.unit}, ${lease.property}`} />
-          <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink-muted">
-            <RecordLink href={`/properties/${lease.property_id}`}>{lease.property}</RecordLink>
-            <RecordLink href={`/units/${lease.unit_id}`}>{lease.unit}</RecordLink>
-            <span>{termLabel(lease)}</span>
-            <span>{rentLabel(lease.monthly_rent)}</span>
-            {lease.ends_on !== null && <GoLink href="/move-out">Move-out</GoLink>}
-          </p>
-          <ul className="flex flex-col">
-            <LeaseRow lease={lease} refresh={refresh} />
-          </ul>
-          <FilesCard kind="move_out_photo" aboutId={id} name={`${lease.unit}, ${lease.property}`} />
-        </>
-      )}
-    </Shell>
-  );
-}

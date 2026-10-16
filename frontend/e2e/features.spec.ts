@@ -83,10 +83,28 @@ async function section(page: Page, name: string): Promise<void> {
 // A lease's own page, from the rent roll: the unit's link on the lease's row. Returns its rent work.
 async function openLease(page: Page, name: string) {
   await section(page, "Rent roll");
-  await page.getByRole("row", { name, exact: true }).getByRole("link").click();
-  const lease = page.getByRole("listitem", { name, exact: true });
-  await expect(lease).toBeVisible();
-  return lease;
+  await page.getByRole("row", { name, exact: true }).getByRole("link", { name: name.split(", ")[1], exact: true }).click();
+  const [property, unit] = name.split(", ");
+  await expect(page.getByRole("heading", { level: 1, name: new RegExp(`^${property} · ${unit} · `) })).toBeVisible();
+  return page.getByRole("main");
+}
+
+// One of a lease's side panels: Receive payment and Enter charge at its top, the rest in its ⋯ menu.
+async function leasePanel(page: Page, name: string) {
+  if (name === "Receive payment" || name === "Enter charge") {
+    await page.getByRole("button", { name, exact: true }).click();
+  } else {
+    await page.getByRole("button", { name: "Actions for this lease" }).click();
+    await page.getByRole("menuitem", { name, exact: true }).click();
+  }
+  const panel = page.getByRole("dialog", { name });
+  await expect(panel).toBeVisible();
+  return panel;
+}
+
+// A lease page's tab.
+async function leaseTab(page: Page, name: string) {
+  await page.getByRole("tab", { name, exact: true }).click();
 }
 
 // An owner's own page, from Owners: their name's link on their row.
@@ -229,9 +247,17 @@ test("staff find a property, rename it and a unit, archive a vacant unit but not
   await search.fill("drew");
   await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Drew Sample/ }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Drew Sample" })).toBeVisible();
+  await page.getByRole("tab", { name: "Leases", exact: true }).click();
   await page.getByRole("row", { name: "Aspen Row East, Unit 1" }).getByRole("link").click();
-  await expect(page.getByRole("heading", { level: 1, name: "Unit 1, Aspen Row East" })).toBeVisible();
-  await expect(page.getByRole("listitem", { name: "Aspen Row East, Unit 1" })).toContainText("Drew Sample");
+  await expect(page.getByRole("heading", { level: 1, name: /^Aspen Row East · Unit 1 · .*Drew Sample/ })).toBeVisible();
+  // Its tenants have pages of their own, a click away.
+  await page.getByRole("tab", { name: "Tenants", exact: true }).click();
+  await expect(page.getByRole("table", { name: "Tenants" }).getByRole("row", { name: "Drew Sample" })).toBeVisible();
+  // A note on the lease stays with it.
+  await page.getByRole("tab", { name: "Notes", exact: true }).click();
+  await page.getByLabel("New note").fill("Asked for a second parking space.");
+  await page.getByRole("button", { name: "Add note" }).click();
+  await expect(page.getByRole("list", { name: /^Notes/ })).toContainText("Asked for a second parking space.");
   await search.fill("cedar");
   await expect(page.getByRole("list", { name: "Search results" })).toContainText("Cedar House");
   await search.press("Enter");
@@ -384,12 +410,12 @@ test("staff find a tenant and an owner, keep their contact details and a vendor'
   const people = seed.features.people!;
   await joinAsStaff(page, people.manager);
 
-  // Tenants, a page at a time, each with their unit and lease.
+  // Tenants, a page at a time, each with their unit, balance and whether they can sign in.
   await section(page, "Tenants");
   const drew = page.getByRole("row", { name: "Drew Sample", exact: true });
   await expect(drew).toContainText("Aspen Row");
   await expect(drew).toContainText("Unit 1");
-  await expect(drew).toContainText("Current");
+  await expect(drew).toContainText("Invited");
   const shown = page.getByRole("combobox", { name: "Properties shown" });
   await shown.selectOption({ label: "Cedar House" });
   await expect(page.getByRole("row", { name: "Taylor Demo", exact: true })).toBeVisible();
@@ -481,100 +507,120 @@ test("staff add a fee, a credit and a monthly charge to a lease, take a deposit 
   await expect(aspen).toContainText("NSF fee $35.00");
 
   const lease = await openLease(page, "Aspen Row, Unit 1");
-  const owed = lease.getByTestId("owed");
-  await expect(owed).toHaveText("Paid up");
-  await lease.getByText("Record for Unit 1").click();
+  const owed = lease.getByTestId("balance-due");
+  const prepaid = lease.getByTestId("prepaid");
+  await expect(owed).toHaveText("$0.00");
 
   // A one-off fee, then a credit that comes off it.
-  await lease.getByLabel("Add a").selectOption("fee");
-  await lease.getByLabel("Amount", { exact: true }).fill("25.00");
-  await lease.getByLabel("What for").fill("Key replacement");
-  await lease.getByRole("button", { name: "Add", exact: true }).click();
+  let charge = await leasePanel(page, "Enter charge");
+  await charge.getByLabel("Add a").selectOption("fee");
+  await charge.getByLabel("Amount", { exact: true }).fill("25.00");
+  await charge.getByLabel("What for").fill("Key replacement");
+  await charge.getByRole("button", { name: "Add", exact: true }).click();
   await expect(lease).toContainText("Fee of $25.00 added.");
-  await expect(owed).toHaveText("Owes $25.00");
-  await lease.getByLabel("Add a").selectOption("credit");
-  await lease.getByLabel("Amount", { exact: true }).fill("10.00");
-  await lease.getByLabel("What for").fill("Goodwill");
-  await lease.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(owed).toHaveText("$25.00");
+  charge = await leasePanel(page, "Enter charge");
+  await charge.getByLabel("Add a").selectOption("credit");
+  await charge.getByLabel("Amount", { exact: true }).fill("10.00");
+  await charge.getByLabel("What for").fill("Goodwill");
+  await charge.getByRole("button", { name: "Add", exact: true }).click();
   await expect(lease).toContainText("Credit of $10.00 added.");
-  await expect(owed).toHaveText("Owes $15.00");
+  await expect(owed).toHaveText("$15.00");
 
   // A payment over what is owed: the rest is the tenant's prepaid rent, used on the next fee.
-  await lease.getByLabel("Payment received").fill("100.00");
-  await lease.getByLabel("Check or reference").fill("Check 501");
-  await lease.getByRole("button", { name: "Record payment" }).click();
+  let pay = await leasePanel(page, "Receive payment");
+  await pay.getByLabel("Payment received").fill("100.00");
+  await pay.getByLabel("Check or reference").fill("Check 501");
+  await pay.getByRole("button", { name: "Record payment" }).click();
   await expect(lease).toContainText("$15.00 paid what is owed; $85.00 held as prepaid rent.");
-  await expect(owed).toHaveText("Paid up");
-  await expect(lease).toContainText("Drew Sample: prepaid $85.00");
-  // The payment is listed as it came in, not only the part that paid charges.
-  await expect(lease.getByRole("row", { name: /Check 501/ })).toContainText("$100.00");
-  await lease.getByLabel("Add a").selectOption("fee");
-  await lease.getByLabel("Amount", { exact: true }).fill("30.00");
-  await lease.getByLabel("What for").fill("Lock change");
-  await lease.getByRole("button", { name: "Add", exact: true }).click();
-  await expect(owed).toHaveText("Owes $30.00");
-  await lease.getByRole("button", { name: "Use prepaid rent" }).click();
+  await expect(owed).toHaveText("$0.00");
+  await expect(prepaid).toHaveText("$85.00");
+  charge = await leasePanel(page, "Enter charge");
+  await charge.getByLabel("Add a").selectOption("fee");
+  await charge.getByLabel("Amount", { exact: true }).fill("30.00");
+  await charge.getByLabel("What for").fill("Lock change");
+  await charge.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(owed).toHaveText("$30.00");
+  await (await leasePanel(page, "Receive payment")).getByRole("button", { name: "Use prepaid rent" }).click();
   await expect(lease).toContainText("$30.00 paid what is owed.");
-  await expect(owed).toHaveText("Paid up");
-  await expect(lease).toContainText("Drew Sample: prepaid $55.00");
+  await expect(owed).toHaveText("$0.00");
+  await expect(prepaid).toHaveText("$55.00");
+
+  // The ledger: each charge, payment and credit with the balance after it.
+  await leaseTab(page, "Ledger");
+  const ledger = lease.getByRole("table", { name: "Ledger" });
+  await expect(ledger).toContainText("Key replacement");
+  await expect(ledger.getByRole("row", { name: /Credit/ })).toContainText("($10.00)");
+  await expect(ledger.getByRole("row", { name: /Check 501/ })).toContainText("$15.00");
+  // Each payment is listed as it came in, not only the part that paid charges.
+  const received = lease.getByRole("table", { name: "Payments received" });
+  await expect(received.getByRole("row", { name: /Check 501/ })).toContainText("$100.00");
 
   // A payment when nothing is owed is all prepaid rent; it is listed, and it can bounce.
-  await lease.getByLabel("Payment received").fill("50.00");
-  await lease.getByLabel("Check or reference").fill("Check 503");
-  await lease.getByRole("button", { name: "Record payment" }).click();
+  pay = await leasePanel(page, "Receive payment");
+  await pay.getByLabel("Payment received").fill("50.00");
+  await pay.getByLabel("Check or reference").fill("Check 503");
+  await pay.getByRole("button", { name: "Record payment" }).click();
   await expect(lease).toContainText("$50.00 held as prepaid rent.");
-  await expect(lease).toContainText("Drew Sample: prepaid $105.00");
-  const prepaidOnly = lease.getByRole("row", { name: /Check 503/ });
+  const prepaidOnly = received.getByRole("row", { name: /Check 503/ });
   await expect(prepaidOnly).toContainText("$50.00");
   await prepaidOnly.getByRole("button", { name: /^Actions for / }).click();
   await prepaidOnly.getByRole("menuitem", { name: "It bounced" }).click();
   await prepaidOnly.getByRole("button", { name: "Record the $50.00 bounce" }).click();
   await expect(lease).toContainText("The $50.00 payment bounced and is undone; a $35.00 NSF fee is charged.");
-  await expect(lease).toContainText("Drew Sample: prepaid $55.00");
-  await expect(owed).toHaveText("Owes $35.00");
-  await lease.getByRole("button", { name: "Use prepaid rent" }).click();
+  await expect(owed).toHaveText("$35.00");
+  await (await leasePanel(page, "Receive payment")).getByRole("button", { name: "Use prepaid rent" }).click();
   await expect(lease).toContainText("$35.00 paid what is owed.");
-  await expect(owed).toHaveText("Paid up");
+  await expect(owed).toHaveText("$0.00");
+  await leaseTab(page, "Summary");
+  await expect(prepaid).toHaveText("$20.00");
 
-  // A monthly charge from next month, then stopped.
+  // A monthly charge from next month, then stopped from its ⋯ menu.
   const nextMonth = new Date(Date.UTC(Number(today().slice(0, 4)), Number(today().slice(5, 7)), 1))
     .toISOString()
     .slice(0, 10);
-  await lease.getByLabel("Every month, a").selectOption("fee");
-  await lease.getByLabel("Monthly amount").fill("40.00");
-  await lease.getByLabel("First due on").fill(nextMonth);
-  await lease.getByLabel("Monthly, for").fill("Parking");
-  await lease.getByRole("button", { name: "Add every month" }).click();
+  const monthly = await leasePanel(page, "Add recurring charge");
+  await monthly.getByLabel("Every month, a").selectOption("fee");
+  await monthly.getByLabel("Monthly amount").fill("40.00");
+  await monthly.getByLabel("First due on").fill(nextMonth);
+  await monthly.getByLabel("Monthly, for").fill("Parking");
+  await monthly.getByRole("button", { name: "Add every month" }).click();
   await expect(lease).toContainText("Parking of $40.00 added every month.");
   await expect(lease).toContainText(`Parking: $40.00 a month from ${us(nextMonth)}`);
-  await lease.getByRole("button", { name: "Stop" }).click();
+  await lease.getByRole("button", { name: "Actions for Parking" }).click();
+  await lease.getByRole("menuitem", { name: "Stop" }).click();
   await lease.getByLabel("Stops on, Parking").fill(nextMonth);
   await lease.getByRole("button", { name: "Stop it" }).click();
   await expect(lease).toContainText(`Parking stops ${us(nextMonth)}.`);
   await expect(lease).toContainText(`Parking: $40.00 a month from ${us(nextMonth)}, stops ${us(nextMonth)}`);
 
   // A deposit held for the tenant.
-  await lease.getByLabel("Deposit received", { exact: true }).fill("100.00");
-  await lease.getByRole("button", { name: "Record deposit" }).click();
+  const deposit = await leasePanel(page, "Record deposit");
+  await deposit.getByLabel("Deposit received", { exact: true }).fill("100.00");
+  await deposit.getByRole("button", { name: "Record deposit" }).click();
   await expect(lease).toContainText("Deposit of $100.00 held.");
-  await expect(lease).toContainText("deposit $1,280.00");
+  await expect(lease.getByTestId("deposit-held")).toHaveText("$1,280.00");
 
   // A payment that bounces is owed again, with the property's NSF fee.
-  await lease.getByLabel("Add a").selectOption("fee");
-  await lease.getByLabel("Amount", { exact: true }).fill("20.00");
-  await lease.getByLabel("What for").fill("Late key return");
-  await lease.getByRole("button", { name: "Add", exact: true }).click();
-  await lease.getByLabel("Payment received").fill("20.00");
-  await lease.getByLabel("Check or reference").fill("Check 502");
-  await lease.getByRole("button", { name: "Record payment" }).click();
+  charge = await leasePanel(page, "Enter charge");
+  await charge.getByLabel("Add a").selectOption("fee");
+  await charge.getByLabel("Amount", { exact: true }).fill("20.00");
+  await charge.getByLabel("What for").fill("Late key return");
+  await charge.getByRole("button", { name: "Add", exact: true }).click();
+  pay = await leasePanel(page, "Receive payment");
+  await pay.getByLabel("Payment received").fill("20.00");
+  await pay.getByLabel("Check or reference").fill("Check 502");
+  await pay.getByRole("button", { name: "Record payment" }).click();
   await expect(lease).toContainText("$20.00 paid what is owed.");
-  const payment = lease.getByRole("row", { name: /Check 502/ });
+  await leaseTab(page, "Ledger");
+  const payment = received.getByRole("row", { name: /Check 502/ });
   await payment.getByRole("button", { name: /^Actions for / }).click();
   await payment.getByRole("menuitem", { name: "It bounced" }).click();
   await payment.getByRole("button", { name: "Record the $20.00 bounce" }).click();
   await expect(lease).toContainText("The $20.00 payment bounced and is undone; a $35.00 NSF fee is charged.");
-  await expect(owed).toHaveText("Owes $55.00");
-  await expect(lease.getByRole("row", { name: /Check 502/ }).getByText("Bounced")).toBeVisible();
+  await expect(owed).toHaveText("$55.00");
+  await expect(received.getByRole("row", { name: /Check 502/ }).getByText("Bounced")).toBeVisible();
+  await expect(ledger.getByRole("row", { name: /NSF fee/ }).last()).toContainText("$35.00");
 });
 
 test("a bill over the owner's limit emails them; they decline one and approve another in the portal, and staff pay it", async ({
@@ -1714,21 +1760,22 @@ test("staff raise a month-to-month rent after a full month's notice, and the ten
   await joinAsStaff(page, people.manager);
   const house = await openLease(page, "Cedar House, House");
   await expect(house).toContainText("$2,250.00 a month");
-  await house.getByText("Record for House").click();
+  const change = await leasePanel(page, "Change rent");
 
   // From this month: notice was due by the first of last month, so it is refused, in words.
-  await house.getByLabel("New monthly rent").fill("2400.00");
-  await house.getByLabel("From (the first of a month)").fill(firstOfThisMonth());
-  await house.getByRole("button", { name: "Change rent" }).click();
-  await expect(house.getByRole("alert")).toHaveText(
+  await change.getByLabel("New monthly rent").fill("2400.00");
+  await change.getByLabel("From (the first of a month)").fill(firstOfThisMonth());
+  await change.getByRole("button", { name: "Change rent" }).click();
+  await expect(change.getByRole("alert")).toHaveText(
     `written notice of a full month comes first: for a change from ${firstOfThisMonth()}, give it by ${firstOfMonthsAgo(1)}`,
   );
   // From the first month a notice given today allows, it is recorded.
   const from = dayOfMonth() === 1 ? firstOfMonthsAgo(-1) : firstOfMonthsAgo(-2);
-  await house.getByLabel("New monthly rent").fill("2400.00");
-  await house.getByLabel("From (the first of a month)").fill(from);
-  await house.getByLabel("Served").selectOption("in person");
-  await house.getByRole("button", { name: "Change rent" }).click();
+  await change.getByLabel("New monthly rent").fill("2400.00");
+  await change.getByLabel("From (the first of a month)").fill(from);
+  await change.getByLabel("Served").selectOption("in person");
+  await change.getByRole("button", { name: "Change rent" }).click();
+  await expect(change).toHaveCount(0);
   await expect(house).toContainText(`Rent of $2,400.00 a month from ${us(from)} recorded.`);
   await expect(house.getByRole("list", { name: "Rent changes, House" })).toHaveText(
     `From ${us(from)}: $2,400.00 a month (notice in person on ${us(today())})`,
@@ -1750,10 +1797,11 @@ test("staff require renters insurance on a lease, Today flags it, the tenant rec
   await joinAsStaff(page, people.manager);
   const house = await openLease(page, "Cedar House, House");
   await expect(house.getByTestId("renters-insurance")).toContainText("Renters insurance not required: none on file");
-  await house.getByText("Record for House").click();
-  await house.getByLabel("Requires renters insurance").check();
-  await house.getByLabel("Least liability coverage (optional)").fill("100000.00");
-  await house.getByRole("button", { name: "Set insurance terms" }).click();
+  const terms = await leasePanel(page, "Renters insurance");
+  await terms.getByLabel("Requires renters insurance").check();
+  await terms.getByLabel("Least liability coverage (optional)").fill("100000.00");
+  await terms.getByRole("button", { name: "Set insurance terms" }).click();
+  await expect(terms).toHaveCount(0);
   await expect(house).toContainText(`Renters insurance is required from ${us(today())}.`);
   await expect(house.getByTestId("renters-insurance")).toContainText(
     "Renters insurance required (at least $100,000.00 of liability): none on file",
@@ -1783,14 +1831,15 @@ test("staff require renters insurance on a lease, Today flags it, the tenant rec
 
   // The tenant mails in next year's renewal; staff record it, and this year's still counts.
   await openLease(page, "Cedar House, House");
-  await house.getByText("Record for House").click();
-  await house.getByLabel("Insurer").fill("Synthetic Mutual");
-  await house.getByLabel("Policy number").fill("RI-0002");
-  await house.getByLabel("Policy starts").fill(daysFromToday(366));
-  await house.getByLabel("Policy runs out").fill(daysFromToday(730));
-  await house.getByLabel("Liability coverage (optional)", { exact: true }).fill("300000.00");
-  await house.getByLabel("The landlord is named an interested party").click();
-  await house.getByRole("button", { name: "Record policy" }).click();
+  const policy = await leasePanel(page, "Renters insurance");
+  await policy.getByLabel("Insurer").fill("Synthetic Mutual");
+  await policy.getByLabel("Policy number").fill("RI-0002");
+  await policy.getByLabel("Policy starts").fill(daysFromToday(366));
+  await policy.getByLabel("Policy runs out").fill(daysFromToday(730));
+  await policy.getByLabel("Liability coverage (optional)", { exact: true }).fill("300000.00");
+  await policy.getByLabel("The landlord is named an interested party").click();
+  await policy.getByRole("button", { name: "Record policy" }).click();
+  await expect(policy).toHaveCount(0);
   await expect(house).toContainText("Policy RI-0002 from Synthetic Mutual recorded.");
   await expect(house.getByTestId("renters-insurance")).toContainText(
     `Synthetic Mutual RI-0001 through ${us(daysFromToday(365))}`,

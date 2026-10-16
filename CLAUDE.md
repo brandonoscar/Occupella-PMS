@@ -133,7 +133,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`src/pms/api/rentals.py`): properties a page at a time at `/properties`, each at
   `/properties/<id>` (its owners' money, its units and their leases), a unit at `/units/<id>`
   (every lease it had), the rent roll at `/rent-roll` (the rent run, then the leases a page at a
-  time) and a lease at `/leases/<id>` with its rent work (`src/pms/api/rent.py`); staff rename a
+  time) and a lease at `/leases/<id>` (ADR 0006: its balance due on top, Receive payment, Enter
+  charge and the ⋯ menu's rent work in side panels, `src/pms/api/rent.py`; tabs Summary, Ledger
+  with the running balance of `trust_report_tenant_ledger`'s lines, Tenants with their portal
+  logins, Files and Notes); staff rename a
   property or unit there and archive it. Tenants at `/tenants` and owners at `/owners`
   (`src/pms/api/directory.py`), each on a page of their own: a tenant's leases and the money
   held for them, an owner's property accounts with their draws and contributions
@@ -221,7 +224,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the reports. It holds no other grant: no write on any table, no function that writes. Grant
   it a new table's SELECT only if `trust_app` has it, and never a write path. It never reads
   logins, invites, sessions or credentials, nor rental applications, applicants and their
-  screenings, nor lease offers and signatures, nor documents' files, nor contact details (`AI_NEVER_READS` in
+  screenings, nor lease offers and signatures, nor documents' files, nor contact details, nor notes (`AI_NEVER_READS` in
   `tests/test_privileges.py`), nor their rows in the audit log: row-level security shows it only
   the audit rows of tables it may read (migration 0043).
 - A new table starts with `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it
@@ -438,6 +441,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   a row of `trust_property_group_members` (append-only, the latest for a group and property
   holding, naming who did it, `trust_group_properties` reading it), and each row changes
   something. They move no money; the AI role reads them.
+- Notes (migration 0066, ADR 0006): what staff write about a property, unit, lease, tenant, owner
+  or vendor of the PMC (`trust_notes`, exactly one of them, append-only, naming who wrote it; a
+  correction is a new note), on its Notes tab (`src/pms/api/notes.py`). They move no money, and
+  the AI role never reads them (`AI_NEVER_READS`).
 - Archiving (migrations 0063 and 0064, ADR 0005): nothing in a PMC is deleted; a property, unit,
   tenant or owner is archived instead, a row in `trust_archivals` (append-only, the latest for a
   record holding, `trust_is_archived` reading it), naming who did it. It is refused while

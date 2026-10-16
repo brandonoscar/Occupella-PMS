@@ -174,6 +174,7 @@ AREA_PATHS = (
     ("/api/move-out/", "move-out"),
     ("/api/inspections", "move-out"),
     ("/api/documents", "documents"),
+    ("/api/notes", "documents"),
     ("/api/leasing/", "leasing"),
     ("/api/maintenance/", "maintenance"),
     ("/api/work-orders", "maintenance"),

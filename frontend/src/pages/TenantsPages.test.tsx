@@ -26,9 +26,9 @@ const ROWS: Paged<TenantRow> = {
   items: [
     { id: "t1", name: "Tenant 1", property: { id: "p1", name: "Property 1" },
       lease: { id: "l1", unit: { id: "u1", name: "Unit 1" }, status: "current" },
-      email: "tenant1@example.com", phone: "555-555-0100", archived: false },
+      email: "tenant1@example.com", phone: "555-555-0100", archived: false, owed: "50.00", portal: "active" },
     { id: "t2", name: "Tenant 2", property: { id: "p1", name: "Property 1" }, lease: null,
-      email: null, phone: null, archived: false },
+      email: null, phone: null, archived: false, owed: "0.00", portal: "no login" },
   ],
   total: 2,
   page: 1,
@@ -36,7 +36,7 @@ const ROWS: Paged<TenantRow> = {
 };
 
 const LINE = {
-  id: "l1", tenants: ["Tenant 1"], starts_on: "2026-01-01", ends_on: null, monthly_rent: "1500.00",
+  id: "l1", tenants: ["Tenant 1"], people: [{ id: "t1", name: "Tenant 1" }], starts_on: "2026-01-01", ends_on: null, monthly_rent: "1500.00",
   owed: "50.00", status: "current" as const, unit: { id: "u1", name: "Unit 1" },
   property: { id: "p1", name: "Property 1" },
 };
@@ -54,6 +54,8 @@ const TENANT: Tenant = {
   prepaid: "25.00",
   deposit: "1500.00",
   leases: [LINE, { ...LINE, id: "l0", starts_on: "2025-01-01", ends_on: "2025-12-31", owed: "0.00", status: "ended" }],
+  portal: "invited",
+  login_email: "tenant1.login@example.com",
 };
 
 // The API: `answers[path]` on GET; a POST answers 204, or 409/422 with `refuse[path]`.
@@ -88,12 +90,18 @@ describe("TenantsPage", () => {
 
     const first = await screen.findByRole("row", { name: "Tenant 1" });
     expect(within(first).getAllByRole("cell").map((c) => c.textContent)).toEqual([
-      "Tenant 1", "Property 1", "Unit 1", "Current", "tenant1@example.com", "555-555-0100",
+      "Tenant 1", "Property 1", "Unit 1", "555-555-0100", "tenant1@example.com", "$50.00", "Active",
     ]);
+    expect(within(first).getAllByRole("cell")[5]?.className).toContain("text-danger");
     expect(within(first).getByRole("link", { name: "Tenant 1" }).getAttribute("href")).toBe("/tenants/t1");
-    expect(within(screen.getByRole("row", { name: "Tenant 2" })).getAllByRole("cell")[3]?.textContent).toBe(
-      "No lease",
-    );
+    const second = within(screen.getByRole("row", { name: "Tenant 2" })).getAllByRole("cell");
+    expect([second[2]?.textContent, second[5]?.textContent, second[6]?.textContent]).toEqual([
+      "No lease", "$0.00", "None",
+    ]);
+    // The whole row opens the tenant.
+    fireEvent.click(second[1]!);
+    expect(window.location.pathname).toBe("/tenants/t2");
+    window.history.pushState(null, "", "/tenants");
 
     const picker = screen.getByRole("combobox", { name: "Properties shown" });
     await within(picker).findByRole("option", { name: "Property 1" });
@@ -129,6 +137,8 @@ describe("TenantPage", () => {
     );
     expect(contact.textContent).toContain("555-555-0101");
     expect(contact.textContent).toContain("100 Example Street, Apt 2Sampletown, ZZ 00000");
+    expect(document.body.textContent).toContain("PortalInvitedtenant1.login@example.com");
+    fireEvent.click(screen.getByRole("tab", { name: "Leases" }));
     const rows = screen.getAllByRole("row", { name: "Property 1, Unit 1" });
     expect(rows.map((row) => within(row).getAllByRole("cell").map((c) => c.textContent))).toEqual([
       ["Unit 1, Property 1", "01/01/2026 – Month to month", "Current", "$1,500.00", "$50.00"],
@@ -145,9 +155,13 @@ describe("TenantPage", () => {
       },
     );
     render(<TenantPage me={ME} id="t2" />);
-    const contact = await screen.findByRole("group", { name: "Contact details, Tenant 2" });
-    expect(contact.textContent).toContain("No contact details yet.");
+    expect((await screen.findByRole("group", { name: "Contact details, Tenant 2" })).textContent).toContain(
+      "No contact details yet.",
+    );
+    fireEvent.click(screen.getByRole("tab", { name: "Leases" }));
     expect(screen.getByTestId("empty-state").textContent).toContain("No lease yet.");
+    fireEvent.click(screen.getByRole("tab", { name: "Summary" }));
+    const contact = screen.getByRole("group", { name: "Contact details, Tenant 2" });
 
     // Cancel sends nothing; Save sends every field.
     fireEvent.click(within(contact).getByRole("button", { name: "Edit contact details" }));

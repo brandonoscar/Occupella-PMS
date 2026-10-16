@@ -336,28 +336,33 @@ test("staff record a tenant's payment, the rest held as prepaid rent, and then i
   const row = page.getByRole("row", { name: "E2E Property 3, E2E Unit 5", exact: true });
   await expect(row.getByTestId("owed")).toHaveText("Owes $800.00");
   await row.getByRole("link", { name: "E2E Unit 5" }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "E2E Unit 5, E2E Property 3" })).toBeVisible();
-  const lease = page.getByRole("listitem", { name: "E2E Property 3, E2E Unit 5" });
-  await expect(lease.getByTestId("owed")).toHaveText("Owes $800.00");
-  await lease.getByText("Record for E2E Unit 5").click();
-  await lease.getByLabel("Payment received").fill("1000.00");
-  await lease.getByLabel("Check or reference").fill("Money order 9");
-  await lease.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: /^E2E Property 3 · E2E Unit 5 · / })).toBeVisible();
+  const lease = page.getByRole("main");
+  const owed = lease.getByTestId("balance-due");
+  await expect(owed).toHaveText("$800.00");
+  await page.getByRole("button", { name: "Receive payment", exact: true }).click();
+  const pay = page.getByRole("dialog", { name: "Receive payment" });
+  await pay.getByLabel("Payment received").fill("1000.00");
+  await pay.getByLabel("Check or reference").fill("Money order 9");
+  await pay.getByRole("button", { name: "Record payment" }).click();
   await expect(lease).toContainText("$800.00 paid what is owed; $200.00 held as prepaid rent.");
-  await expect(lease.getByTestId("owed")).toHaveText("Paid up");
-  await expect(lease).toContainText("Payer E2E: prepaid $200.00");
-  await expect(lease.getByRole("row", { name: /Money order 9/ })).toBeVisible();
+  await expect(owed).toHaveText("$0.00");
+  await expect(lease.getByTestId("prepaid")).toHaveText("$200.00");
+  await page.getByRole("tab", { name: "Ledger", exact: true }).click();
+  const payment = lease.getByRole("table", { name: "Payments received" }).getByRole("row", { name: /Money order 9/ });
+  await expect(payment).toBeVisible();
 
   // A bounce is asked for, with the day it came back (today by default), before it is recorded.
-  await lease.getByRole("button", { name: /^Actions for / }).click();
-  await lease.getByRole("menuitem", { name: "It bounced" }).click();
-  await lease.getByRole("button", { name: "Record the $1,000.00 bounce" }).click();
+  await payment.getByRole("button", { name: /^Actions for / }).click();
+  await payment.getByRole("menuitem", { name: "It bounced" }).click();
+  await payment.getByRole("button", { name: "Record the $1,000.00 bounce" }).click();
   // The whole $1,000.00 comes back: the $800.00 it paid is owed again, and its $200.00 of
   // prepaid rent is gone.
   await expect(lease).toContainText("The $1,000.00 payment bounced and is undone.");
-  await expect(lease.getByTestId("owed")).toHaveText("Owes $800.00");
-  await expect(lease).toContainText("Payer E2E: prepaid $0.00");
-  await expect(lease.getByText("Bounced", { exact: true })).toBeVisible();
+  await expect(owed).toHaveText("$800.00");
+  await expect(payment.getByText("Bounced", { exact: true })).toBeVisible();
+  await page.getByRole("tab", { name: "Summary", exact: true }).click();
+  await expect(lease.getByTestId("prepaid")).toHaveText("$0.00");
 });
 
 test("staff enter a vendor's bill, record the owner's approval, set it aside and pay it, then draw the rest", async ({
