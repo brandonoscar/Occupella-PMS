@@ -29,11 +29,12 @@ SELECT trust_open_lease(
 )
 FROM generate_series(1, 5) AS n;
 
--- The leases by unit number, for the rows below.
+-- The leases by unit number, for the rows below: each found by its unit's id, so nothing reads
+-- a name (another case's units share the database, and a cast of their names would fail).
 CREATE TEMP VIEW golden_lease AS
-SELECT right(u.display_name, 1)::integer AS n, l.id
-FROM trust_leases AS l JOIN trust_units AS u ON u.id = l.unit_id
-WHERE l.pmc_id = '00000000-0000-4000-8000-000000000001';
+SELECT n, l.id
+FROM generate_series(1, 5) AS n
+JOIN trust_leases AS l ON l.unit_id = ('00000000-0000-4000-8000-00000000004' || n)::uuid;
 
 INSERT INTO trust_renters_insurance_terms (pmc_id, lease_id, required, minimum_liability, starts_on)
 SELECT '00000000-0000-4000-8000-000000000001', l.id, t.required, t.minimum, t.starts_on
