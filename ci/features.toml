@@ -51,7 +51,7 @@ operations = ["GET /api/today", "GET /api/dashboard"]
 browser = [
   "features.spec.ts › staff charge this month's rent and its late fees, and the Dashboard shows the rent that is late",
   "features.spec.ts › staff add a recurring bill and stop it, and record the decline of an owner with no login",
-  "features.spec.ts › staff list a vacant unit on the public page; someone applies from it, staff approve, take it off the page and close the link",
+  "features.spec.ts › staff list a vacant unit on the public page; someone applies from it, staff screen and approve it and record its withdrawal, take it off the page and close the link",
 ]
 
 [[feature]]
@@ -408,35 +408,36 @@ browser = [
 
 [[feature]]
 id = "applications"
-statement = "Staff open an application link for a unit and close it; an applicant applies through it and follows its status; staff screen the application through the partner and decide, a decline with its adverse action notice."
+statement = "Staff open an application link for a unit and close it; an applicant applies through it and follows its status; on Applicants (Open, Rejected, Withdrawn, All, by property group) staff open an application's page, screen it through the partner and approve or reject it, a rejection with its adverse action notice, or record that the applicants withdrew it, after which it takes nothing more."
 operations = [
-  "GET /api/leasing/units",
-  "GET /api/leasing/links",
   "POST /api/leasing/links",
   "POST /api/leasing/links/{link_id}/close",
   "POST /api/apply/view",
   "POST /api/apply",
   "POST /api/application/status",
   "GET /api/leasing/applications",
+  "GET /api/leasing/applications/{application_id}",
+  "POST /api/leasing/applications/{application_id}/withdraw",
   "POST /api/leasing/applications/{application_id}/screen",
   "POST /api/leasing/applications/{application_id}/decide",
   "GET /api/leasing/applications/{application_id}/notice",
 ]
 browser = [
   "portal.spec.ts › an applicant applies; staff screen, decline with a notice, and the applicant sees it",
-  "features.spec.ts › staff list a vacant unit on the public page; someone applies from it, staff approve, take it off the page and close the link",
+  "features.spec.ts › staff list a vacant unit on the public page; someone applies from it, staff screen and approve it and record its withdrawal, take it off the page and close the link",
 ]
 
 [[feature]]
 id = "listings"
-statement = "Staff list an open application link on the company's public vacancy page, where anyone sees it and applies, and take it off."
+statement = "On Listings staff see each unit coming free within 90 days (or with an open link), when and at what rent, and list it on the company's public vacancy page (opening its link if it has none), where anyone sees it and applies, and unlist it."
 operations = [
+  "GET /api/leasing/vacancies",
   "POST /api/leasing/links/{link_id}/listing",
   "POST /api/leasing/listings/{listing_id}/remove",
   "GET /api/listings/{pmc_id}",
 ]
 browser = [
-  "features.spec.ts › staff list a vacant unit on the public page; someone applies from it, staff approve, take it off the page and close the link",
+  "features.spec.ts › staff list a vacant unit on the public page; someone applies from it, staff screen and approve it and record its withdrawal, take it off the page and close the link",
 ]
 
 [[feature]]

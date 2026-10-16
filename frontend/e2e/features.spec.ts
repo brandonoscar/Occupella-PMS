@@ -1123,30 +1123,41 @@ test("a lease ended mid-month keeps only its days of the month's rent, and its d
   await downloads(tenant, "Deposit statement (PDF)", PDF);
 });
 
-test("staff list a vacant unit on the public page; someone applies from it, staff approve, take it off the page and close the link", async ({
+test("staff list a vacant unit on the public page; someone applies from it, staff screen and approve it and record its withdrawal, take it off the page and close the link", async ({
   browser,
   page,
 }) => {
   const people = seed.features.listings!;
   await joinAsStaff(page, people.manager);
   await section(page, "Listings");
-  await page.getByRole("combobox", { name: "Unit", exact: true }).selectOption({ label: "Aspen Row, Unit 2" });
-  await page.getByLabel("Rent a month").fill("1240.00");
-  await page.getByRole("button", { name: "Open a link" }).click();
-  await expect(page.getByTestId("application-link")).toContainText("/apply#");
-  const opened = new URL((await page.getByTestId("application-link").textContent()) ?? "");
-  const link = page.getByRole("listitem", { name: "Aspen Row, Unit 2" });
-  await link.getByLabel("Description for the public page (optional)").fill("Two bedrooms, second floor.");
-  await link.getByRole("button", { name: "List on the public page" }).click();
-  await expect(link).toContainText("0 applications; on the public page");
+  // A link to post anywhere first, shown once; then the unit goes on the public page with it.
+  const unit = page.getByRole("row", { name: "Aspen Row, Unit 2" });
+  await expect(unit.getByTestId("listed")).toHaveText("Not listed");
+  await unit.getByRole("button", { name: "Actions for Aspen Row, Unit 2" }).click();
+  await page.getByRole("menuitem", { name: "Open an application link" }).click();
+  const linking = page.getByRole("dialog", { name: "Open an application link" });
+  await linking.getByLabel("Rent a month").fill("1240.00");
+  await linking.getByRole("button", { name: "Open the link" }).click();
+  await expect(linking.getByTestId("application-link")).toContainText("/apply#");
+  const opened = new URL((await linking.getByTestId("application-link").textContent()) ?? "");
+  await linking.getByRole("button", { name: "Close" }).click();
+  await unit.getByRole("button", { name: "List", exact: true }).click();
+  const listing = page.getByRole("dialog", { name: "List on the public page" });
+  await expect(listing).toContainText("At $1,240.00 a month, as its open link asks.");
+  await listing.getByLabel("Description (optional)").fill("Two bedrooms, second floor.");
+  await listing.getByRole("button", { name: "List it" }).click();
+  await expect(page.getByText("Listed Aspen Row, Unit 2 at $1,240.00.")).toBeVisible();
+  await expect(unit.getByTestId("listed")).toHaveText("Listed");
+  await page.getByRole("button", { name: "Copy public page link" }).click();
+  await expect(page.getByText(/public page's link/)).toBeVisible();
 
   // Anyone, signed in or not, sees it on the PMC's vacancy page and applies from there.
   const visitor = await (await browser.newContext()).newPage();
   await visitor.goto(`/listings?pmc=${people.pmc_id}`);
-  const listing = visitor.getByRole("listitem", { name: "Aspen Row, Unit 2" });
-  await expect(listing).toContainText("$1,240.00 a month");
-  await expect(listing).toContainText("Two bedrooms, second floor.");
-  await listing.getByRole("link", { name: "Apply" }).click();
+  const shown = visitor.getByRole("listitem", { name: "Aspen Row, Unit 2" });
+  await expect(shown).toContainText("$1,240.00 a month");
+  await expect(shown).toContainText("Two bedrooms, second floor.");
+  await shown.getByRole("link", { name: "Apply" }).click();
   await expect(visitor.getByRole("heading", { name: "Apply for Aspen Row, Unit 2" })).toBeVisible();
   await visitor.getByLabel("Move-in day").fill(new Date(Date.now() + 20 * 86_400_000).toISOString().slice(0, 10));
   await visitor.getByLabel("Monthly income of everyone applying, together").fill("5200");
@@ -1154,32 +1165,62 @@ test("staff list a vacant unit on the public page; someone applies from it, staf
   await visitor.getByLabel("Email").fill("applicant.listing@example.com");
   await visitor.getByRole("button", { name: "Send application" }).click();
   const statusUrl = new URL((await visitor.getByTestId("status-url").textContent()) ?? "");
+  await page.reload();
+  await expect(page.getByRole("row", { name: "Aspen Row, Unit 2" }).getByRole("cell").nth(3)).toHaveText("1");
 
-  // It waits for a decision on Today and the overview; staff screen and approve it.
+  // It waits for a decision on the Dashboard; on Applicants staff open it, screen and approve it.
   await section(page, "Dashboard");
   await expect(page.getByRole("region", { name: "Applications waiting" })).toContainText("Applicant Listing");
   await section(page, "Applicants");
-  const application = page.getByRole("listitem", { name: "Application from Applicant Listing" });
-  await application.getByRole("button", { name: "Screen" }).click();
-  await expect(application).toContainText("Fake Screening Partner: Recommends approval");
-  await application.getByLabel("Decision").selectOption({ label: "Approve" });
-  await application.getByRole("button", { name: "Record decision" }).click();
-  await expect(application).toHaveCount(0);
+  const row = page.getByRole("row", { name: "Application from Applicant Listing" });
+  await expect(row.getByTestId("status")).toHaveText("New");
+  await expect(row.getByRole("cell").last()).toHaveText("4.1x");
+  await row.click();
+  await expect(page.getByRole("heading", { level: 1, name: "Applicant Listing" })).toBeVisible();
+  await page.getByRole("button", { name: "Screen" }).click();
+  await expect(page.getByRole("list", { name: "Screenings" })).toContainText("Recommends approval");
+  await expect(page.getByTestId("status")).toHaveText("Screening");
+  await page.getByRole("button", { name: "Approve" }).click();
+  const deciding = page.getByRole("dialog", { name: "Approve" });
+  await deciding.getByRole("button", { name: "Approve" }).click();
+  await expect(page.getByText("Approved: Applicant Listing.")).toBeVisible();
+  await expect(page.getByTestId("status")).toHaveText("Approved");
+  await expect(page.getByRole("link", { name: "Create draft lease" })).toHaveAttribute("href", /\/draft-leases\?application=/);
   await visitor.goto(statusUrl.pathname + statusUrl.hash);
   await expect(visitor.getByTestId("application-status")).toContainText("Approved");
 
-  // Taken off the page, it is gone from it.
+  // The applicant changes their mind: staff record it from the ⋯ menu, and it takes nothing more.
+  await page.getByRole("button", { name: "Actions for Applicant Listing" }).click();
+  await page.getByRole("menuitem", { name: "Record withdrawal" }).click();
+  const withdrawing = page.getByRole("dialog", { name: "Record withdrawal" });
+  await withdrawing.getByLabel("Why (optional)").fill("Found another home");
+  await withdrawing.getByRole("button", { name: "Record withdrawal" }).click();
+  await expect(page.getByText("Withdrawn: Applicant Listing.")).toBeVisible();
+  await expect(page.getByTestId("status")).toHaveText("Withdrawn");
+  await expect(page.getByTestId("withdrawal")).toContainText("Found another home");
+  await expect(page.getByRole("link", { name: "Create draft lease" })).toHaveCount(0);
+  await visitor.reload(); // the status page is open already
+  await expect(visitor.getByTestId("application-status")).toHaveText("Withdrawn.");
+  await section(page, "Applicants");
+  await expect(page.getByText("No application is waiting.")).toBeVisible();
+  await page.getByRole("tab", { name: "Withdrawn", exact: true }).click();
+  await expect(page.getByRole("row", { name: "Application from Applicant Listing" }).getByTestId("status")).toHaveText("Withdrawn");
+
+  // Unlisted, it is gone from the public page.
   await section(page, "Listings");
-  await page.getByRole("listitem", { name: "Aspen Row, Unit 2" }).getByRole("button", { name: "Take off the page" }).click();
-  await expect(
-    page.getByRole("listitem", { name: "Aspen Row, Unit 2" }).getByRole("button", { name: "List on the public page" }),
-  ).toBeVisible();
+  const again = page.getByRole("row", { name: "Aspen Row, Unit 2" });
+  await again.getByRole("button", { name: "Unlist" }).click();
+  await expect(page.getByText("Took Aspen Row, Unit 2 off the public page.")).toBeVisible();
+  await expect(again.getByTestId("listed")).toHaveText("Not listed");
   await visitor.goto(`/listings?pmc=${people.pmc_id}`);
   await expect(visitor.getByText("Nothing is available right now.")).toBeVisible();
 
-  // Closed, the link takes no more applications.
-  await page.getByRole("listitem", { name: "Aspen Row, Unit 2" }).getByRole("button", { name: "Close" }).click();
-  await expect(page.getByRole("listitem", { name: "Aspen Row, Unit 2" })).toHaveCount(0);
+  // Closed, its link takes no more applications.
+  await again.getByRole("button", { name: "Actions for Aspen Row, Unit 2" }).click();
+  await page.getByRole("menuitem", { name: "Close its link" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Close its link" }).click();
+  await expect(page.getByText("Closed the link for Aspen Row, Unit 2.")).toBeVisible();
+  await expect(again.getByRole("cell").nth(3)).toHaveText("0");
   await visitor.goto(opened.pathname + opened.hash);
   await expect(visitor.getByRole("alert")).toHaveText("this application link is closed or doesn't exist");
 });

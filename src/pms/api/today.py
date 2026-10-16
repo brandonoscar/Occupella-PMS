@@ -74,7 +74,7 @@ class Today(BaseModel):
     late_rent: list[LateLease]
     bills_due: list[payables.Bill]  # to pay (not paid or declined), due within a week or past
     unreconciled: list[Unreconciled]
-    applications: list[leasing.ApplicationOut]  # not decided
+    applications: list[leasing.ApplicationOut]  # new or being screened: not decided, nor withdrawn
     unsigned_offers: list[offers.OfferOut]  # sent to sign, not signed by everyone
     journal_waiting: list[journal.Entry]  # proposed, not yet posted or declined
     vendor_insurance: list[Lapsing]  # expired, or expiring within 30 days
@@ -137,7 +137,11 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
             if b.due_on <= day + BILLS_AHEAD
         ],
         unreconciled=unreconciled,
-        applications=leasing.applications(session, conn, "open"),
+        applications=[
+            a
+            for a in leasing.applications_of(conn, session.pmc_id, show="open")[0]
+            if a.status in ("new", "screening")
+        ],
         unsigned_offers=[
             o
             for o in offers.offers(session, conn, "open")

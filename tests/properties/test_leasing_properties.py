@@ -1,10 +1,10 @@
-"""Property-based tests for rental applications (migration 20261011000030) and vacancy listings
-(migration 20261013000047).
+"""Property-based tests for rental applications (migration 20261011000030), vacancy listings
+(migration 20261013000047) and withdrawals (migration 20261016000070).
 
 Hypothesis opens and closes application links on two units, lists links on the PMC's public page
-and takes listings off, applies through open and closed links, records screenings, and decides
+and takes listings off, applies through open and closed links, records screenings, decides
 applications, each decision with or without a screening and with or without an adverse action
-notice. A Python model predicts every step: the database
+notice, and records applicants withdrawing. A Python model predicts every step: the database
 must accept exactly what the model accepts and refuse the rest, writing nothing.
 
 Invariants checked after every step (ci/registry.toml maps them to this test):
@@ -15,7 +15,10 @@ Invariants checked after every step (ci/registry.toml maps them to this test):
     and no other decision has one;
   - nothing once written changes;
   - the PMC's public vacancy page shows each listing not taken off whose link is open, and an
-    applicant reaches a link through exactly those listings (migration 20261013000047).
+    applicant reaches a link through exactly those listings (migration 20261013000047);
+  - each withdrawal is the model's: once per application, never of a declined one, and nothing
+    (no screening, no decision) recorded for an application after it (migration
+    20261016000070).
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
@@ -64,6 +67,7 @@ class LeasingMachine(RuleBasedStateMachine):
         self.screenings: dict = {}  # screening -> its application
         self.decisions: dict = {}  # application -> (decision, screening or None, notice?)
         self.listings: dict = {}  # listing -> (its link, taken off?)
+        self.withdrawn: set = set()  # applications withdrawn
         self.snapshot: list = []
 
     # --- links ---------------------------------------------------------------------------
@@ -141,6 +145,18 @@ class LeasingMachine(RuleBasedStateMachine):
     @rule(data=st.data(), recommendation=st.sampled_from(list(RECOMMENDATIONS)))
     def screen(self, data, recommendation):
         application = data.draw(st.sampled_from(list(self.applications)))
+        if application in self.withdrawn:
+            refused = pytest.raises(psycopg.errors.CheckViolation, match="withdrew")
+            with refused, self.conn.transaction():
+                record_screening(
+                    self.conn,
+                    self.pmc_id,
+                    application,
+                    self.staff,
+                    recommendation,
+                    RECOMMENDATIONS[recommendation],
+                )
+            return
         screening = record_screening(
             self.conn,
             self.pmc_id,
@@ -182,9 +198,9 @@ class LeasingMachine(RuleBasedStateMachine):
                     record_adverse_action(self.conn, self.pmc_id, application, self.staff)
 
         needs_notice = decision != "approved" and screening is not None
-        # In the order the database checks: the screening (a BEFORE trigger), then one decision
-        # per application (the key), then the notice (at commit).
-        if screening is not None and screening not in mine:
+        # In the order the database checks: the screening and a withdrawal (BEFORE triggers),
+        # then one decision per application (the key), then the notice (at commit).
+        if application in self.withdrawn or (screening is not None and screening not in mine):
             refusal = psycopg.errors.CheckViolation
         elif application in self.decisions:
             refusal = psycopg.errors.UniqueViolation
@@ -208,7 +224,42 @@ class LeasingMachine(RuleBasedStateMachine):
         with pytest.raises(refusal), self.conn.transaction():
             record_adverse_action(self.conn, self.pmc_id, application, self.staff)
 
+    @precondition(lambda self: self.applications)
+    @rule(data=st.data(), why=st.sampled_from([None, "Found another home"]))
+    def withdraw(self, data, why):
+        """Once per application, and never of a declined one (no offer here becomes a lease)."""
+        application = data.draw(st.sampled_from(list(self.applications)))
+        withdrawal = (
+            "INSERT INTO trust_application_withdrawals (application_id, pmc_id, reason)"
+            " VALUES (%s, %s, %s)"
+        )
+        declined = self.decisions.get(application, ("",))[0] == "declined"
+        if declined or application in self.withdrawn:
+            # The BEFORE trigger refuses a declined one before the key refuses a second.
+            refusal = psycopg.errors.CheckViolation if declined else psycopg.errors.UniqueViolation
+            with pytest.raises(refusal), self.conn.transaction():
+                self.conn.execute(withdrawal, (application, self.pmc_id, why))
+            return
+        self.conn.execute(withdrawal, (application, self.pmc_id, why))
+        self.withdrawn.add(application)
+
     # --- invariants ----------------------------------------------------------------------
+
+    @invariant()
+    def withdrawals_are_the_models(self):
+        rows = self.conn.execute(
+            "SELECT w.application_id, d.decision,"
+            " (SELECT count(*) FROM trust_screenings AS s WHERE s.application_id = w.application_id"
+            "  AND s.reported_at > w.recorded_at)"
+            " FROM trust_application_withdrawals AS w"
+            " LEFT JOIN trust_application_decisions AS d USING (application_id)"
+            " WHERE w.pmc_id = %s",
+            (self.pmc_id,),
+        ).fetchall()
+        assert {application for application, _, _ in rows} == self.withdrawn
+        for _, decision, screened_after in rows:
+            assert decision != "declined"
+            assert screened_after == 0
 
     @invariant()
     def applications_are_the_models(self):
@@ -262,7 +313,7 @@ class LeasingMachine(RuleBasedStateMachine):
             " AND table_name IN ('trust_application_links', 'trust_application_link_closings',"
             " 'trust_applications', 'trust_applicants', 'trust_screenings',"
             " 'trust_application_decisions', 'trust_adverse_actions', 'trust_listings',"
-            " 'trust_listing_removals') ORDER BY id",
+            " 'trust_listing_removals', 'trust_application_withdrawals') ORDER BY id",
             (self.pmc_id,),
         ).fetchall()
         live = {

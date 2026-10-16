@@ -170,15 +170,17 @@ test("an applicant applies; staff screen, decline with a notice, and the applica
   await staff.getByRole("button", { name: "Finish" }).click();
   await staff.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Applicants", exact: true }).click();
 
-  const application = staff.getByRole("listitem", { name: "Application from Applicant E2E" });
-  await application.getByRole("button", { name: "Screen" }).click();
-  await expect(application).toContainText("Fake Screening Partner: Recommends declining");
-  await application.getByLabel("Decision").selectOption({ label: "Decline" });
-  await expect(application.getByLabel("Reasons, one a line")).toHaveValue(
+  await staff.getByRole("row", { name: "Application from Applicant E2E" }).click();
+  await staff.getByRole("button", { name: "Screen" }).click();
+  await expect(staff.getByRole("list", { name: "Screenings" })).toContainText("Recommends declining");
+  await staff.getByRole("button", { name: "Reject" }).click();
+  const rejecting = staff.getByRole("dialog", { name: "Reject" });
+  await expect(rejecting.getByLabel("Adverse action reasons, one a line")).toHaveValue(
     "Household income is less than twice the rent",
   );
-  await application.getByRole("button", { name: "Record decision" }).click();
-  await expect(application).toHaveCount(0);
+  await rejecting.getByRole("button", { name: "Reject" }).click();
+  await expect(staff.getByText("Rejected: Applicant E2E.")).toBeVisible();
+  await expect(staff.getByTestId("status")).toHaveText("Rejected");
   const notice = await staff.request.get(
     (await staff.getByRole("link", { name: "Notice (PDF)" }).getAttribute("href")) ?? "",
   );

@@ -59,11 +59,11 @@ describe("today", () => {
   });
   it("reads an application and an offer", () => {
     const application = {
-      id: "a1", property: "Property 1", unit: "Unit 2", monthly_rent: "1500.00",
+      id: "a1", property_id: "p1", property: "Property 1", unit_id: "u2", unit: "Unit 2", monthly_rent: "1500.00",
       move_in_on: "2026-11-01", monthly_income: "4500.00", submitted_at: "2026-10-12T15:00:00Z",
       applicants: [{ name: "Applicant 1", email: "a1@example.com" }, { name: "Applicant 2", email: "a2@example.com" }],
-      screenings: [], decision: null,
-    } as Application;
+      screenings: [], decision: null, status: "new", withdrawal: null, lease_id: null,
+    } satisfies Application;
     expect(applicationLine(application)).toBe("Unit 2, Property 1: Applicant 1, Applicant 2, applied 10/12/2026");
     const offer = {
       id: "o1", kind: "renewal", application_id: null, renews_lease_id: "l1", property: "Property 1",
