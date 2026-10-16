@@ -33,8 +33,8 @@ const LEASE: LeaseDetail = {
     { id: "c2", due_on: "2026-10-06", kind: "fee", memo: "Late fee", amount: "50.00", open: "50.00" },
   ],
   payments: [
-    { transfer_id: "tr1", received_on: "2026-09-01", amount: "1500.00", reference: "Check 101", bounced: false },
-    { transfer_id: "tr0", received_on: "2026-08-01", amount: "1500.00", reference: null, bounced: true },
+    { transfer_id: "tr1", received_on: "2026-09-01", amount: "1500.00", reference: "Check 101", method: null, bounced: false },
+    { transfer_id: "tr0", received_on: "2026-08-01", amount: "1500.00", reference: null, method: "EFT", bounced: true },
   ],
   recurring: [
     { id: "r1", kind: "fee", memo: "Pet rent", amount: "35.00", starts_on: "2026-01-01", ends_on: null },
@@ -188,7 +188,7 @@ describe("LeasePage", () => {
     const received = screen.getByRole("table", { name: "Payments received" });
     expect(within(received).getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").map((c) => c.textContent))).toEqual([
       ["09/01/2026Check 101", "$1,500.00", ""],
-      ["08/01/2026", "$1,500.00", "Bounced"],
+      ["08/01/2026EFT", "$1,500.00", "Bounced"],  // how it came, when no reference says
     ]);
     const bounced = () => {
       fireEvent.click(within(received).getByRole("button", { name: "Actions for 09/01/2026 payment of $1,500.00" }));

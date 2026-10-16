@@ -121,6 +121,8 @@ TABLES = {
     "trust_property_group_members": {"SELECT", "INSERT"},
     # Notes (migration 0066): written once each; a correction is a new note.
     "trust_notes": {"SELECT", "INSERT"},
+    # Rent runs (migration 0067): recorded by trust_run_rent, which runs with the app's grants.
+    "trust_rent_runs": {"SELECT", "INSERT"},
     "trust_inspections": {"SELECT", "INSERT"},
     "trust_inspection_items": {"SELECT", "INSERT"},
     "trust_listing_removals": {"SELECT", "INSERT"},
@@ -316,6 +318,7 @@ FUNCTIONS = {
     "trust_report_renters_insurance(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_is_archived(uuid,uuid,uuid,uuid)": {"trust_app"},
     "trust_group_properties(uuid)": {"trust_app"},
+    "trust_run_rent(uuid,date,date)": {"trust_app"},
     "trust_report_inspection(uuid,uuid)": {"trust_app", "trust_ai_agent"},
     "trust_report_cash_flow(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_vacancy(uuid,date)": {"trust_app", "trust_ai_agent"},

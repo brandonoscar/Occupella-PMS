@@ -13,15 +13,18 @@ def test_the_server_reads_its_settings_from_the_environment(monkeypatch, databas
     monkeypatch.setenv("PMS_COOKIE_SECURE", "False")
     monkeypatch.setenv("PMS_HOST", "0.0.0.0")
     monkeypatch.setenv("PMS_PORT", "9000")
+    monkeypatch.delenv("PMS_NIGHTLY", raising=False)
 
     runpy.run_module("pms.api", run_name="__main__")
 
     assert (served["host"], served["port"], served["proxy_headers"]) == ("0.0.0.0", 9000, False)
+    # The nightly run is on unless PMS_NIGHTLY=off (src/pms/nightly.py).
     assert served["app"].state.settings == Settings(
         database_url=database_url,
         public_url="https://pms.example.com",
         cookie_secure=False,
         db_role="trust_app",
+        nightly=True,
     )
     assert served["app"].state.settings.origin == "https://pms.example.com"
 

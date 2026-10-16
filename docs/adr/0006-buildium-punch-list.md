@@ -67,3 +67,20 @@ check or reference and whether it bounced. Its Tenants tab has each tenant's con
 portal login (invite or send again). The Tenants list shows each tenant's balance and portal
 login, and every tenant named on a lease row links to their page. Notes are append-only rows
 naming who wrote them; the AI role never reads them.
+
+## Rent posts by itself, and the rent roll
+
+The third piece (migration 0067, `src/pms/nightly.py`): every night each PMC's rent and recurring
+charges for the month, the late fees of rents past their grace, and the recurring bills due post
+by themselves, each once per date, so a missed night is caught up by the next and a restart
+charges nothing twice. The API runs it at start and every day at 06:00 UTC; a server that turns
+that off (`PMS_NIGHTLY=off`) runs `python -m pms.nightly` on its own schedule. Rent and late fees
+go through `trust_run_rent`, which records each run; an admin runs it by hand from the rent roll's
+⋯ menu for a catch-up, and the runs are listed there. The run moves no trust money: charges are
+what tenants owe, and bills wait to be set aside and paid. Fees still post only when staff ask
+(decision 4).
+
+The rent roll lists every lease (current, to come, ended, owing or all) with its start and end,
+days left, rent, the deposits held and its balance, the row opening the lease; Receive payment
+finds a lease by its tenant, unit or property and records a payment with how it came (check,
+money order, EFT or cash; the method only, no bank file).

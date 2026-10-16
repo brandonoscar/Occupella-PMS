@@ -132,8 +132,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`src/pms/api/today.py`: read only, each part the work page's own answer). Rentals
   (`src/pms/api/rentals.py`): properties a page at a time at `/properties`, each at
   `/properties/<id>` (its owners' money, its units and their leases), a unit at `/units/<id>`
-  (every lease it had), the rent roll at `/rent-roll` (the rent run, then the leases a page at a
-  time) and a lease at `/leases/<id>` (ADR 0006: its balance due on top, Receive payment, Enter
+  (every lease it had), the rent roll at `/rent-roll` (every lease a page at a time, current,
+  to come, ended or owing, with days left, rent, deposits and balance; Receive payment, and an
+  admin's Run rent now) and a lease at `/leases/<id>` (ADR 0006: its balance due on top, Receive payment, Enter
   charge and the ⋯ menu's rent work in side panels, `src/pms/api/rent.py`; tabs Summary, Ledger
   with the running balance of `trust_report_tenant_ledger`'s lines, Tenants with their portal
   logins, Files and Notes); staff rename a
@@ -215,8 +216,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `trust_complete_lease_offer`, `trust_match_bank_lines`, `trust_unmatch_bank_lines`,
   `trust_prepare_bank_reconciliation`, `trust_approve_bank_reconciliation`,
   `trust_match_cutover_opening`, `trust_return_deposit`, `trust_propose_journal_entry`,
-  `trust_post_journal_entry` and `trust_decline_journal_entry`, which run as the table owner (`trust_charge_rent_due` and `trust_enter_recurring_bills` run with the app's own
-  grants). It can't call pgledger's posting functions: every posting it makes goes through
+  `trust_post_journal_entry` and `trust_decline_journal_entry`, which run as the table owner (`trust_charge_rent_due`, `trust_enter_recurring_bills` and
+  `trust_run_rent` run with the app's own grants). It can't call pgledger's posting functions: every posting it makes goes through
   `trust_post_transfers`, which takes an idempotency key, unique per PMC, so it is safe to
   retry: the same key returns the original transfers, and a different posting under it is
   refused.
@@ -441,6 +442,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   a row of `trust_property_group_members` (append-only, the latest for a group and property
   holding, naming who did it, `trust_group_properties` reading it), and each row changes
   something. They move no money; the AI role reads them.
+- Rent posts by itself (migration 0067, ADR 0006, `src/pms/nightly.py`): every night each PMC's
+  rent and recurring charges for the month (due on its first day), the late fees of rents past
+  their grace as of the day, and the recurring bills due, with their owners' emails. Rent and late
+  fees go through `trust_run_rent`, which records the run (`trust_rent_runs`, append-only, naming
+  nobody); an admin runs it by hand from the rent roll (Run rent now), and a named staff member
+  without admin is refused. Each part charges once per date, so a run again charges nothing new.
+  The API runs it at start and every day at 06:00 UTC unless `PMS_NIGHTLY` is "off" (e2e turns it
+  off); `python -m pms.nightly` runs it once. It moves no trust money.
 - Notes (migration 0066, ADR 0006): what staff write about a property, unit, lease, tenant, owner
   or vendor of the PMC (`trust_notes`, exactly one of them, append-only, naming who wrote it; a
   correction is a new note), on its Notes tab (`src/pms/api/notes.py`). They move no money, and

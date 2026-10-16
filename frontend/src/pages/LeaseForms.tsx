@@ -6,8 +6,16 @@ import { RowMenu } from "../components/RowMenu";
 import { Select } from "../components/Select";
 import { Badge } from "../components/Badge";
 import { day, money, usDate } from "../money";
-import type { Bounce, Payment, RecurringCharge, RentChange, RentLease } from "../rent";
-import { bounceSummary, earliestRentChange, paymentSummary, recurringLabel, requestId } from "../rent";
+import type { Bounce, Payment, PaymentMethod, RecurringCharge, RentChange, RentLease } from "../rent";
+import {
+  PAYMENT_METHODS,
+  bounceSummary,
+  earliestRentChange,
+  methodLabel,
+  paymentSummary,
+  recurringLabel,
+  requestId,
+} from "../rent";
 
 // The forms of a lease's rent work (pages/LeasePage.tsx), each one thing recorded: a payment, a
 // fee or credit, one every month, a new rent, a deposit; and a payment's row, which can bounce,
@@ -24,7 +32,11 @@ export function PaymentRow({ payment, record }: { payment: RentLease["payments"]
     <tr>
       <td>
         <span className="whitespace-nowrap">{usDate(payment.received_on)}</span>
-        {payment.reference && <span className="block text-ink-muted">{payment.reference}</span>}
+        {(payment.reference || payment.method) && (
+          <span className="block text-ink-muted">
+            {[payment.method && methodLabel(payment.method), payment.reference].filter(Boolean).join(" · ")}
+          </span>
+        )}
       </td>
       <td className="text-right">{money(payment.amount)}</td>
       <td className="text-right">
@@ -62,6 +74,7 @@ export function PaymentForm({ lease, record }: { lease: RentLease; record: Recor
   const [amount, setAmount] = useState("");
   const [on, setOn] = useState(day(new Date()));
   const [reference, setReference] = useState("");
+  const [method, setMethod] = useState<PaymentMethod>("check");
   const hasPrepaid = lease.tenants.some((t) => Number(t.prepaid) > 0);
   return (
     <div className="flex flex-wrap items-end gap-3">
@@ -69,7 +82,7 @@ export function PaymentForm({ lease, record }: { lease: RentLease; record: Recor
         className="flex flex-wrap items-end gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
-          const body = { request_id: id, amount, received_on: on, reference: reference || null };
+          const body = { request_id: id, amount, received_on: on, method, reference: reference || null };
           if (await record<Payment>(`/api/rent/leases/${lease.id}/payments`, body, paymentSummary)) {
             setId(requestId());
             setAmount("");
@@ -81,6 +94,10 @@ export function PaymentForm({ lease, record }: { lease: RentLease; record: Recor
           value={amount} onChange={(e) => setAmount(e.target.value)} />
         <Field label="Received on" id={`pay-on-${lease.id}`} type="date" required value={on}
           onChange={(e) => setOn(e.target.value)} />
+        <Select label="Method" id={`pay-method-${lease.id}`} value={method}
+          onChange={(e) => setMethod(e.target.value as PaymentMethod)}>
+          {PAYMENT_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </Select>
         <Field label="Check or reference" id={`pay-ref-${lease.id}`} maxLength={200}
           value={reference} onChange={(e) => setReference(e.target.value)} />
         <Button type="submit">Record payment</Button>

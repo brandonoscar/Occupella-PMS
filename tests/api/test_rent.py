@@ -60,6 +60,10 @@ def call(client, path, **body):
     return client.post(f"/api/rent/{path}", json=json.loads(json.dumps(body, default=str)))
 
 
+def run(client, due_on, late_fees_as_of=TODAY):
+    return call(client, "run", due_on=due_on, late_fees_as_of=late_fees_as_of)
+
+
 def pay(client, home, amount, received_on=TODAY, request_id=None, **more):
     return call(
         client,
@@ -87,11 +91,14 @@ def lease_row(client, home):
 
 
 def test_the_rent_run_charges_each_lease_once_a_due_date(client, staff, home):
-    first = ok(call(client, "charge-rent", on=TODAY), 200)
-    again = ok(call(client, "charge-rent", on=TODAY), 200)
+    first = ok(run(client, TODAY), 200)
+    again = ok(run(client, TODAY), 200)
     row = lease_row(client, home)
 
-    assert (first, again) == ({"charged": 1, "recurring": 0}, {"charged": 0, "recurring": 0})
+    assert (first, again) == (
+        {"rents": 1, "recurring": 0, "late_fees": 0},
+        {"rents": 0, "recurring": 0, "late_fees": 0},
+    )
     assert row["owed"] == "1500.00"
     assert [(c["due_on"], c["kind"], c["open"]) for c in row["open_charges"]] == [
         (str(TODAY), "rent", "1500.00")
@@ -106,10 +113,10 @@ def test_the_rent_run_charges_a_lease_starting_later_that_month_its_part_month(
         conn, pmc.pmc_id, unit, date(2026, 3, 15), date(2026, 4, 30), "1500.00", [home.tenant]
     )
 
-    run = ok(call(client, "charge-rent", on=date(2026, 3, 1)), 200)
+    ran = ok(run(client, date(2026, 3, 1)), 200)
     row = ok(client.get(f"/api/leases/{lease}"), 200)
 
-    assert run == {"charged": 1, "recurring": 0}
+    assert ran == {"rents": 1, "recurring": 0, "late_fees": 0}
     assert row["owed"] == "822.58"  # 1500.00 x 17 / 31
     assert [(c["due_on"], c["memo"], c["open"]) for c in row["open_charges"]] == [
         (
@@ -149,10 +156,10 @@ def test_the_rent_run_charges_a_lease_starting_later_that_month_its_part_month_o
         )
     )
 
-    run = ok(call(client, "charge-rent", on=date(2026, 3, 1)), 200)
+    ran = ok(run(client, date(2026, 3, 1)), 200)
     row = ok(client.get(f"/api/leases/{lease}"), 200)
 
-    assert run == {"charged": 1, "recurring": 1}
+    assert ran == {"rents": 1, "recurring": 1, "late_fees": 0}
     assert row["owed"] == "841.77"  # 1500.00 and 35.00, each x 17 / 31
     assert sorted((c["due_on"], c["memo"], c["open"]) for c in row["open_charges"]) == [
         (
@@ -172,11 +179,14 @@ def test_the_rent_run_charges_a_recurring_charge_with_the_rent_until_it_stops(cl
     pet_rent = ok(recur(client, home))["id"]
     ok(recur(client, home, "100.00", "Concession", kind="credit"))
 
-    first = ok(call(client, "charge-rent", on=TODAY), 200)
-    again = ok(call(client, "charge-rent", on=TODAY), 200)
+    first = ok(run(client, TODAY), 200)
+    again = ok(run(client, TODAY), 200)
     row = lease_row(client, home)
 
-    assert (first, again) == ({"charged": 1, "recurring": 2}, {"charged": 0, "recurring": 0})
+    assert (first, again) == (
+        {"rents": 1, "recurring": 2, "late_fees": 0},
+        {"rents": 0, "recurring": 0, "late_fees": 0},
+    )
     assert row["owed"] == "1435.00"
     assert [(r["kind"], r["memo"], r["amount"], r["ends_on"]) for r in row["recurring"]] == [
         ("credit", "Concession", "100.00", None),
@@ -194,7 +204,7 @@ def test_the_rent_run_charges_a_recurring_charge_with_the_rent_until_it_stops(cl
         None,
         str(TODAY + DAY),
     ]
-    assert ok(call(client, "charge-rent", on=TODAY + DAY), 200) == {"charged": 1, "recurring": 1}
+    assert ok(run(client, TODAY + DAY), 200) == {"rents": 1, "recurring": 1, "late_fees": 0}
     refused(
         call(client, f"recurring-charges/{pet_rent}/stop", ends_on=TODAY),
         409,
@@ -208,7 +218,7 @@ def test_a_stopped_recurring_charge_is_no_longer_listed(client, staff, home):
     ok(call(client, f"recurring-charges/{pet_rent}/stop", ends_on=TODAY))
 
     assert lease_row(client, home)["recurring"] == []
-    assert ok(call(client, "charge-rent", on=TODAY), 200) == {"charged": 1, "recurring": 0}
+    assert ok(run(client, TODAY), 200) == {"rents": 1, "recurring": 0, "late_fees": 0}
 
 
 def test_a_recurring_charge_names_the_staff_member_in_the_audit_log(client, conn, staff, home):
@@ -506,12 +516,14 @@ def test_late_fees_are_assessed_up_to_today(client, conn, staff, home, pmc):
     home.charge(conn, START)
     add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, START, 5, "50.00")
 
-    future = call(client, "late-fees", on=TODAY + DAY)
-    assessed = ok(call(client, "late-fees", on=TODAY), 200)
+    future = run(client, START, TODAY + DAY)
+    assessed = ok(run(client, START), 200)
 
     refused(future, 422, "late fees are assessed as of today or an earlier day")
-    assert assessed == {"charged": 1}
+    assert assessed == {"rents": 0, "recurring": 0, "late_fees": 1}
     assert lease_row(client, home)["owed"] == "1550.00"
+    # Run again, it charges nothing new.
+    assert ok(run(client, START), 200) == {"rents": 0, "recurring": 0, "late_fees": 0}
 
 
 def test_a_charge_names_the_staff_member_in_the_audit_log(client, conn, staff, home):
@@ -578,8 +590,8 @@ def other_pmc_lease(conn):
 
 
 ENDPOINTS = [
-    ("post", "/api/rent/charge-rent"),
-    ("post", "/api/rent/late-fees"),
+    ("post", "/api/rent/run"),
+    ("get", "/api/rent/runs"),
     ("post", f"/api/rent/leases/{uuid.uuid4()}/charges"),
     ("post", f"/api/rent/leases/{uuid.uuid4()}/recurring-charges"),
     ("post", f"/api/rent/recurring-charges/{uuid.uuid4()}/stop"),

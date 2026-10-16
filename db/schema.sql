@@ -7916,6 +7916,36 @@ $$;
 
 
 --
+-- Name: trust_run_rent(uuid, date, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_run_rent(p_pmc_id uuid, p_due_on date, p_late_fees_as_of date) RETURNS uuid
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_rents integer;
+    v_recurring integer;
+    v_late_fees integer;
+    v_id uuid;
+BEGIN
+    -- By hand, only an admin runs it; the nightly run names nobody.
+    PERFORM trust_require_role(
+        p_pmc_id, nullif(current_setting('trust.staff_id', true), '')::uuid, 'admin',
+        'run rent by hand'
+    );
+    v_rents := trust_charge_rent_due(p_pmc_id, p_due_on);
+    v_recurring := trust_charge_recurring_due(p_pmc_id, p_due_on);
+    v_late_fees := trust_assess_late_fees(p_pmc_id, p_late_fees_as_of);
+    INSERT INTO trust_rent_runs (pmc_id, due_on, late_fees_as_of, rents, recurring, late_fees)
+    VALUES (p_pmc_id, p_due_on, p_late_fees_as_of, v_rents, v_recurring, v_late_fees)
+    RETURNING id INTO v_id;
+    RETURN v_id;
+END;
+$$;
+
+
+--
 -- Name: trust_set_aside_bill(uuid, uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9714,6 +9744,26 @@ CREATE TABLE public.trust_rent_changes (
 
 
 --
+-- Name: trust_rent_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_rent_runs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    due_on date NOT NULL,
+    late_fees_as_of date NOT NULL,
+    rents bigint NOT NULL,
+    recurring bigint NOT NULL,
+    late_fees bigint NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_rent_runs_late_fees_check CHECK ((late_fees >= 0)),
+    CONSTRAINT trust_rent_runs_recurring_check CHECK ((recurring >= 0)),
+    CONSTRAINT trust_rent_runs_rents_check CHECK ((rents >= 0))
+);
+
+
+--
 -- Name: trust_renters_insurance; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11184,6 +11234,14 @@ ALTER TABLE ONLY public.trust_rent_changes
 
 
 --
+-- Name: trust_rent_runs trust_rent_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rent_runs
+    ADD CONSTRAINT trust_rent_runs_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_renters_insurance trust_renters_insurance_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11971,6 +12029,20 @@ CREATE INDEX trust_rent_changes_recorded_by ON public.trust_rent_changes USING b
 
 
 --
+-- Name: trust_rent_runs_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_rent_runs_pmc ON public.trust_rent_runs USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_rent_runs_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_rent_runs_recorded_by ON public.trust_rent_runs USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_renters_insurance_lease; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -12678,6 +12750,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_rent_runs trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_rent_runs FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_renters_insurance trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13378,6 +13457,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_rent
 
 
 --
+-- Name: trust_rent_runs trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_rent_runs FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_renters_insurance trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13760,6 +13846,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_property_group_me
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_rent_changes FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_rent_runs trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_rent_runs FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -15970,6 +16063,22 @@ ALTER TABLE ONLY public.trust_rent_changes
 
 
 --
+-- Name: trust_rent_runs trust_rent_runs_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rent_runs
+    ADD CONSTRAINT trust_rent_runs_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_rent_runs trust_rent_runs_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rent_runs
+    ADD CONSTRAINT trust_rent_runs_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_renters_insurance trust_renters_insurance_lease_id_submitted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16402,4 +16511,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261016000063'),
     ('20261016000064'),
     ('20261016000065'),
-    ('20261016000066');
+    ('20261016000066'),
+    ('20261016000067');

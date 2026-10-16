@@ -564,7 +564,7 @@ def collect_rent(
     paid), one bounced and paid again."""
     conn = b.conn
     with b.as_staff(manager) as s:
-        rent.charge_rent(s, conn, rent.Day(on=month))
+        rent.run_rent(s, conn, rent.RunRent(due_on=month, late_fees_as_of=month))
     for n, (key, lease) in enumerate(demo.leases.items()):
         if key == late:
             continue
@@ -576,7 +576,7 @@ def collect_rent(
             with b.as_staff(manager) as s:
                 rent.pay(s, conn, lease, payment(conn, lease, month + 12 * DAY))
     with b.as_staff(manager) as s:
-        rent.late_fees(s, conn, rent.Day(on=month + 6 * DAY))
+        rent.run_rent(s, conn, rent.RunRent(due_on=month, late_fees_as_of=month + 6 * DAY))
     if late is not None:
         with b.as_staff(manager) as s:
             lease = demo.leases[late]

@@ -227,6 +227,11 @@ def post(
         return None
 
 
+DESCRIBED = ("reference", "method")
+# How a tenant's payment came: recorded as said, nothing sent (ADR 0006).
+Method = Literal["check", "money order", "EFT", "cash"]
+
+
 def earlier(
     conn: psycopg.Connection[Any], pmc_id: UUID, key: str, metadata: dict[str, Any]
 ) -> list[str]:
@@ -238,8 +243,11 @@ def earlier(
         " WHERE a.pmc_id = %s AND t.metadata ->> 'key' = %s ORDER BY t.created_at, t.id",
         (pmc_id, key),
     ).fetchall()
-    asked = {k: v for k, v in metadata.items() if k != "reference"}
-    if not rows or any({k: v for k, v in m.items() if k != "reference"} != asked for _, m in rows):
+    # What describes a payment (its check number, how it came) doesn't change what it asked for.
+    asked = {k: v for k, v in metadata.items() if k not in DESCRIBED}
+    if not rows or any(
+        {k: v for k, v in m.items() if k not in DESCRIBED} != asked for _, m in rows
+    ):
         raise Conflict
     return [str(row[0]) for row in rows]
 
@@ -283,6 +291,7 @@ def record_payment(
     received_on: date,
     reference: str | None = None,
     account: str | None = None,
+    method: Method | None = None,
 ) -> Recorded:
     """A tenant's payment into the operating trust bank account: the owner's account takes
     what the lease owes, matched to its charges oldest first; the rest is the first tenant's
@@ -298,6 +307,7 @@ def record_payment(
         "amount": cents(amount),
         "received_on": received_on.isoformat(),
         "reference": reference,
+        "method": method,
     }
     to_owner = min(amount, max(owed(conn, lease_id), ZERO))
     to_prepaid = amount - to_owner
@@ -490,6 +500,7 @@ class Paid(BaseModel):
     received_on: date
     amount: str
     reference: str | None
+    method: Method | None
     bounced: bool
 
 
@@ -628,7 +639,7 @@ ORDER BY r.starts_on, r.memo COLLATE "C", r.id
 # bounce was posted under its key. A payment all of it prepaid rent is listed too, so it can
 # bounce like any other.
 PAYMENTS = """
-SELECT p.lease_id, p.first_id, p.received_at, p.amount, p.reference,
+SELECT p.lease_id, p.first_id, p.received_at, p.amount, p.reference, p.method,
        EXISTS (SELECT 1 FROM pgledger_transfers AS b
                JOIN trust_ledger_accounts AS ba ON ba.ledger_account_id = b.to_account_id
                WHERE ba.pmc_id = %(pmc)s AND b.metadata ->> 'key' = 'bounce/' || p.key)
@@ -638,12 +649,14 @@ FROM (SELECT t.metadata ->> 'key' AS key,
              min(t.event_at) AS received_at,
              min(t.created_at) AS created_at,
              sum(t.amount) AS amount,
-             t.metadata ->> 'reference' AS reference
+             t.metadata ->> 'reference' AS reference,
+             t.metadata ->> 'method' AS method
       FROM pgledger_transfers AS t
       JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id
       WHERE a.pmc_id = %(pmc)s AND t.metadata ->> 'kind' = 'tenant payment'
         AND (%(lease)s::uuid IS NULL OR t.metadata ->> 'lease_id' = %(lease)s::text)
-      GROUP BY t.metadata ->> 'key', t.metadata ->> 'lease_id', t.metadata ->> 'reference') AS p
+      GROUP BY t.metadata ->> 'key', t.metadata ->> 'lease_id', t.metadata ->> 'reference',
+               t.metadata ->> 'method') AS p
 ORDER BY p.received_at DESC, p.created_at DESC, p.first_id
 """
 
@@ -678,7 +691,7 @@ def built(
             LeaseTenant(id=i, name=name, prepaid=cents(prepaid), deposit=cents(deposit))
         )
     payments: dict[UUID, list[Paid]] = {}
-    for lease, transfer, event_at, amount, reference, bounced in conn.execute(
+    for lease, transfer, event_at, amount, reference, method, bounced in conn.execute(
         PAYMENTS, names
     ).fetchall():
         payments.setdefault(lease, []).append(
@@ -687,6 +700,7 @@ def built(
                 received_on=event_at.astimezone(UTC).date(),
                 amount=cents(amount),
                 reference=reference,
+                method=method,
                 bounced=bounced,
             )
         )
@@ -754,38 +768,67 @@ class Day(BaseModel):
     on: date
 
 
-class Counted(BaseModel):
-    charged: int
+class RunRent(BaseModel):
+    due_on: date
+    late_fees_as_of: date
 
 
 class RentRun(BaseModel):
-    charged: int  # leases charged their rent
+    rents: int  # leases charged their rent
     recurring: int  # recurring charges charged
+    late_fees: int  # rents charged a late fee
 
 
-@router.post("/charge-rent")
-def charge_rent(session: Staff, conn: Conn, run: Day) -> RentRun:
-    """Charges every lease in effect on the day its rent for the days of the month it is in
-    effect, every lease starting later that month its first part month, and every recurring
-    charge in force on the day, once per lease (or recurring charge) and due date."""
-    rent = conn.execute("SELECT trust_charge_rent_due(%s, %s)", (session.pmc_id, run.on))
-    charged = rent.fetchone()
-    recurring = conn.execute(
-        "SELECT trust_charge_recurring_due(%s, %s)", (session.pmc_id, run.on)
-    ).fetchone()
-    assert charged is not None and recurring is not None
-    return RentRun(charged=charged[0], recurring=recurring[0])
+class RentRunLine(RentRun):
+    at: datetime
+    due_on: date
+    late_fees_as_of: date
+    # The staff member who ran it by hand; None for the nightly run.
+    by: str | None
 
 
-@router.post("/late-fees")
-def late_fees(session: Staff, conn: Conn, run: Day) -> Counted:
-    """Charges a late fee for each rent still unpaid after its grace days, under the terms in
-    force on its due date; once per rent."""
-    if run.on > today():
+@router.post("/run")
+def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRun:
+    """Runs by hand what posts by itself every night (pms.nightly), an admin's catch-up: every
+    lease's rent and recurring charges for a due date (each lease in effect on it for the days of
+    the month it is in effect, and each starting later that month its first part month), then a
+    late fee for each rent still open after its grace days as of a day. Each once per lease (or
+    recurring charge, or rent) and date, so running it again charges nothing new."""
+    if run.late_fees_as_of > today():
         raise HTTPException(422, "late fees are assessed as of today or an earlier day")
-    row = conn.execute("SELECT trust_assess_late_fees(%s, %s)", (session.pmc_id, run.on)).fetchone()
+    made = conn.execute(
+        "SELECT trust_run_rent(%s, %s, %s)", (session.pmc_id, run.due_on, run.late_fees_as_of)
+    ).fetchone()
+    assert made is not None
+    row = conn.execute(
+        "SELECT rents, recurring, late_fees FROM trust_rent_runs WHERE id = %s", (made[0],)
+    ).fetchone()
     assert row is not None
-    return Counted(charged=row[0])
+    return RentRun(rents=row[0], recurring=row[1], late_fees=row[2])
+
+
+@router.get("/runs")
+def rent_runs(session: Staff, conn: Conn) -> list[RentRunLine]:
+    """The latest ten rent runs, nightly or by hand, newest first."""
+    rows = conn.execute(
+        "SELECT r.created_at, r.due_on, r.late_fees_as_of, r.rents, r.recurring, r.late_fees,"
+        " s.display_name FROM trust_rent_runs AS r"
+        " LEFT JOIN trust_staff AS s ON s.id = r.recorded_by"
+        " WHERE r.pmc_id = %s ORDER BY r.created_at DESC, r.id DESC LIMIT 10",
+        (session.pmc_id,),
+    ).fetchall()
+    return [
+        RentRunLine(
+            at=at,
+            due_on=due,
+            late_fees_as_of=as_of,
+            rents=rents,
+            recurring=recurring,
+            late_fees=late,
+            by=by,
+        )
+        for at, due, as_of, rents, recurring, late, by in rows
+    ]
 
 
 class NewCharge(BaseModel):
@@ -1002,6 +1045,7 @@ class NewPayment(BaseModel):
     amount: Amount
     received_on: date
     reference: Memo | None = None
+    method: Method | None = None
     # The owner's account it pays, when the property has more than one.
     account: Annotated[str, Field(min_length=1, max_length=100)] | None = None
 
@@ -1039,6 +1083,7 @@ def pay(session: Staff, conn: Conn, lease_id: UUID, new: NewPayment) -> Payment:
                 new.received_on,
                 new.reference,
                 new.account,
+                new.method,
             )
         )
     except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:

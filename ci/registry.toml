@@ -1105,3 +1105,13 @@ tests = [
   "tests/test_vendor_insurance_and_inspections.py::test_a_lease_with_no_inspection_says_so",
   "tests/properties/test_vendor_insurance_properties.py::test_an_inspection_report_lays_the_latest_of_each_kind_side_by_side",
 ]
+
+[[invariant]]
+id = "rent-posts-by-itself"
+statement = "The nightly run (and an admin's Run rent now) charges exactly what the rent run, the recurring charges' run and the late fees' run charge for the month's first day and the day, each once per lease, recurring charge or rent and date, so a run again charges nothing new; it records each run, naming nobody, and refuses a named staff member without admin with nothing charged. One company that fails leaves the others to run."
+tests = [
+  "tests/properties/test_rent_run_properties.py::test_the_nightly_run_charges_what_the_three_runs_charge_and_once",
+  "tests/test_nightly.py::test_a_night_charges_the_months_rent_late_fees_and_bills_once",
+  "tests/test_nightly.py::test_one_company_that_fails_leaves_the_others_to_run",
+  "tests/api/test_rent_runs_api.py::test_only_an_admin_runs_rent_by_hand",
+]

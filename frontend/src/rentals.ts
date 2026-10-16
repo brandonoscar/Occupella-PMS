@@ -52,7 +52,12 @@ export type RentRollRow = {
   people: Ref[];
   starts_on: string;
   ends_on: string | null;
+  status: LeaseLine["status"];
+  // Days from today to its last day, for a lease in effect with an end date.
+  days_left: number | null;
   monthly_rent: string;
+  // The security deposits held for its tenants.
+  deposit: string;
   owed: string;
 };
 
