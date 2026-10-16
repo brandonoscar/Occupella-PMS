@@ -2,7 +2,8 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { Today } from "../today";
-import { TodayPage } from "./TodayPage";
+import type { Dashboard } from "../dashboard";
+import { DashboardPage } from "./DashboardPage";
 
 afterEach(() => {
   cleanup();
@@ -19,15 +20,25 @@ const QUIET: Today = {
   journal_waiting: [], vendor_insurance: [], company_fees: [], signers: [], renters_insurance: [],
 };
 
+const FIGURES: Dashboard = {
+  on: "2026-10-13", outstanding: "1750.50", leases_owing: 2, open_work_orders: 3,
+  leases_ending: { within_30: 1, within_60: 0, within_90: 2 }, vacant_units: 1, applications_waiting: 4,
+};
+
+// The Dashboard asks for its figures and for what needs someone today.
 function server(answer: Today | { detail: string }, status = 200) {
-  const fetch = vi.fn(async (_path: string) => new Response(JSON.stringify(answer), { status }));
+  const fetch = vi.fn(async (path: string) =>
+    path === "/api/dashboard" && status === 200
+      ? new Response(JSON.stringify(FIGURES), { status })
+      : new Response(JSON.stringify(answer), { status }),
+  );
   vi.stubGlobal("fetch", fetch);
   return fetch;
 }
 
 const group = (title: string) => screen.getByRole("region", { name: title });
 
-describe("TodayPage", () => {
+describe("Dashboard", () => {
   it("lists what is late or waiting, a group for each kind with its count and the way to its page", async () => {
     const fetch = server({
       ...QUIET,
@@ -40,36 +51,34 @@ describe("TodayPage", () => {
         months: ["2026-09"], waiting_for_approval: null,
       }],
     });
-    render(<TodayPage me={ME} />);
+    render(<DashboardPage me={ME} />);
 
     expect(await screen.findByText(
       "Unit 1, Property 1 (Tenant A): $1,500.00 of rent past due since 2026-10-03 (10 days)",
     )).toBeTruthy();
-    expect(screen.getByText("2 items need someone today.")).toBeTruthy();
     const late = group("Late rent");
     expect(within(late).getByRole("heading").textContent).toBe("Late rent1");
-    expect(within(late).getByRole("link", { name: "Open Rent" }).getAttribute("href")).toBe("/rent");
+    expect(within(late).getByRole("link", { name: "Open Rent roll" }).getAttribute("href")).toBe("/rent-roll");
     const monthEnd = group("Month-end");
     expect(within(monthEnd).getByText("Operating trust: September 2026 not reconciled")).toBeTruthy();
-    expect(within(monthEnd).getByRole("link", { name: "Open Month-end" }).getAttribute("href")).toBe("/reconcile");
+    expect(within(monthEnd).getByRole("link", { name: "Open Banking" }).getAttribute("href")).toBe("/banking");
     // A kind with nothing in it is left out.
     expect(screen.getAllByRole("region").map((region) => region.getAttribute("aria-label"))).toEqual([
       "Late rent", "Month-end",
     ]);
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(fetch.mock.calls[0]?.[0]).toBe("/api/today");
+    expect(fetch.mock.calls.map(([path]) => path).sort()).toEqual(["/api/dashboard", "/api/today"]);
   });
 
   it("goes to a group's page in place", async () => {
-    window.history.pushState(null, "", "/today");
+    window.history.pushState(null, "", "/");
     server({ ...QUIET, unreconciled: [{
       bank_account_id: "b1", name: "Operating trust", closed_through: null,
       months: [], waiting_for_approval: "2026-09-30",
     }] });
-    render(<TodayPage me={ME} />);
+    render(<DashboardPage me={ME} />);
 
     fireEvent.click(within(await screen.findByRole("region", { name: "Month-end" })).getByRole("link"));
-    expect(window.location.pathname).toBe("/reconcile");
+    expect(window.location.pathname).toBe("/banking");
   });
 
   it("lists journal entries waiting to be posted, with the way to the journal", async () => {
@@ -79,13 +88,13 @@ describe("TodayPage", () => {
       lines: [{ from_account: "a", to_account: "b", amount: "25.00" }],
       status: "waiting", decided_by: null, decided_at: null, reason: null,
     }] });
-    render(<TodayPage me={ME} />);
+    render(<DashboardPage me={ME} />);
 
     const journal = await screen.findByRole("region", { name: "Journal entries waiting" });
     expect(within(journal).getByText(
       "Rent deposited to the wrong property: $25.00, dated 2026-10-10, proposed by Bookkeeper 1",
     )).toBeTruthy();
-    expect(within(journal).getByRole("link", { name: "Open Journal" }).getAttribute("href")).toBe("/journal");
+    expect(within(journal).getByRole("link", { name: "Open Journal entries" }).getAttribute("href")).toBe("/journal");
   });
 
   it("lists vendor insurance running out, with the way to the vendors page", async () => {
@@ -93,7 +102,7 @@ describe("TodayPage", () => {
       vendor_id: "v1", vendor: "Vendor 1", coverage: "commercial auto", expires_on: "2026-05-31",
       standing: "expired",
     }] });
-    render(<TodayPage me={ME} />);
+    render(<DashboardPage me={ME} />);
 
     const insurance = await screen.findByRole("region", { name: "Vendor insurance" });
     expect(within(insurance).getByText("Vendor 1, commercial auto: expired (2026-05-31)")).toBeTruthy();
@@ -107,7 +116,7 @@ describe("TodayPage", () => {
       { bank_account_id: "b2", bank_account: "Second trust", held: "20.00", since: "2026-10-01",
         days_held: 12, take_by: "2026-10-26" },
     ] });
-    render(<TodayPage me={ME} />);
+    render(<DashboardPage me={ME} />);
 
     const fees = await screen.findByRole("region", { name: "Company fees in trust" });
     expect(within(fees).getByText(
@@ -124,28 +133,45 @@ describe("TodayPage", () => {
       { bank_account_id: "b1", bank_account: "Operating trust", signer: "Clerk 1", standing: "bond runs out in 5 days" },
       { bank_account_id: "b2", bank_account: "Deposit trust", signer: null, standing: "no broker on file" },
     ] });
-    render(<TodayPage me={ME} />);
+    render(<DashboardPage me={ME} />);
 
     const signers = await screen.findByRole("region", { name: "Trust account signers" });
     expect(within(signers).getByText("Operating trust, Clerk 1: bond runs out in 5 days")).toBeTruthy();
     expect(within(signers).getByText("Deposit trust: no broker on file")).toBeTruthy();
-    expect(within(signers).getByRole("link", { name: "Open Staff" }).getAttribute("href")).toBe("/staff");
+    expect(within(signers).getByRole("link", { name: "Open Staff and roles" }).getAttribute("href")).toBe("/settings/staff");
   });
 
   it("lists leases whose required renters insurance isn't current", async () => {
     server({ ...QUIET, renters_insurance: [
       { lease_id: "l1", property: "Property 1", unit: "Unit 1", tenants: "Tenant A", standing: "none on file" },
     ] });
-    render(<TodayPage me={ME} />);
+    render(<DashboardPage me={ME} />);
 
     const insurance = await screen.findByRole("region", { name: "Renters insurance" });
     expect(within(insurance).getByText("Unit 1, Property 1 (Tenant A): renters insurance none on file")).toBeTruthy();
-    expect(within(insurance).getByRole("link", { name: "Open Rent" }).getAttribute("href")).toBe("/rent");
+    expect(within(insurance).getByRole("link", { name: "Open Rent roll" }).getAttribute("href")).toBe("/rent-roll");
+  });
+
+  it("shows the company's figures, each opening the page where that work is done", async () => {
+    window.history.pushState(null, "", "/");
+    server(QUIET);
+    render(<DashboardPage me={ME} />);
+
+    const figures = await screen.findByRole("list", { name: "Figures" });
+    expect(within(figures).getAllByRole("link").map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
+      ["Outstanding balances$1,750.502 leases owe", "/rent-roll"],
+      ["Open work orders3not completed or cancelled", "/work-orders"],
+      ["Leases ending31 in 30 days, 0 in 60, 2 in 90", "/draft-leases"],
+      ["Vacant units1no lease in effect today", "/applicants"],
+      ["Applications waiting4not decided yet", "/applicants"],
+    ]);
+    fireEvent.click(within(figures).getByRole("link", { name: /Open work orders/ }));
+    expect(window.location.pathname).toBe("/work-orders");
   });
 
   it("says so in one line on a quiet day", async () => {
     server(QUIET);
-    render(<TodayPage me={ME} />);
+    render(<DashboardPage me={ME} />);
 
     expect(await screen.findByText("Nothing is late or waiting.")).toBeTruthy();
     expect(screen.getByTestId("empty-state").textContent).toContain("Nothing is late or waiting.");
@@ -154,7 +180,7 @@ describe("TodayPage", () => {
 
   it("says what went wrong", async () => {
     server({ detail: "the database is down" }, 503);
-    render(<TodayPage me={ME} />);
+    render(<DashboardPage me={ME} />);
 
     expect(await screen.findByText("the database is down")).toBeTruthy();
     expect(screen.queryByText("Loading")).toBeNull();

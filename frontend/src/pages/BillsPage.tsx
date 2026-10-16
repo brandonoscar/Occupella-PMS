@@ -45,7 +45,7 @@ export function BillsPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Bills" description="Vendor bills to enter, approve and pay, recurring bills, and the emails to owners." />
+      <PageHeader title="Bills" />
       {books && <EnterBillCard books={books} refresh={refresh} />}
       <Card title="Vendor bills">
         <div className="mb-4 max-w-48">

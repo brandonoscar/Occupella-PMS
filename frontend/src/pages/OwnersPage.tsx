@@ -45,7 +45,7 @@ export function OwnersPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Owners" description="What each owner's properties hold, draws and contributions, the management and leasing fees, and the company's fees taken out of trust." />
+      <PageHeader title="Owners" />
       <Card title="Owners' money">
         {owners === null ? (
           <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>

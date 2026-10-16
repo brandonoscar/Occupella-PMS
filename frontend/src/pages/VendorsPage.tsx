@@ -32,7 +32,7 @@ export function VendorsPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Vendors" description="Each vendor's W-9 and insurance, and when it runs out."
+      <PageHeader title="Vendors"
         actions={<LinkButton href={vendorInsuranceHref(today)}>Vendor insurance (PDF)</LinkButton>} />
       <Card title="Insurance">
         {vendors === null ? (

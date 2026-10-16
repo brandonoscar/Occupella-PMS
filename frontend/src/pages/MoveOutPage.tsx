@@ -32,7 +32,7 @@ export function MoveOutPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Move-out" description="Return the deposits of a lease that has ended, with the itemized statement." />
+      <PageHeader title="Move-outs" />
       {leases === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : leases.length === 0 ? (

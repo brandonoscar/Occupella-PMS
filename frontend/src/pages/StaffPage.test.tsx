@@ -59,7 +59,7 @@ describe("StaffPage", () => {
     expect(await screen.findByText("Admin 1 may no longer: Approve.")).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Clerk 2" } });
     fireEvent.click(screen.getByRole("button", { name: "Add" }));
-    expect(await screen.findByText("Added Clerk 2; invite them from the Overview.")).toBeTruthy();
+    expect(await screen.findByText("Added Clerk 2; invite them from Settings, Logins.")).toBeTruthy();
 
     expect(posted(fetch)).toEqual([
       ["/api/staff/s2/roles", { role: "disburse", granted: true }],

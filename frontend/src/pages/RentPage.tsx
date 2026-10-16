@@ -46,7 +46,7 @@ export function RentPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Rent" description="Each lease's charges and payments, the month's rent run and late fees." />
+      <PageHeader title="Rent roll" />
       <RunsCard refresh={refresh} />
       <Card title="Leases">
         {leases === null ? (

@@ -42,6 +42,7 @@ from pms import accounts, email, exports
 from pms.api import (
     budgets,
     custom_roles,
+    dashboard,
     documents,
     fake_esign,
     inspections,
@@ -375,6 +376,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(moveout.router)
     app.include_router(documents.router)
     app.include_router(today.router)
+    app.include_router(dashboard.router)
     if settings.static_dir is not None:
         serve_portal(app, settings.static_dir)
     return app

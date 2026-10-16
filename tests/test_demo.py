@@ -1,7 +1,7 @@
 """The demo PMC (src/pms/demo.py): built through the API's own routes, it opens on last month's
 three-way reconciliation waiting for the manager's approval, with a check outstanding, and its
 owner with three properties has a statement that rolls them up. Every other page has something
-on it, and Today lists what waits."""
+on it, and the Dashboard lists what waits."""
 
 from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal

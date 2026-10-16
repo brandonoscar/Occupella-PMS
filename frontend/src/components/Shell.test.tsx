@@ -2,9 +2,9 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import { STAFF_NAV } from "../pages/staffNav";
-import { Card, PageHeader, Shell } from "./Shell";
+import { Card, isCurrent, PageHeader, Shell } from "./Shell";
 
-beforeEach(() => window.history.pushState(null, "", "/today"));
+beforeEach(() => window.history.pushState(null, "", "/settings/staff"));
 
 afterEach(() => {
   cleanup();
@@ -34,16 +34,37 @@ describe("Shell", () => {
       .toBeTruthy();
   });
 
-  it("lists staff's sections, each with its icon, and marks the one shown", () => {
+  it("lists staff's menu, each group's pages under its name, and marks the one shown", () => {
     render(<Shell me={STAFF} nav={STAFF_NAV}><p /></Shell>);
 
     const links = within(sections()).getAllByRole("link");
-    expect(links.map((link) => link.textContent)).toEqual(STAFF_NAV.map((item) => item.label));
-    expect(links.every((link) => link.querySelector("svg"))).toBe(true);
-    const current = within(sections()).getByRole("link", { name: "Today" });
+    expect(links.map((link) => link.textContent)).toEqual([
+      "Dashboard", "Rent roll", "Owners", "Move-outs", "Applicants", "Draft leases", "Banking", "Bills",
+      "Journal entries", "Budgets", "Work orders", "Vendors", "Files", "Reports", "Settings",
+    ]);
+    const groups = within(sections()).getAllByRole("group");
+    expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual([
+      "Rentals", "Leasing", "Accounting", "Maintenance",
+    ]);
+    const accounting = within(sections()).getByRole("group", { name: "Accounting" });
+    expect(within(accounting).getAllByRole("link").map((link) => link.textContent)).toEqual([
+      "Banking", "Bills", "Journal entries", "Budgets",
+    ]);
+    // Each group and each page outside one has its icon.
+    expect(groups.every((group) => group.querySelector("svg"))).toBe(true);
+    for (const name of ["Dashboard", "Files", "Reports", "Settings"]) {
+      expect(within(sections()).getByRole("link", { name }).querySelector("svg")).toBeTruthy();
+    }
+    // A page of Settings is Settings shown.
+    const current = within(sections()).getByRole("link", { name: "Settings" });
     expect(current.getAttribute("aria-current")).toBe("page");
     expect(current.className).toContain("bg-chrome-raised");
-    expect(within(sections()).getByRole("link", { name: "Rent" }).getAttribute("aria-current")).toBeNull();
+    expect(within(sections()).getByRole("link", { name: "Dashboard" }).getAttribute("aria-current")).toBeNull();
+  });
+
+  it("marks the Dashboard only on its own page, and a page also on its own pages", () => {
+    expect([isCurrent("/", "/"), isCurrent("/", "/bills")]).toEqual([true, false]);
+    expect([isCurrent("/settings", "/settings/staff"), isCurrent("/bills", "/bills-due")]).toEqual([true, false]);
   });
 
   it("goes to a section in place, and leaves a new-tab click to the browser", () => {
@@ -53,7 +74,7 @@ describe("Shell", () => {
     expect(window.location.pathname).toBe("/bills");
     expect(within(sections()).getByRole("link", { name: "Bills" }).getAttribute("aria-current")).toBe("page");
 
-    const rent = within(sections()).getByRole("link", { name: "Rent" });
+    const rent = within(sections()).getByRole("link", { name: "Rent roll" });
     expect(fireEvent.click(rent, { ctrlKey: true })).toBe(true); // not prevented
     expect(window.location.pathname).toBe("/bills");
   });

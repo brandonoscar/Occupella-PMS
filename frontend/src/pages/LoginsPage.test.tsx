@@ -1,8 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
-import { day } from "../money";
-import { StaffHome } from "./StaffHome";
+import { LoginsPage } from "./LoginsPage";
 
 afterEach(() => {
   cleanup();
@@ -19,26 +18,7 @@ const ME: Me = {
   roles: ["admin", "approve", "disburse"],
 };
 
-describe("StaffHome", () => {
-  it("downloads today's reports and the whole ledger", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
-    render(<StaffHome me={ME} />);
-    const today = day(new Date());
-
-    const href = (name: string) => screen.getByRole("link", { name }).getAttribute("href");
-    expect(await screen.findByRole("heading", { name: "Synthetic PMC" })).toBeTruthy();
-    expect(href("Rent roll (PDF)")).toBe(`/api/reports/trust_report_rent_roll?arg=${today}&format=pdf`);
-    expect(href("Trial balance (Excel)")).toBe(
-      `/api/reports/trust_report_trial_balance?arg=${today}&format=xlsx`,
-    );
-    expect(href("Leases ending in 90 days (Excel)")).toBe(
-      `/api/reports/trust_report_lease_expirations?arg=${today}&format=xlsx`,
-    );
-    expect(href("Balance sheet (PDF)")).toBe(`/api/reports/trust_report_balance_sheet?arg=${today}&format=pdf`);
-    expect(screen.getAllByRole("link").map((link) => link.textContent)).toContain("Vendor directory (Excel)");
-    expect(href("Whole ledger (CSV, zip)")).toBe("/api/ledger.zip");
-  });
-
+describe("LoginsPage", () => {
   it("shows each person's role and login as Occupella shows a state: a badge", async () => {
     const people = [
       { kind: "staff", person_id: "s1", name: "Manager 1", email: "manager@example.com", login_id: "l1", status: "active" },
@@ -50,7 +30,7 @@ describe("StaffHome", () => {
       "fetch",
       vi.fn(async (path: string) => new Response(JSON.stringify(path === "/api/people" ? people : []), { status: 200 })),
     );
-    render(<StaffHome me={ME} />);
+    render(<LoginsPage me={ME} />);
 
     const row = async (name: string) => screen.findByRole("row", { name: new RegExp(`^${name}`) });
     const badge = async (name: string) => {
@@ -81,7 +61,7 @@ describe("StaffHome", () => {
       return new Response(JSON.stringify(path === "/api/people" ? people : []), { status: 200 });
     });
     vi.stubGlobal("fetch", fetch);
-    render(<StaffHome me={ME} />);
+    render(<LoginsPage me={ME} />);
     const row = async (name: string) => screen.findByRole("row", { name: new RegExp(`^${name}`) });
     const posts = () => fetch.mock.calls.filter(([, init]) => init?.method === "POST").map(([path]) => path);
 

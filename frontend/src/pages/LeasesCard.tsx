@@ -10,7 +10,7 @@ import { useAdd } from "./useAdd";
 const BLANK = { unit: "", starts_on: "", ends_on: "", rent: "", tenants: [] as string[] };
 
 // Tenants already in place and their leases: a new tenant's lease comes through a lease offer
-// (Overview, Lease offers) instead.
+// (Leasing, Draft leases) instead.
 export function LeasesCard({ books, refresh }: CardProps) {
   const tenants = useAdd(refresh);
   const leases = useAdd(refresh);
@@ -30,7 +30,7 @@ export function LeasesCard({ books, refresh }: CardProps) {
     <Card title="Tenants and leases in place">
       <p className="mb-4 text-sm text-ink-muted">
         For tenants already living in your units. A new tenant's lease comes through a lease
-        offer on the Overview page.
+        offer in Leasing, Draft leases.
       </p>
       <ul className="mb-4 flex flex-col gap-1">
         {books.tenants.map((t) => (

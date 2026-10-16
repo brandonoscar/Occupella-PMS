@@ -56,7 +56,7 @@ export function ReconcilePage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Month-end" description="Import bank statements, match the bank to the books, and prepare or approve each month." />
+      <PageHeader title="Banking" />
       {banks === null || (bank && sheet === null) ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : !bank || !sheet ? (

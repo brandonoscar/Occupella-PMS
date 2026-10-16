@@ -37,7 +37,7 @@ export function SwitchPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Switching" description="Bring a company over from another system: its roster, opening balances and the signed tie-out." />
+      <PageHeader title="Import from another PMS" />
       <RosterCard />
       <VendorPaymentsCard />
       {cutovers === null ? (

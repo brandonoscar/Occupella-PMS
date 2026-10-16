@@ -1,35 +1,63 @@
 import {
-  ArrowLeftRight,
-  BookOpen,
+  BarChart3,
   Building2,
-  CalendarCheck,
-  DoorOpen,
-  FileText,
   FolderOpen,
-  PiggyBank,
+  KeyRound,
   Landmark,
-  Receipt,
+  LayoutDashboard,
   Settings,
-  Truck,
-  UserCog,
-  Users,
+  Wrench,
 } from "lucide-react";
-import type { NavItem } from "../components/Shell";
+import type { NavEntry } from "../components/Shell";
 
-// Staff's sections, in the sidebar of every staff page.
-export const STAFF_NAV: NavItem[] = [
-  { href: "/", label: "Overview", icon: Building2 },
-  { href: "/today", label: "Today", icon: CalendarCheck },
-  { href: "/rent", label: "Rent", icon: Receipt },
-  { href: "/bills", label: "Bills", icon: FileText },
-  { href: "/owners", label: "Owners", icon: Users },
-  { href: "/budgets", label: "Budgets", icon: PiggyBank },
-  { href: "/move-out", label: "Move-out", icon: DoorOpen },
-  { href: "/vendors", label: "Vendors", icon: Truck },
-  { href: "/documents", label: "Documents", icon: FolderOpen },
-  { href: "/reconcile", label: "Month-end", icon: Landmark },
-  { href: "/journal", label: "Journal", icon: BookOpen },
-  { href: "/switching", label: "Switching", icon: ArrowLeftRight },
-  { href: "/staff", label: "Staff", icon: UserCog },
-  { href: "/setup", label: "Setup", icon: Settings },
+// Staff's menu, in the sidebar of every staff page (ADR 0005): what a property manager works on,
+// grouped as Buildium groups it, in Occupella's look.
+export const STAFF_NAV: NavEntry[] = [
+  { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  {
+    label: "Rentals",
+    icon: Building2,
+    items: [
+      { href: "/rent-roll", label: "Rent roll" },
+      { href: "/owners", label: "Owners" },
+      { href: "/move-out", label: "Move-outs" },
+    ],
+  },
+  {
+    label: "Leasing",
+    icon: KeyRound,
+    items: [
+      { href: "/applicants", label: "Applicants" },
+      { href: "/draft-leases", label: "Draft leases" },
+    ],
+  },
+  {
+    label: "Accounting",
+    icon: Landmark,
+    items: [
+      { href: "/banking", label: "Banking" },
+      { href: "/bills", label: "Bills" },
+      { href: "/journal", label: "Journal entries" },
+      { href: "/budgets", label: "Budgets" },
+    ],
+  },
+  {
+    label: "Maintenance",
+    icon: Wrench,
+    items: [
+      { href: "/work-orders", label: "Work orders" },
+      { href: "/vendors", label: "Vendors" },
+    ],
+  },
+  { href: "/files", label: "Files", icon: FolderOpen },
+  { href: "/reports", label: "Reports", icon: BarChart3 },
+  { href: "/settings", label: "Settings", icon: Settings },
 ];
+
+// Settings' own pages, each a link on /settings.
+export const SETTINGS = [
+  { href: "/settings/staff", label: "Staff and roles" },
+  { href: "/settings/logins", label: "Logins" },
+  { href: "/settings/setup", label: "Company setup" },
+  { href: "/settings/import", label: "Import from another PMS" },
+] as const;
