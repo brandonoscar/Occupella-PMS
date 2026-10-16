@@ -59,8 +59,10 @@ On a migrated database (`dbmate up`), `PYTHONPATH=src python -m pms.demo` adds a
 and prints sign-in links for its manager, an owner with three properties and a tenant. Serve
 the portal (`python -m pms.api`, with `PMS_STATIC_DIR=frontend/dist` and `PMS_PUBLIC_URL` set to
 where it's served) and open the manager's link: last month's reconciliation is prepared and
-waits for their approval, with a check not yet cleared at the bank. Like every staff member,
-the manager signs in with a password and an authenticator app.
+waits for their approval, with a check not yet cleared at the bank. Every other page has
+something on it, and Today lists what else waits: a journal entry, the company's fees still in
+trust, a vendor's insurance running out and a lease without renters insurance. Like every staff
+member, the manager signs in with a password and an authenticator app.
 
 ## Working here
 

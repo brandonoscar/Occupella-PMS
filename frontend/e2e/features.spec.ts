@@ -1,6 +1,6 @@
-// Each feature of the portal used end to end in a real browser, on a demo PMC of its own
-// (src/pms/demo.py, seeded by e2e/seed.py): two months of rent, bills, fees, draws and month-end,
-// last month prepared and waiting for its approval. ci/features.toml names the test that proves
+// Each feature of the portal used end to end in a real browser, on a demo PMC's books of its own
+// (demo.books in src/pms/demo.py, seeded by e2e/seed.py): two months of rent, bills, fees, draws
+// and month-end, last month prepared and waiting for its approval. ci/features.toml names the test that proves
 // each feature, and tools/check_features.py keeps the two in step.
 import { readFileSync } from "node:fs";
 import { expect, type Page, test } from "@playwright/test";
@@ -1199,8 +1199,8 @@ test("staff see the company's fees left in trust on Today and take them out to t
   const people = seed.features["company-fees"]!;
   await joinAsStaff(page, people.manager);
 
-  // The demo took two months of management fees and left them in trust: Today says so, with
-  // the day they were to be taken out by.
+  // The demo took the month before last's fees out of trust and left last month's: Today says
+  // so, with the day they are to be taken out by.
   await section(page, "Today");
   const waiting = page.getByRole("region", { name: "Company fees in trust" });
   await expect(waiting).toContainText("Demo operating trust account: $");

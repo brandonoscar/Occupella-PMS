@@ -1,6 +1,7 @@
 """The demo PMC (src/pms/demo.py): built through the API's own routes, it opens on last month's
 three-way reconciliation waiting for the manager's approval, with a check outstanding, and its
-owner with three properties has a statement that rolls them up."""
+owner with three properties has a statement that rolls them up. Every other page has something
+on it, and Today lists what waits."""
 
 from datetime import UTC, datetime, time, timedelta
 from decimal import Decimal
@@ -8,7 +9,7 @@ from decimal import Decimal
 import pytest
 
 from pms import demo
-from pms.api import reconcile
+from pms.api import reconcile, rent, today
 
 DAY = timedelta(days=1)
 
@@ -165,6 +166,148 @@ def test_two_months_of_the_work_staff_do(conn, built):
         "SELECT fee FROM trust_management_fees WHERE ledger_account_id = %s AND period_start = %s",
         (built.accounts["Birch Flats"], last_month),
     ).fetchone() == (Decimal("243.20"),)
+
+
+def test_today_lists_what_waits_on_staff(conn, app_conn, built):
+    _, last_month, this_month = built.months
+    with demo.Builder(app_conn, built.pmc_id).as_staff(built.manager) as session:
+        waiting = today.today(session, app_conn)
+    last_months_fees = conn.execute(
+        "SELECT sum(fee) FROM trust_management_fees WHERE pmc_id = %s AND period_start = %s",
+        (built.pmc_id, last_month),
+    ).fetchone()[0]
+
+    # Last month waits for the manager, for both trust bank accounts.
+    assert [u.waiting_for_approval for u in waiting.unreconciled] == [this_month - DAY] * 2
+    assert [(e.id, e.memo) for e in waiting.journal_waiting] == [
+        (built.journal_entry, "Reserve moved to Birch Flats, as Demo Owner A asked")
+    ]
+    # Only last month's fees are still in trust: the month before last's were taken out.
+    assert [(f.bank_account, Decimal(f.held), f.since) for f in waiting.company_fees] == [
+        ("Demo operating trust account", last_months_fees, this_month - DAY)
+    ]
+    assert [(v.vendor, v.expires_on - waiting.on) for v in waiting.vendor_insurance] == [
+        ("Demo Roofing Co", 20 * DAY)
+    ]
+    assert [(u.property, u.unit, u.standing) for u in waiting.renters_insurance] == [
+        ("Aspen Row", "Unit 1", "none on file")
+    ]
+    # Each trust bank account has its broker, and the bookkeeper's bond runs a while yet.
+    assert waiting.signers == []
+
+
+def test_the_company_took_the_month_before_lasts_fees_out_of_trust(conn, built):
+    month_ago, last_month, _ = built.months
+    fees = conn.execute(
+        "SELECT sum(fee) FROM trust_management_fees WHERE pmc_id = %s AND period_start = %s",
+        (built.pmc_id, month_ago),
+    ).fetchone()[0]
+
+    assert conn.execute(
+        "SELECT w.amount, t.event_at FROM trust_pmc_fee_withdrawals AS w"
+        " JOIN pgledger_transfers AS t ON t.id = w.transfer_id WHERE w.pmc_id = %s",
+        (built.pmc_id,),
+    ).fetchall() == [(fees, utc(last_month + 4 * DAY))]
+
+
+def test_every_other_page_has_something_on_it(conn, app_conn, built):
+    on = datetime.now(UTC).date()
+    pmc = built.pmc_id
+    assert report(
+        conn,
+        "SELECT bank_account, signer, role, standing"
+        " FROM trust_report_trust_account_signers(%s, %s) ORDER BY line",
+        pmc,
+        on,
+    ) == [
+        ("Demo operating trust account", "Demo Manager", "broker", "licensed"),
+        ("Demo operating trust account", "Demo Bookkeeper", "signer", "bonded"),
+        ("Demo security deposit account", "Demo Manager", "broker", "licensed"),
+    ]
+    assert report(
+        conn,
+        "SELECT r.name, s.display_name FROM trust_staff_custom_roles AS g"
+        " JOIN trust_custom_roles AS r ON r.id = g.role_id"
+        " JOIN trust_staff AS s ON s.id = g.staff_id WHERE g.pmc_id = %s",
+        pmc,
+    ) == [("Leasing", "Demo Leasing Agent")]
+    assert report(
+        conn,
+        "SELECT vendor, standing FROM trust_report_vendor_insurance(%s, %s)"
+        " WHERE item = 'policy' ORDER BY line",
+        pmc,
+        on,
+    ) == [("Demo Plumbing Co", "current"), ("Demo Roofing Co", "expires in 20 days")]
+    assert report(
+        conn,
+        "SELECT room, move_in, detail FROM trust_report_inspection(%s, %s) WHERE item = 'room'"
+        " ORDER BY line",
+        pmc,
+        built.leases[("Elm Court", "Unit 1")],
+    ) == [
+        ("Kitchen", "good", None),
+        ("Living room", "good", None),
+        ("Bathroom", "fair", "move-in: Grout stained by the tub"),
+    ]
+    budget = report(
+        conn,
+        "SELECT property, item, budget FROM trust_report_budget_vs_actual(%s, %s, %s, %s)"
+        " WHERE property = 'Elm Court' AND budget <> 0 ORDER BY line",
+        pmc,
+        built.owners["Demo Owner A"],
+        on.replace(month=1, day=1),
+        on.replace(month=12, day=31),
+    )
+    # Twelve months of 2975.00 rent and 100.00 of repairs.
+    assert [(item, amount) for _, item, amount in budget] == [
+        ("income: rent", Decimal("35700.00")),
+        ("total income", Decimal("35700.00")),
+        ("expense: Repairs", Decimal("1200.00")),
+        ("total expenses", Decimal("1200.00")),
+        ("net income", Decimal("34500.00")),
+    ]
+    # Cedar House's rent goes up next month, noticed in writing a full month ahead.
+    with demo.Builder(app_conn, pmc).as_staff(built.manager) as session:
+        [cedar] = [
+            lease
+            for lease in rent.leases(session, app_conn)
+            if lease.id == built.leases[("Cedar House", "House")]
+        ]
+    assert [(c.effective_on, c.monthly_rent) for c in cedar.rent_changes] == [
+        (demo.first_of_month(on, -1), "2300.00")
+    ]
+    assert cedar.monthly_rent == "2250.00"
+    assert report(
+        conn,
+        "SELECT property, standing, below_minimum FROM trust_report_renters_insurance(%s, %s)"
+        " WHERE required ORDER BY line",
+        pmc,
+        on,
+    ) == [("Aspen Row", "none on file", False), ("Cedar House", "current", False)]
+
+
+def test_the_books_alone_leave_every_other_page_for_the_feature_tests(conn, app_conn):
+    # Each browser test of a feature starts from the books (frontend/e2e/seed.py): no broker
+    # named, no policy, inspection, budget, rent change, insurance terms, role or entry yet.
+    books = demo.books(app_conn)
+
+    for table in (
+        "trust_account_signers",
+        "trust_custom_roles",
+        "trust_vendor_insurance",
+        "trust_inspections",
+        "trust_budgets",
+        "trust_rent_changes",
+        "trust_renters_insurance_terms",
+        "trust_journal_entries",
+    ):
+        assert conn.execute(
+            f"SELECT count(*) FROM {table} WHERE pmc_id = %s", (books.pmc_id,)
+        ).fetchone() == (0,), table
+    # The company's fees are taken out of trust on time in the books too.
+    assert conn.execute(
+        "SELECT count(*) FROM trust_pmc_fee_withdrawals WHERE pmc_id = %s", (books.pmc_id,)
+    ).fetchone() == (1,)
 
 
 def test_every_write_but_the_first_staff_member_and_their_role_names_a_staff_member(conn, built):
