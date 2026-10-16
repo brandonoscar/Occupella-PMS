@@ -462,7 +462,7 @@ def lease_page(session: Staff, conn: Conn, lease_id: UUID) -> Lease:
 
 
 class Found(BaseModel):
-    kind: Literal["property", "unit", "tenant"]
+    kind: Literal["property", "unit", "tenant", "owner"]
     id: UUID
     label: str
     detail: str
@@ -483,23 +483,29 @@ UNION ALL
  ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", u.id LIMIT 10)
 UNION ALL
 (SELECT 'tenant', t.id, t.display_name,
-        coalesce(u.display_name || ', ' || p.display_name, p.display_name),
-        coalesce('/leases/' || l.id, '/properties/' || p.id)
+        coalesce(u.display_name || ', ' || p.display_name, p.display_name), '/tenants/' || t.id
  FROM trust_tenants AS t JOIN trust_properties AS p ON p.id = t.property_id
  LEFT JOIN LATERAL (
-     SELECT x.id, x.unit_id FROM trust_lease_tenants AS lt JOIN trust_leases AS x
+     SELECT x.unit_id FROM trust_lease_tenants AS lt JOIN trust_leases AS x
      ON x.id = lt.lease_id WHERE lt.tenant_id = t.id ORDER BY x.starts_on DESC, x.id LIMIT 1
  ) AS l ON true
  LEFT JOIN trust_units AS u ON u.id = l.unit_id
  WHERE t.pmc_id = %(pmc)s AND t.display_name ILIKE %(like)s
+   AND NOT trust_is_archived(NULL, NULL, t.id)
  ORDER BY t.display_name COLLATE "C", t.id LIMIT 10)
+UNION ALL
+(SELECT 'owner', o.id, o.display_name, '', '/owners/' || o.id
+ FROM trust_owners AS o
+ WHERE o.pmc_id = %(pmc)s AND o.display_name ILIKE %(like)s
+   AND NOT trust_is_archived(NULL, NULL, NULL, o.id)
+ ORDER BY o.display_name COLLATE "C", o.id LIMIT 10)
 """
 
 
 @router.get("/search")
 def search(session: Staff, conn: Conn, q: Annotated[SearchWords, Query()]) -> list[Found]:
-    """Properties, units and tenants whose names hold the words, up to 10 of each, each with
-    the page it opens: a tenant opens their latest lease."""
+    """Properties, units, tenants and owners not archived whose names hold the words, up to 10
+    of each, each with the page it opens (a tenant's says their latest unit)."""
     return [
         Found(kind=k, id=i, label=label, detail=detail, href=href)
         for k, i, label, detail, href in conn.execute(

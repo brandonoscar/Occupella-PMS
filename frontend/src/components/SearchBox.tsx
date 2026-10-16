@@ -4,10 +4,15 @@ import { api } from "../api";
 import type { Found } from "../rentals";
 import { navigate } from "../router";
 
-const KIND: Record<Found["kind"], string> = { property: "Property", unit: "Unit", tenant: "Tenant" };
+const KIND: Record<Found["kind"], string> = {
+  property: "Property",
+  unit: "Unit",
+  tenant: "Tenant",
+  owner: "Owner",
+};
 
-// Staff's search at the top of every page: a property, unit or tenant by name, from two letters;
-// choosing one opens its page (a tenant, their latest lease).
+// Staff's search at the top of every page: a property, unit, tenant or owner by name, from two
+// letters; choosing one opens its page.
 export function SearchBox() {
   const [q, setQ] = useState("");
   const [found, setFound] = useState<Found[]>([]);
@@ -43,8 +48,8 @@ export function SearchBox() {
         className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-ink-subtle" />
       <input
         type="search"
-        aria-label="Search properties, units and tenants"
-        placeholder="Search properties, units and tenants"
+        aria-label="Search properties, units, tenants and owners"
+        placeholder="Search properties, units, tenants and owners"
         className="h-7 w-full rounded-sm border border-line-strong bg-sunken pr-2 pl-8 text-sm text-ink placeholder:text-ink-faint"
         value={q}
         onChange={(event) => setQ(event.target.value)}

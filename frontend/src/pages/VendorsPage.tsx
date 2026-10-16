@@ -4,6 +4,7 @@ import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
 import { Button, LinkButton } from "../components/Button";
+import { ContactDetails } from "../components/ContactCard";
 import { EmptyState } from "../components/EmptyState";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
@@ -49,6 +50,13 @@ export function VendorsPage({ me }: { me: Me }) {
                     {vendor.w9_on_file ? "W-9 on file" : "no W-9"}
                   </Badge>
                 </p>
+                <details>
+                  <summary className="text-sm">Contact details for {vendor.name}</summary>
+                  <div className="mt-3">
+                    <ContactDetails path={`/api/vendors/${vendor.id}`} contact={vendor.contact}
+                      refresh={refresh} name={vendor.name} />
+                  </div>
+                </details>
                 {vendor.insurance.length === 0 ? (
                   <p className="text-sm text-ink-subtle">No insurance on file.</p>
                 ) : (

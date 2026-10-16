@@ -118,10 +118,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `/properties/<id>` (its owners' money, its units and their leases), a unit at `/units/<id>`
   (every lease it had), the rent roll at `/rent-roll` (the rent run, then the leases a page at a
   time) and a lease at `/leases/<id>` with its rent work (`src/pms/api/rent.py`); staff rename a
-  property or unit there and archive it. A search in the bar finds a property, unit or tenant
-  (`/api/search`). Lists come a page at a time (`Paged`: 50 by default, at most 200),
-  owners' money at `/owners`
-  (`src/pms/api/payables.py`), move-outs at `/move-out` (`src/pms/api/moveout.py`). Leasing:
+  property or unit there and archive it. Tenants at `/tenants` and owners at `/owners`
+  (`src/pms/api/directory.py`), each on a page of their own: a tenant's leases and the money
+  held for them, an owner's property accounts with their draws and contributions
+  (`src/pms/api/payables.py`); the Owners list also takes the management, leasing and company
+  fees. Staff keep a tenant's, owner's or vendor's contact details there, rename a tenant or owner
+  and archive one. A search in the bar finds a property, unit, tenant or owner (`/api/search`).
+  Lists come a page at a time (`Paged`: 50 by default, at most 200); move-outs at `/move-out` (`src/pms/api/moveout.py`). Leasing:
   applications and links at `/applicants`, lease offers at `/draft-leases`. Accounting:
   reconciling at `/banking` (`src/pms/api/reconcile.py`), bills at `/bills`, journal entries at
   `/journal` (`src/pms/api/journal.py`), budgets at `/budgets` (`src/pms/api/budgets.py`).
@@ -191,7 +194,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the reports. It holds no other grant: no write on any table, no function that writes. Grant
   it a new table's SELECT only if `trust_app` has it, and never a write path. It never reads
   logins, invites, sessions or credentials, nor rental applications, applicants and their
-  screenings, nor lease offers and signatures, nor documents' files (`AI_NEVER_READS` in
+  screenings, nor lease offers and signatures, nor documents' files, nor contact details (`AI_NEVER_READS` in
   `tests/test_privileges.py`), nor their rows in the audit log: row-level security shows it only
   the audit rows of tables it may read (migration 0043).
 - A new table starts with `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it
@@ -403,13 +406,21 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   back to each tenant from the security-deposit account. A tenant still on another lease keeps
   their deposit with it. It takes the disburse role. `trust_report_deposit_return` is the
   itemized statement for the tenants. READ COMMITTED; append-only.
-- Archiving (migration 0063, ADR 0005): nothing in a PMC is deleted; a property or unit is
-  archived instead, a row in `trust_archivals` (append-only, the latest for a record holding,
-  `trust_is_archived` reading it), naming who did it. It is refused while anything is open on
-  it: a lease in effect or to come, and for a property its owners' money or a bill neither paid
-  nor declined. Bringing one back is always allowed. An archived property leaves the properties
-  list unless staff ask for archived ones, an archived unit is marked on its property's page,
-  and both keep their history; it moves no money.
+- Archiving (migrations 0063 and 0064, ADR 0005): nothing in a PMC is deleted; a property, unit,
+  tenant or owner is archived instead, a row in `trust_archivals` (append-only, the latest for a
+  record holding, `trust_is_archived` reading it), naming who did it. It is refused while
+  anything is open on it: a lease in effect or to come (of a unit, of a property's units, or with
+  the tenant on it), money held (a property's owners', an owner's, a tenant's prepaid rent or
+  deposit) or a bill neither paid nor declined (a property's or an owner's). Bringing one back is
+  always allowed. An archived one leaves its list (and search) unless staff ask for archived
+  ones, an archived unit is marked on its property's page, and each keeps its history; it moves
+  no money.
+- Contact details (migration 0064, ADR 0005): a tenant's, owner's or vendor's email, phone, other
+  phone and mailing address (whole or none), in `trust_contacts`: append-only, the latest row
+  for a person holding, naming who recorded it; saving the same details again writes nothing.
+  Staff see and change them on the person's page (`src/pms/api/directory.py`) and on Vendors.
+  The AI role never reads them (`AI_NEVER_READS`), so the audit log hides their rows from it, and
+  no report prints them.
 - Documents (migration 0036): a vendor's W-9, a bill's receipt, a lease's move-out photo or an
   owner's document (`trust_documents`, each kind about its one kind of record of the PMC), a
   PDF, JPEG or PNG of at most 5 MB. Its bytes sit apart (`trust_document_files`, checked at
@@ -462,7 +473,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   days, every move of it in or out once, by what it was), vacancy (units with no lease in
   effect, since when; never leased is unknown), work orders (status and vendor as of a day,
   days open, billed), and directories of tenants, owners and vendors (names and what they are
-  to the company on a day; the PMS keeps no other contact data).
+  to the company on a day; contact details stay out of reports).
 - Budgets (migration 0055): a month's budget of an owner's property account on one of the
   income statement's lines (each income class, the management and leasing fees, an expense
   account, bills in none; `trust_budgets`, append-only, a line's latest row counting). Staff

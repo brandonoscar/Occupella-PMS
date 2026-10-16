@@ -13,7 +13,8 @@ import { ListingsPage } from "./pages/ListingsPage";
 import { OwnerHome } from "./pages/OwnerHome";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { MoveOutPage } from "./pages/MoveOutPage";
-import { OwnersPage } from "./pages/OwnersPage";
+import { OwnerPage, OwnersPage } from "./pages/OwnersPage";
+import { TenantPage, TenantsPage } from "./pages/TenantsPages";
 import { JournalPage } from "./pages/JournalPage";
 import { ApplicantsPage, DraftLeasesPage, WorkOrdersPage } from "./pages/LeasingPages";
 import { LoginsPage } from "./pages/LoginsPage";
@@ -80,6 +81,7 @@ function Home({ path }: { path: string }) {
 const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/properties": (me) => <PropertiesPage me={me} />,
   "/rent-roll": (me) => <RentPage me={me} />,
+  "/tenants": (me) => <TenantsPage me={me} />,
   "/owners": (me) => <OwnersPage me={me} />,
   "/move-out": (me) => <MoveOutPage me={me} />,
   "/applicants": (me) => <ApplicantsPage me={me} />,
@@ -104,4 +106,6 @@ const RECORDS: [RegExp, (me: Me, id: string) => React.ReactNode][] = [
   [/^\/properties\/([0-9a-f-]{36})$/, (me, id) => <PropertyPage me={me} id={id} />],
   [/^\/units\/([0-9a-f-]{36})$/, (me, id) => <UnitPage me={me} id={id} />],
   [/^\/leases\/([0-9a-f-]{36})$/, (me, id) => <LeasePage me={me} id={id} />],
+  [/^\/tenants\/([0-9a-f-]{36})$/, (me, id) => <TenantPage me={me} id={id} />],
+  [/^\/owners\/([0-9a-f-]{36})$/, (me, id) => <OwnerPage me={me} id={id} />],
 ];

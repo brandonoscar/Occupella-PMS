@@ -1,4 +1,5 @@
-"""Staff's vendors (migration 0058): each vendor's W-9 and insurance, and recording a policy.
+"""Staff's vendors (migration 0058): each vendor's W-9, insurance and contact details (migration
+0064, recorded through `directory.py`), and recording a policy.
 How a vendor's coverage stands on a day is trust_report_vendor_insurance's answer (current,
 expiring within 30 days, expired, none on file), which this page reads, so the two agree.
 A policy moves no money; a renewal is a new policy.
@@ -17,6 +18,7 @@ from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from pms import exports
 from pms.api.deps import Conn, Staff
+from pms.api.directory import Contact, contacts_of
 from pms.api.rent import today
 
 router = APIRouter(prefix="/api/vendors")
@@ -53,6 +55,7 @@ class VendorOut(BaseModel):
     name: str
     w9_on_file: bool
     insurance: list[Policy]  # each coverage on file, as of the day
+    contact: Contact = Contact()
 
 
 def coverage(conn: psycopg.Connection[Any], pmc_id: UUID, on: date) -> list[VendorOut]:
@@ -87,6 +90,8 @@ def coverage(conn: psycopg.Connection[Any], pmc_id: UUID, on: date) -> list[Vend
     ).fetchall():
         if vendor in vendors:
             vendors[vendor].w9_on_file = True
+    for vendor, details in contacts_of(conn, pmc_id, "vendor_id").items():
+        vendors[vendor].contact = details
     return list(vendors.values())
 
 

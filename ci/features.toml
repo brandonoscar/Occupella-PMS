@@ -95,6 +95,25 @@ browser = [
 ]
 
 [[feature]]
+id = "people"
+statement = "Staff find a tenant or an owner a page at a time and open their page (a tenant's leases and the money held for them; an owner's property accounts); keep a tenant's, owner's or vendor's email, phones and mailing address, which the AI never reads; rename a tenant or owner, and archive one only while nothing is open on them, or bring them back; and find an owner by search."
+operations = [
+  "GET /api/tenants",
+  "GET /api/tenants/{tenant_id}",
+  "POST /api/tenants/{tenant_id}/name",
+  "POST /api/tenants/{tenant_id}/archive",
+  "POST /api/tenants/{tenant_id}/contact",
+  "GET /api/owners",
+  "POST /api/owners/{owner_id}/name",
+  "POST /api/owners/{owner_id}/archive",
+  "POST /api/owners/{owner_id}/contact",
+  "POST /api/vendors/{vendor_id}/contact",
+]
+browser = [
+  "features.spec.ts › staff find a tenant and an owner, keep their contact details and a vendor's, rename them, and archive only what has nothing open",
+]
+
+[[feature]]
 id = "rent-run"
 statement = "Staff charge every lease its rent and recurring charges for a due date, once, and the late fees of rent still open after its grace days, once, and see on the rent roll what each lease owes, a page at a time."
 operations = ["GET /api/leases", "POST /api/rent/charge-rent", "POST /api/rent/late-fees"]
@@ -177,9 +196,9 @@ browser = [
 
 [[feature]]
 id = "owners-money"
-statement = "Staff take each period's management fees once and a lease's leasing fee once, record owner contributions, and pay owners only what is available: the balance less the reserve and unpaid bills."
+statement = "Staff take each period's management fees once and a lease's leasing fee once, and on an owner's page record their contributions and pay them only what is available: the balance less the reserve and unpaid bills."
 operations = [
-  "GET /api/payables/owners",
+  "GET /api/owners/{owner_id}",
   "POST /api/payables/management-fees",
   "POST /api/payables/leasing-fees",
   "POST /api/payables/contributions",
@@ -423,6 +442,7 @@ statement = "Staff budget each owner's property for a year on the income stateme
 operations = [
   "GET /api/budgets",
   "POST /api/budgets",
+  "GET /api/payables/owners",
 ]
 browser = [
   "features.spec.ts › staff budget an owner's property for the year, line by line, and download it against what happened",

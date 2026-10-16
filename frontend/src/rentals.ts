@@ -53,7 +53,7 @@ export type RentRollRow = {
 };
 
 export type Found = {
-  kind: "property" | "unit" | "tenant";
+  kind: "property" | "unit" | "tenant" | "owner";
   id: string;
   label: string;
   detail: string;

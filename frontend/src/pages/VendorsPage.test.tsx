@@ -14,9 +14,15 @@ const ME: Me = {
   pmc_name: "Synthetic PMC",
 };
 
+const NO_CONTACT = {
+  email: null, phone: null, alternate_phone: null, address_line_1: null, address_line_2: null,
+  city: null, state: null, postal_code: null,
+};
+
 const VENDORS: Vendor[] = [
   {
     id: "v1", name: "Vendor 1", w9_on_file: true,
+    contact: { ...NO_CONTACT, phone: "555-555-0100", email: "vendor1@example.com" },
     insurance: [
       { coverage: "general liability", carrier: "Carrier A", policy_number: "GL-1", starts_on: "2025-07-01",
         expires_on: "2026-07-15", limit_amount: "1000000.00", standing: "expires in 15 days" },
@@ -24,7 +30,7 @@ const VENDORS: Vendor[] = [
         expires_on: "2026-05-31", limit_amount: null, standing: "expired" },
     ],
   },
-  { id: "v2", name: "Vendor 2", w9_on_file: false, insurance: [] },
+  { id: "v2", name: "Vendor 2", w9_on_file: false, insurance: [], contact: NO_CONTACT },
 ];
 
 function server(vendors: Vendor[] = VENDORS, refuse = "") {
@@ -77,6 +83,25 @@ describe("VendorsPage", () => {
       starts_on: "2026-01-01", expires_on: "2026-12-31",
     });
     expect((screen.getByLabelText("Policy number") as HTMLInputElement).value).toBe("");
+  });
+
+  it("shows each vendor's contact details and saves them whole", async () => {
+    const fetch = server();
+    render(<VendorsPage me={ME} />);
+    const first = await screen.findByRole("listitem", { name: "Vendor 1" });
+    expect(within(first).getByRole("group", { name: "Contact details, Vendor 1" }).textContent).toContain(
+      "vendor1@example.com",
+    );
+    const second = screen.getByRole("listitem", { name: "Vendor 2" });
+
+    fireEvent.click(within(second).getByRole("button", { name: "Edit contact details" }));
+    fireEvent.change(within(second).getByLabelText("Phone"), { target: { value: " 555-555-0101 " } });
+    fireEvent.click(within(second).getByRole("button", { name: "Save contact details" }));
+
+    expect(await within(second).findByText("Contact details saved.")).toBeTruthy();
+    const [path, init] = fetch.mock.calls.find(([, i]) => i?.method === "POST") ?? [];
+    expect(path).toBe("/api/vendors/v2/contact");
+    expect(JSON.parse(String(init?.body))).toEqual({ ...NO_CONTACT, phone: "555-555-0101" });
   });
 
   it("shows a refusal, and says when there are no vendors", async () => {

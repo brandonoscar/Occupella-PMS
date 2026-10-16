@@ -87,6 +87,13 @@ async function openLease(page: Page, name: string) {
   return lease;
 }
 
+// An owner's own page, from Owners: their name's link on their row.
+async function openOwner(page: Page, name: string): Promise<void> {
+  await section(page, "Owners");
+  await page.getByRole("row", { name, exact: true }).getByRole("link", { name }).click();
+  await expect(page.getByRole("heading", { level: 1, name, exact: true })).toBeVisible();
+}
+
 // One of Settings' pages: Settings in the menu, then the page.
 async function settings(page: Page, name: string): Promise<void> {
   await section(page, "Settings");
@@ -204,16 +211,106 @@ test("staff find a property, rename it and a unit, archive a vacant unit but not
   await page.getByRole("button", { name: "Bring back Unit 2B" }).click();
   await expect(page.getByText("Unit 2B is back.")).toBeVisible();
 
-  // Search, from any page: a tenant opens their lease, a property its page.
-  const search = page.getByLabel("Search properties, units and tenants");
+  // Search, from any page: a tenant opens their page and their lease from it, a property its page.
+  const search = page.getByLabel("Search properties, units, tenants and owners");
   await search.fill("drew");
   await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Drew Sample/ }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Drew Sample" })).toBeVisible();
+  await page.getByRole("row", { name: "Aspen Row East, Unit 1" }).getByRole("link").click();
   await expect(page.getByRole("heading", { level: 1, name: "Unit 1, Aspen Row East" })).toBeVisible();
   await expect(page.getByRole("listitem", { name: "Aspen Row East, Unit 1" })).toContainText("Drew Sample");
   await search.fill("cedar");
   await expect(page.getByRole("list", { name: "Search results" })).toContainText("Cedar House");
   await search.press("Enter");
   await expect(page.getByRole("heading", { level: 1, name: "Cedar House" })).toBeVisible();
+});
+
+test("staff find a tenant and an owner, keep their contact details and a vendor's, rename them, and archive only what has nothing open", async ({
+  page,
+}) => {
+  const people = seed.features.people!;
+  await joinAsStaff(page, people.manager);
+
+  // Tenants, a page at a time, each with their unit and lease.
+  await section(page, "Tenants");
+  const drew = page.getByRole("row", { name: "Drew Sample", exact: true });
+  await expect(drew).toContainText("Aspen Row");
+  await expect(drew).toContainText("Unit 1");
+  await expect(drew).toContainText("Current");
+  await page.getByLabel("Find a tenant, property or unit").fill("cedar");
+  await expect(page.getByRole("row", { name: "Taylor Demo", exact: true })).toBeVisible();
+  await expect(drew).toHaveCount(0);
+  await page.getByLabel("Find a tenant, property or unit").fill("");
+
+  // A tenant's page: their contact details, saved whole, and their name.
+  await drew.getByRole("link", { name: "Drew Sample" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Drew Sample" })).toBeVisible();
+  const contact = page.getByRole("group", { name: "Contact details, Drew Sample" });
+  await expect(contact).toContainText("No contact details yet.");
+  await contact.getByRole("button", { name: "Edit contact details" }).click();
+  await contact.getByLabel("Email").fill("drew.sample@example.com");
+  await contact.getByLabel("Phone", { exact: true }).fill("(555) 555-0142");
+  await contact.getByLabel("Street address").fill("1 Example Road");
+  await contact.getByLabel("City").fill("Sampletown");
+  await contact.getByLabel("State").fill("ZZ");
+  await contact.getByLabel("ZIP code").fill("00000");
+  await contact.getByRole("button", { name: "Save contact details" }).click();
+  await expect(contact).toContainText("Contact details saved.");
+  await expect(contact).toContainText("Sampletown, ZZ 00000");
+  await page.getByRole("button", { name: "Rename" }).click();
+  await page.getByLabel("New name").fill("Drew Q. Sample");
+  await page.getByRole("button", { name: "Save name" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Drew Q. Sample" })).toBeVisible();
+  // On a lease in effect, they stay; the refusal says why, in words.
+  await page.getByRole("button", { name: "Archive", exact: true }).click();
+  await page.getByRole("button", { name: "Archive Drew Q. Sample" }).click();
+  await expect(page.getByRole("alert")).toHaveText(
+    "Drew Q. Sample is on a lease in effect or to come; end it before archiving",
+  );
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await section(page, "Tenants");
+  await expect(page.getByRole("row", { name: "Drew Q. Sample", exact: true })).toContainText(
+    "drew.sample@example.com",
+  );
+
+  // Owners, one row each with all their properties; an owner's page, renamed, with their details.
+  await section(page, "Owners");
+  const ownerA = page.getByRole("row", { name: "Demo Owner A", exact: true });
+  await expect(ownerA).toContainText("Birch Flats, Cedar House, Elm Court");
+  await ownerA.getByRole("link", { name: "Demo Owner A" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Demo Owner A" })).toBeVisible();
+  await expect(page.getByRole("listitem", { name: "Demo Owner A, Cedar House" })).toBeVisible();
+  await page.getByRole("button", { name: "Rename" }).click();
+  await page.getByLabel("New name").fill("Demo Owner A Trust");
+  await page.getByRole("button", { name: "Save name" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Demo Owner A Trust" })).toBeVisible();
+  const details = page.getByRole("group", { name: "Contact details, Demo Owner A Trust" });
+  await details.getByRole("button", { name: "Edit contact details" }).click();
+  await details.getByLabel("Email").fill("owner.a@example.com");
+  await details.getByRole("button", { name: "Save contact details" }).click();
+  await expect(details).toContainText("owner.a@example.com");
+  // Their accounts hold money: they stay.
+  await page.getByRole("button", { name: "Archive", exact: true }).click();
+  await page.getByRole("button", { name: "Archive Demo Owner A Trust" }).click();
+  await expect(page.getByRole("alert")).toHaveText(
+    "Demo Owner A Trust holds their money; draw it before archiving",
+  );
+
+  // A vendor's contact details, on Vendors.
+  await section(page, "Vendors");
+  const plumbing = page.getByRole("listitem", { name: "Demo Plumbing Co" });
+  await plumbing.getByText("Contact details for Demo Plumbing Co").click();
+  await plumbing.getByRole("button", { name: "Edit contact details" }).click();
+  await plumbing.getByLabel("Phone", { exact: true }).fill("555-555-0177");
+  await plumbing.getByRole("button", { name: "Save contact details" }).click();
+  await expect(plumbing).toContainText("Contact details saved.");
+  await expect(plumbing).toContainText("555-555-0177");
+
+  // Search finds an owner too.
+  const search = page.getByLabel("Search properties, units, tenants and owners");
+  await search.fill("owner b");
+  await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Demo Owner B/ }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Demo Owner B" })).toBeVisible();
 });
 
 test("staff add a fee, a credit and a monthly charge to a lease, take a deposit and prepaid rent, and a bounce undoes a payment and charges the NSF fee", async ({
@@ -384,7 +481,7 @@ test("a bill over the owner's limit emails them; they decline one and approve an
     "not enough money: the owner's account would be $400.00 short",
   );
   // The owner sends the money; then it is set aside and paid.
-  await section(page, "Owners");
+  await openOwner(page, "Demo Owner A");
   const birch = page.getByRole("listitem", { name: "Demo Owner A, Birch Flats" });
   await birch.getByText("Record for Demo Owner A, Birch Flats").click();
   await birch.getByLabel("Contribution received", { exact: true }).fill("650.00");
@@ -478,9 +575,10 @@ test("staff take the month's management fees once, find no leasing fee due, and 
 }) => {
   const people = seed.features.owners!;
   await joinAsStaff(page, people.manager);
-  await section(page, "Owners");
+  await openOwner(page, "Demo Owner A");
   const owner = (name: string) => page.getByRole("listitem", { name });
   await expect(owner("Demo Owner A, Birch Flats")).toContainText("$250.00 held, less a $250.00 reserve");
+  await section(page, "Owners");
 
   // Nothing was collected yet this month: Demo Owner A's agreements take their $50.00 minimum.
   const fees = part(page, "Management fees");
@@ -493,11 +591,12 @@ test("staff take the month's management fees once, find no leasing fee due, and 
   await fees.getByRole("button", { name: "Take fees" }).click();
   const taken = page.getByRole("list", { name: "Fees taken" });
   await expect(taken).toContainText("Demo Owner A, Birch Flats: $50.00 taken");
-  await expect(owner("Demo Owner A, Birch Flats")).toContainText("$200.00 held");
   // Once per period: the same run again takes nothing more.
   await fees.getByRole("button", { name: "Take fees" }).click();
   await expect(taken).toContainText("Demo Owner A, Birch Flats: $50.00 taken");
+  await openOwner(page, "Demo Owner A");
   await expect(owner("Demo Owner A, Birch Flats")).toContainText("$200.00 held");
+  await section(page, "Owners");
 
   // The demo's agreements take no leasing fee, and the page says so.
   const leasing = part(page, "Leasing fee");
@@ -509,6 +608,7 @@ test("staff take the month's management fees once, find no leasing fee due, and 
   await expect(page.getByText("No leasing fee: the owner's agreement in force takes none, so none is due for this lease.")).toBeVisible();
 
   // Aspen Row holds only its reserve: a draw is refused, in words.
+  await openOwner(page, "Demo Owner B");
   const aspen = owner("Demo Owner B, Aspen Row");
   await aspen.getByText("Record for Demo Owner B, Aspen Row").click();
   await aspen.getByRole("button", { name: "Record draw" }).click();
@@ -836,16 +936,18 @@ test("staff set management terms with a leasing fee, late fees, a bank account a
   await expect(aspen).toContainText(`Unit 2: Avery Sample: from ${today()}, month to month, $1,240.00 a month`);
 
   // Its leasing fee is half a month's rent, once the owner has the money for it.
-  await section(page, "Owners");
+  await openOwner(page, "Demo Owner B");
   const owner = page.getByRole("listitem", { name: "Demo Owner B, Aspen Row" });
   await owner.getByText("Record for Demo Owner B, Aspen Row").click();
   await owner.getByLabel("Contribution received", { exact: true }).fill("620.00");
   await owner.getByRole("button", { name: "Record contribution" }).click();
   await expect(owner).toContainText("$620.00 from Demo Owner B recorded.");
+  await section(page, "Owners");
   const leasing = part(page, "Leasing fee");
   await leasing.getByRole("combobox", { name: "Lease" }).selectOption({ label: `Aspen Row, Unit 2 from ${today()}` });
   await leasing.getByRole("button", { name: "Take leasing fee" }).click();
   await expect(page.getByText("A leasing fee of $620.00 is taken.")).toBeVisible();
+  await openOwner(page, "Demo Owner B");
   await expect(owner).toContainText("$200.00 held");
 
   // A second owner of Aspen Row, held in the new operating account.
@@ -1044,8 +1146,8 @@ test("staff put bills in expense accounts on Schedule E lines, and the owner rea
   await lawn.getByRole("button", { name: "Move" }).click();
   await expect(page.getByText("LAWN is entered in Repairs from now on.")).toBeVisible();
 
-  // Staff can download any owner's income statement from the Owners page.
-  await section(page, "Owners");
+  // Staff can download any owner's income statement from the owner's page.
+  await openOwner(page, "Demo Owner B");
   const statement = page
     .getByRole("listitem", { name: "Demo Owner B, Aspen Row" })
     .getByRole("link", { name: "Demo Owner B's income statement this year (PDF)" });
@@ -1352,7 +1454,7 @@ test("staff carry over the old system's unpaid bills, once, and draws hold them 
   await expect(roster).toContainText("0 added; 2 already here.");
 
   // Aspen Row already held only its reserve; the bills are held back on top of it.
-  await section(page, "Owners");
+  await openOwner(page, "Demo Owner B");
   const aspen = page.getByRole("listitem", { name: "Demo Owner B, Aspen Row" });
   await expect(aspen).toContainText("$200.00 held, less a $200.00 reserve and $520.00 of unpaid bills");
   await expect(aspen.getByTestId("available")).toHaveText("$0.00 available");
@@ -1388,7 +1490,7 @@ test("an admin names the broker of a trust account, who authorizes a signer; the
   await expect(page.getByText("Demo Bookkeeper may now: Pay out.")).toBeVisible();
   const bookkeeper = await browser.newPage();
   await joinAsStaff(bookkeeper, people.bookkeeper);
-  await section(bookkeeper, "Owners");
+  await openOwner(bookkeeper, "Demo Owner B");
   const aspen = bookkeeper.getByRole("listitem", { name: "Demo Owner B, Aspen Row" });
   await aspen.getByText("Record for Demo Owner B, Aspen Row").click();
   await aspen.getByLabel("Contribution received", { exact: true }).fill("50.00");

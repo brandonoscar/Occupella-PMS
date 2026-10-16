@@ -20,6 +20,7 @@ export const STAFF_NAV: NavEntry[] = [
     items: [
       { href: "/properties", label: "Properties" },
       { href: "/rent-roll", label: "Rent roll" },
+      { href: "/tenants", label: "Tenants" },
       { href: "/owners", label: "Owners" },
       { href: "/move-out", label: "Move-outs" },
     ],

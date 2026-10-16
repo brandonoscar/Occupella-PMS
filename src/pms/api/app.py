@@ -43,6 +43,7 @@ from pms.api import (
     budgets,
     custom_roles,
     dashboard,
+    directory,
     documents,
     fake_esign,
     inspections,
@@ -365,6 +366,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(setup.router)
     app.include_router(rent.router)
     app.include_router(rentals.router)
+    app.include_router(directory.router)
     app.include_router(payables.router)
     app.include_router(reconcile.router)
     app.include_router(journal.router)

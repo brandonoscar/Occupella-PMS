@@ -54,7 +54,7 @@ describe("payables", () => {
 
   it("says what an owner's account keeps back from a draw", () => {
     const owner: OwnerMoney = {
-      account: "a1", owner_id: "o1", owner: "Owner 1", property: "Property 1", bank_account: "Operating",
+      account: "a1", owner_id: "o1", owner: "Owner 1", property_id: "pr1", property: "Property 1", bank_account: "Operating",
       balance: "1200.00", reserve: "100.00", unpaid_bills: "300.00", available: "800.00",
       has_agreement: true,
     };

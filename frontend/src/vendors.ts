@@ -1,6 +1,7 @@
 // The company's vendors as the API sends them (src/pms/api/vendors.py): W-9 on file and each
 // coverage as trust_report_vendor_insurance has it on the day.
 import type { BadgeTone } from "./components/Badge";
+import type { Contact } from "./directory";
 
 export type Policy = {
   coverage: string;
@@ -11,7 +12,13 @@ export type Policy = {
   limit_amount: string | null;
   standing: string; // current, expires today, expires in N days, expired
 };
-export type Vendor = { id: string; name: string; w9_on_file: boolean; insurance: Policy[] };
+export type Vendor = {
+  id: string;
+  name: string;
+  w9_on_file: boolean;
+  insurance: Policy[];
+  contact: Contact;
+};
 
 export const COVERAGES = [
   "general liability",

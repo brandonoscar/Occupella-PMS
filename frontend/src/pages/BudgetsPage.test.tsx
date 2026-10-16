@@ -17,7 +17,7 @@ const ME: Me = {
 };
 
 const owner = (n: number): OwnerMoney => ({
-  account: `a${n}`, owner_id: `o${n}`, owner: `Owner ${n}`, property: `Property ${n}`,
+  account: `a${n}`, owner_id: `o${n}`, owner: `Owner ${n}`, property_id: `pr${n}`, property: `Property ${n}`,
   bank_account: "Operating", balance: "0.00", reserve: "0.00", unpaid_bills: "0.00",
   available: "0.00", has_agreement: true,
 });

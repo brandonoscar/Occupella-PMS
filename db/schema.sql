@@ -1345,11 +1345,28 @@ DECLARE
     v_today date := (now() AT TIME ZONE 'UTC')::date;
     v_name text;
 BEGIN
-    IF trust_is_archived(NEW.property_id, NEW.unit_id) = NEW.archived THEN
+    IF trust_is_archived(NEW.property_id, NEW.unit_id, NEW.tenant_id, NEW.owner_id) = NEW.archived THEN
         RAISE EXCEPTION 'trust: it is % already', CASE WHEN NEW.archived THEN 'archived' ELSE 'not archived' END
             USING ERRCODE = 'check_violation';
     END IF;
     IF NOT NEW.archived THEN
+        RETURN NEW;
+    END IF;
+    IF NEW.tenant_id IS NOT NULL THEN
+        SELECT t.display_name INTO v_name FROM trust_tenants AS t WHERE t.id = NEW.tenant_id;
+        IF EXISTS (SELECT 1 FROM trust_lease_tenants AS lt JOIN trust_leases AS l ON l.id = lt.lease_id
+                   WHERE lt.tenant_id = NEW.tenant_id AND (l.ends_on IS NULL OR l.ends_on >= v_today))
+        THEN
+            RAISE EXCEPTION 'trust: % is on a lease in effect or to come; end it before archiving',
+                v_name USING ERRCODE = 'check_violation';
+        END IF;
+        IF EXISTS (SELECT 1 FROM trust_ledger_accounts AS a
+                   JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
+                   WHERE a.tenant_id = NEW.tenant_id AND b.balance <> 0)
+        THEN
+            RAISE EXCEPTION 'trust: % has prepaid rent or a deposit held; return it before archiving',
+                v_name USING ERRCODE = 'check_violation';
+        END IF;
         RETURN NEW;
     END IF;
     IF NEW.unit_id IS NOT NULL THEN
@@ -1362,25 +1379,31 @@ BEGIN
         END IF;
         RETURN NEW;
     END IF;
-    SELECT p.display_name INTO v_name FROM trust_properties AS p WHERE p.id = NEW.property_id;
-    IF EXISTS (SELECT 1 FROM trust_leases AS l JOIN trust_units AS u ON u.id = l.unit_id
-               WHERE u.property_id = NEW.property_id
-                 AND (l.ends_on IS NULL OR l.ends_on >= v_today))
-    THEN
-        RAISE EXCEPTION 'trust: % has a lease in effect or to come; end it before archiving',
-            v_name USING ERRCODE = 'check_violation';
+    IF NEW.property_id IS NOT NULL THEN
+        SELECT p.display_name INTO v_name FROM trust_properties AS p WHERE p.id = NEW.property_id;
+        IF EXISTS (SELECT 1 FROM trust_leases AS l JOIN trust_units AS u ON u.id = l.unit_id
+                   WHERE u.property_id = NEW.property_id
+                     AND (l.ends_on IS NULL OR l.ends_on >= v_today))
+        THEN
+            RAISE EXCEPTION 'trust: % has a lease in effect or to come; end it before archiving',
+                v_name USING ERRCODE = 'check_violation';
+        END IF;
+    ELSE
+        SELECT o.display_name INTO v_name FROM trust_owners AS o WHERE o.id = NEW.owner_id;
     END IF;
+    -- A property's owners' accounts, or an owner's accounts: no money held, no bill left open.
     IF EXISTS (SELECT 1 FROM trust_ledger_accounts AS a
                JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
-               WHERE a.property_id = NEW.property_id AND a.kind = 'owner_property'
-                 AND b.balance <> 0)
+               WHERE a.kind = 'owner_property' AND b.balance <> 0
+                 AND (a.property_id = NEW.property_id OR a.owner_id = NEW.owner_id))
     THEN
-        RAISE EXCEPTION 'trust: % holds its owners'' money; draw it before archiving', v_name
+        RAISE EXCEPTION 'trust: % holds % money; draw it before archiving', v_name,
+            CASE WHEN NEW.owner_id IS NULL THEN 'its owners''' ELSE 'their' END
             USING ERRCODE = 'check_violation';
     END IF;
     IF EXISTS (SELECT 1 FROM trust_bills AS bill
                JOIN trust_ledger_accounts AS a ON a.ledger_account_id = bill.ledger_account_id
-               WHERE a.property_id = NEW.property_id
+               WHERE (a.property_id = NEW.property_id OR a.owner_id = NEW.owner_id)
                  AND NOT EXISTS (SELECT 1 FROM trust_bill_payments AS p
                                  WHERE p.bill_id = bill.id AND p.step = 'paid')
                  AND NOT EXISTS (SELECT 1 FROM trust_bill_declines AS d
@@ -2676,10 +2699,10 @@ $$;
 
 
 --
--- Name: trust_is_archived(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+-- Name: trust_is_archived(uuid, uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.trust_is_archived(p_property_id uuid, p_unit_id uuid) RETURNS boolean
+CREATE FUNCTION public.trust_is_archived(p_property_id uuid, p_unit_id uuid, p_tenant_id uuid DEFAULT NULL::uuid, p_owner_id uuid DEFAULT NULL::uuid) RETURNS boolean
     LANGUAGE sql STABLE
     SET search_path TO 'public', 'pg_temp'
     AS $$
@@ -2687,6 +2710,8 @@ CREATE FUNCTION public.trust_is_archived(p_property_id uuid, p_unit_id uuid) RET
         SELECT a.archived FROM trust_archivals AS a
         WHERE (p_property_id IS NOT NULL AND a.property_id = p_property_id)
            OR (p_unit_id IS NOT NULL AND a.unit_id = p_unit_id)
+           OR (p_tenant_id IS NOT NULL AND a.tenant_id = p_tenant_id)
+           OR (p_owner_id IS NOT NULL AND a.owner_id = p_owner_id)
         ORDER BY a.created_at DESC, a.id DESC
         LIMIT 1
     ), false)
@@ -8340,7 +8365,9 @@ CREATE TABLE public.trust_archivals (
     archived boolean NOT NULL,
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
-    CONSTRAINT trust_archivals_check CHECK ((num_nonnulls(property_id, unit_id) = 1))
+    tenant_id uuid,
+    owner_id uuid,
+    CONSTRAINT trust_archivals_one_record CHECK ((num_nonnulls(property_id, unit_id, tenant_id, owner_id) = 1))
 );
 
 
@@ -8620,6 +8647,39 @@ CREATE TABLE public.trust_charges (
     recurring_charge_id uuid,
     CONSTRAINT trust_charges_amount_check CHECK ((amount > (0)::numeric)),
     CONSTRAINT trust_charges_kind_check CHECK ((kind = ANY (ARRAY['rent'::text, 'fee'::text, 'credit'::text])))
+);
+
+
+--
+-- Name: trust_contacts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_contacts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    tenant_id uuid,
+    owner_id uuid,
+    vendor_id uuid,
+    email text,
+    phone text,
+    alternate_phone text,
+    address_line_1 text,
+    address_line_2 text,
+    city text,
+    state text,
+    postal_code text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_contacts_address_line_1_check CHECK (((char_length(address_line_1) >= 1) AND (char_length(address_line_1) <= 200))),
+    CONSTRAINT trust_contacts_address_line_2_check CHECK (((char_length(address_line_2) >= 1) AND (char_length(address_line_2) <= 200))),
+    CONSTRAINT trust_contacts_alternate_phone_check CHECK ((alternate_phone ~ '^[+]?[0-9 ().-]{7,30}$'::text)),
+    CONSTRAINT trust_contacts_check CHECK ((num_nonnulls(tenant_id, owner_id, vendor_id) = 1)),
+    CONSTRAINT trust_contacts_check1 CHECK (((num_nonnulls(address_line_1, city, state, postal_code) = ANY (ARRAY[0, 4])) AND ((address_line_2 IS NULL) OR (address_line_1 IS NOT NULL)))),
+    CONSTRAINT trust_contacts_city_check CHECK (((char_length(city) >= 1) AND (char_length(city) <= 100))),
+    CONSTRAINT trust_contacts_email_check CHECK (((email ~ '^[^@[:space:]]+@[^@[:space:]]+[.][^@[:space:]]+$'::text) AND (char_length(email) <= 254))),
+    CONSTRAINT trust_contacts_phone_check CHECK ((phone ~ '^[+]?[0-9 ().-]{7,30}$'::text)),
+    CONSTRAINT trust_contacts_postal_code_check CHECK (((char_length(postal_code) >= 1) AND (char_length(postal_code) <= 20))),
+    CONSTRAINT trust_contacts_state_check CHECK (((char_length(state) >= 1) AND (char_length(state) <= 50)))
 );
 
 
@@ -10214,6 +10274,14 @@ ALTER TABLE ONLY public.trust_charges
 
 
 --
+-- Name: trust_contacts trust_contacts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_contacts
+    ADD CONSTRAINT trust_contacts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_custom_role_areas trust_custom_role_areas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11252,6 +11320,13 @@ CREATE INDEX trust_applications_link_id ON public.trust_applications USING btree
 
 
 --
+-- Name: trust_archivals_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_archivals_owner ON public.trust_archivals USING btree (pmc_id, owner_id, created_at);
+
+
+--
 -- Name: trust_archivals_property; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -11263,6 +11338,13 @@ CREATE INDEX trust_archivals_property ON public.trust_archivals USING btree (pmc
 --
 
 CREATE INDEX trust_archivals_recorded_by ON public.trust_archivals USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_archivals_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_archivals_tenant ON public.trust_archivals USING btree (pmc_id, tenant_id, created_at);
 
 
 --
@@ -11368,6 +11450,34 @@ CREATE UNIQUE INDEX trust_charges_one_per_recurring_due_date ON public.trust_cha
 --
 
 CREATE UNIQUE INDEX trust_charges_one_rent_per_due_date ON public.trust_charges USING btree (lease_id, due_on) WHERE (kind = 'rent'::text);
+
+
+--
+-- Name: trust_contacts_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_contacts_owner ON public.trust_contacts USING btree (pmc_id, owner_id, created_at);
+
+
+--
+-- Name: trust_contacts_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_contacts_recorded_by ON public.trust_contacts USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_contacts_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_contacts_tenant ON public.trust_contacts USING btree (pmc_id, tenant_id, created_at);
+
+
+--
+-- Name: trust_contacts_vendor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_contacts_vendor ON public.trust_contacts USING btree (pmc_id, vendor_id, created_at);
 
 
 --
@@ -11984,6 +12094,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_charges FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_contacts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_contacts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -12642,6 +12759,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_char
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_charges FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_contacts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_contacts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -13359,6 +13483,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_archivals FOR EAC
 
 
 --
+-- Name: trust_contacts trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_contacts FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_inspections trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13692,6 +13823,14 @@ ALTER TABLE ONLY public.trust_applications
 
 
 --
+-- Name: trust_archivals trust_archivals_owner_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_archivals
+    ADD CONSTRAINT trust_archivals_owner_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id);
+
+
+--
 -- Name: trust_archivals trust_archivals_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13721,6 +13860,14 @@ ALTER TABLE ONLY public.trust_archivals
 
 ALTER TABLE ONLY public.trust_archivals
     ADD CONSTRAINT trust_archivals_pmc_id_unit_id_fkey FOREIGN KEY (pmc_id, unit_id) REFERENCES public.trust_units(pmc_id, id);
+
+
+--
+-- Name: trust_archivals trust_archivals_tenant_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_archivals
+    ADD CONSTRAINT trust_archivals_tenant_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
 
 
 --
@@ -14105,6 +14252,46 @@ ALTER TABLE ONLY public.trust_charges
 
 ALTER TABLE ONLY public.trust_charges
     ADD CONSTRAINT trust_charges_recurring_charge_fkey FOREIGN KEY (pmc_id, lease_id, recurring_charge_id, kind) REFERENCES public.trust_recurring_charges(pmc_id, lease_id, id, kind);
+
+
+--
+-- Name: trust_contacts trust_contacts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_contacts
+    ADD CONSTRAINT trust_contacts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_contacts trust_contacts_pmc_id_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_contacts
+    ADD CONSTRAINT trust_contacts_pmc_id_owner_id_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id);
+
+
+--
+-- Name: trust_contacts trust_contacts_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_contacts
+    ADD CONSTRAINT trust_contacts_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_contacts trust_contacts_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_contacts
+    ADD CONSTRAINT trust_contacts_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
+
+
+--
+-- Name: trust_contacts trust_contacts_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_contacts
+    ADD CONSTRAINT trust_contacts_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
 
 
 --
@@ -15849,4 +16036,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261015000060'),
     ('20261015000061'),
     ('20261015000062'),
-    ('20261016000063');
+    ('20261016000063'),
+    ('20261016000064');

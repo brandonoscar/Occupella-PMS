@@ -1,16 +1,21 @@
-"""Property-based tests for archiving a property or a unit (migration 20261016000063, ADR 0005).
+"""Property-based tests for archiving a property, a unit, a tenant or an owner (migrations
+20261016000063 and 20261016000064, ADR 0005).
 
-Hypothesis builds a property with up to three units, each with a lease or none (a first day and
-maybe a last day, around today), maybe money in its owner's account, and then archives and brings
-back the property and its units in a random order. A model says which of those requests stand;
-the database must take exactly those, refuse every other one, and say after each what the model
-says (`trust_is_archived`):
+Hypothesis builds a property with up to three units, each with a lease of its one tenant or none
+(a first day and maybe a last day, around today), maybe money in its owner's account and in the
+tenant's prepaid rent or deposit, and then archives and brings back the property, its units, the
+tenant and the owner in a random order. A model says which of those requests stand; the database
+must take exactly those, refuse every other one, and say after each what the model says
+(`trust_is_archived`):
   - a unit is archived only while no lease of it is in effect or to come (no last day, or one
-    today or later), and not when it already is; it comes back only when it is archived;
-  - a property is archived only while none of its units' leases is in effect or to come and its
-    owner's account holds nothing, and not when it already is; it comes back only when archived.
+    today or later);
+  - a property only while none of its units' leases is in effect or to come and its owner's
+    account holds nothing;
+  - a tenant only while on no lease in effect or to come and holding no prepaid rent or deposit;
+  - an owner only while their account holds nothing;
+  - none of them when it already is, and each comes back only when it is archived.
 
-A bill not paid holding a property back is an example test (tests/test_archivals.py).
+A bill not paid holding a property or an owner back is an example test (tests/test_archivals.py).
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
 
@@ -26,17 +31,22 @@ LEASE = st.none() | st.tuples(
     st.integers(min_value=-90, max_value=30),  # first day, from today
     st.none() | st.integers(min_value=0, max_value=120),  # days after it, to the last day
 )
+MONEY = st.sampled_from([Decimal("0.00"), Decimal("0.01"), Decimal("250.00")])
 REQUESTS = st.lists(
-    st.tuples(st.sampled_from(["property", 0, 1, 2]), st.booleans()), min_size=1, max_size=8
+    st.tuples(st.sampled_from(["property", "tenant", "owner", 0, 1, 2]), st.booleans()),
+    min_size=1,
+    max_size=10,
 )
 
 
 @given(
     leases=st.lists(LEASE, min_size=1, max_size=3),
-    money=st.sampled_from([Decimal("0.00"), Decimal("0.01"), Decimal("250.00")]),
+    owner_money=MONEY,
+    tenant_money=MONEY,
+    held_as=st.sampled_from(["prepaid rent", "deposit"]),
     requests=REQUESTS,
 )
-def check(conn, leases, money, requests):
+def check(conn, leases, owner_money, tenant_money, held_as, requests):
     today = conn.execute("SELECT (now() AT TIME ZONE 'UTC')::date").fetchone()[0]
     pmc = make_pmc(conn)
     owner = pmc.owners[0]
@@ -55,37 +65,51 @@ def check(conn, leases, money, requests):
         ends = None if lease[1] is None else starts + timedelta(days=lease[1])
         open_lease(conn, pmc.pmc_id, unit, starts, ends, "1500.00", [tenant])
         open_now.append(ends is None or ends >= today)
-    if money:
-        transfer_batch(conn, [(pmc.operating_cash, owner.account, money)])
+    if owner_money:
+        transfer_batch(conn, [(pmc.operating_cash, owner.account, owner_money)])
+    if tenant_money:
+        cash, held = (
+            (pmc.operating_cash, pmc.prepaid_rent)
+            if held_as == "prepaid rent"
+            else (pmc.deposit_cash, pmc.tenant_deposit)
+        )
+        transfer_batch(conn, [(cash, held, tenant_money)])
 
-    archived = {"property": False, **{n: False for n in range(len(units))}}
+    targets = {
+        "property": (owner.property_id, None, None, None),
+        "tenant": (None, None, tenant, None),
+        "owner": (None, None, None, owner.owner_id),
+        **{n: (None, unit, None, None) for n, unit in enumerate(units)},
+    }
+    nothing_open = {
+        "property": not any(open_now) and owner_money == 0,
+        "tenant": not any(open_now) and tenant_money == 0,
+        "owner": owner_money == 0,
+        **{n: not open_now[n] for n in range(len(units))},
+    }
+    archived = {record: False for record in targets}
     for record, wanted in requests:
-        if record != "property" and record >= len(units):
+        if record not in targets:
             continue
-        if archived[record] == wanted:
-            stands = False
-        elif not wanted:
-            stands = True
-        elif record == "property":
-            stands = not any(open_now) and money == 0
-        else:
-            stands = not open_now[record]
-        target = (owner.property_id, None) if record == "property" else (None, units[record])
+        # Never what it already is; brought back whenever; archived only with nothing open.
+        stands = archived[record] != wanted and (not wanted or nothing_open[record])
         try:
             conn.execute(
-                "INSERT INTO trust_archivals (pmc_id, property_id, unit_id, archived)"
-                " VALUES (%s, %s, %s, %s)",
-                (pmc.pmc_id, *target, wanted),
+                "INSERT INTO trust_archivals (pmc_id, property_id, unit_id, tenant_id, owner_id,"
+                " archived) VALUES (%s, %s, %s, %s, %s, %s)",
+                (pmc.pmc_id, *targets[record], wanted),
             )
             took = True
         except psycopg.errors.CheckViolation:
             took = False
-        event(f"{'archive' if wanted else 'bring back'} {'stands' if stands else 'refused'}")
+        kind = record if isinstance(record, str) else "unit"
+        asked = "archive" if wanted else "bring back"
+        event(f"{kind}: {asked} {'stands' if stands else 'refused'}")
         assert took == stands, (record, wanted)
         if took:
             archived[record] = wanted
         assert (
-            conn.execute("SELECT trust_is_archived(%s, %s)", target).fetchone()[0]
+            conn.execute("SELECT trust_is_archived(%s, %s, %s, %s)", targets[record]).fetchone()[0]
             is archived[record]
         )
 

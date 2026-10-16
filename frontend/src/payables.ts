@@ -64,6 +64,7 @@ export type OwnerMoney = {
   account: string;
   owner_id: string;
   owner: string;
+  property_id: string;
   property: string;
   bank_account: string;
   balance: string;

@@ -1,11 +1,18 @@
+import { Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Button, LinkButton } from "../components/Button";
+import { ContactCard } from "../components/ContactCard";
+import { EmptyState } from "../components/EmptyState";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
+import { Pager } from "../components/Pager";
+import { RecordActions } from "../components/RecordActions";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
+import { Wide } from "../components/Wide";
+import type { Owner, OwnerRow as OwnerLine } from "../directory";
 import { day, money } from "../money";
 import { Badge } from "../components/Badge";
 import type { CompanyFees, Fee, OwnerMoney } from "../payables";
@@ -18,50 +25,137 @@ import {
   lastMonthPeriod,
 } from "../payables";
 import { requestId } from "../rent";
+import type { Paged } from "../rentals";
 import type { Portfolio } from "../setup";
+import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
 
-// Staff's work on owners' money: what each owner's property account holds and may pay out,
-// owner draws and contributions as the bank recorded them, the management and leasing fees the
-// agreements take, and those fees taken out of trust to the company. The PMS sends no money
-// itself.
+const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
+
+// Rentals → Owners: the company's owners a page at a time, found by their name or a property's,
+// each opening their own page (ADR 0005); then the management fees the agreements take, the
+// company's fees taken out of trust, and a lease's leasing fee. The PMS sends no money itself.
 export function OwnersPage({ me }: { me: Me }) {
-  const [owners, setOwners] = useState<OwnerMoney[] | null>(null);
+  const [page, setPage] = useState<Paged<OwnerLine> | null>(null);
+  const [q, setQ] = useState("");
+  const [archived, setArchived] = useState(false);
+  const [number, setNumber] = useState(1);
   const [companyFees, setCompanyFees] = useState<CompanyFees[] | null>(null);
   const [books, setBooks] = useState<Portfolio | null>(null);
   const [error, setError] = useState("");
+  const [runs, setRuns] = useState(0);
   const failed = (why: unknown) => setError(why instanceof ApiError ? why.detail : String(why));
 
-  function refresh() {
-    api.get<OwnerMoney[]>("/api/payables/owners").then(setOwners).catch(failed);
+  useEffect(() => {
+    const query = new URLSearchParams({ page: String(number), archived: String(archived) });
+    if (q.trim()) query.set("q", q.trim());
+    api.get<Paged<OwnerLine>>(`/api/owners?${query}`).then(setPage).catch(failed);
+  }, [q, archived, number, runs]);
+  useEffect(() => {
     api.get<CompanyFees[]>("/api/payables/company-fees").then(setCompanyFees).catch(failed);
-  }
-  useEffect(refresh, []);
+  }, [runs]);
   useEffect(() => {
     api.get<Portfolio>("/api/setup").then(setBooks).catch(failed);
   }, []);
+  const refresh = () => setRuns((n) => n + 1);
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title="Owners" />
-      <Card title="Owners' money">
-        {owners === null ? (
-          <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
-        ) : owners.length === 0 ? (
-          <Notice tone="info">No owner has a property account yet. Add one in Setup.</Notice>
-        ) : (
-          <ul className="flex flex-col divide-y divide-line">
-            {owners.map((owner) => (
-              <OwnerRow key={owner.account} owner={owner} refresh={refresh} />
-            ))}
-          </ul>
-        )}
-      </Card>
+      <div className="flex flex-wrap items-end gap-4">
+        <Field label="Find an owner or property" id="find-owner" type="search" value={q}
+          onChange={(event) => { setQ(event.target.value); setNumber(1); }} />
+        <label className="flex items-center gap-2 pb-2 text-sm text-ink-muted">
+          <input type="checkbox" checked={archived}
+            onChange={(event) => { setArchived(event.target.checked); setNumber(1); }} />
+          Archived only
+        </label>
+      </div>
+      <Notice tone="error">{error}</Notice>
+      {page === null ? (
+        !error && <Notice tone="info">Loading</Notice>
+      ) : page.items.length === 0 ? (
+        <EmptyState icon={Users} title={archived ? "No archived owners." : "No owners found."}
+          body="Add an owner from Settings, Company setup." />
+      ) : (
+        <>
+          <Wide>
+            <table className="w-full text-base">
+              <thead>
+                <tr>
+                  <th className="text-left">Owner</th>
+                  <th className="text-left">Properties</th>
+                  <th className="text-right">Holds</th>
+                  <th className="text-left">Email</th>
+                  <th className="text-left">Phone</th>
+                </tr>
+              </thead>
+              <tbody>
+                {page.items.map((row) => (
+                  <tr key={row.id} aria-label={row.name}>
+                    <td><GoLink href={`/owners/${row.id}`} className={LINK}>{row.name}</GoLink></td>
+                    <td className="text-ink-muted">{row.properties.join(", ")}</td>
+                    <td className="text-right">{money(row.held)}</td>
+                    <td className="text-ink-muted">{row.email}</td>
+                    <td className="text-ink-muted">{row.phone}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Wide>
+          <Pager page={page} onPage={setNumber} />
+        </>
+      )}
       <FeesCard refresh={refresh} />
       {companyFees !== null && <CompanyFeesCard fees={companyFees} refresh={refresh} />}
       {books && <LeasingFeeCard books={books} refresh={refresh} />}
+    </Shell>
+  );
+}
+
+// An owner: their contact details, and each of their property accounts with what it holds and
+// may pay out, its draws and contributions as the bank recorded them, and its income statement.
+export function OwnerPage({ me, id }: { me: Me; id: string }) {
+  const [owner, setOwner] = useState<Owner | null>(null);
+  const [said, setSaid] = useState("");
+  const [error, setError] = useState("");
+
+  function refresh() {
+    api
+      .get<Owner>(`/api/owners/${id}`)
+      .then(setOwner)
+      .catch((why) => setError(why instanceof ApiError ? why.detail : String(why)));
+  }
+  useEffect(refresh, [id]);
+
+  return (
+    <Shell me={me} nav={STAFF_NAV}>
+      {owner === null ? (
+        <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
+      ) : (
+        <>
+          <PageHeader title={owner.name} actions={
+            <RecordActions path={`/api/owners/${id}`} name={owner.name} archived={owner.archived}
+              onChange={(done) => { setSaid(done); refresh(); }} />
+          } />
+          <Notice tone="info">{said}</Notice>
+          <ContactCard path={`/api/owners/${id}`} contact={owner.contact} refresh={refresh} name={owner.name} />
+          <Card title="Properties">
+            {owner.accounts.length === 0 ? (
+              <EmptyState icon={Users} title="No property account yet."
+                body="Open one from Settings, Company setup." />
+            ) : (
+              <ul className="flex flex-col divide-y divide-line">
+                {owner.accounts.map((account) => (
+                  <OwnerRow key={account.account} owner={account} refresh={refresh} />
+                ))}
+              </ul>
+            )}
+          </Card>
+        </>
+      )}
     </Shell>
   );
 }
@@ -72,7 +166,7 @@ function OwnerRow({ owner, refresh }: { owner: OwnerMoney; refresh: () => void }
     <li className="flex flex-col gap-2 py-4" aria-label={`${owner.owner}, ${owner.property}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p>
-          <span className="font-medium">{owner.owner}, {owner.property}</span>
+          <GoLink href={`/properties/${owner.property_id}`} className={LINK}>{owner.property}</GoLink>
           <span className="text-ink-muted"> · {owner.bank_account}</span>
         </p>
         <p data-testid="available">

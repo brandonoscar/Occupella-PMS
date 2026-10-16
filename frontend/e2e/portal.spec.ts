@@ -393,6 +393,7 @@ test("staff enter a vendor's bill, record the owner's approval, set it aside and
   await expect(bill.getByTestId("status")).toHaveText("paid");
 
   await sections.getByRole("link", { name: "Owners" }).click();
+  await page.getByRole("row", { name: "Payee E2E", exact: true }).getByRole("link").click();
   const payee = page.getByRole("listitem", { name: "Payee E2E, E2E Property 7" });
   await expect(payee.getByTestId("available")).toHaveText("$700.00 available");
   await payee.getByText("Record for Payee E2E, E2E Property 7").click();
