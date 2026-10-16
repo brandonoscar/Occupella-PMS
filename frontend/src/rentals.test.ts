@@ -29,13 +29,13 @@ describe("properties and units", () => {
     const unit = (over: Partial<UnitLine>): UnitLine => ({ id: "u1", name: "Unit 1", archived: false, lease: null, ...over });
     expect(unitState(unit({}))).toEqual({ word: "Vacant", tone: "caution" });
     expect(unitState(unit({ lease: { ...lease, status: "current" } }))).toEqual({ word: "Occupied", tone: "positive" });
-    expect(unitState(unit({ lease: { ...lease, status: "future" } }))).toEqual({ word: "Starts 2026-11-01", tone: "info" });
+    expect(unitState(unit({ lease: { ...lease, status: "future" } }))).toEqual({ word: "Starts 11/01/2026", tone: "info" });
     expect(unitState(unit({ archived: true }))).toEqual({ word: "Archived", tone: "neutral" });
   });
 
   it("reads a lease's term and rent", () => {
-    expect(termLabel({ starts_on: "2026-01-01", ends_on: null })).toBe("From 2026-01-01, month to month");
-    expect(termLabel({ starts_on: "2026-01-01", ends_on: "2026-12-31" })).toBe("2026-01-01 to 2026-12-31");
+    expect(termLabel({ starts_on: "2026-01-01", ends_on: null })).toBe("From 01/01/2026, month to month");
+    expect(termLabel({ starts_on: "2026-01-01", ends_on: "2026-12-31" })).toBe("01/01/2026 to 12/31/2026");
     expect(rentLabel("1500.00")).toBe("$1,500.00 a month");
   });
 });

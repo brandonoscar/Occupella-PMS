@@ -6,7 +6,7 @@ import { Notice } from "../components/Notice";
 import { Card } from "../components/Shell";
 import type { Application } from "../leasing";
 import { when } from "../maintenance";
-import { money } from "../money";
+import { money, usDate } from "../money";
 import type { Offer, Offered, RenewableLease, SigningLink } from "../offers";
 import {
   MAX_DOCUMENT,
@@ -128,7 +128,7 @@ export function OffersCard({ changed = 0 }: { changed?: number }) {
   function complete(offer: Offer) {
     return act(async () => {
       const lease = await api.post<Offer>(`/api/leasing/offers/${offer.id}/complete`);
-      setDone(`${lease.property}, ${lease.unit} has its lease from ${lease.starts_on}.`);
+      setDone(`${lease.property}, ${lease.unit} has its lease from ${usDate(lease.starts_on)}.`);
     });
   }
 

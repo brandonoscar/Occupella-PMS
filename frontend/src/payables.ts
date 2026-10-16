@@ -1,6 +1,6 @@
 // Staff's bills and owners' money as the API sends them (src/pms/api/payables.py), and how
 // they read.
-import { day, lastMonth, money } from "./money";
+import { day, lastMonth, money, usDate } from "./money";
 
 export type BillStatus = "needs approval" | "declined" | "to set aside" | "set aside" | "paid";
 export type Bill = {
@@ -99,10 +99,10 @@ export function nextStep(status: BillStatus): string | null {
 }
 
 export function recurringLabel(bill: Recurring): string {
-  const until = bill.ends_on ? ` until ${bill.ends_on}` : "";
+  const until = bill.ends_on ? ` until ${usDate(bill.ends_on)}` : "";
   return (
     `${bill.vendor}: ${money(bill.amount)} on day ${bill.day_of_month} of each month ` +
-    `from ${bill.starts_on}${until}, ${bill.owner}, ${bill.property} (${bill.reference_prefix})`
+    `from ${usDate(bill.starts_on)}${until}, ${bill.owner}, ${bill.property} (${bill.reference_prefix})`
   );
 }
 
@@ -145,17 +145,17 @@ export type CompanyFees = {
   take_by: string | null;
 };
 
-// "$150.00 of the company's fees, the oldest since 2026-09-20 (5 days)", or that none is held.
+// "$150.00 of the company's fees, the oldest since 09/20/2026 (5 days)", or that none is held.
 export function companyFeesLabel(fees: CompanyFees): string {
   if (fees.since === null) return "None of the company's fees is held here.";
   const days = fees.days_held === 1 ? "1 day" : `${fees.days_held} days`;
-  return `${money(fees.held)} of the company's fees, the oldest since ${fees.since} (${days})`;
+  return `${money(fees.held)} of the company's fees, the oldest since ${usDate(fees.since)} (${days})`;
 }
 
 // Whether the oldest is past the day to take it out by ("late"), or not yet.
 export function companyFeesDue(fees: CompanyFees, on: string): { word: string; late: boolean } | null {
   if (fees.take_by === null) return null;
   return fees.take_by < on
-    ? { word: `take out: past ${fees.take_by}`, late: true }
-    : { word: `take out by ${fees.take_by}`, late: false };
+    ? { word: `take out: past ${usDate(fees.take_by)}`, late: true }
+    : { word: `take out by ${usDate(fees.take_by)}`, late: false };
 }

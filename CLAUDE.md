@@ -110,7 +110,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the scale). A state (paid up, bounced, approved) is a badge (`components/Badge.tsx`), a page
   with nothing to list says so with `EmptyState`, an error comes with its icon (`Notice`), and
   mono type is only for links, keys and hashes (the same test checks it). Money stays text from
-  the database to the screen, never a float. Staff's menu (`pages/staffNav.ts`, ADR 0005)
+  the database to the screen, never a float. On screen a day reads MM/DD/YYYY (`usDate` in
+  `money.ts`; inputs, links and the API keep YYYY-MM-DD, and a report's own text reads as the
+  report wrote it) and money in accounting form, a negative in parentheses. Money leaving trust
+  (a draw, a bill paid, the company's fees taken out, a deposit returned) waits for staff to
+  confirm a question naming the amount (`components/Confirm.tsx`). Staff's menu (`pages/staffNav.ts`, ADR 0005)
   groups their pages as Buildium does. They open on the Dashboard at `/`: the company's figures
   (`src/pms/api/dashboard.py`, each counted by its report) and what needs attention
   (`src/pms/api/today.py`: read only, each part the work page's own answer). Rentals
@@ -139,7 +143,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`src/pms/api/work_orders.py`: its steps, bills and request; staff open one there too, its
   status the work orders report's word), tenants' requests below them, vendors and their
   insurance at `/vendors`, each at `/vendors/<id>` with their bills and work orders
-  (`src/pms/api/vendors.py`). Files at `/files` (`src/pms/api/documents.py`), every download at
+  (`src/pms/api/vendors.py`). Files at `/files` (`src/pms/api/documents.py`), and an owner's,
+  vendor's or lease's page has a Files card of its own documents (`pages/FilesCard.tsx`); every download at
   `/reports`, and Settings at `/settings`: staff roles and signers at `/settings/staff`
   (`src/pms/api/staff.py`), logins at `/settings/logins`, the books' setup at `/settings/setup`
   (`src/pms/api/setup.py`: plain inserts and the database's own write paths, nothing that

@@ -34,11 +34,6 @@ export function SignersCard({ me, members }: { me: Me; members: Member[] }) {
 
   return (
     <Card title="Who signs each trust bank account">
-      <p className="mb-4 text-sm text-ink-muted">
-        The broker controls each trust bank account; anyone else pays money out of it only with the
-        broker's written authorization. Once an account has its broker here, only its signers may
-        pay money out of it.
-      </p>
       {accounts === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : (

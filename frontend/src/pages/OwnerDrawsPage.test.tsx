@@ -55,6 +55,10 @@ describe("OwnerDrawsPage", () => {
     fireEvent.change(screen.getByLabelText("Owner and property"), { target: { value: "a1" } });
     fireEvent.change(screen.getByLabelText("Paid out on"), { target: { value: "2026-10-10" } });
     fireEvent.click(screen.getByRole("button", { name: "Record draw" }));
+    expect(screen.getByRole("alertdialog").getAttribute("aria-label")).toBe(
+      "Pay all $800.00 available out to Owner 1 from Operating on 10/10/2026?",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
 
     expect(await screen.findByText("$800.00 paid out to Owner 1.")).toBeTruthy();
     const [path, init] = fetch.mock.calls.find(([, i]) => i?.method === "POST") ?? [];
@@ -67,6 +71,7 @@ describe("OwnerDrawsPage", () => {
     render(<OwnerDrawsPage me={ME} />);
     await screen.findByRole("row", { name: "Owner 1, Property 1" });
     fireEvent.click(screen.getByRole("button", { name: "Record draw" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     expect((await screen.findByRole("alert")).textContent).toBe("nothing is available to draw");
     cleanup();
 

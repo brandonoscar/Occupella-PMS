@@ -32,9 +32,13 @@ const VENDOR: VendorPageData = {
   work_orders: [{ id: "w1", property: "Property 1", summary: "Leak", status: "assigned" }],
 };
 
+const NO_FILES = { documents: [], subjects: { w9: [], receipt: [], move_out_photo: [], owner_document: [] } };
+
 function server(vendor: unknown = VENDOR, status = 200) {
-  const fetch = vi.fn(async (_path: string, init?: RequestInit) =>
-    init?.method === "POST" ? new Response(null, { status: 204 }) : new Response(JSON.stringify(vendor), { status }),
+  const fetch = vi.fn(async (path: string, init?: RequestInit) =>
+    init?.method === "POST" ? new Response(null, { status: 204 })
+    : path === "/api/documents" ? new Response(JSON.stringify(NO_FILES), { status: 200 })
+    : new Response(JSON.stringify(vendor), { status }),
   );
   vi.stubGlobal("fetch", fetch);
   return fetch;
@@ -48,12 +52,14 @@ describe("VendorPage", () => {
     expect(await screen.findByRole("heading", { level: 1, name: "Vendor 1" })).toBeTruthy();
     expect(screen.getByText("W-9 on file")).toBeTruthy();
     expect(screen.getByRole("group", { name: "Contact details, Vendor 1" }).textContent).toContain("555-555-0100");
-    expect(screen.getByRole("list", { name: "Insurance" }).textContent).toContain("Carrier A GL-1, 2026-01-01 to 2026-12-31");
+    expect(screen.getByRole("list", { name: "Insurance" }).textContent).toContain("Carrier A GL-1, 01/01/2026 to 12/31/2026");
     expect(within(screen.getByRole("row", { name: "INV-1" })).getAllByRole("cell").map((c) => c.textContent)).toEqual([
-      "INV-1", "Owner 1, Property 1", "2026-10-01", "$80.00", "Unpaid",
+      "INV-1", "Owner 1, Property 1", "10/01/2026", "$80.00", "Unpaid",
     ]);
     const orders = screen.getByRole("list", { name: "Work orders" });
     expect(within(orders).getByRole("link", { name: "Leak" }).getAttribute("href")).toBe("/work-orders/w1");
+    // Their W-9s are on their Files card.
+    expect(await screen.findByLabelText("W-9 file")).toBeTruthy();
     // A vendor is renamed, never archived.
     expect(screen.queryByRole("button", { name: "Archive" })).toBeNull();
   });

@@ -1,5 +1,5 @@
 // The PMC's books as staff set them up (src/pms/api/setup.py), and how they read.
-import { money } from "./money";
+import { money, usDate } from "./money";
 
 export type BankKind = "operating" | "security_deposit";
 export type Named = { id: string; name: string };
@@ -116,6 +116,6 @@ export function nsfFeeSummary(terms: NsfFee | null): string {
 }
 
 export function leaseSummary(lease: Lease): string {
-  const term = lease.ends_on ? `${lease.starts_on} to ${lease.ends_on}` : `from ${lease.starts_on}, month to month`;
+  const term = lease.ends_on ? `${usDate(lease.starts_on)} to ${usDate(lease.ends_on)}` : `from ${usDate(lease.starts_on)}, month to month`;
   return `${lease.tenants.join(", ")}: ${term}, ${money(lease.monthly_rent)} a month`;
 }

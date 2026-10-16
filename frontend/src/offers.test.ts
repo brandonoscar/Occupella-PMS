@@ -73,8 +73,8 @@ describe("signersText", () => {
 
 describe("term and dayAfter", () => {
   it("reads a lease's term", () => {
-    expect(term("2027-01-01", "2027-06-30")).toBe("2027-01-01 to 2027-06-30");
-    expect(term("2027-01-01", null)).toBe("2027-01-01 to month to month");
+    expect(term("2027-01-01", "2027-06-30")).toBe("01/01/2027 to 06/30/2027");
+    expect(term("2027-01-01", null)).toBe("01/01/2027 to month to month");
   });
   it("finds the next day across a month and a year", () => {
     expect(dayAfter("2027-06-30")).toBe("2027-07-01");

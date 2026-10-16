@@ -1,4 +1,5 @@
 // Lease offers and renewals as the API sends them (src/pms/api/offers.py), and how they read.
+import { usDate } from "./money";
 
 export type Signer = { position: number; name: string; email: string; signed_at: string | null };
 
@@ -39,7 +40,7 @@ export type Person = { name: string; email: string };
 export const MAX_DOCUMENT = 5_000_000;
 
 export function term(startsOn: string, endsOn: string | null): string {
-  return `${startsOn} to ${endsOn ?? "month to month"}`;
+  return `${usDate(startsOn)} to ${endsOn ? usDate(endsOn) : "month to month"}`;
 }
 
 // Where an offer stands, for staff.

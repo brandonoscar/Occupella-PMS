@@ -56,18 +56,18 @@ describe("reconcile", () => {
 
   it("reads lines, transfers and a period's last day", () => {
     expect(lineLabel({ id: "l", posted_on: "2026-01-05", amount: "2750.00", description: "Deposit", reference: "D1" }))
-      .toBe("2026-01-05 Deposit (D1): $2,750.00");
+      .toBe("01/05/2026 Deposit (D1): $2,750.00");
     expect(lineLabel({ id: "l", posted_on: "2026-01-05", amount: "-5.00", description: "", reference: null }))
-      .toBe("2026-01-05 No description: -$5.00");
+      .toBe("01/05/2026 No description: ($5.00)");
     expect(transferLabel({ id: "t", on: "2026-01-04", amount: "1500.00", memo: "Rent" }))
-      .toBe("2026-01-04 Rent: $1,500.00");
+      .toBe("01/04/2026 Rent: $1,500.00");
     expect(transferLabel({ id: "t", on: "2026-01-04", amount: "1.00", memo: null }))
-      .toBe("2026-01-04 No memo: $1.00");
+      .toBe("01/04/2026 No memo: $1.00");
     expect(lastDayOf("2026-02-01T00:00:00Z")).toBe("2026-01-31");
     expect(itemLabel({ id: "i", issued_on: "2025-12-30", amount: "-200.00", description: "Check", reference: "1041" }))
-      .toBe("2025-12-30 Check (1041), from before the cutover: -$200.00");
+      .toBe("12/30/2025 Check (1041), from before the cutover: ($200.00)");
     expect(itemLabel({ id: "i", issued_on: "2025-12-31", amount: "75.00", description: "Deposit", reference: null }))
-      .toBe("2025-12-31 Deposit, from before the cutover: $75.00");
+      .toBe("12/31/2025 Deposit, from before the cutover: $75.00");
   });
 
   it("lets anyone but the preparer approve, holding the approve role", () => {

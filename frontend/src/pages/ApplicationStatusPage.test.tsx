@@ -29,7 +29,7 @@ describe("ApplicationStatusPage", () => {
       "Approved, on conditions:",
     );
     expect(screen.getByText("One more month's deposit")).toBeTruthy();
-    expect(screen.getByText("Sent 2026-10-11 18:05 UTC")).toBeTruthy();
+    expect(screen.getByText("Sent 10/11/2026 18:05 UTC")).toBeTruthy();
     expect(JSON.parse(String(fetch.mock.calls[0]?.[1]?.body))).toEqual({
       status_token: "status-token",
     });

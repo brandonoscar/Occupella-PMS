@@ -10,7 +10,7 @@ import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
-import { money } from "../money";
+import { money, usDate } from "../money";
 import type { BankBooks, OpenItem, OpenLine, OpenTransfer, Worksheet } from "../reconcile";
 import {
   approver,
@@ -71,7 +71,7 @@ export function BankingPage({ me }: { me: Me }) {
                   </td>
                   <td className="text-ink-muted">{KIND[bank.kind]}</td>
                   <td className="text-right">{money(bank.book_cash)}</td>
-                  <td>{bank.closed_through ?? <span className="text-ink-subtle">Not yet</span>}</td>
+                  <td>{bank.closed_through ? usDate(bank.closed_through) : <span className="text-ink-subtle">Not yet</span>}</td>
                   <td>{bank.prepared && <Badge tone="caution">Waiting for approval</Badge>}</td>
                 </tr>
               ))}
@@ -170,7 +170,7 @@ function StatementsCard({ bank, refresh }: BankProps) {
           <tbody>
             {bank.statements.map((s) => (
               <tr key={s.id}>
-                <td>{s.first_day} to {s.last_day}</td>
+                <td>{usDate(s.first_day)} to {usDate(s.last_day)}</td>
                 <td className="text-right">{money(s.opening_balance)}</td>
                 <td className="text-right">{money(s.closing_balance)}</td>
                 <td className="text-right">{s.lines}</td>
@@ -195,7 +195,7 @@ function StatementsCard({ bank, refresh }: BankProps) {
             closing_balance: closing || null,
           };
           const done = (made: { lines: number; first_day: string; last_day: string }) =>
-            `Imported ${made.lines} line${made.lines === 1 ? "" : "s"}, ${made.first_day} to ${made.last_day}.`;
+            `Imported ${made.lines} line${made.lines === 1 ? "" : "s"}, ${usDate(made.first_day)} to ${usDate(made.last_day)}.`;
           if (await record("/api/reconcile/statements", body, done)) {
             setFile(null);
             setFirstDay("");
@@ -308,7 +308,7 @@ function WorksheetCard({
               aria-label="Prepared"
             >
               <span className="text-sm">
-                Prepared through {prepared.through} by {prepared.prepared_by}: bank{" "}
+                Prepared through {usDate(prepared.through)} by {prepared.prepared_by}: bank{" "}
                 {money(prepared.bank_balance)}, books {money(prepared.book_cash)}.
               </span>
               {who === "may" ? (
@@ -316,10 +316,10 @@ function WorksheetCard({
                   onClick={() =>
                     record<{ id: string }>(`/api/reconcile/${bank.id}/approve`,
                       { preparation_id: prepared.id },
-                      () => `Approved through ${prepared.through}; the account is closed through it.`)
+                      () => `Approved through ${usDate(prepared.through)}; the account is closed through it.`)
                   }
                 >
-                  Approve through {prepared.through}
+                  Approve through {usDate(prepared.through)}
                 </Button>
               ) : (
                 <span className="text-sm text-ink-subtle">
@@ -336,10 +336,10 @@ function WorksheetCard({
               disabled={gap !== "0.00"}
               onClick={() =>
                 record<{ id: string }>(`/api/reconcile/${bank.id}/prepare`, { through: day },
-                  () => `Prepared through ${day}; another staff member who may approve approves it.`)
+                  () => `Prepared through ${usDate(day)}; another staff member who may approve approves it.`)
               }
             >
-              Prepare through {day}
+              Prepare through {usDate(day)}
             </Button>
             {gap !== "0.00" && (
               <span className="text-sm text-ink-subtle">
@@ -542,7 +542,7 @@ function ApprovedCard({ bank }: { bank: BankBooks }) {
           <tbody>
             {bank.reconciliations.map((r) => (
               <tr key={r.id}>
-                <td>{r.period_start.slice(0, 10)} to {lastDayOf(r.period_end)}</td>
+                <td>{usDate(r.period_start)} to {usDate(lastDayOf(r.period_end))}</td>
                 <td className="text-right">{money(r.statement_balance)}</td>
                 <td className="text-right">{money(r.book_balance)}</td>
                 <td>{r.approved_by}</td>
@@ -553,7 +553,7 @@ function ApprovedCard({ bank }: { bank: BankBooks }) {
       )}
       {bank.closed_through && (
         <p className="mt-3 text-sm text-ink-subtle">
-          Closed through {bank.closed_through}: nothing is recorded on or before it.
+          Closed through {usDate(bank.closed_through)}: nothing is recorded on or before it.
         </p>
       )}
     </Card>

@@ -23,13 +23,13 @@ describe("inspections", () => {
         { room: "Bathroom", condition: "good", note: null },
       ],
     };
-    expect(inspectionSummary(inspection)).toBe("Move-out, 2026-06-30: 2 rooms, 1 damaged or missing");
+    expect(inspectionSummary(inspection)).toBe("Move-out, 06/30/2026: 2 rooms, 1 damaged or missing");
     const missing = { room: "Hallway", condition: "missing" as const, note: null };
     expect(inspectionSummary({ ...inspection, items: [...inspection.items, missing] })).toBe(
-      "Move-out, 2026-06-30: 3 rooms, 2 damaged or missing",
+      "Move-out, 06/30/2026: 3 rooms, 2 damaged or missing",
     );
     expect(inspectionSummary({ ...inspection, kind: "move-in", items: [inspection.items[1]!] })).toBe(
-      "Move-in, 2026-06-30: 1 room",
+      "Move-in, 06/30/2026: 1 room",
     );
     expect(inspectionReportHref("l1")).toBe("/api/reports/trust_report_inspection?arg=l1&format=pdf");
   });

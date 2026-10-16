@@ -30,10 +30,6 @@ export function CustomRolesCard({ members, admin }: { members: Member[]; admin: 
 
   return (
     <Card title="Custom roles">
-      <p className="mb-3 text-sm text-ink-muted">
-        A staff member given custom roles changes only what their roles allow, and still sees
-        every page. One with none works everywhere.
-      </p>
       {roles === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : roles.roles.length === 0 ? (

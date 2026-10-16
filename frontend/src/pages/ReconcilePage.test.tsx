@@ -128,19 +128,19 @@ describe("ReconcilePage", () => {
     render(<ReconcilePage me={ME} id="b1" />);
 
     const statements = await screen.findByRole("table", { name: "Statements" });
-    expect(cells(statements)).toEqual([["2026-01-01 to 2026-01-31", "$0.00", "$4,075.00", "5", "CSV"]]);
+    expect(cells(statements)).toEqual([["01/01/2026 to 01/31/2026", "$0.00", "$4,075.00", "5", "CSV"]]);
     const shown = screen.getByRole("table", { name: "Figures" });
     expect(shown.textContent).toContain("bank balance (statements)$4,075.00");
     // Off by the difference, until the books lack no line.
     expect(screen.getByText("Off by $65.00").closest("[data-tone]")?.getAttribute("data-tone")).toBe("caution");
     expect(cells(screen.getByRole("table", { name: "Reconciling items" }))).toEqual([
-      ["bank line not in the books", "2026-01-28 Service fee", "-$15.00"],
+      ["bank line not in the books", "2026-01-28 Service fee", "($15.00)"],
     ]);
     expect(cells(screen.getByRole("table", { name: "Approved" }))).toEqual([
-      ["2025-12-01 to 2025-12-31", "$0.00", "$0.00", "Staff 1"],
+      ["12/01/2025 to 12/31/2025", "$0.00", "$0.00", "Staff 1"],
     ]);
-    expect(screen.getByText(/Closed through 2025-12-31/)).toBeTruthy();
-    const prepare = screen.getByRole("button", { name: "Prepare through 2026-01-31" });
+    expect(screen.getByText(/Closed through 12\/31\/2025/)).toBeTruthy();
+    const prepare = screen.getByRole("button", { name: "Prepare through 01/31/2026" });
     expect((prepare as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByRole("button", { name: /^Approve/ })).toBeNull();
     expect(screen.getByText("Lines the books lack come to $65.00: record them and match them first.")).toBeTruthy();
@@ -161,7 +161,7 @@ describe("ReconcilePage", () => {
     fireEvent.change(screen.getByLabelText("Closing balance"), { target: { value: "4070.00" } });
     fireEvent.click(importing);
 
-    expect(await screen.findByText("Imported 2 lines, 2026-02-01 to 2026-02-28.")).toBeTruthy();
+    expect(await screen.findByText("Imported 2 lines, 02/01/2026 to 02/28/2026.")).toBeTruthy();
     expect(posted(fetch)).toEqual([
       [
         "/api/reconcile/statements",
@@ -180,11 +180,11 @@ describe("ReconcilePage", () => {
     await screen.findByRole("table", { name: "Statements" });
     const matching = screen.getByRole("button", { name: "Match these" }) as HTMLButtonElement;
 
-    fireEvent.click(screen.getByLabelText("2026-01-05 Deposit (D1): $2,750.00"));
-    fireEvent.click(screen.getByLabelText("2026-01-03 Rent, Property 1: $1,500.00"));
+    fireEvent.click(screen.getByLabelText("01/05/2026 Deposit (D1): $2,750.00"));
+    fireEvent.click(screen.getByLabelText("01/03/2026 Rent, Property 1: $1,500.00"));
     expect(screen.getByTestId("picked").textContent).toBe("Lines $2,750.00 · Transfers $1,500.00");
     expect(matching.disabled).toBe(true);
-    fireEvent.click(screen.getByLabelText("2026-01-04 Rent, Property 2: $1,250.00"));
+    fireEvent.click(screen.getByLabelText("01/04/2026 Rent, Property 2: $1,250.00"));
     expect(matching.disabled).toBe(false);
     fireEvent.click(matching);
     expect(await screen.findByText("Matched.")).toBeTruthy();
@@ -206,21 +206,21 @@ describe("ReconcilePage", () => {
   it("prepares a period whose books lack no line, and shows a refusal", async () => {
     const fetch = server(TIED, {}, {});
     render(<ReconcilePage me={ME} id="b1" />);
-    const prepare = await screen.findByRole("button", { name: "Prepare through 2026-01-31" });
+    const prepare = await screen.findByRole("button", { name: "Prepare through 01/31/2026" });
     expect(screen.queryByText(/Lines the books lack/)).toBeNull();
     expect(screen.getByText("Ties out").closest("[data-tone]")?.getAttribute("data-tone")).toBe("positive");
 
     fireEvent.click(prepare);
 
     expect(
-      await screen.findByText("Prepared through 2026-01-31; another staff member who may approve approves it."),
+      await screen.findByText("Prepared through 01/31/2026; another staff member who may approve approves it."),
     ).toBeTruthy();
     expect(posted(fetch)).toEqual([["/api/reconcile/b1/prepare", { through: "2026-01-31" }]]);
     cleanup();
 
     server(TIED, {}, { "/api/reconcile/b1/prepare": "the next period starts on 2026-02-01" });
     render(<ReconcilePage me={ME} id="b1" />);
-    fireEvent.click(await screen.findByRole("button", { name: "Prepare through 2026-01-31" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Prepare through 01/31/2026" }));
     expect(await screen.findByText("the next period starts on 2026-02-01")).toBeTruthy();
   });
 
@@ -228,10 +228,10 @@ describe("ReconcilePage", () => {
     const fetch = server(TIED, {}, {}, PREPARED);
     render(<ReconcilePage me={{ ...ME, roles: ["approve"] }} id="b1" />);
     const prepared = await screen.findByLabelText("Prepared");
-    expect(prepared.textContent).toContain("Prepared through 2026-01-31 by Staff 2: bank $4,075.00, books $4,075.00.");
-    fireEvent.click(screen.getByRole("button", { name: "Approve through 2026-01-31" }));
+    expect(prepared.textContent).toContain("Prepared through 01/31/2026 by Staff 2: bank $4,075.00, books $4,075.00.");
+    fireEvent.click(screen.getByRole("button", { name: "Approve through 01/31/2026" }));
 
-    expect(await screen.findByText("Approved through 2026-01-31; the account is closed through it.")).toBeTruthy();
+    expect(await screen.findByText("Approved through 01/31/2026; the account is closed through it.")).toBeTruthy();
     expect(posted(fetch)).toEqual([["/api/reconcile/b1/approve", { preparation_id: "pr1" }]]);
     cleanup();
 
@@ -246,7 +246,7 @@ describe("ReconcilePage", () => {
     expect((await screen.findByLabelText("Prepared")).textContent).toContain(
       "Another staff member who may approve approves it.",
     );
-    expect(screen.getByRole("button", { name: "Prepare through 2026-01-31" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Prepare through 01/31/2026" })).toBeTruthy();
   });
 
   it("reads the worksheet at another day, and an account with nothing yet", async () => {
@@ -304,11 +304,11 @@ describe("ReconcilePage", () => {
     expect(await screen.findByText(/the first statement's balance brought forward should be \$1,200.00/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Match the opening" }));
     expect(await screen.findByText("The opening is matched.")).toBeTruthy();
-    expect(screen.getByRole("table", { name: "Matches" }).textContent).toContain("2025-12-29 Old check, from before the cutover: -$10.00");
+    expect(screen.getByRole("table", { name: "Matches" }).textContent).toContain("12/29/2025 Old check, from before the cutover: ($10.00)");
 
-    fireEvent.click(screen.getByLabelText("2026-01-09 Check 1041 (1041): -$200.00"));
-    fireEvent.click(screen.getByLabelText("2025-12-30 Check to Vendor 1 (1041), from before the cutover: -$200.00"));
-    expect(screen.getByTestId("picked").textContent).toBe("Lines -$200.00 · Transfers -$200.00");
+    fireEvent.click(screen.getByLabelText("01/09/2026 Check 1041 (1041): ($200.00)"));
+    fireEvent.click(screen.getByLabelText("12/30/2025 Check to Vendor 1 (1041), from before the cutover: ($200.00)"));
+    expect(screen.getByTestId("picked").textContent).toBe("Lines ($200.00) · Transfers ($200.00)");
     fireEvent.click(screen.getByRole("button", { name: "Match these" }));
     expect(await screen.findByText("Matched.")).toBeTruthy();
 
@@ -370,7 +370,7 @@ describe("BankingPage", () => {
 
     const operating = await screen.findByRole("row", { name: "Operating trust account" });
     expect(within(operating).getAllByRole("cell").map((c) => c.textContent)).toEqual([
-      "Operating trust account", "Operating", "$4,075.00", "2025-12-31", "Waiting for approval",
+      "Operating trust account", "Operating", "$4,075.00", "12/31/2025", "Waiting for approval",
     ]);
     expect(within(operating).getByRole("link").getAttribute("href")).toBe("/bank-accounts/b1");
     expect(within(screen.getByRole("row", { name: "Deposit trust account" })).getAllByRole("cell").map((c) => c.textContent)).toEqual([

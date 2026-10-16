@@ -52,8 +52,8 @@ describe("SignersCard", () => {
     render(<SignersCard me={ADMIN} members={MEMBERS} />);
 
     const operating = await screen.findByRole("listitem", { name: "Operating trust" });
-    expect(operating.textContent).toContain("Admin 1, the broker: license LIC-0001, authorized 2026-01-01");
-    expect(operating.textContent).toContain("Clerk 1: bonded for $25,000.00 through 2026-01-20");
+    expect(operating.textContent).toContain("Admin 1, the broker: license LIC-0001, authorized 01/01/2026");
+    expect(operating.textContent).toContain("Clerk 1: bonded for $25,000.00 through 01/20/2026");
     const running = within(operating).getByText("bond runs out in 5 days");
     expect(running.closest("[data-tone]")?.getAttribute("data-tone")).toBe("caution");
     const deposit = screen.getByRole("listitem", { name: "Deposit trust" });

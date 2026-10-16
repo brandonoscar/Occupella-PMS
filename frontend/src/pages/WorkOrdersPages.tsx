@@ -13,7 +13,7 @@ import { Card, PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Tabs } from "../components/Tabs";
 import { Wide } from "../components/Wide";
-import { money } from "../money";
+import { money, usDate } from "../money";
 import type { Paged } from "../rentals";
 import type { Named, Portfolio } from "../setup";
 import type { WorkOrder, WorkOrderRow } from "../workOrders";
@@ -95,7 +95,7 @@ export function WorkOrdersPage({ me }: { me: Me }) {
                     <tr key={row.id} aria-label={row.summary}>
                       <td><GoLink href={`/work-orders/${row.id}`} className={LINK}>{row.summary}</GoLink></td>
                       <td className="text-ink-muted">{whereLabel(row)}</td>
-                      <td className="whitespace-nowrap">{row.opened_at.slice(0, 10)}</td>
+                      <td className="whitespace-nowrap">{usDate(row.opened_at)}</td>
                       <td><Badge tone={STATUS[row.status].tone}>{STATUS[row.status].word}</Badge></td>
                       <td className="text-ink-muted">{row.vendor}</td>
                       <td className="text-right">{money(row.billed)}</td>
@@ -184,13 +184,13 @@ export function WorkOrderPage({ me, id }: { me: Me; id: string }) {
           <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink-muted">
             <GoLink href={`/properties/${order.property.id}`} className={LINK}>{order.property.name}</GoLink>
             {order.unit && <GoLink href={`/units/${order.unit.id}`} className={LINK}>{order.unit.name}</GoLink>}
-            <span>Opened {order.opened_at.slice(0, 10)}</span>
+            <span>Opened {usDate(order.opened_at)}</span>
             {order.vendor && <span>Vendor: {order.vendor}</span>}
             <span>Billed {money(order.billed)}</span>
           </p>
           {order.request && (
             <p className="text-sm text-ink-muted" data-testid="request">
-              Requested by {order.request.tenant} on {order.request.submitted_at.slice(0, 10)}: {order.request.summary}
+              Requested by {order.request.tenant} on {usDate(order.request.submitted_at)}: {order.request.summary}
             </p>
           )}
           <Card title="Steps">
@@ -202,7 +202,7 @@ export function WorkOrderPage({ me, id }: { me: Me; id: string }) {
                   <li key={n}>
                     <span className="font-medium first-letter:uppercase">{s.step}</span>
                     <span className="text-ink-muted">
-                      {" "}{s.taken_at.slice(0, 10)}{s.vendor ? `, to ${s.vendor}` : ""}{s.note ? `: ${s.note}` : ""}
+                      {" "}{usDate(s.taken_at)}{s.vendor ? `, to ${s.vendor}` : ""}{s.note ? `: ${s.note}` : ""}
                     </span>
                   </li>
                 ))}

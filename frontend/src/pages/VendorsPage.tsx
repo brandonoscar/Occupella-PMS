@@ -10,7 +10,7 @@ import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
-import { day, money } from "../money";
+import { day, money, usDate } from "../money";
 import type { Vendor } from "../vendors";
 import { COVERAGES, standingTone, vendorInsuranceHref } from "../vendors";
 import { GoLink } from "./NeedsAttention";
@@ -68,7 +68,7 @@ export function VendorsPage({ me }: { me: Me }) {
                         aria-label={`${vendor.name}, ${policy.coverage}`}>
                         <span className="first-letter:uppercase">{policy.coverage}</span>
                         <span className="text-ink-muted">
-                          {policy.carrier} {policy.policy_number}, {policy.starts_on} to {policy.expires_on}
+                          {policy.carrier} {policy.policy_number}, {usDate(policy.starts_on)} to {usDate(policy.expires_on)}
                           {policy.limit_amount ? `, limit ${money(policy.limit_amount)}` : ""}
                         </span>
                         <Badge tone={standingTone(policy.standing)} data-testid="standing">{policy.standing}</Badge>

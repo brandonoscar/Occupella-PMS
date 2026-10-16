@@ -48,6 +48,7 @@ describe("MaintenanceCard", () => {
     const received = await screen.findByRole("listitem", { name: "Tap drips" });
     expect(within(received).getByText(/Arrange a time to enter\./)).toBeTruthy();
     fireEvent.click(within(received).getByRole("button", { name: "Open work order" }));
+    expect(await screen.findByText('Work order opened for "Tap drips".')).toBeTruthy();
 
     await vi.waitFor(() =>
       expect(posts(fetch)).toEqual([["/api/maintenance/requests/r1/work-order", {}]]),
@@ -67,6 +68,7 @@ describe("MaintenanceCard", () => {
     });
     fireEvent.click(assign);
     fireEvent.click(within(opened).getByRole("button", { name: "Done" }));
+    expect(await screen.findByText('"Door sticks" updated.')).toBeTruthy();
 
     await vi.waitFor(() =>
       expect(posts(fetch)).toEqual([

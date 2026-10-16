@@ -120,12 +120,12 @@ describe("SetupPage", () => {
       "Owned by Owner A. After 5 days' grace: $50.00. NSF fee $35.00.",
     );
     expect(property.textContent).toContain(
-      "Unit 1: Tenant A: from 2026-10-01, month to month, $1,500.00 a month",
+      "Unit 1: Tenant A: from 10/01/2026, month to month, $1,500.00 a month",
     );
     expect(property.textContent).toContain("Unit 2: vacant");
     expect((await card("Management terms")).textContent).toContain(
       "Owner A, Property A: 8% of rent and recurring fees collected; keeps $250.00 in reserve;" +
-        " owner approves bills over $500.00 (from 2026-10-01)",
+        " owner approves bills over $500.00 (from 10/01/2026)",
     );
     expect((await card("Tenants and leases in place")).textContent).toContain("Tenant B (Property A)");
     // Company setup is one of Settings' pages.

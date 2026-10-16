@@ -3,11 +3,12 @@ import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
 import { Button, LinkButton } from "../components/Button";
+import { useConfirm } from "../components/Confirm";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
-import { day, money } from "../money";
+import { day, money, usDate } from "../money";
 import type { MoveOut } from "../moveout";
 import { chargeLabel, hasEnded, leaseLabel, moveOutStatus, preview } from "../moveout";
 import { InspectionsPanel } from "./InspectionsPanel";
@@ -52,6 +53,7 @@ export function MoveOutPage({ me }: { me: Me }) {
 
 function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
   const { said, error, record } = useRecord(refresh);
+  const { ask, prompt } = useConfirm();
   const today = day(new Date());
   const id = lease.lease_id;
   const [ends, setEnds] = useState(lease.ends_on ?? "");
@@ -70,7 +72,7 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
         className="flex flex-wrap items-end gap-3"
         onSubmit={(event) => {
           event.preventDefault();
-          record(`/api/move-out/${id}/end`, { ends_on: ends }, () => `The lease ends on ${ends}.`);
+          record(`/api/move-out/${id}/end`, { ends_on: ends }, () => `The lease ends on ${usDate(ends)}.`);
         }}
       >
         <Field label="Last day" id={`ends-${id}`} type="date" required value={ends}
@@ -107,14 +109,14 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
           <Badge tone={status.tone}>{status.label}</Badge>
         </div>
         <p className="text-sm text-ink-muted">
-          Lease {lease.starts_on} to {lease.ends_on ?? "month to month"} · owes {money(lease.owed)} ·
+          Lease {usDate(lease.starts_on)} to {lease.ends_on ? usDate(lease.ends_on) : "month to month"} · owes {money(lease.owed)} ·
           deposits held {money(lease.held)}
         </p>
         <InspectionsPanel leaseId={id} label={leaseLabel(lease)} />
         {lease.settled ? (
           <div className="flex flex-wrap items-center gap-3">
             <p className="text-sm" aria-label={`Returned, ${leaseLabel(lease)}`}>
-              Returned on {lease.settled.returned_on}: kept {money(lease.settled.kept)} of{" "}
+              Returned on {usDate(lease.settled.returned_on)}: kept {money(lease.settled.kept)} of{" "}
               {money(lease.settled.held)}, {money(lease.settled.returned)} back to the tenants.
             </p>
             <LinkButton href={`/api/reports/trust_report_deposit_return?arg=${id}&format=pdf`}>
@@ -153,8 +155,10 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
                     on,
                     owner_account: lease.owner_accounts.length > 1 ? owner : null,
                   };
-                  record<{ returned: string }>(`/api/move-out/${id}/return`, body,
-                    (done) => `Returned ${money(done.returned)} to the tenants; the rest paid what the lease owed.`);
+                  ask(`Return the deposit on ${usDate(on)}: keep ${money(next.kept)} for what the lease owes and`
+                    + ` pay ${money(next.returned)} back to the tenants?`, () =>
+                    record<{ returned: string }>(`/api/move-out/${id}/return`, body,
+                      (done) => `Returned ${money(done.returned)} to the tenants; the rest paid what the lease owed.`));
                 }}
               >
                 <Field label="Paid on" id={`on-${id}`} type="date" required value={on}
@@ -175,6 +179,7 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
                 </p>
               </form>
             ) : null}
+            {ended && prompt}
           </>
         )}
         <Notice tone="info">{said}</Notice>

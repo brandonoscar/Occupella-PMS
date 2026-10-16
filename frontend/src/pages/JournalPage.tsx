@@ -12,7 +12,7 @@ import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import type { Journal, JournalEntry, JournalLine } from "../journal";
 import { accountLabel, entryTone, entryTotal, mayPost, whyNotPost } from "../journal";
-import { day, money } from "../money";
+import { day, money, usDate } from "../money";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
@@ -154,11 +154,11 @@ function EntryRow({ journal, entry, refresh, say }: {
   const { error, record } = useRecord(refresh, say);
   const why = whyNotPost(journal, entry);
   return (
-    <li className="flex flex-col gap-2 py-4" aria-label={`${entry.event_on} ${entry.memo}`}>
+    <li className="flex flex-col gap-2 py-4" aria-label={`${usDate(entry.event_on)} ${entry.memo}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p>
           <span className="font-medium">{entry.memo}</span>
-          <span className="text-ink-muted"> · dated {entry.event_on} · proposed by {entry.proposed_by}</span>
+          <span className="text-ink-muted"> · dated {usDate(entry.event_on)} · proposed by {entry.proposed_by}</span>
         </p>
         <p className="flex items-center gap-3">
           <span className="font-medium">{money(entryTotal(entry))}</span>

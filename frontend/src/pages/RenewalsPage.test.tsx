@@ -32,7 +32,7 @@ describe("RenewalsPage", () => {
 
     const first = await screen.findByRole("row", { name: "Property 1, Unit 1" });
     expect(within(first).getAllByRole("cell").map((c) => c.textContent)).toEqual([
-      "Unit 1, Property 1", "Tenant 1", "2026-11-05 (in 20 days)", "$1,500.00", "No renewal",
+      "Unit 1, Property 1", "Tenant 1", "11/05/2026 (in 20 days)", "$1,500.00", "No renewal",
     ]);
     expect(within(first).getByRole("link").getAttribute("href")).toBe("/leases/l1");
     // A lease the page can't name unambiguously reads without a link.

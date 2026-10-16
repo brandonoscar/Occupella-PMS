@@ -23,7 +23,7 @@ describe("renters insurance", () => {
 
   it("reads what the lease asks and the policy on file", () => {
     expect(insuranceLine(ON_FILE)).toBe(
-      "Renters insurance required (at least $100,000.00 of liability): Carrier A RI-1 through 2027-01-31, $300,000.00 of liability",
+      "Renters insurance required (at least $100,000.00 of liability): Carrier A RI-1 through 01/31/2027, $300,000.00 of liability",
     );
     expect(insuranceLine({ ...ON_FILE, required: false, minimum_liability: null, carrier: null,
       policy_number: null, expires_on: null, liability_limit: null, standing: "none on file" }))
@@ -45,9 +45,9 @@ describe("rent changes", () => {
       id: "rc1", effective_on: "2026-12-01", monthly_rent: "1575.00", notice_given_on: "2026-10-15",
       served_by: "mail" as const, lease_terms: null,
     };
-    expect(rentChangeLine(change)).toBe("From 2026-12-01: $1,575.00 a month (notice by mail on 2026-10-15)");
+    expect(rentChangeLine(change)).toBe("From 12/01/2026: $1,575.00 a month (notice by mail on 10/15/2026)");
     expect(rentChangeLine({ ...change, served_by: "in person", lease_terms: "Section 4" })).toBe(
-      "From 2026-12-01: $1,575.00 a month (notice in person on 2026-10-15; Section 4)",
+      "From 12/01/2026: $1,575.00 a month (notice in person on 10/15/2026; Section 4)",
     );
   });
 
@@ -87,21 +87,21 @@ describe("rent", () => {
     const rent: OpenCharge = {
       id: "c", due_on: "2026-10-01", kind: "rent", memo: null, amount: "1500.00", open: "1500.00",
     };
-    expect(chargeLabel(rent)).toBe("2026-10-01 Rent: $1,500.00 open");
+    expect(chargeLabel(rent)).toBe("10/01/2026 Rent: $1,500.00 open");
     expect(chargeLabel({ ...rent, kind: "fee", open: "20.00", amount: "50.00" })).toBe(
-      "2026-10-01 Fee: $20.00 open of $50.00",
+      "10/01/2026 Fee: $20.00 open of $50.00",
     );
-    expect(chargeLabel({ ...rent, memo: "Rent due 2026-10-01" })).toBe(
-      "2026-10-01 Rent due 2026-10-01: $1,500.00 open",
+    expect(chargeLabel({ ...rent, memo: "Rent due 10/01/2026" })).toBe(
+      "10/01/2026 Rent due 10/01/2026: $1,500.00 open",
     );
   });
   it("reads a recurring charge", () => {
     const pet: RecurringCharge = {
       id: "r", kind: "fee", memo: "Pet rent", amount: "35.00", starts_on: "2026-01-01", ends_on: null,
     };
-    expect(recurringLabel(pet)).toBe("Pet rent: $35.00 a month from 2026-01-01");
+    expect(recurringLabel(pet)).toBe("Pet rent: $35.00 a month from 01/01/2026");
     expect(recurringLabel({ ...pet, kind: "credit", memo: "Concession", ends_on: "2026-07-01" })).toBe(
-      "Concession: credit of $35.00 a month from 2026-01-01, stops 2026-07-01",
+      "Concession: credit of $35.00 a month from 01/01/2026, stops 07/01/2026",
     );
   });
   it("says what the rent run charged", () => {

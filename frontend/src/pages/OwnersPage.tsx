@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Button, LinkButton } from "../components/Button";
+import { useConfirm } from "../components/Confirm";
 import { ContactCard } from "../components/ContactCard";
 import { EmptyState } from "../components/EmptyState";
 import { Field } from "../components/Field";
@@ -13,7 +14,7 @@ import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import type { Owner, OwnerRow as OwnerLine } from "../directory";
-import { day, money } from "../money";
+import { day, money, usDate } from "../money";
 import { Badge } from "../components/Badge";
 import type { CompanyFees, Fee, OwnerMoney } from "../payables";
 import {
@@ -28,6 +29,7 @@ import { requestId } from "../rent";
 import type { Paged } from "../rentals";
 import type { Portfolio } from "../setup";
 import { GoLink } from "./NeedsAttention";
+import { FilesCard } from "./FilesCard";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
@@ -154,6 +156,7 @@ export function OwnerPage({ me, id }: { me: Me; id: string }) {
               </ul>
             )}
           </Card>
+          <FilesCard kind="owner_document" aboutId={id} name={owner.name} />
         </>
       )}
     </Shell>
@@ -204,25 +207,32 @@ export function DrawForm({ owner, record }: { owner: OwnerMoney; record: Recorde
   const [id, setId] = useState(requestId);
   const [amount, setAmount] = useState("");
   const [on, setOn] = useState(day(new Date()));
+  const { ask, prompt } = useConfirm();
   return (
-    <form
-      className="flex flex-wrap items-end gap-3"
-      onSubmit={async (event) => {
-        event.preventDefault();
-        const body = { request_id: id, account: owner.account, amount: amount || null, on };
-        const said = (taken: { amount: string }) => `${money(taken.amount)} paid out to ${owner.owner}.`;
-        if (await record("/api/payables/draws", body, said)) {
-          setId(requestId());
-          setAmount("");
-        }
-      }}
-    >
-      <Field label="Draw amount (leave empty for all available)" id={`draw-${owner.account}`}
-        inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
-      <Field label="Paid out on" id={`draw-on-${owner.account}`} type="date" required value={on}
-        onChange={(e) => setOn(e.target.value)} />
-      <Button type="submit">Record draw</Button>
-    </form>
+    <>
+      <form
+        className="flex flex-wrap items-end gap-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          const body = { request_id: id, account: owner.account, amount: amount || null, on };
+          const said = (taken: { amount: string }) => `${money(taken.amount)} paid out to ${owner.owner}.`;
+          const paying = amount ? money(amount) : `all ${money(owner.available)} available`;
+          ask(`Pay ${paying} out to ${owner.owner} from ${owner.bank_account} on ${usDate(on)}?`, async () => {
+            if (await record("/api/payables/draws", body, said)) {
+              setId(requestId());
+              setAmount("");
+            }
+          });
+        }}
+      >
+        <Field label="Draw amount (leave empty for all available)" id={`draw-${owner.account}`}
+          inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
+        <Field label="Paid out on" id={`draw-on-${owner.account}`} type="date" required value={on}
+          onChange={(e) => setOn(e.target.value)} />
+        <Button type="submit">Record draw</Button>
+      </form>
+      {prompt}
+    </>
   );
 }
 
@@ -265,10 +275,6 @@ function FeesCard({ refresh }: { refresh: () => void }) {
   const [fees, setFees] = useState<Fee[] | null>(null);
   return (
     <Card title="Management fees">
-      <p className="mb-4 text-sm text-ink-muted">
-        Each agreement's fee for the period, from the rent and recurring fees collected in it, once
-        per period.
-      </p>
       <form
         className="flex flex-wrap items-end gap-3"
         onSubmit={(event) => {
@@ -310,10 +316,6 @@ function CompanyFeesCard({ fees, refresh }: { fees: CompanyFees[]; refresh: () =
   const today = day(new Date());
   return (
     <Card title="Company fees in trust">
-      <p className="mb-4 text-sm text-ink-muted">
-        Fees the company has earned are its own money: take them out of trust, by 25 days after
-        the oldest came in, so they don't mix with the money held for owners and tenants.
-      </p>
       {fees.length === 0 ? (
         <Notice tone="info">No operating trust bank account yet. Add one in Setup.</Notice>
       ) : (
@@ -333,6 +335,7 @@ function CompanyFeesRow({ fees, today, refresh }: { fees: CompanyFees; today: st
   const [amount, setAmount] = useState("");
   const [on, setOn] = useState(today);
   const due = companyFeesDue(fees, today);
+  const { ask, prompt } = useConfirm();
   return (
     <li className="flex flex-col gap-2 py-4" aria-label={fees.bank_account}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -343,14 +346,17 @@ function CompanyFeesRow({ fees, today, refresh }: { fees: CompanyFees; today: st
       {fees.since !== null && (
         <form
           className="flex flex-wrap items-end gap-3"
-          onSubmit={async (event) => {
+          onSubmit={(event) => {
             event.preventDefault();
             const body = { request_id: id, bank_account_id: fees.bank_account_id, amount: amount || null, on };
             const taken = (out: { amount: string }) => `${money(out.amount)} of the company's fees taken out.`;
-            if (await record("/api/payables/company-fees", body, taken)) {
-              setId(requestId());
-              setAmount("");
-            }
+            const paying = amount ? money(amount) : `all ${money(fees.held)}`;
+            ask(`Take ${paying} of the company's fees out of ${fees.bank_account} on ${usDate(on)}?`, async () => {
+              if (await record("/api/payables/company-fees", body, taken)) {
+                setId(requestId());
+                setAmount("");
+              }
+            });
           }}
         >
           <Field label="Amount (leave empty for all)" id={`company-fees-${fees.bank_account_id}`}
@@ -360,6 +366,7 @@ function CompanyFeesRow({ fees, today, refresh }: { fees: CompanyFees; today: st
           <Button type="submit">Take out company fees</Button>
         </form>
       )}
+      {prompt}
       <Notice tone="info">{said}</Notice>
       <Notice tone="error">{error}</Notice>
     </li>
@@ -378,7 +385,7 @@ function LeasingFeeCard({ books, refresh }: { books: Portfolio; refresh: () => v
   const { said, error, record } = useRecord(refresh);
   const leases = books.properties.flatMap((p) =>
     p.units.flatMap((u) =>
-      u.leases.map((l) => ({ id: l.id, property: p.id, label: `${p.name}, ${u.name} from ${l.starts_on}` })),
+      u.leases.map((l) => ({ id: l.id, property: p.id, label: `${p.name}, ${u.name} from ${usDate(l.starts_on)}` })),
     ),
   );
   const [lease, setLease] = useState(leases[0]?.id ?? "");

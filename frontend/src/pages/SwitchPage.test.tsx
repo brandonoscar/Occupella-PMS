@@ -119,7 +119,7 @@ describe("SwitchPage", () => {
     render(<SwitchPage me={ME} />);
     const tieOut = await screen.findByLabelText("Tie-out, Operating");
 
-    expect(tieOut.textContent).toContain("outstanding check: 2025-12-30 Check (1041)-$200.00");
+    expect(tieOut.textContent).toContain("outstanding check: 2025-12-30 Check (1041)($200.00)");
     expect(tieOut.textContent).toContain("signed off bynot signed off yet");
     expect(screen.getByText(/The bank's statement should open at \$1,200.00/)).toBeTruthy();
     fireEvent.change(screen.getByLabelText("Checks and deposits not cleared (CSV)"), {

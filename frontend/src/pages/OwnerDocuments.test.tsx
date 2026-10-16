@@ -17,7 +17,7 @@ describe("OwnerDocuments", () => {
     render(<OwnerDocuments />);
     const link = await screen.findByRole("link", { name: "Management agreement" });
     expect(link.getAttribute("href")).toBe("/api/owner/documents/d1/file");
-    expect(screen.getByLabelText("Your documents").textContent).toContain("(4 KB, 2026-10-01)");
+    expect(screen.getByLabelText("Your documents").textContent).toContain("(4 KB, 10/01/2026)");
   });
 
   it("says when there are none, and when they can't be read", async () => {

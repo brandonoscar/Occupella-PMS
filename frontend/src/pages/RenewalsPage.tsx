@@ -7,7 +7,7 @@ import { EmptyState } from "../components/EmptyState";
 import { Notice } from "../components/Notice";
 import { PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
-import { money } from "../money";
+import { money, usDate } from "../money";
 import type { Expiring } from "../workOrders";
 import { daysLeftLabel, RENEWAL } from "../workOrders";
 import { GoLink } from "./NeedsAttention";
@@ -49,7 +49,7 @@ export function RenewalsPage({ me }: { me: Me }) {
             </thead>
             <tbody>
               {leases.map((lease) => (
-                <tr key={`${lease.property} ${lease.unit} ${lease.ends_on}`} aria-label={`${lease.property}, ${lease.unit}`}>
+                <tr key={`${lease.property} ${lease.unit} ${usDate(lease.ends_on)}`} aria-label={`${lease.property}, ${lease.unit}`}>
                   <td>
                     {lease.lease_id ? (
                       <GoLink href={`/leases/${lease.lease_id}`} className={LINK}>{lease.unit}, {lease.property}</GoLink>
@@ -58,7 +58,7 @@ export function RenewalsPage({ me }: { me: Me }) {
                     )}
                   </td>
                   <td className="text-ink-muted">{lease.tenants}</td>
-                  <td>{lease.ends_on} <span className="text-ink-muted">({daysLeftLabel(lease.days_left)})</span></td>
+                  <td>{usDate(lease.ends_on)} <span className="text-ink-muted">({daysLeftLabel(lease.days_left)})</span></td>
                   <td className="text-right">{money(lease.monthly_rent)}</td>
                   <td><Badge tone={RENEWAL[lease.renewal].tone}>{RENEWAL[lease.renewal].word}</Badge></td>
                 </tr>

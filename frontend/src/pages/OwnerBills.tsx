@@ -5,7 +5,7 @@ import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Card } from "../components/Shell";
-import { money } from "../money";
+import { money, usDate } from "../money";
 
 export type OwnerBill = {
   id: string;
@@ -78,7 +78,7 @@ export function OwnerBills() {
                 {bill.vendor}, {bill.reference}: <span className="font-medium">{money(bill.amount)}</span>
               </p>
               <p className="text-sm text-ink-muted">
-                {bill.property}: {bill.memo}. Billed {bill.bill_date}, due {bill.due_on}. Over your
+                {bill.property}: {bill.memo}. Billed {usDate(bill.bill_date)}, due {usDate(bill.due_on)}. Over your
                 approval limit of {money(bill.approval_limit)}.
               </p>
               <div className="mt-2 flex flex-wrap items-end gap-3">
@@ -107,7 +107,7 @@ export function OwnerBills() {
             <li key={bill.id} className="flex flex-wrap items-center gap-2">
               <Badge tone={bill.decision === "approved" ? "positive" : "neutral"}>{bill.decision}</Badge>
               <span>
-                {bill.vendor}, {bill.reference} ({money(bill.amount)}) on {bill.decided_on} by {bill.decided_by}
+                {bill.vendor}, {bill.reference} ({money(bill.amount)}) on {usDate(bill.decided_on)} by {bill.decided_by}
                 {bill.reason ? `. ${bill.reason}` : ""}
               </span>
             </li>

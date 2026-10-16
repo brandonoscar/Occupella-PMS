@@ -84,10 +84,10 @@ describe("leaseSummary and kindLabel", () => {
       tenants: ["Tenant A", "Tenant B"],
     };
     expect(leaseSummary(lease)).toBe(
-      "Tenant A, Tenant B: 2026-10-01 to 2027-09-30, $1,500.00 a month",
+      "Tenant A, Tenant B: 10/01/2026 to 09/30/2027, $1,500.00 a month",
     );
     expect(leaseSummary({ ...lease, ends_on: null })).toBe(
-      "Tenant A, Tenant B: from 2026-10-01, month to month, $1,500.00 a month",
+      "Tenant A, Tenant B: from 10/01/2026, month to month, $1,500.00 a month",
     );
   });
   it("names the kinds of trust bank account", () => {

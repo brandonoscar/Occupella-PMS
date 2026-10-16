@@ -4,6 +4,7 @@ import { Notice } from "../components/Notice";
 import { Card } from "../components/Shell";
 import type { OwnerDocument } from "../documents";
 import { sizeLabel } from "../documents";
+import { usDate } from "../money";
 
 // The documents staff keep for the signed-in owner, to download.
 export function OwnerDocuments() {
@@ -29,7 +30,7 @@ export function OwnerDocuments() {
                 {d.title}
               </a>{" "}
               <span className="text-ink-muted">
-                ({sizeLabel(d.size)}, {d.uploaded_at.slice(0, 10)})
+                ({sizeLabel(d.size)}, {usDate(d.uploaded_at)})
               </span>
             </li>
           ))}

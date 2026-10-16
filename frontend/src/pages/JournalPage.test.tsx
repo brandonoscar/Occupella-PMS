@@ -74,17 +74,17 @@ describe("JournalPage", () => {
   it("lists entries with their lines in words, and posts one another staff member proposed", async () => {
     const fetch = server();
     render(<JournalPage me={ME} />);
-    const waiting = await screen.findByRole("listitem", { name: "2026-02-10 Rent deposited to the wrong property" });
+    const waiting = await screen.findByRole("listitem", { name: "02/10/2026 Rent deposited to the wrong property" });
 
     expect(within(waiting).getByTestId("status").textContent).toBe("waiting");
     expect(within(waiting).getByRole("row", { name: "Operating: Owner 1 / Property 1 Operating: Owner 2 / Property 2 $25.00" })).toBeTruthy();
     // Whoever proposed an entry doesn't post it: the page says so where the button would be.
-    const mine = row("2026-02-10 My own correction");
+    const mine = row("02/10/2026 My own correction");
     expect(within(mine).queryByRole("button", { name: "Post" })).toBeNull();
     expect(mine.textContent).toContain("You proposed it: another staff member who may approve posts it.");
-    expect(row("2026-02-10 Fee taken twice").textContent).toContain("Posted by Manager 1.");
-    expect(row("2026-02-10 Entered twice").textContent).toContain("Declined by Manager 1: Duplicate.");
-    expect(within(row("2026-02-10 Entered twice")).queryByRole("button")).toBeNull();
+    expect(row("02/10/2026 Fee taken twice").textContent).toContain("Posted by Manager 1.");
+    expect(row("02/10/2026 Entered twice").textContent).toContain("Declined by Manager 1: Duplicate.");
+    expect(within(row("02/10/2026 Entered twice")).queryByRole("button")).toBeNull();
 
     fireEvent.click(within(waiting).getByRole("button", { name: "Post" }));
     expect(await screen.findByText("Posted: Rent deposited to the wrong property.")).toBeTruthy();
@@ -132,7 +132,7 @@ describe("JournalPage", () => {
       "/api/journal/e1/post": "not enough money: the owner's account would be $0.01 short",
     });
     render(<JournalPage me={ME} />);
-    const waiting = await screen.findByRole("listitem", { name: "2026-02-10 Rent deposited to the wrong property" });
+    const waiting = await screen.findByRole("listitem", { name: "02/10/2026 Rent deposited to the wrong property" });
 
     fireEvent.click(within(waiting).getByRole("button", { name: "Post" }));
     expect((await within(waiting).findByRole("alert")).textContent).toBe(
@@ -149,7 +149,7 @@ describe("JournalPage", () => {
   it("says who may post, and shows an empty journal", async () => {
     server({ ...JOURNAL, may_post: false, entries: [entry({})] });
     render(<JournalPage me={{ ...ME, roles: [] }} />);
-    const waiting = await screen.findByRole("listitem", { name: "2026-02-10 Rent deposited to the wrong property" });
+    const waiting = await screen.findByRole("listitem", { name: "02/10/2026 Rent deposited to the wrong property" });
     expect(within(waiting).queryByRole("button", { name: "Post" })).toBeNull();
     expect(waiting.textContent).toContain("A staff member who may approve posts it.");
     cleanup();

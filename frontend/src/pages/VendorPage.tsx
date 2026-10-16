@@ -7,11 +7,12 @@ import { Notice } from "../components/Notice";
 import { RecordActions } from "../components/RecordActions";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
-import { money } from "../money";
+import { money, usDate } from "../money";
 import { standingTone } from "../vendors";
 import type { VendorPageData } from "../workOrders";
 import { STATUS } from "../workOrders";
 import { GoLink } from "./NeedsAttention";
+import { FilesCard } from "./FilesCard";
 import { STAFF_NAV } from "./staffNav";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
@@ -56,7 +57,7 @@ export function VendorPage({ me, id }: { me: Me; id: string }) {
                   <li key={policy.coverage} className="flex flex-wrap items-center gap-2">
                     <span className="first-letter:uppercase">{policy.coverage}</span>
                     <span className="text-ink-muted">
-                      {policy.carrier} {policy.policy_number}, {policy.starts_on} to {policy.expires_on}
+                      {policy.carrier} {policy.policy_number}, {usDate(policy.starts_on)} to {usDate(policy.expires_on)}
                     </span>
                     <Badge tone={standingTone(policy.standing)}>{policy.standing}</Badge>
                   </li>
@@ -84,7 +85,7 @@ export function VendorPage({ me, id }: { me: Me; id: string }) {
                       <tr key={bill.id} aria-label={bill.reference}>
                         <td>{bill.reference}</td>
                         <td className="text-ink-muted">{bill.owner}, {bill.property}</td>
-                        <td>{bill.bill_date}</td>
+                        <td>{usDate(bill.bill_date)}</td>
                         <td className="text-right">{money(bill.amount)}</td>
                         <td><Badge tone={bill.paid ? "positive" : "caution"}>{bill.paid ? "Paid" : "Unpaid"}</Badge></td>
                       </tr>
@@ -109,6 +110,7 @@ export function VendorPage({ me, id }: { me: Me; id: string }) {
               </ul>
             )}
           </Card>
+          <FilesCard kind="w9" aboutId={id} name={vendor.name} />
         </>
       )}
     </Shell>

@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Button } from "../components/Button";
 import { Field } from "../components/Field";
-import { day } from "../money";
+import { day, usDate } from "../money";
 import type { RentLease } from "../rent";
 
 type Recorder = <T>(path: string, body: object, done: (answer: T) => string) => Promise<boolean>;
@@ -19,7 +19,7 @@ export function InsuranceForms({ lease, record }: { lease: RentLease; record: Re
         onSubmit={async (event) => {
           event.preventDefault();
           const body = { required, minimum_liability: required && minimum ? minimum : null, starts_on: from };
-          const said = () => (required ? "Renters insurance is required from " : "Renters insurance is not required from ") + `${from}.`;
+          const said = () => (required ? "Renters insurance is required from " : "Renters insurance is not required from ") + `${usDate(from)}.`;
           if (await record(`/api/rent/leases/${lease.id}/renters-insurance-terms`, body, said)) setMinimum("");
         }}
       >

@@ -54,7 +54,7 @@ describe("Dashboard", () => {
     render(<DashboardPage me={ME} />);
 
     expect(await screen.findByText(
-      "Unit 1, Property 1 (Tenant A): $1,500.00 of rent past due since 2026-10-03 (10 days)",
+      "Unit 1, Property 1 (Tenant A): $1,500.00 of rent past due since 10/03/2026 (10 days)",
     )).toBeTruthy();
     const late = group("Late rent");
     expect(within(late).getByRole("heading").textContent).toBe("Late rent1");
@@ -92,7 +92,7 @@ describe("Dashboard", () => {
 
     const journal = await screen.findByRole("region", { name: "Journal entries waiting" });
     expect(within(journal).getByText(
-      "Rent deposited to the wrong property: $25.00, dated 2026-10-10, proposed by Bookkeeper 1",
+      "Rent deposited to the wrong property: $25.00, dated 10/10/2026, proposed by Bookkeeper 1",
     )).toBeTruthy();
     expect(within(journal).getByRole("link", { name: "Open Journal entries" }).getAttribute("href")).toBe("/journal");
   });
@@ -105,7 +105,7 @@ describe("Dashboard", () => {
     render(<DashboardPage me={ME} />);
 
     const insurance = await screen.findByRole("region", { name: "Vendor insurance" });
-    expect(within(insurance).getByText("Vendor 1, commercial auto: expired (2026-05-31)")).toBeTruthy();
+    expect(within(insurance).getByText("Vendor 1, commercial auto: expired (05/31/2026)")).toBeTruthy();
     expect(within(insurance).getByRole("link", { name: "Open Vendors" }).getAttribute("href")).toBe("/vendors");
   });
 
@@ -120,10 +120,10 @@ describe("Dashboard", () => {
 
     const fees = await screen.findByRole("region", { name: "Company fees in trust" });
     expect(within(fees).getByText(
-      "Operating trust: $150.00 of the company's fees, the oldest since 2026-09-10 (33 days); past 2026-10-05 to take them out",
+      "Operating trust: $150.00 of the company's fees, the oldest since 09/10/2026 (33 days); past 10/05/2026 to take them out",
     )).toBeTruthy();
     expect(within(fees).getByText(
-      "Second trust: $20.00 of the company's fees, the oldest since 2026-10-01 (12 days); take them out by 2026-10-26",
+      "Second trust: $20.00 of the company's fees, the oldest since 10/01/2026 (12 days); take them out by 10/26/2026",
     )).toBeTruthy();
     expect(within(fees).getByRole("link", { name: "Open Owners" }).getAttribute("href")).toBe("/owners");
   });

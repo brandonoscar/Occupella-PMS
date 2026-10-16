@@ -239,7 +239,7 @@ describe("OffersCard", () => {
     render(<OffersCard changed={1} />);
 
     const open = await screen.findByRole("listitem", { name: "Offer for Unit 2" });
-    expect(open.textContent).toContain("Renewal at Property 1, Unit 2: 2027-07-01 to month to month");
+    expect(open.textContent).toContain("Renewal at Property 1, Unit 2: 07/01/2027 to month to month");
     expect(within(open).getByText(/Tenant 2 \(t2@example.com\): not signed yet/)).toBeTruthy();
     expect(within(open).getByText(/Signed by 1 of 2\./)).toBeTruthy();
     expect(within(open).getByRole("link", { name: "Lease (PDF)" }).getAttribute("href")).toBe(
@@ -253,7 +253,7 @@ describe("OffersCard", () => {
     fireEvent.click(within(open).getByRole("button", { name: "Check signatures" }));
     fireEvent.click(within(open).getByRole("button", { name: "Make it the lease" }));
 
-    expect(await screen.findByText("Property 1, Unit 2 has its lease from 2027-07-01.")).toBeTruthy();
+    expect(await screen.findByText("Property 1, Unit 2 has its lease from 07/01/2027.")).toBeTruthy();
     expect(posts(fetch).map(([path]) => path)).toEqual([
       "/api/leasing/offers/o1/signatures",
       "/api/leasing/offers/o1/complete",

@@ -11,7 +11,7 @@ import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import type { LedgerAccount } from "../generalLedger";
 import { ledgerHref, monthToDate, nonZero } from "../generalLedger";
-import { day, money } from "../money";
+import { day, money, usDate } from "../money";
 import type { Paged } from "../rentals";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
@@ -100,7 +100,7 @@ function AccountCard({ account }: { account: LedgerAccount }) {
             </tr>
             {account.entries.map((entry, n) => (
               <tr key={n}>
-                <td className="whitespace-nowrap">{entry.posted_at.slice(0, 10)}</td>
+                <td className="whitespace-nowrap">{usDate(entry.posted_at)}</td>
                 <td>{entry.description}</td>
                 <td className="text-right">{nonZero(entry.debit) && money(entry.debit)}</td>
                 <td className="text-right">{nonZero(entry.credit) && money(entry.credit)}</td>

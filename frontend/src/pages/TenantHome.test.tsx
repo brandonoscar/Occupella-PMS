@@ -82,12 +82,12 @@ describe("what comes up", () => {
     const pet = { what: "Pet rent", kind: "fee" as const, amount: "35.00", starts_on: "2026-02-01", ends_on: null };
     expect(monthlyLabel(pet, "2026-10-13")).toBe("Pet rent: $35.00");
     expect(monthlyLabel({ ...pet, what: "Parking", kind: "credit", ends_on: "2026-12-01" }, "2026-10-13")).toBe(
-      "Parking: $35.00 off, until 2026-12-01",
+      "Parking: $35.00 off, until 12/01/2026",
     );
-    expect(monthlyLabel({ ...pet, starts_on: "2026-11-01" }, "2026-10-13")).toBe("Pet rent: $35.00, from 2026-11-01");
+    expect(monthlyLabel({ ...pet, starts_on: "2026-11-01" }, "2026-10-13")).toBe("Pet rent: $35.00, from 11/01/2026");
     const key = { due_on: "2026-10-23", kind: "fee" as const, memo: "Key replacement", open: "50.00" };
-    expect(comingDueLabel(key)).toBe("2026-10-23 Key replacement: $50.00");
-    expect(comingDueLabel({ ...key, kind: "rent", memo: null, open: "1500.00" })).toBe("2026-10-23 Rent: $1,500.00");
+    expect(comingDueLabel(key)).toBe("10/23/2026 Key replacement: $50.00");
+    expect(comingDueLabel({ ...key, kind: "rent", memo: null, open: "1500.00" })).toBe("10/23/2026 Rent: $1,500.00");
   });
 });
 
@@ -112,7 +112,7 @@ describe("TenantHome", () => {
     const card = (await screen.findByRole("heading", { name: "Coming up" })).closest("section") as HTMLElement;
     expect(within(card).getByText("Rent: $1,500.00")).toBeTruthy();
     expect(within(card).getByText("Pet rent: $35.00")).toBeTruthy();
-    expect(within(card).getByText("2099-01-01 Key replacement: $50.00")).toBeTruthy();
+    expect(within(card).getByText("01/01/2099 Key replacement: $50.00")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Deposit statement (PDF)" }).getAttribute("href")).toBe(
       "/api/tenant/leases/1/deposit-return/download?format=pdf",
     );
@@ -147,10 +147,10 @@ describe("TenantHome", () => {
     expect(screen.getByTestId("balance-due").className).toContain("text-xl");
     expect(screen.getByTestId("balance-due").className).not.toContain("font-mono");
     expect(screen.getByText("Tenant 1, Tenant 2")).toBeTruthy();
-    expect(await screen.findByText("Balance at the end of 2026-10-11")).toBeTruthy();
-    const rent = screen.getByRole("row", { name: /^2026-01-01 Rent/ });
+    expect(await screen.findByText("Balance at the end of 10/11/2026")).toBeTruthy();
+    const rent = screen.getByRole("row", { name: /^01\/01\/2026 Rent/ });
     expect(within(rent).getAllByRole("cell").map((cell) => cell.textContent)).toEqual([
-      "2026-01-01", "Rent", "$1,500.00", "", "$1,500.00",
+      "01/01/2026", "Rent", "$1,500.00", "", "$1,500.00",
     ]);
     expect(screen.queryByText("Lease renewal")).toBeNull();
     expect(screen.getByRole("link", { name: "PDF" }).getAttribute("href")).toBe(
@@ -187,7 +187,7 @@ describe("TenantHome", () => {
     render(<TenantHome me={ME} />);
 
     expect(await screen.findByText(
-      "$1,500.00 a month; $1,575.00 from 2026-12-01 (notice given 2026-10-15)",
+      "$1,500.00 a month; $1,575.00 from 12/01/2026 (notice given 10/15/2026)",
     )).toBeTruthy();
   });
 
@@ -208,7 +208,7 @@ describe("TenantHome", () => {
     render(<TenantHome me={ME} />);
 
     expect((await screen.findByTestId("renters-insurance")).textContent).toBe(
-      "Renters insurance required: Carrier A RI-1 through 2026-11-30 (expires in 20 days)",
+      "Renters insurance required: Carrier A RI-1 through 11/30/2026 (expires in 20 days)",
     );
     fireEvent.change(screen.getByLabelText("Insurer"), { target: { value: "Carrier B" } });
     fireEvent.change(screen.getByLabelText("Policy number"), { target: { value: "RI-2" } });

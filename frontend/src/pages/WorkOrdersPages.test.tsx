@@ -68,7 +68,7 @@ describe("WorkOrdersPage", () => {
 
     const row = await screen.findByRole("row", { name: "Leak under the sink" });
     expect(within(row).getAllByRole("cell").map((c) => c.textContent)).toEqual([
-      "Leak under the sink", "Unit 1, Property 1", "2026-10-01", "Assigned", "Vendor 1", "$80.00",
+      "Leak under the sink", "Unit 1, Property 1", "10/01/2026", "Assigned", "Vendor 1", "$80.00",
     ]);
     expect(within(row).getByRole("link").getAttribute("href")).toBe("/work-orders/w1");
     fireEvent.click(screen.getByRole("tab", { name: "Closed" }));
@@ -126,8 +126,8 @@ describe("WorkOrderPage", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "Leak under the sink" })).toBeTruthy();
     expect(screen.getByRole("link", { name: "Unit 1" }).getAttribute("href")).toBe("/units/u1");
-    expect(screen.getByTestId("request").textContent).toBe("Requested by Tenant 1 on 2026-09-30: Drip");
-    expect(screen.getByRole("list", { name: "Steps" }).textContent).toBe("assigned 2026-10-02, to Vendor 1: Tuesday");
+    expect(screen.getByTestId("request").textContent).toBe("Requested by Tenant 1 on 09/30/2026: Drip");
+    expect(screen.getByRole("list", { name: "Steps" }).textContent).toBe("assigned 10/02/2026, to Vendor 1: Tuesday");
     expect(within(screen.getByRole("row", { name: "INV-1" })).getAllByRole("cell").map((c) => c.textContent)).toEqual([
       "Vendor 1", "INV-1", "$80.00", "Paid",
     ]);

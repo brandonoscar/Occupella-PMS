@@ -19,9 +19,9 @@ describe("payables", () => {
       bank_account_id: "b1", bank_account: "Operating", held: "1234.50", since: "2026-10-01",
       days_held: 1, take_by: "2026-10-26",
     };
-    expect(companyFeesLabel(held)).toBe("$1,234.50 of the company's fees, the oldest since 2026-10-01 (1 day)");
-    expect(companyFeesDue(held, "2026-10-26")).toEqual({ word: "take out by 2026-10-26", late: false });
-    expect(companyFeesDue(held, "2026-10-27")).toEqual({ word: "take out: past 2026-10-26", late: true });
+    expect(companyFeesLabel(held)).toBe("$1,234.50 of the company's fees, the oldest since 10/01/2026 (1 day)");
+    expect(companyFeesDue(held, "2026-10-26")).toEqual({ word: "take out by 10/26/2026", late: false });
+    expect(companyFeesDue(held, "2026-10-27")).toEqual({ word: "take out: past 10/26/2026", late: true });
     const none = { ...held, held: "0.00", since: null, days_held: null, take_by: null };
     expect(companyFeesLabel(none)).toBe("None of the company's fees is held here.");
     expect(companyFeesDue(none, "2026-10-27")).toBeNull();
@@ -41,9 +41,9 @@ describe("payables", () => {
       starts_on: "2026-01-01", ends_on: null, expense_account_id: null, expense_account: null,
     };
     expect(recurringLabel(bill)).toBe(
-      "Vendor 1: $80.00 on day 5 of each month from 2026-01-01, Owner 1, Property 1 (LAWN)",
+      "Vendor 1: $80.00 on day 5 of each month from 01/01/2026, Owner 1, Property 1 (LAWN)",
     );
-    expect(recurringLabel({ ...bill, ends_on: "2026-12-31" })).toContain("until 2026-12-31,");
+    expect(recurringLabel({ ...bill, ends_on: "2026-12-31" })).toContain("until 12/31/2026,");
   });
 
   it("links an owner's income statement from the first of the year through today", () => {

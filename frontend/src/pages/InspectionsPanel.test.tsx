@@ -32,7 +32,7 @@ describe("InspectionsPanel", () => {
     expect(fetch).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("button", { name: "Inspections" }));
 
-    expect(await screen.findByText("Move-in, 2026-01-01: 1 room")).toBeTruthy();
+    expect(await screen.findByText("Move-in, 01/01/2026: 1 room")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Inspection report (PDF)" }).getAttribute("href")).toBe(
       "/api/reports/trust_report_inspection?arg=l1&format=pdf",
     );
@@ -45,7 +45,7 @@ describe("InspectionsPanel", () => {
     fireEvent.change(screen.getByLabelText("Room 5"), { target: { value: "Garage" } });
     fireEvent.click(screen.getByRole("button", { name: "Record inspection" }));
 
-    expect(await screen.findByText("The move-out inspection of 2026-06-30 is recorded.")).toBeTruthy();
+    expect(await screen.findByText("The move-out inspection of 06/30/2026 is recorded.")).toBeTruthy();
     const [path, init] = fetch.mock.calls.find(([, i]) => i?.method === "POST") ?? [];
     expect(path).toBe("/api/inspections");
     expect(JSON.parse(String(init?.body))).toEqual({

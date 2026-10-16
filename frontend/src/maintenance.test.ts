@@ -16,8 +16,8 @@ describe("maintenance status", () => {
   });
 
   it("shows a time in UTC to the minute, whatever the browser's zone", () => {
-    expect(when("2026-10-11T18:05:09.123456Z")).toBe("2026-10-11 18:05 UTC");
-    expect(when("2026-10-11T20:05:00+02:00")).toBe("2026-10-11 18:05 UTC");
+    expect(when("2026-10-11T18:05:09.123456Z")).toBe("10/11/2026 18:05 UTC");
+    expect(when("2026-10-11T20:05:00+02:00")).toBe("10/11/2026 18:05 UTC");
     expect(when("not a time")).toBe("not a time");
   });
 });

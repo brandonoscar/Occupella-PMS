@@ -46,7 +46,7 @@ describe("GeneralLedgerPage", () => {
     expect(within(table).getAllByRole("row").slice(1).map((row) =>
       within(row).getAllByRole("cell").map((c) => c.textContent))).toEqual([
       ["Prior balance", "$1,000.00"],
-      ["2026-10-03", "pmc_income: Synthetic PMC - Fee", "$80.00", "", "$920.00"],
+      ["10/03/2026", "pmc_income: Synthetic PMC - Fee", "$80.00", "", "$920.00"],
       ["Total", "$80.00", "$0.00", "$920.00"],
     ]);
     expect(fetch.mock.calls[0]?.[0]).toBe("/api/general-ledger?from=2026-10-01&to=2026-10-16&page=1");

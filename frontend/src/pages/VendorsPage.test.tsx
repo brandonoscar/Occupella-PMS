@@ -51,7 +51,7 @@ describe("VendorsPage", () => {
     const first = await screen.findByRole("listitem", { name: "Vendor 1" });
     expect(within(first).getByText("W-9 on file")).toBeTruthy();
     const liability = within(first).getByRole("listitem", { name: "Vendor 1, general liability" });
-    expect(liability.textContent).toContain("Carrier A GL-1, 2025-07-01 to 2026-07-15, limit $1,000,000.00");
+    expect(liability.textContent).toContain("Carrier A GL-1, 07/01/2025 to 07/15/2026, limit $1,000,000.00");
     expect(within(liability).getByTestId("standing").textContent).toBe("expires in 15 days");
     expect(within(first).getByRole("listitem", { name: "Vendor 1, commercial auto" }).textContent).not.toContain("limit");
     const second = screen.getByRole("listitem", { name: "Vendor 2" });

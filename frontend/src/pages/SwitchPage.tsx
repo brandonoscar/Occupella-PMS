@@ -74,10 +74,6 @@ function RosterCard() {
   const columns = ROSTER.find((r) => r.kind === kind)?.columns;
   return (
     <Card title="Bring the roster in">
-      <p className="mb-4 text-sm text-ink-muted">
-        One CSV file at a time, in this order. Names are matched exactly, so a file sent again adds
-        nothing twice.
-      </p>
       <form
         className="flex flex-wrap items-end gap-3"
         onSubmit={(event) => {
@@ -108,10 +104,6 @@ function VendorPaymentsCard() {
   const [content, setContent] = useState<string | null>(null);
   return (
     <Card title="Vendor payments before the cutover">
-      <p className="mb-4 text-sm text-ink-muted">
-        What the old system paid each vendor in the cutover&apos;s year, so the year&apos;s vendor
-        payments (for 1099s) count it. A January 1 cutover carries over the whole year before.
-      </p>
       <form
         className="flex flex-wrap items-end gap-3"
         onSubmit={(event) => {

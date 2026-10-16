@@ -16,6 +16,7 @@ import type { Paged, Property, PropertyRow, Unit } from "../rentals";
 import { LEASE_STATUS, occupancy, rentLabel, termLabel, unitState } from "../rentals";
 import { GoLink } from "./NeedsAttention";
 import { LeaseRow } from "./RentPage";
+import { FilesCard } from "./FilesCard";
 import { STAFF_NAV } from "./staffNav";
 
 function detail(failed: unknown): string {
@@ -277,6 +278,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
           <ul className="flex flex-col">
             <LeaseRow lease={lease} refresh={refresh} />
           </ul>
+          <FilesCard kind="move_out_photo" aboutId={id} name={`${lease.unit}, ${lease.property}`} />
         </>
       )}
     </Shell>

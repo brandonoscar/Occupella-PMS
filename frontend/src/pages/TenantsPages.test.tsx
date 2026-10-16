@@ -126,8 +126,8 @@ describe("TenantPage", () => {
     expect(contact.textContent).toContain("100 Example Street, Apt 2Sampletown, ZZ 00000");
     const rows = screen.getAllByRole("row", { name: "Property 1, Unit 1" });
     expect(rows.map((row) => within(row).getAllByRole("cell").map((c) => c.textContent))).toEqual([
-      ["Unit 1, Property 1", "From 2026-01-01, month to month", "Current", "$1,500.00", "$50.00"],
-      ["Unit 1, Property 1", "2025-01-01 to 2025-12-31", "Ended", "$1,500.00", "$0.00"],
+      ["Unit 1, Property 1", "From 01/01/2026, month to month", "Current", "$1,500.00", "$50.00"],
+      ["Unit 1, Property 1", "01/01/2025 to 12/31/2025", "Ended", "$1,500.00", "$0.00"],
     ]);
     expect(within(rows[0]!).getByRole("link").getAttribute("href")).toBe("/leases/l1");
   });

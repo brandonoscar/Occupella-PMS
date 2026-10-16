@@ -142,6 +142,7 @@ describe("LeasingCard", () => {
     );
     fireEvent.click(within(open).getByRole("button", { name: "Record decision" }));
 
+    expect(await screen.findByText("Decision on Applicant A recorded.")).toBeTruthy();
     await vi.waitFor(() => expect(posts(fetch)).toHaveLength(1));
     const [path, body] = posts(fetch)[0] as [string, Record<string, unknown>];
     expect(path).toBe("/api/leasing/applications/a1/decide");
@@ -162,6 +163,7 @@ describe("LeasingCard", () => {
     const open = await screen.findByRole("listitem", { name: "Application from Applicant A" });
     expect(within(open).queryByLabelText("Reasons, one a line")).toBeNull();
     fireEvent.click(within(open).getByRole("button", { name: "Screen" }));
+    expect(await screen.findByText("Sent for screening.")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Notice (PDF)" }).getAttribute("href")).toBe(
       "/api/leasing/applications/a2/notice",
     );

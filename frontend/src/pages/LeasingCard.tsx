@@ -7,7 +7,7 @@ import { Card } from "../components/Shell";
 import type { Application, Decision } from "../leasing";
 import { incomeMultiple, needsNotice, recommendationLabel } from "../leasing";
 import { when } from "../maintenance";
-import { day, money } from "../money";
+import { day, money, usDate } from "../money";
 
 type Unit = { unit_id: string; property: string; unit: string; leased_today: boolean };
 type Link = {
@@ -55,6 +55,7 @@ export function LeasingCard({
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [descriptions, setDescriptions] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
+  const [said, setSaid] = useState("");
 
   function show(failed: unknown) {
     setError(failed instanceof ApiError ? failed.detail : String(failed));
@@ -70,10 +71,13 @@ export function LeasingCard({
     refresh();
   }, []);
 
-  async function act(work: () => Promise<unknown>) {
+  // Runs one write and says what it did (`done`), or shows why it was refused.
+  async function act(work: () => Promise<unknown>, done = "") {
     setError("");
+    setSaid("");
     try {
       await work();
+      setSaid(done);
       refresh();
       onChange?.();
     } catch (failed) {
@@ -112,6 +116,7 @@ export function LeasingCard({
             }
           : null,
       }),
+      `Decision on ${application.applicants.map((a) => a.name).join(", ")} recorded.`,
     );
   }
 
@@ -120,6 +125,7 @@ export function LeasingCard({
 
   return (
     <Card title={{ all: "Leasing", links: "Application links", applications: "Applications" }[part]}>
+      <Notice tone="info">{said}</Notice>
       <Notice tone="error">{error}</Notice>
       {part !== "applications" && (
       <>
@@ -177,12 +183,13 @@ export function LeasingCard({
               <span className="flex gap-2">
                 {link.listing_id && (
                   <Button variant="ghost"
-                    onClick={() => act(() => api.post(`/api/leasing/listings/${link.listing_id}/remove`))}>
+                    onClick={() => act(() => api.post(`/api/leasing/listings/${link.listing_id}/remove`),
+                      "Taken off the public page.")}>
                     Take off the page
                   </Button>
                 )}
                 <Button variant="ghost"
-                  onClick={() => act(() => api.post(`/api/leasing/links/${link.id}/close`))}>
+                  onClick={() => act(() => api.post(`/api/leasing/links/${link.id}/close`), "Link closed.")}>
                   Close
                 </Button>
               </span>
@@ -196,6 +203,7 @@ export function LeasingCard({
                     api.post(`/api/leasing/links/${link.id}/listing`, {
                       description: (descriptions[link.id] ?? "").trim() || null,
                     }),
+                    "Listed on the public page.",
                   );
                 }}
               >
@@ -237,7 +245,7 @@ export function LeasingCard({
                 aria-label={`Application from ${application.applicants[0]?.name ?? ""}`}>
                 <p>
                   {application.applicants.map((a) => a.name).join(", ")} for {application.unit},{" "}
-                  moving in {application.move_in_on}.
+                  moving in {usDate(application.move_in_on)}.
                 </p>
                 <p className="text-sm text-ink-subtle">
                   Income {money(application.monthly_income)} a month,{" "}
@@ -252,7 +260,8 @@ export function LeasingCard({
                 ))}
                 <div>
                   <Button variant="secondary"
-                    onClick={() => act(() => api.post(`/api/leasing/applications/${application.id}/screen`))}>
+                    onClick={() => act(() => api.post(`/api/leasing/applications/${application.id}/screen`),
+                      "Sent for screening.")}>
                     Screen
                   </Button>
                 </div>

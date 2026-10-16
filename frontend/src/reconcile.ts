@@ -1,6 +1,6 @@
 // Staff's month-end as the API sends it (src/pms/api/reconcile.py), and how it reads.
 import type { Me } from "./api";
-import { day, money } from "./money";
+import { day, money, usDate } from "./money";
 
 export type StatementRow = {
   id: string;
@@ -126,11 +126,11 @@ export function formatOf(name: string): "csv" | "ofx" {
 
 export function lineLabel(line: OpenLine): string {
   const ref = line.reference ? ` (${line.reference})` : "";
-  return `${line.posted_on} ${line.description || "No description"}${ref}: ${money(line.amount)}`;
+  return `${usDate(line.posted_on)} ${line.description || "No description"}${ref}: ${money(line.amount)}`;
 }
 
 export function transferLabel(transfer: OpenTransfer): string {
-  return `${transfer.on} ${transfer.memo ?? "No memo"}: ${money(transfer.amount)}`;
+  return `${usDate(transfer.on)} ${transfer.memo ?? "No memo"}: ${money(transfer.amount)}`;
 }
 
 // A period ends at midnight UTC after its last day; the day staff read is that last day.
@@ -140,7 +140,7 @@ export function lastDayOf(periodEnd: string): string {
 
 export function itemLabel(item: OpenItem): string {
   const ref = item.reference ? ` (${item.reference})` : "";
-  return `${item.issued_on} ${item.description}${ref}, from before the cutover: ${money(item.amount)}`;
+  return `${usDate(item.issued_on)} ${item.description}${ref}, from before the cutover: ${money(item.amount)}`;
 }
 
 // Who may approve a prepared period: anyone but its preparer, holding the approve role.

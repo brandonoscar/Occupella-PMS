@@ -84,12 +84,15 @@ const ROWS: Paged<OwnerRow> = {
   per_page: 50,
 };
 
+const NO_FILES = { documents: [], subjects: { w9: [], receipt: [], move_out_photo: [], owner_document: [] } };
+
 function server(answers: Record<string, unknown> = {}, refuse: Record<string, string> = {}) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method !== "POST") {
       const read = path === "/api/setup" ? BOOKS
         : path === "/api/payables/company-fees" ? COMPANY_FEES
         : path === "/api/owners/o1" ? OWNER
+        : path === "/api/documents" ? NO_FILES
         : (answers[path] ?? ROWS);
       return new Response(JSON.stringify(read), { status: 200 });
     }
@@ -142,6 +145,8 @@ describe("OwnerPage", () => {
     expect(second.textContent).toContain("No management agreement: no reserve is kept and no fee is taken.");
     expect(within(first).getByRole("link", { name: "Property 1" }).getAttribute("href")).toBe("/properties/pr1");
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Owner 1");
+    // Their documents are on their Files card.
+    expect(await screen.findByLabelText("Owner document file")).toBeTruthy();
     expect(screen.getByRole("group", { name: "Contact details, Owner 1" }).textContent).toContain(
       "No contact details yet.",
     );
@@ -161,11 +166,16 @@ describe("OwnerPage", () => {
 
     fireEvent.change(within(first).getByLabelText("Paid out on"), { target: { value: "2026-10-10" } });
     fireEvent.click(within(first).getByRole("button", { name: "Record draw" }));
+    fireEvent.click(within(first).getByRole("button", { name: "Confirm" }));
     expect(await within(first).findByText("$800.00 paid out to Owner 1.")).toBeTruthy();
     fireEvent.change(within(first).getByLabelText("Draw amount (leave empty for all available)"), {
       target: { value: "50.00" },
     });
     fireEvent.click(within(first).getByRole("button", { name: "Record draw" }));
+    expect(within(first).getByRole("alertdialog").getAttribute("aria-label")).toBe(
+      "Pay $50.00 out to Owner 1 from Operating on 10/10/2026?",
+    );
+    fireEvent.click(within(first).getByRole("button", { name: "Confirm" }));
     await vi.waitFor(() => expect(posted(fetch)).toHaveLength(2));
 
     fireEvent.change(within(first).getByLabelText("Contribution received"), { target: { value: "250.00" } });
@@ -194,12 +204,12 @@ describe("OwnersPage's fees", () => {
     const operating = await screen.findByRole("listitem", { name: "Operating" });
 
     expect(within(operating).getByTestId("company-fees").textContent).toBe(
-      "$150.00 of the company's fees, the oldest since 2000-01-01 (40 days)",
+      "$150.00 of the company's fees, the oldest since 01/01/2000 (40 days)",
     );
-    const late = within(operating).getByText("take out: past 2000-01-26");
+    const late = within(operating).getByText("take out: past 01/26/2000");
     expect(late.closest("[data-tone]")?.getAttribute("data-tone")).toBe("danger");
     const second = screen.getByRole("listitem", { name: "Second operating" });
-    const due = within(second).getByText("take out by 2999-01-01");
+    const due = within(second).getByText("take out by 01/01/2999");
     expect(due.closest("[data-tone]")?.getAttribute("data-tone")).toBe("caution");
     // Nothing held: nothing to take out, and no day to take it by.
     const third = screen.getByRole("listitem", { name: "Third operating" });
@@ -208,11 +218,24 @@ describe("OwnersPage's fees", () => {
 
     fireEvent.change(within(operating).getByLabelText("Paid out on"), { target: { value: "2026-10-12" } });
     fireEvent.click(within(operating).getByRole("button", { name: "Take out company fees" }));
+    expect(within(operating).getByRole("alertdialog").getAttribute("aria-label")).toBe(
+      "Take all $150.00 of the company's fees out of Operating on 10/12/2026?",
+    );
+    fireEvent.click(within(operating).getByRole("button", { name: "Confirm" }));
     expect(await within(operating).findByText("$150.00 of the company's fees taken out.")).toBeTruthy();
     fireEvent.change(within(operating).getByLabelText("Amount (leave empty for all)"), {
       target: { value: "10.00" },
     });
+    // Cancel sends nothing; asked again, confirming sends it.
     fireEvent.click(within(operating).getByRole("button", { name: "Take out company fees" }));
+    fireEvent.click(within(operating).getByRole("button", { name: "Cancel" }));
+    expect(within(operating).queryByRole("alertdialog")).toBeNull();
+    expect(posted(fetch)).toHaveLength(1);
+    fireEvent.click(within(operating).getByRole("button", { name: "Take out company fees" }));
+    expect(within(operating).getByRole("alertdialog").getAttribute("aria-label")).toBe(
+      "Take $10.00 of the company's fees out of Operating on 10/12/2026?",
+    );
+    fireEvent.click(within(operating).getByRole("button", { name: "Confirm" }));
     await vi.waitFor(() => expect(posted(fetch)).toHaveLength(2));
 
     const [all, some] = posted(fetch) as [string, Record<string, unknown>][];
@@ -228,6 +251,7 @@ describe("OwnersPage's fees", () => {
     const operating = await screen.findByRole("listitem", { name: "Operating" });
 
     fireEvent.click(within(operating).getByRole("button", { name: "Take out company fees" }));
+    fireEvent.click(within(operating).getByRole("button", { name: "Confirm" }));
 
     expect(await within(operating).findByText("Clerk 1 may not pay out money (the disburse role)")).toBeTruthy();
   });
@@ -238,6 +262,7 @@ describe("OwnersPage's fees", () => {
     const second = await owner("Owner 1, Property 2");
 
     fireEvent.click(within(second).getByRole("button", { name: "Record draw" }));
+    fireEvent.click(within(second).getByRole("button", { name: "Confirm" }));
 
     expect(await within(second).findByText("0.00 is available to draw")).toBeTruthy();
   });
@@ -309,6 +334,7 @@ describe("OwnersPage's fees", () => {
             path === "/api/setup" ? { ...BOOKS, properties: [] }
               : path.startsWith("/api/owners?") ? { ...ROWS, items: [], total: 0 }
               : path === "/api/owners/o1" ? { ...OWNER, accounts: [] }
+              : path === "/api/documents" ? NO_FILES
               : [],
           ),
           { status: 200 },

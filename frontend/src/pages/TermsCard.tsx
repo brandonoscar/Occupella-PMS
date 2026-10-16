@@ -7,6 +7,7 @@ import { Card } from "../components/Shell";
 import { agreementSummary } from "../setup";
 import type { CardProps } from "./useAdd";
 import { useAdd } from "./useAdd";
+import { usDate } from "../money";
 
 const BLANK = {
   account: "",
@@ -40,7 +41,7 @@ export function TermsCard({ books, refresh }: CardProps) {
             {a.owner}, {a.property}:{" "}
             <span className="text-sm text-ink-muted">
               {a.agreement
-                ? `${agreementSummary(a.agreement)} (from ${a.agreement.starts_on})`
+                ? `${agreementSummary(a.agreement)} (from ${usDate(a.agreement.starts_on)})`
                 : "no terms in force"}
             </span>
           </li>

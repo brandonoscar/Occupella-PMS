@@ -57,9 +57,9 @@ describe("OwnerHome", () => {
       .getAllByRole("row")
       .map((row) => within(row).queryAllByRole("cell").map((cell) => cell.textContent));
     expect(rows.slice(2, 5)).toEqual([
-      ["2026-09-04", "Received · Operating trust account", "$1,430.00", "$1,680.00"],
-      ["2026-09-30", "Management fee 2026-09 · Synthetic PMC", "-$143.00", "$1,537.00"],
-      ["2026-09-30", "Owner draw · Operating trust account", "-$1,287.00", "$250.00"],
+      ["09/04/2026", "Received · Operating trust account", "$1,430.00", "$1,680.00"],
+      ["09/30/2026", "Management fee 2026-09 · Synthetic PMC", "($143.00)", "$1,537.00"],
+      ["09/30/2026", "Owner draw · Operating trust account", "($1,287.00)", "$250.00"],
     ]);
     // No ledger kind reaches the owner, and money is in the page's own face, not mono.
     expect(statement.textContent).not.toMatch(/bank_cash|pmc_income/);

@@ -4,6 +4,7 @@ import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
+import { useConfirm } from "../components/Confirm";
 import { EmptyState } from "../components/EmptyState";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
@@ -11,7 +12,7 @@ import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Tabs } from "../components/Tabs";
-import { day, money } from "../money";
+import { day, money, usDate } from "../money";
 import type { Bill, OutboxEmail, Recurring } from "../payables";
 import { emailNote, nextStep, recurringLabel, statusTone } from "../payables";
 import type { ExpenseAccount, Portfolio } from "../setup";
@@ -175,7 +176,7 @@ function BillRow({ bill, books, refresh, say }: {
         <p>
           <span className="font-medium">{bill.vendor} {bill.reference}</span>
           <span className="text-ink-muted">
-            {" "}· {bill.owner}, {bill.property} · {bill.memo} · dated {bill.bill_date}, due {bill.due_on}
+            {" "}· {bill.owner}, {bill.property} · {bill.memo} · dated {usDate(bill.bill_date)}, due {usDate(bill.due_on)}
           </span>
         </p>
         <p className="flex items-center gap-3">
@@ -277,18 +278,25 @@ function StepForm({ bill, step, record }: { bill: Bill; step: string; record: Re
   const done = step === "Pay"
     ? `${bill.reference} is paid.`
     : `${money(bill.amount)} is set aside for ${bill.reference}.`;
+  const { ask, prompt } = useConfirm();
+  const send = () => record(`/api/payables/bills/${bill.id}/${path}`, { on }, () => done);
   return (
-    <form
-      className="flex flex-wrap items-end gap-3"
-      onSubmit={(event) => {
-        event.preventDefault();
-        record(`/api/payables/bills/${bill.id}/${path}`, { on }, () => done);
-      }}
-    >
-      <Field label={step === "Pay" ? "Paid on" : "Set aside on"} id={`${path}-on-${bill.id}`}
-        type="date" required value={on} onChange={(e) => setOn(e.target.value)} />
-      <Button type="submit" variant="secondary">{step}</Button>
-    </form>
+    <>
+      <form
+        className="flex flex-wrap items-end gap-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          // Paying sends the money out of trust: staff confirm the amount first.
+          if (step === "Pay") ask(`Pay ${money(bill.amount)} to ${bill.vendor} for ${bill.reference} on ${usDate(on)}?`, send);
+          else send();
+        }}
+      >
+        <Field label={step === "Pay" ? "Paid on" : "Set aside on"} id={`${path}-on-${bill.id}`}
+          type="date" required value={on} onChange={(e) => setOn(e.target.value)} />
+        <Button type="submit" variant="secondary">{step}</Button>
+      </form>
+      {prompt}
+    </>
   );
 }
 
@@ -355,7 +363,7 @@ function RecurringLine({ bill, books, record }: { bill: Recurring; books: Portfo
             onSubmit={async (event) => {
               event.preventDefault();
               const done = await record(`/api/payables/recurring/${bill.id}/end`, { ends_on: on },
-                () => `${bill.reference_prefix} stops after ${on}.`);
+                () => `${bill.reference_prefix} stops after ${usDate(on)}.`);
               if (done) setAsking(false);
             }}
           >
@@ -452,7 +460,7 @@ function OutboxCard({ emails }: { emails: OutboxEmail[] }) {
         <ul className="flex flex-col gap-1 text-sm" aria-label="Emails to owners">
           {emails.map((e) => (
             <li key={e.id}>
-              {e.written_at.slice(0, 10)} to {e.to}: {e.subject}.{" "}
+              {usDate(e.written_at)} to {e.to}: {e.subject}.{" "}
               <span className="text-ink-muted">
                 {e.status === "sent" ? "Sent." : e.status === "waiting" ? "Waiting to be sent." : "Not sent"}
                 {e.status !== "sent" && e.error ? ` (${e.error})` : ""}

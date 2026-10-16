@@ -144,7 +144,7 @@ describe("BillsPage", () => {
     render(<BillsPage me={ME} />);
 
     const first = await bill("Vendor 1 INV-1");
-    expect(first.textContent).toContain("Owner 1, Property 1 · Roof repair · dated 2026-10-01, due 2026-10-15");
+    expect(first.textContent).toContain("Owner 1, Property 1 · Roof repair · dated 10/01/2026, due 10/15/2026");
     expect(within(first).getByTestId("status").textContent).toBe("needs approval");
     expect(first.textContent).toContain("Over the owner's approval limit of $500.00.");
     expect(within(first).getByRole("button", { name: "Record approval" })).toBeTruthy();
@@ -269,6 +269,11 @@ describe("BillsPage", () => {
     const third = await bill("Vendor 1 INV-3");
     fireEvent.change(within(third).getByLabelText("Paid on"), { target: { value: "2026-10-05" } });
     fireEvent.click(within(third).getByRole("button", { name: "Pay" }));
+    // Paying sends money out of trust: nothing goes until staff confirm the amount.
+    const ask = within(third).getByRole("alertdialog");
+    expect(ask.getAttribute("aria-label")).toBe("Pay $900.00 to Vendor 1 for INV-3 on 10/05/2026?");
+    expect(posted(fetch)).toHaveLength(2);
+    fireEvent.click(within(ask).getByRole("button", { name: "Confirm" }));
     expect(await said("INV-3 is paid.")).toBeTruthy();
 
     expect(posted(fetch)).toEqual([
@@ -341,7 +346,7 @@ describe("BillsPage", () => {
 
     const outbox = await screen.findByRole("list", { name: "Emails to owners" });
     expect(outbox.textContent).toContain(
-      "2026-10-02 to owner1@example.com: A bill waits for your approval: Vendor 1, $750.00. Sent.",
+      "10/02/2026 to owner1@example.com: A bill waits for your approval: Vendor 1, $750.00. Sent.",
     );
     expect(outbox.textContent).toContain("Not sent (SMTPRecipientsRefused: no such mailbox).");
   });
@@ -361,7 +366,7 @@ describe("BillsPage", () => {
     render(<BillsPage me={ME} />);
     expect(
       await screen.findByText(
-        "Vendor 2: $80.00 on day 5 of each month from 2026-01-01, Owner 1, Property 1 (LAWN)",
+        "Vendor 2: $80.00 on day 5 of each month from 01/01/2026, Owner 1, Property 1 (LAWN)",
       ),
     ).toBeTruthy();
 
@@ -374,7 +379,7 @@ describe("BillsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Stop" }));
     fireEvent.change(screen.getByLabelText("Last day, LAWN"), { target: { value: "2026-12-31" } });
     fireEvent.click(screen.getByRole("button", { name: "Stop it" }));
-    expect(await screen.findByText("LAWN stops after 2026-12-31.")).toBeTruthy();
+    expect(await screen.findByText("LAWN stops after 12/31/2026.")).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("Recurring vendor"), { target: { value: "v1" } });
     fireEvent.change(screen.getByLabelText("For owner and property"), { target: { value: "a2" } });
