@@ -4,7 +4,7 @@
 # (python -m pms.admin) and serves the API and the portal on port 8000 (python -m pms.api).
 
 # The portal (frontend/), built in the pinned Node image; only its static files go on.
-FROM mirror.gcr.io/library/node:22.22.0-slim@sha256:dd9d21971ec4395903fa6143c2b9267d048ae01ca6d3ea96f16cb30df6187d94 AS portal
+FROM mirror.gcr.io/library/node:26.12.0-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS portal
 WORKDIR /portal
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-audit --no-fund
