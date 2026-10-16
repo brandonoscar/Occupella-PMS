@@ -36,19 +36,23 @@ THRESHOLDS = {
 }
 
 
-def function(name, hit_raise):
+def function(name, hit_raise, ran=None):
+    """IF ... THEN RAISE; END IF: with hit_raise, it ran twice and raised once (both branches
+    taken); else it ran once and never raised. `ran` sets how often it ran."""
+    ran = ran if ran is not None else 2 if hit_raise else 1
+    raised = 1 if hit_raise else 0
     return {
         "name": name,
         "args": "",
         "source": "x",
-        "branch_ratio": 1.0 if hit_raise else 0.5,
+        "branch_ratio": (min(raised, 1) + min(ran - raised, 1)) / 2,
         "statements": [
             {
                 "stmtid": 0,
                 "parent_stmtid": None,
                 "parent_note": None,
                 "lineno": 1,
-                "exec_stmts": 1,
+                "exec_stmts": ran,
                 "stmtname": "IF",
             },
             {
@@ -56,7 +60,7 @@ def function(name, hit_raise):
                 "parent_stmtid": 0,
                 "parent_note": "then body",
                 "lineno": 2,
-                "exec_stmts": 1 if hit_raise else 0,
+                "exec_stmts": raised,
                 "stmtname": "RAISE",
             },
         ],
@@ -159,6 +163,34 @@ def test_main_writes_the_sql_report_and_summary(tmp_path, capsys):
     raw.write_text(json.dumps([function("guard", False)]))
     assert coverage_gate.main(args) == 1
     assert "### Failed" in capsys.readouterr().out
+
+
+def test_main_adds_up_the_runs_that_split_the_suite(tmp_path, capsys):
+    thresholds = tmp_path / "thresholds.toml"
+    thresholds.write_text(
+        "[coverage]\nchanged_lines_min = 90.0\n"
+        "[coverage.money]\nstatements_min = 95.0\nbranches_min = 95.0\n"
+        'functions = ["guard"]\npython_paths = []\n'
+        "[coverage.baseline]\npython_lines = 75.0\nsql_statements = 100.0\nsql_branches = 100.0\n"
+    )
+    python_xml = tmp_path / "python.xml"
+    python_xml.write_text(PYTHON_XML)
+    # One shard always raised and the other never did: both branches taken, by neither alone.
+    first, second = tmp_path / "1.json", tmp_path / "2.json"
+    first.write_text(json.dumps([function("guard", True, ran=1)]))
+    second.write_text(json.dumps([function("guard", False, ran=2)]))
+
+    def gate(*raws):
+        return coverage_gate.main(
+            ["--thresholds", str(thresholds), "--migrations", str(tmp_path), "--sql-raw"]
+            + [str(raw) for raw in raws]
+            + ["--python-xml", str(python_xml), "--sql-xml-out", str(tmp_path / "sql.xml")]
+        )
+
+    assert gate(first) == 1
+    assert gate(second) == 1
+    assert gate(first, second) == 0
+    assert "| guard() | 2/2 | 2/2 |" in capsys.readouterr().out
 
 
 def test_main_needs_its_inputs(capsys):

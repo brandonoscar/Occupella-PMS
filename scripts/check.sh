@@ -77,8 +77,10 @@ schema_has_not_drifted() {
 }
 
 coverage_gates() {
+  coverage combine -q --keep coverage/lint.coverage coverage/tests-1.coverage \
+    coverage/tests-2.coverage || return 1
   coverage xml -q -o coverage/python.xml || return 1
-  python -m tools.coverage_gate --sql-raw coverage/sql-raw.json \
+  python -m tools.coverage_gate --sql-raw coverage/sql-raw-1.json coverage/sql-raw-2.json \
     --python-xml coverage/python.xml --sql-xml-out coverage/sql.xml || return 1
   diff-cover coverage/python.xml coverage/sql.xml --compare-branch="$base" \
     --fail-under="$(python -m tools.coverage_gate --print coverage.changed_lines_min)"
@@ -115,11 +117,16 @@ step "schema drift" schema_has_not_drifted
 step "upgrade a database that holds money" python -m tools.check_upgrade --base "$base"
 # coverage.yml, ledger-invariants.yml, golden.yml and the ci job's tests
 if server_has preloaded; then
-  # As in coverage.yml: the lint runs under coverage, then every test adds to it.
+  # As in coverage.yml: the lint runs under coverage, then the suite in its two shards (one
+  # after the other here), each with its own coverage data, and the gates add them up.
   rm -rf .coverage coverage
-  step "PL/pgSQL lint" coverage run -m tools.sql_lint
-  step "every test, with coverage" env PMS_SQL_COVERAGE_OUT=coverage/sql-raw.json \
-    coverage run -a -m pytest -q -p no:cacheprovider
+  mkdir -p coverage
+  step "PL/pgSQL lint" env COVERAGE_FILE=coverage/lint.coverage coverage run -m tools.sql_lint
+  for shard in 1 2; do
+    step "tests, shard $shard of 2, with coverage" env PMS_TEST_SHARD="$shard/2" \
+      PMS_SQL_COVERAGE_OUT="coverage/sql-raw-$shard.json" \
+      COVERAGE_FILE="coverage/tests-$shard.coverage" coverage run -m pytest -q -p no:cacheprovider
+  done
   step "coverage gates" coverage_gates
 else
   if server_has available; then
