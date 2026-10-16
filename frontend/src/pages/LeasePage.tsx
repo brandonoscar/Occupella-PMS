@@ -20,6 +20,7 @@ import type { LeaseDetail, LeasePerson, Ledger } from "../rentals";
 import { LEASE_STATUS, LEDGER_KIND, PORTAL, rentLabel, termLabel } from "../rentals";
 import { FilesCard } from "./FilesCard";
 import { InsuranceForms } from "./InsuranceForms";
+import { LeasingFeeForm } from "./LeasingFeeForm";
 import type { Recorder } from "./LeaseForms";
 import {
   ChargeForm,
@@ -35,7 +36,7 @@ import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 
-type Panel = "payment" | "charge" | "rent" | "recurring" | "insurance" | "deposit";
+type Panel = "payment" | "charge" | "rent" | "recurring" | "insurance" | "deposit" | "leasing";
 const PANELS: Record<Panel, string> = {
   payment: "Receive payment",
   charge: "Enter charge",
@@ -43,6 +44,7 @@ const PANELS: Record<Panel, string> = {
   recurring: "Add recurring charge",
   insurance: "Renters insurance",
   deposit: "Record deposit",
+  leasing: "Take leasing fee",
 };
 type Tab = "summary" | "ledger" | "tenants" | "files" | "notes";
 const TABS: { value: Tab; label: string }[] = [
@@ -98,6 +100,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
     { label: "Add recurring charge", onSelect: () => setPanel("recurring") },
     { label: "Renters insurance", onSelect: () => setPanel("insurance") },
     { label: "Record deposit", onSelect: () => setPanel("deposit") },
+    { label: "Take leasing fee", onSelect: () => setPanel("leasing") },
     { label: "Record NSF", onSelect: () => setTab("ledger") },
     { label: "Renew lease", onSelect: () => navigate("/draft-leases") },
     { label: "Move out", onSelect: () => navigate("/move-out") },
@@ -146,6 +149,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
           {panel === "recurring" && <RecurringForm lease={lease} record={recordThenClose} />}
           {panel === "insurance" && <InsuranceForms lease={lease} record={recordThenClose} />}
           {panel === "deposit" && <DepositForm lease={lease} record={recordThenClose} />}
+          {panel === "leasing" && <LeasingFeeForm lease={lease} record={recordThenClose} />}
           <Notice tone="error">{refused}</Notice>
         </SidePanel>
       )}

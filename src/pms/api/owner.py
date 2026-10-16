@@ -56,8 +56,10 @@ def properties(session: Owner, conn: Conn) -> list[Property]:
 
 
 def statement_table(
-    conn: psycopg.Connection[object], session: accounts.Session, start: date, end: date
+    conn: psycopg.Connection[object], pmc_id: UUID, owner_id: UUID, start: date, end: date
 ) -> exports.Table:
+    """An owner's statement over whole days (UTC): theirs in the portal, any owner's for staff
+    (src/pms/api/directory.py)."""
     if end < start:
         raise HTTPException(422, "a statement runs from a day to the same day or a later one")
     if (end - start).days > MAX_DAYS:
@@ -69,7 +71,7 @@ def statement_table(
     return exports.run_report(
         conn,
         "trust_report_owner_statement",
-        [session.pmc_id, session.person_id, *period],
+        [pmc_id, owner_id, *period],
     )
 
 
@@ -77,7 +79,7 @@ def statement_table(
 def statement(
     session: Owner, conn: Conn, start: Annotated[date, Query()], end: Annotated[date, Query()]
 ) -> Rows:
-    table = statement_table(conn, session, start, end)
+    table = statement_table(conn, session.pmc_id, session.person_id, start, end)
     return Rows.of(
         exports.Table(
             f"Owner statement, {start.isoformat()} to {end.isoformat()}", table.columns, table.rows
@@ -93,7 +95,7 @@ def statement_download(
     end: Annotated[date, Query()],
     fmt: Annotated[Literal["csv", "xlsx", "pdf"], Query(alias="format")] = "pdf",
 ) -> Response:
-    table = statement_table(conn, session, start, end)
+    table = statement_table(conn, session.pmc_id, session.person_id, start, end)
     titled = exports.Table(
         f"Owner statement, {start.isoformat()} to {end.isoformat()}", table.columns, table.rows
     )

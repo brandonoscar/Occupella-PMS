@@ -403,15 +403,15 @@ test("staff enter a vendor's bill, record the owner's approval, set it aside and
   await page.getByRole("tab", { name: "All", exact: true }).click();
   await expect(bill.getByTestId("status")).toHaveText("paid");
 
-  await sections.getByRole("link", { name: "Owners" }).click();
-  await page.getByRole("row", { name: "Payee E2E", exact: true }).getByRole("link").click();
-  const payee = page.getByRole("listitem", { name: "Payee E2E, E2E Property 7" });
-  await expect(payee.getByTestId("available")).toHaveText("$700.00 available");
-  await payee.getByText("Record for Payee E2E, E2E Property 7").click();
-  await payee.getByRole("button", { name: "Record draw" }).click();
-  await payee.getByRole("button", { name: "Confirm" }).click();
-  await expect(payee).toContainText("$700.00 paid out to Payee E2E.");
-  await expect(payee.getByTestId("available")).toHaveText("$0.00 available");
+  // Pay owners pays the rest out: everything available, by check.
+  await sections.getByRole("link", { name: "Pay owners" }).click();
+  const payee = page.getByRole("row", { name: "Payee E2E, E2E Property 7", exact: true });
+  await expect(payee.getByRole("cell").nth(6)).toHaveText("$700.00");
+  await payee.getByLabel("Pay Payee E2E, E2E Property 7").check();
+  await page.getByRole("button", { name: "Pay $700.00" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByRole("main")).toContainText("1 payout of $700.00 recorded, by check.");
+  await expect(payee.getByRole("cell").nth(6)).toHaveText("$0.00");
 });
 
 test("staff charge a tenant's damage at move-out, return the rest of the deposit and get the statement", async ({

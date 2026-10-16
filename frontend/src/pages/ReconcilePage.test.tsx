@@ -100,7 +100,9 @@ function server(
 ) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method !== "POST") {
-      const body = path === "/api/reconcile" ? banks : path.startsWith("/api/reconcile/b2") ? { ...sheet, through: null, rows: [], open_lines: [], open_transfers: [], matches: [] } : sheet;
+      const body = path === "/api/reconcile" ? banks
+        : path === "/api/payables/company-fees" ? (answers[path] ?? [])
+        : path.startsWith("/api/reconcile/b2") ? { ...sheet, through: null, rows: [], open_lines: [], open_transfers: [], matches: [] } : sheet;
       return new Response(JSON.stringify(body), { status: 200 });
     }
     if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
@@ -370,12 +372,71 @@ describe("BankingPage", () => {
 
     const operating = await screen.findByRole("row", { name: "Operating trust account" });
     expect(within(operating).getAllByRole("cell").map((c) => c.textContent)).toEqual([
-      "Operating trust account", "Operating", "$4,075.00", "12/31/2025", "Waiting for approval",
+      "Operating trust account", "Operating", "$4,075.00", "12/31/2025", "Waiting for approval", "", "",
     ]);
     expect(within(operating).getByRole("link").getAttribute("href")).toBe("/bank-accounts/b1");
     expect(within(screen.getByRole("row", { name: "Deposit trust account" })).getAllByRole("cell").map((c) => c.textContent)).toEqual([
-      "Deposit trust account", "Security deposits", "$0.00", "Not yet", "",
+      "Deposit trust account", "Security deposits", "$0.00", "Not yet", "", "", "",
     ]);
+  });
+
+  it("shows the company's fees held in an operating account and transfers them out after asking", async () => {
+    const fees = [{ bank_account_id: "b1", bank_account: "Operating trust account", held: "150.00",
+      since: "2000-01-01", days_held: 40, take_by: "2000-01-26" }];
+    const fetch = server(SHEET, { "/api/payables/company-fees": fees }, {}, BANKS);
+    render(<BankingPage me={ME} />);
+
+    const operating = await screen.findByRole("row", { name: "Operating trust account" });
+    await vi.waitFor(() => expect(within(operating).getAllByRole("cell")[5]?.textContent).toBe("$150.00take out: past 01/26/2000"));
+    fireEvent.click(within(operating).getByRole("button", { name: "Actions for Operating trust account" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Transfer company fees" }));
+    const panel = screen.getByRole("dialog", { name: "Transfer company fees" });
+    expect(within(panel).getByTestId("company-fees").textContent).toBe(
+      "$150.00 of the company's fees, the oldest since 01/01/2000 (40 days)",
+    );
+    fireEvent.change(within(panel).getByLabelText("Amount (leave empty for all)"), { target: { value: "100.00" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Take out company fees" }));
+    const confirm = screen.getByRole("alertdialog");
+    expect(confirm.textContent).toContain("Take $100.00 of the company's fees out of Operating trust account on");
+    fireEvent.click(within(confirm).getByRole("button", { name: "Confirm" }));
+
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(posted(fetch)).toEqual([["/api/payables/company-fees", expect.objectContaining({ bank_account_id: "b1", amount: "100.00" })]]);
+  });
+
+  it("keeps a refused transfer's panel open with why", async () => {
+    const fees = [{ bank_account_id: "b1", bank_account: "Operating trust account", held: "150.00",
+      since: "2000-01-01", days_held: 40, take_by: "2000-01-26" }];
+    server(SHEET, { "/api/payables/company-fees": fees },
+      { "/api/payables/company-fees": "only $150.00 of the company's fees is in this trust bank account" }, BANKS);
+    render(<BankingPage me={ME} />);
+    const operating = await screen.findByRole("row", { name: "Operating trust account" });
+    fireEvent.click(await within(operating).findByRole("button", { name: "Actions for Operating trust account" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Transfer company fees" }));
+    const panel = screen.getByRole("dialog", { name: "Transfer company fees" });
+    fireEvent.click(within(panel).getByRole("button", { name: "Take out company fees" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Confirm" }));
+
+    expect((await within(panel).findByRole("alert")).textContent).toBe(
+      "only $150.00 of the company's fees is in this trust bank account",
+    );
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
+
+  it("offers no transfer where none of the company's fees was ever held", async () => {
+    const fees = [
+      { bank_account_id: "b1", bank_account: "Operating trust account", held: "0.00", since: null, days_held: null, take_by: null },
+    ];
+    server(SHEET, { "/api/payables/company-fees": fees }, {}, BANKS);
+    render(<BankingPage me={ME} />);
+    const operating = await screen.findByRole("row", { name: "Operating trust account" });
+    fireEvent.click(await within(operating).findByRole("button", { name: "Actions for Operating trust account" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Transfer company fees" }));
+    const panel = screen.getByRole("dialog", { name: "Transfer company fees" });
+    expect(within(panel).getByTestId("company-fees").textContent).toBe("None of the company's fees is held here.");
+    expect(within(panel).queryByRole("button", { name: "Take out company fees" })).toBeNull();
+    fireEvent.click(within(panel).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("says when there is no trust bank account, and when they can't be read", async () => {

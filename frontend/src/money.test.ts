@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { day, lastMonth, money } from "./money";
+import { day, lastMonth, money, sumMoney } from "./money";
 
 describe("money", () => {
   it("shows dollars and cents from the API's text, negatives in parentheses", () => {
@@ -30,5 +30,14 @@ describe("lastMonth", () => {
 
   it("writes days as YYYY-MM-DD", () => {
     expect(day(new Date(Date.UTC(2024, 1, 29)))).toBe("2024-02-29");
+  });
+});
+
+describe("sumMoney", () => {
+  it("adds amounts exactly, in whole cents", () => {
+    expect(sumMoney(["0.10", "0.20"])).toBe("0.30");
+    expect(sumMoney(["1200.5", "-0.75", "3"])).toBe("1202.75");
+    expect(sumMoney(["-1.00", "0.25"])).toBe("-0.75");
+    expect(sumMoney([])).toBe("0.00");
   });
 });

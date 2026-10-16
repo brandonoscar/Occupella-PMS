@@ -123,6 +123,8 @@ TABLES = {
     "trust_notes": {"SELECT", "INSERT"},
     # Rent runs (migration 0067): recorded by trust_run_rent, which runs with the app's grants.
     "trust_rent_runs": {"SELECT", "INSERT"},
+    # How a payout was sent (migration 0068): recorded once each, never changed.
+    "trust_payout_methods": {"SELECT", "INSERT"},
     "trust_inspections": {"SELECT", "INSERT"},
     "trust_inspection_items": {"SELECT", "INSERT"},
     "trust_listing_removals": {"SELECT", "INSERT"},
@@ -383,6 +385,7 @@ FUNCTIONS = {
     "trust_name_recorder()": {"PUBLIC"},
     "trust_check_archival()": {"PUBLIC"},
     "trust_check_group_member()": {"PUBLIC"},
+    "trust_check_payout_method()": {"PUBLIC"},
     "trust_check_document_has_file()": {"PUBLIC"},
     "trust_check_recurring_charge_amount()": {"PUBLIC"},
     "trust_check_signer_change()": {"PUBLIC"},

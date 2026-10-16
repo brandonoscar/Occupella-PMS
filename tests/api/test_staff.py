@@ -128,12 +128,12 @@ def test_paying_out_money_takes_the_disburse_role(client, other_client, conn, pm
     )
     refused(
         other_client.post(
-            "/api/payables/draws",
+            "/api/payables/draws/batch",
             json={
                 "request_id": str(uuid.uuid4()),
-                "account": owner,
-                "amount": "10.00",
                 "on": str(today.date()),
+                "method": "check",
+                "payouts": [{"account": owner, "amount": "10.00"}],
             },
         ),
         403,

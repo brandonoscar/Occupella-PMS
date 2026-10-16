@@ -40,7 +40,7 @@ describe("Shell", () => {
     const links = within(sections()).getAllByRole("link");
     expect(links.map((link) => link.textContent)).toEqual([
       "Dashboard", "Properties", "Rent roll", "Tenants", "Owners", "Move-outs", "Listings", "Applicants", "Draft leases", "Renewals", "Banking", "Bills",
-      "General ledger", "Owner draws", "Budgets", "Work orders", "Vendors", "Files", "Reports", "Settings",
+      "General ledger", "Pay owners", "Management fees", "Budgets", "Work orders", "Vendors", "Files", "Reports", "Settings",
     ]);
     const groups = within(sections()).getAllByRole("group");
     expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual([
@@ -48,7 +48,7 @@ describe("Shell", () => {
     ]);
     const accounting = within(sections()).getByRole("group", { name: "Accounting" });
     expect(within(accounting).getAllByRole("link").map((link) => link.textContent)).toEqual([
-      "Banking", "Bills", "General ledger", "Owner draws", "Budgets",
+      "Banking", "Bills", "General ledger", "Pay owners", "Management fees", "Budgets",
     ]);
     // Each group and each page outside one has its icon.
     expect(groups.every((group) => group.querySelector("svg"))).toBe(true);

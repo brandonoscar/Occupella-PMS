@@ -1999,6 +1999,31 @@ $$;
 
 
 --
+-- Name: trust_check_payout_method(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_payout_method() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM trust_owner_draws AS d
+        WHERE d.transfer_id = NEW.transfer_id AND d.pmc_id = NEW.pmc_id
+    ) AND NOT EXISTS (
+        SELECT 1 FROM trust_bill_payments AS b
+        WHERE b.transfer_id = NEW.transfer_id AND b.pmc_id = NEW.pmc_id AND b.step = 'paid'
+    ) THEN
+        RAISE EXCEPTION 'trust: transfer % is not an owner draw or a bill paid of the PMC',
+            NEW.transfer_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_recurring_bill(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9523,6 +9548,21 @@ CREATE TABLE public.trust_payment_reversals (
 
 
 --
+-- Name: trust_payout_methods; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payout_methods (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    transfer_id text NOT NULL,
+    method text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_payout_methods_method_check CHECK ((method = ANY (ARRAY['check'::text, 'EFT'::text])))
+);
+
+
+--
 -- Name: trust_pmc_fee_withdrawals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11074,6 +11114,22 @@ ALTER TABLE ONLY public.trust_payment_reversals
 
 
 --
+-- Name: trust_payout_methods trust_payout_methods_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_methods
+    ADD CONSTRAINT trust_payout_methods_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_payout_methods trust_payout_methods_transfer_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_methods
+    ADD CONSTRAINT trust_payout_methods_transfer_id_key UNIQUE (transfer_id);
+
+
+--
 -- Name: trust_pmc_fee_withdrawals trust_pmc_fee_withdrawals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11938,6 +11994,13 @@ CREATE INDEX trust_payment_reversals_reversal_id ON public.trust_payment_reversa
 
 
 --
+-- Name: trust_payout_methods_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payout_methods_recorded_by ON public.trust_payout_methods USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_pmc_fee_withdrawals_ledger_account_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -12680,6 +12743,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_payout_methods trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payout_methods FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_pmc_fee_withdrawals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13366,6 +13436,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_paym
 
 
 --
+-- Name: trust_payout_methods trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payout_methods FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_pmc_fee_withdrawals trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13807,6 +13884,13 @@ CREATE TRIGGER trust_opened_at BEFORE INSERT OR UPDATE OF opened_at ON public.tr
 
 
 --
+-- Name: trust_payout_methods trust_payout_method; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_payout_method BEFORE INSERT ON public.trust_payout_methods FOR EACH ROW EXECUTE FUNCTION public.trust_check_payout_method();
+
+
+--
 -- Name: trust_archivals trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13832,6 +13916,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_inspections FOR E
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_notes FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_payout_methods trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payout_methods FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -15831,6 +15922,30 @@ ALTER TABLE ONLY public.trust_payment_reversals
 
 
 --
+-- Name: trust_payout_methods trust_payout_methods_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_methods
+    ADD CONSTRAINT trust_payout_methods_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_payout_methods trust_payout_methods_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_methods
+    ADD CONSTRAINT trust_payout_methods_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_payout_methods trust_payout_methods_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payout_methods
+    ADD CONSTRAINT trust_payout_methods_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
 -- Name: trust_pmc_fee_withdrawals trust_pmc_fee_withdrawals_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16512,4 +16627,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261016000064'),
     ('20261016000065'),
     ('20261016000066'),
-    ('20261016000067');
+    ('20261016000067'),
+    ('20261016000068');

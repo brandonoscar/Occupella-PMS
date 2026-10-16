@@ -11,15 +11,19 @@ owner's draws and contributions go through the owners' money paths (`payables.py
 
 from __future__ import annotations
 
+from datetime import date
+from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import psycopg
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, StringConstraints, model_validator
 
+from pms import exports
+from pms.api import owner as owner_portal
 from pms.api import payables, rent, scope
-from pms.api.deps import Conn, Staff, refusal
+from pms.api.deps import Conn, Rows, Staff, download, refusal
 from pms.api.rentals import (
     PORTAL,
     PORTAL_STATUS,
@@ -362,8 +366,11 @@ class OwnerRow(BaseModel):
     id: UUID
     name: str
     properties: list[str]
-    # What their property accounts hold today, together.
+    # What their property accounts hold today, keep back (the reserves) and may pay out
+    # (payables.owner_money), together.
     held: str
+    reserve: str
+    available: str
     email: str | None
     phone: str | None
     archived: bool
@@ -420,6 +427,16 @@ def owners(
             "offset": (page - 1) * per_page,
         },
     ).fetchall()
+    money = payables.owner_money(conn, session.pmc_id, owners=[row[0] for row in rows])
+    reserve: dict[UUID, Decimal] = {}
+    available: dict[UUID, Decimal] = {}
+    for account in money:
+        reserve[account.owner_id] = reserve.get(account.owner_id, rent.ZERO) + Decimal(
+            account.reserve
+        )
+        available[account.owner_id] = available.get(account.owner_id, rent.ZERO) + Decimal(
+            account.available
+        )
     return Paged(
         items=[
             OwnerRow(
@@ -427,6 +444,8 @@ def owners(
                 name=name,
                 properties=props,
                 held=rent.cents(held),
+                reserve=rent.cents(reserve.get(i, rent.ZERO)),
+                available=rent.cents(available.get(i, rent.ZERO)),
                 email=email,
                 phone=phone,
                 archived=gone,
@@ -439,12 +458,42 @@ def owners(
     )
 
 
+class Agreement(BaseModel):
+    account: str
+    starts_on: date
+    fee_percent: str
+    minimum_fee: str
+    flat_fee: str
+    leasing_fee_percent: str
+    reserve: str
+    approval_limit: str
+
+
 class Owner(BaseModel):
     id: UUID
     name: str
     archived: bool
     contact: Contact
     accounts: list[payables.OwnerMoney]
+    # The management agreement in force today on each account that has one.
+    agreements: list[Agreement]
+    # Whether they can sign in to the portal, and their login's email.
+    portal: Portal
+    login_email: str | None
+
+
+AGREEMENTS = """
+SELECT DISTINCT ON (g.ledger_account_id) g.ledger_account_id, g.starts_on, g.fee_percent,
+       g.minimum_fee, g.flat_fee, g.leasing_fee_percent, g.reserve, g.approval_limit
+FROM trust_management_agreements AS g
+JOIN trust_ledger_accounts AS a ON a.ledger_account_id = g.ledger_account_id
+WHERE a.pmc_id = %s AND a.owner_id = %s AND g.starts_on <= %s
+ORDER BY g.ledger_account_id, g.starts_on DESC
+"""
+OWNER_PORTAL = """
+LEFT JOIN trust_logins AS g ON g.pmc_id = o.pmc_id AND g.owner_id = o.id
+LEFT JOIN trust_login_secrets AS s ON s.login_id = g.id
+"""
 
 
 @router.get("/owners/{owner_id}")
@@ -458,13 +507,78 @@ def owner_page(session: Staff, conn: Conn, owner_id: UUID) -> Owner:
     ).fetchone()
     if row is None:
         raise HTTPException(404, "no such owner")
+    login = conn.execute(
+        f"SELECT {PORTAL_STATUS}, g.email FROM trust_owners AS o {OWNER_PORTAL} WHERE o.id = %s",
+        (owner_id,),
+    ).fetchone()
+    assert login is not None
+    portal: Portal = login[0]
     return Owner(
         id=owner_id,
         name=row[0],
         archived=row[1],
         contact=contact_of(conn, "owner_id", owner_id),
         accounts=payables.owner_money(conn, session.pmc_id, owner_id),
+        agreements=[
+            Agreement(
+                account=account,
+                starts_on=starts,
+                fee_percent=f"{percent.normalize():f}",
+                minimum_fee=rent.cents(minimum),
+                flat_fee=rent.cents(flat),
+                leasing_fee_percent=f"{leasing.normalize():f}",
+                reserve=rent.cents(reserve),
+                approval_limit=rent.cents(limit),
+            )
+            for account, starts, percent, minimum, flat, leasing, reserve, limit in conn.execute(
+                AGREEMENTS, (session.pmc_id, owner_id, rent.today())
+            ).fetchall()
+        ],
+        portal=portal,
+        login_email=login[1],
     )
+
+
+@router.get("/owners/{owner_id}/statement")
+def owner_statement(
+    session: Staff,
+    conn: Conn,
+    owner_id: UUID,
+    start: Annotated[date, Query()],
+    end: Annotated[date, Query()],
+) -> Rows:
+    """An owner's statement over whole days (UTC), as the owner reads it in the portal: each
+    property account's opening balance, what came in and went out, and its closing balance."""
+    return Rows.of(statement_of(conn, session.pmc_id, owner_id, start, end))
+
+
+def statement_of(
+    conn: psycopg.Connection[Any], pmc_id: UUID, owner_id: UUID, start: date, end: date
+) -> exports.Table:
+    found = conn.execute(
+        "SELECT 1 FROM trust_owners WHERE pmc_id = %s AND id = %s", (pmc_id, owner_id)
+    ).fetchone()
+    if found is None:
+        raise HTTPException(404, "no such owner")
+    table = owner_portal.statement_table(conn, pmc_id, owner_id, start, end)
+    return exports.Table(
+        f"Owner statement, {start.isoformat()} to {end.isoformat()}", table.columns, table.rows
+    )
+
+
+@router.get("/owners/{owner_id}/statement/download")
+def owner_statement_download(
+    session: Staff,
+    conn: Conn,
+    owner_id: UUID,
+    start: Annotated[date, Query()],
+    end: Annotated[date, Query()],
+    fmt: Annotated[Literal["csv", "xlsx", "pdf"], Query(alias="format")] = "pdf",
+) -> Response:
+    """The same statement as a file, as the owner downloads it in the portal."""
+    table = statement_of(conn, session.pmc_id, owner_id, start, end)
+    name = f"owner-statement-{start.isoformat()}-{end.isoformat()}"
+    return download(exports.export(table, fmt), name, fmt)
 
 
 @router.post("/owners/{owner_id}/name", status_code=204)

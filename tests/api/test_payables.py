@@ -343,23 +343,38 @@ def test_owners_money_shows_what_a_draw_may_take(client, conn, staff, pmc):
     assert (second["available"], second["has_agreement"]) == ("0.00", False)
 
 
+def draw(client, account, amount=None, request_id=None, on=TODAY):
+    """Pay owners, one account: everything available unless an amount is given."""
+    return call(
+        client,
+        "draws/batch",
+        request_id=request_id or uuid.uuid4(),
+        on=on,
+        method="check",
+        payouts=[
+            {"account": account} if amount is None else {"account": account, "amount": amount}
+        ],
+    )
+
+
 def test_a_draw_pays_out_what_is_available_once(client, conn, staff, pmc):
     fund(conn, pmc, "1000.00")
     add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 60 * DAY, reserve="200")
     request = uuid.uuid4()
     account = pmc.owners[0].account
 
-    drawn = ok(call(client, "draws", request_id=request, account=account, on=TODAY))
-    again = ok(call(client, "draws", request_id=request, account=account, on=TODAY))
-    more = call(client, "draws", request_id=uuid.uuid4(), account=account, amount="0.01", on=TODAY)
-    elsewhere = call(client, "draws", request_id=request, account=pmc.owners[1].account, on=TODAY)
+    drawn = ok(draw(client, account, request_id=request), 201)
+    again = ok(draw(client, account, request_id=request), 201)
+    more = draw(client, account, "0.01")
+    elsewhere = draw(client, pmc.owners[1].account, request_id=request)
 
-    assert drawn == again == {"amount": "800.00"}
-    # In words: nothing left, and why (the reserve), not the account's id.
+    assert [p["amount"] for p in drawn] == [p["amount"] for p in again] == ["800.00"]
+    # In words: whose, nothing left, and why (the reserve), not the account's id.
     refused(
         more,
         409,
-        "nothing is available to draw: what the account holds is kept for the $200.00 reserve",
+        "Owner 1, Property 1: nothing is available to draw: what the account holds is kept for"
+        " the $200.00 reserve",
     )
     refused(elsewhere, 409)
     assert balance(conn, account) == Decimal("200.00")
@@ -500,8 +515,7 @@ def test_a_leasing_fee_needs_an_agreement_and_the_money(client, conn, staff, pmc
     add_agreement(
         conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 120 * DAY, leasing_fee_percent="100"
     )
-    drawn = {"request_id": str(uuid.uuid4()), "amount": "1000.00", "on": TODAY}
-    ok(call(client, "draws", account=pmc.owners[0].account, **drawn))
+    ok(draw(client, pmc.owners[0].account, "1000.00"), 201)
     too_much = call(
         client, "leasing-fees", lease_id=rented.lease, account=pmc.owners[0].account, on=TODAY
     )
@@ -537,12 +551,7 @@ def test_another_pmcs_records_are_not_found(client, conn, staff, pmc):
             call(client, f"bills/{theirs}/approval", approved_on=TODAY, approved_by="X"),
             "no such bill",
         ),
-        (
-            call(
-                client, "draws", request_id=uuid.uuid4(), account=other.owners[0].account, on=TODAY
-            ),
-            "no such owner account",
-        ),
+        (draw(client, other.owners[0].account), "no such owner account"),
         (
             call(
                 client,
@@ -721,7 +730,7 @@ ENDPOINTS = [
     ("get", "/api/payables/emails"),
     ("post", "/api/payables/management-fees"),
     ("post", "/api/payables/leasing-fees"),
-    ("post", "/api/payables/draws"),
+    ("post", "/api/payables/draws/batch"),
     ("post", "/api/payables/contributions"),
 ]
 
@@ -745,10 +754,23 @@ def test_only_staff_handle_bills_and_owners_money(
     ("path", "body"),
     [
         ("bills", {"amount": "10.00"}),
-        ("draws", {"request_id": "x", "account": "a", "on": "2026-10-01"}),
         (
-            "draws",
-            {"request_id": str(uuid.uuid4()), "account": "a", "amount": "0", "on": "2026-10-01"},
+            "draws/batch",
+            {
+                "request_id": "x",
+                "method": "check",
+                "payouts": [{"account": "a"}],
+                "on": "2026-10-01",
+            },
+        ),
+        (
+            "draws/batch",
+            {
+                "request_id": str(uuid.uuid4()),
+                "method": "check",
+                "payouts": [{"account": "a", "amount": "0"}],
+                "on": "2026-10-01",
+            },
         ),
         (
             "contributions",
@@ -793,7 +815,7 @@ def test_a_bills_list_of_no_kind_is_refused(client, staff):
         "bills/{bill}/pay",
         "management-fees",
         "leasing-fees",
-        "draws",
+        "draws/batch",
         "contributions",
     ],
 )
@@ -810,6 +832,8 @@ def test_money_is_recorded_no_later_than_today(client, conn, staff, pmc, path):
         "period_start": str(TODAY - DAY),
         "period_end": tomorrow,
         "lease_id": str(uuid.uuid4()),
+        "method": "check",
+        "payouts": [{"account": pmc.owners[0].account, "amount": "1.00"}],
     }
 
     refused(

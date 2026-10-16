@@ -10,7 +10,12 @@ import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
-import { money, usDate } from "../money";
+import { day, money, usDate } from "../money";
+import type { CompanyFees } from "../payables";
+import { companyFeesDue } from "../payables";
+import { RowMenu } from "../components/RowMenu";
+import { SidePanel } from "../components/SidePanel";
+import { CompanyFeesForm } from "./CompanyFeesForm";
 import type { BankBooks, OpenItem, OpenLine, OpenTransfer, Worksheet } from "../reconcile";
 import {
   approver,
@@ -35,16 +40,30 @@ import { Form } from "../components/Form";
 // far it is reconciled and whether a month waits for approval, each opening its own page.
 export function BankingPage({ me }: { me: Me }) {
   const [banks, setBanks] = useState<BankBooks[] | null>(null);
+  const [fees, setFees] = useState<CompanyFees[]>([]);
   const [error, setError] = useState("");
+  const [transfer, setTransfer] = useState<CompanyFees | null>(null);
+  const [runs, setRuns] = useState(0);
+  const { said, error: refused, record } = useRecord(() => setRuns((n) => n + 1));
   useEffect(() => {
     api
       .get<BankBooks[]>("/api/reconcile")
       .then(setBanks)
       .catch((why) => setError(why instanceof ApiError ? why.detail : String(why)));
-  }, []);
+    api.get<CompanyFees[]>("/api/payables/company-fees").then(setFees).catch(() => setFees([]));
+  }, [runs]);
+  const today = day(new Date());
+  // A form in the side panel closes once what it recorded is recorded.
+  const recordThenClose: typeof record = async (path, body, done) => {
+    const recorded = await record(path, body, done);
+    if (recorded) setTransfer(null);
+    return recorded;
+  };
   return (
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title="Banking" />
+      <Said>{said}</Said>
+      {transfer === null && <Notice tone="error">{refused}</Notice>}
       {banks === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : banks.length === 0 ? (
@@ -60,10 +79,15 @@ export function BankingPage({ me }: { me: Me }) {
                 <th className="text-right">Book balance</th>
                 <th className="text-left">Reconciled through</th>
                 <th className="text-left">Month-end</th>
+                <th className="text-right">Company fees held</th>
+                <th><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
-              {banks.map((bank) => (
+              {banks.map((bank) => {
+                const held = fees.find((f) => f.bank_account_id === bank.id);
+                const due = held ? companyFeesDue(held, today) : null;
+                return (
                 <tr key={bank.id} aria-label={bank.name}>
                   <td>
                     <GoLink href={`/bank-accounts/${bank.id}`}
@@ -75,11 +99,33 @@ export function BankingPage({ me }: { me: Me }) {
                   <td className="text-right">{money(bank.book_cash)}</td>
                   <td>{bank.closed_through ? usDate(bank.closed_through) : <span className="text-ink-subtle">Not yet</span>}</td>
                   <td>{bank.prepared && <Badge tone="caution">Waiting for approval</Badge>}</td>
+                  <td className="text-right">
+                    {held && (
+                      <span className="flex flex-wrap items-center justify-end gap-2">
+                        {money(held.held)}
+                        {due && <Badge tone={due.late ? "danger" : "caution"}>{due.word}</Badge>}
+                      </span>
+                    )}
+                  </td>
+                  <td className="text-right">
+                    {held && (
+                      <RowMenu label={bank.name}
+                        actions={[{ label: "Transfer company fees", onSelect: () => setTransfer(held) }]} />
+                    )}
+                  </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </Wide>
+      )}
+      {transfer !== null && (
+        <SidePanel title="Transfer company fees" onClose={() => setTransfer(null)}>
+          <p className="text-base text-ink">{transfer.bank_account}</p>
+          <CompanyFeesForm fees={transfer} record={recordThenClose} />
+          <Notice tone="error">{refused}</Notice>
+        </SidePanel>
       )}
     </Shell>
   );

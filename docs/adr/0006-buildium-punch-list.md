@@ -84,3 +84,17 @@ The rent roll lists every lease (current, to come, ended, owing or all) with its
 days left, rent, the deposits held and its balance, the row opening the lease; Receive payment
 finds a lease by its tenant, unit or property and records a payment with how it came (check,
 money order, EFT or cash; the method only, no bank file).
+
+## Owners, Pay owners and the fees
+
+The fourth piece (migration 0068): the Owners list shows each owner once with what their accounts
+hold, keep back and may pay out; an owner's page has Summary (contact details, portal login, each
+agreement's terms), Properties, Financials (their statement and Record contribution), Statements
+(each of the last twelve months and the year's income statement) and Files. Pay owners is
+Buildium's owner draw: choose owners or narrow to a group or property, change an amount, say how
+and when it was sent, and pay them all at once, every draw or none, each at most what is
+available; how each left trust (check or EFT) is recorded, and the PMS writes no bank file. It
+replaces the one-at-a-time draw. Management fees has its own page under Accounting: each
+agreement's fee for a period, worked out by the database and rolled back so looking moves
+nothing, then Collect fees (decision 4). The company's fees leave trust from Banking, and a
+lease's leasing fee from the lease's ⋯ menu.

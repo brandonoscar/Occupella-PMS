@@ -1,6 +1,6 @@
 // Staff's bills and owners' money as the API sends them (src/pms/api/payables.py), and how
 // they read.
-import { day, lastMonth, money, usDate } from "./money";
+import { day, lastMonth, money, sumMoney, usDate } from "./money";
 
 export type BillStatus = "needs approval" | "declined" | "to set aside" | "set aside" | "paid";
 export type Bill = {
@@ -80,6 +80,19 @@ export type Fee = {
   fee: string | null;
   refused: string | null;
 };
+// A management fee for a period: taken already, or what Collect fees would take, or why not.
+export type FeeDue = Fee & { taken: boolean };
+// One payout of Pay owners, as recorded.
+export type OwnerPaid = { account: string; owner: string; property: string; amount: string; transfer_id: string };
+export type PayoutMethod = "check" | "EFT";
+
+// What Pay owners did, in a line.
+export function paidSummary(paid: OwnerPaid[], method: PayoutMethod): string {
+  const total = sumMoney(paid.map((p) => p.amount));
+  const owners = `${paid.length} payout${paid.length === 1 ? "" : "s"}`;
+  return `${owners} of ${money(total)} recorded, by ${method}.`;
+}
+
 
 // What staff do next with a bill, as its button says; nothing once it is paid.
 // A bill's status as a badge: waiting on the owner is a caution, on its way is news, paid is

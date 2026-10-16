@@ -140,9 +140,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   logins, Files and Notes); staff rename a
   property or unit there and archive it. Tenants at `/tenants` and owners at `/owners`
   (`src/pms/api/directory.py`), each on a page of their own: a tenant's leases and the money
-  held for them, an owner's property accounts with their draws and contributions
-  (`src/pms/api/payables.py`); the Owners list also takes the management, leasing and company
-  fees. Staff keep a tenant's, owner's or vendor's contact details there, rename a tenant or owner
+  held for them; an owner's tabs (ADR 0006): Summary (contact, portal login, the agreements'
+  terms), Properties, Financials (their statement and Record contribution), Statements and Files.
+  The Owners list shows each owner once with what they hold, keep back and may pay out, and opens
+  Pay owners and Add owner. Staff keep a tenant's, owner's or vendor's contact details there, rename a tenant or owner
   and archive one. A search in the bar finds a property, unit, tenant or owner (`/api/search`).
   Lists come a page at a time (`Paged`: 50 by default, at most 200); move-outs at `/move-out` (`src/pms/api/moveout.py`). Leasing:
   application links and the public listings at `/rental-listings`, applications at
@@ -153,8 +154,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and All tabs; Record bill opens a side panel), the general ledger on
   screen at `/general-ledger` (`src/pms/api/general_ledger.py`: trust_report_general_ledger's
   rows by account, a page of accounts at a time; cash basis) with its Journal entry button to
-  `/journal` (`src/pms/api/journal.py`), owner draws at `/owner-draws`, budgets at `/budgets`
-  (`src/pms/api/budgets.py`).
+  `/journal` (`src/pms/api/journal.py`), Pay owners at `/owner-draws` (several owners at once, all
+  or none, recorded as sent by check or EFT), management fees at `/management-fees` (each
+  agreement's fee for a period, worked out and rolled back, then Collect fees), budgets at
+  `/budgets` (`src/pms/api/budgets.py`). The company's fees leave trust from Banking (an
+  operating account's ⋯ menu), a lease's leasing fee from the lease's ⋯ menu.
   Maintenance: work orders a page at a time at `/work-orders`, each at `/work-orders/<id>`
   (`src/pms/api/work_orders.py`: its steps, bills and request; staff open one there too, its
   status the work orders report's word), tenants' requests below them, vendors and their
@@ -381,7 +385,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   leasing fees, each through its `trust_*` write path. What the owners page shows as available
   is what a draw of everything takes: the balance less the reserve and the unpaid bills, which
   it counts as `trust_unpaid_bills` does (the app may not call it). Draws and contributions
-  carry a request id the page makes, so a retry pays nothing twice.
+  carry a request id the page makes, so a retry pays nothing twice; Pay owners keys each draw by
+  its run and account. How a payout left trust (`trust_payout_methods`, migration 0068: check or
+  EFT, once per owner draw or bill paid of the PMC, append-only) describes money already moved.
 - Bank statements (migration 0032): a trust bank account's statements, imported from CSV or
   OFX, follow one another day after day and balance after balance from 0 (a first statement's
   opening balance is a line of its own), each with all its lines, and a file goes in once.

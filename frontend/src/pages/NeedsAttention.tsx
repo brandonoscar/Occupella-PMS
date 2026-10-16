@@ -36,7 +36,7 @@ export function attentionGroups(today: Today): Group[] {
       lines: today.journal_waiting.map(journalLine) },
     { title: "Vendor insurance", go: "/vendors", goLabel: "Vendors",
       lines: today.vendor_insurance.map(insuranceLine) },
-    { title: "Company fees in trust", go: "/owners", goLabel: "Owners",
+    { title: "Company fees in trust", go: "/banking", goLabel: "Banking",
       lines: today.company_fees.map((fees) => companyFeesLine(fees, today.on)) },
     { title: "Trust account signers", go: "/settings/staff", goLabel: "Staff and roles",
       lines: today.signers.map(signerNoteLine) },
