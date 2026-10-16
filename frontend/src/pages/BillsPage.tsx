@@ -1,13 +1,18 @@
+import { Receipt } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
+import { useConfirm } from "../components/Confirm";
+import { EmptyState } from "../components/EmptyState";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
-import { day, money } from "../money";
+import { SidePanel } from "../components/SidePanel";
+import { Tabs } from "../components/Tabs";
+import { day, money, usDate } from "../money";
 import type { Bill, OutboxEmail, Recurring } from "../payables";
 import { emailNote, nextStep, recurringLabel, statusTone } from "../payables";
 import type { ExpenseAccount, Portfolio } from "../setup";
@@ -16,7 +21,20 @@ import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
 
-type Show = "open" | "all";
+type Show = "open" | "paid" | "declined" | "all";
+
+const TABS: { value: Show; label: string }[] = [
+  { value: "open", label: "Unpaid" },
+  { value: "paid", label: "Paid" },
+  { value: "declined", label: "Declined" },
+  { value: "all", label: "All" },
+];
+const NONE: Record<Show, string> = {
+  open: "Nothing left to pay: every bill is paid or declined.",
+  paid: "No bill is paid yet.",
+  declined: "No bill was declined.",
+  all: "No bills yet.",
+};
 
 // Staff's vendor bills: enter one against an owner's property account, record the owner's
 // approval (or decline) when it is over their limit, unless the owner decided in their portal,
@@ -31,6 +49,7 @@ export function BillsPage({ me }: { me: Me }) {
   const [error, setError] = useState("");
   // What a bill's step did: said here, as the step may take the bill off the list.
   const [done, setDone] = useState("");
+  const [recording, setRecording] = useState(false);
   const failed = (why: unknown) => setError(why instanceof ApiError ? why.detail : String(why));
 
   function refresh() {
@@ -45,16 +64,14 @@ export function BillsPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Bills" />
-      {books && <EnterBillCard books={books} refresh={refresh} />}
+      <PageHeader title="Bills" actions={<Button onClick={() => setRecording(true)}>Record bill</Button>} />
+      {recording && books && (
+        <SidePanel title="Record bill" onClose={() => setRecording(false)}>
+          <EnterBillForm books={books} refresh={refresh} />
+        </SidePanel>
+      )}
       <Card title="Vendor bills">
-        <div className="mb-4 max-w-48">
-          <Select label="Show" id="bills-show" value={show}
-            onChange={(e) => setShow(e.target.value as Show)}>
-            <option value="open">Still to pay</option>
-            <option value="all">All bills</option>
-          </Select>
-        </div>
+        <Tabs label="Bills" tabs={TABS} value={show} onChange={setShow} />
         {done && (
           <div className="mb-2">
             <Notice tone="info">{done}</Notice>
@@ -63,7 +80,7 @@ export function BillsPage({ me }: { me: Me }) {
         {bills === null ? (
           <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
         ) : bills.length === 0 ? (
-          <Notice tone="info">{show === "open" ? "Nothing left to pay: every bill is paid or declined." : "No bills yet."}</Notice>
+          <EmptyState icon={Receipt} title={NONE[show]} />
         ) : (
           <ul className="flex flex-col divide-y divide-line">
             {bills.map((bill) => (
@@ -78,7 +95,7 @@ export function BillsPage({ me }: { me: Me }) {
   );
 }
 
-function EnterBillCard({ books, refresh }: { books: Portfolio; refresh: () => void }) {
+function EnterBillForm({ books, refresh }: { books: Portfolio; refresh: () => void }) {
   const { said, error, record } = useRecord(refresh);
   const [vendor, setVendor] = useState(books.vendors[0]?.id ?? "");
   const [account, setAccount] = useState(books.accounts[0]?.account ?? "");
@@ -89,16 +106,12 @@ function EnterBillCard({ books, refresh }: { books: Portfolio; refresh: () => vo
   const [memo, setMemo] = useState("");
   const [expense, setExpense] = useState("");
   if (books.vendors.length === 0 || books.accounts.length === 0) {
-    return (
-      <Card title="Enter a bill">
-        <Notice tone="info">Add a vendor and a property with an owner in Setup first.</Notice>
-      </Card>
-    );
+    return <Notice tone="info">Add a vendor and a property with an owner in Setup first.</Notice>;
   }
   return (
-    <Card title="Enter a bill">
+    <>
       <form
-        className="flex flex-wrap items-end gap-3"
+        className="flex flex-col gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
           const body = {
@@ -144,7 +157,7 @@ function EnterBillCard({ books, refresh }: { books: Portfolio; refresh: () => vo
       </form>
       <Notice tone="info">{said}</Notice>
       <Notice tone="error">{error}</Notice>
-    </Card>
+    </>
   );
 }
 
@@ -163,7 +176,7 @@ function BillRow({ bill, books, refresh, say }: {
         <p>
           <span className="font-medium">{bill.vendor} {bill.reference}</span>
           <span className="text-ink-muted">
-            {" "}· {bill.owner}, {bill.property} · {bill.memo} · dated {bill.bill_date}, due {bill.due_on}
+            {" "}· {bill.owner}, {bill.property} · {bill.memo} · dated {usDate(bill.bill_date)}, due {usDate(bill.due_on)}
           </span>
         </p>
         <p className="flex items-center gap-3">
@@ -265,18 +278,25 @@ function StepForm({ bill, step, record }: { bill: Bill; step: string; record: Re
   const done = step === "Pay"
     ? `${bill.reference} is paid.`
     : `${money(bill.amount)} is set aside for ${bill.reference}.`;
+  const { ask, prompt } = useConfirm();
+  const send = () => record(`/api/payables/bills/${bill.id}/${path}`, { on }, () => done);
   return (
-    <form
-      className="flex flex-wrap items-end gap-3"
-      onSubmit={(event) => {
-        event.preventDefault();
-        record(`/api/payables/bills/${bill.id}/${path}`, { on }, () => done);
-      }}
-    >
-      <Field label={step === "Pay" ? "Paid on" : "Set aside on"} id={`${path}-on-${bill.id}`}
-        type="date" required value={on} onChange={(e) => setOn(e.target.value)} />
-      <Button type="submit" variant="secondary">{step}</Button>
-    </form>
+    <>
+      <form
+        className="flex flex-wrap items-end gap-3"
+        onSubmit={(event) => {
+          event.preventDefault();
+          // Paying sends the money out of trust: staff confirm the amount first.
+          if (step === "Pay") ask(`Pay ${money(bill.amount)} to ${bill.vendor} for ${bill.reference} on ${usDate(on)}?`, send);
+          else send();
+        }}
+      >
+        <Field label={step === "Pay" ? "Paid on" : "Set aside on"} id={`${path}-on-${bill.id}`}
+          type="date" required value={on} onChange={(e) => setOn(e.target.value)} />
+        <Button type="submit" variant="secondary">{step}</Button>
+      </form>
+      {prompt}
+    </>
   );
 }
 
@@ -343,7 +363,7 @@ function RecurringLine({ bill, books, record }: { bill: Recurring; books: Portfo
             onSubmit={async (event) => {
               event.preventDefault();
               const done = await record(`/api/payables/recurring/${bill.id}/end`, { ends_on: on },
-                () => `${bill.reference_prefix} stops after ${on}.`);
+                () => `${bill.reference_prefix} stops after ${usDate(on)}.`);
               if (done) setAsking(false);
             }}
           >
@@ -440,7 +460,7 @@ function OutboxCard({ emails }: { emails: OutboxEmail[] }) {
         <ul className="flex flex-col gap-1 text-sm" aria-label="Emails to owners">
           {emails.map((e) => (
             <li key={e.id}>
-              {e.written_at.slice(0, 10)} to {e.to}: {e.subject}.{" "}
+              {usDate(e.written_at)} to {e.to}: {e.subject}.{" "}
               <span className="text-ink-muted">
                 {e.status === "sent" ? "Sent." : e.status === "waiting" ? "Waiting to be sent." : "Not sent"}
                 {e.status !== "sent" && e.error ? ` (${e.error})` : ""}

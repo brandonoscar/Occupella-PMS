@@ -16,6 +16,7 @@ export function MaintenanceCard() {
   const [chosen, setChosen] = useState<Record<string, string>>({});
   const [showClosed, setShowClosed] = useState(false);
   const [error, setError] = useState("");
+  const [said, setSaid] = useState("");
 
   function show(failed: unknown) {
     setError(failed instanceof ApiError ? failed.detail : String(failed));
@@ -33,10 +34,13 @@ export function MaintenanceCard() {
     api.get<Vendor[]>("/api/maintenance/vendors").then(setVendors).catch(show);
   }, []);
 
-  async function act(work: () => Promise<unknown>) {
+  // Runs one write and says what it did (`done`), or shows why it was refused.
+  async function act(work: () => Promise<unknown>, done: string) {
     setError("");
+    setSaid("");
     try {
       await work();
+      setSaid(done);
       refresh();
     } catch (failed) {
       show(failed);
@@ -44,9 +48,9 @@ export function MaintenanceCard() {
   }
 
   const openOrder = (request: StaffRequest) =>
-    act(() => api.post(`/api/maintenance/requests/${request.id}/work-order`));
+    act(() => api.post(`/api/maintenance/requests/${request.id}/work-order`), `Work order opened for "${request.summary}".`);
   const step = (request: StaffRequest, body: Record<string, string>) =>
-    act(() => api.post(`/api/maintenance/work-orders/${request.work_order_id}/steps`, body));
+    act(() => api.post(`/api/maintenance/work-orders/${request.work_order_id}/steps`, body), `"${request.summary}" updated.`);
 
   return (
     <Card title="Maintenance requests">
@@ -61,6 +65,7 @@ export function MaintenanceCard() {
         />
         Show done and closed requests too
       </label>
+      <Notice tone="info">{said}</Notice>
       <Notice tone="error">{error}</Notice>
       {requests === null ? (
         <Notice tone="info">Loading</Notice>

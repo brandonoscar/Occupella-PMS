@@ -39,8 +39,8 @@ describe("Shell", () => {
 
     const links = within(sections()).getAllByRole("link");
     expect(links.map((link) => link.textContent)).toEqual([
-      "Dashboard", "Properties", "Rent roll", "Owners", "Move-outs", "Applicants", "Draft leases", "Banking", "Bills",
-      "Journal entries", "Budgets", "Work orders", "Vendors", "Files", "Reports", "Settings",
+      "Dashboard", "Properties", "Rent roll", "Tenants", "Owners", "Move-outs", "Listings", "Applicants", "Draft leases", "Renewals", "Banking", "Bills",
+      "General ledger", "Owner draws", "Budgets", "Work orders", "Vendors", "Files", "Reports", "Settings",
     ]);
     const groups = within(sections()).getAllByRole("group");
     expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual([
@@ -48,7 +48,7 @@ describe("Shell", () => {
     ]);
     const accounting = within(sections()).getByRole("group", { name: "Accounting" });
     expect(within(accounting).getAllByRole("link").map((link) => link.textContent)).toEqual([
-      "Banking", "Bills", "Journal entries", "Budgets",
+      "Banking", "Bills", "General ledger", "Owner draws", "Budgets",
     ]);
     // Each group and each page outside one has its icon.
     expect(groups.every((group) => group.querySelector("svg"))).toBe(true);
@@ -81,11 +81,11 @@ describe("Shell", () => {
 
   it("gives staff the search in the bar, and nobody else", () => {
     render(<Shell me={STAFF} nav={STAFF_NAV}><p /></Shell>);
-    expect(within(screen.getByRole("banner")).getByLabelText("Search properties, units and tenants")).toBeTruthy();
+    expect(within(screen.getByRole("banner")).getByLabelText("Search properties, units, tenants and owners")).toBeTruthy();
     cleanup();
 
     render(<Shell me={OWNER}><p /></Shell>);
-    expect(screen.queryByLabelText("Search properties, units and tenants")).toBeNull();
+    expect(screen.queryByLabelText("Search properties, units, tenants and owners")).toBeNull();
   });
 
   it("names an owner's or a tenant's one page in the rail", () => {

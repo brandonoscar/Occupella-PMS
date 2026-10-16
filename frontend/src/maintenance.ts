@@ -1,5 +1,6 @@
 // Maintenance requests as the API sends them, and how their status reads. A request's status is
 // its work order's latest step (src/pms/api/maintenance.py).
+import { usDate } from "./money";
 
 export type Status = "received" | "opened" | "assigned" | "completed" | "cancelled";
 
@@ -41,5 +42,6 @@ export function isOpen(status: Status): boolean {
 export function when(iso: string): string {
   const moment = new Date(iso);
   if (Number.isNaN(moment.getTime())) return iso;
-  return `${moment.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+  const at = moment.toISOString();
+  return `${usDate(at)} ${at.slice(11, 16)} UTC`;
 }

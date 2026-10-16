@@ -156,12 +156,13 @@ def status_of(
     return "to set aside"
 
 
+BillsShown = Literal["open", "paid", "declined", "all"]
+
+
 @router.get("/bills")
-def bills(
-    session: Staff, conn: Conn, show: Annotated[Literal["open", "all"], Query()] = "open"
-) -> list[Bill]:
+def bills(session: Staff, conn: Conn, show: Annotated[BillsShown, Query()] = "open") -> list[Bill]:
     """The PMC's vendor bills, by due date: by default those still to pay (not paid, nor
-    declined by the owner)."""
+    declined by the owner); or the paid ones, the declined ones, or all."""
     found = []
     for (
         i,
@@ -189,6 +190,8 @@ def bills(
             amount, limit, approved_by is not None, declined_by is not None, aside, paid
         )
         if show == "open" and status in ("paid", "declined"):
+            continue
+        if show in ("paid", "declined") and status != show:
             continue
         found.append(
             Bill(
@@ -668,6 +671,7 @@ class OwnerMoney(BaseModel):
     account: str
     owner_id: UUID
     owner: str
+    property_id: UUID
     property: str
     bank_account: str
     balance: str
@@ -679,7 +683,7 @@ class OwnerMoney(BaseModel):
 
 
 OWNERS = """
-SELECT a.ledger_account_id, o.id, o.display_name, p.display_name, b.display_name, l.balance,
+SELECT a.ledger_account_id, o.id, o.display_name, p.id, p.display_name, b.display_name, l.balance,
        coalesce(g.reserve, 0),
        -- Bills dated by today and not set aside by then (trust_unpaid_bills, which the app
        -- may not call, written out).
@@ -705,6 +709,7 @@ LEFT JOIN LATERAL (
     ORDER BY g.starts_on DESC LIMIT 1
 ) AS g ON true
 WHERE a.pmc_id = %(pmc)s AND a.kind = 'owner_property'
+  AND (%(owner)s::uuid IS NULL OR a.owner_id = %(owner)s)
 ORDER BY o.display_name COLLATE "C", p.display_name COLLATE "C", a.ledger_account_id
 """
 
@@ -712,11 +717,20 @@ ORDER BY o.display_name COLLATE "C", p.display_name COLLATE "C", a.ledger_accoun
 @router.get("/owners")
 def owners(session: Staff, conn: Conn) -> list[OwnerMoney]:
     """Each owner's property account today: what it holds, keeps back and may pay out."""
+    return owner_money(conn, session.pmc_id)
+
+
+def owner_money(
+    conn: psycopg.Connection[Any], pmc: UUID, owner: UUID | None = None
+) -> list[OwnerMoney]:
+    """The PMC's owners' property accounts today (or one owner's), as `owners` lists them."""
+    rows = conn.execute(OWNERS, {"pmc": pmc, "today": today(), "owner": owner}).fetchall()
     return [
         OwnerMoney(
             account=account,
             owner_id=owner_id,
-            owner=owner,
+            owner=name,
+            property_id=property_id,
             property=prop,
             bank_account=bank,
             balance=cents(held),
@@ -725,9 +739,7 @@ def owners(session: Staff, conn: Conn) -> list[OwnerMoney]:
             available=cents(max(held - reserve - bills_, Decimal(0))),
             has_agreement=agreed,
         )
-        for account, owner_id, owner, prop, bank, held, reserve, bills_, agreed in conn.execute(
-            OWNERS, {"pmc": session.pmc_id, "today": today()}
-        ).fetchall()
+        for account, owner_id, name, property_id, prop, bank, held, reserve, bills_, agreed in rows
     ]
 
 

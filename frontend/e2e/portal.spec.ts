@@ -30,6 +30,8 @@ type Seed = {
 const seed: Seed = JSON.parse(readFileSync(new URL("./.seed.json", import.meta.url), "utf8"));
 const PASSWORD = "a long synthetic passphrase";
 const day = (fromNow: number) => new Date(Date.now() + fromNow * 86_400_000).toISOString().slice(0, 10);
+// A day as the portal shows it: MM/DD/YYYY.
+const us = (iso: string) => `${iso.slice(5, 7)}/${iso.slice(8, 10)}/${iso.slice(0, 4)}`;
 
 // The pages are served under a strict Content-Security-Policy (src/pms/api/app.py). Anything it
 // blocks, such as a script or an image from another origin, fails the test that loaded it.
@@ -228,7 +230,7 @@ test("staff offer a lease and a renewal; the signers sign on the partner's page;
   await expect(mover.getByTestId("esign-status")).toHaveText("Signed. You can close this page.");
 
   await offer.getByRole("button", { name: "Make it the lease" }).click();
-  await expect(page.getByText(`E2E Property 3, E2E Unit 4 has its lease from ${day(30)}.`)).toBeVisible();
+  await expect(page.getByText(`E2E Property 3, E2E Unit 4 has its lease from ${us(day(30))}.`)).toBeVisible();
   await expect(offer).toHaveCount(0);
 
   // The renewal of a tenant's lease; the tenant signs it from their portal.
@@ -248,7 +250,7 @@ test("staff offer a lease and a renewal; the signers sign on the partner's page;
   await tenant.getByLabel("The same password again").fill(PASSWORD);
   await tenant.getByRole("button", { name: "Set password" }).click();
   const offered = tenant.getByRole("listitem", { name: "Renewal of E2E Unit 3" });
-  await expect(offered).toContainText(`${day(60)} to month to month, $1,000.00 a month`);
+  await expect(offered).toContainText(`${us(day(60))} to month to month, $1,000.00 a month`);
   const read = await tenant.request.get(
     (await offered.getByRole("link", { name: "Read the lease (PDF)" }).getAttribute("href")) ?? "",
   );
@@ -308,7 +310,7 @@ test("staff set up a property from nothing, lease a unit and see it on the rent 
   await page.getByLabel("Tenant Setup E2E").check();
   await page.getByRole("button", { name: "Add lease" }).click();
   await expect(property).toContainText(
-    `Unit 9A: Tenant Setup E2E: from ${today}, month to month, $1,100.00 a month`,
+    `Unit 9A: Tenant Setup E2E: from ${us(today)}, month to month, $1,100.00 a month`,
   );
 
   const rentRoll = await page.request.get(
@@ -369,6 +371,7 @@ test("staff enter a vendor's bill, record the owner's approval, set it aside and
   const sections = page.getByRole("navigation", { name: "Sections" });
   await sections.getByRole("link", { name: "Bills" }).click();
 
+  await page.getByRole("button", { name: "Record bill" }).click();
   await page.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Vendor E2E" });
   await page
     .getByRole("combobox", { name: "Owner and property", exact: true })
@@ -378,6 +381,7 @@ test("staff enter a vendor's bill, record the owner's approval, set it aside and
   await page.getByLabel("What for").fill("Gutter repair");
   await page.getByRole("button", { name: "Enter bill" }).click();
   await expect(page.getByText("Bill E2E-INV-1 entered.")).toBeVisible();
+  await page.getByRole("dialog", { name: "Record bill" }).getByRole("button", { name: "Close" }).click();
 
   // No agreement: every bill needs the owner's approval first.
   const bill = page.getByRole("listitem", { name: "Vendor E2E E2E-INV-1" });
@@ -388,15 +392,18 @@ test("staff enter a vendor's bill, record the owner's approval, set it aside and
   await bill.getByRole("button", { name: "Set aside" }).click();
   await expect(bill.getByTestId("status")).toHaveText("set aside");
   await bill.getByRole("button", { name: "Pay" }).click();
+  await bill.getByRole("button", { name: "Confirm" }).click();
   await expect(bill).toHaveCount(0);
-  await page.getByRole("combobox", { name: "Show", exact: true }).selectOption("all");
+  await page.getByRole("tab", { name: "All", exact: true }).click();
   await expect(bill.getByTestId("status")).toHaveText("paid");
 
   await sections.getByRole("link", { name: "Owners" }).click();
+  await page.getByRole("row", { name: "Payee E2E", exact: true }).getByRole("link").click();
   const payee = page.getByRole("listitem", { name: "Payee E2E, E2E Property 7" });
   await expect(payee.getByTestId("available")).toHaveText("$700.00 available");
   await payee.getByText("Record for Payee E2E, E2E Property 7").click();
   await payee.getByRole("button", { name: "Record draw" }).click();
+  await payee.getByRole("button", { name: "Confirm" }).click();
   await expect(payee).toContainText("$700.00 paid out to Payee E2E.");
   await expect(payee.getByTestId("available")).toHaveText("$0.00 available");
 });
@@ -420,6 +427,7 @@ test("staff charge a tenant's damage at move-out, return the rest of the deposit
   await expect(card.getByText(/Keeps \$150.00 for what the lease owes; \$750.00 goes back/)).toBeVisible();
 
   await card.getByRole("button", { name: "Return the deposit" }).click();
+  await card.getByRole("button", { name: "Confirm" }).click();
   await expect(card.getByText("Returned $750.00 to the tenants; the rest paid what the lease owed.")).toBeVisible();
   await expect(card.getByLabel("Returned, E2E Property 8 / E2E Unit 8: Leaver E2E")).toContainText(
     "kept $150.00 of $900.00, $750.00 back to the tenants",
@@ -446,8 +454,8 @@ test("staff keep an owner's document and the owner downloads it from the portal"
   await page.getByLabel("File").setInputFiles({ name: "agreement-2026.pdf", mimeType: "application/pdf", buffer: pdf });
   await expect(page.getByLabel("Title")).toHaveValue("agreement-2026");
   await page.getByLabel("Title").fill("Management agreement 2026");
-  await page.getByRole("button", { name: "Keep it" }).click();
-  await expect(page.getByText("Kept Management agreement 2026.")).toBeVisible();
+  await page.getByRole("button", { name: "Upload" }).click();
+  await expect(page.getByText("Uploaded Management agreement 2026.")).toBeVisible();
   const kept = page.getByRole("list", { name: "Documents" }).getByRole("listitem");
   await expect(kept).toContainText("Owner document, Owner E2E");
 
@@ -485,9 +493,8 @@ test("staff import last month's statement, match it to the books and prepare it;
   await page.getByRole("button", { name: "Finish" }).click();
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Banking", exact: true }).click();
 
-  await page
-    .getByRole("combobox", { name: "Trust bank account", exact: true })
-    .selectOption({ label: "E2E operating trust account" });
+  await page.getByRole("row", { name: "E2E operating trust account", exact: true }).getByRole("link").click();
+  await expect(page.getByRole("heading", { level: 1, name: "E2E operating trust account" })).toBeVisible();
   // The seed's rents of last month: two owners' in one deposit, two more on their own.
   const csv = [
     "Date,Description,Amount,Reference",
@@ -502,16 +509,16 @@ test("staff import last month's statement, match it to the books and prepare it;
   await page.getByLabel("First day").fill(iso(first));
   await page.getByLabel("Last day").fill(iso(last));
   await page.getByRole("button", { name: "Import statement" }).click();
-  await expect(page.getByText(`Imported 3 lines, ${iso(first)} to ${iso(last)}.`)).toBeVisible();
+  await expect(page.getByText(`Imported 3 lines, ${us(iso(first))} to ${us(iso(last))}.`)).toBeVisible();
 
   await page.getByRole("button", { name: "Match the sure ones" }).click();
   await expect(page.getByText("2 lines matched.")).toBeVisible();
-  const prepare = page.getByRole("button", { name: `Prepare through ${iso(last)}` });
+  const prepare = page.getByRole("button", { name: `Prepare through ${us(iso(last))}` });
   await expect(prepare).toBeDisabled();
 
-  await page.getByLabel(`${sixth} Deposit (D-1): $2,750.00`).check();
-  await page.getByLabel(`${fifth} Rent: $1,500.00`).check();
-  await page.getByLabel(`${fifth} Rent: $1,250.00`).check();
+  await page.getByLabel(`${us(sixth)} Deposit (D-1): $2,750.00`).check();
+  await page.getByLabel(`${us(fifth)} Rent: $1,500.00`).check();
+  await page.getByLabel(`${us(fifth)} Rent: $1,250.00`).check();
   await page.getByRole("button", { name: "Match these" }).click();
   await expect(page.getByText("Matched.")).toBeVisible();
 
@@ -521,15 +528,15 @@ test("staff import last month's statement, match it to the books and prepare it;
   await expect(page.getByText("Match undone.")).toBeVisible();
   await expect(matches.getByRole("row", { name: /\(D-1\)/ })).toHaveCount(0);
   await expect(prepare).toBeDisabled();
-  await page.getByLabel(`${sixth} Deposit (D-1): $2,750.00`).check();
-  await page.getByLabel(`${fifth} Rent: $1,500.00`).check();
-  await page.getByLabel(`${fifth} Rent: $1,250.00`).check();
+  await page.getByLabel(`${us(sixth)} Deposit (D-1): $2,750.00`).check();
+  await page.getByLabel(`${us(fifth)} Rent: $1,500.00`).check();
+  await page.getByLabel(`${us(fifth)} Rent: $1,250.00`).check();
   await page.getByRole("button", { name: "Match these" }).click();
   await expect(page.getByText("Matched.")).toBeVisible();
 
   await prepare.click();
   await expect(page.getByLabel("Prepared")).toContainText(
-    `Prepared through ${iso(last)} by Month-end E2E: bank $4,700.00, books $4,700.00.`,
+    `Prepared through ${us(iso(last))} by Month-end E2E: bank $4,700.00, books $4,700.00.`,
   );
   await expect(page.getByLabel("Prepared")).toContainText("Another staff member who may approve approves it.");
   await page.getByRole("button", { name: "Sign out" }).click();
@@ -542,13 +549,12 @@ test("staff import last month's statement, match it to the books and prepare it;
   await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
   await page.getByRole("button", { name: "Finish" }).click();
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Banking", exact: true }).click();
-  await page
-    .getByRole("combobox", { name: "Trust bank account", exact: true })
-    .selectOption({ label: "E2E operating trust account" });
-  await page.getByRole("button", { name: `Approve through ${iso(last)}` }).click();
-  await expect(page.getByText(`Approved through ${iso(last)}; the account is closed through it.`)).toBeVisible();
+  await page.getByRole("row", { name: "E2E operating trust account", exact: true }).getByRole("link").click();
+  await expect(page.getByRole("heading", { level: 1, name: "E2E operating trust account" })).toBeVisible();
+  await page.getByRole("button", { name: `Approve through ${us(iso(last))}` }).click();
+  await expect(page.getByText(`Approved through ${us(iso(last))}; the account is closed through it.`)).toBeVisible();
   const approved = page.getByRole("table", { name: "Approved" }).getByRole("row", {
-    name: `${iso(first)} to ${iso(last)} $4,700.00 $4,700.00 Approver E2E`,
+    name: `${us(iso(first))} to ${us(iso(last))} $4,700.00 $4,700.00 Approver E2E`,
   });
   await expect(approved).toBeVisible();
 });
@@ -601,22 +607,21 @@ test("staff bring a roster in, open an account with its old balances and a check
   await expect(card).toContainText("Switch E2E at ");
 
   await sections.getByRole("link", { name: "Banking", exact: true }).click();
-  await page
-    .getByRole("combobox", { name: "Trust bank account", exact: true })
-    .selectOption({ label: "E2E cutover trust account" });
+  await page.getByRole("row", { name: "E2E cutover trust account", exact: true }).getByRole("link").click();
+  await expect(page.getByRole("heading", { level: 1, name: "E2E cutover trust account" })).toBeVisible();
   await page.getByLabel("Statement file (CSV or OFX)").setInputFiles(file("statement.csv", "Date,Description,Amount\n"));
   await page.getByLabel("First day").fill(iso(cutover));
   await page.getByLabel("Last day").fill(iso(cutover));
   await page.getByLabel("Opening balance", { exact: true }).fill("1050.00");
   await page.getByRole("button", { name: "Import statement" }).click();
-  await expect(page.getByText(`Imported 1 line, ${iso(cutover)} to ${iso(cutover)}.`)).toBeVisible();
+  await expect(page.getByText(`Imported 1 line, ${us(iso(cutover))} to ${us(iso(cutover))}.`)).toBeVisible();
   await expect(page.getByText(/balance brought forward should be \$1,050.00/)).toBeVisible();
   await page.getByRole("button", { name: "Match the opening" }).click();
   await expect(page.getByText("The opening is matched.")).toBeVisible();
   // Carried by the opening match, the check waits for the bank line that clears it.
-  await expect(page.getByLabel(`${before} Check to Vendor E2E (2001), from before the cutover: -$150.00`)).toBeVisible();
+  await expect(page.getByLabel(`${us(before)} Check to Vendor E2E (2001), from before the cutover: ($150.00)`)).toBeVisible();
   const carried = page.getByRole("table", { name: "Reconciling items" }).getByRole("row", {
-    name: `outstanding withdrawal ${before} Check to Vendor E2E (2001), from before the cutover -$150.00`,
+    name: `outstanding withdrawal ${before} Check to Vendor E2E (2001), from before the cutover ($150.00)`,
   });
   await expect(carried).toBeVisible();
 });
@@ -636,19 +641,18 @@ test("the demo opens on last month waiting for its manager, who approves it and 
   await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
   await page.getByRole("button", { name: "Finish" }).click();
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Banking", exact: true }).click();
-  await page
-    .getByRole("combobox", { name: "Trust bank account", exact: true })
-    .selectOption({ label: "Demo operating trust account" });
+  await page.getByRole("row", { name: "Demo operating trust account", exact: true }).getByRole("link").click();
+  await expect(page.getByRole("heading", { level: 1, name: "Demo operating trust account" })).toBeVisible();
 
   // The bookkeeper prepared last month; the roof repair's check hasn't cleared the bank.
   await expect(page.getByRole("table", { name: "Reconciling items" })).toContainText("Bill RF-2207 paid");
   await expect(page.getByLabel("Prepared")).toContainText(
-    `Prepared through ${iso(last)} by Demo Bookkeeper: bank $2,379.20, books $1,729.20.`,
+    `Prepared through ${us(iso(last))} by Demo Bookkeeper: bank $2,379.20, books $1,729.20.`,
   );
-  await page.getByRole("button", { name: `Approve through ${iso(last)}` }).click();
-  await expect(page.getByText(`Approved through ${iso(last)}; the account is closed through it.`)).toBeVisible();
+  await page.getByRole("button", { name: `Approve through ${us(iso(last))}` }).click();
+  await expect(page.getByText(`Approved through ${us(iso(last))}; the account is closed through it.`)).toBeVisible();
   const approved = page.getByRole("table", { name: "Approved" }).getByRole("row", {
-    name: `${iso(first)} to ${iso(last)} $2,379.20 $1,729.20 Demo Manager`,
+    name: `${us(iso(first))} to ${us(iso(last))} $2,379.20 $1,729.20 Demo Manager`,
   });
   await expect(approved).toBeVisible();
 
@@ -659,13 +663,13 @@ test("the demo opens on last month waiting for its manager, who approves it and 
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Dashboard", exact: true }).click();
   const thisMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   await expect(page.getByRole("region", { name: "Journal entries waiting" })).toContainText(
-    `Reserve moved to Birch Flats, as Demo Owner A asked: $25.00, dated ${iso(thisMonth)}, proposed by Demo Bookkeeper`,
+    `Reserve moved to Birch Flats, as Demo Owner A asked: $25.00, dated ${us(iso(thisMonth))}, proposed by Demo Bookkeeper`,
   );
   await expect(page.getByRole("region", { name: "Vendor insurance" })).toContainText(
     "Demo Roofing Co, general liability: expires in 20 days",
   );
   await expect(page.getByRole("region", { name: "Company fees in trust" })).toContainText(
-    `Demo operating trust account: $779.20 of the company's fees, the oldest since ${iso(last)}`,
+    `Demo operating trust account: $779.20 of the company's fees, the oldest since ${us(iso(last))}`,
   );
   await expect(page.getByRole("region", { name: "Renters insurance" })).toHaveText(
     /Unit 1, Aspen Row \(Drew Sample\): renters insurance none on file/,

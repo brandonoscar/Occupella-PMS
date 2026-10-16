@@ -1,4 +1,5 @@
 // A lease's move-in and move-out inspections as the API sends them (src/pms/api/inspections.py).
+import { usDate } from "./money";
 export type Condition = "good" | "fair" | "poor" | "damaged" | "missing";
 export const CONDITIONS: Condition[] = ["good", "fair", "poor", "damaged", "missing"];
 export type InspectionItem = { room: string; condition: Condition; note: string | null };
@@ -28,7 +29,7 @@ export function inspectionSummary(inspection: Inspection): string {
   const kind = inspection.kind === "move-in" ? "Move-in" : "Move-out";
   const rooms = inspection.items.length;
   const bad = inspection.items.filter((i) => i.condition === "damaged" || i.condition === "missing").length;
-  return `${kind}, ${inspection.inspected_on}: ${rooms} room${rooms === 1 ? "" : "s"}` +
+  return `${kind}, ${usDate(inspection.inspected_on)}: ${rooms} room${rooms === 1 ? "" : "s"}` +
     (bad ? `, ${bad} damaged or missing` : "");
 }
 

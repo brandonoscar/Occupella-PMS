@@ -56,9 +56,9 @@ describe("DocumentsPage", () => {
     fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "o2" } });
     fireEvent.change(screen.getByLabelText("File"), { target: { files: [pdf("Owner 2 agreement.pdf")] } });
     await vi.waitFor(() => expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("Owner 2 agreement"));
-    fireEvent.click(screen.getByRole("button", { name: "Keep it" }));
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
 
-    expect(await screen.findByText("Kept Owner 2 agreement.")).toBeTruthy();
+    expect(await screen.findByText("Uploaded Owner 2 agreement.")).toBeTruthy();
     expect(posted(fetch)).toEqual([
       ["/api/documents", {
         kind: "owner_document", about_id: "o2", title: "Owner 2 agreement",
@@ -71,7 +71,7 @@ describe("DocumentsPage", () => {
     const fetch = server();
     render(<DocumentsPage me={ME} />);
     const listed = await screen.findByLabelText("Documents");
-    expect(listed.textContent).toContain("W-9, Vendor 1, 2 KB, by Staff 1 on 2026-10-01");
+    expect(listed.textContent).toContain("W-9, Vendor 1, 2 KB, by Staff 1 on 10/01/2026");
     expect(screen.getByRole("link", { name: "W-9 2026" }).getAttribute("href")).toBe("/api/documents/d1/file");
     fireEvent.click(screen.getByRole("button", { name: "Remove W-9 2026" }));
     expect(await screen.findByText("Removed W-9 2026.")).toBeTruthy();
@@ -81,7 +81,7 @@ describe("DocumentsPage", () => {
   it("refuses a file a document can't be, says when there is nothing to keep one for, and shows a refusal", async () => {
     server({ "/api/documents": "nothing of this PMC for the document to be about" });
     render(<DocumentsPage me={ME} />);
-    const keep = (await screen.findByRole("button", { name: "Keep it" })) as HTMLButtonElement;
+    const keep = (await screen.findByRole("button", { name: "Upload" })) as HTMLButtonElement;
     fireEvent.change(screen.getByLabelText("File"), { target: { files: [new File(["<html>"], "page.html", { type: "text/html" })] } });
     expect(await screen.findByText("A document is a PDF, a JPEG or a PNG.")).toBeTruthy();
     expect(keep.disabled).toBe(true);
@@ -99,7 +99,7 @@ describe("DocumentsPage", () => {
 
     server({}, { ...LIBRARY, documents: [] });
     render(<DocumentsPage me={ME} />);
-    expect(await screen.findByText("No document yet.")).toBeTruthy();
+    expect(await screen.findByText("No file yet.")).toBeTruthy();
     cleanup();
 
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));

@@ -90,13 +90,13 @@ describe("LeaseRow", () => {
     const lease = leaseRow();
     expect(within(lease).getByTestId("owed").textContent).toBe("Owes $1,550.00");
     expect(lease.textContent).toContain("Tenant 1: prepaid $50.00, deposit $1,500.00");
-    expect(lease.textContent).toContain("2026-10-06 Late fee: $50.00 open");
+    expect(lease.textContent).toContain("10/06/2026 Late fee: $50.00 open");
     // The payments as rows: the day with its reference under it, the amount, and a badge on the one
     // that bounced.
     const payments = within(lease).getAllByRole("row").slice(1);
     expect(payments.map((r) => within(r).getAllByRole("cell").map((c) => c.textContent))).toEqual([
-      ["2026-09-01Check 101", "$1,500.00", "It bounced"],
-      ["2026-08-01", "$1,500.00", "Bounced"],
+      ["09/01/2026Check 101", "$1,500.00", "It bounced"],
+      ["08/01/2026", "$1,500.00", "Bounced"],
     ]);
     expect(within(payments[0]!).getByText("Check 101").className).toContain("text-ink-muted");
     expect(within(lease).getByTestId("owed").getAttribute("data-tone")).toBe("caution");
@@ -151,12 +151,12 @@ describe("LeaseRow", () => {
     fireEvent.click(within(lease).getByRole("button", { name: "Record deposit" }));
     expect(await within(lease).findByText("Deposit of $500.00 held.")).toBeTruthy();
     // A bounce asks for the day it came back before anything is recorded; Cancel records nothing.
-    expect(within(lease).queryByLabelText("Bounced on, 2026-09-01 payment")).toBeNull();
+    expect(within(lease).queryByLabelText("Bounced on, 09/01/2026 payment")).toBeNull();
     fireEvent.click(within(lease).getByRole("button", { name: "It bounced" }));
     fireEvent.click(within(lease).getByRole("button", { name: "Cancel" }));
-    expect(within(lease).queryByLabelText("Bounced on, 2026-09-01 payment")).toBeNull();
+    expect(within(lease).queryByLabelText("Bounced on, 09/01/2026 payment")).toBeNull();
     fireEvent.click(within(lease).getByRole("button", { name: "It bounced" }));
-    fireEvent.change(within(lease).getByLabelText("Bounced on, 2026-09-01 payment"), {
+    fireEvent.change(within(lease).getByLabelText("Bounced on, 09/01/2026 payment"), {
       target: { value: "2026-09-05" },
     });
     fireEvent.click(within(lease).getByRole("button", { name: "Record the bounce" }));
@@ -180,9 +180,9 @@ describe("LeaseRow", () => {
     const fetch = server();
     const lease = leaseRow();
 
-    expect(lease.textContent).toContain("Pet rent: $35.00 a month from 2026-01-01");
+    expect(lease.textContent).toContain("Pet rent: $35.00 a month from 01/01/2026");
     expect(lease.textContent).toContain(
-      "Concession: credit of $100.00 a month from 2026-02-01, stops 2026-12-01",
+      "Concession: credit of $100.00 a month from 02/01/2026, stops 12/01/2026",
     );
     // Only one still to stop.
     expect(within(lease).getAllByRole("button", { name: "Stop" })).toHaveLength(1);
@@ -193,7 +193,7 @@ describe("LeaseRow", () => {
       target: { value: "2026-11-01" },
     });
     fireEvent.click(within(lease).getByRole("button", { name: "Stop it" }));
-    expect(await within(lease).findByText("Pet rent stops 2026-11-01.")).toBeTruthy();
+    expect(await within(lease).findByText("Pet rent stops 11/01/2026.")).toBeTruthy();
 
     fireEvent.change(within(lease).getByLabelText("Every month, a"), { target: { value: "fee" } });
     fireEvent.change(within(lease).getByLabelText("Monthly amount"), { target: { value: "50.00" } });
@@ -223,7 +223,7 @@ describe("LeaseRow", () => {
     const lease = leaseRow(changed);
 
     expect(within(lease).getByRole("list", { name: "Rent changes, Unit 1" }).textContent).toBe(
-      "From 2026-12-01: $1,575.00 a month (notice by mail on 2026-10-15)",
+      "From 12/01/2026: $1,575.00 a month (notice by mail on 10/15/2026)",
     );
     // A month-to-month lease names no lease term.
     expect(within(lease).queryByLabelText("The lease term that allows it")).toBeNull();
@@ -232,7 +232,7 @@ describe("LeaseRow", () => {
     fireEvent.change(within(lease).getByLabelText("Written notice given on"), { target: { value: "2026-11-01" } });
     fireEvent.change(within(lease).getByLabelText("Served"), { target: { value: "in person" } });
     fireEvent.click(within(lease).getByRole("button", { name: "Change rent" }));
-    expect(await within(lease).findByText("Rent of $1,600.00 a month from 2027-01-01 recorded.")).toBeTruthy();
+    expect(await within(lease).findByText("Rent of $1,600.00 a month from 01/01/2027 recorded.")).toBeTruthy();
 
     expect(posted(fetch)).toEqual([
       [
@@ -265,7 +265,7 @@ describe("LeaseRow", () => {
     });
     fireEvent.change(within(lease).getByLabelText("Asked from"), { target: { value: "2026-11-01" } });
     fireEvent.click(within(lease).getByRole("button", { name: "Set insurance terms" }));
-    expect(await within(lease).findByText("Renters insurance is required from 2026-11-01.")).toBeTruthy();
+    expect(await within(lease).findByText("Renters insurance is required from 11/01/2026.")).toBeTruthy();
 
     fireEvent.change(within(lease).getByLabelText("Insurer"), { target: { value: "Carrier A" } });
     fireEvent.change(within(lease).getByLabelText("Policy number"), { target: { value: "RI-1" } });
@@ -325,7 +325,7 @@ describe("RentPage", () => {
 
     const row = await roll();
     expect(within(row).getAllByRole("cell").map((c) => c.textContent)).toEqual([
-      "Property 1", "Unit 1", "Tenant 1, Tenant 2", "$1,500.00", "From 2026-01-01, month to month", "Owes $1,550.00",
+      "Property 1", "Unit 1", "Tenant 1, Tenant 2", "$1,500.00", "From 01/01/2026, month to month", "Owes $1,550.00",
     ]);
     expect(within(row).getByRole("link", { name: "Unit 1" }).getAttribute("href")).toBe("/leases/l1");
     expect(within(row).getByTestId("owed").getAttribute("data-tone")).toBe("caution");

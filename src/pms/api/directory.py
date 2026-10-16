@@ -1,0 +1,462 @@
+"""Tenants and owners as a property manager works them (ADR 0005): each a page at a time, each on
+a page of their own, renamed, archived and reached by their contact details.
+
+A tenant's page has their leases, their prepaid rent and deposit, and their contact details; an
+owner's has each of their property accounts (what it holds and may pay out, its draws and
+contributions) and their contact details. Contact details (`trust_contacts`, migration 0064) are
+a row per change, the latest holding; the AI role never reads them. Archiving is a row of
+`trust_archivals`, refused while anything is open on the person. Nothing here moves money: an
+owner's draws and contributions go through the owners' money paths (`payables.py`).
+"""
+
+from __future__ import annotations
+
+from typing import Annotated, Any, Literal
+from uuid import UUID
+
+import psycopg
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, StringConstraints, model_validator
+
+from pms.api import payables, rent
+from pms.api.deps import Conn, Staff, refusal
+from pms.api.rentals import (
+    Archiving,
+    LeaseLine,
+    Page,
+    Paged,
+    PerPage,
+    Ref,
+    Rename,
+    Search,
+    lease_lines,
+    like,
+    status_of,
+)
+
+router = APIRouter(prefix="/api")
+
+# --- contact details ---------------------------------------------------------------------------
+
+Email = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$"),
+]
+Phone = Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^\+?[0-9 ().-]{7,30}$")]
+
+
+Street = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+City = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+State = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=50)]
+PostalCode = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20)]
+
+ADDRESS = ("address_line_1", "city", "state", "postal_code")
+
+
+class Contact(BaseModel):
+    email: Email | None = None
+    phone: Phone | None = None
+    alternate_phone: Phone | None = None
+    address_line_1: Street | None = None
+    address_line_2: Street | None = None
+    city: City | None = None
+    state: State | None = None
+    postal_code: PostalCode | None = None
+
+    @model_validator(mode="after")
+    def whole_address(self) -> Contact:
+        given = [getattr(self, part) is not None for part in ADDRESS]
+        if any(given) and not all(given) or self.address_line_2 and not self.address_line_1:
+            raise ValueError("a mailing address needs its street, city, state and ZIP code")
+        return self
+
+
+FIELDS = list(Contact.model_fields)
+Person = Literal["tenant_id", "owner_id", "vendor_id"]
+
+
+def contact_of(conn: psycopg.Connection[Any], person: Person, person_id: UUID) -> Contact:
+    """A person's latest contact details; none recorded, all empty."""
+    row = conn.execute(
+        f"SELECT {', '.join(FIELDS)} FROM trust_contacts WHERE {person} = %s"
+        " ORDER BY created_at DESC, id DESC LIMIT 1",
+        (person_id,),
+    ).fetchone()
+    return Contact() if row is None else Contact(**dict(zip(FIELDS, row, strict=True)))
+
+
+def contacts_of(conn: psycopg.Connection[Any], pmc: UUID, person: Person) -> dict[UUID, Contact]:
+    """The latest contact details of each of the PMC's people of a kind who have some."""
+    return {
+        row[0]: Contact(**dict(zip(FIELDS, row[1:], strict=True)))
+        for row in conn.execute(
+            f"SELECT DISTINCT ON ({person}) {person}, {', '.join(FIELDS)} FROM trust_contacts"
+            f" WHERE pmc_id = %s AND {person} IS NOT NULL"
+            f" ORDER BY {person}, created_at DESC, id DESC",
+            (pmc,),
+        ).fetchall()
+    }
+
+
+def record_contact(
+    conn: psycopg.Connection[Any], pmc: UUID, person: Person, person_id: UUID, details: Contact
+) -> None:
+    """Records a person's contact details as given (all of them, so a field left empty is
+    cleared); the same details again write nothing."""
+    if contact_of(conn, person, person_id) == details:
+        return
+    conn.execute(
+        f"INSERT INTO trust_contacts (pmc_id, {person}, {', '.join(FIELDS)})"
+        f" VALUES (%s, %s, {', '.join(['%s'] * len(FIELDS))})",
+        (pmc, person_id, *(getattr(details, field) for field in FIELDS)),
+    )
+
+
+def found(conn: psycopg.Connection[Any], table: str, pmc: UUID, record: UUID, what: str) -> None:
+    """404 unless the PMC has the record."""
+    if (
+        conn.execute(
+            f"SELECT 1 FROM {table} WHERE pmc_id = %s AND id = %s", (pmc, record)
+        ).fetchone()
+        is None
+    ):
+        raise HTTPException(404, f"no such {what}")
+
+
+def archive(
+    conn: psycopg.Connection[Any], pmc: UUID, person: Person, record: UUID, archived: bool
+) -> None:
+    try:
+        with conn.transaction():
+            conn.execute(
+                f"INSERT INTO trust_archivals (pmc_id, {person}, archived) VALUES (%s, %s, %s)",
+                (pmc, record, archived),
+            )
+    except psycopg.errors.CheckViolation as refused:
+        raise HTTPException(409, refusal(refused)) from None
+
+
+def rename(conn: psycopg.Connection[Any], table: str, pmc: UUID, record: UUID, name: str) -> None:
+    conn.execute(
+        f"UPDATE {table} SET display_name = %s WHERE pmc_id = %s AND id = %s", (name, pmc, record)
+    )
+
+
+# --- tenants -----------------------------------------------------------------------------------
+
+
+class TenantLeaseRef(BaseModel):
+    id: UUID
+    unit: Ref
+    status: Literal["current", "future", "ended"]
+
+
+class TenantRow(BaseModel):
+    id: UUID
+    name: str
+    property: Ref
+    # The lease in effect today, or else their latest; None before their first.
+    lease: TenantLeaseRef | None
+    email: str | None
+    phone: str | None
+    archived: bool
+
+
+# A person's latest contact details, on c.
+LATEST_CONTACT = """
+LEFT JOIN LATERAL (
+    SELECT k.email, k.phone FROM trust_contacts AS k WHERE k.{person} = {key}
+    ORDER BY k.created_at DESC, k.id DESC LIMIT 1
+) AS c ON true
+"""
+
+TENANTS = f"""
+SELECT t.id, t.display_name, p.id, p.display_name, l.id, u.id, u.display_name, l.starts_on,
+       l.ends_on, c.email, c.phone, trust_is_archived(NULL, NULL, t.id), count(*) OVER ()
+FROM trust_tenants AS t
+JOIN trust_properties AS p ON p.id = t.property_id
+LEFT JOIN LATERAL (
+    SELECT x.id, x.unit_id, x.starts_on, x.ends_on FROM trust_lease_tenants AS lt
+    JOIN trust_leases AS x ON x.id = lt.lease_id
+    WHERE lt.tenant_id = t.id
+    ORDER BY (x.starts_on <= %(day)s AND (x.ends_on IS NULL OR %(day)s <= x.ends_on)) DESC,
+             x.starts_on DESC, x.id
+    LIMIT 1
+) AS l ON true
+LEFT JOIN trust_units AS u ON u.id = l.unit_id
+{LATEST_CONTACT.format(person="tenant_id", key="t.id")}
+WHERE t.pmc_id = %(pmc)s AND trust_is_archived(NULL, NULL, t.id) = %(archived)s
+  AND (%(like)s::text IS NULL OR t.display_name ILIKE %(like)s OR p.display_name ILIKE %(like)s
+       OR u.display_name ILIKE %(like)s)
+ORDER BY t.display_name COLLATE "C", t.id
+LIMIT %(per_page)s OFFSET %(offset)s
+"""
+
+
+@router.get("/tenants")
+def tenants(
+    session: Staff,
+    conn: Conn,
+    q: Search = None,
+    archived: bool = False,
+    page: Page = 1,
+    per_page: PerPage = 50,
+) -> Paged[TenantRow]:
+    """The company's tenants a page at a time, found by their name, property or unit: each
+    with their lease in effect today (or latest), email and phone. Archived ones on request."""
+    day = rent.today()
+    rows = conn.execute(
+        TENANTS,
+        {
+            "pmc": session.pmc_id,
+            "day": day,
+            "archived": archived,
+            "like": like(q),
+            "per_page": per_page,
+            "offset": (page - 1) * per_page,
+        },
+    ).fetchall()
+    return Paged(
+        items=[
+            TenantRow(
+                id=i,
+                name=name,
+                property=Ref(id=p, name=pn),
+                lease=None
+                if lease is None
+                else TenantLeaseRef(
+                    id=lease, unit=Ref(id=u, name=un), status=status_of(starts, ends, day)
+                ),
+                email=email,
+                phone=phone,
+                archived=gone,
+            )
+            for i, name, p, pn, lease, u, un, starts, ends, email, phone, gone, _ in rows
+        ],
+        total=rows[0][-1] if rows else 0,
+        page=page,
+        per_page=per_page,
+    )
+
+
+class TenantLease(LeaseLine):
+    unit: Ref
+    property: Ref
+
+
+class Tenant(BaseModel):
+    id: UUID
+    name: str
+    archived: bool
+    property: Ref
+    contact: Contact
+    prepaid: str
+    deposit: str
+    leases: list[TenantLease]
+
+
+@router.get("/tenants/{tenant_id}")
+def tenant_page(session: Staff, conn: Conn, tenant_id: UUID) -> Tenant:
+    """A tenant: their contact details, prepaid rent and deposits held, and every lease they
+    have been on, newest first."""
+    row = conn.execute(
+        "SELECT t.display_name, trust_is_archived(NULL, NULL, t.id), p.id, p.display_name,"
+        " coalesce(sum(b.balance) FILTER (WHERE a.kind = 'prepaid_rent'), 0),"
+        " coalesce(sum(b.balance) FILTER (WHERE a.kind = 'tenant_deposit'), 0)"
+        " FROM trust_tenants AS t JOIN trust_properties AS p ON p.id = t.property_id"
+        " LEFT JOIN trust_ledger_accounts AS a ON a.tenant_id = t.id"
+        " LEFT JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id"
+        " WHERE t.pmc_id = %s AND t.id = %s GROUP BY t.id, p.id",
+        (session.pmc_id, tenant_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, "no such tenant")
+    name, gone, p, pn, prepaid, deposit = row
+    lines = lease_lines(
+        conn,
+        session.pmc_id,
+        rent.today(),
+        "EXISTS (SELECT 1 FROM trust_lease_tenants AS lt"
+        " WHERE lt.lease_id = l.id AND lt.tenant_id = %(tenant)s)",
+        tenant=tenant_id,
+    )
+    units = {
+        u: (Ref(id=u, name=un), Ref(id=up, name=upn))
+        for u, un, up, upn in conn.execute(
+            "SELECT u.id, u.display_name, p.id, p.display_name FROM trust_units AS u"
+            " JOIN trust_properties AS p ON p.id = u.property_id WHERE u.id = ANY(%s)",
+            ([unit for unit, _ in lines],),
+        ).fetchall()
+    }
+    leases = [
+        TenantLease(**lease.model_dump(), unit=units[unit][0], property=units[unit][1])
+        for unit, lease in lines
+    ]
+    return Tenant(
+        id=tenant_id,
+        name=name,
+        archived=gone,
+        property=Ref(id=p, name=pn),
+        contact=contact_of(conn, "tenant_id", tenant_id),
+        prepaid=rent.cents(prepaid),
+        deposit=rent.cents(deposit),
+        leases=leases,
+    )
+
+
+@router.post("/tenants/{tenant_id}/name", status_code=204)
+def rename_tenant(session: Staff, conn: Conn, tenant_id: UUID, body: Rename) -> None:
+    """Renames a tenant; the audit log keeps the name they had."""
+    found(conn, "trust_tenants", session.pmc_id, tenant_id, "tenant")
+    rename(conn, "trust_tenants", session.pmc_id, tenant_id, body.name)
+
+
+@router.post("/tenants/{tenant_id}/archive", status_code=204)
+def archive_tenant(session: Staff, conn: Conn, tenant_id: UUID, body: Archiving) -> None:
+    """Archives a tenant (refused while on a lease in effect or to come, or holding prepaid
+    rent or a deposit) or brings them back."""
+    found(conn, "trust_tenants", session.pmc_id, tenant_id, "tenant")
+    archive(conn, session.pmc_id, "tenant_id", tenant_id, body.archived)
+
+
+@router.post("/tenants/{tenant_id}/contact", status_code=204)
+def tenant_contact(session: Staff, conn: Conn, tenant_id: UUID, body: Contact) -> None:
+    """Records a tenant's contact details; the ones before stay in the history."""
+    found(conn, "trust_tenants", session.pmc_id, tenant_id, "tenant")
+    record_contact(conn, session.pmc_id, "tenant_id", tenant_id, body)
+
+
+# --- owners ------------------------------------------------------------------------------------
+
+
+class OwnerRow(BaseModel):
+    id: UUID
+    name: str
+    properties: list[str]
+    # What their property accounts hold today, together.
+    held: str
+    email: str | None
+    phone: str | None
+    archived: bool
+
+
+OWNERS = f"""
+SELECT o.id, o.display_name,
+       array(SELECT p.display_name FROM trust_ledger_accounts AS a
+             JOIN trust_properties AS p ON p.id = a.property_id
+             WHERE a.owner_id = o.id AND a.kind = 'owner_property'
+             ORDER BY p.display_name COLLATE "C", p.id),
+       (SELECT coalesce(sum(b.balance), 0) FROM trust_ledger_accounts AS a
+        JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
+        WHERE a.owner_id = o.id AND a.kind = 'owner_property'),
+       c.email, c.phone, trust_is_archived(NULL, NULL, NULL, o.id), count(*) OVER ()
+FROM trust_owners AS o
+{LATEST_CONTACT.format(person="owner_id", key="o.id")}
+WHERE o.pmc_id = %(pmc)s AND trust_is_archived(NULL, NULL, NULL, o.id) = %(archived)s
+  AND (%(like)s::text IS NULL OR o.display_name ILIKE %(like)s
+       OR EXISTS (SELECT 1 FROM trust_ledger_accounts AS a
+                  JOIN trust_properties AS p ON p.id = a.property_id
+                  WHERE a.owner_id = o.id AND p.display_name ILIKE %(like)s))
+ORDER BY o.display_name COLLATE "C", o.id
+LIMIT %(per_page)s OFFSET %(offset)s
+"""
+
+
+@router.get("/owners")
+def owners(
+    session: Staff,
+    conn: Conn,
+    q: Search = None,
+    archived: bool = False,
+    page: Page = 1,
+    per_page: PerPage = 50,
+) -> Paged[OwnerRow]:
+    """The company's owners a page at a time, found by their name or a property's: each with
+    their properties, what their accounts hold, email and phone. Archived ones on request."""
+    rows = conn.execute(
+        OWNERS,
+        {
+            "pmc": session.pmc_id,
+            "archived": archived,
+            "like": like(q),
+            "per_page": per_page,
+            "offset": (page - 1) * per_page,
+        },
+    ).fetchall()
+    return Paged(
+        items=[
+            OwnerRow(
+                id=i,
+                name=name,
+                properties=props,
+                held=rent.cents(held),
+                email=email,
+                phone=phone,
+                archived=gone,
+            )
+            for i, name, props, held, email, phone, gone, _ in rows
+        ],
+        total=rows[0][-1] if rows else 0,
+        page=page,
+        per_page=per_page,
+    )
+
+
+class Owner(BaseModel):
+    id: UUID
+    name: str
+    archived: bool
+    contact: Contact
+    accounts: list[payables.OwnerMoney]
+
+
+@router.get("/owners/{owner_id}")
+def owner_page(session: Staff, conn: Conn, owner_id: UUID) -> Owner:
+    """An owner: their contact details and each of their property accounts today, what it
+    holds, keeps back and may pay out."""
+    row = conn.execute(
+        "SELECT display_name, trust_is_archived(NULL, NULL, NULL, id) FROM trust_owners"
+        " WHERE pmc_id = %s AND id = %s",
+        (session.pmc_id, owner_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, "no such owner")
+    return Owner(
+        id=owner_id,
+        name=row[0],
+        archived=row[1],
+        contact=contact_of(conn, "owner_id", owner_id),
+        accounts=payables.owner_money(conn, session.pmc_id, owner_id),
+    )
+
+
+@router.post("/owners/{owner_id}/name", status_code=204)
+def rename_owner(session: Staff, conn: Conn, owner_id: UUID, body: Rename) -> None:
+    """Renames an owner; the audit log keeps the name they had."""
+    found(conn, "trust_owners", session.pmc_id, owner_id, "owner")
+    rename(conn, "trust_owners", session.pmc_id, owner_id, body.name)
+
+
+@router.post("/owners/{owner_id}/archive", status_code=204)
+def archive_owner(session: Staff, conn: Conn, owner_id: UUID, body: Archiving) -> None:
+    """Archives an owner (refused while their accounts hold money or a bill not paid) or
+    brings them back."""
+    found(conn, "trust_owners", session.pmc_id, owner_id, "owner")
+    archive(conn, session.pmc_id, "owner_id", owner_id, body.archived)
+
+
+@router.post("/owners/{owner_id}/contact", status_code=204)
+def owner_contact(session: Staff, conn: Conn, owner_id: UUID, body: Contact) -> None:
+    """Records an owner's contact details; the ones before stay in the history."""
+    found(conn, "trust_owners", session.pmc_id, owner_id, "owner")
+    record_contact(conn, session.pmc_id, "owner_id", owner_id, body)
+
+
+# --- vendors -----------------------------------------------------------------------------------
+
+
+@router.post("/vendors/{vendor_id}/contact", status_code=204)
+def vendor_contact(session: Staff, conn: Conn, vendor_id: UUID, body: Contact) -> None:
+    """Records a vendor's contact details; the ones before stay in the history."""
+    found(conn, "trust_vendors", session.pmc_id, vendor_id, "vendor")
+    record_contact(conn, session.pmc_id, "vendor_id", vendor_id, body)

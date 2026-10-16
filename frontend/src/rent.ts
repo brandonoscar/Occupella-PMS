@@ -1,5 +1,5 @@
 // Staff's rent work as the API sends it (src/pms/api/rent.py), and how it reads.
-import { day, money } from "./money";
+import { day, money, usDate } from "./money";
 
 export type OpenCharge = {
   id: string;
@@ -111,13 +111,13 @@ export function owedTone(owed: string): "caution" | "positive" | "info" {
 export function chargeLabel(charge: OpenCharge): string {
   const what = charge.memo ?? (charge.kind === "rent" ? "Rent" : "Fee");
   const part = charge.open === charge.amount ? "" : ` of ${money(charge.amount)}`;
-  return `${charge.due_on} ${what}: ${money(charge.open)} open${part}`;
+  return `${usDate(charge.due_on)} ${what}: ${money(charge.open)} open${part}`;
 }
 
 export function recurringLabel(recurring: RecurringCharge): string {
   const amount = recurring.kind === "credit" ? `credit of ${money(recurring.amount)}` : money(recurring.amount);
-  const stops = recurring.ends_on ? `, stops ${recurring.ends_on}` : "";
-  return `${recurring.memo}: ${amount} a month from ${recurring.starts_on}${stops}`;
+  const stops = recurring.ends_on ? `, stops ${usDate(recurring.ends_on)}` : "";
+  return `${recurring.memo}: ${amount} a month from ${usDate(recurring.starts_on)}${stops}`;
 }
 
 export function rentRunSummary(run: RentRun): string {
@@ -138,8 +138,8 @@ const SERVED: Record<RentChange["served_by"], string> = {
 export function rentChangeLine(change: RentChange): string {
   const terms = change.lease_terms ? `; ${change.lease_terms}` : "";
   return (
-    `From ${change.effective_on}: ${money(change.monthly_rent)} a month ` +
-    `(notice ${SERVED[change.served_by]} on ${change.notice_given_on}${terms})`
+    `From ${usDate(change.effective_on)}: ${money(change.monthly_rent)} a month ` +
+    `(notice ${SERVED[change.served_by]} on ${usDate(change.notice_given_on)}${terms})`
   );
 }
 
@@ -158,7 +158,7 @@ export function insuranceLine(insurance: RentersInsurance): string {
     : "Renters insurance not required";
   if (insurance.policy_number === null) return `${asks}: none on file`;
   const limit = insurance.liability_limit ? `, ${money(insurance.liability_limit)} of liability` : "";
-  return `${asks}: ${insurance.carrier} ${insurance.policy_number} through ${insurance.expires_on}${limit}`;
+  return `${asks}: ${insurance.carrier} ${insurance.policy_number} through ${usDate(insurance.expires_on)}${limit}`;
 }
 
 // The badge for it: a policy below what the lease asks, or not current where it is required.

@@ -4,14 +4,16 @@ import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
 import { Button, LinkButton } from "../components/Button";
+import { ContactDetails } from "../components/ContactCard";
 import { EmptyState } from "../components/EmptyState";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
-import { day, money } from "../money";
+import { day, money, usDate } from "../money";
 import type { Vendor } from "../vendors";
 import { COVERAGES, standingTone, vendorInsuranceHref } from "../vendors";
+import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 
@@ -44,11 +46,19 @@ export function VendorsPage({ me }: { me: Me }) {
             {vendors.map((vendor) => (
               <li key={vendor.id} className="flex flex-col gap-2 py-4" aria-label={vendor.name}>
                 <p className="flex items-center gap-3">
-                  <span className="font-medium">{vendor.name}</span>
+                  <GoLink href={`/vendors/${vendor.id}`}
+                    className="font-medium text-iris hover:text-iris-hover hover:underline">{vendor.name}</GoLink>
                   <Badge tone={vendor.w9_on_file ? "positive" : "caution"}>
                     {vendor.w9_on_file ? "W-9 on file" : "no W-9"}
                   </Badge>
                 </p>
+                <details>
+                  <summary className="text-sm">Contact details for {vendor.name}</summary>
+                  <div className="mt-3">
+                    <ContactDetails path={`/api/vendors/${vendor.id}`} contact={vendor.contact}
+                      refresh={refresh} name={vendor.name} />
+                  </div>
+                </details>
                 {vendor.insurance.length === 0 ? (
                   <p className="text-sm text-ink-subtle">No insurance on file.</p>
                 ) : (
@@ -58,7 +68,7 @@ export function VendorsPage({ me }: { me: Me }) {
                         aria-label={`${vendor.name}, ${policy.coverage}`}>
                         <span className="first-letter:uppercase">{policy.coverage}</span>
                         <span className="text-ink-muted">
-                          {policy.carrier} {policy.policy_number}, {policy.starts_on} to {policy.expires_on}
+                          {policy.carrier} {policy.policy_number}, {usDate(policy.starts_on)} to {usDate(policy.expires_on)}
                           {policy.limit_amount ? `, limit ${money(policy.limit_amount)}` : ""}
                         </span>
                         <Badge tone={standingTone(policy.standing)} data-testid="standing">{policy.standing}</Badge>

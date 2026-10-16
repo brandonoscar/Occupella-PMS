@@ -1,13 +1,16 @@
+import { Landmark } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
+import { EmptyState } from "../components/EmptyState";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
-import { money } from "../money";
+import { Wide } from "../components/Wide";
+import { money, usDate } from "../money";
 import type { BankBooks, OpenItem, OpenLine, OpenTransfer, Worksheet } from "../reconcile";
 import {
   approver,
@@ -22,22 +25,81 @@ import {
   sum,
   transferLabel,
 } from "../reconcile";
+import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 
-// Staff's month-end: import a trust bank account's statements, match their lines to the
-// transfers in the books, and once the books lack no line one staff member prepares the period
-// and another, who may approve, approves it. The PMS compares what the bank says with the
-// books; it moves no money.
-export function ReconcilePage({ me }: { me: Me }) {
+// Accounting → Banking (ADR 0005): each trust bank account with what the books hold in it, how
+// far it is reconciled and whether a month waits for approval, each opening its own page.
+export function BankingPage({ me }: { me: Me }) {
   const [banks, setBanks] = useState<BankBooks[] | null>(null);
-  const [chosen, setChosen] = useState("");
+  const [error, setError] = useState("");
+  useEffect(() => {
+    api
+      .get<BankBooks[]>("/api/reconcile")
+      .then(setBanks)
+      .catch((why) => setError(why instanceof ApiError ? why.detail : String(why)));
+  }, []);
+  return (
+    <Shell me={me} nav={STAFF_NAV}>
+      <PageHeader title="Banking" />
+      {banks === null ? (
+        <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
+      ) : banks.length === 0 ? (
+        <EmptyState icon={Landmark} title="No trust bank account yet."
+          body="Add one from Settings, Company setup." />
+      ) : (
+        <Wide>
+          <table className="w-full text-base">
+            <thead>
+              <tr>
+                <th className="text-left">Trust bank account</th>
+                <th className="text-left">Holds</th>
+                <th className="text-right">Book balance</th>
+                <th className="text-left">Reconciled through</th>
+                <th className="text-left">Month-end</th>
+              </tr>
+            </thead>
+            <tbody>
+              {banks.map((bank) => (
+                <tr key={bank.id} aria-label={bank.name}>
+                  <td>
+                    <GoLink href={`/bank-accounts/${bank.id}`}
+                      className="font-medium text-iris hover:text-iris-hover hover:underline">
+                      {bank.name}
+                    </GoLink>
+                  </td>
+                  <td className="text-ink-muted">{KIND[bank.kind]}</td>
+                  <td className="text-right">{money(bank.book_cash)}</td>
+                  <td>{bank.closed_through ? usDate(bank.closed_through) : <span className="text-ink-subtle">Not yet</span>}</td>
+                  <td>{bank.prepared && <Badge tone="caution">Waiting for approval</Badge>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Wide>
+      )}
+    </Shell>
+  );
+}
+
+const KIND: Record<BankBooks["kind"], string> = {
+  operating: "Operating",
+  security_deposit: "Security deposits",
+};
+
+// A trust bank account's month-end: import its statements, match their lines to the transfers
+// in the books, and once the books lack no line one staff member prepares the period and
+// another, who may approve, approves it. The PMS compares what the bank says with the books; it
+// moves no money.
+export function ReconcilePage({ me, id }: { me: Me; id: string }) {
+  const [banks, setBanks] = useState<BankBooks[] | null>(null);
   const [through, setThrough] = useState("");
   // The worksheet, with the trust bank account it was read for.
   const [read, setRead] = useState<{ bank: string; sheet: Worksheet } | null>(null);
   const [error, setError] = useState("");
   const failed = (why: unknown) => setError(why instanceof ApiError ? why.detail : String(why));
-  const bank = banks?.find((b) => b.id === chosen) ?? banks?.[0];
+  const bank = banks?.find((b) => b.id === id);
   const sheet = read && bank && read.bank === bank.id ? read.sheet : null;
 
   function refresh() {
@@ -56,23 +118,18 @@ export function ReconcilePage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Banking" />
-      {banks === null || (bank && sheet === null) ? (
+      {banks !== null && !bank ? (
+        <Notice tone="error">no such trust bank account</Notice>
+      ) : !bank || sheet === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
-      ) : !bank || !sheet ? (
-        <Notice tone="info">Add a trust bank account in Setup first.</Notice>
       ) : (
         <>
-          <div className="max-w-sm">
-            <Select label="Trust bank account" id="reconcile-bank" value={bank.id}
-              onChange={(e) => { setChosen(e.target.value); setThrough(""); }}>
-              {banks.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </Select>
-          </div>
+          <PageHeader title={bank.name} />
+          <p className="flex flex-wrap gap-x-4 text-sm text-ink-muted">
+            <GoLink href="/banking" className="text-iris hover:underline">Banking</GoLink>
+            <span>{KIND[bank.kind]}</span>
+            <span data-testid="book-cash">Book balance {money(bank.book_cash)}</span>
+          </p>
           <Notice tone="error">{error}</Notice>
           <StatementsCard bank={bank} refresh={refresh} />
           {sheet.opening && <OpeningCard bank={bank} sheet={sheet} refresh={refresh} />}
@@ -113,7 +170,7 @@ function StatementsCard({ bank, refresh }: BankProps) {
           <tbody>
             {bank.statements.map((s) => (
               <tr key={s.id}>
-                <td>{s.first_day} to {s.last_day}</td>
+                <td>{usDate(s.first_day)} to {usDate(s.last_day)}</td>
                 <td className="text-right">{money(s.opening_balance)}</td>
                 <td className="text-right">{money(s.closing_balance)}</td>
                 <td className="text-right">{s.lines}</td>
@@ -138,7 +195,7 @@ function StatementsCard({ bank, refresh }: BankProps) {
             closing_balance: closing || null,
           };
           const done = (made: { lines: number; first_day: string; last_day: string }) =>
-            `Imported ${made.lines} line${made.lines === 1 ? "" : "s"}, ${made.first_day} to ${made.last_day}.`;
+            `Imported ${made.lines} line${made.lines === 1 ? "" : "s"}, ${usDate(made.first_day)} to ${usDate(made.last_day)}.`;
           if (await record("/api/reconcile/statements", body, done)) {
             setFile(null);
             setFirstDay("");
@@ -251,7 +308,7 @@ function WorksheetCard({
               aria-label="Prepared"
             >
               <span className="text-sm">
-                Prepared through {prepared.through} by {prepared.prepared_by}: bank{" "}
+                Prepared through {usDate(prepared.through)} by {prepared.prepared_by}: bank{" "}
                 {money(prepared.bank_balance)}, books {money(prepared.book_cash)}.
               </span>
               {who === "may" ? (
@@ -259,10 +316,10 @@ function WorksheetCard({
                   onClick={() =>
                     record<{ id: string }>(`/api/reconcile/${bank.id}/approve`,
                       { preparation_id: prepared.id },
-                      () => `Approved through ${prepared.through}; the account is closed through it.`)
+                      () => `Approved through ${usDate(prepared.through)}; the account is closed through it.`)
                   }
                 >
-                  Approve through {prepared.through}
+                  Approve through {usDate(prepared.through)}
                 </Button>
               ) : (
                 <span className="text-sm text-ink-subtle">
@@ -279,10 +336,10 @@ function WorksheetCard({
               disabled={gap !== "0.00"}
               onClick={() =>
                 record<{ id: string }>(`/api/reconcile/${bank.id}/prepare`, { through: day },
-                  () => `Prepared through ${day}; another staff member who may approve approves it.`)
+                  () => `Prepared through ${usDate(day)}; another staff member who may approve approves it.`)
               }
             >
-              Prepare through {day}
+              Prepare through {usDate(day)}
             </Button>
             {gap !== "0.00" && (
               <span className="text-sm text-ink-subtle">
@@ -485,7 +542,7 @@ function ApprovedCard({ bank }: { bank: BankBooks }) {
           <tbody>
             {bank.reconciliations.map((r) => (
               <tr key={r.id}>
-                <td>{r.period_start.slice(0, 10)} to {lastDayOf(r.period_end)}</td>
+                <td>{usDate(r.period_start)} to {usDate(lastDayOf(r.period_end))}</td>
                 <td className="text-right">{money(r.statement_balance)}</td>
                 <td className="text-right">{money(r.book_balance)}</td>
                 <td>{r.approved_by}</td>
@@ -496,7 +553,7 @@ function ApprovedCard({ bank }: { bank: BankBooks }) {
       )}
       {bank.closed_through && (
         <p className="mt-3 text-sm text-ink-subtle">
-          Closed through {bank.closed_through}: nothing is recorded on or before it.
+          Closed through {usDate(bank.closed_through)}: nothing is recorded on or before it.
         </p>
       )}
     </Card>

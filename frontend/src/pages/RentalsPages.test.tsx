@@ -135,7 +135,7 @@ describe("PropertyPage", () => {
     ]);
     const units = ["Unit 1", "Unit 2", "Unit 3", "Unit 4"].map((name) => screen.getByRole("row", { name }));
     expect(units.map((row) => within(row).getAllByRole("cell")[1]?.textContent)).toEqual([
-      "Occupied", "Starts 2026-11-01", "Vacant", "Archived",
+      "Occupied", "Starts 11/01/2026", "Vacant", "Archived",
     ]);
     expect(within(units[0]!).getAllByRole("cell").map((c) => c.textContent)).toEqual([
       "Unit 1", "Occupied", "Tenant 1, Tenant 2", "$1,500.00", "$50.00", "Open lease",
@@ -207,8 +207,8 @@ describe("UnitPage", () => {
     expect(screen.getAllByRole("link", { name: "Property 1" }).at(-1)?.getAttribute("href")).toBe("/properties/p1");
     const rows = screen.getAllByRole("row").slice(1);
     expect(rows.map((row) => within(row).getAllByRole("cell").map((c) => c.textContent))).toEqual([
-      ["Tenant 1, Tenant 2", "From 2026-01-01, month to month", "Current", "$1,500.00", "$50.00"],
-      ["Tenant 0", "2025-01-01 to 2025-12-31", "Ended", "$1,500.00", "$0.00"],
+      ["Tenant 1, Tenant 2", "From 01/01/2026, month to month", "Current", "$1,500.00", "$50.00"],
+      ["Tenant 0", "01/01/2025 to 12/31/2025", "Ended", "$1,500.00", "$0.00"],
     ]);
     expect(within(rows[0]!).getByRole("link").getAttribute("href")).toBe("/leases/l1");
   });
@@ -240,7 +240,7 @@ describe("LeasePage", () => {
     expect(await screen.findByRole("heading", { name: "Unit 1, Property 1" })).toBeTruthy();
     expect(screen.getAllByRole("link", { name: "Property 1" }).at(-1)?.getAttribute("href")).toBe("/properties/p1");
     expect(screen.getByRole("link", { name: "Unit 1" }).getAttribute("href")).toBe("/units/u1");
-    expect(screen.getByText("From 2026-01-01, month to month")).toBeTruthy();
+    expect(screen.getByText("From 01/01/2026, month to month")).toBeTruthy();
     expect(screen.getByText("$1,500.00 a month")).toBeTruthy();
     expect(screen.getAllByText("Owes $50.00")).toHaveLength(1);
     // The lease's own rent work, and no move-out while it has no end.

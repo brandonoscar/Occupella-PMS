@@ -12,7 +12,8 @@ afterEach(() => {
 const FOUND: Found[] = [
   { kind: "property", id: "p1", label: "Property 1", detail: "Owner 1", href: "/properties/p1" },
   { kind: "unit", id: "u1", label: "Unit 1", detail: "Property 1", href: "/units/u1" },
-  { kind: "tenant", id: "t1", label: "Tenant 1", detail: "", href: "/leases/l1" },
+  { kind: "tenant", id: "t1", label: "Tenant 1", detail: "", href: "/tenants/t1" },
+  { kind: "owner", id: "o1", label: "Owner 1", detail: "", href: "/owners/o1" },
 ];
 
 function server(found: Found[] = FOUND) {
@@ -21,7 +22,7 @@ function server(found: Found[] = FOUND) {
   return fetch;
 }
 
-const box = () => screen.getByLabelText("Search properties, units and tenants");
+const box = () => screen.getByLabelText("Search properties, units, tenants and owners");
 
 describe("SearchBox", () => {
   it("asks from two letters and lists what it found, each with its kind", async () => {
@@ -38,7 +39,8 @@ describe("SearchBox", () => {
     expect(within(results).getAllByRole("link").map((link) => [link.textContent, link.getAttribute("href")])).toEqual([
       ["Property 1 · Owner 1Property", "/properties/p1"],
       ["Unit 1 · Property 1Unit", "/units/u1"],
-      ["Tenant 1Tenant", "/leases/l1"],
+      ["Tenant 1Tenant", "/tenants/t1"],
+      ["Owner 1Owner", "/owners/o1"],
     ]);
   });
 

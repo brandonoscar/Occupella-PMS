@@ -7,7 +7,7 @@ import { Card } from "../components/Shell";
 import type { Application, Decision } from "../leasing";
 import { incomeMultiple, needsNotice, recommendationLabel } from "../leasing";
 import { when } from "../maintenance";
-import { day, money } from "../money";
+import { day, money, usDate } from "../money";
 
 type Unit = { unit_id: string; property: string; unit: string; leased_today: boolean };
 type Link = {
@@ -35,7 +35,16 @@ const SELECT = "h-9 rounded-sm border border-line-strong bg-sunken px-2 text-sm 
 // vacancy page, and the applications that come through them, screened through the server's
 // partner and decided. A decline or conditional approval that rests on a screening records its
 // adverse action notice with it.
-export function LeasingCard({ pmcId, onChange }: { pmcId?: string; onChange?: () => void }) {
+export function LeasingCard({
+  pmcId,
+  onChange,
+  part = "all",
+}: {
+  pmcId?: string;
+  onChange?: () => void;
+  // Leasing's pages each show a part (ADR 0005): Listings the links, Applicants the applications.
+  part?: "all" | "links" | "applications";
+}) {
   const [units, setUnits] = useState<Unit[]>([]);
   const [links, setLinks] = useState<Link[]>([]);
   // Every application, decided or not: the open ones to decide, the decided ones' notices.
@@ -46,6 +55,7 @@ export function LeasingCard({ pmcId, onChange }: { pmcId?: string; onChange?: ()
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [descriptions, setDescriptions] = useState<Record<string, string>>({});
   const [error, setError] = useState("");
+  const [said, setSaid] = useState("");
 
   function show(failed: unknown) {
     setError(failed instanceof ApiError ? failed.detail : String(failed));
@@ -61,10 +71,13 @@ export function LeasingCard({ pmcId, onChange }: { pmcId?: string; onChange?: ()
     refresh();
   }, []);
 
-  async function act(work: () => Promise<unknown>) {
+  // Runs one write and says what it did (`done`), or shows why it was refused.
+  async function act(work: () => Promise<unknown>, done = "") {
     setError("");
+    setSaid("");
     try {
       await work();
+      setSaid(done);
       refresh();
       onChange?.();
     } catch (failed) {
@@ -103,6 +116,7 @@ export function LeasingCard({ pmcId, onChange }: { pmcId?: string; onChange?: ()
             }
           : null,
       }),
+      `Decision on ${application.applicants.map((a) => a.name).join(", ")} recorded.`,
     );
   }
 
@@ -110,8 +124,11 @@ export function LeasingCard({ pmcId, onChange }: { pmcId?: string; onChange?: ()
   const notices = (all ?? []).filter((a) => a.decision?.adverse_action);
 
   return (
-    <Card title="Leasing">
+    <Card title={{ all: "Leasing", links: "Application links", applications: "Applications" }[part]}>
+      <Notice tone="info">{said}</Notice>
       <Notice tone="error">{error}</Notice>
+      {part !== "applications" && (
+      <>
       <h3 className="mb-3 text-md font-medium">Application links</h3>
       <form
         className="mb-4 flex flex-wrap items-end gap-3"
@@ -166,12 +183,13 @@ export function LeasingCard({ pmcId, onChange }: { pmcId?: string; onChange?: ()
               <span className="flex gap-2">
                 {link.listing_id && (
                   <Button variant="ghost"
-                    onClick={() => act(() => api.post(`/api/leasing/listings/${link.listing_id}/remove`))}>
+                    onClick={() => act(() => api.post(`/api/leasing/listings/${link.listing_id}/remove`),
+                      "Taken off the public page.")}>
                     Take off the page
                   </Button>
                 )}
                 <Button variant="ghost"
-                  onClick={() => act(() => api.post(`/api/leasing/links/${link.id}/close`))}>
+                  onClick={() => act(() => api.post(`/api/leasing/links/${link.id}/close`), "Link closed.")}>
                   Close
                 </Button>
               </span>
@@ -185,6 +203,7 @@ export function LeasingCard({ pmcId, onChange }: { pmcId?: string; onChange?: ()
                     api.post(`/api/leasing/links/${link.id}/listing`, {
                       description: (descriptions[link.id] ?? "").trim() || null,
                     }),
+                    "Listed on the public page.",
                   );
                 }}
               >
@@ -206,7 +225,11 @@ export function LeasingCard({ pmcId, onChange }: { pmcId?: string; onChange?: ()
           . Point applicants to it; nothing is sent to listing sites.
         </p>
       )}
+      </>
+      )}
 
+      {part !== "links" && (
+      <>
       <h3 className="mb-3 text-md font-medium">Applications to decide</h3>
       {applications === null ? (
         <Notice tone="info">Loading</Notice>
@@ -222,7 +245,7 @@ export function LeasingCard({ pmcId, onChange }: { pmcId?: string; onChange?: ()
                 aria-label={`Application from ${application.applicants[0]?.name ?? ""}`}>
                 <p>
                   {application.applicants.map((a) => a.name).join(", ")} for {application.unit},{" "}
-                  moving in {application.move_in_on}.
+                  moving in {usDate(application.move_in_on)}.
                 </p>
                 <p className="text-sm text-ink-subtle">
                   Income {money(application.monthly_income)} a month,{" "}
@@ -237,7 +260,8 @@ export function LeasingCard({ pmcId, onChange }: { pmcId?: string; onChange?: ()
                 ))}
                 <div>
                   <Button variant="secondary"
-                    onClick={() => act(() => api.post(`/api/leasing/applications/${application.id}/screen`))}>
+                    onClick={() => act(() => api.post(`/api/leasing/applications/${application.id}/screen`),
+                      "Sent for screening.")}>
                     Screen
                   </Button>
                 </div>
@@ -313,6 +337,8 @@ export function LeasingCard({ pmcId, onChange }: { pmcId?: string; onChange?: ()
             ))}
           </ul>
         </>
+      )}
+      </>
       )}
     </Card>
   );

@@ -56,10 +56,6 @@ function BanksCard({ books, refresh }: CardProps) {
   const [name, setName] = useState("");
   return (
     <Card title="Trust bank accounts">
-      <p className="mb-4 text-sm text-ink-muted">
-        Tenants' deposits are held in a security deposit account; everything else held in trust
-        in an operating one.
-      </p>
       <ul className="mb-4 flex flex-col gap-1">
         {books.bank_accounts.map((bank) => (
           <li key={bank.id}>

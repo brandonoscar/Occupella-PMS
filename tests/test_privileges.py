@@ -114,6 +114,7 @@ TABLES = {
     "trust_renters_insurance_terms": {"SELECT", "INSERT"},
     "trust_renters_insurance": {"SELECT", "INSERT"},
     "trust_archivals": {"SELECT", "INSERT"},
+    "trust_contacts": {"SELECT", "INSERT"},
     "trust_inspections": {"SELECT", "INSERT"},
     "trust_inspection_items": {"SELECT", "INSERT"},
     "trust_listing_removals": {"SELECT", "INSERT"},
@@ -193,6 +194,8 @@ AI_NEVER_READS = {
     # Emails to owners and their deliveries: people's addresses (ADR 0004).
     "trust_emails",
     "trust_email_deliveries",
+    # Tenants', owners' and vendors' emails, phones and mailing addresses (ADR 0005).
+    "trust_contacts",
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
 RENAMEABLE = [
@@ -302,7 +305,7 @@ FUNCTIONS = {
     "trust_report_vendor_insurance(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_trust_account_signers(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_renters_insurance(uuid,date)": {"trust_app", "trust_ai_agent"},
-    "trust_is_archived(uuid,uuid)": {"trust_app"},
+    "trust_is_archived(uuid,uuid,uuid,uuid)": {"trust_app"},
     "trust_report_inspection(uuid,uuid)": {"trust_app", "trust_ai_agent"},
     "trust_report_cash_flow(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_vacancy(uuid,date)": {"trust_app", "trust_ai_agent"},

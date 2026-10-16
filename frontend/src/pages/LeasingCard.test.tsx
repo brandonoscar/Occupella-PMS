@@ -70,6 +70,20 @@ const posts = (fetch: ReturnType<typeof server>) =>
     .map(([path, init]) => [path, JSON.parse(String(init?.body))]);
 
 describe("LeasingCard", () => {
+  it("shows Listings the links alone, and Applicants the applications alone", async () => {
+    server();
+    render(<LeasingCard pmcId="p1" part="links" />);
+    expect(await screen.findByRole("heading", { level: 2, name: "Application links" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open a link" })).toBeTruthy();
+    expect(screen.queryByText("Applications to decide")).toBeNull();
+    cleanup();
+
+    render(<LeasingCard part="applications" />);
+    expect(await screen.findByRole("listitem", { name: "Application from Applicant A" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 2, name: "Applications" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Open a link" })).toBeNull();
+  });
+
   it("lists a link on the public page with its description, and takes one off", async () => {
     const fetch = server(LINKS);
     render(<LeasingCard pmcId="p1" />);
@@ -128,6 +142,7 @@ describe("LeasingCard", () => {
     );
     fireEvent.click(within(open).getByRole("button", { name: "Record decision" }));
 
+    expect(await screen.findByText("Decision on Applicant A recorded.")).toBeTruthy();
     await vi.waitFor(() => expect(posts(fetch)).toHaveLength(1));
     const [path, body] = posts(fetch)[0] as [string, Record<string, unknown>];
     expect(path).toBe("/api/leasing/applications/a1/decide");
@@ -148,6 +163,7 @@ describe("LeasingCard", () => {
     const open = await screen.findByRole("listitem", { name: "Application from Applicant A" });
     expect(within(open).queryByLabelText("Reasons, one a line")).toBeNull();
     fireEvent.click(within(open).getByRole("button", { name: "Screen" }));
+    expect(await screen.findByText("Sent for screening.")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Notice (PDF)" }).getAttribute("href")).toBe(
       "/api/leasing/applications/a2/notice",
     );

@@ -20,6 +20,7 @@ export const STAFF_NAV: NavEntry[] = [
     items: [
       { href: "/properties", label: "Properties" },
       { href: "/rent-roll", label: "Rent roll" },
+      { href: "/tenants", label: "Tenants" },
       { href: "/owners", label: "Owners" },
       { href: "/move-out", label: "Move-outs" },
     ],
@@ -28,8 +29,10 @@ export const STAFF_NAV: NavEntry[] = [
     label: "Leasing",
     icon: KeyRound,
     items: [
+      { href: "/rental-listings", label: "Listings" },
       { href: "/applicants", label: "Applicants" },
       { href: "/draft-leases", label: "Draft leases" },
+      { href: "/renewals", label: "Renewals" },
     ],
   },
   {
@@ -38,7 +41,8 @@ export const STAFF_NAV: NavEntry[] = [
     items: [
       { href: "/banking", label: "Banking" },
       { href: "/bills", label: "Bills" },
-      { href: "/journal", label: "Journal entries" },
+      { href: "/general-ledger", label: "General ledger" },
+      { href: "/owner-draws", label: "Owner draws" },
       { href: "/budgets", label: "Budgets" },
     ],
   },

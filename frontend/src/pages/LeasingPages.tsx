@@ -1,17 +1,26 @@
 import type { Me } from "../api";
 import { PageHeader, Shell } from "../components/Shell";
 import { LeasingCard } from "./LeasingCard";
-import { MaintenanceCard } from "./MaintenanceCard";
 import { OffersCard } from "./OffersCard";
 import { STAFF_NAV } from "./staffNav";
 
-// Leasing → Applicants: application links (and listing them on the vacancy page), applications,
-// screenings and decisions.
+// Leasing → Listings: each unit's application link, listed on the public vacancy page or not.
+export function RentalListingsPage({ me }: { me: Me }) {
+  return (
+    <Shell me={me} nav={STAFF_NAV}>
+      <PageHeader title="Listings" />
+      <LeasingCard pmcId={me.pmc_id} part="links" />
+    </Shell>
+  );
+}
+
+// Leasing → Applicants: the applications that came through the links, their screenings and
+// decisions, and the adverse action notices given.
 export function ApplicantsPage({ me }: { me: Me }) {
   return (
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title="Applicants" />
-      <LeasingCard pmcId={me.pmc_id} />
+      <LeasingCard part="applications" />
     </Shell>
   );
 }
@@ -26,12 +35,3 @@ export function DraftLeasesPage({ me }: { me: Me }) {
   );
 }
 
-// Maintenance → Work orders: tenants' requests and the work orders that answer them.
-export function WorkOrdersPage({ me }: { me: Me }) {
-  return (
-    <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Work orders" />
-      <MaintenanceCard />
-    </Shell>
-  );
-}

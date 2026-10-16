@@ -1,5 +1,6 @@
 // Staff's move-outs as the API sends them (src/pms/api/moveout.py), and how they read.
 import { fromCents, toCents } from "./reconcile";
+import { usDate } from "./money";
 
 export type OpenCharge = { id: string; due_on: string; kind: "rent" | "fee"; memo: string | null; open: string };
 export type OwnerAccount = { id: string; owner: string };
@@ -30,7 +31,7 @@ export function leaseLabel(lease: MoveOut): string {
 }
 
 export function chargeLabel(charge: OpenCharge): string {
-  return `${charge.due_on} ${charge.kind}${charge.memo ? `: ${charge.memo}` : ""}`;
+  return `${usDate(charge.due_on)} ${charge.kind}${charge.memo ? `: ${charge.memo}` : ""}`;
 }
 
 // The lease ended before `today` (YYYY-MM-DD, UTC), so its deposit may go back.
@@ -46,6 +47,6 @@ export function moveOutStatus(
 ): { label: string; tone: "positive" | "caution" | "info" | "neutral" } {
   if (lease.settled) return { label: "Deposit returned", tone: "positive" };
   if (hasEnded(lease, today)) return { label: "Ended, deposit to return", tone: "caution" };
-  if (lease.ends_on !== null) return { label: `Ends ${lease.ends_on}`, tone: "info" };
+  if (lease.ends_on !== null) return { label: `Ends ${usDate(lease.ends_on)}`, tone: "info" };
   return { label: "In effect", tone: "neutral" };
 }

@@ -10,6 +10,7 @@ import type { ContentType, Kind, Library } from "../documents";
 import { KINDS, MAX_BYTES, kindLabel, sizeLabel, titleOf, toBase64, typeOf } from "../documents";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
+import { usDate } from "../money";
 
 // Staff's documents: a vendor's W-9, a bill's receipt, a lease's move-out photos and an owner's
 // documents (owners read their own in the portal). Files are PDF, JPEG or PNG, at most 5 MB.
@@ -35,9 +36,9 @@ export function DocumentsPage({ me }: { me: Me }) {
       ) : (
         <>
           <UploadCard library={library} refresh={refresh} />
-          <Card title="Kept documents">
+          <Card title="All files">
             {library.documents.length === 0 ? (
-              <p className="text-sm text-ink-muted">No document yet.</p>
+              <p className="text-sm text-ink-muted">No file yet.</p>
             ) : (
               <ul className="flex flex-col gap-2 text-sm" aria-label="Documents">
                 {library.documents.map((d) => (
@@ -47,7 +48,7 @@ export function DocumentsPage({ me }: { me: Me }) {
                     </a>
                     <span className="text-ink-muted">
                       {kindLabel(d.kind)}, {d.about}, {sizeLabel(d.size)}, by {d.uploaded_by ?? "the server"}{" "}
-                      on {d.uploaded_at.slice(0, 10)}
+                      on {usDate(d.uploaded_at)}
                     </span>
                     <Button variant="secondary" aria-label={`Remove ${d.title}`}
                       onClick={() => record(`/api/documents/${d.id}/remove`, {}, () => `Removed ${d.title}.`)}>
@@ -79,14 +80,14 @@ function UploadCard({ library, refresh }: { library: Library; refresh: () => voi
   const problem =
     file === null ? "" : file.type === null ? "A document is a PDF, a JPEG or a PNG." : file.size > MAX_BYTES ? "A document is at most 5 MB." : "";
   return (
-    <Card title="Add a document">
+    <Card title="Upload a file">
       <form
         className="flex flex-wrap items-end gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
           if (file === null || problem) return;
           const body = { kind, about_id: chosen, title, content_type: file.type, content_base64: file.base64 };
-          if (await record<{ id: string }>("/api/documents", body, () => `Kept ${title.trim()}.`)) {
+          if (await record<{ id: string }>("/api/documents", body, () => `Uploaded ${title.trim()}.`)) {
             setTitle("");
             setFile(null);
           }
@@ -119,7 +120,7 @@ function UploadCard({ library, refresh }: { library: Library; refresh: () => voi
             }} />
         </label>
         <Field label="Title" id="document-title" required value={title} onChange={(e) => setTitle(e.target.value)} />
-        <Button type="submit" disabled={file === null || chosen === "" || problem !== ""}>Keep it</Button>
+        <Button type="submit" disabled={file === null || chosen === "" || problem !== ""}>Upload</Button>
       </form>
       {subjects.length === 0 && (
         <p className="mt-3 text-sm text-ink-subtle">Nothing to keep a {kindLabel(kind)} for yet.</p>

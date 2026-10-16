@@ -54,7 +54,7 @@ describe("OwnerBills", () => {
     const decided = screen.getByRole("list", { name: "Decided" });
     expect(decided.querySelector("[data-tone]")?.getAttribute("data-tone")).toBe("neutral");
     expect(decided.textContent).toBe(
-      "declinedVendor 1, PAINT-1 ($600.00) on 2026-01-11 by Owner 1, in the owner portal. Get a second quote",
+      "declinedVendor 1, PAINT-1 ($600.00) on 01/11/2026 by Owner 1, in the owner portal. Get a second quote",
     );
   });
 

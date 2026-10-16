@@ -11,7 +11,7 @@ import { Select } from "../components/Select";
 import { Pager } from "../components/Pager";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
-import { day, money } from "../money";
+import { day, money, usDate } from "../money";
 import type { Bounce, Payment, RecurringCharge, RentChange, RentLease, RentRun } from "../rent";
 import type { Paged, RentRollRow } from "../rentals";
 import { termLabel } from "../rentals";
@@ -276,7 +276,7 @@ function PaymentRow({ payment, record }: { payment: RentLease["payments"][number
   return (
     <tr>
       <td>
-        <span className="whitespace-nowrap">{payment.received_on}</span>
+        <span className="whitespace-nowrap">{usDate(payment.received_on)}</span>
         {payment.reference && <span className="block text-ink-muted">{payment.reference}</span>}
       </td>
       <td className="text-right">{money(payment.amount)}</td>
@@ -293,7 +293,7 @@ function PaymentRow({ payment, record }: { payment: RentLease["payments"][number
               if (done) setAsking(false);
             }}
           >
-            <input type="date" aria-label={`Bounced on, ${payment.received_on} payment`} value={on}
+            <input type="date" aria-label={`Bounced on, ${usDate(payment.received_on)} payment`} value={on}
               onChange={(e) => setOn(e.target.value)} required
               className="h-8 rounded-sm border border-line-strong bg-sunken px-2 text-sm text-ink" />
             <Button type="submit" variant="secondary" size="sm">Record the bounce</Button>
@@ -402,7 +402,7 @@ function RecurringLine({ recurring, record }: { recurring: RecurringCharge; reco
             onSubmit={async (event) => {
               event.preventDefault();
               const done = await record(`/api/rent/recurring-charges/${recurring.id}/stop`,
-                { ends_on: on }, () => `${recurring.memo} stops ${on}.`);
+                { ends_on: on }, () => `${recurring.memo} stops ${usDate(on)}.`);
               if (done) setAsking(false);
             }}
           >
@@ -475,7 +475,7 @@ function RentChangeForm({ lease, record }: { lease: RentLease; record: Recorder 
           effective_on: from, monthly_rent: amount, notice_given_on: notice, served_by: served,
           lease_terms: terms || null,
         };
-        const said = () => `Rent of ${money(amount)} a month from ${from} recorded.`;
+        const said = () => `Rent of ${money(amount)} a month from ${usDate(from)} recorded.`;
         if (await record(`/api/rent/leases/${lease.id}/rent-changes`, body, said)) {
           setAmount("");
           setTerms("");

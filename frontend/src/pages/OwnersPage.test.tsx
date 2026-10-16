@@ -1,9 +1,11 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
+import type { Owner, OwnerRow } from "../directory";
 import type { CompanyFees, OwnerMoney } from "../payables";
+import type { Paged } from "../rentals";
 import type { Portfolio } from "../setup";
-import { OwnersPage, leasingFeeSaid } from "./OwnersPage";
+import { OwnerPage, OwnersPage, leasingFeeSaid } from "./OwnersPage";
 
 afterEach(() => {
   cleanup();
@@ -21,13 +23,13 @@ const ME: Me = {
 
 const OWNERS: OwnerMoney[] = [
   {
-    account: "a1", owner_id: "o1", owner: "Owner 1", property: "Property 1", bank_account: "Operating",
-    balance: "1200.00", reserve: "100.00", unpaid_bills: "300.00", available: "800.00",
+    account: "a1", owner_id: "o1", owner: "Owner 1", property_id: "pr1", property: "Property 1",
+    bank_account: "Operating", balance: "1200.00", reserve: "100.00", unpaid_bills: "300.00", available: "800.00",
     has_agreement: true,
   },
   {
-    account: "a2", owner_id: "o2", owner: "Owner 2", property: "Property 2", bank_account: "Operating",
-    balance: "0.00", reserve: "0.00", unpaid_bills: "0.00", available: "0.00",
+    account: "a2", owner_id: "o1", owner: "Owner 1", property_id: "pr2", property: "Property 2",
+    bank_account: "Operating", balance: "0.00", reserve: "0.00", unpaid_bills: "0.00", available: "0.00",
     has_agreement: false,
   },
 ];
@@ -66,10 +68,32 @@ const BOOKS: Portfolio = {
   schedule_e_lines: [],
 };
 
+const NO_CONTACT = {
+  email: null, phone: null, alternate_phone: null, address_line_1: null, address_line_2: null,
+  city: null, state: null, postal_code: null,
+};
+const OWNER: Owner = { id: "o1", name: "Owner 1", archived: false, contact: NO_CONTACT, accounts: OWNERS };
+const ROWS: Paged<OwnerRow> = {
+  items: [
+    { id: "o1", name: "Owner 1", properties: ["Property 1", "Property 2"], held: "1200.00",
+      email: "owner1@example.com", phone: "555-555-0100", archived: false },
+    { id: "o2", name: "Owner 2", properties: [], held: "0.00", email: null, phone: null, archived: false },
+  ],
+  total: 2,
+  page: 1,
+  per_page: 50,
+};
+
+const NO_FILES = { documents: [], subjects: { w9: [], receipt: [], move_out_photo: [], owner_document: [] } };
+
 function server(answers: Record<string, unknown> = {}, refuse: Record<string, string> = {}) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method !== "POST") {
-      const read = path === "/api/setup" ? BOOKS : path === "/api/payables/company-fees" ? COMPANY_FEES : OWNERS;
+      const read = path === "/api/setup" ? BOOKS
+        : path === "/api/payables/company-fees" ? COMPANY_FEES
+        : path === "/api/owners/o1" ? OWNER
+        : path === "/api/documents" ? NO_FILES
+        : (answers[path] ?? ROWS);
       return new Response(JSON.stringify(read), { status: 200 });
     }
     if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
@@ -87,16 +111,45 @@ const posted = (fetch: ReturnType<typeof server>) =>
 const owner = (name: string) => screen.findByRole("listitem", { name });
 
 describe("OwnersPage", () => {
-  it("shows what each owner's account holds and may pay out", async () => {
-    server();
+  it("lists the owners a page at a time, each with their properties, money held and contact", async () => {
+    const fetch = server();
     render(<OwnersPage me={ME} />);
+
+    const first = await screen.findByRole("row", { name: "Owner 1" });
+    expect(within(first).getAllByRole("cell").map((c) => c.textContent)).toEqual([
+      "Owner 1", "Property 1, Property 2", "$1,200.00", "owner1@example.com", "555-555-0100",
+    ]);
+    expect(within(first).getByRole("link", { name: "Owner 1" }).getAttribute("href")).toBe("/owners/o1");
+    expect(screen.getByRole("navigation", { name: "Pages" }).textContent).toContain("1–2 of 2");
+
+    fireEvent.change(screen.getByLabelText("Find an owner or property"), { target: { value: "Property 2" } });
+    fireEvent.click(screen.getByLabelText("Archived only"));
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.map(([path]) => path)).toContain(
+        "/api/owners?page=1&archived=true&q=Property+2",
+      ),
+    );
+  });
+});
+
+describe("OwnerPage", () => {
+  it("shows what each of the owner's accounts holds and may pay out", async () => {
+    server();
+    render(<OwnerPage me={ME} id="o1" />);
 
     const first = await owner("Owner 1, Property 1");
     expect(within(first).getByTestId("available").textContent).toBe("$800.00 available");
     expect(first.textContent).toContain("$1,200.00 held, less a $100.00 reserve and $300.00 of unpaid bills");
     expect(first.textContent).not.toContain("No management agreement");
-    const second = await owner("Owner 2, Property 2");
+    const second = await owner("Owner 1, Property 2");
     expect(second.textContent).toContain("No management agreement: no reserve is kept and no fee is taken.");
+    expect(within(first).getByRole("link", { name: "Property 1" }).getAttribute("href")).toBe("/properties/pr1");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Owner 1");
+    // Their documents are on their Files card.
+    expect(await screen.findByLabelText("Owner document file")).toBeTruthy();
+    expect(screen.getByRole("group", { name: "Contact details, Owner 1" }).textContent).toContain(
+      "No contact details yet.",
+    );
     const statement = within(first).getByRole("link", { name: "Owner 1's income statement this year (PDF)" });
     expect(statement.getAttribute("href")).toMatch(
       /^\/api\/reports\/trust_report_income_statement\?arg=o1&arg=\d{4}-01-01&arg=\d{4}-\d{2}-\d{2}&format=pdf$/,
@@ -108,16 +161,21 @@ describe("OwnersPage", () => {
       "/api/payables/draws": { amount: "800.00" },
       "/api/payables/contributions": { transfer_id: "t1" },
     });
-    render(<OwnersPage me={ME} />);
+    render(<OwnerPage me={ME} id="o1" />);
     const first = await owner("Owner 1, Property 1");
 
     fireEvent.change(within(first).getByLabelText("Paid out on"), { target: { value: "2026-10-10" } });
     fireEvent.click(within(first).getByRole("button", { name: "Record draw" }));
+    fireEvent.click(within(first).getByRole("button", { name: "Confirm" }));
     expect(await within(first).findByText("$800.00 paid out to Owner 1.")).toBeTruthy();
     fireEvent.change(within(first).getByLabelText("Draw amount (leave empty for all available)"), {
       target: { value: "50.00" },
     });
     fireEvent.click(within(first).getByRole("button", { name: "Record draw" }));
+    expect(within(first).getByRole("alertdialog").getAttribute("aria-label")).toBe(
+      "Pay $50.00 out to Owner 1 from Operating on 10/10/2026?",
+    );
+    fireEvent.click(within(first).getByRole("button", { name: "Confirm" }));
     await vi.waitFor(() => expect(posted(fetch)).toHaveLength(2));
 
     fireEvent.change(within(first).getByLabelText("Contribution received"), { target: { value: "250.00" } });
@@ -137,18 +195,21 @@ describe("OwnersPage", () => {
     });
   });
 
+});
+
+describe("OwnersPage's fees", () => {
   it("lists the company's fees in trust and takes them out once per request", async () => {
     const fetch = server({ "/api/payables/company-fees": { amount: "150.00" } });
     render(<OwnersPage me={ME} />);
     const operating = await screen.findByRole("listitem", { name: "Operating" });
 
     expect(within(operating).getByTestId("company-fees").textContent).toBe(
-      "$150.00 of the company's fees, the oldest since 2000-01-01 (40 days)",
+      "$150.00 of the company's fees, the oldest since 01/01/2000 (40 days)",
     );
-    const late = within(operating).getByText("take out: past 2000-01-26");
+    const late = within(operating).getByText("take out: past 01/26/2000");
     expect(late.closest("[data-tone]")?.getAttribute("data-tone")).toBe("danger");
     const second = screen.getByRole("listitem", { name: "Second operating" });
-    const due = within(second).getByText("take out by 2999-01-01");
+    const due = within(second).getByText("take out by 01/01/2999");
     expect(due.closest("[data-tone]")?.getAttribute("data-tone")).toBe("caution");
     // Nothing held: nothing to take out, and no day to take it by.
     const third = screen.getByRole("listitem", { name: "Third operating" });
@@ -157,11 +218,24 @@ describe("OwnersPage", () => {
 
     fireEvent.change(within(operating).getByLabelText("Paid out on"), { target: { value: "2026-10-12" } });
     fireEvent.click(within(operating).getByRole("button", { name: "Take out company fees" }));
+    expect(within(operating).getByRole("alertdialog").getAttribute("aria-label")).toBe(
+      "Take all $150.00 of the company's fees out of Operating on 10/12/2026?",
+    );
+    fireEvent.click(within(operating).getByRole("button", { name: "Confirm" }));
     expect(await within(operating).findByText("$150.00 of the company's fees taken out.")).toBeTruthy();
     fireEvent.change(within(operating).getByLabelText("Amount (leave empty for all)"), {
       target: { value: "10.00" },
     });
+    // Cancel sends nothing; asked again, confirming sends it.
     fireEvent.click(within(operating).getByRole("button", { name: "Take out company fees" }));
+    fireEvent.click(within(operating).getByRole("button", { name: "Cancel" }));
+    expect(within(operating).queryByRole("alertdialog")).toBeNull();
+    expect(posted(fetch)).toHaveLength(1);
+    fireEvent.click(within(operating).getByRole("button", { name: "Take out company fees" }));
+    expect(within(operating).getByRole("alertdialog").getAttribute("aria-label")).toBe(
+      "Take $10.00 of the company's fees out of Operating on 10/12/2026?",
+    );
+    fireEvent.click(within(operating).getByRole("button", { name: "Confirm" }));
     await vi.waitFor(() => expect(posted(fetch)).toHaveLength(2));
 
     const [all, some] = posted(fetch) as [string, Record<string, unknown>][];
@@ -177,16 +251,18 @@ describe("OwnersPage", () => {
     const operating = await screen.findByRole("listitem", { name: "Operating" });
 
     fireEvent.click(within(operating).getByRole("button", { name: "Take out company fees" }));
+    fireEvent.click(within(operating).getByRole("button", { name: "Confirm" }));
 
     expect(await within(operating).findByText("Clerk 1 may not pay out money (the disburse role)")).toBeTruthy();
   });
 
   it("shows why a draw was refused on its owner", async () => {
     server({}, { "/api/payables/draws": "0.00 is available to draw" });
-    render(<OwnersPage me={ME} />);
-    const second = await owner("Owner 2, Property 2");
+    render(<OwnerPage me={ME} id="o1" />);
+    const second = await owner("Owner 1, Property 2");
 
     fireEvent.click(within(second).getByRole("button", { name: "Record draw" }));
+    fireEvent.click(within(second).getByRole("button", { name: "Confirm" }));
 
     expect(await within(second).findByText("0.00 is available to draw")).toBeTruthy();
   });
@@ -199,7 +275,7 @@ describe("OwnersPage", () => {
       ],
     });
     render(<OwnersPage me={ME} />);
-    await owner("Owner 1, Property 1");
+    await screen.findByRole("row", { name: "Owner 1" });
 
     fireEvent.change(screen.getByLabelText("Period from"), { target: { value: "2026-09-01" } });
     fireEvent.change(screen.getByLabelText("Up to (not including)"), { target: { value: "2026-10-01" } });
@@ -219,7 +295,7 @@ describe("OwnersPage", () => {
   it("says when no agreement was in force for a fee run", async () => {
     server({ "/api/payables/management-fees": [] });
     render(<OwnersPage me={ME} />);
-    await owner("Owner 1, Property 1");
+    await screen.findByRole("row", { name: "Owner 1" });
 
     fireEvent.click(screen.getByRole("button", { name: "Take fees" }));
 
@@ -229,7 +305,7 @@ describe("OwnersPage", () => {
   it("takes a leasing fee from an owner of the lease's property", async () => {
     const fetch = server({ "/api/payables/leasing-fees": { amount: "750.00" } });
     render(<OwnersPage me={ME} />);
-    await owner("Owner 1, Property 1");
+    await screen.findByRole("row", { name: "Owner 1" });
 
     const from = screen.getByLabelText("From owner");
     expect(within(from).getAllByRole("option").map((o) => o.textContent)).toEqual(["Owner 1", "Owner 3"]);
@@ -249,19 +325,28 @@ describe("OwnersPage", () => {
     expect(posted(fetch)[1]?.[1]).toEqual({ lease_id: "l2", account: "a2", on: "2026-10-03" });
   });
 
-  it("says when no owner has an account yet, and when the page can't be read", async () => {
+  it("says when no owner is found or has an account, and when the page can't be read", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (path: string) =>
         new Response(
-          JSON.stringify(path === "/api/setup" ? { ...BOOKS, properties: [] } : []),
+          JSON.stringify(
+            path === "/api/setup" ? { ...BOOKS, properties: [] }
+              : path.startsWith("/api/owners?") ? { ...ROWS, items: [], total: 0 }
+              : path === "/api/owners/o1" ? { ...OWNER, accounts: [] }
+              : path === "/api/documents" ? NO_FILES
+              : [],
+          ),
           { status: 200 },
         ),
       ),
     );
     render(<OwnersPage me={ME} />);
-    expect(await screen.findByText("No owner has a property account yet. Add one in Setup.")).toBeTruthy();
+    expect((await screen.findByTestId("empty-state")).textContent).toContain("No owners found.");
     expect(screen.queryByText("Leasing fee")).toBeNull();
+    cleanup();
+    render(<OwnerPage me={ME} id="o1" />);
+    expect((await screen.findByTestId("empty-state")).textContent).toContain("No property account yet.");
     cleanup();
 
     vi.stubGlobal(
@@ -270,6 +355,9 @@ describe("OwnersPage", () => {
     );
     render(<OwnersPage me={ME} />);
     expect((await screen.findAllByRole("alert"))[0]?.textContent).toBe("sign in first");
+    cleanup();
+    render(<OwnerPage me={ME} id="o1" />);
+    expect((await screen.findByRole("alert")).textContent).toBe("sign in first");
   });
 
   it("says so when the agreement takes no leasing fee, rather than that $0.00 was taken", () => {

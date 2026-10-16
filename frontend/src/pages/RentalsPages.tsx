@@ -3,11 +3,11 @@ import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
-import { Button } from "../components/Button";
 import { EmptyState } from "../components/EmptyState";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Pager } from "../components/Pager";
+import { RecordActions } from "../components/RecordActions";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import { money } from "../money";
@@ -16,6 +16,7 @@ import type { Paged, Property, PropertyRow, Unit } from "../rentals";
 import { LEASE_STATUS, occupancy, rentLabel, termLabel, unitState } from "../rentals";
 import { GoLink } from "./NeedsAttention";
 import { LeaseRow } from "./RentPage";
+import { FilesCard } from "./FilesCard";
 import { STAFF_NAV } from "./staffNav";
 
 function detail(failed: unknown): string {
@@ -28,79 +29,6 @@ function RecordLink({ href, children }: { href: string; children: React.ReactNod
     <GoLink href={href} className="font-medium text-iris hover:text-iris-hover hover:underline">
       {children}
     </GoLink>
-  );
-}
-
-// A record's name and whether it is archived, changed in place: Rename opens a field, and
-// Archive (or Bring back) asks before it does anything. The database refuses archiving while
-// something is open on it, and says what in words.
-function RecordActions({
-  path,
-  name,
-  archived,
-  onChange,
-}: {
-  path: string;
-  name: string;
-  archived: boolean;
-  onChange: (said: string) => void;
-}) {
-  const [renaming, setRenaming] = useState(false);
-  const [asking, setAsking] = useState(false);
-  const [draft, setDraft] = useState(name);
-  const [error, setError] = useState("");
-
-  async function post(to: string, body: object, said: string) {
-    setError("");
-    try {
-      await api.post(`${path}/${to}`, body);
-      setRenaming(false);
-      setAsking(false);
-      onChange(said);
-    } catch (failed) {
-      setError(detail(failed));
-    }
-  }
-
-  return (
-    <div className="flex flex-col items-end gap-2">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        {archived && <Badge tone="neutral">Archived</Badge>}
-        <Button variant="secondary" size="sm" onClick={() => { setDraft(name); setRenaming(!renaming); }}>
-          Rename
-        </Button>
-        <Button variant="ghost" size="sm" onClick={() => setAsking(!asking)}>
-          {archived ? "Bring back" : "Archive"}
-        </Button>
-      </div>
-      {renaming && (
-        <form
-          className="flex items-end gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            post("name", { name: draft }, `Renamed ${draft.trim()}.`);
-          }}
-        >
-          <Field label="New name" id={`rename-${path}`} required maxLength={200} value={draft}
-            onChange={(event) => setDraft(event.target.value)} />
-          <Button type="submit" size="sm">Save name</Button>
-        </form>
-      )}
-      {asking && (
-        <div className="flex flex-wrap items-center justify-end gap-2 text-sm text-ink-muted">
-          <span>
-            {archived
-              ? `${name} comes back into lists.`
-              : `${name} leaves the lists; its history stays.`}
-          </span>
-          <Button size="sm" onClick={() => post("archive", { archived: !archived }, archived ? `${name} is back.` : `${name} is archived.`)}>
-            {archived ? `Bring back ${name}` : `Archive ${name}`}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => setAsking(false)}>Cancel</Button>
-        </div>
-      )}
-      <Notice tone="error">{error}</Notice>
-    </div>
   );
 }
 
@@ -350,6 +278,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
           <ul className="flex flex-col">
             <LeaseRow lease={lease} refresh={refresh} />
           </ul>
+          <FilesCard kind="move_out_photo" aboutId={id} name={`${lease.unit}, ${lease.property}`} />
         </>
       )}
     </Shell>

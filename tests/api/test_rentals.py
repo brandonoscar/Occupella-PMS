@@ -188,12 +188,28 @@ def test_staff_archive_and_bring_back_a_unit_and_a_property_only_when_nothing_is
     assert len(ok(client.get("/api/properties"))["items"]) == 2
 
 
-def test_search_finds_properties_units_and_tenants_with_the_page_each_opens(
+def test_search_finds_properties_units_tenants_and_owners_with_the_page_each_opens(
     client, conn, staff, pmc
 ):
     prop = pmc.owners[0].property_id
-    unit, lease = lease_at(conn, pmc, prop, "Maple 1", "Jordan Maple", TODAY - 30 * DAY)
+    unit, _ = lease_at(conn, pmc, prop, "Maple 1", "Jordan Maple", TODAY - 30 * DAY)
+    (tenant,) = conn.execute(
+        "SELECT id FROM trust_tenants WHERE display_name = 'Jordan Maple'"
+    ).fetchone()
     conn.execute("UPDATE trust_properties SET display_name = 'Maple Court' WHERE id = %s", (prop,))
+    conn.execute(
+        "UPDATE trust_owners SET display_name = 'Maple Holdings' WHERE id = %s",
+        (pmc.owners[0].owner_id,),
+    )
+    # An archived owner is found no more.
+    conn.execute(
+        "UPDATE trust_owners SET display_name = 'Maple Gone' WHERE id = %s",
+        (pmc.owners[1].owner_id,),
+    )
+    conn.execute(
+        "INSERT INTO trust_archivals (pmc_id, owner_id, archived) VALUES (%s, %s, true)",
+        (pmc.pmc_id, pmc.owners[1].owner_id),
+    )
     theirs = make_pmc(conn)
     add_unit(conn, theirs.pmc_id, theirs.owners[0].property_id, "Maple 9")
 
@@ -202,7 +218,8 @@ def test_search_finds_properties_units_and_tenants_with_the_page_each_opens(
     assert [(f["kind"], f["label"], f["detail"], f["href"]) for f in found] == [
         ("property", "Maple Court", "", f"/properties/{prop}"),
         ("unit", "Maple 1", "Maple Court", f"/units/{unit}"),
-        ("tenant", "Jordan Maple", "Maple 1, Maple Court", f"/leases/{lease}"),
+        ("tenant", "Jordan Maple", "Maple 1, Maple Court", f"/tenants/{tenant}"),
+        ("owner", "Maple Holdings", "", f"/owners/{pmc.owners[0].owner_id}"),
     ]
 
 

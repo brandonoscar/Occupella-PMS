@@ -9,7 +9,7 @@ import type { Ledger } from "../ledger";
 import { entryWords, readLedger } from "../ledger";
 import type { MaintenanceRequest } from "../maintenance";
 import { statusLabel, when } from "../maintenance";
-import { day, money } from "../money";
+import { day, money, usDate } from "../money";
 import type { StatementData } from "../statement";
 import type { RentersInsurance } from "../rent";
 import { insuranceLine } from "../rent";
@@ -51,15 +51,15 @@ export type Lease = {
 // "Pet rent: $35.00", "Parking: $25.00 off" for a credit, with when it starts or stops.
 export function monthlyLabel(item: Monthly, today: string): string {
   const amount = item.kind === "credit" ? `${money(item.amount)} off` : money(item.amount);
-  const from = item.starts_on > today ? `, from ${item.starts_on}` : "";
-  const until = item.ends_on ? `, until ${item.ends_on}` : "";
+  const from = item.starts_on > today ? `, from ${usDate(item.starts_on)}` : "";
+  const until = item.ends_on ? `, until ${usDate(item.ends_on)}` : "";
   return `${item.what}: ${amount}${from}${until}`;
 }
 
-// "2026-10-23 Key replacement: $50.00" (the kind when it has no memo).
+// "10/23/2026 Key replacement: $50.00" (the kind when it has no memo).
 export function comingDueLabel(charge: ComingDue): string {
   const what = charge.memo ?? (charge.kind === "rent" ? "Rent" : "Fee");
-  return `${charge.due_on} ${what}: ${money(charge.open)}`;
+  return `${usDate(charge.due_on)} ${what}: ${money(charge.open)}`;
 }
 
 // Cells take the table style's padding (less of it on a phone); only their alignment is set here.
@@ -154,7 +154,7 @@ export function TenantHome({ me }: { me: Me }) {
                 >
                   {leases.map((l) => (
                     <option key={l.lease_id} value={l.lease_id}>
-                      {l.property}, {l.unit}, from {l.starts_on}
+                      {l.property}, {l.unit}, from {usDate(l.starts_on)}
                       {l.in_effect ? "" : " (ended)"}
                     </option>
                   ))}
@@ -164,9 +164,9 @@ export function TenantHome({ me }: { me: Me }) {
             <dl className="grid grid-cols-2 gap-x-8 gap-y-3 text-base sm:grid-cols-4">
               {[
                 ["Home", `${lease.property}, ${lease.unit}`],
-                ["Term", `${lease.starts_on} to ${lease.ends_on ?? "month to month"}`],
+                ["Term", `${usDate(lease.starts_on)} to ${lease.ends_on ? usDate(lease.ends_on) : "month to month"}`],
                 ["Rent", `${money(lease.monthly_rent)} a month` + lease.rent_changes
-                  .map((c) => `; ${money(c.monthly_rent)} from ${c.effective_on} (notice given ${c.notice_given_on})`)
+                  .map((c) => `; ${money(c.monthly_rent)} from ${usDate(c.effective_on)} (notice given ${usDate(c.notice_given_on)})`)
                   .join("")],
                 ["On the lease", lease.tenants.join(", ")],
               ].map(([label, value]) => (
@@ -213,7 +213,7 @@ export function TenantHome({ me }: { me: Me }) {
                   <p className="text-sm text-ink-subtle">Charged already, due later</p>
                   <ul className="flex flex-col gap-1 text-base">
                     {lease.coming_due.map((charge) => (
-                      <li key={`${charge.due_on}-${charge.memo}`}>{comingDueLabel(charge)}</li>
+                      <li key={`${usDate(charge.due_on)}-${charge.memo}`}>{comingDueLabel(charge)}</li>
                     ))}
                   </ul>
                 </>
@@ -253,7 +253,7 @@ export function TenantHome({ me }: { me: Me }) {
                       const words = entryWords(entry);
                       return (
                       <tr key={n} className="border-t border-line">
-                        <td className={`${CELL} whitespace-nowrap text-ink-muted`}>{entry.on}</td>
+                        <td className={`${CELL} whitespace-nowrap text-ink-muted`}>{usDate(entry.on)}</td>
                         <td className={CELL}>
                           {words.what}
                           {words.detail && <span className="text-ink-muted">: {words.detail}</span>}
@@ -266,7 +266,7 @@ export function TenantHome({ me }: { me: Me }) {
                     })}
                     <tr className="border-t border-line-strong font-medium">
                       <td className={CELL} colSpan={2}>
-                        Balance at the end of {ledger.through}
+                        Balance at the end of {usDate(ledger.through)}
                       </td>
                       <td className={AMOUNT}>{money(ledger.totals.charged)}</td>
                       <td className={AMOUNT}>{money(ledger.totals.paid)}</td>

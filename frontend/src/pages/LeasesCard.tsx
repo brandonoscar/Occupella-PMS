@@ -28,10 +28,6 @@ export function LeasesCard({ books, refresh }: CardProps) {
 
   return (
     <Card title="Tenants and leases in place">
-      <p className="mb-4 text-sm text-ink-muted">
-        For tenants already living in your units. A new tenant's lease comes through a lease
-        offer in Leasing, Draft leases.
-      </p>
       <ul className="mb-4 flex flex-col gap-1">
         {books.tenants.map((t) => (
           <li key={t.id}>

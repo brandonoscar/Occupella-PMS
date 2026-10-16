@@ -1,6 +1,6 @@
 // Rentals as the API sends them (src/pms/api/rentals.py): pages of properties and leases, a
 // property, a unit, and search results; and how they read.
-import { money } from "./money";
+import { money, usDate } from "./money";
 
 export type Paged<T> = { items: T[]; total: number; page: number; per_page: number };
 export type Ref = { id: string; name: string };
@@ -53,7 +53,7 @@ export type RentRollRow = {
 };
 
 export type Found = {
-  kind: "property" | "unit" | "tenant";
+  kind: "property" | "unit" | "tenant" | "owner";
   id: string;
   label: string;
   detail: string;
@@ -81,14 +81,14 @@ export function occupancy(row: PropertyRow): string {
 
 // "From 2026-01-01, month to month", "2026-01-01 to 2026-12-31".
 export function termLabel(lease: { starts_on: string; ends_on: string | null }): string {
-  return lease.ends_on ? `${lease.starts_on} to ${lease.ends_on}` : `From ${lease.starts_on}, month to month`;
+  return lease.ends_on ? `${usDate(lease.starts_on)} to ${usDate(lease.ends_on)}` : `From ${usDate(lease.starts_on)}, month to month`;
 }
 
 // A unit's state as a badge: occupied, a lease to come, vacant, or archived.
 export function unitState(unit: UnitLine): { word: string; tone: "positive" | "info" | "neutral" | "caution" } {
   if (unit.archived) return { word: "Archived", tone: "neutral" };
   if (unit.lease === null) return { word: "Vacant", tone: "caution" };
-  if (unit.lease.status === "future") return { word: `Starts ${unit.lease.starts_on}`, tone: "info" };
+  if (unit.lease.status === "future") return { word: `Starts ${usDate(unit.lease.starts_on)}`, tone: "info" };
   return { word: "Occupied", tone: "positive" };
 }
 

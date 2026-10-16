@@ -43,8 +43,10 @@ from pms.api import (
     budgets,
     custom_roles,
     dashboard,
+    directory,
     documents,
     fake_esign,
+    general_ledger,
     inspections,
     journal,
     leasing,
@@ -57,6 +59,7 @@ from pms.api import (
     payables,
     people,
     reconcile,
+    renewals,
     rent,
     rentals,
     setup,
@@ -66,6 +69,7 @@ from pms.api import (
     tenant,
     today,
     vendors,
+    work_orders,
 )
 from pms.api.deps import COOKIE, Conn, Current, Staff, download, refusal
 from pms.leasing import esign, screening
@@ -365,6 +369,10 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(setup.router)
     app.include_router(rent.router)
     app.include_router(rentals.router)
+    app.include_router(directory.router)
+    app.include_router(general_ledger.router)
+    app.include_router(work_orders.router)
+    app.include_router(renewals.router)
     app.include_router(payables.router)
     app.include_router(reconcile.router)
     app.include_router(journal.router)

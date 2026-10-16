@@ -167,12 +167,15 @@ AREA_PATHS = (
     ("/api/setup/", "setup"),
     ("/api/properties/", "setup"),
     ("/api/units/", "setup"),
+    ("/api/tenants/", "setup"),
+    ("/api/owners/", "setup"),
     ("/api/vendors/", "setup"),
     ("/api/move-out/", "move-out"),
     ("/api/inspections", "move-out"),
     ("/api/documents", "documents"),
     ("/api/leasing/", "leasing"),
     ("/api/maintenance/", "maintenance"),
+    ("/api/work-orders", "maintenance"),
     ("/api/invites", "people"),
 )
 READS = ("GET", "HEAD", "OPTIONS")

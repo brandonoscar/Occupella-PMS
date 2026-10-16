@@ -6,7 +6,7 @@ import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
-import { lastMonth, money } from "../money";
+import { lastMonth, money, usDate } from "../money";
 import type { StatementData } from "../statement";
 import { describePosting, group, periodLabel } from "../statement";
 import { OwnerBills } from "./OwnerBills";
@@ -125,7 +125,7 @@ export function OwnerHome({ me }: { me: Me }) {
                       const described = describePosting(posting.detail, posting.amount);
                       return (
                       <tr key={n} className="border-t border-line">
-                        <td className={`${CELL} whitespace-nowrap text-ink-muted`}>{posting.postedOn}</td>
+                        <td className={`${CELL} whitespace-nowrap text-ink-muted`}>{usDate(posting.postedOn)}</td>
                         <td className={CELL}>
                           {described.what}
                           {described.with && <span className="text-ink-muted"> · {described.with}</span>}

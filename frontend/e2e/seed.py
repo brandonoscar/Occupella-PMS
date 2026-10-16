@@ -465,6 +465,9 @@ FEATURES = (
     "rent-changes",
     "renters-insurance",
     "rentals",
+    "people",
+    "general-ledger",
+    "maintenance-pages",
 )
 
 

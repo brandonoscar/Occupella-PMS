@@ -49,12 +49,18 @@ describe("MoveOutPage", () => {
     const fetch = server();
     render(<MoveOutPage me={ME} />);
     expect((await screen.findByLabelText("Owed, Property 1 / Unit 1: Tenant 1")).textContent)
-      .toBe("2026-06-30 fee: Broken window: $350.00");
+      .toBe("06/30/2026 fee: Broken window: $350.00");
     expect(screen.getByText(/Keeps \$350.00 for what the lease owes; \$850.00 goes back/)).toBeTruthy();
 
     fireEvent.change(screen.getAllByLabelText("Paid on")[0]!, { target: { value: "2026-07-05" } });
     fireEvent.change(screen.getByLabelText("Kept money to"), { target: { value: "a2" } });
     fireEvent.click(screen.getByRole("button", { name: "Return the deposit" }));
+    const ask = screen.getByRole("alertdialog");
+    expect(ask.getAttribute("aria-label")).toBe(
+      "Return the deposit on 07/05/2026: keep $350.00 for what the lease owes and pay $850.00 back to the tenants?",
+    );
+    expect(posted(fetch)).toHaveLength(0);
+    fireEvent.click(within(ask).getByRole("button", { name: "Confirm" }));
 
     expect(await screen.findByText("Returned $850.00 to the tenants; the rest paid what the lease owed.")).toBeTruthy();
     const [[path, body]] = posted(fetch) as [[string, { request_id: string; on: string; owner_account: string }]];
@@ -80,7 +86,7 @@ describe("MoveOutPage", () => {
 
     fireEvent.change(screen.getAllByLabelText("Last day")[1]!, { target: { value: "2026-07-31" } });
     fireEvent.click(screen.getAllByRole("button", { name: "End the lease" })[1]!);
-    expect(await screen.findByText("The lease ends on 2026-07-31.")).toBeTruthy();
+    expect(await screen.findByText("The lease ends on 07/31/2026.")).toBeTruthy();
     fireEvent.change(screen.getAllByLabelText("Cleaning or damage")[0]!, { target: { value: " Carpet cleaning " } });
     fireEvent.change(screen.getAllByLabelText("Amount")[0]!, { target: { value: "120.00" } });
     fireEvent.click(screen.getAllByRole("button", { name: "Charge it" })[0]!);
@@ -97,10 +103,11 @@ describe("MoveOutPage", () => {
     server({ "/api/move-out/l1/return": "Clerk 1 may not pay out money (the disburse role)" });
     render(<MoveOutPage me={ME} />);
     expect((await screen.findByLabelText("Returned, Property 1 / Unit 3: Tenant 1")).textContent)
-      .toBe("Returned on 2026-07-05: kept $350.00 of $1,200.00, $850.00 back to the tenants.");
+      .toBe("Returned on 07/05/2026: kept $350.00 of $1,200.00, $850.00 back to the tenants.");
     expect(screen.getByRole("link", { name: "Statement for the tenants (PDF)" }).getAttribute("href"))
       .toBe("/api/reports/trust_report_deposit_return?arg=l3&format=pdf");
     fireEvent.click(screen.getByRole("button", { name: "Return the deposit" }));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     expect(await screen.findByText("Clerk 1 may not pay out money (the disburse role)")).toBeTruthy();
     cleanup();
 
