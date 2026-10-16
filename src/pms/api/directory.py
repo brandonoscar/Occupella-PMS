@@ -21,11 +21,14 @@ from pydantic import BaseModel, StringConstraints, model_validator
 from pms.api import payables, rent, scope
 from pms.api.deps import Conn, Staff, refusal
 from pms.api.rentals import (
+    PORTAL,
+    PORTAL_STATUS,
     Archiving,
     LeaseLine,
     Page,
     Paged,
     PerPage,
+    Portal,
     Ref,
     Rename,
     Search,
@@ -160,6 +163,9 @@ class TenantRow(BaseModel):
     email: str | None
     phone: str | None
     archived: bool
+    # What the lease shown owes today (0.00 without one), and whether they can sign in.
+    owed: str
+    portal: Portal
 
 
 # A person's latest contact details, on c.
@@ -172,7 +178,8 @@ LEFT JOIN LATERAL (
 
 TENANTS = f"""
 SELECT t.id, t.display_name, p.id, p.display_name, l.id, u.id, u.display_name, l.starts_on,
-       l.ends_on, c.email, c.phone, trust_is_archived(NULL, NULL, t.id), count(*) OVER ()
+       l.ends_on, c.email, c.phone, trust_is_archived(NULL, NULL, t.id), {rent.OWED},
+       {PORTAL_STATUS}, count(*) OVER ()
 FROM trust_tenants AS t
 JOIN trust_properties AS p ON p.id = t.property_id
 LEFT JOIN LATERAL (
@@ -185,6 +192,7 @@ LEFT JOIN LATERAL (
 ) AS l ON true
 LEFT JOIN trust_units AS u ON u.id = l.unit_id
 {LATEST_CONTACT.format(person="tenant_id", key="t.id")}
+{PORTAL}
 WHERE t.pmc_id = %(pmc)s AND trust_is_archived(NULL, NULL, t.id) = %(archived)s
   AND {scope.within("t.property_id")}
   AND (%(like)s::text IS NULL OR t.display_name ILIKE %(like)s OR p.display_name ILIKE %(like)s
@@ -235,8 +243,12 @@ def tenants(
                 email=email,
                 phone=phone,
                 archived=gone,
+                owed=rent.cents(owed),
+                portal=portal,
             )
-            for i, name, p, pn, lease, u, un, starts, ends, email, phone, gone, _ in rows
+            for i, name, p, pn, lease, u, un, starts, ends, email, phone, gone, owed, portal, _ in (
+                rows
+            )
         ],
         total=rows[0][-1] if rows else 0,
         page=page,
@@ -258,6 +270,9 @@ class Tenant(BaseModel):
     prepaid: str
     deposit: str
     leases: list[TenantLease]
+    # Whether they can sign in to the portal, and their login's email.
+    portal: Portal
+    login_email: str | None
 
 
 @router.get("/tenants/{tenant_id}")
@@ -277,6 +292,13 @@ def tenant_page(session: Staff, conn: Conn, tenant_id: UUID) -> Tenant:
     if row is None:
         raise HTTPException(404, "no such tenant")
     name, gone, p, pn, prepaid, deposit = row
+    login = conn.execute(
+        f"SELECT {PORTAL_STATUS}, g.email FROM trust_tenants AS t {PORTAL} WHERE t.id = %s",
+        (tenant_id,),
+    ).fetchone()
+    assert login is not None
+    portal: Portal = login[0]
+    login_email: str | None = login[1]
     lines = lease_lines(
         conn,
         session.pmc_id,
@@ -306,6 +328,8 @@ def tenant_page(session: Staff, conn: Conn, tenant_id: UUID) -> Tenant:
         prepaid=rent.cents(prepaid),
         deposit=rent.cents(deposit),
         leases=leases,
+        portal=portal,
+        login_email=login_email,
     )
 
 

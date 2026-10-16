@@ -1,9 +1,8 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
-import type { RentLease } from "../rent";
 import type { Paged, Property, PropertyRow, Unit } from "../rentals";
-import { LeasePage, PropertiesPage, PropertyPage, UnitPage } from "./RentalsPages";
+import { PropertiesPage, PropertyPage, UnitPage } from "./RentalsPages";
 
 afterEach(() => {
   cleanup();
@@ -41,7 +40,8 @@ const ROWS: Paged<PropertyRow> = {
 };
 
 const LINE = {
-  id: "l1", tenants: ["Tenant 1", "Tenant 2"], starts_on: "2026-01-01", ends_on: null,
+  id: "l1", tenants: ["Tenant 1", "Tenant 2"], people: [{ id: "t1", name: "Tenant 1" }, { id: "t2", name: "Tenant 2" }],
+  starts_on: "2026-01-01", ends_on: null,
   monthly_rent: "1500.00", owed: "50.00", status: "current" as const,
 };
 
@@ -63,15 +63,9 @@ const UNIT: Unit = {
   name: "Unit 1",
   archived: false,
   property: { id: "p1", name: "Property 1" },
-  leases: [LINE, { ...LINE, id: "l0", tenants: ["Tenant 0"], starts_on: "2025-01-01", ends_on: "2025-12-31", owed: "0.00", status: "ended" }],
+  leases: [LINE, { ...LINE, id: "l0", tenants: ["Tenant 0"], people: [{ id: "t0", name: "Tenant 0" }], starts_on: "2025-01-01", ends_on: "2025-12-31", owed: "0.00", status: "ended" }],
 };
 
-const LEASE: RentLease & { property_id: string; unit_id: string } = {
-  id: "l1", property: "Property 1", unit: "Unit 1", property_id: "p1", unit_id: "u1",
-  starts_on: "2026-01-01", ends_on: null, monthly_rent: "1500.00", rent_changes: [], renters_insurance: null,
-  tenants: [{ id: "t1", name: "Tenant 1", prepaid: "0.00", deposit: "1500.00" }],
-  owed: "50.00", on_hold: false, open_charges: [], payments: [], recurring: [],
-};
 
 // The API: `answers[path]` on GET (the paths asked are kept); a POST answers 204, or 409 with
 // `refuse[path]`.
@@ -242,7 +236,12 @@ describe("UnitPage", () => {
       ["Tenant 1, Tenant 2", "01/01/2026 – Month to month", "Current", "$1,500.00", "$50.00"],
       ["Tenant 0", "01/01/2025 – 12/31/2025", "Ended", "$1,500.00", "$0.00"],
     ]);
-    expect(within(rows[0]!).getByRole("link").getAttribute("href")).toBe("/leases/l1");
+    // Each tenant opens their own page; the term opens the lease.
+    expect(within(rows[0]!).getAllByRole("link").map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
+      ["Tenant 1", "/tenants/t1"],
+      ["Tenant 2", "/tenants/t2"],
+      ["01/01/2026 – Month to month", "/leases/l1"],
+    ]);
   });
 
   it("archives a unit with nothing on it, and says when it has no lease yet", async () => {
@@ -263,31 +262,3 @@ describe("UnitPage", () => {
   });
 });
 
-describe("LeasePage", () => {
-  it("shows the lease with its property and unit, and its rent work", async () => {
-    server({ "/api/leases/l1": LEASE });
-    render(<LeasePage me={ME} id="l1" />);
-
-    expect(await screen.findByRole("heading", { name: "Unit 1, Property 1" })).toBeTruthy();
-    expect(screen.getAllByRole("link", { name: "Property 1" }).at(-1)?.getAttribute("href")).toBe("/properties/p1");
-    expect(screen.getByRole("link", { name: "Unit 1" }).getAttribute("href")).toBe("/units/u1");
-    expect(screen.getByText("01/01/2026 – Month to month")).toBeTruthy();
-    expect(screen.getByText("$1,500.00 a month")).toBeTruthy();
-    expect(screen.getAllByText("Owes $50.00")).toHaveLength(1);
-    // The lease's own rent work, and no move-out while it has no end.
-    expect(screen.getByRole("listitem", { name: "Property 1, Unit 1" })).toBeTruthy();
-    expect(screen.queryByRole("link", { name: "Move-out" })).toBeNull();
-  });
-
-  it("links an ending lease to its move-out", async () => {
-    server({ "/api/leases/l1": { ...LEASE, ends_on: "2026-09-30" } });
-    render(<LeasePage me={ME} id="l1" />);
-    expect((await screen.findByRole("link", { name: "Move-out" })).getAttribute("href")).toBe("/move-out");
-  });
-
-  it("says when there is no such lease", async () => {
-    server({});
-    render(<LeasePage me={ME} id="nope" />);
-    expect((await screen.findByRole("alert")).textContent).toBe("no such page");
-  });
-});

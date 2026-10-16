@@ -25,7 +25,7 @@ describe("properties and units", () => {
   });
 
   it("reads a unit's state as a badge", () => {
-    const lease = { id: "l1", tenants: [], starts_on: "2026-11-01", ends_on: null, monthly_rent: "1.00", owed: "0.00" };
+    const lease = { id: "l1", tenants: [], people: [], starts_on: "2026-11-01", ends_on: null, monthly_rent: "1.00", owed: "0.00" };
     const unit = (over: Partial<UnitLine>): UnitLine => ({ id: "u1", name: "Unit 1", archived: false, lease: null, ...over });
     expect(unitState(unit({}))).toEqual({ word: "Vacant", tone: "caution" });
     expect(unitState(unit({ lease: { ...lease, status: "current" } }))).toEqual({ word: "Occupied", tone: "positive" });

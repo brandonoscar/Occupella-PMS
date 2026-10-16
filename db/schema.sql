@@ -9320,6 +9320,27 @@ CREATE TABLE public.trust_management_fees (
 
 
 --
+-- Name: trust_notes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_notes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    property_id uuid,
+    unit_id uuid,
+    lease_id uuid,
+    tenant_id uuid,
+    owner_id uuid,
+    vendor_id uuid,
+    body text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_notes_body_check CHECK (((btrim(body) <> ''::text) AND (char_length(body) <= 5000))),
+    CONSTRAINT trust_notes_check CHECK ((num_nonnulls(property_id, unit_id, lease_id, tenant_id, owner_id, vendor_id) = 1))
+);
+
+
+--
 -- Name: trust_nsf_fee_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10875,6 +10896,14 @@ ALTER TABLE ONLY public.trust_management_fees
 
 
 --
+-- Name: trust_notes trust_notes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notes
+    ADD CONSTRAINT trust_notes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_nsf_fee_policies trust_nsf_fee_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11767,6 +11796,55 @@ CREATE INDEX trust_management_fees_transfer_id ON public.trust_management_fees U
 
 
 --
+-- Name: trust_notes_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notes_lease ON public.trust_notes USING btree (pmc_id, lease_id, created_at);
+
+
+--
+-- Name: trust_notes_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notes_owner ON public.trust_notes USING btree (pmc_id, owner_id, created_at);
+
+
+--
+-- Name: trust_notes_property; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notes_property ON public.trust_notes USING btree (pmc_id, property_id, created_at);
+
+
+--
+-- Name: trust_notes_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notes_recorded_by ON public.trust_notes USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_notes_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notes_tenant ON public.trust_notes USING btree (pmc_id, tenant_id, created_at);
+
+
+--
+-- Name: trust_notes_unit; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notes_unit ON public.trust_notes USING btree (pmc_id, unit_id, created_at);
+
+
+--
+-- Name: trust_notes_vendor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notes_vendor ON public.trust_notes USING btree (pmc_id, vendor_id, created_at);
+
+
+--
 -- Name: trust_nsf_fees_policy_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -12460,6 +12538,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_notes trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_notes FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_nsf_fee_policies trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13125,6 +13210,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_mana
 
 
 --
+-- Name: trust_notes trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_notes FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_nsf_fee_policies trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13647,6 +13739,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_contacts FOR EACH
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_inspections FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_notes trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_notes FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -15367,6 +15466,70 @@ ALTER TABLE ONLY public.trust_management_fees
 
 
 --
+-- Name: trust_notes trust_notes_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notes
+    ADD CONSTRAINT trust_notes_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_notes trust_notes_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notes
+    ADD CONSTRAINT trust_notes_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_notes trust_notes_pmc_id_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notes
+    ADD CONSTRAINT trust_notes_pmc_id_owner_id_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id);
+
+
+--
+-- Name: trust_notes trust_notes_pmc_id_property_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notes
+    ADD CONSTRAINT trust_notes_pmc_id_property_id_fkey FOREIGN KEY (pmc_id, property_id) REFERENCES public.trust_properties(pmc_id, id);
+
+
+--
+-- Name: trust_notes trust_notes_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notes
+    ADD CONSTRAINT trust_notes_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_notes trust_notes_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notes
+    ADD CONSTRAINT trust_notes_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
+
+
+--
+-- Name: trust_notes trust_notes_pmc_id_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notes
+    ADD CONSTRAINT trust_notes_pmc_id_unit_id_fkey FOREIGN KEY (pmc_id, unit_id) REFERENCES public.trust_units(pmc_id, id);
+
+
+--
+-- Name: trust_notes trust_notes_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notes
+    ADD CONSTRAINT trust_notes_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
 -- Name: trust_nsf_fee_policies trust_nsf_fee_policies_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16238,4 +16401,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261015000062'),
     ('20261016000063'),
     ('20261016000064'),
-    ('20261016000065');
+    ('20261016000065'),
+    ('20261016000066');

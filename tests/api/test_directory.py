@@ -81,6 +81,8 @@ def test_tenants_come_a_page_at_a_time_with_their_lease_and_contact(client, conn
         "email": "tenant.one@example.com",
         "phone": "(555) 555-0100",
         "archived": False,
+        "owed": "0.00",
+        "portal": "no login",
     }
     assert (two["name"], two["lease"]["status"], two["email"]) == ("Tenant 2", "future", None)
     last = ok(client.get("/api/tenants", params={"per_page": 2, "page": 2}))["items"]

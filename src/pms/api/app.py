@@ -20,6 +20,7 @@ refusal is answered 403.
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -32,6 +33,8 @@ from uuid import UUID
 
 import psycopg
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request, Response
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from psycopg import sql
@@ -54,6 +57,7 @@ from pms.api import (
     listings,
     maintenance,
     moveout,
+    notes,
     offers,
     outbox,
     owner,
@@ -247,6 +251,13 @@ def create_app(settings: Settings) -> FastAPI:
         }.get(type(error), 422)
         return JSONResponse({"detail": str(error)}, status)
 
+    @app.exception_handler(RequestValidationError)
+    async def invalid(request: Request, error: RequestValidationError) -> Response:
+        # FastAPI's own answer, in ASCII JSON: what it can't encode as UTF-8 (a lone surrogate,
+        # echoed back as the input refused) is escaped instead of failing as a server error.
+        body = json.dumps({"detail": jsonable_encoder(error.errors())}, ensure_ascii=True)
+        return Response(body, status_code=422, media_type="application/json")
+
     @app.exception_handler(psycopg.errors.InsufficientPrivilege)
     async def not_allowed(request: Request, error: psycopg.Error) -> JSONResponse:
         # A staff member without the role a write takes (the transaction is rolled back).
@@ -387,6 +398,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(signers.router)
     app.include_router(moveout.router)
     app.include_router(documents.router)
+    app.include_router(notes.router)
     app.include_router(today.router)
     app.include_router(dashboard.router)
     if settings.static_dir is not None:

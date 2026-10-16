@@ -55,3 +55,15 @@ leaves it by an append-only row naming who did it, and each row changes somethin
 properties, rent roll, tenants and owners lists narrow to a group or one property; the other
 list pages and the reports follow as the build order reaches them. Groups move no money, and
 the AI role reads them.
+
+## The lease page, tenants and notes
+
+The second piece (migration 0066, `src/pms/api/notes.py`, `src/pms/api/rentals.py`): a lease's
+page puts its property, unit and tenants in its title and its balance due at the top, Receive
+payment and Enter charge beside it and the rest of its rent work in its ⋯ menu, each in a side
+panel. Its Ledger tab is the lease ledger report's own lines, each with the balance after it, a
+charge saying what it is (rent, a recurring charge, a late or NSF fee, a credit) and a payment its
+check or reference and whether it bounced. Its Tenants tab has each tenant's contact details and
+portal login (invite or send again). The Tenants list shows each tenant's balance and portal
+login, and every tenant named on a lease row links to their page. Notes are append-only rows
+naming who wrote them; the AI role never reads them.

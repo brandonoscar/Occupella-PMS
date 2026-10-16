@@ -1,7 +1,7 @@
 // Tenants, owners and contact details as the API sends them (src/pms/api/directory.py), and how
 // they read.
 import type { OwnerMoney } from "./payables";
-import type { LeaseLine, Ref } from "./rentals";
+import type { LeaseLine, Portal, Ref } from "./rentals";
 
 export type Contact = {
   email: string | null;
@@ -33,6 +33,9 @@ export type TenantRow = {
   email: string | null;
   phone: string | null;
   archived: boolean;
+  // What the lease shown owes today, and whether they can sign in to the portal.
+  owed: string;
+  portal: Portal;
 };
 export type Tenant = {
   id: string;
@@ -43,6 +46,8 @@ export type Tenant = {
   prepaid: string;
   deposit: string;
   leases: (LeaseLine & { unit: Ref; property: Ref })[];
+  portal: Portal;
+  login_email: string | null;
 };
 
 export type OwnerRow = {
