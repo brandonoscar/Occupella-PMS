@@ -152,7 +152,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   days or with an open link, its rent and available day; List opens its link if it has none and
   puts it on the public page, Unlist takes it off), Applicants at `/applicants` (Open, Rejected,
   Withdrawn, All) with each application's page at `/applicants/<id>` (screen, approve or reject,
-  record a withdrawal, Create draft lease), lease offers at `/draft-leases`, the leases ending in the next 90 days with
+  record a withdrawal, Create draft lease), Draft leases at `/draft-leases` (Waiting for
+  signatures, Leases made, Void, All; New draft lease in a side panel) with each at
+  `/draft-leases/<id>` (Send, Resend, Check signatures, Activate lease, Void), the leases ending in the next 90 days with
   their renewal status at `/renewals` (`src/pms/api/renewals.py`, the expirations report's rows). Accounting:
   the trust bank accounts at `/banking` (Add bank account), each at `/bank-accounts/<id>` in tabs:
   its register and balance breakdown (`src/pms/api/banking.py`), its month-end
@@ -381,7 +383,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   it. `trust_complete_lease_offer` makes it the lease once everyone has signed, once per offer
   and safe to retry, and an application or a lease takes one completed offer: a new lease's
   signers become its tenants; a renewal keeps the lease's tenants and ends it the day before.
-  READ COMMITTED; all append-only.
+  READ COMMITTED; all append-only. Since migration 0071 an offer may be kept as a draft (no
+  signature request until staff send it), asks a security deposit (`security_deposit`; asked,
+  not held) and lists up to ten monthly fees or credits (`trust_lease_offer_charges`, written
+  only before it is sent) that become the lease's recurring charges from its first day when it
+  completes; staff void an offer that is not a lease yet (`trust_lease_offer_voids`, once,
+  naming who and why), after which it is never sent, signed or completed (a void and a
+  completion wait for each other), the tenant no longer sees it, and the expirations report
+  leaves it out. The AI role reads none of it.
 - Rent work (`src/pms/api/rent.py`): a tenant's payment recorded by staff pays the owner's
   account no more than the lease owes, matched to what is open of its charges oldest first
   (`trust_open_charges`, so a credit counts), and the rest is

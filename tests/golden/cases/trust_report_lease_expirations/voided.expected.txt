@@ -1,0 +1,9 @@
+line	item	property	unit	tenants	ends_on	days_left	bucket	monthly_rent	renewal
+1	PMC	Golden PMC	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+2	as of	2026-10-01, end of day UTC; leases ending in the next 90 days	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+3	lease	Property 1	Unit 1	Tenant 1	2026-10-31	30	0-30	1500.00	none
+4	lease	Property 1	Unit 2	Tenant 2	2026-10-31	30	0-30	1250.00	sent
+5	group total	NULL	NULL	NULL	NULL	NULL	0-30	2750.00	1 of 2 with no renewal offer out
+6	group total	NULL	NULL	NULL	NULL	NULL	31-60	0.00	0 of 0 with no renewal offer out
+7	group total	NULL	NULL	NULL	NULL	NULL	61-90	0.00	0 of 0 with no renewal offer out
+8	total	NULL	NULL	NULL	NULL	NULL	NULL	2750.00	1 of 2 with no renewal offer out

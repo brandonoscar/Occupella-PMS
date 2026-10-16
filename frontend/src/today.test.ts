@@ -66,14 +66,15 @@ describe("today", () => {
     } satisfies Application;
     expect(applicationLine(application)).toBe("Unit 2, Property 1: Applicant 1, Applicant 2, applied 10/12/2026");
     const offer = {
-      id: "o1", kind: "renewal", application_id: null, renews_lease_id: "l1", property: "Property 1",
-      unit: "Unit 1", starts_on: "2026-11-01", ends_on: null, monthly_rent: "1550.00",
-      document_title: "Renewal", offered_at: "2026-10-01T00:00:00Z", sent: true, lease_id: null,
+      id: "o1", kind: "renewal", application_id: null, renews_lease_id: "l1", property_id: "p1",
+      property: "Property 1", unit_id: "u1", unit: "Unit 1", starts_on: "2026-11-01", ends_on: null,
+      monthly_rent: "1550.00", security_deposit: null, recurring_charges: [], status: "partially signed",
+      void: null, document_title: "Renewal", offered_at: "2026-10-01T00:00:00Z", sent: true, lease_id: null,
       signers: [
         { position: 1, name: "Tenant A", email: "a@example.com", signed_at: "2026-10-02T00:00:00Z" },
         { position: 2, name: "Tenant B", email: "b@example.com", signed_at: null },
       ],
-    } as Offer;
+    } satisfies Offer;
     expect(offerLine(offer)).toBe("Renewal of Unit 1, Property 1 from 11/01/2026: 1 of 2 signed");
     expect(offerLine({ ...offer, kind: "new lease" })).toBe(
       "New lease of Unit 1, Property 1 from 11/01/2026: 1 of 2 signed",

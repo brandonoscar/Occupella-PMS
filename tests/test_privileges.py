@@ -137,6 +137,8 @@ TABLES = {
     "trust_application_decisions": {"SELECT", "INSERT"},
     "trust_adverse_actions": {"SELECT", "INSERT"},
     "trust_application_withdrawals": {"SELECT", "INSERT"},
+    "trust_lease_offer_charges": {"SELECT", "INSERT"},
+    "trust_lease_offer_voids": {"SELECT", "INSERT"},
     # Lease offers: staff offer and send them, the partner's signatures are recorded.
     "trust_lease_offers": {"SELECT", "INSERT"},
     "trust_lease_offer_signers": {"SELECT", "INSERT"},
@@ -199,6 +201,8 @@ AI_NEVER_READS = {
     "trust_adverse_actions",
     "trust_application_withdrawals",
     "trust_lease_offers",
+    "trust_lease_offer_charges",
+    "trust_lease_offer_voids",
     "trust_lease_offer_signers",
     "trust_signature_requests",
     "trust_signatures",
@@ -403,6 +407,10 @@ FUNCTIONS = {
     "trust_check_application_withdrawal()": {"PUBLIC"},
     "trust_check_application_not_withdrawn()": {"PUBLIC"},
     "trust_check_completion_not_withdrawn()": {"PUBLIC"},
+    "trust_check_lease_offer_charge()": {"PUBLIC"},
+    "trust_check_lease_offer_void()": {"PUBLIC"},
+    "trust_check_lease_offer_not_void()": {"PUBLIC"},
+    "trust_open_lease_offer_charges()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.

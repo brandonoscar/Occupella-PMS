@@ -148,7 +148,7 @@ is dated after last month's prepared reconciliation, so the demo still opens on 
 
 Two of the punch list's states had no record in the PMS yet: an applicant who withdrew (the
 leasing pages below add it, and the demo has one), and a lease offer kept as a draft before it
-is sent (an offer goes to the e-sign partner when it is made), which waits for Draft leases.
+is sent (an offer goes to the e-sign partner when it is made), which Draft leases adds below.
 
 ## Listings and Applicants
 
@@ -171,3 +171,27 @@ with why if the applicant said; it comes before a decline and before a lease is 
 application, and after it the database refuses a screening, a decision, an offer or a lease for
 it. The applicant's status link says Withdrawn. ADR 0002 holds: the PMS keeps names, emails and
 income; the partner keeps the rest, so the page shows no employment, history, pets or vehicles.
+
+## Draft leases
+
+The ninth piece, the second half of step 9 (migration 0071, `src/pms/api/offers.py`). Draft
+leases lists lease offers a page at a time in tabs, Waiting for signatures (drafts, sent,
+partially signed, signed), Leases made, Void and All, narrowed by property group: Unit, Tenants
+(its signers), Start, Rent, Status (Draft, Sent, Partially signed, Signed, Lease active, Void) and
+Created; the row opens its page. New draft lease opens a side panel, from an approved applicant
+or a lease to renew (an application's Create draft lease and a lease's Renew lease open it on
+that one): days, rent, the security deposit it asks, monthly fees and credits besides rent, the
+company's own PDF and who signs; Save draft keeps it unsent, Send for signing sends it at once. A
+draft lease's page shows its terms, deposit, monthly charges, signers and who has signed, and the
+PDF to open; Send sends a draft, Resend shows each signer's link again, Check signatures records
+what the partner reports, Activate lease makes it the lease once everyone has signed (its monthly
+charges become the lease's recurring charges from its first day), and its ⋯ menu voids it, with
+why. A void offer is never sent, signed or made the lease, the tenant's portal stops showing it,
+and the lease expirations report no longer counts it as a renewal out (a golden case pins that).
+"Waiting to be the lease" is now the Waiting for signatures tab.
+
+The deposit is the one the lease asks: what is held still comes in through Record deposit, as
+money in the security-deposit trust account, so nothing here moves money. The PDF opens in its
+own tab rather than inside the page: the API serves every response under `frame-ancestors 'none'`
+and `X-Frame-Options: DENY`, and that stays. The fake e-sign partner keeps a voided envelope; a
+real partner's void call comes with the real partner, which launch still needs.

@@ -144,8 +144,8 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
         ],
         unsigned_offers=[
             o
-            for o in offers.offers(session, conn, "open")
-            if o.sent and any(s.signed_at is None for s in o.signers)
+            for o in offers.offers_of(conn, session.pmc_id, show="open")[0]
+            if o.status in ("sent", "partially signed")
         ],
         vendor_insurance=[
             Lapsing(

@@ -102,7 +102,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
     { label: "Record deposit", onSelect: () => setPanel("deposit") },
     { label: "Take leasing fee", onSelect: () => setPanel("leasing") },
     { label: "Record NSF", onSelect: () => setTab("ledger") },
-    { label: "Renew lease", onSelect: () => navigate("/draft-leases") },
+    { label: "Renew lease", onSelect: () => navigate(`/draft-leases?lease=${id}`) },
     { label: "Move out", onSelect: () => navigate("/move-out") },
   ];
 

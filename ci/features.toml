@@ -442,12 +442,15 @@ browser = [
 
 [[feature]]
 id = "lease-offers"
-statement = "Staff offer a lease for an approved application or a renewal of a lease, with the company's own PDF; signers sign on the partner's page (a tenant signs a renewal from the portal); once everyone has signed it becomes the lease."
+statement = "On Draft leases (Waiting for signatures, Leases made, Void, All, by property group) staff draft a lease for an approved applicant or a renewal of a lease, with the company's own PDF, the security deposit it asks and its monthly fees and credits, kept as a draft or sent at once; on its page they send it, show its links again, check signatures, void it, or activate it once everyone has signed on the partner's page (a tenant signs a renewal from the portal), its monthly charges becoming the lease's."
 operations = [
   "GET /api/leasing/leases",
   "POST /api/leasing/applications/{application_id}/offer",
   "POST /api/leasing/leases/{lease_id}/renewal",
   "GET /api/leasing/offers",
+  "GET /api/leasing/offers/{offer_id}",
+  "POST /api/leasing/offers/{offer_id}/send",
+  "POST /api/leasing/offers/{offer_id}/void",
   "GET /api/leasing/offers/{offer_id}/document",
   "GET /api/leasing/offers/{offer_id}/links",
   "POST /api/leasing/offers/{offer_id}/signatures",
@@ -459,7 +462,7 @@ operations = [
   "POST /api/fake-esign/sign",
 ]
 browser = [
-  "portal.spec.ts › staff offer a lease and a renewal; the signers sign on the partner's page; both become leases",
+  "portal.spec.ts › staff draft a lease with a deposit and a monthly charge and send it, void a renewal, send another; the signers sign on the partner's page; both become leases",
 ]
 
 [[feature]]

@@ -24,7 +24,8 @@ import { TenantPage, TenantsPage } from "./pages/TenantsPages";
 import { JournalPage } from "./pages/JournalPage";
 import { ApplicantPage } from "./pages/ApplicantPage";
 import { ApplicantsPage } from "./pages/ApplicantsPage";
-import { DraftLeasesPage } from "./pages/LeasingPages";
+import { DraftLeasePage } from "./pages/DraftLeasePage";
+import { DraftLeasesPage } from "./pages/DraftLeasesPage";
 import { RentalListingsPage } from "./pages/RentalListingsPage";
 import { RenewalsPage } from "./pages/RenewalsPage";
 import { VendorPage } from "./pages/VendorPage";
@@ -131,6 +132,7 @@ const RECORDS: [RegExp, (me: Me, id: string) => React.ReactNode][] = [
   [/^\/bank-accounts\/([0-9a-f-]{36})$/, (me, id) => <ReconcilePage me={me} id={id} />],
   [/^\/bills\/([0-9a-f-]{36})$/, (me, id) => <BillPage me={me} id={id} />],
   [/^\/applicants\/([0-9a-f-]{36})$/, (me, id) => <ApplicantPage me={me} id={id} />],
+  [/^\/draft-leases\/([0-9a-f-]{36})$/, (me, id) => <DraftLeasePage me={me} id={id} />],
   [/^\/work-orders\/([0-9a-f-]{36})$/, (me, id) => <WorkOrderPage me={me} id={id} />],
   [/^\/vendors\/([0-9a-f-]{36})$/, (me, id) => <VendorPage me={me} id={id} />],
 ];

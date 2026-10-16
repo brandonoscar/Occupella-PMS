@@ -1,23 +1,37 @@
 // Lease offers and renewals as the API sends them (src/pms/api/offers.py), and how they read.
+import type { BadgeTone } from "./components/Badge";
 import { usDate } from "./money";
 
 export type Signer = { position: number; name: string; email: string; signed_at: string | null };
+
+// Where an offer stands: a draft, sent and signed by none, some or all of its signers, made the
+// lease, or voided.
+export type OfferStatus = "draft" | "sent" | "partially signed" | "signed" | "leased" | "void";
+
+// A fee the lease will owe every month besides rent, or a credit.
+export type MonthlyCharge = { kind: "fee" | "credit"; memo: string; amount: string };
 
 export type Offer = {
   id: string;
   kind: "new lease" | "renewal";
   application_id: string | null;
   renews_lease_id: string | null;
+  property_id: string;
   property: string;
+  unit_id: string;
   unit: string;
   starts_on: string;
   ends_on: string | null;
   monthly_rent: string;
+  security_deposit: string | null;
+  recurring_charges: MonthlyCharge[];
   document_title: string;
   offered_at: string;
   sent: boolean;
   signers: Signer[];
   lease_id: string | null;
+  status: OfferStatus;
+  void: { reason: string | null; recorded_at: string; recorded_by: string | null } | null;
 };
 
 export type SigningLink = { position: number; name: string; email: string; url: string };
@@ -43,13 +57,21 @@ export function term(startsOn: string, endsOn: string | null): string {
   return `${usDate(startsOn)} – ${endsOn ? usDate(endsOn) : "Month to month"}`;
 }
 
-// Where an offer stands, for staff.
-export function offerStatus(offer: Offer): string {
-  if (offer.lease_id) return "It is the lease now.";
-  if (!offer.sent) return "Not sent for signing.";
-  const signed = offer.signers.filter((s) => s.signed_at).length;
-  if (signed === offer.signers.length) return "Signed by everyone: it can be made the lease.";
-  return `Signed by ${signed} of ${offer.signers.length}.`;
+// Where an offer stands, for staff, in a badge.
+export function offerBadge(status: OfferStatus): { word: string; tone: BadgeTone } {
+  return {
+    draft: { word: "Draft", tone: "neutral" as const },
+    sent: { word: "Sent", tone: "info" as const },
+    "partially signed": { word: "Partially signed", tone: "caution" as const },
+    signed: { word: "Signed", tone: "positive" as const },
+    leased: { word: "Lease active", tone: "positive" as const },
+    void: { word: "Void", tone: "danger" as const },
+  }[status];
+}
+
+// How many of its signers have signed: "1 of 2 signed".
+export function signedCount(offer: Offer): string {
+  return `${offer.signers.filter((s) => s.signed_at).length} of ${offer.signers.length} signed`;
 }
 
 // Signers typed one a line as "Name, email"; the email is what follows the last comma.

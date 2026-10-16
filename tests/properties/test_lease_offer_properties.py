@@ -1,16 +1,21 @@
-"""Property-based tests for lease offers and completing them (migration 20261011000031).
+"""Property-based tests for lease offers and completing them (migration 20261011000031), with
+drafts' monthly charges and voids (migration 20261016000071).
 
 Hypothesis approves applications for one unit, offers them leases (and renewals of the leases
-those became) with random terms, sends and signs offers, and completes them, in random order. A
-Python model predicts every step: which leases the unit has, from and to when, with whose names;
-the database must accept exactly what the model accepts and refuse the rest, writing nothing.
+those became) with random terms, adds monthly charges to offers, sends, signs and voids offers,
+and completes them, in random order. A Python model predicts every step: which leases the unit
+has, from and to when, with whose names and which recurring charges; the database must accept
+exactly what the model accepts and refuse the rest, writing nothing.
 
 Invariants checked after every step (ci/registry.toml maps them to this test):
   - the unit's leases are the model's, and never overlap;
   - an offer became a lease only once everyone signed, and an application or a lease took at
     most one completed offer;
   - a new lease's tenants are its offer's signers; a renewal keeps the tenants of the lease it
-    renews, which ends the day before the renewal starts.
+    renews, which ends the day before the renewal starts;
+  - an offer's charges are written only before it is sent, and the lease it becomes owes exactly
+    them as recurring charges from its first day; a void offer is never sent, signed or made a
+    lease, and an offer is voided only before it is a lease (migration 20261016000071).
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
@@ -67,6 +72,7 @@ class LeaseOfferMachine(RuleBasedStateMachine):
         self.offers: dict = {}
         self.leases: dict = {}  # lease -> [starts, ends, tenant names]
         self.completed: dict = {}  # offer -> lease
+        self.voided: set = set()
 
     # --- applications and offers ---------------------------------------------------------
 
@@ -101,6 +107,7 @@ class LeaseOfferMachine(RuleBasedStateMachine):
             "signers": [name for name, _ in signers],
             "sent": False,
             "signed": set(),
+            "charges": [],  # (kind, amount, memo), in position order
         }
 
     @precondition(lambda self: self.applications)
@@ -127,12 +134,64 @@ class LeaseOfferMachine(RuleBasedStateMachine):
         with self.conn.transaction():
             self.make_offer(starts, length, signers, renews=lease)
 
+    @precondition(lambda self: self.offers)
+    @rule(
+        data=st.data(),
+        kind=st.sampled_from(["fee", "credit"]),
+        cents=st.integers(min_value=1, max_value=50_000),
+    )
+    def add_a_charge(self, data, kind, cents):
+        """A monthly fee or credit on the offer: only while it is a draft (not sent)."""
+        offer = data.draw(st.sampled_from(list(self.offers)))
+        model = self.offers[offer]
+        amount = f"{cents // 100}.{cents % 100:02d}"
+        position = len(model["charges"]) + 1
+        if position > 10:
+            return
+        charge = (
+            "INSERT INTO trust_lease_offer_charges (offer_id, position, pmc_id, kind, amount,"
+            " memo) VALUES (%s, %s, %s, %s, %s, %s)"
+        )
+        memo = f"Charge {position}"
+        if model["sent"]:
+            refused = pytest.raises(psycopg.errors.CheckViolation, match="before it is sent")
+            with refused, self.conn.transaction():
+                self.conn.execute(charge, (offer, position, self.pmc_id, kind, amount, memo))
+            return
+        self.conn.execute(charge, (offer, position, self.pmc_id, kind, amount, memo))
+        model["charges"].append((kind, amount, memo))
+
     @precondition(lambda self: any(not o["sent"] for o in self.offers.values()))
     @rule(data=st.data())
     def send(self, data):
         offer = data.draw(st.sampled_from([o for o, v in self.offers.items() if not v["sent"]]))
+        if offer in self.voided:
+            refused = pytest.raises(psycopg.errors.CheckViolation, match="was voided")
+            with refused, self.conn.transaction():
+                send_offer(self.conn, self.pmc_id, offer, self.staff)
+            return
         send_offer(self.conn, self.pmc_id, offer, self.staff)
         self.offers[offer]["sent"] = True
+
+    @precondition(lambda self: self.offers)
+    @rule(data=st.data())
+    def void(self, data):
+        """Once, and only before the offer is a lease."""
+        offer = data.draw(st.sampled_from(list(self.offers)))
+        voiding = (
+            "INSERT INTO trust_lease_offer_voids (offer_id, pmc_id, reason) VALUES (%s, %s, %s)"
+        )
+        if offer in self.completed or offer in self.voided:
+            refusal = (
+                psycopg.errors.CheckViolation
+                if offer in self.completed
+                else psycopg.errors.UniqueViolation
+            )
+            with pytest.raises(refusal), self.conn.transaction():
+                self.conn.execute(voiding, (offer, self.pmc_id, "Terms changed"))
+            return
+        self.conn.execute(voiding, (offer, self.pmc_id, "Terms changed"))
+        self.voided.add(offer)
 
     @precondition(
         lambda self: any(
@@ -152,6 +211,11 @@ class LeaseOfferMachine(RuleBasedStateMachine):
         )
         model = self.offers[offer]
         position = min(set(range(1, len(model["signers"]) + 1)) - model["signed"])
+        if offer in self.voided:
+            refused = pytest.raises(psycopg.errors.CheckViolation, match="was voided")
+            with refused, self.conn.transaction():
+                sign_offer(self.conn, self.pmc_id, offer, position)
+            return
         sign_offer(self.conn, self.pmc_id, offer, position)
         model["signed"].add(position)
 
@@ -169,6 +233,13 @@ class LeaseOfferMachine(RuleBasedStateMachine):
 
         if offer in self.completed:
             assert attempt() == self.completed[offer]
+            return
+        if offer in self.voided:
+            # Whatever the database finds first (a missing signature, an overlap, the void),
+            # a void offer is made no lease, and nothing is written.
+            refusals = (psycopg.errors.CheckViolation, psycopg.errors.ExclusionViolation)
+            with pytest.raises(refusals):
+                attempt()
             return
         target = model["application"] or model["renews"]
         taken = any(
@@ -212,6 +283,43 @@ class LeaseOfferMachine(RuleBasedStateMachine):
         spans = sorted((s, e) for _, s, e, _ in rows)
         for (s1, e1), (s2, e2) in zip(spans, spans[1:], strict=False):
             assert not overlaps(s1, e1, s2, e2)
+
+    @invariant()
+    def each_lease_owes_its_offers_charges_and_no_void_offer_moved_on(self):
+        for offer, lease in self.completed.items():
+            rows = self.conn.execute(
+                # One statement writes them all, so they share their time: compared in any order.
+                "SELECT kind, amount::text, memo, starts_on FROM trust_recurring_charges"
+                " WHERE lease_id = %s",
+                (lease,),
+            ).fetchall()
+            model = self.offers[offer]
+            assert sorted(rows) == sorted(
+                (k, a, m, model["starts"]) for k, a, m in model["charges"]
+            )
+        (moved,) = self.conn.execute(
+            "SELECT count(*) FROM trust_lease_offer_voids AS v WHERE v.pmc_id = %s AND ("
+            " EXISTS (SELECT 1 FROM trust_lease_offer_completions AS c"
+            "  WHERE c.offer_id = v.offer_id)"
+            " OR EXISTS (SELECT 1 FROM trust_signature_requests AS r WHERE r.offer_id = v.offer_id"
+            "  AND r.sent_at > v.recorded_at)"
+            " OR EXISTS (SELECT 1 FROM trust_signatures AS g WHERE g.offer_id = v.offer_id"
+            "  AND g.recorded_at > v.recorded_at))",
+            (self.pmc_id,),
+        ).fetchone()
+        assert moved == 0
+        voided = self.conn.execute(
+            "SELECT offer_id FROM trust_lease_offer_voids WHERE pmc_id = %s", (self.pmc_id,)
+        ).fetchall()
+        assert {v for (v,) in voided} == self.voided
+        # A charge refused once the offer was sent wrote nothing: each offer has the model's.
+        for offer, model in self.offers.items():
+            rows = self.conn.execute(
+                "SELECT kind, amount::text, memo FROM trust_lease_offer_charges"
+                " WHERE offer_id = %s ORDER BY position",
+                (offer,),
+            ).fetchall()
+            assert rows == model["charges"]
 
     @invariant()
     def completions_are_the_models_and_follow_every_signature(self):
