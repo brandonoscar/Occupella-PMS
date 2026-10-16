@@ -190,6 +190,7 @@ def test_a_quiet_day_shows_nothing(client, conn, staff, pmc):
         "vendor_insurance": [],
         "company_fees": [],
         "signers": [],
+        "renters_insurance": [],
     }
 
 

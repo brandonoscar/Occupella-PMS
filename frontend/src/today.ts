@@ -33,6 +33,14 @@ export type Today = {
   vendor_insurance: Lapsing[];
   company_fees: CompanyFees[];
   signers: SignerNote[];
+  renters_insurance: Uninsured[];
+};
+export type Uninsured = {
+  lease_id: string;
+  property: string;
+  unit: string;
+  tenants: string;
+  standing: string;
 };
 export type SignerNote = {
   bank_account_id: string;
@@ -126,4 +134,10 @@ export function signerNoteLine(note: SignerNote): string {
   return note.signer === null
     ? `${note.bank_account}: ${note.standing}`
     : `${note.bank_account}, ${note.signer}: ${note.standing}`;
+}
+
+// "Unit 1, Property 1 (Tenant A): renters insurance none on file".
+export function uninsuredLine(lease: Uninsured): string {
+  const who = lease.tenants ? ` (${lease.tenants})` : "";
+  return `${lease.unit}, ${lease.property}${who}: renters insurance ${lease.standing}`;
 }

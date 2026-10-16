@@ -1086,6 +1086,17 @@ tests = [
 ]
 
 [[report]]
+id = "renters-insurance"
+statement = "Each lease in effect on a day: whether it requires renters insurance under the terms in force (the latest from that day or before), and of the policies started by then, the one that runs out last, standing current, expires today, expires in N days up to 30, expired, or none on file, and below the minimum when its coverage is less than the lease asks or not stated. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_renters_insurance.py::test_the_policy_running_last_counts_and_how_it_stands",
+  "tests/test_renters_insurance.py::test_a_policy_run_out_or_below_the_minimum_says_so",
+  "tests/test_renters_insurance.py::test_the_terms_in_force_on_the_day_hold",
+  "tests/properties/test_renters_insurance_properties.py::test_the_policy_running_last_counts_against_the_terms_in_force",
+]
+
+[[report]]
 id = "inspection"
 statement = "A lease's latest move-in and move-out inspections (by the day each was done, then as recorded) side by side: each room once whatever its case, named as the move-in names it, in the move-in's order then the move-out's; changed only when both name it, and then exactly when the conditions differ; each side's note. Compared to a checked-in golden file."
 tests = [

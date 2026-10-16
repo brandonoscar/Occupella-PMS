@@ -112,6 +112,18 @@ browser = [
 ]
 
 [[feature]]
+id = "renters-insurance"
+statement = "Staff set whether a lease requires renters insurance and the least liability it asks, and record a policy; the tenant records their own from the portal, with any insurer; the rent page, the portal and Today show how each lease stands."
+operations = [
+  "POST /api/rent/leases/{lease_id}/renters-insurance-terms",
+  "POST /api/rent/leases/{lease_id}/renters-insurance",
+  "POST /api/tenant/leases/{lease_id}/renters-insurance",
+]
+browser = [
+  "features.spec.ts › staff require renters insurance on a lease, Today flags it, the tenant records their own policy and staff its renewal",
+]
+
+[[feature]]
 id = "bills"
 statement = "Staff enter a vendor's bill; one over the owner's limit emails the owner, who approves or declines it in their portal (or staff record their answer); staff set it aside from the owner's money and pay it; a declined bill is never paid."
 operations = [

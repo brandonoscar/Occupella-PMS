@@ -75,6 +75,8 @@ class Lease(BaseModel):
     coming_due: list[ComingDue]
     # Its tenants' deposits were returned at move-out: the statement can be downloaded.
     deposit_returned: bool
+    # A lease in effect: whether it requires renters insurance, and the policy on file.
+    renters_insurance: rent_api.RentersInsurance | None
 
 
 class NewRequest(BaseModel):
@@ -117,6 +119,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
         " ORDER BY l.starts_on DESC, l.id",
         (on, on, session.pmc_id, session.person_id),
     ).fetchall()
+    insured = rent_api.renters_insurance(conn, session.pmc_id, on)
     coming: dict[UUID, list[RentChangeNotice]] = {}
     for lease, effective, monthly_rent, notice in conn.execute(
         "SELECT c.lease_id, c.effective_on, c.monthly_rent, c.notice_given_on"
@@ -154,6 +157,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
                 if due > on
             ],
             deposit_returned=returned,
+            renters_insurance=insured.get(lease),
         )
         for lease, prop, unit, starts, ends, rent, names, balance, returned in rows
     ]
@@ -240,6 +244,16 @@ def requests(session: Tenant, conn: Conn) -> list[maintenance.Request]:
         conn, maintenance.FOR_TENANT, pmc=session.pmc_id, person=session.person_id
     )
     return [maintenance.for_tenant(r) for r in found]
+
+
+@router.post("/leases/{lease_id}/renters-insurance", status_code=201)
+def record_my_policy(
+    session: Tenant, conn: Conn, lease_id: UUID, policy: rent_api.NewPolicy
+) -> rent_api.Created:
+    """The tenant's own renters insurance policy for a lease they are on, with whatever insurer
+    they chose; it is recorded as theirs."""
+    lease_of(conn, session, lease_id)
+    return rent_api.add_policy(conn, session.pmc_id, lease_id, policy, session.person_id)
 
 
 @router.post("/requests", status_code=201)

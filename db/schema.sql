@@ -6306,6 +6306,62 @@ $$;
 
 
 --
+-- Name: trust_report_renters_insurance(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_renters_insurance(p_pmc_id uuid, p_on date) RETURNS TABLE(line integer, lease_id uuid, property text, unit text, tenants text, required boolean, minimum_liability numeric, carrier text, policy_number text, starts_on date, expires_on date, liability_limit numeric, standing text, below_minimum boolean)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    WITH leases AS (
+        SELECT l.id, pr.display_name AS property, u.display_name AS unit,
+               (SELECT string_agg(t.display_name, ', ' ORDER BY t.display_name COLLATE "C", t.id)
+                FROM trust_lease_tenants AS lt JOIN trust_tenants AS t ON t.id = lt.tenant_id
+                WHERE lt.lease_id = l.id) AS tenants,
+               terms.required, terms.minimum_liability,
+               p.carrier, p.policy_number, p.starts_on, p.expires_on, p.liability_limit
+        FROM trust_leases AS l
+        JOIN trust_units AS u ON u.id = l.unit_id
+        JOIN trust_properties AS pr ON pr.id = u.property_id
+        LEFT JOIN LATERAL (
+            SELECT r.required, r.minimum_liability FROM trust_renters_insurance_terms AS r
+            WHERE r.lease_id = l.id AND r.starts_on <= p_on
+            ORDER BY r.starts_on DESC, r.created_at DESC, r.id DESC
+            LIMIT 1
+        ) AS terms ON true
+        LEFT JOIN LATERAL (
+            SELECT i.carrier, i.policy_number, i.starts_on, i.expires_on, i.liability_limit
+            FROM trust_renters_insurance AS i
+            WHERE i.lease_id = l.id AND i.starts_on <= p_on
+            ORDER BY i.expires_on DESC, i.created_at DESC, i.id DESC
+            LIMIT 1
+        ) AS p ON true
+        WHERE l.pmc_id = p_pmc_id AND l.starts_on <= p_on
+          AND (l.ends_on IS NULL OR p_on <= l.ends_on)
+    )
+    SELECT (row_number() OVER (
+                ORDER BY x.property COLLATE "C", x.unit COLLATE "C", x.id
+            ))::integer,
+           x.id, x.property, x.unit, x.tenants, coalesce(x.required, false),
+           x.minimum_liability, x.carrier, x.policy_number, x.starts_on, x.expires_on,
+           x.liability_limit,
+           CASE
+               WHEN x.expires_on IS NULL THEN 'none on file'
+               WHEN x.expires_on < p_on THEN 'expired'
+               WHEN x.expires_on = p_on THEN 'expires today'
+               WHEN x.expires_on - p_on <= 30 THEN
+                   'expires in ' || (x.expires_on - p_on) || ' day'
+                   || CASE WHEN x.expires_on - p_on = 1 THEN '' ELSE 's' END
+               ELSE 'current'
+           END,
+           x.minimum_liability IS NOT NULL AND x.expires_on IS NOT NULL
+               AND coalesce(x.liability_limit, 0) < x.minimum_liability
+    FROM leases AS x
+    ORDER BY 1
+$$;
+
+
+--
 -- Name: trust_report_security_deposits(uuid, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9409,6 +9465,49 @@ CREATE TABLE public.trust_rent_changes (
 
 
 --
+-- Name: trust_renters_insurance; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_renters_insurance (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    carrier text NOT NULL,
+    policy_number text NOT NULL,
+    starts_on date NOT NULL,
+    expires_on date NOT NULL,
+    liability_limit numeric,
+    landlord_interested_party boolean DEFAULT false NOT NULL,
+    recorded_by uuid,
+    submitted_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_renters_insurance_carrier_check CHECK (((carrier ~ '\S'::text) AND (length(carrier) <= 200))),
+    CONSTRAINT trust_renters_insurance_check CHECK ((expires_on >= starts_on)),
+    CONSTRAINT trust_renters_insurance_check1 CHECK (((recorded_by IS NULL) OR (submitted_by IS NULL))),
+    CONSTRAINT trust_renters_insurance_liability_limit_check CHECK (((liability_limit > (0)::numeric) AND (liability_limit = round(liability_limit, 2)))),
+    CONSTRAINT trust_renters_insurance_policy_number_check CHECK (((policy_number ~ '\S'::text) AND (length(policy_number) <= 100)))
+);
+
+
+--
+-- Name: trust_renters_insurance_terms; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_renters_insurance_terms (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    required boolean NOT NULL,
+    minimum_liability numeric,
+    starts_on date NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_renters_insurance_terms_check CHECK ((required OR (minimum_liability IS NULL))),
+    CONSTRAINT trust_renters_insurance_terms_minimum_liability_check CHECK (((minimum_liability > (0)::numeric) AND (minimum_liability = round(minimum_liability, 2))))
+);
+
+
+--
 -- Name: trust_screenings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10788,6 +10887,22 @@ ALTER TABLE ONLY public.trust_rent_changes
 
 
 --
+-- Name: trust_renters_insurance trust_renters_insurance_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_renters_insurance
+    ADD CONSTRAINT trust_renters_insurance_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_renters_insurance_terms trust_renters_insurance_terms_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_renters_insurance_terms
+    ADD CONSTRAINT trust_renters_insurance_terms_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_screenings trust_screenings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11416,6 +11531,41 @@ CREATE INDEX trust_rent_changes_pmc_lease ON public.trust_rent_changes USING btr
 --
 
 CREATE INDEX trust_rent_changes_recorded_by ON public.trust_rent_changes USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_renters_insurance_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_renters_insurance_lease ON public.trust_renters_insurance USING btree (pmc_id, lease_id);
+
+
+--
+-- Name: trust_renters_insurance_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_renters_insurance_recorded_by ON public.trust_renters_insurance USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_renters_insurance_submitted_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_renters_insurance_submitted_by ON public.trust_renters_insurance USING btree (lease_id, submitted_by);
+
+
+--
+-- Name: trust_renters_insurance_terms_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_renters_insurance_terms_lease ON public.trust_renters_insurance_terms USING btree (pmc_id, lease_id, starts_on);
+
+
+--
+-- Name: trust_renters_insurance_terms_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_renters_insurance_terms_recorded_by ON public.trust_renters_insurance_terms USING btree (pmc_id, recorded_by);
 
 
 --
@@ -12063,6 +12213,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_renters_insurance trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_renters_insurance FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_renters_insurance_terms trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_renters_insurance_terms FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_screenings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -12707,6 +12871,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_rent
 
 
 --
+-- Name: trust_renters_insurance trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_renters_insurance FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_renters_insurance_terms trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_renters_insurance_terms FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_screenings trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13040,6 +13218,20 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_inspections FOR E
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_rent_changes FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_renters_insurance trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_renters_insurance FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_renters_insurance_terms trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_renters_insurance_terms FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -15044,6 +15236,62 @@ ALTER TABLE ONLY public.trust_rent_changes
 
 
 --
+-- Name: trust_renters_insurance trust_renters_insurance_lease_id_submitted_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_renters_insurance
+    ADD CONSTRAINT trust_renters_insurance_lease_id_submitted_by_fkey FOREIGN KEY (lease_id, submitted_by) REFERENCES public.trust_lease_tenants(lease_id, tenant_id);
+
+
+--
+-- Name: trust_renters_insurance trust_renters_insurance_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_renters_insurance
+    ADD CONSTRAINT trust_renters_insurance_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_renters_insurance trust_renters_insurance_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_renters_insurance
+    ADD CONSTRAINT trust_renters_insurance_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_renters_insurance trust_renters_insurance_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_renters_insurance
+    ADD CONSTRAINT trust_renters_insurance_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_renters_insurance_terms trust_renters_insurance_terms_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_renters_insurance_terms
+    ADD CONSTRAINT trust_renters_insurance_terms_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_renters_insurance_terms trust_renters_insurance_terms_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_renters_insurance_terms
+    ADD CONSTRAINT trust_renters_insurance_terms_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_renters_insurance_terms trust_renters_insurance_terms_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_renters_insurance_terms
+    ADD CONSTRAINT trust_renters_insurance_terms_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_screenings trust_screenings_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15415,4 +15663,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261015000058'),
     ('20261015000059'),
     ('20261015000060'),
-    ('20261015000061');
+    ('20261015000061'),
+    ('20261015000062');

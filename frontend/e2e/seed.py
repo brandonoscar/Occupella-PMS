@@ -462,6 +462,7 @@ FEATURES = (
     "cutover-bills",
     "signers",
     "rent-changes",
+    "renters-insurance",
 )
 
 

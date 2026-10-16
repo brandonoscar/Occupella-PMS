@@ -1358,3 +1358,59 @@ test("staff raise a month-to-month rent after a full month's notice, and the ten
   await expect(tenant.getByText(`$2,250.00 a month; $2,400.00 from ${from} (notice given ${today()})`)).toBeVisible();
   await tenant.close();
 });
+
+test("staff require renters insurance on a lease, Today flags it, the tenant records their own policy and staff its renewal", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["renters-insurance"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Rent");
+  const house = page.getByRole("listitem", { name: "Cedar House, House" });
+  await expect(house.getByTestId("renters-insurance")).toContainText("Renters insurance not required: none on file");
+  await house.getByText("Record for House").click();
+  await house.getByLabel("Requires renters insurance").check();
+  await house.getByLabel("Least liability coverage (optional)").fill("100000.00");
+  await house.getByRole("button", { name: "Set insurance terms" }).click();
+  await expect(house).toContainText(`Renters insurance is required from ${today()}.`);
+  await expect(house.getByTestId("renters-insurance")).toContainText(
+    "Renters insurance required (at least $100,000.00 of liability): none on file",
+  );
+
+  await section(page, "Today");
+  const waiting = page.getByRole("region", { name: "Renters insurance" });
+  await expect(waiting).toContainText("House, Cedar House (Quinn Demo, Taylor Demo): renters insurance none on file");
+
+  // The tenant records their policy, from the insurer they chose.
+  const tenant = await browser.newPage();
+  await joinPortal(tenant, people.taylor);
+  const card = part(tenant, "Renters insurance");
+  await card.getByLabel("Insurer").fill("Synthetic Mutual");
+  await card.getByLabel("Policy number").fill("RI-0001");
+  await card.getByLabel("Policy runs out").fill(daysFromToday(365));
+  await card.getByLabel("Liability coverage (optional)").fill("300000.00");
+  await card.getByRole("button", { name: "Record policy" }).click();
+  await expect(card).toContainText("Policy RI-0001 from Synthetic Mutual recorded.");
+  await expect(card.getByTestId("renters-insurance")).toContainText(
+    `Synthetic Mutual RI-0001 through ${daysFromToday(365)}, $300,000.00 of liability (current)`,
+  );
+  await tenant.close();
+
+  await page.reload();
+  await expect(page.getByRole("region", { name: "Renters insurance" })).toHaveCount(0);
+
+  // The tenant mails in next year's renewal; staff record it, and this year's still counts.
+  await section(page, "Rent");
+  await house.getByText("Record for House").click();
+  await house.getByLabel("Insurer").fill("Synthetic Mutual");
+  await house.getByLabel("Policy number").fill("RI-0002");
+  await house.getByLabel("Policy starts").fill(daysFromToday(366));
+  await house.getByLabel("Policy runs out").fill(daysFromToday(730));
+  await house.getByLabel("Liability coverage (optional)", { exact: true }).fill("300000.00");
+  await house.getByLabel("The landlord is named an interested party").click();
+  await house.getByRole("button", { name: "Record policy" }).click();
+  await expect(house).toContainText("Policy RI-0002 from Synthetic Mutual recorded.");
+  await expect(house.getByTestId("renters-insurance")).toContainText(
+    `Synthetic Mutual RI-0001 through ${daysFromToday(365)}`,
+  );
+});
