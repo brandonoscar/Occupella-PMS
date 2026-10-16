@@ -1,11 +1,13 @@
-"""Staff's bills and owners' money: vendor bills (entered, approved by the owner when over the
-agreement's limit, set aside from the owner's account, paid), monthly recurring bills, the
-PMC's management and leasing fees, owner draws and owner contributions, and the company's
-earned fees taken out of trust.
+"""Staff's bills and owners' money: vendor bills (entered, maybe split across expense accounts
+and with the vendor's invoice, approved by the owner when over the agreement's limit, set aside
+from the owner's account, paid, several at once by Pay bills), a bill's own page, monthly
+recurring bills (each month's entered by the nightly run, src/pms/nightly.py), the PMC's
+management and leasing fees, owner draws and owner contributions, and the company's earned fees
+taken out of trust.
 
 Every step goes through the database's write paths (trust_set_aside_bill, trust_pay_bill,
-trust_enter_recurring_bills, trust_post_management_fee, trust_post_leasing_fee,
-trust_draw_owner, trust_record_owner_contribution, trust_withdraw_pmc_fees), each once per
+trust_post_management_fee, trust_post_leasing_fee, trust_draw_owner,
+trust_record_owner_contribution, trust_withdraw_pmc_fees), each once per
 bill, period, lease or request key, so a retry does nothing twice. A draw, a bill payment or
 the company's fees taken out record what the bank paid out; the PMS sends no money itself.
 """
@@ -22,8 +24,9 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, StringConstraints
 
 from pms import email, exports
-from pms.api import outbox, scope
+from pms.api import documents, outbox, scope
 from pms.api.deps import Conn, Staff, refusal
+from pms.api.rentals import Page, Paged, PerPage
 
 router = APIRouter(prefix="/api/payables")
 
@@ -68,10 +71,11 @@ def owner_account(conn: psycopg.Connection[Any], pmc_id: UUID, account: str) -> 
     return UUID(str(row[0]))
 
 
-# --- bills --------------------------------------------------------------------------------------
+# --- bills ---------------------------------------------------------------------------------------
 
 Status = Literal["needs approval", "declined", "to set aside", "set aside", "paid"]
 EmailStatus = Literal["sent", "waiting", "failed"]
+PayoutMethod = Literal["check", "EFT"]
 
 # An email's state: delivered, or waiting for a delivery (none tried yet, or fewer than
 # pms.email.MAX_ATTEMPTS failed), or given up on.
@@ -86,19 +90,23 @@ CASE WHEN EXISTS (SELECT 1 FROM trust_email_deliveries AS d
 
 class Bill(BaseModel):
     id: UUID
+    vendor_id: UUID
     vendor: str
     reference: str
     account: str
     owner: str
+    property_id: UUID
     property: str
     bill_date: date
     due_on: date
     amount: str
     memo: str
     work_order_id: UUID | None
-    # The expense account it is in (its latest), if it is in one.
+    # The expense account it is in (its latest), if it is in one and not split.
     expense_account_id: UUID | None = None
     expense_account: str | None = None
+    # Split across expense accounts by lines (on the bill's page).
+    split: bool = False
     approval_limit: str
     approved_by: str | None
     # Who declined it for the owner (the owner in the portal, or as staff recorded it), and why.
@@ -107,116 +115,370 @@ class Bill(BaseModel):
     # The email asking the owner to decide it (ADR 0004): None when none was written.
     owner_email: EmailStatus | None = None
     status: Status
+    # Neither paid nor declined, and due before today (UTC).
+    overdue: bool = False
 
 
+# Every bill of the PMC with its status, then narrowed by what is shown, the vendor, the day it
+# is due by and the property group or property.
 BILLS = (
     """
-SELECT b.id, v.display_name, b.reference, b.ledger_account_id, o.display_name, p.display_name,
-       b.bill_date, b.due_on, b.amount, b.memo, b.work_order_id, ex.id, ex.name,
-       coalesce((SELECT g.approval_limit FROM trust_management_agreements AS g
-                 WHERE g.ledger_account_id = b.ledger_account_id AND g.starts_on <= b.bill_date
-                 ORDER BY g.starts_on DESC LIMIT 1), 0),
-       ap.approved_by, dc.declined_by, dc.reason,
-       CASE WHEN em.id IS NOT NULL THEN """
+WITH listed AS (
+    SELECT b.id, b.vendor_id, v.display_name AS vendor, b.reference, b.ledger_account_id,
+           o.display_name AS owner, p.id AS property_id, p.display_name AS property, b.bill_date,
+           b.due_on, b.amount, b.memo, b.work_order_id,
+           CASE WHEN ex.split THEN NULL ELSE ex.expense_account_id END AS expense_id,
+           CASE WHEN ex.split THEN NULL ELSE ex.name END AS expense,
+           coalesce(ex.split, false) AS split,
+           coalesce((SELECT g.approval_limit FROM trust_management_agreements AS g
+                     WHERE g.ledger_account_id = b.ledger_account_id AND g.starts_on <= b.bill_date
+                     ORDER BY g.starts_on DESC LIMIT 1), 0) AS approval_limit,
+           ap.approved_by, dc.declined_by, dc.reason,
+           CASE WHEN em.id IS NOT NULL THEN """
     + EMAIL_STATUS.format(e="em")
-    + """ END,
-       EXISTS (SELECT 1 FROM trust_bill_payments AS s WHERE s.bill_id = b.id
-               AND s.step = 'set_aside'),
-       EXISTS (SELECT 1 FROM trust_bill_payments AS s WHERE s.bill_id = b.id AND s.step = 'paid')
-FROM trust_bills AS b
-JOIN trust_vendors AS v ON v.id = b.vendor_id
-JOIN trust_ledger_accounts AS a ON a.ledger_account_id = b.ledger_account_id
-JOIN trust_owners AS o ON o.id = a.owner_id
-JOIN trust_properties AS p ON p.id = a.property_id
-LEFT JOIN trust_bill_approvals AS ap ON ap.bill_id = b.id
-LEFT JOIN trust_bill_declines AS dc ON dc.bill_id = b.id
-LEFT JOIN trust_emails AS em ON em.kind = 'bill_approval' AND em.bill_id = b.id
-LEFT JOIN LATERAL (
-    SELECT e.id, e.name FROM trust_bill_expense_accounts AS x
-    JOIN trust_expense_accounts AS e ON e.id = x.expense_account_id
-    WHERE x.bill_id = b.id ORDER BY x.id DESC LIMIT 1
-) AS ex ON true
-WHERE b.pmc_id = %s
-ORDER BY b.due_on, b.bill_date, v.display_name COLLATE "C", b.reference COLLATE "C", b.id
-"""
+    + """ END AS owner_email,
+           EXISTS (SELECT 1 FROM trust_bill_payments AS s WHERE s.bill_id = b.id
+                   AND s.step = 'set_aside') AS aside,
+           EXISTS (SELECT 1 FROM trust_bill_payments AS s WHERE s.bill_id = b.id
+                   AND s.step = 'paid') AS paid
+    FROM trust_bills AS b
+    JOIN trust_vendors AS v ON v.id = b.vendor_id
+    JOIN trust_ledger_accounts AS a ON a.ledger_account_id = b.ledger_account_id
+    JOIN trust_owners AS o ON o.id = a.owner_id
+    JOIN trust_properties AS p ON p.id = a.property_id
+    LEFT JOIN trust_bill_approvals AS ap ON ap.bill_id = b.id
+    LEFT JOIN trust_bill_declines AS dc ON dc.bill_id = b.id
+    LEFT JOIN trust_emails AS em ON em.kind = 'bill_approval' AND em.bill_id = b.id
+    LEFT JOIN LATERAL (
+        SELECT e.id AS expense_account_id, e.name,
+               EXISTS (SELECT 1 FROM trust_bill_splits AS sp WHERE sp.categorized_id = x.id)
+                   AS split
+        FROM trust_bill_expense_accounts AS x
+        JOIN trust_expense_accounts AS e ON e.id = x.expense_account_id
+        WHERE x.bill_id = b.id ORDER BY x.id DESC LIMIT 1
+    ) AS ex ON true
+    WHERE b.pmc_id = %(pmc)s
+      AND (%(bill)s::uuid IS NULL OR b.id = %(bill)s::uuid)
+      AND (%(vendor)s::uuid IS NULL OR b.vendor_id = %(vendor)s::uuid)
+      AND (%(due_by)s::date IS NULL OR b.due_on <= %(due_by)s::date)
+      AND {within}
+), statused AS (
+    SELECT l.*,
+           CASE WHEN l.paid THEN 'paid'
+                WHEN l.aside THEN 'set aside'
+                WHEN l.declined_by IS NOT NULL THEN 'declined'
+                WHEN l.amount > l.approval_limit AND l.approved_by IS NULL THEN 'needs approval'
+                ELSE 'to set aside' END AS status
+    FROM listed AS l
 )
-
-
-def status_of(
-    amount: Decimal, limit: Decimal, approved: bool, declined: bool, aside: bool, paid: bool
-) -> Status:
-    if paid:
-        return "paid"
-    if aside:
-        return "set aside"
-    if declined:
-        return "declined"
-    if amount > limit and not approved:
-        return "needs approval"
-    return "to set aside"
+SELECT s.id, s.vendor_id, s.vendor, s.reference, s.ledger_account_id, s.owner, s.property_id,
+       s.property, s.bill_date, s.due_on, s.amount, s.memo, s.work_order_id, s.expense_id,
+       s.expense, s.split, s.approval_limit, s.approved_by, s.declined_by, s.reason,
+       s.owner_email, s.status, count(*) OVER ()
+FROM statused AS s
+WHERE CASE %(show)s WHEN 'open' THEN s.status NOT IN ('paid', 'declined')
+                    WHEN 'all' THEN true
+                    ELSE s.status = %(show)s END
+ORDER BY s.due_on, s.bill_date, s.vendor COLLATE "C", s.reference COLLATE "C", s.id
+LIMIT %(limit)s OFFSET %(offset)s
+"""
+).format(within=scope.within("p.id"))
 
 
 BillsShown = Literal["open", "paid", "declined", "all"]
 
 
-@router.get("/bills")
-def bills(session: Staff, conn: Conn, show: Annotated[BillsShown, Query()] = "open") -> list[Bill]:
-    """The PMC's vendor bills, by due date: by default those still to pay (not paid, nor
-    declined by the owner); or the paid ones, the declined ones, or all."""
-    found = []
-    for (
-        i,
-        vendor,
-        reference,
-        account,
-        owner,
-        prop,
-        billed,
-        due,
-        amount,
-        memo,
-        order,
-        expense_id,
-        expense,
-        limit,
-        approved_by,
-        declined_by,
-        decline_reason,
-        owner_email,
-        aside,
-        paid,
-    ) in conn.execute(BILLS, (session.pmc_id,)).fetchall():
-        status = status_of(
-            amount, limit, approved_by is not None, declined_by is not None, aside, paid
+def find_bills(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    show: BillsShown = "all",
+    *,
+    bill: UUID | None = None,
+    vendor: UUID | None = None,
+    due_by: date | None = None,
+    group: UUID | None = None,
+    property_id: UUID | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+) -> tuple[list[Bill], int]:
+    """The PMC's bills shown, by due date, a page of them when given a limit, and how many
+    there are in all."""
+    day = today()
+    rows = conn.execute(
+        BILLS,
+        {
+            "pmc": pmc_id,
+            "bill": bill,
+            "show": show,
+            "vendor": vendor,
+            "due_by": due_by,
+            "limit": limit,
+            "offset": offset,
+            **scope.params(group, property_id),
+        },
+    ).fetchall()
+    found = [
+        Bill(
+            id=i,
+            vendor_id=vendor_id,
+            vendor=vendor_name,
+            reference=reference,
+            account=account,
+            owner=owner,
+            property_id=prop_id,
+            property=prop,
+            bill_date=billed,
+            due_on=due,
+            amount=cents(amount),
+            memo=memo,
+            work_order_id=order,
+            expense_account_id=expense_id,
+            expense_account=expense,
+            split=split,
+            approval_limit=cents(limit_),
+            approved_by=approved_by,
+            declined_by=declined_by,
+            decline_reason=decline_reason,
+            owner_email=owner_email,
+            status=status,
+            overdue=status not in ("paid", "declined") and due < day,
         )
-        if show == "open" and status in ("paid", "declined"):
-            continue
-        if show in ("paid", "declined") and status != show:
-            continue
-        found.append(
-            Bill(
-                id=i,
-                vendor=vendor,
-                reference=reference,
-                account=account,
-                owner=owner,
-                property=prop,
-                bill_date=billed,
-                due_on=due,
-                amount=cents(amount),
-                memo=memo,
-                work_order_id=order,
-                expense_account_id=expense_id,
-                expense_account=expense,
-                approval_limit=cents(limit),
-                approved_by=approved_by,
-                declined_by=declined_by,
-                decline_reason=decline_reason,
-                owner_email=owner_email,
-                status=status,
+        for (
+            i,
+            vendor_id,
+            vendor_name,
+            reference,
+            account,
+            owner,
+            prop_id,
+            prop,
+            billed,
+            due,
+            amount,
+            memo,
+            order,
+            expense_id,
+            expense,
+            split,
+            limit_,
+            approved_by,
+            declined_by,
+            decline_reason,
+            owner_email,
+            status,
+            _,
+        ) in rows
+    ]
+    return found, rows[0][-1] if rows else 0
+
+
+@router.get("/bills")
+def bills(
+    session: Staff,
+    conn: Conn,
+    show: Annotated[BillsShown, Query()] = "open",
+    vendor: Annotated[UUID | None, Query()] = None,
+    due_by: Annotated[date | None, Query()] = None,
+    group: scope.Group = None,
+    property_id: scope.Property = None,
+    page: Page = 1,
+    per_page: PerPage = 50,
+) -> Paged[Bill]:
+    """The PMC's vendor bills, by due date, a page at a time: by default those still to pay
+    (not paid, nor declined by the owner); or the paid ones, the declined ones, or all. Maybe
+    of one vendor, due by a day, or of a property group or property."""
+    found, total = find_bills(
+        conn,
+        session.pmc_id,
+        show,
+        vendor=vendor,
+        due_by=due_by,
+        group=group,
+        property_id=property_id,
+        limit=per_page,
+        offset=(page - 1) * per_page,
+    )
+    return Paged(items=found, total=total, page=page, per_page=per_page)
+
+
+class BillLine(BaseModel):
+    # None: the bill is in no expense account yet.
+    expense_account_id: UUID | None
+    expense_account: str | None
+    amount: str
+
+
+class BillEvent(BaseModel):
+    on: date
+    what: str
+
+
+class BillEmail(BaseModel):
+    to: str
+    subject: str
+    written_at: datetime
+    status: EmailStatus
+    attempts: int
+    # Why the last delivery failed, while it isn't sent.
+    error: str | None
+
+
+class BillFile(BaseModel):
+    id: UUID
+    title: str
+    content_type: str
+    size: int
+    uploaded_at: datetime
+
+
+class BillPage(BaseModel):
+    bill: Bill
+    # Its expense accounts: its lines when it is split, else the whole bill in its account.
+    lines: list[BillLine]
+    files: list[BillFile]
+    email: BillEmail | None
+    # What happened to it, oldest first: entered, emailed, decided, set aside, paid.
+    history: list[BillEvent]
+
+
+@router.get("/bills/{bill_id}")
+def bill_page(session: Staff, conn: Conn, bill_id: UUID) -> BillPage:
+    """A bill's own page: the bill, its expense account lines, its invoices and receipts, the
+    email asking the owner to decide it, and its history."""
+    found, _ = find_bills(conn, session.pmc_id, bill=bill_id)
+    if not found:
+        raise HTTPException(404, "no such bill")
+    bill = found[0]
+    head = conn.execute(
+        "SELECT x.id, e.id, e.name FROM trust_bill_expense_accounts AS x"
+        " JOIN trust_expense_accounts AS e ON e.id = x.expense_account_id"
+        " WHERE x.bill_id = %s ORDER BY x.id DESC LIMIT 1",
+        (bill_id,),
+    ).fetchone()
+    lines = (
+        [
+            BillLine(expense_account_id=i, expense_account=name, amount=cents(amount))
+            for i, name, amount in conn.execute(
+                "SELECT e.id, e.name, s.amount FROM trust_bill_splits AS s"
+                " JOIN trust_expense_accounts AS e ON e.id = s.expense_account_id"
+                " WHERE s.categorized_id = %s ORDER BY s.id",
+                (head[0],),
+            ).fetchall()
+        ]
+        if head is not None
+        else []
+    )
+    if not lines:
+        lines = [
+            BillLine(
+                expense_account_id=head[1] if head else None,
+                expense_account=head[2] if head else None,
+                amount=bill.amount,
+            )
+        ]
+    files = [
+        BillFile(id=i, title=title, content_type=kind, size=size, uploaded_at=at)
+        for i, title, kind, size, at in conn.execute(
+            "SELECT d.id, d.title, d.content_type, d.size, d.created_at FROM trust_documents AS d"
+            " WHERE d.pmc_id = %s AND d.bill_id = %s AND NOT EXISTS ("
+            "   SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)"
+            " ORDER BY d.created_at, d.id",
+            (session.pmc_id, bill_id),
+        ).fetchall()
+    ]
+    row = conn.execute(
+        "SELECT e.to_address, e.subject, e.created_at, "
+        + EMAIL_STATUS.format(e="e")
+        + ", (SELECT count(*) FROM trust_email_deliveries AS d WHERE d.email_id = e.id),"
+        " (SELECT d.error FROM trust_email_deliveries AS d WHERE d.email_id = e.id"
+        "  ORDER BY d.attempted_at DESC LIMIT 1)"
+        " FROM trust_emails AS e WHERE e.kind = 'bill_approval' AND e.bill_id = %s",
+        (bill_id,),
+    ).fetchone()
+    sent = (
+        None
+        if row is None
+        else BillEmail(
+            to=row[0],
+            subject=row[1],
+            written_at=row[2],
+            status=row[3],
+            attempts=row[4],
+            error=None if row[3] == "sent" else row[5],
+        )
+    )
+    return BillPage(
+        bill=bill, lines=lines, files=files, email=sent, history=history_of(conn, bill, sent)
+    )
+
+
+def history_of(
+    conn: psycopg.Connection[Any], bill: Bill, sent: BillEmail | None
+) -> list[BillEvent]:
+    """A bill's steps, oldest first, each on its day (UTC)."""
+    events = [
+        BillEvent(
+            on=one(
+                conn,
+                "SELECT (created_at AT TIME ZONE 'UTC')::date FROM trust_bills WHERE id = %s",
+                (bill.id,),
+            ),
+            what="Entered",
+        )
+    ]
+    if sent is not None:
+        words = {"sent": "sent", "waiting": "waiting to be sent", "failed": "not sent"}
+        events.append(
+            BillEvent(
+                on=sent.written_at.astimezone(UTC).date(),
+                what=f"Email to {sent.to} asking the owner to decide it: {words[sent.status]}",
             )
         )
-    return found
+    approved = conn.execute(
+        "SELECT approved_on, approved_by FROM trust_bill_approvals WHERE bill_id = %s", (bill.id,)
+    ).fetchone()
+    if approved is not None:
+        events.append(BillEvent(on=approved[0], what=f"Approved by {approved[1]}"))
+    declined = conn.execute(
+        "SELECT declined_on, declined_by, reason FROM trust_bill_declines WHERE bill_id = %s",
+        (bill.id,),
+    ).fetchone()
+    if declined is not None:
+        events.append(BillEvent(on=declined[0], what=f"Declined by {declined[1]}: {declined[2]}"))
+    for step, on, method in conn.execute(
+        "SELECT s.step, (t.event_at AT TIME ZONE 'UTC')::date, m.method"
+        " FROM trust_bill_payments AS s JOIN pgledger_transfers AS t ON t.id = s.transfer_id"
+        " LEFT JOIN trust_payout_methods AS m ON m.transfer_id = s.transfer_id"
+        " WHERE s.bill_id = %s ORDER BY t.event_at, s.step DESC",
+        (bill.id,),
+    ).fetchall():
+        if step == "set_aside":
+            events.append(
+                BillEvent(on=on, what=f"{dollars(bill.amount)} set aside from the owner's money")
+            )
+        else:
+            how = f" by {method}" if method else ""
+            events.append(BillEvent(on=on, what=f"Paid{how}"))
+    return sorted(events, key=lambda event: event.on)
+
+
+def dollars(amount: str) -> str:
+    return f"${Decimal(amount):,.2f}"
+
+
+class Line(BaseModel):
+    expense_account_id: UUID
+    amount: Amount
+
+
+Lines = Annotated[list[Line], Field(min_length=2, max_length=20)]
+
+
+class Attachment(BaseModel):
+    title: documents.Title
+    content_type: documents.ContentType
+    # The file, base64, as Files takes it.
+    content_base64: str = Field(min_length=4, max_length=7_000_000)
 
 
 class NewBill(BaseModel):
@@ -228,7 +490,11 @@ class NewBill(BaseModel):
     amount: Amount
     memo: Text
     work_order_id: UUID | None = None
+    # One expense account for the whole bill, or lines splitting it across several.
     expense_account_id: UUID | None = None
+    lines: Lines | None = None
+    # The vendor's invoice, kept with the bill as its receipt.
+    invoice: Attachment | None = None
 
 
 class Created(BaseModel):
@@ -255,13 +521,41 @@ def vendor_of(conn: psycopg.Connection[Any], pmc_id: UUID, vendor: UUID) -> None
         raise HTTPException(404, "no such vendor")
 
 
+def lines_of(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    amount: Decimal,
+    account: UUID | None,
+    lines: list[Line] | None,
+) -> list[Line] | None:
+    """A bill's expense accounts as given, checked: one account, or lines in different accounts
+    that come to the bill's amount; None for neither."""
+    if account is not None and lines is not None:
+        raise HTTPException(422, "give a bill one expense account or lines, not both")
+    if lines is None:
+        if account is None:
+            return None
+        lines = [Line(expense_account_id=account, amount=amount)]
+    accounts = [line.expense_account_id for line in lines]
+    if len(set(accounts)) != len(accounts):
+        raise HTTPException(422, "a bill's lines are each in a different expense account")
+    total = sum((line.amount for line in lines), Decimal(0))
+    if total != amount:
+        raise HTTPException(
+            422, f"the lines come to {dollars(str(total))}, not the bill's {dollars(str(amount))}"
+        )
+    for chosen in accounts:
+        expense_account_of(conn, pmc_id, chosen)
+    return lines
+
+
 @router.post("/bills", status_code=201)
 def enter_bill(session: Staff, conn: Conn, new: NewBill) -> Created:
-    """A vendor's bill against an owner's property account, once per vendor reference."""
+    """A vendor's bill against an owner's property account, once per vendor reference, maybe
+    in an expense account or split across several, maybe with the vendor's invoice."""
     vendor_of(conn, session.pmc_id, new.vendor_id)
     owner_account(conn, session.pmc_id, new.account)
-    if new.expense_account_id is not None:
-        expense_account_of(conn, session.pmc_id, new.expense_account_id)
+    lines = lines_of(conn, session.pmc_id, new.amount, new.expense_account_id, new.lines)
     if new.due_on < new.bill_date:
         raise HTTPException(422, "a bill is due on or after its date")
     try:
@@ -287,33 +581,59 @@ def enter_bill(session: Staff, conn: Conn, new: NewBill) -> Created:
     except (psycopg.errors.CheckViolation, psycopg.errors.ForeignKeyViolation) as refused:
         # a work order of another property, a cancelled one, or none of this PMC's
         raise HTTPException(409, refusal(refused)) from None
-    if new.expense_account_id is not None:
-        put_in(conn, session.pmc_id, bill, new.expense_account_id)
+    if lines is not None:
+        put_in(conn, session.pmc_id, bill, lines)
+    if new.invoice is not None:
+        documents.keep(
+            conn,
+            session.pmc_id,
+            documents.NewDocument(kind="receipt", about_id=bill, **new.invoice.model_dump()),
+        )
     # Over the owner's limit: the email asking them to decide it, which goes out once this
     # commits (ADR 0004).
     email.write_bill_approval(conn, session.pmc_id, bill, outbox.PUBLIC_URL.get())
     return Created(id=bill)
 
 
-def put_in(conn: psycopg.Connection[Any], pmc_id: UUID, bill: UUID, account: UUID) -> None:
-    conn.execute(
+def put_in(conn: psycopg.Connection[Any], pmc_id: UUID, bill: UUID, lines: list[Line]) -> None:
+    """A bill's expense accounts: its new latest row, and the lines splitting it when there are
+    several."""
+    row = one(
+        conn,
         "INSERT INTO trust_bill_expense_accounts (pmc_id, bill_id, expense_account_id)"
-        " VALUES (%s, %s, %s)",
-        (pmc_id, bill, account),
+        " VALUES (%s, %s, %s) RETURNING id",
+        (pmc_id, bill, lines[0].expense_account_id),
     )
+    if len(lines) > 1:
+        for line in lines:
+            conn.execute(
+                "INSERT INTO trust_bill_splits"
+                " (pmc_id, bill_id, categorized_id, expense_account_id, amount)"
+                " VALUES (%s, %s, %s, %s, %s)",
+                (pmc_id, bill, row, line.expense_account_id, line.amount),
+            )
 
 
 class InAccount(BaseModel):
-    expense_account_id: UUID
+    # One expense account for the whole bill, or lines splitting it across several.
+    expense_account_id: UUID | None = None
+    lines: Lines | None = None
 
 
 @router.post("/bills/{bill_id}/expense-account", status_code=201)
 def bill_expense_account(session: Staff, conn: Conn, bill_id: UUID, put: InAccount) -> None:
-    """Puts a bill in an expense account: one entered before it had one, or one in the wrong
-    account. Its latest is its account; the earlier rows stay, as every row does."""
-    bill_of(conn, session.pmc_id, bill_id)
-    expense_account_of(conn, session.pmc_id, put.expense_account_id)
-    put_in(conn, session.pmc_id, bill_id, put.expense_account_id)
+    """Puts a bill in an expense account, or splits it across several: one entered before it
+    had one, or one in the wrong account. Its latest is its account; the earlier rows stay, as
+    every row does."""
+    amount = conn.execute(
+        "SELECT amount FROM trust_bills WHERE pmc_id = %s AND id = %s", (session.pmc_id, bill_id)
+    ).fetchone()
+    if amount is None:
+        raise HTTPException(404, "no such bill")
+    lines = lines_of(conn, session.pmc_id, amount[0], put.expense_account_id, put.lines)
+    if lines is None:
+        raise HTTPException(422, "give an expense account or lines")
+    put_in(conn, session.pmc_id, bill_id, lines)
 
 
 def bill_of(conn: psycopg.Connection[Any], pmc_id: UUID, bill: UUID) -> None:
@@ -428,20 +748,93 @@ def set_aside(session: Staff, conn: Conn, bill_id: UUID, step: Day) -> Moved:
     return Moved(transfer_id=moved)
 
 
+class Paying(BaseModel):
+    on: date
+    # How it was sent; recorded, nothing sent (the PMS writes no bank file).
+    method: PayoutMethod = "check"
+
+
+def pay_one(
+    conn: psycopg.Connection[Any], pmc_id: UUID, bill_id: UUID, on: date, method: PayoutMethod
+) -> str:
+    """Records that the trust bank account paid the vendor a bill set aside, once, and how; the
+    same again returns that payment, keeping how it was first recorded as sent."""
+    moved = one(conn, "SELECT trust_pay_bill(%s, %s, %s)", (pmc_id, bill_id, at(on)))
+    conn.execute(
+        "INSERT INTO trust_payout_methods (pmc_id, transfer_id, method) VALUES (%s, %s, %s)"
+        " ON CONFLICT (transfer_id) DO NOTHING",
+        (pmc_id, moved, method),
+    )
+    return str(moved)
+
+
 @router.post("/bills/{bill_id}/pay", status_code=201)
-def pay(session: Staff, conn: Conn, bill_id: UUID, step: Day) -> Moved:
-    """Records that the trust bank account paid the vendor the bill, once."""
+def pay(session: Staff, conn: Conn, bill_id: UUID, step: Paying) -> Moved:
+    """Records that the trust bank account paid the vendor the bill, once, by check or EFT."""
     not_after_today(step.on)
     bill_of(conn, session.pmc_id, bill_id)
     try:
-        moved = one(
-            conn, "SELECT trust_pay_bill(%s, %s, %s)", (session.pmc_id, bill_id, at(step.on))
-        )
+        moved = pay_one(conn, session.pmc_id, bill_id, step.on, step.method)
     except psycopg.errors.InvalidParameterValue as refused:  # not set aside, or before that
         raise HTTPException(409, refusal(refused)) from None
     except psycopg.errors.CheckViolation as refused:  # a closed period
         raise HTTPException(409, refusal(refused)) from None
     return Moved(transfer_id=moved)
+
+
+class PayBills(BaseModel):
+    on: date
+    # How they were sent; recorded, nothing sent (the PMS writes no bank file).
+    method: PayoutMethod
+    bill_ids: Annotated[list[UUID], Field(min_length=1, max_length=200)]
+
+
+class BillPaid(BaseModel):
+    bill_id: UUID
+    vendor: str
+    reference: str
+    amount: str
+    transfer_id: str
+
+
+@router.post("/bills/pay", status_code=201)
+def pay_bills(session: Staff, conn: Conn, run: PayBills) -> list[BillPaid]:
+    """Pay bills (Buildium's): each bill chosen set aside from its owner's money, if it wasn't,
+    and paid from its trust bank account, all of them or none, each recorded with how it was
+    sent. Sent again, it pays nothing twice. A refusal names the bill it is about."""
+    not_after_today(run.on)
+    if len(set(run.bill_ids)) != len(run.bill_ids):
+        raise HTTPException(422, "pay each bill once")
+    names = {
+        bill: (vendor, reference, amount)
+        for bill, vendor, reference, amount in conn.execute(
+            "SELECT b.id, v.display_name, b.reference, b.amount FROM trust_bills AS b"
+            " JOIN trust_vendors AS v ON v.id = b.vendor_id"
+            " WHERE b.pmc_id = %s AND b.id = ANY(%s)",
+            (session.pmc_id, run.bill_ids),
+        ).fetchall()
+    }
+    paid = []
+    for bill in run.bill_ids:
+        if bill not in names:
+            raise HTTPException(404, "no such bill")
+        vendor, reference, amount = names[bill]
+        vendor_account(conn, session.pmc_id, bill)
+        try:
+            one(conn, "SELECT trust_set_aside_bill(%s, %s, %s)", (session.pmc_id, bill, at(run.on)))
+            moved = pay_one(conn, session.pmc_id, bill, run.on, run.method)
+        except (psycopg.errors.CheckViolation, psycopg.errors.InvalidParameterValue) as refused:
+            raise HTTPException(409, f"{vendor} {reference}: {refusal(refused)}") from None
+        paid.append(
+            BillPaid(
+                bill_id=bill,
+                vendor=vendor,
+                reference=reference,
+                amount=cents(amount),
+                transfer_id=moved,
+            )
+        )
+    return paid
 
 
 # --- recurring bills ------------------------------------------------------------------------
@@ -586,9 +979,13 @@ def recurring_put_in(
     )
 
 
+class RecurringInAccount(BaseModel):
+    expense_account_id: UUID
+
+
 @router.post("/recurring/{recurring_id}/expense-account", status_code=201)
 def recurring_expense_account(
-    session: Staff, conn: Conn, recurring_id: UUID, put: InAccount
+    session: Staff, conn: Conn, recurring_id: UUID, put: RecurringInAccount
 ) -> None:
     """Puts a recurring bill in an expense account: each month's bill entered from now on is
     in it. Bills entered before keep theirs; put each in one as a bill."""
@@ -613,55 +1010,6 @@ def end_recurring(session: Staff, conn: Conn, recurring_id: UUID, end: End) -> N
         )
     except psycopg.errors.UniqueViolation:
         raise HTTPException(409, "this recurring bill has ended already") from None
-
-
-class Counted(BaseModel):
-    entered: int
-
-
-@router.post("/recurring/enter")
-def enter_recurring(session: Staff, conn: Conn, through: Day) -> Counted:
-    """Enters each recurring bill's months up to the day, each month once, and writes the
-    email to the owner of each one over their limit."""
-    entered = one(conn, "SELECT trust_enter_recurring_bills(%s, %s)", (session.pmc_id, through.on))
-    # The bills this transaction entered: their created_at is its start, now().
-    for (bill,) in conn.execute(
-        "SELECT id FROM trust_bills WHERE pmc_id = %s AND created_at = now() ORDER BY id",
-        (session.pmc_id,),
-    ).fetchall():
-        email.write_bill_approval(conn, session.pmc_id, bill, outbox.PUBLIC_URL.get())
-    return Counted(entered=entered)
-
-
-# --- the outbox: emails to owners (ADR 0004) --------------------------------------------------
-
-
-class OutboxEmail(BaseModel):
-    id: UUID
-    to: str
-    subject: str
-    written_at: datetime
-    status: EmailStatus
-    # Why the last delivery failed, while it isn't sent.
-    error: str | None
-
-
-@router.get("/emails")
-def emails(session: Staff, conn: Conn) -> list[OutboxEmail]:
-    """The PMC's emails to owners, newest first (the last 100): to whom, about what, and
-    whether each went."""
-    rows = conn.execute(
-        "SELECT e.id, e.to_address, e.subject, e.created_at, "
-        + EMAIL_STATUS.format(e="e")
-        + ", (SELECT d.error FROM trust_email_deliveries AS d WHERE d.email_id = e.id"
-        "    ORDER BY d.attempted_at DESC LIMIT 1)"
-        " FROM trust_emails AS e WHERE e.pmc_id = %s ORDER BY e.created_at DESC, e.id LIMIT 100",
-        (session.pmc_id,),
-    ).fetchall()
-    return [
-        OutboxEmail(id=i, to=to, subject=subject, written_at=at, status=status, error=error)
-        for i, to, subject, at, status, error in rows
-    ]
 
 
 # --- owners' money ----------------------------------------------------------------------------
@@ -941,7 +1289,7 @@ class PayOwners(BaseModel):
     request_id: UUID
     on: date
     # How the payouts were sent; recorded, nothing sent (the PMS writes no bank file).
-    method: Literal["check", "EFT"]
+    method: PayoutMethod
     payouts: Annotated[list[Payout], Field(min_length=1, max_length=500)]
 
 

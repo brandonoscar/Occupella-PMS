@@ -132,7 +132,9 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
         on=day,
         late_rent=late,
         bills_due=[
-            b for b in payables.bills(session, conn, "open") if b.due_on <= day + BILLS_AHEAD
+            b
+            for b in payables.find_bills(conn, session.pmc_id, "open")[0]
+            if b.due_on <= day + BILLS_AHEAD
         ],
         unreconciled=unreconciled,
         applications=leasing.applications(session, conn, "open"),

@@ -26,7 +26,7 @@ from helpers import (
 )
 from people import join_as_owner, join_as_staff, join_as_tenant
 
-from pms import accounts, email
+from pms import accounts, email, nightly
 
 NOW = datetime.now(UTC)
 TODAY = NOW.date()
@@ -85,7 +85,8 @@ def new_bill(client, pmc, amount="200.00", reference="INV-1", **more):
 
 def statuses(client, show="open"):
     return {
-        b["reference"]: b["status"] for b in ok(client.get(f"/api/payables/bills?show={show}"), 200)
+        b["reference"]: b["status"]
+        for b in ok(client.get(f"/api/payables/bills?show={show}"), 200)["items"]
     }
 
 
@@ -99,7 +100,7 @@ def test_a_bill_is_entered_set_aside_and_paid_once_each(client, conn, staff, pmc
     again = ok(call(client, f"bills/{bill}/set-aside", on=TODAY))
     held = balance(conn, pmc.owners[0].account)
     paid = ok(call(client, f"bills/{bill}/pay", on=TODAY))
-    (listed,) = ok(client.get("/api/payables/bills?show=all"), 200)
+    (listed,) = ok(client.get("/api/payables/bills?show=all"), 200)["items"]
 
     assert entered == {"INV-1": "to set aside"}
     assert again == aside
@@ -194,7 +195,9 @@ def test_staff_record_an_owners_decline_and_the_bill_is_never_paid(client, conn,
             reason="Get a second quote",
         )
     )
-    shown = next(b for b in ok(client.get("/api/payables/bills?show=all"), 200) if b["id"] == bill)
+    shown = next(
+        b for b in ok(client.get("/api/payables/bills?show=all"), 200)["items"] if b["id"] == bill
+    )
     after = ok(client.get("/api/payables/owners"), 200)[0]
     aside = call(client, f"bills/{bill}/set-aside", on=TODAY)
     approval = call(client, f"bills/{bill}/approval", approved_on=TODAY, approved_by="Owner 1")
@@ -283,7 +286,7 @@ def test_a_bill_is_entered_once_per_vendor_reference_with_sound_terms(client, co
     assert "was cancelled" in gone.json()["detail"]
 
 
-def test_recurring_bills_are_entered_each_month_once_and_stop(client, conn, staff, pmc):
+def test_recurring_bills_are_entered_each_month_once_and_stop(client, conn, app_conn, staff, pmc):
     start = TODAY.replace(day=1) - timedelta(days=60)
     body = {
         "vendor_id": pmc.vendor_id,
@@ -297,14 +300,15 @@ def test_recurring_bills_are_entered_each_month_once_and_stop(client, conn, staf
 
     made = ok(call(client, "recurring", **body))["id"]
     same = call(client, "recurring", **body)
-    first = ok(call(client, "recurring/enter", on=TODAY), 200)
-    again = ok(call(client, "recurring/enter", on=TODAY), 200)
+    # The nightly run enters them (src/pms/nightly.py); there is no button for it.
+    first = nightly.run_pmc(app_conn, pmc.pmc_id, TODAY, "http://pms.test").bills
+    again = nightly.run_pmc(app_conn, pmc.pmc_id, TODAY, "http://pms.test").bills
     ok(call(client, f"recurring/{made}/end", ends_on=TODAY))
     ended_twice = call(client, f"recurring/{made}/end", ends_on=TODAY)
     (listed,) = ok(client.get("/api/payables/recurring"), 200)
 
     refused(same, 409, "this vendor has a recurring bill with that reference already")
-    assert first["entered"] >= 2 and again == {"entered": 0}
+    assert first >= 2 and again == 0
     refused(ended_twice, 409, "this recurring bill has ended already")
     assert (listed["reference_prefix"], listed["day_of_month"], listed["ends_on"]) == (
         "LAWN",
@@ -609,7 +613,7 @@ def owner_signs_in(conn, pmc, n=0):
 def bill_email(client, bill):
     return next(
         b["owner_email"]
-        for b in ok(client.get("/api/payables/bills?show=all"), 200)
+        for b in ok(client.get("/api/payables/bills?show=all"), 200)["items"]
         if b["id"] == bill
     )
 
@@ -622,10 +626,12 @@ def test_a_bill_over_the_limit_emails_its_owner_after_it_commits(client, conn, s
     bill = ok(new_bill(client, pmc, "800.00"))["id"]
 
     assert bill_email(client, bill) == "sent"
-    (sent,) = [e for e in ok(client.get("/api/payables/emails"), 200) if e["to"] == to]
-    assert (sent["subject"], sent["status"], sent["error"]) == (
+    sent = ok(client.get(f"/api/payables/bills/{bill}"), 200)["email"]
+    assert (sent["to"], sent["subject"], sent["status"], sent["attempts"], sent["error"]) == (
+        to,
         "A bill waits for your approval: Vendor 1, $800.00",
         "sent",
+        1,
         None,
     )
     assert conn.execute(
@@ -672,8 +678,7 @@ def test_no_email_when_the_bill_needs_none_or_the_owner_cannot_sign_in(
     assert bill_email(client, bill) is None
 
 
-def test_recurring_bills_over_the_limit_email_their_owner(client, conn, staff, pmc):
-    client.app.state.email = email.FakeSender()
+def test_recurring_bills_over_the_limit_email_their_owner(client, conn, app_conn, staff, pmc):
     to = owner_signs_in(conn, pmc)
     add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 400 * DAY, approval_limit="500")
     ok(
@@ -690,11 +695,13 @@ def test_recurring_bills_over_the_limit_email_their_owner(client, conn, staff, p
         )
     )
 
-    entered = ok(call(client, "recurring/enter", on=TODAY), 200)["entered"]
+    entered = nightly.run_pmc(app_conn, pmc.pmc_id, TODAY, "http://pms.test").bills
 
-    emailed = [e for e in ok(client.get("/api/payables/emails"), 200) if e["to"] == to]
-    assert entered >= 1 and len(emailed) == entered
-    assert {e["status"] for e in emailed} == {"sent"}
+    bills = ok(client.get("/api/payables/bills"), 200)["items"]
+    emailed = [ok(client.get(f"/api/payables/bills/{b['id']}"), 200)["email"] for b in bills]
+    assert entered >= 1 and len(bills) == entered
+    # Written with the bills; the nightly run hands them to the server's sender after.
+    assert {(e["to"], e["status"]) for e in emailed} == {(to, "waiting")}
 
 
 def test_an_email_given_up_on_shows_as_failed_with_why(client, conn, staff, pmc):
@@ -710,9 +717,14 @@ def test_an_email_given_up_on_shows_as_failed_with_why(client, conn, staff, pmc)
             (email_id, pmc.pmc_id, n),
         )
 
-    (shown,) = [e for e in ok(client.get("/api/payables/emails"), 200) if e["id"] == str(email_id)]
+    shown = ok(client.get(f"/api/payables/bills/{bill}"), 200)
     assert bill_email(client, bill) == "failed"
-    assert (shown["status"], shown["error"]) == ("failed", "SMTPRecipientsRefused: no such mailbox")
+    assert (shown["email"]["status"], shown["email"]["attempts"], shown["email"]["error"]) == (
+        "failed",
+        email.MAX_ATTEMPTS,
+        "SMTPRecipientsRefused: no such mailbox",
+    )
+    assert shown["history"][1]["what"].endswith("asking the owner to decide it: not sent")
 
 
 ENDPOINTS = [
@@ -725,9 +737,9 @@ ENDPOINTS = [
     ("get", "/api/payables/recurring"),
     ("post", "/api/payables/recurring"),
     ("post", f"/api/payables/recurring/{uuid.uuid4()}/end"),
-    ("post", "/api/payables/recurring/enter"),
     ("get", "/api/payables/owners"),
-    ("get", "/api/payables/emails"),
+    ("get", f"/api/payables/bills/{uuid.uuid4()}"),
+    ("post", "/api/payables/bills/pay"),
     ("post", "/api/payables/management-fees"),
     ("post", "/api/payables/leasing-fees"),
     ("post", "/api/payables/draws/batch"),

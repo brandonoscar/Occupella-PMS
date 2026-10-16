@@ -5,19 +5,23 @@ import { day, lastMonth, money, sumMoney, usDate } from "./money";
 export type BillStatus = "needs approval" | "declined" | "to set aside" | "set aside" | "paid";
 export type Bill = {
   id: string;
+  vendor_id: string;
   vendor: string;
   reference: string;
   account: string;
   owner: string;
+  property_id: string;
   property: string;
   bill_date: string;
   due_on: string;
   amount: string;
   memo: string;
   work_order_id: string | null;
-  // The expense account it is in (its latest), or null while it is in none.
+  // The expense account it is in (its latest), or null while it is in none or split.
   expense_account_id: string | null;
   expense_account: string | null;
+  // Split across expense accounts by lines (on its page).
+  split: boolean;
   approval_limit: string;
   approved_by: string | null;
   // Who declined it for the owner (in the portal, or as staff recorded it), and why.
@@ -26,23 +30,58 @@ export type Bill = {
   // The email asking the owner to decide it: null when none was written.
   owner_email: EmailStatus | null;
   status: BillStatus;
+  // Neither paid nor declined, and due before today.
+  overdue: boolean;
 };
 export type EmailStatus = "sent" | "waiting" | "failed";
-export type OutboxEmail = {
-  id: string;
+// A bill's expense account lines: its lines when split, else the whole bill in its account.
+export type BillLine = { expense_account_id: string | null; expense_account: string | null; amount: string };
+export type BillEmail = {
   to: string;
   subject: string;
   written_at: string;
   status: EmailStatus;
+  attempts: number;
   error: string | null;
 };
+export type BillPageData = {
+  bill: Bill;
+  lines: BillLine[];
+  files: { id: string; title: string; content_type: string; size: number; uploaded_at: string }[];
+  email: BillEmail | null;
+  history: { on: string; what: string }[];
+};
+// One bill of Pay bills, as recorded.
+export type BillPaid = { bill_id: string; vendor: string; reference: string; amount: string; transfer_id: string };
+
+// A bill's status as staff read it in the list (Buildium's words): awaiting the owner, approved
+// (to set aside or pay), set aside, overdue, paid or declined.
+export function billBadge(bill: Bill): { word: string; tone: "caution" | "info" | "positive" | "neutral" | "danger" } {
+  if (bill.status === "paid") return { word: "Paid", tone: "positive" };
+  if (bill.status === "declined") return { word: "Declined", tone: "neutral" };
+  if (bill.overdue) return { word: "Overdue", tone: "danger" };
+  if (bill.status === "needs approval") return { word: "Awaiting owner approval", tone: "caution" };
+  if (bill.status === "set aside") return { word: "Set aside", tone: "info" };
+  return { word: "Approved", tone: "info" };
+}
+
+// What Pay bills did, in a line.
+export function billsPaidSummary(paid: BillPaid[], method: PayoutMethod): string {
+  const total = sumMoney(paid.map((p) => p.amount));
+  return `${paid.length} bill${paid.length === 1 ? "" : "s"} of ${money(total)} paid, by ${method}.`;
+}
+
+// What a bill's split lines come to, against the bill: "Lines come to $250.00 of $300.00".
+export function linesNote(amounts: string[], amount: string): string {
+  return `Lines come to ${money(sumMoney(amounts.map((a) => a || "0")))} of ${money(amount || "0")}.`;
+}
 
 // What staff are told about the email to a bill's owner, while the bill waits for them.
 export function emailNote(bill: Bill): string | null {
   if (bill.status !== "needs approval") return null;
   if (bill.owner_email === "sent") return "Emailed the owner to approve or decline it in their portal.";
   if (bill.owner_email === "waiting") return "An email to the owner waits to be sent.";
-  if (bill.owner_email === "failed") return "The email to the owner could not be sent; see Emails to owners.";
+  if (bill.owner_email === "failed") return "The email to the owner could not be sent; its page says why.";
   return "No email went to the owner: they have no active portal login. Ask them yourself.";
 }
 export type Recurring = {
@@ -95,15 +134,6 @@ export function paidSummary(paid: OwnerPaid[], method: PayoutMethod): string {
 
 
 // What staff do next with a bill, as its button says; nothing once it is paid.
-// A bill's status as a badge: waiting on the owner is a caution, on its way is news, paid is
-// done, declined is closed.
-export function statusTone(status: BillStatus): "caution" | "info" | "positive" | "neutral" {
-  if (status === "needs approval") return "caution";
-  if (status === "paid") return "positive";
-  if (status === "declined") return "neutral";
-  return "info";
-}
-
 export function nextStep(status: BillStatus): string | null {
   if (status === "needs approval") return "Record approval";
   if (status === "to set aside") return "Set aside";

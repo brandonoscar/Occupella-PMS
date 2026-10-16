@@ -50,7 +50,7 @@ statement = "Staff open the Dashboard: what tenants owe, open work orders, lease
 operations = ["GET /api/today", "GET /api/dashboard"]
 browser = [
   "features.spec.ts › staff charge this month's rent and its late fees, and the Dashboard shows the rent that is late",
-  "features.spec.ts › staff add a recurring bill, enter this month's once and stop it, and record the decline of an owner with no login",
+  "features.spec.ts › staff add a recurring bill and stop it, and record the decline of an owner with no login",
   "features.spec.ts › staff list a vacant unit on the public page; someone applies from it, staff approve, take it off the page and close the link",
 ]
 
@@ -212,35 +212,35 @@ browser = [
 
 [[feature]]
 id = "bills"
-statement = "Staff enter a vendor's bill; one over the owner's limit emails the owner, who approves or declines it in their portal (or staff record their answer); staff set it aside from the owner's money and pay it; a declined bill is never paid."
+statement = "Staff list bills a page at a time (Unpaid, Paid, Declined; by property group, vendor and due day; each awaiting the owner, approved, set aside, overdue or paid) and record one in a side panel, maybe with its invoice; one over the owner's limit emails the owner, who approves or declines it in their portal (or staff record their answer); a bill's own page has its expense account lines, files, the email and its history, and sets it aside and pays it by check or EFT; Pay bills sets aside and pays several at once, all or none, showing each property's cash first; a declined bill is never paid."
 operations = [
   "GET /api/payables/bills",
+  "GET /api/payables/bills/{bill_id}",
   "POST /api/payables/bills",
+  "POST /api/payables/bills/pay",
   "POST /api/payables/bills/{bill_id}/approval",
   "POST /api/payables/bills/{bill_id}/decline",
   "POST /api/payables/bills/{bill_id}/set-aside",
   "POST /api/payables/bills/{bill_id}/pay",
-  "GET /api/payables/emails",
   "GET /api/owner/bills",
   "POST /api/owner/bills/{bill_id}/approval",
   "POST /api/owner/bills/{bill_id}/decline",
 ]
 browser = [
   "features.spec.ts › a bill over the owner's limit emails them; they decline one and approve another in the portal, and staff pay it",
-  "portal.spec.ts › staff enter a vendor's bill, record the owner's approval, set it aside and pay it, then draw the rest",
+  "portal.spec.ts › staff record a vendor's bill with its invoice, record the owner's approval, set it aside and pay it on its page, then draw the rest",
 ]
 
 [[feature]]
 id = "recurring-bills"
-statement = "Staff add a bill that comes every month, enter each month's once under its prefix and the month, and stop it from a day."
+statement = "Staff add a bill that comes every month on Bills' Recurring tab and stop it from a day; the nightly run enters each month's once under its prefix and the month (tests/test_nightly.py: the browser run has it off)."
 operations = [
   "GET /api/payables/recurring",
   "POST /api/payables/recurring",
-  "POST /api/payables/recurring/enter",
   "POST /api/payables/recurring/{recurring_id}/end",
 ]
 browser = [
-  "features.spec.ts › staff add a recurring bill, enter this month's once and stop it, and record the decline of an owner with no login",
+  "features.spec.ts › staff add a recurring bill and stop it, and record the decline of an owner with no login",
 ]
 
 [[feature]]
@@ -259,7 +259,7 @@ operations = [
 browser = [
   "features.spec.ts › staff take the month's management fees once, find no leasing fee due, and pay owners only what is available",
   "features.spec.ts › staff set management terms with a leasing fee, late fees, a bank account and a vendor, and a new lease takes its leasing fee",
-  "portal.spec.ts › staff enter a vendor's bill, record the owner's approval, set it aside and pay it, then draw the rest",
+  "portal.spec.ts › staff record a vendor's bill with its invoice, record the owner's approval, set it aside and pay it on its page, then draw the rest",
 ]
 
 [[feature]]
@@ -463,7 +463,7 @@ browser = [
 
 [[feature]]
 id = "expense-accounts"
-statement = "Staff add expense accounts, each on its Schedule E line, and put bills and recurring bills in them (a bill's latest account is its account; a recurring bill's goes on each month it enters); an owner reads and downloads the year's income statement, by property and Schedule E line, and staff download any owner's."
+statement = "Staff add expense accounts, each on its Schedule E line, and put bills and recurring bills in them, a bill maybe split across several by lines that come to it (a bill's latest account or split is its own; a recurring bill's goes on each month it enters); an owner reads and downloads the year's income statement, by property and Schedule E line, and staff download any owner's."
 operations = [
   "POST /api/setup/expense-accounts",
   "POST /api/payables/bills/{bill_id}/expense-account",

@@ -1,22 +1,19 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
-import type { Bill, OutboxEmail, Recurring } from "../payables";
+import type { Bill, Recurring } from "../payables";
 import type { Portfolio } from "../setup";
 import { BillsPage } from "./BillsPage";
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  window.history.pushState(null, "", "/");
+  window.localStorage.clear();
 });
 
 const ME: Me = {
-  kind: "staff",
-  email: "staff@example.com",
-  name: "Staff 1",
-  person_id: "s1",
-  pmc_id: "p1",
-  pmc_name: "Synthetic PMC",
+  kind: "staff", email: "staff@example.com", name: "Staff 1", person_id: "s1", pmc_id: "p1", pmc_name: "Synthetic PMC",
 };
 
 const BOOKS: Portfolio = {
@@ -25,100 +22,45 @@ const BOOKS: Portfolio = {
   properties: [],
   accounts: [
     { account: "a1", owner_id: "o1", owner: "Owner 1", property_id: "pr1", property: "Property 1", bank_account: "Operating", agreement: null },
-    { account: "a2", owner_id: "o2", owner: "Owner 2", property_id: "pr1", property: "Property 1", bank_account: "Operating", agreement: null },
   ],
   tenants: [],
-  vendors: [
-    { id: "v1", name: "Vendor 1" },
-    { id: "v2", name: "Vendor 2" },
-  ],
-  expense_accounts: [
-    { id: "e1", name: "Repairs", schedule_e_line: 14 },
-    { id: "e2", name: "Water", schedule_e_line: 17 },
-  ],
-  schedule_e_lines: [
-    { line: 7, label: "Cleaning and maintenance" },
-    { line: 14, label: "Repairs" },
-    { line: 17, label: "Utilities" },
-  ],
+  vendors: [{ id: "v1", name: "Vendor 1" }, { id: "v2", name: "Vendor 2" }],
+  expense_accounts: [{ id: "e1", name: "Repairs", schedule_e_line: 14 }, { id: "e2", name: "Water", schedule_e_line: 17 }],
+  schedule_e_lines: [{ line: 14, label: "Repairs" }, { line: 17, label: "Utilities" }],
 };
 
 const BILL: Bill = {
-  id: "b1",
-  vendor: "Vendor 1",
-  reference: "INV-1",
-  account: "a1",
-  owner: "Owner 1",
-  property: "Property 1",
-  bill_date: "2026-10-01",
-  due_on: "2026-10-15",
-  amount: "750.00",
-  memo: "Roof repair",
-  work_order_id: null,
-  expense_account_id: null,
-  expense_account: null,
-  approval_limit: "500.00",
-  approved_by: null,
-  declined_by: null,
-  decline_reason: null,
-  owner_email: "sent",
-  status: "needs approval",
+  id: "b1", vendor_id: "v1", vendor: "Vendor 1", reference: "INV-1", account: "a1", owner: "Owner 1",
+  property_id: "pr1", property: "Property 1", bill_date: "2026-10-01", due_on: "2026-10-15", amount: "750.00",
+  memo: "Roof repair", work_order_id: null, expense_account_id: null, expense_account: null, split: false,
+  approval_limit: "500.00", approved_by: null, declined_by: null, decline_reason: null, owner_email: "sent",
+  status: "needs approval", overdue: false,
 };
-
 const BILLS: Bill[] = [
   BILL,
-  { ...BILL, id: "b2", reference: "INV-2", amount: "200.00", status: "to set aside" },
+  { ...BILL, id: "b2", reference: "INV-2", amount: "200.00", status: "to set aside", overdue: true },
   { ...BILL, id: "b3", reference: "INV-3", amount: "900.00", status: "set aside", approved_by: "Owner 1" },
 ];
-
 const RECURRING: Recurring[] = [
   {
-    id: "r1", vendor: "Vendor 2", account: "a1", owner: "Owner 1", property: "Property 1",
-    reference_prefix: "LAWN", amount: "80.00", memo: "Lawn care", day_of_month: 5,
-    starts_on: "2026-01-01", ends_on: null, expense_account_id: null, expense_account: null,
+    id: "r1", vendor: "Vendor 2", account: "a1", owner: "Owner 1", property: "Property 1", reference_prefix: "LAWN",
+    amount: "80.00", memo: "Lawn care", day_of_month: 5, starts_on: "2026-01-01", ends_on: null,
+    expense_account_id: null, expense_account: null,
   },
 ];
 
-// The API: bills, recurring bills and the books on GET; each POST answers with
-// `answers[path]` (or 201 {}), or 409 with `refuse[path]`.
-const OUTBOX: OutboxEmail[] = [
-  {
-    id: "e1",
-    to: "owner1@example.com",
-    subject: "A bill waits for your approval: Vendor 1, $750.00",
-    written_at: "2026-10-02T09:00:00Z",
-    status: "sent",
-    error: null,
-  },
-  {
-    id: "e2",
-    to: "owner2@example.com",
-    subject: "A bill waits for your approval: Vendor 1, $900.00",
-    written_at: "2026-10-01T09:00:00Z",
-    status: "failed",
-    error: "SMTPRecipientsRefused: no such mailbox",
-  },
-];
+const paged = (items: Bill[]) => ({ items, total: items.length, page: 1, per_page: 50 });
 
-function server(
-  answers: Record<string, unknown> = {},
-  refuse: Record<string, string> = {},
-  bills: Bill[] = BILLS,
-  posting: (path: string) => void = () => undefined,
-) {
+function server(answers: Record<string, unknown> = {}, refuse: Record<string, string> = {}, bills: Bill[] = BILLS) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method !== "POST") {
-      const body = path.startsWith("/api/payables/bills")
-        ? path.endsWith("show=all") ? [...bills, { ...BILL, id: "b4", reference: "INV-4", status: "paid" }]
-        : path.endsWith("show=paid") ? [{ ...BILL, id: "b4", reference: "INV-4", status: "paid" }]
-        : path.endsWith("show=declined") ? []
-        : bills
-        : path === "/api/payables/recurring" ? RECURRING
-        : path === "/api/payables/emails" ? OUTBOX : BOOKS;
-      return new Response(JSON.stringify(body), { status: 200 });
+      const read = path in answers ? answers[path]
+        : path.startsWith("/api/payables/bills") ? paged(bills)
+          : path === "/api/payables/recurring" ? RECURRING
+            : path === "/api/setup" ? BOOKS : { groups: [], properties: [] };
+      return new Response(JSON.stringify(read), { status: 200 });
     }
     if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
-    posting(path);
     return new Response(JSON.stringify(answers[path] ?? {}), { status: 201 });
   });
   vi.stubGlobal("fetch", fetch);
@@ -126,333 +68,182 @@ function server(
 }
 
 const posted = (fetch: ReturnType<typeof server>) =>
-  fetch.mock.calls
-    .filter(([, init]) => init?.method === "POST")
-    .map(([path, init]) => [path, JSON.parse(String(init?.body))]);
-
-const bill = (name: string) => screen.findByRole("listitem", { name });
-// What a bill's step did is said above the list, not in its row, which the step may remove.
-const said = async (text: string) => {
-  const line = await screen.findByText(text);
-  expect(line.closest("li")).toBeNull();
-  return line;
-};
+  fetch.mock.calls.filter(([, init]) => init?.method === "POST").map(([path, init]) => [path, JSON.parse(String(init?.body))]);
+const reads = (fetch: ReturnType<typeof server>) =>
+  fetch.mock.calls.filter(([, init]) => init?.method !== "POST").map(([path]) => String(path));
 
 describe("BillsPage", () => {
-  it("lists the bills not paid yet, each with its next step", async () => {
+  it("lists each bill with its due day, vendor, property, memo, ref, amount and status, the row opening it", async () => {
     server();
     render(<BillsPage me={ME} />);
 
-    const first = await bill("Vendor 1 INV-1");
-    expect(first.textContent).toContain("Owner 1, Property 1 · Roof repair · dated 10/01/2026, due 10/15/2026");
-    expect(within(first).getByTestId("status").textContent).toBe("needs approval");
-    expect(first.textContent).toContain("Over the owner's approval limit of $500.00.");
-    expect(within(first).getByRole("button", { name: "Record approval" })).toBeTruthy();
-    expect(within(await bill("Vendor 1 INV-2")).getByRole("button", { name: "Set aside" })).toBeTruthy();
-    const third = await bill("Vendor 1 INV-3");
-    expect(within(third).getByRole("button", { name: "Pay" })).toBeTruthy();
-    expect(third.textContent).toContain("Approved by Owner 1.");
+    const row = await screen.findByRole("row", { name: "Vendor 1 INV-1" });
+    expect(within(row).getAllByRole("cell").map((c) => c.textContent)).toEqual([
+      "10/15/2026", "Vendor 1", "Property 1", "Roof repair", "INV-1", "$750.00", "Awaiting owner approval", "",
+    ]);
+    expect(within(screen.getByRole("row", { name: "Vendor 1 INV-2" })).getByTestId("status").textContent).toBe("Overdue");
+    expect(within(screen.getByRole("row", { name: "Vendor 1 INV-3" })).getByTestId("status").textContent).toBe("Set aside");
+    fireEvent.click(within(row).getByText("Roof repair"));
+    expect(window.location.pathname).toBe("/bills/b1");
+    expect(screen.getByRole("link", { name: "Pay bills" }).getAttribute("href")).toBe("/pay-bills");
   });
 
-  it("shows the paid bills, the declined ones or all of them on their tabs, with no step left", async () => {
+  it("narrows to a vendor, a due day and a tab, starting from the first page", async () => {
     const fetch = server();
     render(<BillsPage me={ME} />);
-    await bill("Vendor 1 INV-1");
-    const tabs = screen.getByRole("tablist", { name: "Bills" });
-    expect(within(tabs).getAllByRole("tab").map((t) => [t.textContent, t.getAttribute("aria-selected")])).toEqual([
-      ["Unpaid", "true"], ["Paid", "false"], ["Declined", "false"], ["All", "false"],
-    ]);
+    await screen.findByRole("row", { name: "Vendor 1 INV-1" });
 
-    fireEvent.click(within(tabs).getByRole("tab", { name: "Paid" }));
-    await vi.waitFor(() => expect(screen.queryByRole("listitem", { name: "Vendor 1 INV-1" })).toBeNull());
-    expect(await bill("Vendor 1 INV-4")).toBeTruthy();
-    fireEvent.click(within(tabs).getByRole("tab", { name: "Declined" }));
-    expect((await screen.findByTestId("empty-state")).textContent).toContain("No bill was declined.");
-    fireEvent.click(within(tabs).getByRole("tab", { name: "All" }));
-    expect(within(tabs).getByRole("tab", { name: "All" }).getAttribute("aria-selected")).toBe("true");
-    expect(fetch.mock.calls.map(([path]) => path).filter((p) => p.startsWith("/api/payables/bills"))).toEqual([
-      "/api/payables/bills?show=open", "/api/payables/bills?show=paid", "/api/payables/bills?show=declined",
-      "/api/payables/bills?show=all",
-    ]);
+    const vendor = screen.getByRole("combobox", { name: "Vendor" });
+    await within(vendor).findByRole("option", { name: "Vendor 2" });
+    fireEvent.change(vendor, { target: { value: "v2" } });
+    fireEvent.change(screen.getByLabelText("Due by"), { target: { value: "2026-10-31" } });
+    fireEvent.click(screen.getByRole("tab", { name: "Paid" }));
 
-    await bill("Vendor 1 INV-1");
-    const paid = await bill("Vendor 1 INV-4");
-    expect(within(paid).getByTestId("status").textContent).toBe("paid");
-    // No step is left; a paid bill can still be put in an expense account.
-    expect(within(paid).queryAllByRole("button").map((b) => b.textContent)).toEqual(["Put in"]);
+    await vi.waitFor(() =>
+      expect(reads(fetch)).toContain("/api/payables/bills?show=paid&page=1&vendor=v2&due_by=2026-10-31"));
   });
 
-  it("enters a bill against the chosen vendor and owner, in a panel that Close and Escape shut", async () => {
-    const fetch = server({ "/api/payables/bills": { id: "b9" } });
-    render(<BillsPage me={ME} />);
-    await bill("Vendor 1 INV-1");
-    expect(screen.queryByLabelText("Vendor's reference")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Record bill" }));
-    fireEvent.click(within(screen.getByRole("dialog", { name: "Record bill" })).getByRole("button", { name: "Close" }));
-    expect(screen.queryByRole("dialog")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Record bill" }));
-    fireEvent.keyDown(window, { key: "Escape" });
-    expect(screen.queryByRole("dialog")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Record bill" }));
-    fireEvent.click(screen.getByTestId("panel-scrim"));
-    expect(screen.queryByRole("dialog")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Record bill" }));
-
-    fireEvent.change(screen.getByLabelText("Vendor"), { target: { value: "v2" } });
-    fireEvent.change(screen.getByLabelText("Owner and property"), { target: { value: "a2" } });
-    fireEvent.change(screen.getByLabelText("Vendor's reference"), { target: { value: "INV-9" } });
-    fireEvent.change(screen.getByLabelText("Bill date"), { target: { value: "2026-10-02" } });
-    fireEvent.change(screen.getByLabelText("Due on"), { target: { value: "2026-10-30" } });
-    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "120.00" } });
-    fireEvent.change(screen.getByLabelText("What for"), { target: { value: "Plumbing" } });
-    fireEvent.click(screen.getByRole("button", { name: "Enter bill" }));
-
-    expect(await screen.findByText("Bill INV-9 entered.")).toBeTruthy();
-    expect(posted(fetch)).toEqual([
-      [
-        "/api/payables/bills",
-        {
-          vendor_id: "v2", account: "a2", reference: "INV-9", bill_date: "2026-10-02",
-          due_on: "2026-10-30", amount: "120.00", memo: "Plumbing",
-        },
-      ],
-    ]);
-  });
-
-  it("enters a bill in an expense account, and puts another in one", async () => {
-    const fetch = server({ "/api/payables/bills": { id: "b9" } });
-    render(<BillsPage me={ME} />);
-    const second = await bill("Vendor 1 INV-2");
-    expect(within(second).getByTestId("expense-account").textContent).toBe("In no expense account yet.");
-    fireEvent.click(screen.getByRole("button", { name: "Record bill" }));
-
-    fireEvent.change(screen.getByLabelText("Vendor's reference"), { target: { value: "INV-9" } });
-    fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "120.00" } });
-    fireEvent.change(screen.getByLabelText("What for"), { target: { value: "Plumbing" } });
-    fireEvent.change(screen.getByLabelText("Expense account"), { target: { value: "e1" } });
-    expect(
-      within(screen.getByLabelText("Expense account")).getByRole("option", {
-        name: "Repairs (Schedule E line 14: Repairs)",
-      }),
-    ).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Enter bill" }));
-    expect(await screen.findByText("Bill INV-9 entered.")).toBeTruthy();
-    // The next bill starts in no expense account, not the last one's.
-    expect((screen.getByLabelText("Expense account") as HTMLSelectElement).value).toBe("");
-
-    const putIn = within(second).getByRole("button", { name: "Put in" });
-    expect((putIn as HTMLButtonElement).disabled).toBe(true);  // nothing chosen yet
-    fireEvent.change(within(second).getByLabelText("Expense account, INV-2"), { target: { value: "e2" } });
-    fireEvent.click(putIn);
-    expect(await screen.findByText("INV-2 is in Water.")).toBeTruthy();
-
-    const calls = posted(fetch);
-    expect(calls[0]?.[1]).toMatchObject({ reference: "INV-9", expense_account_id: "e1" });
-    expect(calls[1]).toEqual(["/api/payables/bills/b2/expense-account", { expense_account_id: "e2" }]);
-  });
-
-  it("records the owner's approval, sets a bill aside and pays one", async () => {
+  it("takes a bill's next step from its row's menu in a side panel that closes once recorded", async () => {
     const fetch = server();
     render(<BillsPage me={ME} />);
 
-    const first = await bill("Vendor 1 INV-1");
-    fireEvent.change(within(first).getByLabelText("Approved by"), { target: { value: "Owner 1" } });
-    fireEvent.change(within(first).getByLabelText("Approved on"), { target: { value: "2026-10-03" } });
-    fireEvent.click(within(first).getByRole("button", { name: "Record approval" }));
-    expect(await said("The owner's approval of INV-1 is recorded.")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for Vendor 1 INV-1" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Record approval" }));
+    const panel = screen.getByRole("dialog", { name: "Record approval" });
+    fireEvent.change(within(panel).getByLabelText("Approved by"), { target: { value: "Owner 1, by phone" } });
+    fireEvent.change(within(panel).getByLabelText("Approved on"), { target: { value: "2026-10-02" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Record approval" }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText("The owner's approval of INV-1 is recorded.")).toBeTruthy();
 
-    const second = await bill("Vendor 1 INV-2");
-    fireEvent.change(within(second).getByLabelText("Set aside on"), { target: { value: "2026-10-04" } });
-    fireEvent.click(within(second).getByRole("button", { name: "Set aside" }));
-    expect(await said("$200.00 is set aside for INV-2.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Vendor 1 INV-2" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Set aside" }));
+    fireEvent.change(within(screen.getByRole("dialog", { name: "Set aside" })).getByLabelText("Set aside on"), { target: { value: "2026-10-03" } });
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Set aside" })).getByRole("button", { name: "Set aside" }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    const third = await bill("Vendor 1 INV-3");
-    fireEvent.change(within(third).getByLabelText("Paid on"), { target: { value: "2026-10-05" } });
-    fireEvent.click(within(third).getByRole("button", { name: "Pay" }));
-    // Paying sends money out of trust: nothing goes until staff confirm the amount.
-    const ask = within(third).getByRole("alertdialog");
-    expect(ask.getAttribute("aria-label")).toBe("Pay $900.00 to Vendor 1 for INV-3 on 10/05/2026?");
-    expect(posted(fetch)).toHaveLength(2);
-    fireEvent.click(within(ask).getByRole("button", { name: "Confirm" }));
-    expect(await said("INV-3 is paid.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Vendor 1 INV-3" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Pay" }));
+    const pay = screen.getByRole("dialog", { name: "Pay" });
+    fireEvent.change(within(pay).getByLabelText("Sent by"), { target: { value: "EFT" } });
+    fireEvent.change(within(pay).getByLabelText("Paid on"), { target: { value: "2026-10-04" } });
+    fireEvent.click(within(pay).getByRole("button", { name: "Pay $900.00" }));
+    const confirm = screen.getByRole("alertdialog");
+    expect(confirm.textContent).toContain("Pay $900.00 to Vendor 1 for INV-3 by EFT on 10/04/2026?");
+    fireEvent.click(within(confirm).getByRole("button", { name: "Confirm" }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     expect(posted(fetch)).toEqual([
-      ["/api/payables/bills/b1/approval", { approved_on: "2026-10-03", approved_by: "Owner 1" }],
-      ["/api/payables/bills/b2/set-aside", { on: "2026-10-04" }],
-      ["/api/payables/bills/b3/pay", { on: "2026-10-05" }],
+      ["/api/payables/bills/b1/approval", { approved_on: "2026-10-02", approved_by: "Owner 1, by phone" }],
+      ["/api/payables/bills/b2/set-aside", { on: "2026-10-03" }],
+      ["/api/payables/bills/b3/pay", { on: "2026-10-04", method: "EFT" }],
     ]);
   });
 
-  it("records the owner's decline behind its own button, and says so once the bill leaves the list", async () => {
-    // Declined, the bill is no longer one still to pay: the refresh takes it off the list.
-    const open = [...BILLS];
-    const fetch = server({}, {}, open, (path) => {
-      if (path.endsWith("/decline")) open.splice(0, 1);
-    });
+  it("records an owner's decline, and keeps the panel open with why one was refused", async () => {
+    server({}, { "/api/payables/bills/b1/decline": "the owner declined this bill" });
     render(<BillsPage me={ME} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for Vendor 1 INV-1" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Record decline" }));
+    const panel = screen.getByRole("dialog", { name: "Record decline" });
+    fireEvent.change(within(panel).getByLabelText("Declined by"), { target: { value: "Owner 1" } });
+    fireEvent.change(within(panel).getByLabelText("Why"), { target: { value: "Not ours" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Record decline" }));
 
-    const first = await bill("Vendor 1 INV-1");
-    expect(within(first).queryByLabelText("Why")).toBeNull();
-    fireEvent.click(within(first).getByRole("button", { name: "Record a decline instead" }));
-    fireEvent.change(within(first).getByLabelText("Declined by"), { target: { value: "Owner 1, by phone" } });
-    fireEvent.change(within(first).getByLabelText("Declined on"), { target: { value: "2026-10-03" } });
-    fireEvent.change(within(first).getByLabelText("Why"), { target: { value: "Get a second quote" } });
-    fireEvent.click(within(first).getByRole("button", { name: "Record decline" }));
-    expect(await said("The owner's decline of INV-1 is recorded.")).toBeTruthy();
-    await waitFor(() => expect(screen.queryByRole("listitem", { name: "Vendor 1 INV-1" })).toBeNull());
-    expect(screen.getByText("The owner's decline of INV-1 is recorded.")).toBeTruthy();
-
-    expect(posted(fetch)).toEqual([
-      [
-        "/api/payables/bills/b1/decline",
-        { declined_on: "2026-10-03", declined_by: "Owner 1, by phone", reason: "Get a second quote" },
-      ],
-    ]);
+    expect((await within(panel).findByRole("alert")).textContent).toBe("the owner declined this bill");
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
   });
 
-  it("shows a declined bill with who declined it and why, and no step", async () => {
-    server({}, {}, [
+  it("records a bill split across expense accounts from Record bill", async () => {
+    const fetch = server();
+    render(<BillsPage me={ME} />);
+    await screen.findByRole("row", { name: "Vendor 1 INV-1" });
+    fireEvent.click(screen.getByRole("button", { name: "Record bill" }));
+    const panel = await screen.findByRole("dialog", { name: "Record bill" });
+
+    fireEvent.change(within(panel).getByLabelText("Ref #"), { target: { value: "FIX-1" } });
+    fireEvent.change(within(panel).getByLabelText("Bill date"), { target: { value: "2026-10-01" } });
+    fireEvent.change(within(panel).getByLabelText("Due"), { target: { value: "2026-10-20" } });
+    fireEvent.change(within(panel).getByLabelText("Amount"), { target: { value: "300.00" } });
+    fireEvent.change(within(panel).getByLabelText("Memo"), { target: { value: "Plumbing" } });
+    fireEvent.click(within(panel).getByLabelText("Split across expense accounts"));
+    fireEvent.change(within(panel).getByLabelText("Expense account, line 1"), { target: { value: "e1" } });
+    fireEvent.change(within(panel).getByLabelText("Amount, line 1"), { target: { value: "200.00" } });
+    fireEvent.change(within(panel).getByLabelText("Expense account, line 2"), { target: { value: "e2" } });
+    fireEvent.change(within(panel).getByLabelText("Amount, line 2"), { target: { value: "100.00" } });
+    expect(within(panel).getByTestId("lines-total").textContent).toBe("Lines come to $300.00 of $300.00.");
+    fireEvent.click(within(panel).getByRole("button", { name: "Record bill" }));
+
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(posted(fetch)).toEqual([[
+      "/api/payables/bills",
       {
-        ...BILL,
-        status: "declined",
-        declined_by: "Owner 1, in the owner portal",
-        decline_reason: "Get a second quote",
+        vendor_id: "v1", account: "a1", reference: "FIX-1", bill_date: "2026-10-01", due_on: "2026-10-20",
+        amount: "300.00", memo: "Plumbing",
+        lines: [{ expense_account_id: "e1", amount: "200.00" }, { expense_account_id: "e2", amount: "100.00" }],
       },
-    ]);
-    render(<BillsPage me={ME} />);
-
-    const first = await bill("Vendor 1 INV-1");
-    expect(within(first).getByTestId("status").textContent).toBe("declined");
-    expect(within(first).getByText(/Declined by Owner 1, in the owner portal: Get a second quote/)).toBeTruthy();
-    expect(within(first).queryAllByRole("button")).toEqual([]);
+    ]]);
   });
 
-  it("says whether the owner was emailed about a bill waiting for them", async () => {
-    server({}, {}, [
-      BILL,
-      { ...BILL, id: "b5", reference: "INV-5", owner_email: "waiting" },
-      { ...BILL, id: "b6", reference: "INV-6", owner_email: null },
-    ]);
-    render(<BillsPage me={ME} />);
-
-    expect(within(await bill("Vendor 1 INV-1")).getByText(/Emailed the owner/)).toBeTruthy();
-    expect(within(await bill("Vendor 1 INV-5")).getByText("An email to the owner waits to be sent.")).toBeTruthy();
-    expect(within(await bill("Vendor 1 INV-6")).getByText(/no active portal login/)).toBeTruthy();
-  });
-
-  it("lists the emails to owners and whether each went", async () => {
-    server();
-    render(<BillsPage me={ME} />);
-
-    const outbox = await screen.findByRole("list", { name: "Emails to owners" });
-    expect(outbox.textContent).toContain(
-      "10/02/2026 to owner1@example.com: A bill waits for your approval: Vendor 1, $750.00. Sent.",
-    );
-    expect(outbox.textContent).toContain("Not sent (SMTPRecipientsRefused: no such mailbox).");
-  });
-
-  it("shows why a step was refused on its bill", async () => {
-    server({}, { "/api/payables/bills/b2/set-aside": "the owner's account would go below zero" });
-    render(<BillsPage me={ME} />);
-
-    const second = await bill("Vendor 1 INV-2");
-    fireEvent.click(within(second).getByRole("button", { name: "Set aside" }));
-
-    expect(await within(second).findByText("the owner's account would go below zero")).toBeTruthy();
-  });
-
-  it("adds, enters and stops recurring bills", async () => {
-    const fetch = server({ "/api/payables/recurring/enter": { entered: 2 } });
-    render(<BillsPage me={ME} />);
-    expect(
-      await screen.findByText(
-        "Vendor 2: $80.00 on day 5 of each month from 01/01/2026, Owner 1, Property 1 (LAWN)",
-      ),
-    ).toBeTruthy();
-
-    fireEvent.change(screen.getByLabelText("Enter bills due through"), { target: { value: "2026-10-31" } });
-    fireEvent.click(screen.getByRole("button", { name: "Enter recurring bills" }));
-    expect(await screen.findByText("2 bills entered.")).toBeTruthy();
-
-    // Stopping asks for the last day first.
-    expect(screen.queryByLabelText("Last day, LAWN")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
-    fireEvent.change(screen.getByLabelText("Last day, LAWN"), { target: { value: "2026-12-31" } });
-    fireEvent.click(screen.getByRole("button", { name: "Stop it" }));
-    expect(await screen.findByText("LAWN stops after 12/31/2026.")).toBeTruthy();
-
-    fireEvent.change(screen.getByLabelText("Recurring vendor"), { target: { value: "v1" } });
-    fireEvent.change(screen.getByLabelText("For owner and property"), { target: { value: "a2" } });
-    fireEvent.change(screen.getByLabelText("Reference prefix"), { target: { value: "POOL" } });
-    fireEvent.change(screen.getByLabelText("Monthly amount"), { target: { value: "60.00" } });
-    fireEvent.change(screen.getByLabelText("For"), { target: { value: "Pool service" } });
-    fireEvent.change(screen.getByLabelText("Day of the month"), { target: { value: "15" } });
-    fireEvent.change(screen.getByLabelText("First day"), { target: { value: "2026-11-01" } });
-    fireEvent.click(screen.getByRole("button", { name: "Add recurring bill" }));
-    expect(await screen.findByText("POOL is entered each month.")).toBeTruthy();
-
-    expect(posted(fetch)).toEqual([
-      ["/api/payables/recurring/enter", { on: "2026-10-31" }],
-      ["/api/payables/recurring/r1/end", { ends_on: "2026-12-31" }],
-      [
-        "/api/payables/recurring",
-        {
-          vendor_id: "v1", account: "a2", reference_prefix: "POOL", amount: "60.00",
-          memo: "Pool service", day_of_month: 15, starts_on: "2026-11-01",
-        },
-      ],
-    ]);
-  });
-
-  it("adds a recurring bill in an expense account, and moves one to another", async () => {
+  it("lists recurring bills, adds one and stops one, each in a side panel", async () => {
     const fetch = server();
     render(<BillsPage me={ME} />);
-    const lawn = await screen.findByRole("listitem", { name: "Vendor 2 LAWN" });
-    expect(within(lawn).getByTestId("expense-account").textContent).toBe("In no expense account yet.");
+    fireEvent.click(await screen.findByRole("tab", { name: "Recurring" }));
 
-    fireEvent.change(within(lawn).getByLabelText("Expense account, LAWN"), { target: { value: "e1" } });
-    fireEvent.click(within(lawn).getByRole("button", { name: "Put in" }));
-    expect(await screen.findByText("LAWN is entered in Repairs from now on.")).toBeTruthy();
+    const lawn = await screen.findByRole("row", { name: "Vendor 2 LAWN" });
+    expect(within(lawn).getAllByRole("cell").map((c) => c.textContent).slice(0, 7)).toEqual([
+      "Vendor 2", "Owner 1, Property 1", "LAWN", "$80.00", "5", "01/01/2026", "",
+    ]);
+    fireEvent.click(within(lawn).getByRole("button", { name: "Actions for Vendor 2 LAWN" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Stop it" }));
+    const stop = screen.getByRole("dialog", { name: "Stop recurring bill" });
+    fireEvent.change(within(stop).getByLabelText("Last day"), { target: { value: "2026-12-31" } });
+    fireEvent.click(within(stop).getByRole("button", { name: "Stop it" }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    fireEvent.click(screen.getByText("Add a recurring bill"));
-    fireEvent.change(screen.getByLabelText("Reference prefix"), { target: { value: "POOL" } });
-    fireEvent.change(screen.getByLabelText("Monthly amount"), { target: { value: "60.00" } });
-    fireEvent.change(screen.getByLabelText("For"), { target: { value: "Pool care" } });
-    fireEvent.change(screen.getByLabelText("Recurring expense account"), { target: { value: "e2" } });
+    fireEvent.click(within(screen.getByRole("row", { name: "Vendor 2 LAWN" })).getByRole("button", { name: "Actions for Vendor 2 LAWN" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Change expense account" }));
+    const moving = screen.getByRole("dialog", { name: "Expense account" });
+    fireEvent.change(within(moving).getByLabelText("Expense account"), { target: { value: "e2" } });
+    fireEvent.click(within(moving).getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText("LAWN is entered in Water from now on.")).toBeTruthy();
+
     fireEvent.click(screen.getByRole("button", { name: "Add recurring bill" }));
-    expect(await screen.findByText("POOL is entered each month.")).toBeTruthy();
+    const adding = screen.getByRole("dialog", { name: "Add recurring bill" });
+    fireEvent.change(within(adding).getByLabelText("Ref # prefix"), { target: { value: "HOA" } });
+    fireEvent.change(within(adding).getByLabelText("Monthly amount"), { target: { value: "120.00" } });
+    fireEvent.change(within(adding).getByLabelText("Memo"), { target: { value: "Dues" } });
+    fireEvent.change(within(adding).getByLabelText("First day"), { target: { value: "2026-11-01" } });
+    fireEvent.change(within(adding).getByLabelText("Expense account"), { target: { value: "e1" } });
+    fireEvent.click(within(adding).getByRole("button", { name: "Add recurring bill" }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    const calls = posted(fetch);
-    expect(calls[0]).toEqual(["/api/payables/recurring/r1/expense-account", { expense_account_id: "e1" }]);
-    expect(calls[1]?.[1]).toMatchObject({ reference_prefix: "POOL", expense_account_id: "e2" });
+    expect(posted(fetch)).toEqual([
+      ["/api/payables/recurring/r1/end", { ends_on: "2026-12-31" }],
+      ["/api/payables/recurring/r1/expense-account", { expense_account_id: "e2" }],
+      ["/api/payables/recurring", {
+        vendor_id: "v1", account: "a1", reference_prefix: "HOA", amount: "120.00", memo: "Dues", day_of_month: 1,
+        starts_on: "2026-11-01", expense_account_id: "e1",
+      }],
+    ]);
   });
 
-  it("says when every bill is paid, and when there is nothing to bill yet", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (path: string) =>
-        new Response(
-          JSON.stringify(path === "/api/setup" ? { ...BOOKS, vendors: [] } : []),
-          { status: 200 },
-        ),
-      ),
-    );
+  it("says when a tab has nothing, and when the bills can't be read", async () => {
+    server({}, {}, []);
     render(<BillsPage me={ME} />);
+    expect((await screen.findByTestId("empty-state")).textContent).toContain("Nothing left to pay.");
+    fireEvent.click(screen.getByRole("tab", { name: "Declined" }));
+    expect((await screen.findByTestId("empty-state")).textContent).toContain("No bill was declined.");
+    cleanup();
 
-    expect(await screen.findByText("Nothing left to pay: every bill is paid or declined.")).toBeTruthy();
-    expect(await screen.findByText("No recurring bills yet.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Record bill" }));
-    expect(await screen.findByText("Add a vendor and a property with an owner in Setup first.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Close" }));
-    fireEvent.click(screen.getByRole("tab", { name: "All" }));
-    expect(await screen.findByText("No bills yet.")).toBeTruthy();
-  });
+    server({ "/api/payables/recurring": [] });
+    render(<BillsPage me={ME} />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Recurring" }));
+    expect((await screen.findByTestId("empty-state")).textContent).toContain("No recurring bills yet.");
+    cleanup();
 
-  it("says when the bills can't be read", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })),
-    );
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));
     render(<BillsPage me={ME} />);
     expect((await screen.findAllByRole("alert"))[0]?.textContent).toBe("sign in first");
   });

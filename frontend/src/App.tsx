@@ -5,6 +5,8 @@ import { Notice } from "./components/Notice";
 import { ApplicationStatusPage } from "./pages/ApplicationStatusPage";
 import { ApplyPage } from "./pages/ApplyPage";
 import { BillsPage } from "./pages/BillsPage";
+import { BillPage } from "./pages/BillPage";
+import { PayBillsPage } from "./pages/PayBillsPage";
 import { BudgetsPage } from "./pages/BudgetsPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ESignPage } from "./pages/ESignPage";
@@ -98,6 +100,7 @@ const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/renewals": (me) => <RenewalsPage me={me} />,
   "/banking": (me) => <BankingPage me={me} />,
   "/bills": (me) => <BillsPage me={me} />,
+  "/pay-bills": (me) => <PayBillsPage me={me} />,
   "/general-ledger": (me) => <GeneralLedgerPage me={me} />,
   "/journal": (me) => <JournalPage me={me} />,
   "/owner-draws": (me) => <PayOwnersPage me={me} />,
@@ -123,6 +126,7 @@ const RECORDS: [RegExp, (me: Me, id: string) => React.ReactNode][] = [
   [/^\/tenants\/([0-9a-f-]{36})$/, (me, id) => <TenantPage me={me} id={id} />],
   [/^\/owners\/([0-9a-f-]{36})$/, (me, id) => <OwnerPage me={me} id={id} />],
   [/^\/bank-accounts\/([0-9a-f-]{36})$/, (me, id) => <ReconcilePage me={me} id={id} />],
+  [/^\/bills\/([0-9a-f-]{36})$/, (me, id) => <BillPage me={me} id={id} />],
   [/^\/work-orders\/([0-9a-f-]{36})$/, (me, id) => <WorkOrderPage me={me} id={id} />],
   [/^\/vendors\/([0-9a-f-]{36})$/, (me, id) => <VendorPage me={me} id={id} />],
 ];

@@ -7,8 +7,8 @@ import {
 } from "./today";
 
 const BILL: Bill = {
-  id: "b1", vendor: "Vendor A", reference: "INV-1", account: "a1", owner: "Owner A",
-  property: "Property 1", bill_date: "2026-10-01", due_on: "2026-10-16", amount: "1200.00",
+  id: "b1", vendor_id: "v1", vendor: "Vendor A", reference: "INV-1", account: "a1", owner: "Owner A",
+  property_id: "pr1", property: "Property 1", split: false, overdue: false, bill_date: "2026-10-01", due_on: "2026-10-16", amount: "1200.00",
   memo: "Repair", work_order_id: null, expense_account_id: null, expense_account: null,
   approval_limit: "500.00", approved_by: null,
   declined_by: null, decline_reason: null, owner_email: null, status: "needs approval",
