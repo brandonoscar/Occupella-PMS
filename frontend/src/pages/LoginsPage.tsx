@@ -8,6 +8,7 @@ import { Notice } from "../components/Notice";
 import { PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import { STAFF_NAV } from "./staffNav";
+import { Said } from "../components/Said";
 
 type Person = {
   kind: "staff" | "owner" | "tenant";
@@ -82,7 +83,7 @@ export function LoginsPage({ me }: { me: Me }) {
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title="Logins" />
       <Notice tone="error">{error}</Notice>
-      <Notice tone="info">{done}</Notice>
+      <Said>{done}</Said>
       {people === null ? (
         <Notice tone="info">Loading</Notice>
       ) : (

@@ -10,6 +10,8 @@ import type { CustomRole, CustomRoles } from "../customRoles";
 import { roleSummary } from "../customRoles";
 import type { Member } from "../staff";
 import { useRecord } from "./useRecord";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 // The company's custom roles: the areas each may change and who holds it. A staff member given
 // custom roles changes only what their roles allow and still sees everything; one with none
@@ -43,10 +45,10 @@ export function CustomRolesCard({ members, admin }: { members: Member[]; admin: 
           ))}
         </ul>
       )}
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{refused}</Notice>
       {admin && (
-        <form
+        <Form
           className="mt-4 flex flex-wrap items-end gap-3"
           onSubmit={async (event) => {
             event.preventDefault();
@@ -59,7 +61,7 @@ export function CustomRolesCard({ members, admin }: { members: Member[]; admin: 
           <Field label="New role" id="custom-role-name" required maxLength={100} value={name}
             onChange={(e) => setName(e.target.value)} />
           <Button type="submit">Make role</Button>
-        </form>
+        </Form>
       )}
     </Card>
   );

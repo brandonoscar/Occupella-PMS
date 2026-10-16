@@ -16,6 +16,8 @@ import { COVERAGES, standingTone, vendorInsuranceHref } from "../vendors";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 // Staff's vendors: each one's W-9 and insurance, how it stands today (current, running out
 // within 30 days, expired), and recording a policy or its renewal. Vendors are added in Setup.
@@ -97,7 +99,7 @@ function PolicyCard({ vendors, refresh }: { vendors: Vendor[]; refresh: () => vo
   const [limit, setLimit] = useState("");
   return (
     <Card title="Record a policy">
-      <form
+      <Form
         className="flex flex-wrap items-end gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
@@ -135,8 +137,8 @@ function PolicyCard({ vendors, refresh }: { vendors: Vendor[]; refresh: () => vo
         <Field label="Limit (optional)" id="policy-limit" inputMode="decimal" value={limit}
           onChange={(e) => setLimit(e.target.value)} />
         <Button type="submit">Record policy</Button>
-      </form>
-      <Notice tone="info">{said}</Notice>
+      </Form>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </Card>
   );

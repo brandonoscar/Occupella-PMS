@@ -12,6 +12,7 @@ import { InvitePage } from "./pages/InvitePage";
 import { ListingsPage } from "./pages/ListingsPage";
 import { OwnerHome } from "./pages/OwnerHome";
 import { DocumentsPage } from "./pages/DocumentsPage";
+import { GroupsPage } from "./pages/GroupsPage";
 import { MoveOutPage } from "./pages/MoveOutPage";
 import { GeneralLedgerPage } from "./pages/GeneralLedgerPage";
 import { OwnerDrawsPage } from "./pages/OwnerDrawsPage";
@@ -106,6 +107,7 @@ const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/settings": (me) => <SettingsPage me={me} />,
   "/settings/staff": (me) => <StaffPage me={me} />,
   "/settings/logins": (me) => <LoginsPage me={me} />,
+  "/settings/groups": (me) => <GroupsPage me={me} />,
   "/settings/setup": (me) => <SetupPage me={me} />,
   "/settings/import": (me) => <SwitchPage me={me} />,
 };

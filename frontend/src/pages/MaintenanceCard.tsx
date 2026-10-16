@@ -5,6 +5,7 @@ import { Notice } from "../components/Notice";
 import { Card } from "../components/Shell";
 import type { StaffRequest } from "../maintenance";
 import { isOpen, statusLabel, when } from "../maintenance";
+import { Said } from "../components/Said";
 
 type Vendor = { id: string; name: string };
 
@@ -65,7 +66,7 @@ export function MaintenanceCard() {
         />
         Show done and closed requests too
       </label>
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
       {requests === null ? (
         <Notice tone="info">Loading</Notice>

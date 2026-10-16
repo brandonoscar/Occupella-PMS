@@ -3,6 +3,7 @@ import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { day, usDate } from "../money";
 import type { RentLease } from "../rent";
+import { Form } from "../components/Form";
 
 type Recorder = <T>(path: string, body: object, done: (answer: T) => string) => Promise<boolean>;
 
@@ -14,7 +15,7 @@ export function InsuranceForms({ lease, record }: { lease: RentLease; record: Re
   const [from, setFrom] = useState(day(new Date()));
   return (
     <div className="flex flex-col gap-4">
-      <form
+      <Form
         className="flex flex-wrap items-end gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
@@ -34,7 +35,7 @@ export function InsuranceForms({ lease, record }: { lease: RentLease; record: Re
         <Field label="Asked from" id={`insurance-from-${lease.id}`} type="date" required value={from}
           onChange={(e) => setFrom(e.target.value)} />
         <Button type="submit" variant="secondary">Set insurance terms</Button>
-      </form>
+      </Form>
       <PolicyForm path={`/api/rent/leases/${lease.id}/renters-insurance`} id={lease.id} record={record} />
     </div>
   );
@@ -50,7 +51,7 @@ export function PolicyForm({ path, id, record }: { path: string; id: string; rec
   const [limit, setLimit] = useState("");
   const [named, setNamed] = useState(false);
   return (
-    <form
+    <Form
       className="flex flex-wrap items-end gap-3"
       onSubmit={async (event) => {
         event.preventDefault();
@@ -80,6 +81,6 @@ export function PolicyForm({ path, id, record }: { path: string; id: string; rec
         The landlord is named an interested party
       </label>
       <Button type="submit" variant="secondary">Record policy</Button>
-    </form>
+    </Form>
   );
 }

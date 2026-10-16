@@ -10,6 +10,8 @@ import { OwnerPage, OwnersPage, leasingFeeSaid } from "./OwnersPage";
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  window.history.pushState(null, "", "/");
+  window.localStorage.clear();
 });
 
 const ME: Me = {
@@ -112,7 +114,9 @@ const owner = (name: string) => screen.findByRole("listitem", { name });
 
 describe("OwnersPage", () => {
   it("lists the owners a page at a time, each with their properties, money held and contact", async () => {
-    const fetch = server();
+    const fetch = server({
+      "/api/property-groups": { groups: [], properties: [{ id: "p2", name: "Property 2" }] },
+    });
     render(<OwnersPage me={ME} />);
 
     const first = await screen.findByRole("row", { name: "Owner 1" });
@@ -122,11 +126,13 @@ describe("OwnersPage", () => {
     expect(within(first).getByRole("link", { name: "Owner 1" }).getAttribute("href")).toBe("/owners/o1");
     expect(screen.getByRole("navigation", { name: "Pages" }).textContent).toContain("1–2 of 2");
 
-    fireEvent.change(screen.getByLabelText("Find an owner or property"), { target: { value: "Property 2" } });
-    fireEvent.click(screen.getByLabelText("Archived only"));
+    const picker = screen.getByRole("combobox", { name: "Properties shown" });
+    await within(picker).findByRole("option", { name: "Property 2" });
+    fireEvent.change(picker, { target: { value: "property:p2" } });
+    fireEvent.change(screen.getByRole("combobox", { name: "Status" }), { target: { value: "archived" } });
     await vi.waitFor(() =>
       expect(fetch.mock.calls.map(([path]) => path)).toContain(
-        "/api/owners?page=1&archived=true&q=Property+2",
+        "/api/owners?page=1&archived=true&property=p2",
       ),
     );
   });

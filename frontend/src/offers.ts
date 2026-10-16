@@ -40,7 +40,7 @@ export type Person = { name: string; email: string };
 export const MAX_DOCUMENT = 5_000_000;
 
 export function term(startsOn: string, endsOn: string | null): string {
-  return `${usDate(startsOn)} to ${endsOn ? usDate(endsOn) : "month to month"}`;
+  return `${usDate(startsOn)} – ${endsOn ? usDate(endsOn) : "Month to month"}`;
 }
 
 // Where an offer stands, for staff.

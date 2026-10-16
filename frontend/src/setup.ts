@@ -116,6 +116,6 @@ export function nsfFeeSummary(terms: NsfFee | null): string {
 }
 
 export function leaseSummary(lease: Lease): string {
-  const term = lease.ends_on ? `${usDate(lease.starts_on)} to ${usDate(lease.ends_on)}` : `from ${usDate(lease.starts_on)}, month to month`;
+  const term = `${usDate(lease.starts_on)} – ${lease.ends_on ? usDate(lease.ends_on) : "Month to month"}`;
   return `${lease.tenants.join(", ")}: ${term}, ${money(lease.monthly_rent)} a month`;
 }

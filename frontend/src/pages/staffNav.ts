@@ -63,6 +63,7 @@ export const STAFF_NAV: NavEntry[] = [
 export const SETTINGS = [
   { href: "/settings/staff", label: "Staff and roles" },
   { href: "/settings/logins", label: "Logins" },
+  { href: "/settings/groups", label: "Property groups" },
   { href: "/settings/setup", label: "Company setup" },
   { href: "/settings/import", label: "Import from another PMS" },
 ] as const;

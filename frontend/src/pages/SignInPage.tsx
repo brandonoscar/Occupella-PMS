@@ -6,6 +6,7 @@ import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Wordmark } from "../components/Shell";
 import { navigate } from "../router";
+import { Form } from "../components/Form";
 
 export const PMC_KEY = "pms.pmc";
 
@@ -51,7 +52,7 @@ export function SignInPage() {
       <Wordmark />
       <h1 className="font-display text-lg font-semibold">Sign in</h1>
       {pmcId ? (
-        <form className="flex flex-col gap-4" onSubmit={submit}>
+        <Form className="flex flex-col gap-4" onSubmit={submit}>
           <Field label="Email" id="email" type="email" autoComplete="username" value={email}
             onChange={(e) => setEmail(e.target.value)} required />
           <Field label="Password" id="password" type="password" autoComplete="current-password"
@@ -65,7 +66,7 @@ export function SignInPage() {
           <Button type="submit" disabled={busy}>
             Sign in
           </Button>
-        </form>
+        </Form>
       ) : (
         <Notice tone="info">
           Open the sign-in link your property manager sent you, or the invite link to set your

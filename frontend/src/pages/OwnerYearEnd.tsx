@@ -7,6 +7,7 @@ import { Card } from "../components/Shell";
 import { money } from "../money";
 import type { YearEnd, YearEndData } from "../yearEnd";
 import { groupYearEnd, lastYear, partLabel } from "../yearEnd";
+import { Form } from "../components/Form";
 
 // Cells take the table style's padding (less of it on a phone); only their alignment is set here.
 const CELL = "text-left";
@@ -38,7 +39,7 @@ export function OwnerYearEnd() {
 
   return (
     <Card title="Year-end package">
-      <form
+      <Form
         className="mb-6 flex flex-wrap items-end gap-4"
         onSubmit={(event) => {
           event.preventDefault();
@@ -54,7 +55,7 @@ export function OwnerYearEnd() {
           <LinkButton href={download("xlsx")}>Excel</LinkButton>
           <LinkButton href={statement}>The year&apos;s statement</LinkButton>
         </div>
-      </form>
+      </Form>
       <Notice tone="error">{error}</Notice>
       {shown && (
         <div className="flex flex-col gap-6">

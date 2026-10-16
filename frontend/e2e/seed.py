@@ -468,6 +468,7 @@ FEATURES = (
     "people",
     "general-ledger",
     "maintenance-pages",
+    "groups",
 )
 
 

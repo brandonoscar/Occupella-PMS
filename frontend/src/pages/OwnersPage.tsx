@@ -31,8 +31,12 @@ import type { Portfolio } from "../setup";
 import { GoLink } from "./NeedsAttention";
 import { FilesCard } from "./FilesCard";
 import { STAFF_NAV } from "./staffNav";
+import { ListBar } from "../components/ListBar";
+import { scopeParams, useScope } from "../scope";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
@@ -41,7 +45,7 @@ const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 // company's fees taken out of trust, and a lease's leasing fee. The PMS sends no money itself.
 export function OwnersPage({ me }: { me: Me }) {
   const [page, setPage] = useState<Paged<OwnerLine> | null>(null);
-  const [q, setQ] = useState("");
+  const [scope, setScope] = useScope();
   const [archived, setArchived] = useState(false);
   const [number, setNumber] = useState(1);
   const [companyFees, setCompanyFees] = useState<CompanyFees[] | null>(null);
@@ -51,10 +55,9 @@ export function OwnersPage({ me }: { me: Me }) {
   const failed = (why: unknown) => setError(why instanceof ApiError ? why.detail : String(why));
 
   useEffect(() => {
-    const query = new URLSearchParams({ page: String(number), archived: String(archived) });
-    if (q.trim()) query.set("q", q.trim());
+    const query = new URLSearchParams({ page: String(number), archived: String(archived), ...scopeParams(scope) });
     api.get<Paged<OwnerLine>>(`/api/owners?${query}`).then(setPage).catch(failed);
-  }, [q, archived, number, runs]);
+  }, [scope, archived, number, runs]);
   useEffect(() => {
     api.get<CompanyFees[]>("/api/payables/company-fees").then(setCompanyFees).catch(failed);
   }, [runs]);
@@ -66,15 +69,8 @@ export function OwnersPage({ me }: { me: Me }) {
   return (
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title="Owners" />
-      <div className="flex flex-wrap items-end gap-4">
-        <Field label="Find an owner or property" id="find-owner" type="search" value={q}
-          onChange={(event) => { setQ(event.target.value); setNumber(1); }} />
-        <label className="flex items-center gap-2 pb-2 text-sm text-ink-muted">
-          <input type="checkbox" checked={archived}
-            onChange={(event) => { setArchived(event.target.checked); setNumber(1); }} />
-          Archived only
-        </label>
-      </div>
+      <ListBar scope={scope} onScope={(next) => { setScope(next); setNumber(1); }}
+        archived={archived} onArchived={(next) => { setArchived(next); setNumber(1); }} />
       <Notice tone="error">{error}</Notice>
       {page === null ? (
         !error && <Notice tone="info">Loading</Notice>
@@ -142,7 +138,7 @@ export function OwnerPage({ me, id }: { me: Me; id: string }) {
             <RecordActions path={`/api/owners/${id}`} name={owner.name} archived={owner.archived}
               onChange={(done) => { setSaid(done); refresh(); }} />
           } />
-          <Notice tone="info">{said}</Notice>
+          <Said>{said}</Said>
           <ContactCard path={`/api/owners/${id}`} contact={owner.contact} refresh={refresh} name={owner.name} />
           <Card title="Properties">
             {owner.accounts.length === 0 ? (
@@ -197,7 +193,7 @@ function OwnerRow({ owner, refresh }: { owner: OwnerMoney; refresh: () => void }
           <ContributionForm owner={owner} record={record} />
         </div>
       </details>
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </li>
   );
@@ -210,7 +206,7 @@ export function DrawForm({ owner, record }: { owner: OwnerMoney; record: Recorde
   const { ask, prompt } = useConfirm();
   return (
     <>
-      <form
+      <Form
         className="flex flex-wrap items-end gap-3"
         onSubmit={(event) => {
           event.preventDefault();
@@ -230,7 +226,7 @@ export function DrawForm({ owner, record }: { owner: OwnerMoney; record: Recorde
         <Field label="Paid out on" id={`draw-on-${owner.account}`} type="date" required value={on}
           onChange={(e) => setOn(e.target.value)} />
         <Button type="submit">Record draw</Button>
-      </form>
+      </Form>
       {prompt}
     </>
   );
@@ -242,7 +238,7 @@ function ContributionForm({ owner, record }: { owner: OwnerMoney; record: Record
   const [on, setOn] = useState(day(new Date()));
   const [memo, setMemo] = useState("");
   return (
-    <form
+    <Form
       className="flex flex-wrap items-end gap-3"
       onSubmit={async (event) => {
         event.preventDefault();
@@ -262,7 +258,7 @@ function ContributionForm({ owner, record }: { owner: OwnerMoney; record: Record
       <Field label="For" id={`contribution-memo-${owner.account}`} maxLength={200} value={memo}
         onChange={(e) => setMemo(e.target.value)} />
       <Button type="submit" variant="secondary">Record contribution</Button>
-    </form>
+    </Form>
   );
 }
 
@@ -275,7 +271,7 @@ function FeesCard({ refresh }: { refresh: () => void }) {
   const [fees, setFees] = useState<Fee[] | null>(null);
   return (
     <Card title="Management fees">
-      <form
+      <Form
         className="flex flex-wrap items-end gap-3"
         onSubmit={(event) => {
           event.preventDefault();
@@ -295,7 +291,7 @@ function FeesCard({ refresh }: { refresh: () => void }) {
         <Field label="Taken on" id="fee-on" type="date" required value={on}
           onChange={(e) => setOn(e.target.value)} />
         <Button type="submit" variant="secondary">Take fees</Button>
-      </form>
+      </Form>
       {fees !== null && (
         <ul className="mt-4 flex flex-col gap-1 text-sm" aria-label="Fees taken">
           {fees.length === 0 ? (
@@ -344,7 +340,7 @@ function CompanyFeesRow({ fees, today, refresh }: { fees: CompanyFees; today: st
       </div>
       <p className="text-sm text-ink-subtle" data-testid="company-fees">{companyFeesLabel(fees)}</p>
       {fees.since !== null && (
-        <form
+        <Form
           className="flex flex-wrap items-end gap-3"
           onSubmit={(event) => {
             event.preventDefault();
@@ -364,10 +360,10 @@ function CompanyFeesRow({ fees, today, refresh }: { fees: CompanyFees; today: st
           <Field label="Paid out on" id={`company-fees-on-${fees.bank_account_id}`} type="date"
             required value={on} onChange={(e) => setOn(e.target.value)} />
           <Button type="submit">Take out company fees</Button>
-        </form>
+        </Form>
       )}
       {prompt}
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </li>
   );
@@ -397,7 +393,7 @@ function LeasingFeeCard({ books, refresh }: { books: Portfolio; refresh: () => v
   if (leases.length === 0) return null;
   return (
     <Card title="Leasing fee">
-      <form
+      <Form
         className="flex flex-wrap items-end gap-3"
         onSubmit={(event) => {
           event.preventDefault();
@@ -424,8 +420,8 @@ function LeasingFeeCard({ books, refresh }: { books: Portfolio; refresh: () => v
         <Field label="Taken on" id="leasing-on" type="date" required value={on}
           onChange={(e) => setOn(e.target.value)} />
         <Button type="submit" variant="secondary">Take leasing fee</Button>
-      </form>
-      <Notice tone="info">{said}</Notice>
+      </Form>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </Card>
   );

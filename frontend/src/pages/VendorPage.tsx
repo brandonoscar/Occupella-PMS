@@ -14,6 +14,7 @@ import { STATUS } from "../workOrders";
 import { GoLink } from "./NeedsAttention";
 import { FilesCard } from "./FilesCard";
 import { STAFF_NAV } from "./staffNav";
+import { Said } from "../components/Said";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
@@ -46,7 +47,7 @@ export function VendorPage({ me, id }: { me: Me; id: string }) {
             <GoLink href="/vendors" className={LINK}>Vendors</GoLink>
             <Badge tone={vendor.w9_on_file ? "positive" : "caution"}>{vendor.w9_on_file ? "W-9 on file" : "no W-9"}</Badge>
           </p>
-          <Notice tone="info">{said}</Notice>
+          <Said>{said}</Said>
           <ContactCard path={`/api/vendors/${id}`} contact={vendor.contact} refresh={refresh} name={vendor.name} />
           <Card title="Insurance">
             {vendor.insurance.length === 0 ? (

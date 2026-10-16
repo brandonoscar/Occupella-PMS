@@ -57,7 +57,7 @@ describe("RenewalsCard", () => {
 
     const renewal = await screen.findByRole("listitem", { name: "Renewal of Unit 1" });
     expect(renewal.textContent).toContain(
-      "Synthetic PMC offers a renewal of Property 1, Unit 1: 07/01/2027 to 06/30/2028, $1,250.00 a month.",
+      "Synthetic PMC offers a renewal of Property 1, Unit 1: 07/01/2027 – 06/30/2028, $1,250.00 a month.",
     );
     expect(within(renewal).getByText("Signing: Tenant 1, Tenant 2 (signed)")).toBeTruthy();
     expect(within(renewal).getByRole("link", { name: "Read the lease (PDF)" }).getAttribute("href")).toBe(

@@ -32,6 +32,11 @@ import {
   requestId,
 } from "../rent";
 import { STAFF_NAV } from "./staffNav";
+import { ListBar } from "../components/ListBar";
+import { RowMenu } from "../components/RowMenu";
+import { scopeParams, useScope } from "../scope";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 function detail(failed: unknown): string {
   return failed instanceof ApiError ? failed.detail : String(failed);
@@ -43,7 +48,7 @@ function detail(failed: unknown): string {
 // it takes no payments itself.
 export function RentPage({ me }: { me: Me }) {
   const [page, setPage] = useState<Paged<RentRollRow> | null>(null);
-  const [q, setQ] = useState("");
+  const [scope, setScope] = useScope();
   const [show, setShow] = useState<"current" | "owing" | "all">("current");
   const [number, setNumber] = useState(1);
   const [error, setError] = useState("");
@@ -51,22 +56,20 @@ export function RentPage({ me }: { me: Me }) {
   const [runs, setRuns] = useState(0);
 
   useEffect(() => {
-    const query = new URLSearchParams({ page: String(number), show });
-    if (q.trim()) query.set("q", q.trim());
+    const query = new URLSearchParams({ page: String(number), show, ...scopeParams(scope) });
     api
       .get<Paged<RentRollRow>>(`/api/leases?${query}`)
       .then(setPage)
       .catch((failed) => setError(detail(failed)));
-  }, [q, show, number, runs]);
+  }, [scope, show, number, runs]);
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title="Rent roll" />
+      <ListBar scope={scope} onScope={(next) => { setScope(next); setNumber(1); }} />
       <RunsCard refresh={() => setRuns((n) => n + 1)} />
       <Card title="Leases">
         <div className="mb-4 flex flex-wrap items-end gap-4">
-          <Field label="Find a tenant, unit or property" id="find-lease" type="search" value={q}
-            onChange={(event) => { setQ(event.target.value); setNumber(1); }} />
           <Select label="Show" id="show-leases" value={show}
             onChange={(event) => { setShow(event.target.value as typeof show); setNumber(1); }}>
             <option value="current">In effect today</option>
@@ -77,7 +80,7 @@ export function RentPage({ me }: { me: Me }) {
         {page === null ? (
           <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
         ) : page.items.length === 0 ? (
-          <EmptyState icon={FileText} title={q.trim() || show !== "current" ? "No leases found." : "No lease is in effect today."} />
+          <EmptyState icon={FileText} title={scope.group || scope.property || show !== "current" ? "No leases found." : "No lease is in effect today."} />
         ) : (
           <>
             <Wide>
@@ -142,22 +145,22 @@ function RunsCard({ refresh }: { refresh: () => void }) {
   return (
     <Card title="Rent run and late fees">
       <div className="flex flex-wrap items-end gap-6">
-        <form className="flex items-end gap-3" onSubmit={(e) => { e.preventDefault(); run<RentRun>("charge-rent", due, rentRunSummary); }}>
+        <Form className="flex items-end gap-3" onSubmit={(e) => { e.preventDefault(); run<RentRun>("charge-rent", due, rentRunSummary); }}>
           <Field label="Rent due on" id="rent-due" type="date" required value={due}
             onChange={(e) => setDue(e.target.value)} />
           <Button type="submit" variant="secondary">Charge rent</Button>
-        </form>
-        <form className="flex items-end gap-3" onSubmit={(e) => { e.preventDefault(); run("late-fees", asOf, lateFees); }}>
+        </Form>
+        <Form className="flex items-end gap-3" onSubmit={(e) => { e.preventDefault(); run("late-fees", asOf, lateFees); }}>
           <Field label="Late fees as of" id="late-as-of" type="date" required value={asOf}
             onChange={(e) => setAsOf(e.target.value)} />
           <Button type="submit" variant="secondary">Assess late fees</Button>
-        </form>
+        </Form>
       </div>
       <p className="mt-3 text-sm text-ink-subtle">
         Each lease is charged its rent and recurring charges once per due date, and each rent at
         most one late fee.
       </p>
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </Card>
   );
@@ -260,7 +263,7 @@ export function LeaseRow({ lease, refresh }: { lease: RentLease; refresh: () => 
           <DepositForm lease={lease} record={record} />
         </div>
       </details>
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </li>
   );
@@ -268,8 +271,8 @@ export function LeaseRow({ lease, refresh }: { lease: RentLease; refresh: () => 
 
 type Recorder = <T>(path: string, body: object, done: (answer: T) => string) => Promise<boolean>;
 
-// A payment as a row; a bounce is asked for, with the day it came back, before it is recorded,
-// since it moves the money back and charges the property's NSF fee.
+// A payment as a row; It bounced is in its ⋯ menu and asks for the day it came back, naming the
+// amount, before it is recorded, since it moves the money back and charges the property's NSF fee.
 function PaymentRow({ payment, record }: { payment: RentLease["payments"][number]; record: Recorder }) {
   const [asking, setAsking] = useState(false);
   const [on, setOn] = useState(day(new Date()));
@@ -284,7 +287,7 @@ function PaymentRow({ payment, record }: { payment: RentLease["payments"][number
         {payment.bounced ? (
           <Badge tone="danger">Bounced</Badge>
         ) : asking ? (
-          <form
+          <Form
             className="flex flex-wrap items-center justify-end gap-2"
             onSubmit={async (event) => {
               event.preventDefault();
@@ -296,15 +299,14 @@ function PaymentRow({ payment, record }: { payment: RentLease["payments"][number
             <input type="date" aria-label={`Bounced on, ${usDate(payment.received_on)} payment`} value={on}
               onChange={(e) => setOn(e.target.value)} required
               className="h-8 rounded-sm border border-line-strong bg-sunken px-2 text-sm text-ink" />
-            <Button type="submit" variant="secondary" size="sm">Record the bounce</Button>
+            <Button type="submit" variant="danger" size="sm">Record the {money(payment.amount)} bounce</Button>
             <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(false)}>
               Cancel
             </Button>
-          </form>
+          </Form>
         ) : (
-          <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(true)}>
-            It bounced
-          </Button>
+          <RowMenu label={`${usDate(payment.received_on)} payment of ${money(payment.amount)}`}
+            actions={[{ label: "It bounced", danger: true, onSelect: () => setAsking(true) }]} />
         )}
       </td>
     </tr>
@@ -319,7 +321,7 @@ function PaymentForm({ lease, record }: { lease: RentLease; record: Recorder }) 
   const hasPrepaid = lease.tenants.some((t) => Number(t.prepaid) > 0);
   return (
     <div className="flex flex-wrap items-end gap-3">
-      <form
+      <Form
         className="flex flex-wrap items-end gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
@@ -338,7 +340,7 @@ function PaymentForm({ lease, record }: { lease: RentLease; record: Recorder }) 
         <Field label="Check or reference" id={`pay-ref-${lease.id}`} maxLength={200}
           value={reference} onChange={(e) => setReference(e.target.value)} />
         <Button type="submit">Record payment</Button>
-      </form>
+      </Form>
       {hasPrepaid && (
         <Button
           variant="secondary"
@@ -360,7 +362,7 @@ function ChargeForm({ lease, record }: { lease: RentLease; record: Recorder }) {
   const [due, setDue] = useState(day(new Date()));
   const [memo, setMemo] = useState("");
   return (
-    <form
+    <Form
       className="flex flex-wrap items-end gap-3"
       onSubmit={async (event) => {
         event.preventDefault();
@@ -384,7 +386,7 @@ function ChargeForm({ lease, record }: { lease: RentLease; record: Recorder }) {
       <Field label="What for" id={`charge-memo-${lease.id}`} required maxLength={200} value={memo}
         onChange={(e) => setMemo(e.target.value)} />
       <Button type="submit" variant="secondary">Add</Button>
-    </form>
+    </Form>
   );
 }
 
@@ -397,7 +399,7 @@ function RecurringLine({ recurring, record }: { recurring: RecurringCharge; reco
       <span>{recurringLabel(recurring)}</span>
       {recurring.ends_on === null &&
         (asking ? (
-          <form
+          <Form
             className="flex items-center gap-2"
             onSubmit={async (event) => {
               event.preventDefault();
@@ -413,7 +415,7 @@ function RecurringLine({ recurring, record }: { recurring: RecurringCharge; reco
             <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(false)}>
               Cancel
             </Button>
-          </form>
+          </Form>
         ) : (
           <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(true)}>
             Stop
@@ -429,7 +431,7 @@ function RecurringForm({ lease, record }: { lease: RentLease; record: Recorder }
   const [from, setFrom] = useState(day(new Date()));
   const [memo, setMemo] = useState("");
   return (
-    <form
+    <Form
       className="flex flex-wrap items-end gap-3"
       onSubmit={async (event) => {
         event.preventDefault();
@@ -453,7 +455,7 @@ function RecurringForm({ lease, record }: { lease: RentLease; record: Recorder }
       <Field label="Monthly, for" id={`recurring-memo-${lease.id}`} required maxLength={200}
         value={memo} onChange={(e) => setMemo(e.target.value)} />
       <Button type="submit" variant="secondary">Add every month</Button>
-    </form>
+    </Form>
   );
 }
 
@@ -467,7 +469,7 @@ function RentChangeForm({ lease, record }: { lease: RentLease; record: Recorder 
   const [served, setServed] = useState<RentChange["served_by"]>("mail");
   const [terms, setTerms] = useState("");
   return (
-    <form
+    <Form
       className="flex flex-wrap items-end gap-3"
       onSubmit={async (event) => {
         event.preventDefault();
@@ -501,7 +503,7 @@ function RentChangeForm({ lease, record }: { lease: RentLease; record: Recorder 
           maxLength={500} value={terms} onChange={(e) => setTerms(e.target.value)} />
       )}
       <Button type="submit" variant="secondary">Change rent</Button>
-    </form>
+    </Form>
   );
 }
 
@@ -511,7 +513,7 @@ function DepositForm({ lease, record }: { lease: RentLease; record: Recorder }) 
   const [amount, setAmount] = useState("");
   const [on, setOn] = useState(day(new Date()));
   return (
-    <form
+    <Form
       className="flex flex-wrap items-end gap-3"
       onSubmit={async (event) => {
         event.preventDefault();
@@ -535,6 +537,6 @@ function DepositForm({ lease, record }: { lease: RentLease; record: Recorder }) 
       <Field label="Deposit received on" id={`deposit-on-${lease.id}`} type="date" required value={on}
         onChange={(e) => setOn(e.target.value)} />
       <Button type="submit" variant="secondary">Record deposit</Button>
-    </form>
+    </Form>
   );
 }

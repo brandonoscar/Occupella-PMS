@@ -32,7 +32,10 @@ bank statement import, a switching tool, staff roles, move-out and documents. Si
 2026-10-13 (`docs/adr/0004-email.md`): one email, to a rental owner when a bill waits for
 their approval. Since 2026-10-15 (`docs/adr/0005-property-management-pages.md`): pages built
 around properties, units, leases, tenants, owners and vendors, with paged lists, edits (never
-deletes: archive) and contact details the AI never reads. Still out of scope: Stripe and online payments, bank files, 1099 filing, any
+deletes: archive) and contact details the AI never reads. Since 2026-10-16
+(`docs/adr/0006-buildium-punch-list.md`): the founder's punch list, built in its order (property
+groups first; rent, recurring charges, late fees and recurring bills to post by themselves each
+night; fees still move only when staff ask). Still out of scope: Stripe and online payments, bank files, 1099 filing, any
 other email, and state rules beyond the no-negative rule. If one of these looks needed, stop
 and ask the founder.
 
@@ -112,9 +115,18 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   mono type is only for links, keys and hashes (the same test checks it). Money stays text from
   the database to the screen, never a float. On screen a day reads MM/DD/YYYY (`usDate` in
   `money.ts`; inputs, links and the API keep YYYY-MM-DD, and a report's own text reads as the
-  report wrote it) and money in accounting form, a negative in parentheses. Money leaving trust
-  (a draw, a bill paid, the company's fees taken out, a deposit returned) waits for staff to
-  confirm a question naming the amount (`components/Confirm.tsx`). Staff's menu (`pages/staffNav.ts`, ADR 0005)
+  report wrote it) and money in accounting form, a negative in parentheses; a lease's term reads
+  `11/01/2025 – Month to month`. Money leaving trust (a draw, a bill paid, the company's fees
+  taken out, a deposit returned) waits for staff to confirm a question naming the amount
+  (`components/Confirm.tsx`), and a row's risky actions (It bounced, Archive...) sit in its ⋯ menu
+  (`components/RowMenu.tsx`), each confirmed. What a save did shows as a toast
+  (`components/Said.tsx`, which keeps an off-screen status line; `components/Toaster.tsx`), a
+  refused change's reason too (`api.post`), and a form's submit button is busy while its save runs
+  (`components/Form.tsx`). A list page has no search box of its own: its top left picks All
+  properties, a property group or one property (`components/ListBar.tsx`), kept in the URL
+  (`?group=`, `?property=`) and the browser so it carries from page to page (`scope.ts`); the API
+  narrows a list to it with `src/pms/api/scope.py`. Staff make groups at `/settings/groups`
+  (`src/pms/api/groups.py`). Staff's menu (`pages/staffNav.ts`, ADR 0005)
   groups their pages as Buildium does. They open on the Dashboard at `/`: the company's figures
   (`src/pms/api/dashboard.py`, each counted by its report) and what needs attention
   (`src/pms/api/today.py`: read only, each part the work page's own answer). Rentals
@@ -421,6 +433,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   back to each tenant from the security-deposit account. A tenant still on another lease keeps
   their deposit with it. It takes the disburse role. `trust_report_deposit_return` is the
   itemized statement for the tenants. READ COMMITTED; append-only.
+- Property groups (migration 0065, ADR 0006): a PMC's named sets of its properties, a name once
+  per PMC whatever its case. A group is renamed, never deleted; a property joins or leaves it by
+  a row of `trust_property_group_members` (append-only, the latest for a group and property
+  holding, naming who did it, `trust_group_properties` reading it), and each row changes
+  something. They move no money; the AI role reads them.
 - Archiving (migrations 0063 and 0064, ADR 0005): nothing in a PMC is deleted; a property, unit,
   tenant or owner is archived instead, a row in `trust_archivals` (append-only, the latest for a
   record holding, `trust_is_archived` reading it), naming who did it. It is refused while

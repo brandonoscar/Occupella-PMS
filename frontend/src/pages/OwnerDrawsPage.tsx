@@ -13,6 +13,7 @@ import { GoLink } from "./NeedsAttention";
 import { DrawForm } from "./OwnersPage";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
+import { Said } from "../components/Said";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
@@ -102,7 +103,7 @@ function DrawCard({
         {money(owner.available)} available from {owner.bank_account}
       </p>
       <DrawForm key={owner.account} owner={owner} record={record} />
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </Card>
   );

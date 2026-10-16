@@ -4,14 +4,16 @@ import { Badge } from "./Badge";
 import { Button } from "./Button";
 import { Field } from "./Field";
 import { Notice } from "./Notice";
+import { Form } from "./Form";
+import { RowMenu } from "./RowMenu";
 
 function detail(failed: unknown): string {
   return failed instanceof ApiError ? failed.detail : String(failed);
 }
 
-// A record's name and whether it is archived, changed in place: Rename opens a field, and
-// Archive (or Bring back) asks before it does anything. The database refuses archiving while
-// something is open on it, and says what in words.
+// A record's name and whether it is archived, changed in place: Edit opens its name, and
+// Archive (or Bring back) is in the ⋯ menu and asks before it does anything. The database refuses
+// archiving while something is open on it, and says what in words.
 export function RecordActions({
   path,
   name,
@@ -25,7 +27,6 @@ export function RecordActions({
   onChange: (said: string) => void;
 }) {
   const [renaming, setRenaming] = useState(false);
-  const [asking, setAsking] = useState(false);
   const [draft, setDraft] = useState(name);
   const [error, setError] = useState("");
 
@@ -34,7 +35,6 @@ export function RecordActions({
     try {
       await api.post(`${path}/${to}`, body);
       setRenaming(false);
-      setAsking(false);
       onChange(said);
     } catch (failed) {
       setError(detail(failed));
@@ -46,39 +46,30 @@ export function RecordActions({
       <div className="flex flex-wrap items-center justify-end gap-2">
         {archived && <Badge tone="neutral">Archived</Badge>}
         <Button variant="secondary" size="sm" onClick={() => { setDraft(name); setRenaming(!renaming); }}>
-          Rename
+          Edit
         </Button>
         {archived !== undefined && (
-          <Button variant="ghost" size="sm" onClick={() => setAsking(!asking)}>
-            {archived ? "Bring back" : "Archive"}
-          </Button>
+          <RowMenu label={name} actions={[
+            archived
+              ? { label: "Bring back", confirm: `Bring back ${name}? It comes back into lists.`,
+                  onSelect: () => post("archive", { archived: false }, `${name} is back.`) }
+              : { label: "Archive", danger: true, confirm: `Archive ${name}? It leaves the lists; its history stays.`,
+                  onSelect: () => post("archive", { archived: true }, `${name} is archived.`) },
+          ]} />
         )}
       </div>
       {renaming && (
-        <form
+        <Form
           className="flex items-end gap-2"
           onSubmit={(event) => {
             event.preventDefault();
-            post("name", { name: draft }, `Renamed ${draft.trim()}.`);
+            return post("name", { name: draft }, `Renamed ${draft.trim()}.`);
           }}
         >
-          <Field label="New name" id={`rename-${path}`} required maxLength={200} value={draft}
+          <Field label="Name" id={`rename-${path}`} required maxLength={200} value={draft}
             onChange={(event) => setDraft(event.target.value)} />
-          <Button type="submit" size="sm">Save name</Button>
-        </form>
-      )}
-      {asking && (
-        <div className="flex flex-wrap items-center justify-end gap-2 text-sm text-ink-muted">
-          <span>
-            {archived
-              ? `${name} comes back into lists.`
-              : `${name} leaves the lists; its history stays.`}
-          </span>
-          <Button size="sm" onClick={() => post("archive", { archived: !archived }, archived ? `${name} is back.` : `${name} is archived.`)}>
-            {archived ? `Bring back ${name}` : `Archive ${name}`}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => setAsking(false)}>Cancel</Button>
-        </div>
+          <Button type="submit" size="sm">Save</Button>
+        </Form>
       )}
       <Notice tone="error">{error}</Notice>
     </div>

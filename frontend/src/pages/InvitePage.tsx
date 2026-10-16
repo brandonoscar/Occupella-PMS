@@ -8,6 +8,7 @@ import { Notice } from "../components/Notice";
 import { Wordmark } from "../components/Shell";
 import { navigate } from "../router";
 import { PMC_KEY } from "./SignInPage";
+import { Form } from "../components/Form";
 
 type Details = { kind: string; email: string; name: string; pmc_name: string; expires_at: string };
 
@@ -94,7 +95,7 @@ export function InvitePage() {
         </div>
       )}
       {details && !totpUri && (
-        <form className="flex flex-col gap-4" onSubmit={setThePassword}>
+        <Form className="flex flex-col gap-4" onSubmit={setThePassword}>
           <Field label="Choose a password (12 characters or more)" id="password" type="password"
             autoComplete="new-password" minLength={12} value={password}
             onChange={(e) => setPassword(e.target.value)} required />
@@ -105,10 +106,10 @@ export function InvitePage() {
           <Button type="submit" disabled={busy}>
             Set password
           </Button>
-        </form>
+        </Form>
       )}
       {totpUri && (
-        <form className="flex flex-col gap-4" onSubmit={confirm}>
+        <Form className="flex flex-col gap-4" onSubmit={confirm}>
           <p className="text-sm text-ink-muted">
             Staff also sign in with a code from an authenticator app. Scan this with the app, or
             type the key into it, then enter the code it shows.
@@ -121,7 +122,7 @@ export function InvitePage() {
           <Button type="submit" disabled={busy}>
             Finish
           </Button>
-        </form>
+        </Form>
       )}
       {!details && <Notice tone="error">{error}</Notice>}
     </div>

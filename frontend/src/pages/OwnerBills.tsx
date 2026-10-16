@@ -6,6 +6,7 @@ import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Card } from "../components/Shell";
 import { money, usDate } from "../money";
+import { Said } from "../components/Said";
 
 export type OwnerBill = {
   id: string;
@@ -63,7 +64,7 @@ export function OwnerBills() {
       {(error || done) && (
         <div className="flex flex-col gap-1">
           <Notice tone="error">{error}</Notice>
-          <Notice tone="info">{done}</Notice>
+          <Said>{done}</Said>
         </div>
       )}
       {bills === null ? (

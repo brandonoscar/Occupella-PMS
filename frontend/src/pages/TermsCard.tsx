@@ -8,6 +8,7 @@ import { agreementSummary } from "../setup";
 import type { CardProps } from "./useAdd";
 import { useAdd } from "./useAdd";
 import { usDate } from "../money";
+import { Form } from "../components/Form";
 
 const BLANK = {
   account: "",
@@ -47,7 +48,7 @@ export function TermsCard({ books, refresh }: CardProps) {
           </li>
         ))}
       </ul>
-      <form
+      <Form
         className="flex flex-col gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
@@ -77,7 +78,7 @@ export function TermsCard({ books, refresh }: CardProps) {
         <div>
           <Button type="submit" variant="secondary">Set terms</Button>
         </div>
-      </form>
+      </Form>
       <Notice tone="error">{error}</Notice>
     </Card>
   );

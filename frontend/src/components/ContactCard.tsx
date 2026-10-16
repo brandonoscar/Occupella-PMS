@@ -6,6 +6,8 @@ import { Button } from "./Button";
 import { Field } from "./Field";
 import { Notice } from "./Notice";
 import { Card } from "./Shell";
+import { Said } from "./Said";
+import { Form } from "./Form";
 
 const LABELS: Record<(typeof CONTACT_FIELDS)[number], string> = {
   email: "Email",
@@ -81,7 +83,7 @@ export function ContactDetails({
           </Button>
         </div>
       ) : (
-        <form
+        <Form
           className="grid gap-3 sm:grid-cols-2"
           onSubmit={async (event) => {
             event.preventDefault();
@@ -100,9 +102,9 @@ export function ContactDetails({
             <Button type="submit" size="sm">Save contact details</Button>
             <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(false)}>Cancel</Button>
           </div>
-        </form>
+        </Form>
       )}
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </div>
   );

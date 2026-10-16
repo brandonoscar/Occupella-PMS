@@ -14,6 +14,8 @@ import { chargeLabel, hasEnded, leaseLabel, moveOutStatus, preview } from "../mo
 import { InspectionsPanel } from "./InspectionsPanel";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 // Staff's move-outs: end the lease, inspect it on the way in and out, charge what the tenants
 // owe for cleaning or damage, and return their deposits. The return keeps what the lease owes
@@ -68,7 +70,7 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
   // The end and a damage charge: in view once the lease has ended, folded away while it runs.
   const endAndCharge = (
     <>
-      <form
+      <Form
         className="flex flex-wrap items-end gap-3"
         onSubmit={(event) => {
           event.preventDefault();
@@ -78,8 +80,8 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
         <Field label="Last day" id={`ends-${id}`} type="date" required value={ends}
           onChange={(e) => setEnds(e.target.value)} />
         <Button type="submit" variant="secondary">End the lease</Button>
-      </form>
-      <form
+      </Form>
+      <Form
         className="flex flex-wrap items-end gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
@@ -95,7 +97,7 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
         <Field label="Amount" id={`amount-${id}`} inputMode="decimal" required value={amount}
           onChange={(e) => setAmount(e.target.value)} />
         <Button type="submit" variant="secondary">Charge it</Button>
-      </form>
+      </Form>
     </>
   );
   return (
@@ -146,7 +148,7 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
               </details>
             )}
             {ended ? (
-              <form
+              <Form
                 className="flex flex-wrap items-end gap-3"
                 onSubmit={(event) => {
                   event.preventDefault();
@@ -177,12 +179,12 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
                 <p className="w-full text-sm text-ink-subtle">
                   Keeps {money(next.kept)} for what the lease owes; {money(next.returned)} goes back.
                 </p>
-              </form>
+              </Form>
             ) : null}
             {ended && prompt}
           </>
         )}
-        <Notice tone="info">{said}</Notice>
+        <Said>{said}</Said>
         <Notice tone="error">{error}</Notice>
       </section>
     </li>

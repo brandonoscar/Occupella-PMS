@@ -28,6 +28,8 @@ import {
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 // Accounting → Banking (ADR 0005): each trust bank account with what the books hold in it, how
 // far it is reconciled and whether a month waits for approval, each opening its own page.
@@ -180,7 +182,7 @@ function StatementsCard({ bank, refresh }: BankProps) {
           </tbody>
         </table>
       )}
-      <form
+      <Form
         className="flex flex-wrap items-end gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
@@ -223,13 +225,13 @@ function StatementsCard({ bank, refresh }: BankProps) {
         <Field label="Closing balance" id="statement-closing" inputMode="decimal" value={closing}
           onChange={(e) => setClosing(e.target.value)} />
         <Button type="submit" disabled={!file}>Import statement</Button>
-      </form>
+      </Form>
       <p className="mt-3 text-sm text-ink-subtle">
         {file ? `Ready: ${file.name}.` : "Choose the file first."} A CSV needs its days; by default a
         statement starts the day after the last one, at its closing balance. An OFX file gives its
         own days and closing balance.
       </p>
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </Card>
   );
@@ -349,7 +351,7 @@ function WorksheetCard({
           </div>
         </>
       )}
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </Card>
   );
@@ -447,7 +449,7 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
           </tbody>
         </table>
       )}
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </Card>
   );
@@ -493,7 +495,7 @@ function OpeningCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet })
           </Button>
         </div>
       )}
-      {!opening.matched && <Notice tone="info">{said}</Notice>}
+      {!opening.matched && <Said>{said}</Said>}
       <Notice tone="error">{error}</Notice>
     </Card>
   );

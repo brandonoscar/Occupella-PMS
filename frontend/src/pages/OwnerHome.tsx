@@ -13,6 +13,7 @@ import { OwnerBills } from "./OwnerBills";
 import { OwnerDocuments } from "./OwnerDocuments";
 import { OwnerIncomeStatement } from "./OwnerIncomeStatement";
 import { OwnerYearEnd } from "./OwnerYearEnd";
+import { Form } from "../components/Form";
 
 type Property = { account_id: string; property_id: string; name: string; bank: string; balance: string };
 
@@ -82,7 +83,7 @@ export function OwnerHome({ me }: { me: Me }) {
       <OwnerBills />
 
       <Card title="Statement">
-        <form
+        <Form
           className="mb-6 flex flex-wrap items-end gap-4"
           onSubmit={(event) => {
             event.preventDefault();
@@ -99,7 +100,7 @@ export function OwnerHome({ me }: { me: Me }) {
             <LinkButton href={download("csv")}>CSV</LinkButton>
             <LinkButton href={download("xlsx")}>Excel</LinkButton>
           </div>
-        </form>
+        </Form>
         <Notice tone="error">{error}</Notice>
         {grouped && (
           <div className="flex flex-col gap-6">

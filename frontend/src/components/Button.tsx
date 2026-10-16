@@ -1,6 +1,9 @@
-import type { ButtonHTMLAttributes } from "react";
+import { Loader2 } from "lucide-react";
+import type { ButtonHTMLAttributes, MouseEvent } from "react";
+import { useState } from "react";
+import { useFormBusy } from "./Form";
 
-type Variant = "primary" | "secondary" | "ghost";
+type Variant = "primary" | "secondary" | "ghost" | "danger";
 
 // Occupella's buttons: primary solid iris with white text, secondary white with a strong
 // hairline, ghost an iris text link. All 36px tall with the 6px radius; disabled is grey.
@@ -10,22 +13,55 @@ const VARIANTS: Record<Variant, string> = {
     " active:bg-iris-press",
   secondary: "border border-line-strong bg-canvas text-ink hover:bg-raised",
   ghost: "border border-transparent text-iris underline-offset-2 hover:text-iris-hover hover:underline",
+  // The confirm of something that can't simply be taken back.
+  danger: "border border-danger bg-danger text-canvas hover:opacity-90",
 };
 
 // A row action inside a table or a list is the small size: 32px, 13px.
 const SIZES = { md: "h-9 px-3.5 text-base", sm: "h-8 px-3 text-sm" };
 
+// A button is busy while what it started runs: its form's save (<Form>), or the promise its own
+// click returned. Busy, it shows a spinner and can't be pressed again.
 export function Button({
   variant = "primary",
   size = "md",
   className = "",
+  busy,
+  onClick,
+  disabled,
+  children,
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: Variant; size?: keyof typeof SIZES }) {
+}: Omit<ButtonHTMLAttributes<HTMLButtonElement>, "onClick"> & {
+  variant?: Variant;
+  size?: keyof typeof SIZES;
+  busy?: boolean;
+  onClick?: (event: MouseEvent<HTMLButtonElement>) => unknown;
+}) {
+  const formBusy = useFormBusy();
+  const [clicked, setClicked] = useState(false);
+  const working = busy ?? (clicked || (props.type === "submit" && formBusy));
   const base =
-    "inline-flex items-center justify-center rounded-sm font-medium whitespace-nowrap" +
+    "inline-flex items-center justify-center gap-1.5 rounded-sm font-medium whitespace-nowrap" +
     " transition-colors duration-100 disabled:border-disabled-bg disabled:bg-disabled-bg" +
     " disabled:text-disabled-ink";
-  return <button className={`${base} ${SIZES[size]} ${VARIANTS[variant]} ${className}`} {...props} />;
+  return (
+    <button
+      className={`${base} ${SIZES[size]} ${VARIANTS[variant]} ${className}`}
+      disabled={disabled || working}
+      aria-busy={working || undefined}
+      onClick={(event) => {
+        const result = onClick?.(event);
+        if (result instanceof Promise) {
+          setClicked(true);
+          result.finally(() => setClicked(false));
+        }
+      }}
+      {...props}
+    >
+      {working && <Loader2 size={14} strokeWidth={2} aria-hidden="true" className="animate-spin" />}
+      {children}
+    </button>
+  );
 }
 
 export function LinkButton({

@@ -6,6 +6,7 @@ import { Select } from "../components/Select";
 import { Card } from "../components/Shell";
 import type { CardProps } from "./useAdd";
 import { useAdd } from "./useAdd";
+import { Form } from "../components/Form";
 
 const BLANK = { unit: "", starts_on: "", ends_on: "", rent: "", tenants: [] as string[] };
 
@@ -35,7 +36,7 @@ export function LeasesCard({ books, refresh }: CardProps) {
           </li>
         ))}
       </ul>
-      <form
+      <Form
         className="mb-8 flex flex-wrap items-end gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
@@ -54,11 +55,11 @@ export function LeasesCard({ books, refresh }: CardProps) {
         <Field label="Tenant's name" id="tenant-name" required maxLength={200} value={name}
           onChange={(e) => setName(e.target.value)} />
         <Button type="submit" variant="secondary">Add tenant</Button>
-      </form>
+      </Form>
       <Notice tone="error">{tenants.error}</Notice>
 
       <h3 className="mb-3 text-md font-medium">A lease in place</h3>
-      <form
+      <Form
         className="flex flex-col gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
@@ -107,7 +108,7 @@ export function LeasesCard({ books, refresh }: CardProps) {
             Add lease
           </Button>
         </div>
-      </form>
+      </Form>
       <Notice tone="error">{leases.error}</Notice>
     </Card>
   );

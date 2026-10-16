@@ -250,7 +250,7 @@ test("staff offer a lease and a renewal; the signers sign on the partner's page;
   await tenant.getByLabel("The same password again").fill(PASSWORD);
   await tenant.getByRole("button", { name: "Set password" }).click();
   const offered = tenant.getByRole("listitem", { name: "Renewal of E2E Unit 3" });
-  await expect(offered).toContainText(`${us(day(60))} to month to month, $1,000.00 a month`);
+  await expect(offered).toContainText(`${us(day(60))} – Month to month, $1,000.00 a month`);
   const read = await tenant.request.get(
     (await offered.getByRole("link", { name: "Read the lease (PDF)" }).getAttribute("href")) ?? "",
   );
@@ -310,7 +310,7 @@ test("staff set up a property from nothing, lease a unit and see it on the rent 
   await page.getByLabel("Tenant Setup E2E").check();
   await page.getByRole("button", { name: "Add lease" }).click();
   await expect(property).toContainText(
-    `Unit 9A: Tenant Setup E2E: from ${us(today)}, month to month, $1,100.00 a month`,
+    `Unit 9A: Tenant Setup E2E: ${us(today)} – Month to month, $1,100.00 a month`,
   );
 
   const rentRoll = await page.request.get(
@@ -349,8 +349,9 @@ test("staff record a tenant's payment, the rest held as prepaid rent, and then i
   await expect(lease.getByRole("row", { name: /Money order 9/ })).toBeVisible();
 
   // A bounce is asked for, with the day it came back (today by default), before it is recorded.
-  await lease.getByRole("button", { name: "It bounced" }).click();
-  await lease.getByRole("button", { name: "Record the bounce" }).click();
+  await lease.getByRole("button", { name: /^Actions for / }).click();
+  await lease.getByRole("menuitem", { name: "It bounced" }).click();
+  await lease.getByRole("button", { name: "Record the $1,000.00 bounce" }).click();
   // The whole $1,000.00 comes back: the $800.00 it paid is owed again, and its $200.00 of
   // prepaid rent is gone.
   await expect(lease).toContainText("The $1,000.00 payment bounced and is undone.");

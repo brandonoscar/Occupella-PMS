@@ -114,7 +114,7 @@ def test_the_rent_roll_shows_leases_in_effect_those_that_owe_or_all(client, conn
     owing = ok(client.get("/api/leases", params={"show": "owing"}))["items"]
     assert [(r["id"], r["owed"]) for r in owing] == [(str(ended), "75.00")]
     assert ok(client.get("/api/leases", params={"show": "all"}))["total"] == 3
-    one = ok(client.get("/api/leases", params={"property_id": str(second)}))["items"]
+    one = ok(client.get("/api/leases", params={"property": str(second)}))["items"]
     assert [r["id"] for r in one] == [str(b)]
     by_tenant = ok(client.get("/api/leases", params={"q": "tenant a"}))["items"]
     assert [r["id"] for r in by_tenant] == [str(a)]
@@ -278,7 +278,7 @@ def test_only_staff_see_or_change_rentals(client, conn, app_conn, pmc, caller):
         ("get", "/api/properties?per_page=201", None),
         ("get", "/api/properties?page=0", None),
         ("get", "/api/leases?show=late", None),
-        ("get", "/api/leases?property_id=not-an-id", None),
+        ("get", "/api/leases?property=not-an-id", None),
         ("get", "/api/search?q=a", None),
         ("get", "/api/search", None),
         ("get", "/api/properties/not-an-id", None),

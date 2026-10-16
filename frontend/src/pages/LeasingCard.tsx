@@ -8,6 +8,8 @@ import type { Application, Decision } from "../leasing";
 import { incomeMultiple, needsNotice, recommendationLabel } from "../leasing";
 import { when } from "../maintenance";
 import { day, money, usDate } from "../money";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 type Unit = { unit_id: string; property: string; unit: string; leased_today: boolean };
 type Link = {
@@ -125,12 +127,12 @@ export function LeasingCard({
 
   return (
     <Card title={{ all: "Leasing", links: "Application links", applications: "Applications" }[part]}>
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
       {part !== "applications" && (
       <>
       <h3 className="mb-3 text-md font-medium">Application links</h3>
-      <form
+      <Form
         className="mb-4 flex flex-wrap items-end gap-3"
         onSubmit={(event) => {
           event.preventDefault();
@@ -160,7 +162,7 @@ export function LeasingCard({
         <Button type="submit" variant="secondary">
           Open a link
         </Button>
-      </form>
+      </Form>
       {opened && (
         <p className="mb-4 text-sm text-ink-muted">
           Post this link where applicants will see it. It is shown once:{" "}
@@ -195,7 +197,7 @@ export function LeasingCard({
               </span>
             </div>
             {!link.listing_id && (
-              <form
+              <Form
                 className="flex flex-wrap items-end gap-3"
                 onSubmit={(event) => {
                   event.preventDefault();
@@ -211,7 +213,7 @@ export function LeasingCard({
                   maxLength={2000} value={descriptions[link.id] ?? ""}
                   onChange={(e) => setDescriptions({ ...descriptions, [link.id]: e.target.value })} />
                 <Button type="submit" variant="secondary">List on the public page</Button>
-              </form>
+              </Form>
             )}
           </li>
         ))}
