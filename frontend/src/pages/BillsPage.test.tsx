@@ -109,7 +109,10 @@ function server(
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method !== "POST") {
       const body = path.startsWith("/api/payables/bills")
-        ? path.endsWith("show=all") ? [...bills, { ...BILL, id: "b4", reference: "INV-4", status: "paid" }] : bills
+        ? path.endsWith("show=all") ? [...bills, { ...BILL, id: "b4", reference: "INV-4", status: "paid" }]
+        : path.endsWith("show=paid") ? [{ ...BILL, id: "b4", reference: "INV-4", status: "paid" }]
+        : path.endsWith("show=declined") ? []
+        : bills
         : path === "/api/payables/recurring" ? RECURRING
         : path === "/api/payables/emails" ? OUTBOX : BOOKS;
       return new Response(JSON.stringify(body), { status: 200 });
@@ -151,23 +154,49 @@ describe("BillsPage", () => {
     expect(third.textContent).toContain("Approved by Owner 1.");
   });
 
-  it("shows paid bills too when asked, with no step left", async () => {
-    server();
+  it("shows the paid bills, the declined ones or all of them on their tabs, with no step left", async () => {
+    const fetch = server();
     render(<BillsPage me={ME} />);
     await bill("Vendor 1 INV-1");
+    const tabs = screen.getByRole("tablist", { name: "Bills" });
+    expect(within(tabs).getAllByRole("tab").map((t) => [t.textContent, t.getAttribute("aria-selected")])).toEqual([
+      ["Unpaid", "true"], ["Paid", "false"], ["Declined", "false"], ["All", "false"],
+    ]);
 
-    fireEvent.change(screen.getByLabelText("Show"), { target: { value: "all" } });
+    fireEvent.click(within(tabs).getByRole("tab", { name: "Paid" }));
+    await vi.waitFor(() => expect(screen.queryByRole("listitem", { name: "Vendor 1 INV-1" })).toBeNull());
+    expect(await bill("Vendor 1 INV-4")).toBeTruthy();
+    fireEvent.click(within(tabs).getByRole("tab", { name: "Declined" }));
+    expect((await screen.findByTestId("empty-state")).textContent).toContain("No bill was declined.");
+    fireEvent.click(within(tabs).getByRole("tab", { name: "All" }));
+    expect(within(tabs).getByRole("tab", { name: "All" }).getAttribute("aria-selected")).toBe("true");
+    expect(fetch.mock.calls.map(([path]) => path).filter((p) => p.startsWith("/api/payables/bills"))).toEqual([
+      "/api/payables/bills?show=open", "/api/payables/bills?show=paid", "/api/payables/bills?show=declined",
+      "/api/payables/bills?show=all",
+    ]);
 
+    await bill("Vendor 1 INV-1");
     const paid = await bill("Vendor 1 INV-4");
     expect(within(paid).getByTestId("status").textContent).toBe("paid");
     // No step is left; a paid bill can still be put in an expense account.
     expect(within(paid).queryAllByRole("button").map((b) => b.textContent)).toEqual(["Put in"]);
   });
 
-  it("enters a bill against the chosen vendor and owner", async () => {
+  it("enters a bill against the chosen vendor and owner, in a panel that Close and Escape shut", async () => {
     const fetch = server({ "/api/payables/bills": { id: "b9" } });
     render(<BillsPage me={ME} />);
     await bill("Vendor 1 INV-1");
+    expect(screen.queryByLabelText("Vendor's reference")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Record bill" }));
+    fireEvent.click(within(screen.getByRole("dialog", { name: "Record bill" })).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Record bill" }));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Record bill" }));
+    fireEvent.click(screen.getByTestId("panel-scrim"));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Record bill" }));
 
     fireEvent.change(screen.getByLabelText("Vendor"), { target: { value: "v2" } });
     fireEvent.change(screen.getByLabelText("Owner and property"), { target: { value: "a2" } });
@@ -195,6 +224,7 @@ describe("BillsPage", () => {
     render(<BillsPage me={ME} />);
     const second = await bill("Vendor 1 INV-2");
     expect(within(second).getByTestId("expense-account").textContent).toBe("In no expense account yet.");
+    fireEvent.click(screen.getByRole("button", { name: "Record bill" }));
 
     fireEvent.change(screen.getByLabelText("Vendor's reference"), { target: { value: "INV-9" } });
     fireEvent.change(screen.getByLabelText("Amount"), { target: { value: "120.00" } });
@@ -405,9 +435,11 @@ describe("BillsPage", () => {
     render(<BillsPage me={ME} />);
 
     expect(await screen.findByText("Nothing left to pay: every bill is paid or declined.")).toBeTruthy();
+    expect(await screen.findByText("No recurring bills yet.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Record bill" }));
     expect(await screen.findByText("Add a vendor and a property with an owner in Setup first.")).toBeTruthy();
-    expect(screen.getByText("No recurring bills yet.")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Show"), { target: { value: "all" } });
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(screen.getByRole("tab", { name: "All" }));
     expect(await screen.findByText("No bills yet.")).toBeTruthy();
   });
 

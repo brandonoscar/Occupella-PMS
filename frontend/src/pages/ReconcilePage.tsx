@@ -1,12 +1,15 @@
+import { Landmark } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
+import { EmptyState } from "../components/EmptyState";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
+import { Wide } from "../components/Wide";
 import { money } from "../money";
 import type { BankBooks, OpenItem, OpenLine, OpenTransfer, Worksheet } from "../reconcile";
 import {
@@ -22,22 +25,81 @@ import {
   sum,
   transferLabel,
 } from "../reconcile";
+import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 
-// Staff's month-end: import a trust bank account's statements, match their lines to the
-// transfers in the books, and once the books lack no line one staff member prepares the period
-// and another, who may approve, approves it. The PMS compares what the bank says with the
-// books; it moves no money.
-export function ReconcilePage({ me }: { me: Me }) {
+// Accounting → Banking (ADR 0005): each trust bank account with what the books hold in it, how
+// far it is reconciled and whether a month waits for approval, each opening its own page.
+export function BankingPage({ me }: { me: Me }) {
   const [banks, setBanks] = useState<BankBooks[] | null>(null);
-  const [chosen, setChosen] = useState("");
+  const [error, setError] = useState("");
+  useEffect(() => {
+    api
+      .get<BankBooks[]>("/api/reconcile")
+      .then(setBanks)
+      .catch((why) => setError(why instanceof ApiError ? why.detail : String(why)));
+  }, []);
+  return (
+    <Shell me={me} nav={STAFF_NAV}>
+      <PageHeader title="Banking" />
+      {banks === null ? (
+        <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
+      ) : banks.length === 0 ? (
+        <EmptyState icon={Landmark} title="No trust bank account yet."
+          body="Add one from Settings, Company setup." />
+      ) : (
+        <Wide>
+          <table className="w-full text-base">
+            <thead>
+              <tr>
+                <th className="text-left">Trust bank account</th>
+                <th className="text-left">Holds</th>
+                <th className="text-right">Book balance</th>
+                <th className="text-left">Reconciled through</th>
+                <th className="text-left">Month-end</th>
+              </tr>
+            </thead>
+            <tbody>
+              {banks.map((bank) => (
+                <tr key={bank.id} aria-label={bank.name}>
+                  <td>
+                    <GoLink href={`/bank-accounts/${bank.id}`}
+                      className="font-medium text-iris hover:text-iris-hover hover:underline">
+                      {bank.name}
+                    </GoLink>
+                  </td>
+                  <td className="text-ink-muted">{KIND[bank.kind]}</td>
+                  <td className="text-right">{money(bank.book_cash)}</td>
+                  <td>{bank.closed_through ?? <span className="text-ink-subtle">Not yet</span>}</td>
+                  <td>{bank.prepared && <Badge tone="caution">Waiting for approval</Badge>}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Wide>
+      )}
+    </Shell>
+  );
+}
+
+const KIND: Record<BankBooks["kind"], string> = {
+  operating: "Operating",
+  security_deposit: "Security deposits",
+};
+
+// A trust bank account's month-end: import its statements, match their lines to the transfers
+// in the books, and once the books lack no line one staff member prepares the period and
+// another, who may approve, approves it. The PMS compares what the bank says with the books; it
+// moves no money.
+export function ReconcilePage({ me, id }: { me: Me; id: string }) {
+  const [banks, setBanks] = useState<BankBooks[] | null>(null);
   const [through, setThrough] = useState("");
   // The worksheet, with the trust bank account it was read for.
   const [read, setRead] = useState<{ bank: string; sheet: Worksheet } | null>(null);
   const [error, setError] = useState("");
   const failed = (why: unknown) => setError(why instanceof ApiError ? why.detail : String(why));
-  const bank = banks?.find((b) => b.id === chosen) ?? banks?.[0];
+  const bank = banks?.find((b) => b.id === id);
   const sheet = read && bank && read.bank === bank.id ? read.sheet : null;
 
   function refresh() {
@@ -56,23 +118,18 @@ export function ReconcilePage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Banking" />
-      {banks === null || (bank && sheet === null) ? (
+      {banks !== null && !bank ? (
+        <Notice tone="error">no such trust bank account</Notice>
+      ) : !bank || sheet === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
-      ) : !bank || !sheet ? (
-        <Notice tone="info">Add a trust bank account in Setup first.</Notice>
       ) : (
         <>
-          <div className="max-w-sm">
-            <Select label="Trust bank account" id="reconcile-bank" value={bank.id}
-              onChange={(e) => { setChosen(e.target.value); setThrough(""); }}>
-              {banks.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.name}
-                </option>
-              ))}
-            </Select>
-          </div>
+          <PageHeader title={bank.name} />
+          <p className="flex flex-wrap gap-x-4 text-sm text-ink-muted">
+            <GoLink href="/banking" className="text-iris hover:underline">Banking</GoLink>
+            <span>{KIND[bank.kind]}</span>
+            <span data-testid="book-cash">Book balance {money(bank.book_cash)}</span>
+          </p>
           <Notice tone="error">{error}</Notice>
           <StatementsCard bank={bank} refresh={refresh} />
           {sheet.opening && <OpeningCard bank={bank} sheet={sheet} refresh={refresh} />}

@@ -200,7 +200,7 @@ function OwnerRow({ owner, refresh }: { owner: OwnerMoney; refresh: () => void }
   );
 }
 
-function DrawForm({ owner, record }: { owner: OwnerMoney; record: Recorder }) {
+export function DrawForm({ owner, record }: { owner: OwnerMoney; record: Recorder }) {
   const [id, setId] = useState(requestId);
   const [amount, setAmount] = useState("");
   const [on, setOn] = useState(day(new Date()));

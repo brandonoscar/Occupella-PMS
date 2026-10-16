@@ -39,7 +39,8 @@ export const STAFF_NAV: NavEntry[] = [
     items: [
       { href: "/banking", label: "Banking" },
       { href: "/bills", label: "Bills" },
-      { href: "/journal", label: "Journal entries" },
+      { href: "/general-ledger", label: "General ledger" },
+      { href: "/owner-draws", label: "Owner draws" },
       { href: "/budgets", label: "Budgets" },
     ],
   },

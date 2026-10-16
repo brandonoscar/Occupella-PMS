@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { BankBooks, Worksheet } from "../reconcile";
-import { ReconcilePage } from "./ReconcilePage";
+import { BankingPage, ReconcilePage } from "./ReconcilePage";
 
 afterEach(() => {
   cleanup();
@@ -23,6 +23,7 @@ const BANKS: BankBooks[] = [
     id: "b1",
     name: "Operating trust account",
     kind: "operating",
+    book_cash: "4075.00",
     closed_through: "2025-12-31",
     next_start: "2026-01-01",
     statements: [
@@ -41,7 +42,7 @@ const BANKS: BankBooks[] = [
     prepared: null,
   },
   {
-    id: "b2", name: "Deposit trust account", kind: "security_deposit", closed_through: null,
+    id: "b2", name: "Deposit trust account", kind: "security_deposit", book_cash: "0.00", closed_through: null,
     next_start: null, statements: [], reconciliations: [], prepared: null,
   },
 ];
@@ -124,7 +125,7 @@ const cells = (table: HTMLElement) =>
 describe("ReconcilePage", () => {
   it("shows the statements, the figures, the items and the approved periods", async () => {
     server();
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
 
     const statements = await screen.findByRole("table", { name: "Statements" });
     expect(cells(statements)).toEqual([["2026-01-01 to 2026-01-31", "$0.00", "$4,075.00", "5", "CSV"]]);
@@ -147,7 +148,7 @@ describe("ReconcilePage", () => {
 
   it("imports a statement file with its days and balances", async () => {
     const fetch = server(SHEET, { "/api/reconcile/statements": { lines: 2, first_day: "2026-02-01", last_day: "2026-02-28" } });
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
     await screen.findByRole("table", { name: "Statements" });
     const importing = screen.getByRole("button", { name: "Import statement" }) as HTMLButtonElement;
     expect(importing.disabled).toBe(true);
@@ -175,7 +176,7 @@ describe("ReconcilePage", () => {
 
   it("matches the lines and transfers picked once they come to the same", async () => {
     const fetch = server(SHEET, { "/api/reconcile/b1/auto-match": { matched: 1 } });
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
     await screen.findByRole("table", { name: "Statements" });
     const matching = screen.getByRole("button", { name: "Match these" }) as HTMLButtonElement;
 
@@ -204,7 +205,7 @@ describe("ReconcilePage", () => {
 
   it("prepares a period whose books lack no line, and shows a refusal", async () => {
     const fetch = server(TIED, {}, {});
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
     const prepare = await screen.findByRole("button", { name: "Prepare through 2026-01-31" });
     expect(screen.queryByText(/Lines the books lack/)).toBeNull();
     expect(screen.getByText("Ties out").closest("[data-tone]")?.getAttribute("data-tone")).toBe("positive");
@@ -218,14 +219,14 @@ describe("ReconcilePage", () => {
     cleanup();
 
     server(TIED, {}, { "/api/reconcile/b1/prepare": "the next period starts on 2026-02-01" });
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Prepare through 2026-01-31" }));
     expect(await screen.findByText("the next period starts on 2026-02-01")).toBeTruthy();
   });
 
   it("approves a period another staff member prepared, if this one may", async () => {
     const fetch = server(TIED, {}, {}, PREPARED);
-    render(<ReconcilePage me={{ ...ME, roles: ["approve"] }} />);
+    render(<ReconcilePage me={{ ...ME, roles: ["approve"] }} id="b1" />);
     const prepared = await screen.findByLabelText("Prepared");
     expect(prepared.textContent).toContain("Prepared through 2026-01-31 by Staff 2: bank $4,075.00, books $4,075.00.");
     fireEvent.click(screen.getByRole("button", { name: "Approve through 2026-01-31" }));
@@ -235,32 +236,33 @@ describe("ReconcilePage", () => {
     cleanup();
 
     server(TIED, {}, {}, PREPARED);
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
     expect((await screen.findByLabelText("Prepared")).textContent).toContain("A staff member who may approve approves it.");
     expect(screen.queryByRole("button", { name: /^Approve/ })).toBeNull();
     cleanup();
 
     server(TIED, {}, {}, PREPARED);
-    render(<ReconcilePage me={{ ...ME, person_id: "s2", roles: ["approve"] }} />);
+    render(<ReconcilePage me={{ ...ME, person_id: "s2", roles: ["approve"] }} id="b1" />);
     expect((await screen.findByLabelText("Prepared")).textContent).toContain(
       "Another staff member who may approve approves it.",
     );
     expect(screen.getByRole("button", { name: "Prepare through 2026-01-31" })).toBeTruthy();
   });
 
-  it("reads the worksheet at another day, and another account", async () => {
+  it("reads the worksheet at another day, and an account with nothing yet", async () => {
     const fetch = server();
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
     await screen.findByRole("table", { name: "Statements" });
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Operating trust account");
+    expect(screen.getByTestId("book-cash").textContent).toBe("Book balance $4,075.00");
+    expect(within(screen.getByRole("main")).getByRole("link", { name: "Banking" }).getAttribute("href")).toBe("/banking");
 
     fireEvent.change(screen.getByLabelText("At the end of"), { target: { value: "2026-01-15" } });
     await vi.waitFor(() =>
       expect(fetch.mock.calls.map(([path]) => path)).toContain("/api/reconcile/b1?through=2026-01-15"),
     );
-    // Choosing the account already shown keeps its worksheet.
-    fireEvent.change(screen.getByLabelText("Trust bank account"), { target: { value: "b1" } });
-    expect(await screen.findByLabelText("Figures")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Trust bank account"), { target: { value: "b2" } });
+    cleanup();
+    render(<ReconcilePage me={ME} id="b2" />);
 
     expect(await screen.findByText("No statement yet. The first one sets where the bank record starts.")).toBeTruthy();
     expect(screen.getByText("Import a statement to see the reconciliation.")).toBeTruthy();
@@ -268,17 +270,17 @@ describe("ReconcilePage", () => {
     expect(screen.getByText("None yet.")).toBeTruthy();
   });
 
-  it("says when there is no trust bank account, and when the page can't be read", async () => {
+  it("says when there is no such trust bank account, and when the page can't be read", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
-    render(<ReconcilePage me={ME} />);
-    expect(await screen.findByText("Add a trust bank account in Setup first.")).toBeTruthy();
+    render(<ReconcilePage me={ME} id="b1" />);
+    expect((await screen.findByRole("alert")).textContent).toBe("no such trust bank account");
     cleanup();
 
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })),
     );
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
     expect((await screen.findAllByRole("alert"))[0]?.textContent).toBe("sign in first");
   });
 
@@ -297,7 +299,7 @@ describe("ReconcilePage", () => {
       matches: [{ ...SHEET.matches[0]!, items: [{ id: "i0", issued_on: "2025-12-29", amount: "-10.00", description: "Old check", reference: null }] }],
     };
     const fetch = server(migrated);
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
 
     expect(await screen.findByText(/the first statement's balance brought forward should be \$1,200.00/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Match the opening" }));
@@ -332,7 +334,7 @@ describe("ReconcilePage", () => {
       return new Response(JSON.stringify(path === "/api/reconcile" ? BANKS : sheet), { status: 200 });
     });
     vi.stubGlobal("fetch", fetch);
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Match the opening" }));
     // The refresh brings the matched opening; the confirmation stays, the form goes.
@@ -344,19 +346,45 @@ describe("ReconcilePage", () => {
   it("says what the opening needs before it can be matched", async () => {
     const opening = { book_cash: "1000.00", carried: "0.00", brought_forward: "1000.00", signed_off: false, matched: false };
     server({ ...SHEET, opening });
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
     expect(await screen.findByText("Sign off the cutover at Switching first.")).toBeTruthy();
     cleanup();
 
     server({ ...SHEET, opening: { ...opening, signed_off: true } });
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
     expect(await screen.findByText("No open bank line comes to $1,000.00.")).toBeTruthy();
     cleanup();
 
     // Matched, the card says so for good, with nothing left to do.
     server({ ...SHEET, opening: { ...opening, signed_off: true, matched: true } });
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
     expect(await screen.findByText("The opening is matched.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Match the opening" })).toBeNull();
+  });
+});
+
+describe("BankingPage", () => {
+  it("lists each trust bank account with its book balance, how far it is reconciled and what waits", async () => {
+    server(SHEET, {}, {}, [{ ...BANKS[0]!, prepared: PREPARED[0]!.prepared }, BANKS[1]!]);
+    render(<BankingPage me={ME} />);
+
+    const operating = await screen.findByRole("row", { name: "Operating trust account" });
+    expect(within(operating).getAllByRole("cell").map((c) => c.textContent)).toEqual([
+      "Operating trust account", "Operating", "$4,075.00", "2025-12-31", "Waiting for approval",
+    ]);
+    expect(within(operating).getByRole("link").getAttribute("href")).toBe("/bank-accounts/b1");
+    expect(within(screen.getByRole("row", { name: "Deposit trust account" })).getAllByRole("cell").map((c) => c.textContent)).toEqual([
+      "Deposit trust account", "Security deposits", "$0.00", "Not yet", "",
+    ]);
+  });
+
+  it("says when there is no trust bank account, and when they can't be read", async () => {
+    server(SHEET, {}, {}, []);
+    render(<BankingPage me={ME} />);
+    expect((await screen.findByTestId("empty-state")).textContent).toContain("No trust bank account yet.");
+    cleanup();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));
+    render(<BankingPage me={ME} />);
+    expect((await screen.findByRole("alert")).textContent).toBe("sign in first");
   });
 });

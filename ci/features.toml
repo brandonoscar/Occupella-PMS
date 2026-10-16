@@ -114,6 +114,14 @@ browser = [
 ]
 
 [[feature]]
+id = "general-ledger"
+statement = "Staff read the general ledger on screen for any days: each account's prior balance, its entries with a running balance and its totals, a page of accounts at a time, found by account or bank, as trust_report_general_ledger has them; Banking opens each trust bank account with its book balance; Owner draws shows what each owner's account may pay out and records a draw."
+operations = ["GET /api/general-ledger"]
+browser = [
+  "features.spec.ts › staff read each account's general ledger, open a trust bank account from Banking, and pay an owner's draw from Owner draws",
+]
+
+[[feature]]
 id = "rent-run"
 statement = "Staff charge every lease its rent and recurring charges for a due date, once, and the late fees of rent still open after its grace days, once, and see on the rent roll what each lease owes, a page at a time."
 operations = ["GET /api/leases", "POST /api/rent/charge-rent", "POST /api/rent/late-fees"]

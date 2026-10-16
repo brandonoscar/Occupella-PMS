@@ -369,6 +369,7 @@ test("staff enter a vendor's bill, record the owner's approval, set it aside and
   const sections = page.getByRole("navigation", { name: "Sections" });
   await sections.getByRole("link", { name: "Bills" }).click();
 
+  await page.getByRole("button", { name: "Record bill" }).click();
   await page.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Vendor E2E" });
   await page
     .getByRole("combobox", { name: "Owner and property", exact: true })
@@ -378,6 +379,7 @@ test("staff enter a vendor's bill, record the owner's approval, set it aside and
   await page.getByLabel("What for").fill("Gutter repair");
   await page.getByRole("button", { name: "Enter bill" }).click();
   await expect(page.getByText("Bill E2E-INV-1 entered.")).toBeVisible();
+  await page.getByRole("dialog", { name: "Record bill" }).getByRole("button", { name: "Close" }).click();
 
   // No agreement: every bill needs the owner's approval first.
   const bill = page.getByRole("listitem", { name: "Vendor E2E E2E-INV-1" });
@@ -389,7 +391,7 @@ test("staff enter a vendor's bill, record the owner's approval, set it aside and
   await expect(bill.getByTestId("status")).toHaveText("set aside");
   await bill.getByRole("button", { name: "Pay" }).click();
   await expect(bill).toHaveCount(0);
-  await page.getByRole("combobox", { name: "Show", exact: true }).selectOption("all");
+  await page.getByRole("tab", { name: "All", exact: true }).click();
   await expect(bill.getByTestId("status")).toHaveText("paid");
 
   await sections.getByRole("link", { name: "Owners" }).click();
@@ -486,9 +488,8 @@ test("staff import last month's statement, match it to the books and prepare it;
   await page.getByRole("button", { name: "Finish" }).click();
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Banking", exact: true }).click();
 
-  await page
-    .getByRole("combobox", { name: "Trust bank account", exact: true })
-    .selectOption({ label: "E2E operating trust account" });
+  await page.getByRole("row", { name: "E2E operating trust account", exact: true }).getByRole("link").click();
+  await expect(page.getByRole("heading", { level: 1, name: "E2E operating trust account" })).toBeVisible();
   // The seed's rents of last month: two owners' in one deposit, two more on their own.
   const csv = [
     "Date,Description,Amount,Reference",
@@ -543,9 +544,8 @@ test("staff import last month's statement, match it to the books and prepare it;
   await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
   await page.getByRole("button", { name: "Finish" }).click();
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Banking", exact: true }).click();
-  await page
-    .getByRole("combobox", { name: "Trust bank account", exact: true })
-    .selectOption({ label: "E2E operating trust account" });
+  await page.getByRole("row", { name: "E2E operating trust account", exact: true }).getByRole("link").click();
+  await expect(page.getByRole("heading", { level: 1, name: "E2E operating trust account" })).toBeVisible();
   await page.getByRole("button", { name: `Approve through ${iso(last)}` }).click();
   await expect(page.getByText(`Approved through ${iso(last)}; the account is closed through it.`)).toBeVisible();
   const approved = page.getByRole("table", { name: "Approved" }).getByRole("row", {
@@ -602,9 +602,8 @@ test("staff bring a roster in, open an account with its old balances and a check
   await expect(card).toContainText("Switch E2E at ");
 
   await sections.getByRole("link", { name: "Banking", exact: true }).click();
-  await page
-    .getByRole("combobox", { name: "Trust bank account", exact: true })
-    .selectOption({ label: "E2E cutover trust account" });
+  await page.getByRole("row", { name: "E2E cutover trust account", exact: true }).getByRole("link").click();
+  await expect(page.getByRole("heading", { level: 1, name: "E2E cutover trust account" })).toBeVisible();
   await page.getByLabel("Statement file (CSV or OFX)").setInputFiles(file("statement.csv", "Date,Description,Amount\n"));
   await page.getByLabel("First day").fill(iso(cutover));
   await page.getByLabel("Last day").fill(iso(cutover));
@@ -637,9 +636,8 @@ test("the demo opens on last month waiting for its manager, who approves it and 
   await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
   await page.getByRole("button", { name: "Finish" }).click();
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Banking", exact: true }).click();
-  await page
-    .getByRole("combobox", { name: "Trust bank account", exact: true })
-    .selectOption({ label: "Demo operating trust account" });
+  await page.getByRole("row", { name: "Demo operating trust account", exact: true }).getByRole("link").click();
+  await expect(page.getByRole("heading", { level: 1, name: "Demo operating trust account" })).toBeVisible();
 
   // The bookkeeper prepared last month; the roof repair's check hasn't cleared the bank.
   await expect(page.getByRole("table", { name: "Reconciling items" })).toContainText("Bill RF-2207 paid");

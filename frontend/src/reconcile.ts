@@ -36,6 +36,7 @@ export type BankBooks = {
   id: string;
   name: string;
   kind: "operating" | "security_deposit";
+  book_cash: string;
   closed_through: string | null;
   next_start: string | null;
   statements: StatementRow[];

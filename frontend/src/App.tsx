@@ -13,12 +13,14 @@ import { ListingsPage } from "./pages/ListingsPage";
 import { OwnerHome } from "./pages/OwnerHome";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { MoveOutPage } from "./pages/MoveOutPage";
+import { GeneralLedgerPage } from "./pages/GeneralLedgerPage";
+import { OwnerDrawsPage } from "./pages/OwnerDrawsPage";
 import { OwnerPage, OwnersPage } from "./pages/OwnersPage";
 import { TenantPage, TenantsPage } from "./pages/TenantsPages";
 import { JournalPage } from "./pages/JournalPage";
 import { ApplicantsPage, DraftLeasesPage, WorkOrdersPage } from "./pages/LeasingPages";
 import { LoginsPage } from "./pages/LoginsPage";
-import { ReconcilePage } from "./pages/ReconcilePage";
+import { BankingPage, ReconcilePage } from "./pages/ReconcilePage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { RentPage } from "./pages/RentPage";
 import { LeasePage, PropertiesPage, PropertyPage, UnitPage } from "./pages/RentalsPages";
@@ -86,9 +88,11 @@ const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/move-out": (me) => <MoveOutPage me={me} />,
   "/applicants": (me) => <ApplicantsPage me={me} />,
   "/draft-leases": (me) => <DraftLeasesPage me={me} />,
-  "/banking": (me) => <ReconcilePage me={me} />,
+  "/banking": (me) => <BankingPage me={me} />,
   "/bills": (me) => <BillsPage me={me} />,
+  "/general-ledger": (me) => <GeneralLedgerPage me={me} />,
   "/journal": (me) => <JournalPage me={me} />,
+  "/owner-draws": (me) => <OwnerDrawsPage me={me} />,
   "/budgets": (me) => <BudgetsPage me={me} />,
   "/work-orders": (me) => <WorkOrdersPage me={me} />,
   "/vendors": (me) => <VendorsPage me={me} />,
@@ -108,4 +112,5 @@ const RECORDS: [RegExp, (me: Me, id: string) => React.ReactNode][] = [
   [/^\/leases\/([0-9a-f-]{36})$/, (me, id) => <LeasePage me={me} id={id} />],
   [/^\/tenants\/([0-9a-f-]{36})$/, (me, id) => <TenantPage me={me} id={id} />],
   [/^\/owners\/([0-9a-f-]{36})$/, (me, id) => <OwnerPage me={me} id={id} />],
+  [/^\/bank-accounts\/([0-9a-f-]{36})$/, (me, id) => <ReconcilePage me={me} id={id} />],
 ];

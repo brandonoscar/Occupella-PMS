@@ -94,6 +94,13 @@ async function openOwner(page: Page, name: string): Promise<void> {
   await expect(page.getByRole("heading", { level: 1, name, exact: true })).toBeVisible();
 }
 
+// Journal entries, from the general ledger's Journal entry button.
+async function journal(page: Page): Promise<void> {
+  await section(page, "General ledger");
+  await page.getByRole("link", { name: "Journal entry", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Journal entries", exact: true })).toBeVisible();
+}
+
 // One of Settings' pages: Settings in the menu, then the page.
 async function settings(page: Page, name: string): Promise<void> {
   await section(page, "Settings");
@@ -223,6 +230,46 @@ test("staff find a property, rename it and a unit, archive a vacant unit but not
   await expect(page.getByRole("list", { name: "Search results" })).toContainText("Cedar House");
   await search.press("Enter");
   await expect(page.getByRole("heading", { level: 1, name: "Cedar House" })).toBeVisible();
+});
+
+test("staff read each account's general ledger, open a trust bank account from Banking, and pay an owner's draw from Owner draws", async ({
+  page,
+}) => {
+  const people = seed.features["general-ledger"]!;
+  await joinAsStaff(page, people.manager);
+
+  // The general ledger, from two months back to today: each account's entries and running balance.
+  await section(page, "General ledger");
+  await page.getByLabel("From").fill(firstOfMonthsAgo(2));
+  await page.getByLabel("Find an account").fill("aspen row");
+  const aspen = page.getByRole("table", { name: "owner_property: Demo Owner B / Aspen Row, Demo operating trust account (operating)" });
+  await expect(aspen.getByRole("row").first()).toBeVisible();
+  await expect(aspen.getByRole("row", { name: /^Prior balance/ })).toBeVisible();
+  await expect(aspen.getByRole("row", { name: /^Total/ })).toBeVisible();
+  await expect(page.getByRole("table")).toHaveCount(1);
+  const pdf = await page.request.get(
+    (await page.getByRole("link", { name: "PDF", exact: true }).getAttribute("href")) ?? "",
+  );
+  expect(pdf.status()).toBe(200);
+
+  // Banking: each trust bank account with its book balance, opening its own page.
+  await section(page, "Banking");
+  const operating = page.getByRole("row", { name: "Demo operating trust account", exact: true });
+  await expect(operating).toContainText("Operating");
+  await operating.getByRole("link").click();
+  await expect(page.getByRole("heading", { level: 1, name: "Demo operating trust account" })).toBeVisible();
+  await expect(page.getByTestId("book-cash")).toContainText("Book balance $");
+
+  // Owner draws: what each owner's account may pay out, and a draw from one.
+  await section(page, "Owner draws");
+  const birch = page.getByRole("row", { name: "Demo Owner A, Birch Flats", exact: true });
+  await expect(birch).toContainText("$250.00");
+  await page.getByLabel("Owner and property").selectOption({ label: "Demo Owner B, Aspen Row" });
+  await expect(page.getByTestId("draw-available")).toContainText("available from Demo operating trust account");
+  await page.getByRole("button", { name: "Record draw" }).click();
+  await expect(page.getByRole("alert")).toHaveText(
+    "nothing is available to draw: what the account holds is kept for the $200.00 reserve",
+  );
 });
 
 test("staff find a tenant and an owner, keep their contact details and a vendor's, rename them, and archive only what has nothing open", async ({
@@ -436,6 +483,7 @@ test("a bill over the owner's limit emails them; they decline one and approve an
   await joinAsStaff(page, people.manager);
   await section(page, "Bills");
   const enter = async (reference: string, amount: string, memo: string) => {
+    await page.getByRole("button", { name: "Record bill" }).click();
     await page.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Plumbing Co" });
     await page
       .getByRole("combobox", { name: "Owner and property", exact: true })
@@ -445,6 +493,7 @@ test("a bill over the owner's limit emails them; they decline one and approve an
     await page.getByLabel("What for").fill(memo);
     await page.getByRole("button", { name: "Enter bill" }).click();
     await expect(page.getByText(`Bill ${reference} entered.`)).toBeVisible();
+    await page.getByRole("dialog", { name: "Record bill" }).getByRole("button", { name: "Close" }).click();
   };
   // Over Demo Owner A's $500.00 approval limit.
   await enter("PLB-2001", "800.00", "Water heater");
@@ -496,7 +545,7 @@ test("a bill over the owner's limit emails them; they decline one and approve an
   await bill("PLB-2002").getByRole("button", { name: "Pay" }).click();
   await expect(page.getByText("PLB-2002 is paid.")).toBeVisible();
   await expect(bill("PLB-2002")).toHaveCount(0);
-  await page.getByRole("combobox", { name: "Show", exact: true }).selectOption("all");
+  await page.getByRole("tab", { name: "All", exact: true }).click();
   await expect(bill("PLB-2002").getByTestId("status")).toHaveText("paid");
   await expect(bill("PLB-2001").getByTestId("status")).toHaveText("declined");
   await expect(bill("PLB-2001")).toContainText("Get a second quote");
@@ -541,6 +590,7 @@ test("staff add a recurring bill, enter this month's once and stop it, and recor
 
   // A bill over the limit of an owner with no portal login: no email can go, so staff record
   // the owner's answer themselves, here a decline.
+  await page.getByRole("button", { name: "Record bill" }).click();
   await page.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Roofing Co" });
   await page
     .getByRole("combobox", { name: "Owner and property", exact: true })
@@ -549,6 +599,8 @@ test("staff add a recurring bill, enter this month's once and stop it, and recor
   await page.getByLabel("Amount", { exact: true }).fill("900.00");
   await page.getByLabel("What for", { exact: true }).fill("Skylight");
   await page.getByRole("button", { name: "Enter bill" }).click();
+  await expect(page.getByText("Bill RF-3001 entered.")).toBeVisible();
+  await page.getByRole("dialog", { name: "Record bill" }).getByRole("button", { name: "Close" }).click();
   const skylight = page.getByRole("listitem", { name: "Demo Roofing Co RF-3001" });
   await expect(skylight).toContainText(
     "No email went to the owner: they have no active portal login. Ask them yourself.",
@@ -565,7 +617,7 @@ test("staff add a recurring bill, enter this month's once and stop it, and recor
   await skylight.getByRole("button", { name: "Record decline" }).click();
   await expect(page.getByText("The owner's decline of RF-3001 is recorded.")).toBeVisible();
   await expect(skylight).toHaveCount(0);
-  await page.getByRole("combobox", { name: "Show", exact: true }).selectOption("all");
+  await page.getByRole("tab", { name: "All", exact: true }).click();
   await expect(skylight.getByTestId("status")).toHaveText("declined");
   await expect(skylight).toContainText("Declined by Demo Owner A, by phone: Not this year.");
 });
@@ -637,6 +689,7 @@ test("only staff holding a role do its work: an admin grants pay-out and adds st
   const people = seed.features.roles!;
   const secret = await joinAsStaff(page, people.bookkeeper);
   await section(page, "Bills");
+  await page.getByRole("button", { name: "Record bill" }).click();
   await page.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Plumbing Co" });
   await page
     .getByRole("combobox", { name: "Owner and property", exact: true })
@@ -645,6 +698,8 @@ test("only staff holding a role do its work: an admin grants pay-out and adds st
   await page.getByLabel("Amount", { exact: true }).fill("100.00");
   await page.getByLabel("What for").fill("Faucet washer");
   await page.getByRole("button", { name: "Enter bill" }).click();
+  await expect(page.getByText("Bill PLB-3001 entered.")).toBeVisible();
+  await page.getByRole("dialog", { name: "Record bill" }).getByRole("button", { name: "Close" }).click();
   const bill = page.getByRole("listitem", { name: "Demo Plumbing Co PLB-3001" });
   await bill.getByRole("button", { name: "Set aside" }).click();
   await expect(bill.getByTestId("status")).toHaveText("set aside");
@@ -1098,6 +1153,7 @@ test("staff put bills in expense accounts on Schedule E lines, and the owner rea
   // A water bill entered in Water; a hose in none, then put in Water; both set aside.
   await section(page, "Bills");
   const enter = async (reference: string, amount: string, memo: string, account?: string) => {
+    await page.getByRole("button", { name: "Record bill" }).click();
     await page.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Plumbing Co" });
     await page
       .getByRole("combobox", { name: "Owner and property", exact: true })
@@ -1112,6 +1168,7 @@ test("staff put bills in expense accounts on Schedule E lines, and the owner rea
     }
     await page.getByRole("button", { name: "Enter bill" }).click();
     await expect(page.getByText(`Bill ${reference} entered.`)).toBeVisible();
+    await page.getByRole("dialog", { name: "Record bill" }).getByRole("button", { name: "Close" }).click();
   };
   await enter("WTR-1", "45.00", "Water, last month", "Water (Schedule E line 17: Utilities)");
   await enter("HOSE-1", "12.00", "Garden hose");
@@ -1177,7 +1234,7 @@ test("a bookkeeper proposes journal entries; the manager posts one, the ledger r
   const people = seed.features.journal!;
   const OPERATING = "Demo operating trust account";
   await joinAsStaff(page, people.bookkeeper);
-  await section(page, "Journal entries");
+  await journal(page);
   await expect(page.getByTestId("empty-state")).toContainText("No journal entries yet");
 
   async function propose(memo: string, amount: string) {
@@ -1202,7 +1259,7 @@ test("a bookkeeper proposes journal entries; the manager posts one, the ledger r
 
   const manager = await (await browser.newContext()).newPage();
   await joinAsStaff(manager, people.manager);
-  await section(manager, "Journal entries");
+  await journal(manager);
   const toPost = entry(manager, "Birch Flats rent deposited as Aspen Row");
   await expect(toPost.getByRole("row", { name: /Demo Owner B \/ Aspen Row .*Demo Owner A \/ Birch Flats \$10\.00/ })).toBeVisible();
   await toPost.getByRole("button", { name: "Post" }).click();
@@ -1278,6 +1335,7 @@ test("an admin makes a custom role and gives it: its holder changes only what it
   const bookkeeper = await (await browser.newContext()).newPage();
   await joinAsStaff(bookkeeper, people.bookkeeper);
   await section(bookkeeper, "Bills");
+  await bookkeeper.getByRole("button", { name: "Record bill" }).click();
   await bookkeeper.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Plumbing Co" });
   await bookkeeper.getByLabel("Vendor's reference").fill("PLB-4001");
   await bookkeeper.getByLabel("Amount", { exact: true }).fill("80.00");

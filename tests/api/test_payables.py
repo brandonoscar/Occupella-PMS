@@ -106,6 +106,9 @@ def test_a_bill_is_entered_set_aside_and_paid_once_each(client, conn, staff, pmc
     assert held == Decimal("800.00")
     assert paid["transfer_id"] != aside["transfer_id"]
     assert statuses(client) == {}
+    # The paid ones, apart.
+    assert statuses(client, "paid") == {"INV-1": "paid"}
+    assert statuses(client, "declined") == {}
     assert (listed["status"], listed["amount"], listed["owner"], listed["vendor"]) == (
         "paid",
         "200.00",
@@ -205,6 +208,8 @@ def test_staff_record_an_owners_decline_and_the_bill_is_never_paid(client, conn,
         "Get a second quote",
     )
     assert statuses(client) == {}  # nothing left to pay
+    assert statuses(client, "declined") == {"INV-1": "declined"}
+    assert statuses(client, "paid") == {}
     assert (before["unpaid_bills"], after["unpaid_bills"]) == ("800.00", "0.00")
     refused(aside, 409)
     assert "declined by Owner 1, by email" in aside.json()["detail"]
@@ -775,6 +780,10 @@ def test_only_staff_handle_bills_and_owners_money(
 )
 def test_bad_input_is_refused(client, staff, path, body):
     refused(client.post(f"/api/payables/{path}", json=body), 422)
+
+
+def test_a_bills_list_of_no_kind_is_refused(client, staff):
+    refused(client.get("/api/payables/bills?show=late"), 422)
 
 
 @pytest.mark.parametrize(

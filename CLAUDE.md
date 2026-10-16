@@ -126,8 +126,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and archive one. A search in the bar finds a property, unit, tenant or owner (`/api/search`).
   Lists come a page at a time (`Paged`: 50 by default, at most 200); move-outs at `/move-out` (`src/pms/api/moveout.py`). Leasing:
   applications and links at `/applicants`, lease offers at `/draft-leases`. Accounting:
-  reconciling at `/banking` (`src/pms/api/reconcile.py`), bills at `/bills`, journal entries at
-  `/journal` (`src/pms/api/journal.py`), budgets at `/budgets` (`src/pms/api/budgets.py`).
+  the trust bank accounts at `/banking`, each with its book balance and its month-end at
+  `/bank-accounts/<id>` (`src/pms/api/reconcile.py`), bills at `/bills` (Unpaid, Paid, Declined
+  and All tabs; Record bill opens a side panel), the general ledger on
+  screen at `/general-ledger` (`src/pms/api/general_ledger.py`: trust_report_general_ledger's
+  rows by account, a page of accounts at a time; cash basis) with its Journal entry button to
+  `/journal` (`src/pms/api/journal.py`), owner draws at `/owner-draws`, budgets at `/budgets`
+  (`src/pms/api/budgets.py`).
   Maintenance: work orders at `/work-orders`, vendors and their insurance at `/vendors`
   (`src/pms/api/vendors.py`). Files at `/files` (`src/pms/api/documents.py`), every download at
   `/reports`, and Settings at `/settings`: staff roles and signers at `/settings/staff`

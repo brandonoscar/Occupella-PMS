@@ -1,12 +1,16 @@
+import { Receipt } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
+import { EmptyState } from "../components/EmptyState";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
+import { SidePanel } from "../components/SidePanel";
+import { Tabs } from "../components/Tabs";
 import { day, money } from "../money";
 import type { Bill, OutboxEmail, Recurring } from "../payables";
 import { emailNote, nextStep, recurringLabel, statusTone } from "../payables";
@@ -16,7 +20,20 @@ import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
 
-type Show = "open" | "all";
+type Show = "open" | "paid" | "declined" | "all";
+
+const TABS: { value: Show; label: string }[] = [
+  { value: "open", label: "Unpaid" },
+  { value: "paid", label: "Paid" },
+  { value: "declined", label: "Declined" },
+  { value: "all", label: "All" },
+];
+const NONE: Record<Show, string> = {
+  open: "Nothing left to pay: every bill is paid or declined.",
+  paid: "No bill is paid yet.",
+  declined: "No bill was declined.",
+  all: "No bills yet.",
+};
 
 // Staff's vendor bills: enter one against an owner's property account, record the owner's
 // approval (or decline) when it is over their limit, unless the owner decided in their portal,
@@ -31,6 +48,7 @@ export function BillsPage({ me }: { me: Me }) {
   const [error, setError] = useState("");
   // What a bill's step did: said here, as the step may take the bill off the list.
   const [done, setDone] = useState("");
+  const [recording, setRecording] = useState(false);
   const failed = (why: unknown) => setError(why instanceof ApiError ? why.detail : String(why));
 
   function refresh() {
@@ -45,16 +63,14 @@ export function BillsPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Bills" />
-      {books && <EnterBillCard books={books} refresh={refresh} />}
+      <PageHeader title="Bills" actions={<Button onClick={() => setRecording(true)}>Record bill</Button>} />
+      {recording && books && (
+        <SidePanel title="Record bill" onClose={() => setRecording(false)}>
+          <EnterBillForm books={books} refresh={refresh} />
+        </SidePanel>
+      )}
       <Card title="Vendor bills">
-        <div className="mb-4 max-w-48">
-          <Select label="Show" id="bills-show" value={show}
-            onChange={(e) => setShow(e.target.value as Show)}>
-            <option value="open">Still to pay</option>
-            <option value="all">All bills</option>
-          </Select>
-        </div>
+        <Tabs label="Bills" tabs={TABS} value={show} onChange={setShow} />
         {done && (
           <div className="mb-2">
             <Notice tone="info">{done}</Notice>
@@ -63,7 +79,7 @@ export function BillsPage({ me }: { me: Me }) {
         {bills === null ? (
           <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
         ) : bills.length === 0 ? (
-          <Notice tone="info">{show === "open" ? "Nothing left to pay: every bill is paid or declined." : "No bills yet."}</Notice>
+          <EmptyState icon={Receipt} title={NONE[show]} />
         ) : (
           <ul className="flex flex-col divide-y divide-line">
             {bills.map((bill) => (
@@ -78,7 +94,7 @@ export function BillsPage({ me }: { me: Me }) {
   );
 }
 
-function EnterBillCard({ books, refresh }: { books: Portfolio; refresh: () => void }) {
+function EnterBillForm({ books, refresh }: { books: Portfolio; refresh: () => void }) {
   const { said, error, record } = useRecord(refresh);
   const [vendor, setVendor] = useState(books.vendors[0]?.id ?? "");
   const [account, setAccount] = useState(books.accounts[0]?.account ?? "");
@@ -89,16 +105,12 @@ function EnterBillCard({ books, refresh }: { books: Portfolio; refresh: () => vo
   const [memo, setMemo] = useState("");
   const [expense, setExpense] = useState("");
   if (books.vendors.length === 0 || books.accounts.length === 0) {
-    return (
-      <Card title="Enter a bill">
-        <Notice tone="info">Add a vendor and a property with an owner in Setup first.</Notice>
-      </Card>
-    );
+    return <Notice tone="info">Add a vendor and a property with an owner in Setup first.</Notice>;
   }
   return (
-    <Card title="Enter a bill">
+    <>
       <form
-        className="flex flex-wrap items-end gap-3"
+        className="flex flex-col gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
           const body = {
@@ -144,7 +156,7 @@ function EnterBillCard({ books, refresh }: { books: Portfolio; refresh: () => vo
       </form>
       <Notice tone="info">{said}</Notice>
       <Notice tone="error">{error}</Notice>
-    </Card>
+    </>
   );
 }
 

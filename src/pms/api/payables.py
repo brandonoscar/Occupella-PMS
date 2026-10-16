@@ -156,12 +156,13 @@ def status_of(
     return "to set aside"
 
 
+BillsShown = Literal["open", "paid", "declined", "all"]
+
+
 @router.get("/bills")
-def bills(
-    session: Staff, conn: Conn, show: Annotated[Literal["open", "all"], Query()] = "open"
-) -> list[Bill]:
+def bills(session: Staff, conn: Conn, show: Annotated[BillsShown, Query()] = "open") -> list[Bill]:
     """The PMC's vendor bills, by due date: by default those still to pay (not paid, nor
-    declined by the owner)."""
+    declined by the owner); or the paid ones, the declined ones, or all."""
     found = []
     for (
         i,
@@ -189,6 +190,8 @@ def bills(
             amount, limit, approved_by is not None, declined_by is not None, aside, paid
         )
         if show == "open" and status in ("paid", "declined"):
+            continue
+        if show in ("paid", "declined") and status != show:
             continue
         found.append(
             Bill(

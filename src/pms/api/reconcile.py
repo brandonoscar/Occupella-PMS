@@ -99,6 +99,8 @@ class BankBooks(BaseModel):
     id: UUID
     name: str
     kind: str
+    # What the books say the account holds now: its cash, everything held in it.
+    book_cash: str
     # The last day an approved reconciliation closed, and the next period's first day (known
     # once the account was cut over, reconciled or given a statement).
     closed_through: date | None
@@ -147,9 +149,14 @@ def next_start(conn: psycopg.Connection[Any], bank: UUID) -> date | None:
 def books(session: Staff, conn: Conn) -> list[BankBooks]:
     """Each trust bank account: its statements, its approved reconciliations, where it stands."""
     found: list[BankBooks] = []
-    for bank, name, kind, closed in conn.execute(
-        "SELECT id, display_name, kind, (closed_through AT TIME ZONE 'UTC')::date - 1"
-        ' FROM trust_bank_accounts WHERE pmc_id = %s ORDER BY kind, display_name COLLATE "C", id',
+    for bank, name, kind, closed, cash in conn.execute(
+        "SELECT k.id, k.display_name, k.kind, (k.closed_through AT TIME ZONE 'UTC')::date - 1,"
+        # Cash is the side money leaves from, so the books' cash is its balance negated.
+        " (SELECT -coalesce(sum(l.balance), 0) FROM trust_ledger_accounts AS a"
+        "  JOIN pgledger_accounts AS l ON l.id = a.ledger_account_id"
+        "  WHERE a.bank_account_id = k.id AND a.kind = 'bank_cash')"
+        " FROM trust_bank_accounts AS k WHERE k.pmc_id = %s"
+        ' ORDER BY k.kind, k.display_name COLLATE "C", k.id',
         (session.pmc_id,),
     ).fetchall():
         found.append(
@@ -157,6 +164,7 @@ def books(session: Staff, conn: Conn) -> list[BankBooks]:
                 id=bank,
                 name=name,
                 kind=kind,
+                book_cash=cents(cash),
                 closed_through=closed,
                 next_start=next_start(conn, bank),
                 statements=[
