@@ -22,6 +22,8 @@ import { MaintenanceCard } from "./MaintenanceCard";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
@@ -133,7 +135,7 @@ function NewWorkOrderForm({ opened }: { opened: () => void }) {
   if (books.properties.length === 0) return <Notice tone="info">Add a property from Settings, Company setup first.</Notice>;
   const units = books.properties.find((p) => p.id === property)?.units ?? [];
   return (
-    <form
+    <Form
       className="flex flex-col gap-3"
       onSubmit={async (event) => {
         event.preventDefault();
@@ -152,9 +154,9 @@ function NewWorkOrderForm({ opened }: { opened: () => void }) {
       <Field label="What needs doing" id="work-order-summary" required maxLength={500} value={summary}
         onChange={(event) => setSummary(event.target.value)} />
       <div><Button type="submit">Open work order</Button></div>
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
-    </form>
+    </Form>
   );
 }
 
@@ -253,7 +255,7 @@ function StepForm({ id, vendors, refresh }: { id: string; vendors: Named[]; refr
   const [note, setNote] = useState("");
   const chosen = vendor || vendors[0]?.id || "";
   return (
-    <form
+    <Form
       className="mt-4 flex flex-wrap items-end gap-3"
       onSubmit={async (event) => {
         event.preventDefault();
@@ -276,8 +278,8 @@ function StepForm({ id, vendors, refresh }: { id: string; vendors: Named[]; refr
       <Field label="Note (optional)" id="step-note" maxLength={2000} value={note}
         onChange={(event) => setNote(event.target.value)} />
       <Button type="submit">Record</Button>
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
-    </form>
+    </Form>
   );
 }

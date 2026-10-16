@@ -115,6 +115,10 @@ TABLES = {
     "trust_renters_insurance": {"SELECT", "INSERT"},
     "trust_archivals": {"SELECT", "INSERT"},
     "trust_contacts": {"SELECT", "INSERT"},
+    # Property groups (migration 0065): a group is renamed (UPDATE of display_name only), a
+    # property joins or leaves it by an insert.
+    "trust_property_groups": {"SELECT", "INSERT"},
+    "trust_property_group_members": {"SELECT", "INSERT"},
     "trust_inspections": {"SELECT", "INSERT"},
     "trust_inspection_items": {"SELECT", "INSERT"},
     "trust_listing_removals": {"SELECT", "INSERT"},
@@ -207,6 +211,7 @@ RENAMEABLE = [
     "trust_vendors",
     "trust_units",
     "trust_staff",
+    "trust_property_groups",
 ]
 
 # Who may call each function, besides the role that owns it.
@@ -306,6 +311,7 @@ FUNCTIONS = {
     "trust_report_trust_account_signers(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_renters_insurance(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_is_archived(uuid,uuid,uuid,uuid)": {"trust_app"},
+    "trust_group_properties(uuid)": {"trust_app"},
     "trust_report_inspection(uuid,uuid)": {"trust_app", "trust_ai_agent"},
     "trust_report_cash_flow(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_vacancy(uuid,date)": {"trust_app", "trust_ai_agent"},
@@ -369,6 +375,7 @@ FUNCTIONS = {
     "trust_name_custom_role_changer()": {"PUBLIC"},
     "trust_name_recorder()": {"PUBLIC"},
     "trust_check_archival()": {"PUBLIC"},
+    "trust_check_group_member()": {"PUBLIC"},
     "trust_check_document_has_file()": {"PUBLIC"},
     "trust_check_recurring_charge_amount()": {"PUBLIC"},
     "trust_check_signer_change()": {"PUBLIC"},

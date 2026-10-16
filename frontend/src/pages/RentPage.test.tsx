@@ -8,6 +8,8 @@ import { LeaseRow, RentPage } from "./RentPage";
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  window.history.pushState(null, "", "/");
+  window.localStorage.clear();
 });
 
 const ME: Me = {
@@ -95,13 +97,16 @@ describe("LeaseRow", () => {
     // that bounced.
     const payments = within(lease).getAllByRole("row").slice(1);
     expect(payments.map((r) => within(r).getAllByRole("cell").map((c) => c.textContent))).toEqual([
-      ["09/01/2026Check 101", "$1,500.00", "It bounced"],
+      ["09/01/2026Check 101", "$1,500.00", ""],
       ["08/01/2026", "$1,500.00", "Bounced"],
     ]);
     expect(within(payments[0]!).getByText("Check 101").className).toContain("text-ink-muted");
     expect(within(lease).getByTestId("owed").getAttribute("data-tone")).toBe("caution");
     expect(within(payments[1]!).getByText("Bounced").closest("[data-tone]")?.getAttribute("data-tone")).toBe("danger");
-    expect(within(lease).getAllByRole("button", { name: "It bounced" })).toHaveLength(1);
+    // It bounced is in the ⋯ menu of the payment that hasn't.
+    expect(within(lease).getAllByRole("button", { name: /^Actions for / }).map((b) => b.getAttribute("aria-label"))).toEqual([
+      "Actions for 09/01/2026 payment of $1,500.00",
+    ]);
     expect(screen.queryByText(/payment hold/)).toBeNull();
   });
   it("records a payment once per request, and says where it went", async () => {
@@ -152,14 +157,18 @@ describe("LeaseRow", () => {
     expect(await within(lease).findByText("Deposit of $500.00 held.")).toBeTruthy();
     // A bounce asks for the day it came back before anything is recorded; Cancel records nothing.
     expect(within(lease).queryByLabelText("Bounced on, 09/01/2026 payment")).toBeNull();
-    fireEvent.click(within(lease).getByRole("button", { name: "It bounced" }));
+    const bounced = () => {
+      fireEvent.click(within(lease).getByRole("button", { name: "Actions for 09/01/2026 payment of $1,500.00" }));
+      fireEvent.click(within(lease).getByRole("menuitem", { name: "It bounced" }));
+    };
+    bounced();
     fireEvent.click(within(lease).getByRole("button", { name: "Cancel" }));
     expect(within(lease).queryByLabelText("Bounced on, 09/01/2026 payment")).toBeNull();
-    fireEvent.click(within(lease).getByRole("button", { name: "It bounced" }));
+    bounced();
     fireEvent.change(within(lease).getByLabelText("Bounced on, 09/01/2026 payment"), {
       target: { value: "2026-09-05" },
     });
-    fireEvent.click(within(lease).getByRole("button", { name: "Record the bounce" }));
+    fireEvent.click(within(lease).getByRole("button", { name: "Record the $1,500.00 bounce" }));
     expect(
       await within(lease).findByText("The $1,500.00 payment bounced and is undone; a $35.00 NSF fee is charged."),
     ).toBeTruthy();
@@ -320,28 +329,31 @@ describe("RentPage", () => {
   it("lists the leases a page at a time, each linking to its own page", async () => {
     const fetch = server({
       "/api/leases?page=1&show=current": { ...ROLL, total: 51 },
+      "/api/property-groups": { groups: [], properties: [{ id: "p1", name: "Property 1" }] },
     });
     render(<RentPage me={ME} />);
 
     const row = await roll();
     expect(within(row).getAllByRole("cell").map((c) => c.textContent)).toEqual([
-      "Property 1", "Unit 1", "Tenant 1, Tenant 2", "$1,500.00", "From 01/01/2026, month to month", "Owes $1,550.00",
+      "Property 1", "Unit 1", "Tenant 1, Tenant 2", "$1,500.00", "01/01/2026 – Month to month", "Owes $1,550.00",
     ]);
     expect(within(row).getByRole("link", { name: "Unit 1" }).getAttribute("href")).toBe("/leases/l1");
     expect(within(row).getByTestId("owed").getAttribute("data-tone")).toBe("caution");
     const pages = screen.getByRole("navigation", { name: "Pages" });
     expect(pages.textContent).toContain("1–1 of 51");
 
-    // The next page, a search and the owing leases each ask again, from the first page.
+    // The next page, one property and the owing leases each ask again, from the first page.
     fireEvent.click(within(pages).getByRole("button", { name: "Next" }));
     await vi.waitFor(() => expect(fetch.mock.calls.at(-1)?.[0]).toBe("/api/leases?page=2&show=current"));
-    fireEvent.change(screen.getByLabelText("Find a tenant, unit or property"), { target: { value: " Tenant 2 " } });
+    const picker = screen.getByRole("combobox", { name: "Properties shown" });
+    await within(picker).findByRole("option", { name: "Property 1" });
+    fireEvent.change(picker, { target: { value: "property:p1" } });
     await vi.waitFor(() =>
-      expect(fetch.mock.calls.at(-1)?.[0]).toBe("/api/leases?page=1&show=current&q=Tenant+2"),
+      expect(fetch.mock.calls.at(-1)?.[0]).toBe("/api/leases?page=1&show=current&property=p1"),
     );
     fireEvent.change(screen.getByLabelText("Show"), { target: { value: "owing" } });
     await vi.waitFor(() =>
-      expect(fetch.mock.calls.at(-1)?.[0]).toBe("/api/leases?page=1&show=owing&q=Tenant+2"),
+      expect(fetch.mock.calls.at(-1)?.[0]).toBe("/api/leases?page=1&show=owing&property=p1"),
     );
   });
 

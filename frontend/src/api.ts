@@ -1,3 +1,5 @@
+import { notify } from "./toast";
+
 // Calls to the API on the same origin. The session is an HttpOnly cookie the browser sends by
 // itself; every change goes as JSON, which the API requires (it refuses anything else, so a
 // form on another site can't act for the person signed in here).
@@ -52,7 +54,17 @@ function detailOf(data: unknown): string | null {
   return null;
 }
 
+// A refused change also shows as a toast with its reason, wherever the page says it.
+async function change<T>(path: string, body: unknown): Promise<T> {
+  try {
+    return await call<T>("POST", path, body);
+  } catch (failed) {
+    notify("error", failed instanceof ApiError ? failed.detail : String(failed));
+    throw failed;
+  }
+}
+
 export const api = {
   get: <T>(path: string) => call<T>("GET", path),
-  post: <T>(path: string, body: unknown = {}) => call<T>("POST", path, body),
+  post: <T>(path: string, body: unknown = {}) => change<T>(path, body),
 };

@@ -8,6 +8,8 @@ import { TenantPage, TenantsPage } from "./TenantsPages";
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  window.history.pushState(null, "", "/");
+  window.localStorage.clear();
 });
 
 const ME: Me = {
@@ -78,8 +80,9 @@ describe("TenantsPage", () => {
   it("lists the tenants a page at a time, each with their unit, lease and contact", async () => {
     const fetch = server({
       "/api/tenants?page=1&archived=false": ROWS,
-      "/api/tenants?page=1&archived=false&q=Unit+1": { ...ROWS, items: [ROWS.items[0]], total: 1 },
-      "/api/tenants?page=1&archived=true&q=Unit+1": { ...ROWS, items: [], total: 0 },
+      "/api/tenants?page=1&archived=false&property=p1": { ...ROWS, items: [ROWS.items[0]], total: 1 },
+      "/api/tenants?page=1&archived=true&property=p1": { ...ROWS, items: [], total: 0 },
+      "/api/property-groups": { groups: [], properties: [{ id: "p1", name: "Property 1" }] },
     });
     render(<TenantsPage me={ME} />);
 
@@ -92,14 +95,16 @@ describe("TenantsPage", () => {
       "No lease",
     );
 
-    fireEvent.change(screen.getByLabelText("Find a tenant, property or unit"), { target: { value: "Unit 1" } });
+    const picker = screen.getByRole("combobox", { name: "Properties shown" });
+    await within(picker).findByRole("option", { name: "Property 1" });
+    fireEvent.change(picker, { target: { value: "property:p1" } });
     await vi.waitFor(() => expect(screen.queryByRole("row", { name: "Tenant 2" })).toBeNull());
-    fireEvent.click(screen.getByLabelText("Archived only"));
+    fireEvent.change(screen.getByRole("combobox", { name: "Status" }), { target: { value: "archived" } });
     expect((await screen.findByTestId("empty-state")).textContent).toContain("No archived tenants.");
-    expect(fetch.mock.calls.map(([path]) => path)).toEqual([
+    expect(fetch.mock.calls.map(([path]) => path).filter((path) => path !== "/api/property-groups")).toEqual([
       "/api/tenants?page=1&archived=false",
-      "/api/tenants?page=1&archived=false&q=Unit+1",
-      "/api/tenants?page=1&archived=true&q=Unit+1",
+      "/api/tenants?page=1&archived=false&property=p1",
+      "/api/tenants?page=1&archived=true&property=p1",
     ]);
   });
 
@@ -126,8 +131,8 @@ describe("TenantPage", () => {
     expect(contact.textContent).toContain("100 Example Street, Apt 2Sampletown, ZZ 00000");
     const rows = screen.getAllByRole("row", { name: "Property 1, Unit 1" });
     expect(rows.map((row) => within(row).getAllByRole("cell").map((c) => c.textContent))).toEqual([
-      ["Unit 1, Property 1", "From 01/01/2026, month to month", "Current", "$1,500.00", "$50.00"],
-      ["Unit 1, Property 1", "01/01/2025 to 12/31/2025", "Ended", "$1,500.00", "$0.00"],
+      ["Unit 1, Property 1", "01/01/2026 – Month to month", "Current", "$1,500.00", "$50.00"],
+      ["Unit 1, Property 1", "01/01/2025 – 12/31/2025", "Ended", "$1,500.00", "$0.00"],
     ]);
     expect(within(rows[0]!).getByRole("link").getAttribute("href")).toBe("/leases/l1");
   });
@@ -157,8 +162,9 @@ describe("TenantPage", () => {
     expect(await within(contact).findByText("Contact details saved.")).toBeTruthy();
     expect(within(contact).queryByLabelText("Email")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: "Archive" }));
-    fireEvent.click(screen.getByRole("button", { name: "Archive Tenant 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Tenant 2" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Archive" }));
     expect(await screen.findByText("Tenant 2 has prepaid rent or a deposit held; return it before archiving")).toBeTruthy();
 
     expect(posted(fetch)).toEqual([

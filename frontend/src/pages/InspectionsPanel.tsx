@@ -8,6 +8,8 @@ import type { Condition, Inspection, NewRoom } from "../inspections";
 import { CONDITIONS, ROOMS, inspectionReportHref, inspectionSummary, itemsToSend } from "../inspections";
 import { day, usDate } from "../money";
 import { useRecord } from "./useRecord";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 const fresh = (): NewRoom[] => ROOMS.map((room) => ({ room, condition: "good", note: "" }));
 
@@ -61,7 +63,7 @@ export function InspectionsPanel({ leaseId, label }: { leaseId: string; label: s
           ))}
         </ul>
       )}
-      <form
+      <Form
         className="flex flex-col gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
@@ -107,8 +109,8 @@ export function InspectionsPanel({ leaseId, label }: { leaseId: string; label: s
           </Button>
           <Button type="submit">Record inspection</Button>
         </div>
-      </form>
-      <Notice tone="info">{said}</Notice>
+      </Form>
+      <Said>{said}</Said>
       <Notice tone="error">{refused}</Notice>
     </section>
   );

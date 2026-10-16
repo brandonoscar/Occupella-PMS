@@ -9,7 +9,20 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   window.history.pushState(null, "", "/");
+  window.localStorage.clear();
 });
+
+const GROUPS = {
+  groups: [{ id: "g1", name: "North", properties: [{ id: "p2", name: "Property 2" }] }],
+  properties: [{ id: "p1", name: "Property 1" }, { id: "p2", name: "Property 2" }],
+};
+
+// Opens a row's ⋯ menu, picks the action and confirms it.
+function choose(menu: string, action: string) {
+  fireEvent.click(screen.getByRole("button", { name: `Actions for ${menu}` }));
+  fireEvent.click(screen.getByRole("menuitem", { name: action }));
+  fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: action }));
+}
 
 const ME: Me = {
   kind: "staff", email: "staff@example.com", name: "Staff 1", person_id: "s1", pmc_id: "p1",
@@ -83,8 +96,9 @@ describe("PropertiesPage", () => {
     const fetch = server({
       "/api/properties?page=1&archived=false": { ...ROWS, total: 60 },
       "/api/properties?page=2&archived=false": { ...ROWS, page: 2, total: 60 },
-      "/api/properties?page=1&archived=false&q=Property+2": { ...ROWS, items: [ROWS.items[1]], total: 1 },
-      "/api/properties?page=1&archived=true&q=Property+2": { ...ROWS, items: [], total: 0 },
+      "/api/properties?page=1&archived=false&group=g1": { ...ROWS, items: [ROWS.items[1]], total: 1 },
+      "/api/properties?page=1&archived=true&group=g1": { ...ROWS, items: [], total: 0 },
+      "/api/property-groups": GROUPS,
     });
     render(<PropertiesPage me={ME} />);
 
@@ -103,17 +117,36 @@ describe("PropertiesPage", () => {
     fireEvent.click(within(pages).getByRole("button", { name: "Next" }));
     expect(await screen.findByText("51–53 of 60")).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText("Find a property"), { target: { value: "Property 2" } });
+    // The picker narrows to a group (groups first, then properties), kept in the URL.
+    const picker = screen.getByRole("combobox", { name: "Properties shown" });
+    await within(picker).findByRole("option", { name: "North" });
+    expect(within(picker).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "All properties", "North", "Property 1", "Property 2",
+    ]);
+    fireEvent.change(picker, { target: { value: "group:g1" } });
     await vi.waitFor(() => expect(screen.queryByRole("row", { name: "Property 1" })).toBeNull());
     expect(screen.getByRole("row", { name: "Property 2" })).toBeTruthy();
-    fireEvent.click(screen.getByLabelText("Archived only"));
+    expect(window.location.search).toBe("?group=g1");
+    fireEvent.change(screen.getByRole("combobox", { name: "Status" }), { target: { value: "archived" } });
     expect((await screen.findByTestId("empty-state")).textContent).toContain("No archived properties.");
-    expect(asked(fetch)).toEqual([
+    expect(asked(fetch).filter((path) => path !== "/api/property-groups")).toEqual([
       "/api/properties?page=1&archived=false",
       "/api/properties?page=2&archived=false",
-      "/api/properties?page=1&archived=false&q=Property+2",
-      "/api/properties?page=1&archived=true&q=Property+2",
+      "/api/properties?page=1&archived=false&group=g1",
+      "/api/properties?page=1&archived=true&group=g1",
     ]);
+  });
+
+  it("opens on the group last chosen in this browser", async () => {
+    window.localStorage.setItem("pms.scope", JSON.stringify({ group: "g1" }));
+    const fetch = server({
+      "/api/properties?page=1&archived=false&group=g1": { ...ROWS, items: [ROWS.items[1]], total: 1 },
+      "/api/property-groups": GROUPS,
+    });
+    render(<PropertiesPage me={ME} />);
+    expect(await screen.findByRole("row", { name: "Property 2" })).toBeTruthy();
+    expect(window.location.search).toBe("?group=g1");
+    expect(asked(fetch)).toContain("/api/properties?page=1&archived=false&group=g1");
   });
 
   it("says when the properties can't be read", async () => {
@@ -153,18 +186,19 @@ describe("PropertyPage", () => {
     render(<PropertyPage me={ME} id="p1" />);
     await screen.findByRole("heading", { name: "Property 1" });
 
-    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
-    fireEvent.change(screen.getByLabelText("New name"), { target: { value: " Property 1A " } });
-    fireEvent.click(screen.getByRole("button", { name: "Save name" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: " Property 1A " } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Renamed Property 1A.")).toBeTruthy();
-    expect(screen.queryByLabelText("New name")).toBeNull();
+    expect(screen.queryByLabelText("Name")).toBeNull();
 
-    // Archive asks first; Cancel sends nothing.
-    fireEvent.click(screen.getByRole("button", { name: "Archive" }));
-    expect(screen.getByText("Property 1 leaves the lists; its history stays.")).toBeTruthy();
+    // Archive is in the ⋯ menu and asks first; Cancel sends nothing.
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Property 1" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+    expect(screen.getByRole("alertdialog", { name: "Archive Property 1? It leaves the lists; its history stays." })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
-    fireEvent.click(screen.getByRole("button", { name: "Archive" }));
-    fireEvent.click(screen.getByRole("button", { name: "Archive Property 1" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    choose("Property 1", "Archive");
     expect((await screen.findByRole("alert")).textContent).toBe(
       "Property 1 has a lease in effect or to come; end it before archiving",
     );
@@ -184,9 +218,7 @@ describe("PropertyPage", () => {
       "No owner's account yet.Open one from Settings, Company setup.",
       "No units yet.Add units from Settings, Company setup.",
     ]);
-    fireEvent.click(screen.getByRole("button", { name: "Bring back" }));
-    expect(screen.getByText("Property 3 comes back into lists.")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Bring back Property 3" }));
+    choose("Property 3", "Bring back");
     expect(await screen.findByText("Property 3 is back.")).toBeTruthy();
     expect(asked(fetch)).toContainEqual(["/api/properties/p3/archive", { archived: false }]);
   });
@@ -207,8 +239,8 @@ describe("UnitPage", () => {
     expect(screen.getAllByRole("link", { name: "Property 1" }).at(-1)?.getAttribute("href")).toBe("/properties/p1");
     const rows = screen.getAllByRole("row").slice(1);
     expect(rows.map((row) => within(row).getAllByRole("cell").map((c) => c.textContent))).toEqual([
-      ["Tenant 1, Tenant 2", "From 01/01/2026, month to month", "Current", "$1,500.00", "$50.00"],
-      ["Tenant 0", "01/01/2025 to 12/31/2025", "Ended", "$1,500.00", "$0.00"],
+      ["Tenant 1, Tenant 2", "01/01/2026 – Month to month", "Current", "$1,500.00", "$50.00"],
+      ["Tenant 0", "01/01/2025 – 12/31/2025", "Ended", "$1,500.00", "$0.00"],
     ]);
     expect(within(rows[0]!).getByRole("link").getAttribute("href")).toBe("/leases/l1");
   });
@@ -219,8 +251,7 @@ describe("UnitPage", () => {
     await screen.findByRole("heading", { name: "Unit 3, Property 1" });
 
     expect(screen.getByTestId("empty-state").textContent).toContain("No lease yet.");
-    fireEvent.click(screen.getByRole("button", { name: "Archive" }));
-    fireEvent.click(screen.getByRole("button", { name: "Archive Unit 3" }));
+    choose("Unit 3", "Archive");
     expect(await screen.findByText("Unit 3 is archived.")).toBeTruthy();
     expect(asked(fetch)).toContainEqual(["/api/units/u3/archive", { archived: true }]);
   });
@@ -240,7 +271,7 @@ describe("LeasePage", () => {
     expect(await screen.findByRole("heading", { name: "Unit 1, Property 1" })).toBeTruthy();
     expect(screen.getAllByRole("link", { name: "Property 1" }).at(-1)?.getAttribute("href")).toBe("/properties/p1");
     expect(screen.getByRole("link", { name: "Unit 1" }).getAttribute("href")).toBe("/units/u1");
-    expect(screen.getByText("From 01/01/2026, month to month")).toBeTruthy();
+    expect(screen.getByText("01/01/2026 – Month to month")).toBeTruthy();
     expect(screen.getByText("$1,500.00 a month")).toBeTruthy();
     expect(screen.getAllByText("Owes $50.00")).toHaveLength(1);
     // The lease's own rent work, and no move-out while it has no end.

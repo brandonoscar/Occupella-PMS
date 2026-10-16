@@ -16,6 +16,8 @@ import { insuranceLine } from "../rent";
 import { PolicyForm } from "./InsuranceForms";
 import { RenewalsCard } from "./RenewalsCard";
 import { useRecord } from "./useRecord";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 // What the lease charges every month: its rent, and each recurring fee or credit not stopped
 // (ends_on is the first due date it is no longer charged for).
@@ -280,7 +282,7 @@ export function TenantHome({ me }: { me: Me }) {
 
           <Card title="Maintenance requests">
             {lease.in_effect ? (
-              <form className="mb-6 flex flex-col gap-3" onSubmit={send}>
+              <Form className="mb-6 flex flex-col gap-3" onSubmit={send}>
                 <label htmlFor="summary" className="flex flex-col gap-1.5 text-sm text-ink-muted">
                   What needs fixing?
                   <textarea
@@ -303,9 +305,9 @@ export function TenantHome({ me }: { me: Me }) {
                 </label>
                 <div className="flex items-center gap-4">
                   <Button type="submit">Send request</Button>
-                  <Notice tone="info">{sent}</Notice>
+                  <Said>{sent}</Said>
                 </div>
-              </form>
+              </Form>
             ) : (
               <Notice tone="info">This lease has ended; requests go under a current one.</Notice>
             )}
@@ -348,7 +350,7 @@ function InsuranceCard({ leaseId, insurance, refresh }: {
       </p>
       <p className="mb-2 text-sm text-ink-subtle">Record your policy, from any insurer you choose.</p>
       <PolicyForm path={`/api/tenant/leases/${leaseId}/renters-insurance`} id={leaseId} record={record} />
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </Card>
   );

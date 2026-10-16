@@ -239,7 +239,7 @@ describe("OffersCard", () => {
     render(<OffersCard changed={1} />);
 
     const open = await screen.findByRole("listitem", { name: "Offer for Unit 2" });
-    expect(open.textContent).toContain("Renewal at Property 1, Unit 2: 07/01/2027 to month to month");
+    expect(open.textContent).toContain("Renewal at Property 1, Unit 2: 07/01/2027 – Month to month");
     expect(within(open).getByText(/Tenant 2 \(t2@example.com\): not signed yet/)).toBeTruthy();
     expect(within(open).getByText(/Signed by 1 of 2\./)).toBeTruthy();
     expect(within(open).getByRole("link", { name: "Lease (PDF)" }).getAttribute("href")).toBe(

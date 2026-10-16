@@ -20,6 +20,8 @@ import { expenseAccountLabel } from "../setup";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 type Show = "open" | "paid" | "declined" | "all";
 
@@ -74,7 +76,7 @@ export function BillsPage({ me }: { me: Me }) {
         <Tabs label="Bills" tabs={TABS} value={show} onChange={setShow} />
         {done && (
           <div className="mb-2">
-            <Notice tone="info">{done}</Notice>
+            <Said>{done}</Said>
           </div>
         )}
         {bills === null ? (
@@ -110,7 +112,7 @@ function EnterBillForm({ books, refresh }: { books: Portfolio; refresh: () => vo
   }
   return (
     <>
-      <form
+      <Form
         className="flex flex-col gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
@@ -154,8 +156,8 @@ function EnterBillForm({ books, refresh }: { books: Portfolio; refresh: () => vo
           onChange={(e) => setMemo(e.target.value)} />
         <ExpenseAccountSelect books={books} id="bill-expense" value={expense} onChange={setExpense} />
         <Button type="submit">Enter bill</Button>
-      </form>
-      <Notice tone="info">{said}</Notice>
+      </Form>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </>
   );
@@ -217,7 +219,7 @@ function ApprovalForm({ bill, record }: { bill: Bill; record: Recorder }) {
   const [on, setOn] = useState(day(new Date()));
   const [by, setBy] = useState("");
   return (
-    <form
+    <Form
       className="flex flex-wrap items-end gap-3"
       onSubmit={(event) => {
         event.preventDefault();
@@ -233,7 +235,7 @@ function ApprovalForm({ bill, record }: { bill: Bill; record: Recorder }) {
       <Field label="Approved on" id={`approved-on-${bill.id}`} type="date" required value={on}
         onChange={(e) => setOn(e.target.value)} />
       <Button type="submit" variant="secondary">Record approval</Button>
-    </form>
+    </Form>
   );
 }
 
@@ -252,7 +254,7 @@ function DeclineForm({ bill, record }: { bill: Bill; record: Recorder }) {
     );
   }
   return (
-    <form
+    <Form
       className="flex flex-wrap items-end gap-3"
       onSubmit={(event) => {
         event.preventDefault();
@@ -268,7 +270,7 @@ function DeclineForm({ bill, record }: { bill: Bill; record: Recorder }) {
       <Field label="Why" id={`declined-why-${bill.id}`} required maxLength={1000} value={why}
         onChange={(e) => setWhy(e.target.value)} />
       <Button type="submit" variant="secondary">Record decline</Button>
-    </form>
+    </Form>
   );
 }
 
@@ -282,7 +284,7 @@ function StepForm({ bill, step, record }: { bill: Bill; step: string; record: Re
   const send = () => record(`/api/payables/bills/${bill.id}/${path}`, { on }, () => done);
   return (
     <>
-      <form
+      <Form
         className="flex flex-wrap items-end gap-3"
         onSubmit={(event) => {
           event.preventDefault();
@@ -294,7 +296,7 @@ function StepForm({ bill, step, record }: { bill: Bill; step: string; record: Re
         <Field label={step === "Pay" ? "Paid on" : "Set aside on"} id={`${path}-on-${bill.id}`}
           type="date" required value={on} onChange={(e) => setOn(e.target.value)} />
         <Button type="submit" variant="secondary">{step}</Button>
-      </form>
+      </Form>
       {prompt}
     </>
   );
@@ -322,7 +324,7 @@ function RecurringCard({
           ))}
         </ul>
       )}
-      <form
+      <Form
         className="mt-2 flex items-end gap-3"
         onSubmit={(event) => {
           event.preventDefault();
@@ -333,7 +335,7 @@ function RecurringCard({
         <Field label="Enter bills due through" id="recurring-through" type="date" required
           value={through} onChange={(e) => setThrough(e.target.value)} />
         <Button type="submit" variant="secondary">Enter recurring bills</Button>
-      </form>
+      </Form>
       {books.vendors.length > 0 && books.accounts.length > 0 && (
         <details className="mt-2">
           <summary>Add a recurring bill</summary>
@@ -342,7 +344,7 @@ function RecurringCard({
           </div>
         </details>
       )}
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </Card>
   );
@@ -358,7 +360,7 @@ function RecurringLine({ bill, books, record }: { bill: Recurring; books: Portfo
       <span>{recurringLabel(bill)}</span>
       {bill.ends_on === null &&
         (asking ? (
-          <form
+          <Form
             className="flex items-center gap-2"
             onSubmit={async (event) => {
               event.preventDefault();
@@ -374,7 +376,7 @@ function RecurringLine({ bill, books, record }: { bill: Recurring; books: Portfo
             <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(false)}>
               Cancel
             </Button>
-          </form>
+          </Form>
         ) : (
           <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(true)}>
             Stop
@@ -401,7 +403,7 @@ function NewRecurringForm({ books, record }: { books: Portfolio; record: Recorde
   const [starts, setStarts] = useState(day(new Date()));
   const [expense, setExpense] = useState("");
   return (
-    <form
+    <Form
       className="flex flex-wrap items-end gap-3"
       onSubmit={async (event) => {
         event.preventDefault();
@@ -446,7 +448,7 @@ function NewRecurringForm({ books, record }: { books: Portfolio; record: Recorde
       <ExpenseAccountSelect books={books} id="recurring-expense" label="Recurring expense account"
         value={expense} onChange={setExpense} />
       <Button type="submit" variant="secondary">Add recurring bill</Button>
-    </form>
+    </Form>
   );
 }
 
@@ -505,7 +507,7 @@ function MoveToAccount({ books, what, current, onMove }: {
   const [chosen, setChosen] = useState("");
   const account = books.expense_accounts.find((a) => a.id === chosen);
   return (
-    <form
+    <Form
       className="flex flex-wrap items-center gap-2 text-sm"
       onSubmit={(event) => {
         event.preventDefault();
@@ -528,6 +530,6 @@ function MoveToAccount({ books, what, current, onMove }: {
       <Button type="submit" variant="ghost" size="sm" disabled={!account}>
         {current ? "Move" : "Put in"}
       </Button>
-    </form>
+    </Form>
   );
 }

@@ -80,8 +80,9 @@ export function occupancy(row: PropertyRow): string {
 }
 
 // "From 2026-01-01, month to month", "2026-01-01 to 2026-12-31".
+// A lease's term as Buildium reads it: "11/01/2025 – 10/31/2026", or "11/01/2025 – Month to month".
 export function termLabel(lease: { starts_on: string; ends_on: string | null }): string {
-  return lease.ends_on ? `${usDate(lease.starts_on)} to ${usDate(lease.ends_on)}` : `From ${usDate(lease.starts_on)}, month to month`;
+  return `${usDate(lease.starts_on)} – ${lease.ends_on ? usDate(lease.ends_on) : "Month to month"}`;
 }
 
 // A unit's state as a badge: occupied, a lease to come, vacant, or archived.

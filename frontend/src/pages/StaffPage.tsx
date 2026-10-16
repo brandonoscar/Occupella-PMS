@@ -11,6 +11,8 @@ import { CustomRolesCard } from "./CustomRolesCard";
 import { SignersCard } from "./SignersCard";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 // The PMC's staff and their roles. Every staff member sees who may do what; an admin adds staff
 // members and changes roles (the database refuses anyone else, and keeps one admin). Invites go
@@ -82,14 +84,14 @@ export function StaffPage({ me }: { me: Me }) {
           </table>
         )}
         {!admin && <p className="mt-3 text-sm text-ink-subtle">Only an admin changes roles.</p>}
-        <Notice tone="info">{said}</Notice>
+        <Said>{said}</Said>
         <Notice tone="error">{refused}</Notice>
       </Card>
       {members && <CustomRolesCard members={members} admin={admin} />}
       {members && <SignersCard me={me} members={members} />}
       {admin && (
         <Card title="Add a staff member">
-          <form
+          <Form
             className="flex flex-wrap items-end gap-3"
             onSubmit={async (event) => {
               event.preventDefault();
@@ -100,7 +102,7 @@ export function StaffPage({ me }: { me: Me }) {
           >
             <Field label="Name" id="staff-name" required value={name} onChange={(e) => setName(e.target.value)} />
             <Button type="submit">Add</Button>
-          </form>
+          </Form>
         </Card>
       )}
     </Shell>

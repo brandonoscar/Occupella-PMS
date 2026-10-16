@@ -18,6 +18,8 @@ import {
   signersText,
   term,
 } from "../offers";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 const SELECT = "h-9 rounded-sm border border-line-strong bg-sunken px-2 text-sm text-ink";
 
@@ -135,8 +137,8 @@ export function OffersCard({ changed = 0 }: { changed?: number }) {
   return (
     <Card title="Lease offers">
       <Notice tone="error">{error}</Notice>
-      <Notice tone="info">{done}</Notice>
-      <form className="mb-8 flex flex-col gap-3" onSubmit={offer}>
+      <Said>{done}</Said>
+      <Form className="mb-8 flex flex-col gap-3" onSubmit={offer}>
         <label className="flex flex-col gap-1.5 text-sm text-ink-muted">
           Offer
           <select className={SELECT} required value={target} onChange={(e) => choose(e.target.value)}>
@@ -187,7 +189,7 @@ export function OffersCard({ changed = 0 }: { changed?: number }) {
             </div>
           </>
         )}
-      </form>
+      </Form>
 
       <h3 className="mb-3 text-md font-medium">Waiting to be the lease</h3>
       {offers === null ? (

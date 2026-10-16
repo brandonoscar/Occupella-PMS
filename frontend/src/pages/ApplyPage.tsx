@@ -7,6 +7,7 @@ import { Card, Wordmark } from "../components/Shell";
 import type { Listing } from "../leasing";
 import { applyVia } from "../leasing";
 import { money } from "../money";
+import { Form } from "../components/Form";
 
 const MAX_APPLICANTS = 6;
 
@@ -76,7 +77,7 @@ export function ApplyPage() {
             company may ask each of you for more by email; this form asks only for what is
             below.
           </p>
-          <form className="flex flex-col gap-4" onSubmit={submit}>
+          <Form className="flex flex-col gap-4" onSubmit={submit}>
             <Field label="Move-in day" id="move-in" type="date" required value={moveIn}
               onChange={(e) => setMoveIn(e.target.value)} />
             <Field label="Monthly income of everyone applying, together" id="income"
@@ -107,7 +108,7 @@ export function ApplyPage() {
                 Send application
               </Button>
             </div>
-          </form>
+          </Form>
         </Card>
       )}
     </div>

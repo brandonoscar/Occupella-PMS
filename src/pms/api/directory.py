@@ -18,7 +18,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, StringConstraints, model_validator
 
-from pms.api import payables, rent
+from pms.api import payables, rent, scope
 from pms.api.deps import Conn, Staff, refusal
 from pms.api.rentals import (
     Archiving,
@@ -186,6 +186,7 @@ LEFT JOIN LATERAL (
 LEFT JOIN trust_units AS u ON u.id = l.unit_id
 {LATEST_CONTACT.format(person="tenant_id", key="t.id")}
 WHERE t.pmc_id = %(pmc)s AND trust_is_archived(NULL, NULL, t.id) = %(archived)s
+  AND {scope.within("t.property_id")}
   AND (%(like)s::text IS NULL OR t.display_name ILIKE %(like)s OR p.display_name ILIKE %(like)s
        OR u.display_name ILIKE %(like)s)
 ORDER BY t.display_name COLLATE "C", t.id
@@ -199,15 +200,19 @@ def tenants(
     conn: Conn,
     q: Search = None,
     archived: bool = False,
+    group: scope.Group = None,
+    property_id: scope.Property = None,
     page: Page = 1,
     per_page: PerPage = 50,
 ) -> Paged[TenantRow]:
     """The company's tenants a page at a time, found by their name, property or unit: each
-    with their lease in effect today (or latest), email and phone. Archived ones on request."""
+    with their lease in effect today (or latest), email and phone. Archived ones on request;
+    maybe of a group's properties or one property's."""
     day = rent.today()
     rows = conn.execute(
         TENANTS,
         {
+            **scope.params(group, property_id),
             "pmc": session.pmc_id,
             "day": day,
             "archived": archived,
@@ -353,6 +358,10 @@ SELECT o.id, o.display_name,
 FROM trust_owners AS o
 {LATEST_CONTACT.format(person="owner_id", key="o.id")}
 WHERE o.pmc_id = %(pmc)s AND trust_is_archived(NULL, NULL, NULL, o.id) = %(archived)s
+  AND (%(scope_group)s::uuid IS NULL AND %(scope_property)s::uuid IS NULL
+       OR EXISTS (SELECT 1 FROM trust_ledger_accounts AS a
+                  WHERE a.owner_id = o.id AND a.kind = 'owner_property'
+                    AND {scope.within("a.property_id")}))
   AND (%(like)s::text IS NULL OR o.display_name ILIKE %(like)s
        OR EXISTS (SELECT 1 FROM trust_ledger_accounts AS a
                   JOIN trust_properties AS p ON p.id = a.property_id
@@ -368,14 +377,18 @@ def owners(
     conn: Conn,
     q: Search = None,
     archived: bool = False,
+    group: scope.Group = None,
+    property_id: scope.Property = None,
     page: Page = 1,
     per_page: PerPage = 50,
 ) -> Paged[OwnerRow]:
     """The company's owners a page at a time, found by their name or a property's: each with
-    their properties, what their accounts hold, email and phone. Archived ones on request."""
+    their properties, what their accounts hold, email and phone. Archived ones on request;
+    maybe only owners of a group's properties or one property."""
     rows = conn.execute(
         OWNERS,
         {
+            **scope.params(group, property_id),
             "pmc": session.pmc_id,
             "archived": archived,
             "like": like(q),

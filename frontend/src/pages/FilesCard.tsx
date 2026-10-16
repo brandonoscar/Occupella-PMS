@@ -8,6 +8,8 @@ import type { ContentType, Kind, Library } from "../documents";
 import { MAX_BYTES, kindLabel, sizeLabel, titleOf, toBase64, typeOf } from "../documents";
 import { usDate } from "../money";
 import { useRecord } from "./useRecord";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 type Chosen = { type: ContentType | null; size: number; base64: string };
 
@@ -58,7 +60,7 @@ export function FilesCard({ kind, aboutId, name }: { kind: Kind; aboutId: string
         </ul>
       )}
       {library !== null && (
-        <form
+        <Form
           className="mt-4 flex flex-wrap items-end gap-3"
           onSubmit={async (event) => {
             event.preventDefault();
@@ -84,10 +86,10 @@ export function FilesCard({ kind, aboutId, name }: { kind: Kind; aboutId: string
           </label>
           <Field label="Title" id={`file-title-${aboutId}`} required value={title} onChange={(e) => setTitle(e.target.value)} />
           <Button type="submit" disabled={file === null || problem !== ""}>Upload</Button>
-        </form>
+        </Form>
       )}
       <Notice tone="error">{problem}</Notice>
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{refused}</Notice>
     </Card>
   );

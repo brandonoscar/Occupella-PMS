@@ -5,7 +5,6 @@ import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
 import { ContactCard } from "../components/ContactCard";
 import { EmptyState } from "../components/EmptyState";
-import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Pager } from "../components/Pager";
 import { RecordActions } from "../components/RecordActions";
@@ -17,6 +16,9 @@ import type { Paged } from "../rentals";
 import { LEASE_STATUS, termLabel } from "../rentals";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
+import { ListBar } from "../components/ListBar";
+import { scopeParams, useScope } from "../scope";
+import { Said } from "../components/Said";
 
 function detail(failed: unknown): string {
   return failed instanceof ApiError ? failed.detail : String(failed);
@@ -28,32 +30,24 @@ const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 // unit, each opening their own page (ADR 0005).
 export function TenantsPage({ me }: { me: Me }) {
   const [page, setPage] = useState<Paged<TenantRow> | null>(null);
-  const [q, setQ] = useState("");
+  const [scope, setScope] = useScope();
   const [archived, setArchived] = useState(false);
   const [number, setNumber] = useState(1);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const query = new URLSearchParams({ page: String(number), archived: String(archived) });
-    if (q.trim()) query.set("q", q.trim());
+    const query = new URLSearchParams({ page: String(number), archived: String(archived), ...scopeParams(scope) });
     api
       .get<Paged<TenantRow>>(`/api/tenants?${query}`)
       .then(setPage)
       .catch((failed) => setError(detail(failed)));
-  }, [q, archived, number]);
+  }, [scope, archived, number]);
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title="Tenants" />
-      <div className="flex flex-wrap items-end gap-4">
-        <Field label="Find a tenant, property or unit" id="find-tenant" type="search" value={q}
-          onChange={(event) => { setQ(event.target.value); setNumber(1); }} />
-        <label className="flex items-center gap-2 pb-2 text-sm text-ink-muted">
-          <input type="checkbox" checked={archived}
-            onChange={(event) => { setArchived(event.target.checked); setNumber(1); }} />
-          Archived only
-        </label>
-      </div>
+      <ListBar scope={scope} onScope={(next) => { setScope(next); setNumber(1); }}
+        archived={archived} onArchived={(next) => { setArchived(next); setNumber(1); }} />
       <Notice tone="error">{error}</Notice>
       {page === null ? (
         !error && <Notice tone="info">Loading</Notice>
@@ -126,7 +120,7 @@ export function TenantPage({ me, id }: { me: Me; id: string }) {
             <GoLink href={`/properties/${tenant.property.id}`} className={LINK}>{tenant.property.name}</GoLink>
             <span data-testid="held">Prepaid rent {money(tenant.prepaid)} · Deposit held {money(tenant.deposit)}</span>
           </p>
-          <Notice tone="info">{said}</Notice>
+          <Said>{said}</Said>
           <ContactCard path={`/api/tenants/${id}`} contact={tenant.contact} refresh={refresh} name={tenant.name} />
           <Card title="Leases">
             {tenant.leases.length === 0 ? (

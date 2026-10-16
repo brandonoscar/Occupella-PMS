@@ -8,6 +8,7 @@ import type { Portfolio, Property } from "../setup";
 import { lateFeeSummary, leaseSummary, nsfFeeSummary } from "../setup";
 import type { CardProps } from "./useAdd";
 import { useAdd } from "./useAdd";
+import { Form } from "../components/Form";
 
 function operatingAccounts(books: Portfolio) {
   return books.bank_accounts.filter((bank) => bank.kind === "operating");
@@ -70,7 +71,7 @@ export function PropertiesCard({ books, refresh }: CardProps) {
           <PropertyRow key={property.id} property={property} books={books} refresh={refresh} />
         ))}
       </ul>
-      <form
+      <Form
         className="flex flex-wrap items-end gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
@@ -84,7 +85,7 @@ export function PropertiesCard({ books, refresh }: CardProps) {
         <OwnerSelect books={books} id="property-owner" value={owner} onChange={setOwner} />
         <BankSelect books={books} id="property-bank" value={bank} onChange={setBank} />
         <Button type="submit" variant="secondary">Add property</Button>
-      </form>
+      </Form>
       <Notice tone="error">{error}</Notice>
     </Card>
   );
@@ -127,7 +128,7 @@ function PropertyRow({ property, books, refresh }: CardProps & { property: Prope
       <details>
         <summary>Add to {property.name}</summary>
         <div className="mt-3 flex flex-col gap-4">
-          <form
+          <Form
             className="flex flex-wrap items-end gap-3"
             onSubmit={async (event) => {
               event.preventDefault();
@@ -137,8 +138,8 @@ function PropertyRow({ property, books, refresh }: CardProps & { property: Prope
             <Field label="Unit name" id={at("unit")} required maxLength={200} value={unit}
               onChange={(e) => setUnit(e.target.value)} />
             <Button type="submit" variant="secondary">Add unit</Button>
-          </form>
-          <form
+          </Form>
+          <Form
             className="flex flex-wrap items-end gap-3"
             onSubmit={(event) => {
               event.preventDefault();
@@ -148,8 +149,8 @@ function PropertyRow({ property, books, refresh }: CardProps & { property: Prope
             <OwnerSelect books={books} id={at("owner")} value={owner} onChange={setOwner} />
             <BankSelect books={books} id={at("bank")} value={bank} onChange={setBank} />
             <Button type="submit" variant="secondary">Add owner</Button>
-          </form>
-          <form
+          </Form>
+          <Form
             className="flex flex-wrap items-end gap-3"
             onSubmit={(event) => {
               event.preventDefault();
@@ -174,8 +175,8 @@ function PropertyRow({ property, books, refresh }: CardProps & { property: Prope
             <Field label="Up to" id={at("maximum")} inputMode="decimal" value={fees.maximum}
               onChange={(e) => setFees({ ...fees, maximum: e.target.value })} />
             <Button type="submit" variant="secondary">Set late fees</Button>
-          </form>
-          <form
+          </Form>
+          <Form
             className="flex flex-wrap items-end gap-3"
             onSubmit={(event) => {
               event.preventDefault();
@@ -187,7 +188,7 @@ function PropertyRow({ property, books, refresh }: CardProps & { property: Prope
             <Field label="NSF fee" id={at("nsf-fee")} inputMode="decimal" required value={nsf.fee}
               onChange={(e) => setNsf({ ...nsf, fee: e.target.value })} />
             <Button type="submit" variant="secondary">Set NSF fee</Button>
-          </form>
+          </Form>
           <Notice tone="error">{error}</Notice>
         </div>
       </details>

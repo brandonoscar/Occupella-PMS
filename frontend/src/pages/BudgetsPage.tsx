@@ -13,6 +13,7 @@ import { money } from "../money";
 import type { OwnerMoney } from "../payables";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
+import { Said } from "../components/Said";
 
 // Staff's budgets: what each owner's property is expected to bring in and cost in a year, on
 // the income statement's own lines, spread over its months; and the budget against what
@@ -120,7 +121,7 @@ function BudgetTable({ budget, refresh }: { budget: Budget; refresh: () => void 
           </tbody>
         </table>
       </Wide>
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </>
   );

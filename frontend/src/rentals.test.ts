@@ -34,8 +34,8 @@ describe("properties and units", () => {
   });
 
   it("reads a lease's term and rent", () => {
-    expect(termLabel({ starts_on: "2026-01-01", ends_on: null })).toBe("From 01/01/2026, month to month");
-    expect(termLabel({ starts_on: "2026-01-01", ends_on: "2026-12-31" })).toBe("01/01/2026 to 12/31/2026");
+    expect(termLabel({ starts_on: "2026-01-01", ends_on: null })).toBe("01/01/2026 – Month to month");
+    expect(termLabel({ starts_on: "2026-01-01", ends_on: "2026-12-31" })).toBe("01/01/2026 – 12/31/2026");
     expect(rentLabel("1500.00")).toBe("$1,500.00 a month");
   });
 });

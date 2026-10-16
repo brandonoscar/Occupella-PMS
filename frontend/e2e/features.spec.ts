@@ -103,6 +103,13 @@ async function journal(page: Page): Promise<void> {
   await expect(page.getByRole("heading", { level: 1, name: "Journal entries", exact: true })).toBeVisible();
 }
 
+// A record's ⋯ menu: opens it, picks the action and confirms it in its dialog.
+async function chooseAction(page: Page, record: string, action: string): Promise<void> {
+  await page.getByRole("button", { name: `Actions for ${record}` }).click();
+  await page.getByRole("menuitem", { name: action }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: action, exact: true }).click();
+}
+
 // One of Settings' pages: Settings in the menu, then the page.
 async function settings(page: Page, name: string): Promise<void> {
   await section(page, "Settings");
@@ -175,10 +182,11 @@ test("staff find a property, rename it and a unit, archive a vacant unit but not
   await expect(aspen).toContainText("Demo Owner B");
   await expect(aspen).toContainText("1 of 2 occupied");
   await expect(page.getByRole("navigation", { name: "Pages" })).toContainText("1–4 of 4");
-  await page.getByLabel("Find a property").fill("birch");
+  const shown = page.getByRole("combobox", { name: "Properties shown" });
+  await shown.selectOption({ label: "Birch Flats" });
   await expect(page.getByRole("row", { name: "Birch Flats", exact: true })).toBeVisible();
   await expect(aspen).toHaveCount(0);
-  await page.getByLabel("Find a property").fill("");
+  await shown.selectOption({ label: "All properties" });
 
   // A property: what its owner's account holds, and each unit's state.
   await aspen.getByRole("link", { name: "Aspen Row" }).click();
@@ -190,15 +198,13 @@ test("staff find a property, rename it and a unit, archive a vacant unit but not
   await expect(unit("Unit 2")).toContainText("Vacant");
 
   // A property with a lease in effect stays; the refusal says why, in words.
-  await page.getByRole("button", { name: "Archive", exact: true }).click();
-  await page.getByRole("button", { name: "Archive Aspen Row" }).click();
+  await chooseAction(page, "Aspen Row", "Archive");
   await expect(page.getByRole("alert")).toHaveText(
     "Aspen Row has a lease in effect or to come; end it before archiving",
   );
-  await page.getByRole("button", { name: "Cancel" }).click();
-  await page.getByRole("button", { name: "Rename" }).click();
-  await page.getByLabel("New name").fill("Aspen Row East");
-  await page.getByRole("button", { name: "Save name" }).click();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByLabel("Name", { exact: true }).fill("Aspen Row East");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText("Renamed Aspen Row East.")).toBeVisible();
   await expect(page.getByRole("heading", { level: 1, name: "Aspen Row East" })).toBeVisible();
 
@@ -206,18 +212,16 @@ test("staff find a property, rename it and a unit, archive a vacant unit but not
   await unit("Unit 2").getByRole("link", { name: "Unit 2" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Unit 2, Aspen Row East" })).toBeVisible();
   await expect(page.getByTestId("empty-state")).toContainText("No lease yet.");
-  await page.getByRole("button", { name: "Rename" }).click();
-  await page.getByLabel("New name").fill("Unit 2B");
-  await page.getByRole("button", { name: "Save name" }).click();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByLabel("Name", { exact: true }).fill("Unit 2B");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Unit 2B, Aspen Row East" })).toBeVisible();
-  await page.getByRole("button", { name: "Archive", exact: true }).click();
-  await page.getByRole("button", { name: "Archive Unit 2B" }).click();
+  await chooseAction(page, "Unit 2B", "Archive");
   await expect(page.getByText("Unit 2B is archived.")).toBeVisible();
   await page.getByRole("main").getByRole("link", { name: "Aspen Row East" }).click();
   await expect(unit("Unit 2B")).toContainText("Archived");
   await unit("Unit 2B").getByRole("link", { name: "Unit 2B" }).click();
-  await page.getByRole("button", { name: "Bring back", exact: true }).click();
-  await page.getByRole("button", { name: "Bring back Unit 2B" }).click();
+  await chooseAction(page, "Unit 2B", "Bring back");
   await expect(page.getByText("Unit 2B is back.")).toBeVisible();
 
   // Search, from any page: a tenant opens their page and their lease from it, a property its page.
@@ -232,6 +236,60 @@ test("staff find a property, rename it and a unit, archive a vacant unit but not
   await expect(page.getByRole("list", { name: "Search results" })).toContainText("Cedar House");
   await search.press("Enter");
   await expect(page.getByRole("heading", { level: 1, name: "Cedar House" })).toBeVisible();
+});
+
+test("staff group properties, and every list shows just the group's, the choice carried from page to page", async ({
+  page,
+}) => {
+  const people = seed.features.groups!;
+  await joinAsStaff(page, people.manager);
+
+  // Settings, Property groups: a group of two properties, added in a side panel.
+  await settings(page, "Property groups");
+  await expect(page.getByTestId("empty-state")).toContainText("No property groups yet.");
+  await page.getByRole("button", { name: "Add group" }).click();
+  const panel = page.getByRole("dialog", { name: "Add group" });
+  await panel.getByLabel("Name", { exact: true }).fill("North portfolio");
+  await panel.getByLabel("Birch Flats").check();
+  await panel.getByLabel("Cedar House").check();
+  await panel.getByRole("button", { name: "Add group" }).click();
+  await expect(page.getByText("Added the group North portfolio, with 2 properties.")).toBeVisible();
+  await expect(page.getByRole("row", { name: "North portfolio" })).toContainText("Birch Flats, Cedar House");
+
+  // Properties narrowed to the group, and the rent roll, tenants and owners open on it too.
+  await section(page, "Properties");
+  const shown = page.getByRole("combobox", { name: "Properties shown" });
+  await shown.selectOption({ label: "North portfolio" });
+  await expect(page.getByRole("row", { name: "Aspen Row", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("row", { name: "Birch Flats", exact: true })).toBeVisible();
+  await expect(page.getByRole("row", { name: "Cedar House", exact: true })).toBeVisible();
+  await section(page, "Rent roll");
+  await expect(page).toHaveURL(/[?&]group=/);
+  await expect(page.getByRole("row", { name: /^Cedar House, / }).first()).toBeVisible();
+  await expect(page.getByRole("row", { name: /^Aspen Row, / })).toHaveCount(0);
+  await section(page, "Tenants");
+  await expect(page.getByRole("row", { name: "Taylor Demo", exact: true })).toBeVisible();
+  await expect(page.getByRole("row", { name: "Drew Sample", exact: true })).toHaveCount(0);
+  await section(page, "Owners");
+  await expect(page.getByRole("row", { name: "Demo Owner A", exact: true })).toBeVisible();
+  await expect(page.getByRole("row", { name: "Demo Owner B", exact: true })).toHaveCount(0);
+
+  // The group renamed and changed; one property is a choice too, and All properties ends it.
+  await settings(page, "Property groups");
+  await page.getByRole("button", { name: "North portfolio" }).click();
+  const edit = page.getByRole("dialog", { name: "Edit North portfolio" });
+  await edit.getByLabel("Name", { exact: true }).fill("North");
+  await edit.getByLabel("Cedar House").uncheck();
+  await edit.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByText("Saved North: 1 property.")).toBeVisible();
+  await section(page, "Properties");
+  await expect(shown).toHaveValue(/^group:/);
+  await expect(page.getByRole("row", { name: "Cedar House", exact: true })).toHaveCount(0);
+  await shown.selectOption({ label: "Aspen Row" });
+  await expect(page.getByRole("row", { name: "Aspen Row", exact: true })).toBeVisible();
+  await expect(page.getByRole("row", { name: "Birch Flats", exact: true })).toHaveCount(0);
+  await shown.selectOption({ label: "All properties" });
+  await expect(page.getByRole("navigation", { name: "Pages" })).toContainText("1–4 of 4");
 });
 
 test("staff read each account's general ledger, open a trust bank account from Banking, and pay an owner's draw from Owner draws", async ({
@@ -309,9 +367,9 @@ test("staff open a work order, assign it, find it on the vendor's page, rename t
   await page.getByRole("link", { name: "Demo Roofing Co", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Demo Roofing Co" })).toBeVisible();
   await expect(page.getByRole("list", { name: "Work orders" })).toContainText("Window latch");
-  await page.getByRole("button", { name: "Rename" }).click();
-  await page.getByLabel("New name").fill("Demo Roofing Company");
-  await page.getByRole("button", { name: "Save name" }).click();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByLabel("Name", { exact: true }).fill("Demo Roofing Company");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Demo Roofing Company" })).toBeVisible();
 
   // Renewals: the demo's leases run month to month, so none ends in the next 90 days.
@@ -332,10 +390,11 @@ test("staff find a tenant and an owner, keep their contact details and a vendor'
   await expect(drew).toContainText("Aspen Row");
   await expect(drew).toContainText("Unit 1");
   await expect(drew).toContainText("Current");
-  await page.getByLabel("Find a tenant, property or unit").fill("cedar");
+  const shown = page.getByRole("combobox", { name: "Properties shown" });
+  await shown.selectOption({ label: "Cedar House" });
   await expect(page.getByRole("row", { name: "Taylor Demo", exact: true })).toBeVisible();
   await expect(drew).toHaveCount(0);
-  await page.getByLabel("Find a tenant, property or unit").fill("");
+  await shown.selectOption({ label: "All properties" });
 
   // A tenant's page: their contact details, saved whole, and their name.
   await drew.getByRole("link", { name: "Drew Sample" }).click();
@@ -352,17 +411,15 @@ test("staff find a tenant and an owner, keep their contact details and a vendor'
   await contact.getByRole("button", { name: "Save contact details" }).click();
   await expect(contact).toContainText("Contact details saved.");
   await expect(contact).toContainText("Sampletown, ZZ 00000");
-  await page.getByRole("button", { name: "Rename" }).click();
-  await page.getByLabel("New name").fill("Drew Q. Sample");
-  await page.getByRole("button", { name: "Save name" }).click();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByLabel("Name", { exact: true }).fill("Drew Q. Sample");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Drew Q. Sample" })).toBeVisible();
   // On a lease in effect, they stay; the refusal says why, in words.
-  await page.getByRole("button", { name: "Archive", exact: true }).click();
-  await page.getByRole("button", { name: "Archive Drew Q. Sample" }).click();
+  await chooseAction(page, "Drew Q. Sample", "Archive");
   await expect(page.getByRole("alert")).toHaveText(
     "Drew Q. Sample is on a lease in effect or to come; end it before archiving",
   );
-  await page.getByRole("button", { name: "Cancel" }).click();
   await section(page, "Tenants");
   await expect(page.getByRole("row", { name: "Drew Q. Sample", exact: true })).toContainText(
     "drew.sample@example.com",
@@ -375,9 +432,9 @@ test("staff find a tenant and an owner, keep their contact details and a vendor'
   await ownerA.getByRole("link", { name: "Demo Owner A" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Demo Owner A" })).toBeVisible();
   await expect(page.getByRole("listitem", { name: "Demo Owner A, Cedar House" })).toBeVisible();
-  await page.getByRole("button", { name: "Rename" }).click();
-  await page.getByLabel("New name").fill("Demo Owner A Trust");
-  await page.getByRole("button", { name: "Save name" }).click();
+  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.getByLabel("Name", { exact: true }).fill("Demo Owner A Trust");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Demo Owner A Trust" })).toBeVisible();
   const details = page.getByRole("group", { name: "Contact details, Demo Owner A Trust" });
   await details.getByRole("button", { name: "Edit contact details" }).click();
@@ -385,8 +442,7 @@ test("staff find a tenant and an owner, keep their contact details and a vendor'
   await details.getByRole("button", { name: "Save contact details" }).click();
   await expect(details).toContainText("owner.a@example.com");
   // Their accounts hold money: they stay.
-  await page.getByRole("button", { name: "Archive", exact: true }).click();
-  await page.getByRole("button", { name: "Archive Demo Owner A Trust" }).click();
+  await chooseAction(page, "Demo Owner A Trust", "Archive");
   await expect(page.getByRole("alert")).toHaveText(
     "Demo Owner A Trust holds their money; draw it before archiving",
   );
@@ -470,8 +526,9 @@ test("staff add a fee, a credit and a monthly charge to a lease, take a deposit 
   await expect(lease).toContainText("Drew Sample: prepaid $105.00");
   const prepaidOnly = lease.getByRole("row", { name: /Check 503/ });
   await expect(prepaidOnly).toContainText("$50.00");
-  await prepaidOnly.getByRole("button", { name: "It bounced" }).click();
-  await prepaidOnly.getByRole("button", { name: "Record the bounce" }).click();
+  await prepaidOnly.getByRole("button", { name: /^Actions for / }).click();
+  await prepaidOnly.getByRole("menuitem", { name: "It bounced" }).click();
+  await prepaidOnly.getByRole("button", { name: "Record the $50.00 bounce" }).click();
   await expect(lease).toContainText("The $50.00 payment bounced and is undone; a $35.00 NSF fee is charged.");
   await expect(lease).toContainText("Drew Sample: prepaid $55.00");
   await expect(owed).toHaveText("Owes $35.00");
@@ -512,8 +569,9 @@ test("staff add a fee, a credit and a monthly charge to a lease, take a deposit 
   await lease.getByRole("button", { name: "Record payment" }).click();
   await expect(lease).toContainText("$20.00 paid what is owed.");
   const payment = lease.getByRole("row", { name: /Check 502/ });
-  await payment.getByRole("button", { name: "It bounced" }).click();
-  await payment.getByRole("button", { name: "Record the bounce" }).click();
+  await payment.getByRole("button", { name: /^Actions for / }).click();
+  await payment.getByRole("menuitem", { name: "It bounced" }).click();
+  await payment.getByRole("button", { name: "Record the $20.00 bounce" }).click();
   await expect(lease).toContainText("The $20.00 payment bounced and is undone; a $35.00 NSF fee is charged.");
   await expect(owed).toHaveText("Owes $55.00");
   await expect(lease.getByRole("row", { name: /Check 502/ }).getByText("Bounced")).toBeVisible();
@@ -1048,7 +1106,7 @@ test("staff set management terms with a leasing fee, late fees, a bank account a
   await page.getByLabel("Rent a month").fill("1240.00");
   await page.getByLabel("Avery Sample").check();
   await page.getByRole("button", { name: "Add lease" }).click();
-  await expect(aspen).toContainText(`Unit 2: Avery Sample: from ${us(today())}, month to month, $1,240.00 a month`);
+  await expect(aspen).toContainText(`Unit 2: Avery Sample: ${us(today())} – Month to month, $1,240.00 a month`);
 
   // Its leasing fee is half a month's rent, once the owner has the money for it.
   await openOwner(page, "Demo Owner B");

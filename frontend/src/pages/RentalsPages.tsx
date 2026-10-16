@@ -4,13 +4,14 @@ import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
 import { EmptyState } from "../components/EmptyState";
-import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Pager } from "../components/Pager";
+import { ListBar } from "../components/ListBar";
 import { RecordActions } from "../components/RecordActions";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import { money } from "../money";
+import { scopeParams, useScope } from "../scope";
 import type { RentLease } from "../rent";
 import type { Paged, Property, PropertyRow, Unit } from "../rentals";
 import { LEASE_STATUS, occupancy, rentLabel, termLabel, unitState } from "../rentals";
@@ -18,6 +19,7 @@ import { GoLink } from "./NeedsAttention";
 import { LeaseRow } from "./RentPage";
 import { FilesCard } from "./FilesCard";
 import { STAFF_NAV } from "./staffNav";
+import { Said } from "../components/Said";
 
 function detail(failed: unknown): string {
   return failed instanceof ApiError ? failed.detail : String(failed);
@@ -32,35 +34,29 @@ function RecordLink({ href, children }: { href: string; children: React.ReactNod
   );
 }
 
-// Rentals → Properties: the company's properties a page at a time, found by name, each opening
-// its own page (ADR 0005).
+// Rentals → Properties: the company's properties a page at a time, narrowed to a property group
+// or one property (the picker every list page has; search is the bar's), each opening its own
+// page (ADR 0005).
 export function PropertiesPage({ me }: { me: Me }) {
   const [page, setPage] = useState<Paged<PropertyRow> | null>(null);
-  const [q, setQ] = useState("");
+  const [scope, setScope] = useScope();
   const [archived, setArchived] = useState(false);
   const [number, setNumber] = useState(1);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const query = new URLSearchParams({ page: String(number), archived: String(archived) });
-    if (q.trim()) query.set("q", q.trim());
+    const query = new URLSearchParams({ page: String(number), archived: String(archived), ...scopeParams(scope) });
     api
       .get<Paged<PropertyRow>>(`/api/properties?${query}`)
       .then(setPage)
       .catch((failed) => setError(detail(failed)));
-  }, [q, archived, number]);
+  }, [scope, archived, number]);
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title="Properties" actions={<GoLink href="/settings/setup" className="inline-flex h-9 items-center rounded-sm bg-iris px-3.5 text-base font-medium text-canvas hover:bg-iris-hover">Add property</GoLink>} />
-      <div className="flex flex-wrap items-end gap-4">
-        <Field label="Find a property" id="find-property" type="search" value={q}
-          onChange={(event) => { setQ(event.target.value); setNumber(1); }} />
-        <label className="flex items-center gap-2 pb-2 text-sm text-ink-muted">
-          <input type="checkbox" checked={archived} onChange={(event) => { setArchived(event.target.checked); setNumber(1); }} />
-          Archived only
-        </label>
-      </div>
+      <ListBar scope={scope} onScope={(next) => { setScope(next); setNumber(1); }}
+        archived={archived} onArchived={(next) => { setArchived(next); setNumber(1); }} />
       <Notice tone="error">{error}</Notice>
       {page === null ? (
         !error && <Notice tone="info">Loading</Notice>
@@ -117,7 +113,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
             <RecordActions path={`/api/properties/${id}`} name={property.name} archived={property.archived}
               onChange={(done) => { setSaid(done); refresh(); }} />
           } />
-          <Notice tone="info">{said}</Notice>
+          <Said>{said}</Said>
           <Card title="Owners">
             {property.owners.length === 0 ? (
               <EmptyState icon={Building2} title="No owner's account yet." body="Open one from Settings, Company setup." />
@@ -211,7 +207,7 @@ export function UnitPage({ me, id }: { me: Me; id: string }) {
           <p className="text-sm">
             <RecordLink href={`/properties/${unit.property.id}`}>{unit.property.name}</RecordLink>
           </p>
-          <Notice tone="info">{said}</Notice>
+          <Said>{said}</Said>
           <Card title="Leases">
             {unit.leases.length === 0 ? (
               <EmptyState icon={Building2} title="No lease yet." body="A lease comes through Leasing, Draft leases." />

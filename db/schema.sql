@@ -1842,6 +1842,32 @@ $$;
 
 
 --
+-- Name: trust_check_group_member(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_group_member() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_group text;
+    v_property text;
+BEGIN
+    SELECT g.display_name INTO v_group FROM trust_property_groups AS g
+    WHERE g.id = NEW.group_id FOR UPDATE;
+    IF (NEW.property_id IN (SELECT trust_group_properties(NEW.group_id))) = NEW.member THEN
+        SELECT p.display_name INTO v_property FROM trust_properties AS p
+        WHERE p.id = NEW.property_id;
+        RAISE EXCEPTION 'trust: % is % in %', v_property,
+            CASE WHEN NEW.member THEN 'already' ELSE 'not' END, v_group
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_hold_allowance(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2695,6 +2721,25 @@ BEGIN
     SELECT count(*)::integer INTO v_entered FROM entered;
     RETURN v_entered;
 END;
+$$;
+
+
+--
+-- Name: trust_group_properties(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_group_properties(p_group_id uuid) RETURNS SETOF uuid
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT latest.property_id
+    FROM (
+        SELECT DISTINCT ON (m.property_id) m.property_id, m.member
+        FROM trust_property_group_members AS m
+        WHERE m.group_id = p_group_id
+        ORDER BY m.property_id, m.created_at DESC, m.id DESC
+    ) AS latest
+    WHERE latest.member
 $$;
 
 
@@ -9468,6 +9513,34 @@ CREATE TABLE public.trust_properties (
 
 
 --
+-- Name: trust_property_group_members; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_property_group_members (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    group_id uuid NOT NULL,
+    property_id uuid NOT NULL,
+    member boolean NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_property_groups; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_property_groups (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    display_name text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_property_groups_display_name_check CHECK (((display_name <> ''::text) AND (display_name = btrim(display_name)) AND (length(display_name) <= 100)))
+);
+
+
+--
 -- Name: trust_reconciliation_preparations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10954,6 +11027,30 @@ ALTER TABLE ONLY public.trust_properties
 
 
 --
+-- Name: trust_property_group_members trust_property_group_members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_group_members
+    ADD CONSTRAINT trust_property_group_members_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_property_groups trust_property_groups_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_groups
+    ADD CONSTRAINT trust_property_groups_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_property_groups trust_property_groups_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_groups
+    ADD CONSTRAINT trust_property_groups_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_reconciliation_preparations trust_reconciliation_preparations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11719,6 +11816,34 @@ CREATE INDEX trust_pmc_fee_withdrawals_transfer_id ON public.trust_pmc_fee_withd
 
 
 --
+-- Name: trust_property_group_members_group; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_property_group_members_group ON public.trust_property_group_members USING btree (group_id, property_id, created_at);
+
+
+--
+-- Name: trust_property_group_members_property; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_property_group_members_property ON public.trust_property_group_members USING btree (pmc_id, property_id);
+
+
+--
+-- Name: trust_property_group_members_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_property_group_members_recorded_by ON public.trust_property_group_members USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_property_groups_name; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_property_groups_name ON public.trust_property_groups USING btree (pmc_id, lower(display_name));
+
+
+--
 -- Name: trust_reconciliation_preparations_bank_account_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -12405,6 +12530,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_property_group_members trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_property_group_members FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_reconciliation_preparations trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13084,6 +13216,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_prop
 
 
 --
+-- Name: trust_property_group_members trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_property_group_members FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_property_groups trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_property_groups FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_reconciliation_preparations trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13448,6 +13594,13 @@ CREATE TRIGGER trust_document_staff BEFORE INSERT ON public.trust_documents FOR 
 
 
 --
+-- Name: trust_property_group_members trust_group_member; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_group_member BEFORE INSERT ON public.trust_property_group_members FOR EACH ROW EXECUTE FUNCTION public.trust_check_group_member();
+
+
+--
 -- Name: trust_lease_offers trust_lease_offer_terms; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13494,6 +13647,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_contacts FOR EACH
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_inspections FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_property_group_members trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_property_group_members FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -15447,6 +15607,46 @@ ALTER TABLE ONLY public.trust_properties
 
 
 --
+-- Name: trust_property_group_members trust_property_group_members_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_group_members
+    ADD CONSTRAINT trust_property_group_members_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_property_group_members trust_property_group_members_pmc_id_group_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_group_members
+    ADD CONSTRAINT trust_property_group_members_pmc_id_group_id_fkey FOREIGN KEY (pmc_id, group_id) REFERENCES public.trust_property_groups(pmc_id, id);
+
+
+--
+-- Name: trust_property_group_members trust_property_group_members_pmc_id_property_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_group_members
+    ADD CONSTRAINT trust_property_group_members_pmc_id_property_id_fkey FOREIGN KEY (pmc_id, property_id) REFERENCES public.trust_properties(pmc_id, id);
+
+
+--
+-- Name: trust_property_group_members trust_property_group_members_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_group_members
+    ADD CONSTRAINT trust_property_group_members_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_property_groups trust_property_groups_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_groups
+    ADD CONSTRAINT trust_property_groups_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
 -- Name: trust_reconciliation_preparations trust_reconciliation_preparations_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16037,4 +16237,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261015000061'),
     ('20261015000062'),
     ('20261016000063'),
-    ('20261016000064');
+    ('20261016000064'),
+    ('20261016000065');

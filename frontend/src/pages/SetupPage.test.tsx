@@ -120,7 +120,7 @@ describe("SetupPage", () => {
       "Owned by Owner A. After 5 days' grace: $50.00. NSF fee $35.00.",
     );
     expect(property.textContent).toContain(
-      "Unit 1: Tenant A: from 10/01/2026, month to month, $1,500.00 a month",
+      "Unit 1: Tenant A: 10/01/2026 – Month to month, $1,500.00 a month",
     );
     expect(property.textContent).toContain("Unit 2: vacant");
     expect((await card("Management terms")).textContent).toContain(

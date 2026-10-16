@@ -95,6 +95,19 @@ browser = [
 ]
 
 [[feature]]
+id = "property-groups"
+statement = "Staff group properties at Settings, Property groups (add a group, rename it, choose its properties; a group is never deleted), and narrow the properties, rent roll, tenants and owners lists to a group or one property from the picker at the top left, a choice that carries from page to page."
+operations = [
+  "GET /api/property-groups",
+  "POST /api/property-groups",
+  "POST /api/property-groups/{group_id}/name",
+  "POST /api/property-groups/{group_id}/properties",
+]
+browser = [
+  "features.spec.ts › staff group properties, and every list shows just the group's, the choice carried from page to page",
+]
+
+[[feature]]
 id = "people"
 statement = "Staff find a tenant or an owner a page at a time and open their page (a tenant's leases and the money held for them; an owner's property accounts); keep a tenant's, owner's or vendor's email, phones and mailing address, which the AI never reads; rename a tenant or owner, and archive one only while nothing is open on them, or bring them back; and find an owner by search."
 operations = [

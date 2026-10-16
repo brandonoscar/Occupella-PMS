@@ -4,6 +4,7 @@ import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Card } from "../components/Shell";
+import { Form } from "../components/Form";
 
 type Envelope = {
   partner: string;
@@ -65,14 +66,14 @@ export function ESignPage() {
               Signed. You can close this page.
             </p>
           ) : (
-            <form className="mt-4 flex flex-col gap-3" onSubmit={sign}>
+            <Form className="mt-4 flex flex-col gap-3" onSubmit={sign}>
               <Field label="Type your name as it is on the lease" id="esign-name" required
                 maxLength={200} value={name} onChange={(e) => setName(e.target.value)} />
               <Notice tone="error">{error}</Notice>
               <div>
                 <Button type="submit">Sign</Button>
               </div>
-            </form>
+            </Form>
           )}
         </Card>
       )}

@@ -11,6 +11,8 @@ import { KINDS, MAX_BYTES, kindLabel, sizeLabel, titleOf, toBase64, typeOf } fro
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 import { usDate } from "../money";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 // Staff's documents: a vendor's W-9, a bill's receipt, a lease's move-out photos and an owner's
 // documents (owners read their own in the portal). Files are PDF, JPEG or PNG, at most 5 MB.
@@ -58,7 +60,7 @@ export function DocumentsPage({ me }: { me: Me }) {
                 ))}
               </ul>
             )}
-            <Notice tone="info">{said}</Notice>
+            <Said>{said}</Said>
             <Notice tone="error">{refused}</Notice>
           </Card>
         </>
@@ -81,7 +83,7 @@ function UploadCard({ library, refresh }: { library: Library; refresh: () => voi
     file === null ? "" : file.type === null ? "A document is a PDF, a JPEG or a PNG." : file.size > MAX_BYTES ? "A document is at most 5 MB." : "";
   return (
     <Card title="Upload a file">
-      <form
+      <Form
         className="flex flex-wrap items-end gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
@@ -121,12 +123,12 @@ function UploadCard({ library, refresh }: { library: Library; refresh: () => voi
         </label>
         <Field label="Title" id="document-title" required value={title} onChange={(e) => setTitle(e.target.value)} />
         <Button type="submit" disabled={file === null || chosen === "" || problem !== ""}>Upload</Button>
-      </form>
+      </Form>
       {subjects.length === 0 && (
         <p className="mt-3 text-sm text-ink-subtle">Nothing to keep a {kindLabel(kind)} for yet.</p>
       )}
       <Notice tone="error">{problem}</Notice>
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </Card>
   );

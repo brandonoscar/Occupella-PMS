@@ -18,7 +18,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, StringConstraints
 
-from pms.api import rent
+from pms.api import rent, scope
 from pms.api.deps import Conn, Staff, refusal
 from pms.api.setup import Name
 
@@ -84,6 +84,7 @@ SELECT p.id, p.display_name,
 FROM trust_properties AS p
 WHERE p.pmc_id = %(pmc)s AND trust_is_archived(p.id, NULL) = %(archived)s
   AND (%(like)s::text IS NULL OR p.display_name ILIKE %(like)s)
+  AND {scope.within("p.id")}
 ORDER BY p.display_name COLLATE "C", p.id
 LIMIT %(per_page)s OFFSET %(offset)s
 """
@@ -95,14 +96,17 @@ def properties(
     conn: Conn,
     q: Search = None,
     archived: bool = False,
+    group: scope.Group = None,
+    property_id: scope.Property = None,
     page: Page = 1,
     per_page: PerPage = 50,
 ) -> Paged[PropertyRow]:
     """The company's properties a page at a time, by name: their owners, units and how many
-    are occupied today. Archived ones only when asked."""
+    are occupied today. Archived ones only when asked; maybe of a group or just one."""
     rows = conn.execute(
         PROPERTIES,
         {
+            **scope.params(group, property_id),
             "pmc": session.pmc_id,
             "day": rent.today(),
             "archived": archived,
@@ -378,7 +382,7 @@ JOIN trust_units AS u ON u.id = l.unit_id
 JOIN trust_properties AS p ON p.id = u.property_id
 CROSS JOIN LATERAL (SELECT {rent.OWED} AS owed) AS x
 WHERE l.pmc_id = %(pmc)s
-  AND (%(property)s::uuid IS NULL OR p.id = %(property)s)
+  AND {scope.within("p.id")}
   AND (%(like)s::text IS NULL OR p.display_name ILIKE %(like)s OR u.display_name ILIKE %(like)s
        OR EXISTS (SELECT 1 FROM trust_lease_tenants AS lt
                   JOIN trust_tenants AS t ON t.id = lt.tenant_id
@@ -397,21 +401,22 @@ LIMIT %(per_page)s OFFSET %(offset)s
 def rent_roll(
     session: Staff,
     conn: Conn,
-    property_id: UUID | None = None,
+    group: scope.Group = None,
+    property_id: scope.Property = None,
     q: Search = None,
     show: Literal["current", "owing", "all"] = "current",
     page: Page = 1,
     per_page: PerPage = 50,
 ) -> Paged[RentRollRow]:
     """The rent roll a page at a time: leases in effect today (or those that owe, or all),
-    maybe of one property or matching a tenant, unit or property name, each with its rent and
-    what it owes."""
+    maybe of a group or one property, or matching a tenant, unit or property name, each with
+    its rent and what it owes."""
     rows = conn.execute(
         RENT_ROLL,
         {
+            **scope.params(group, property_id),
             "pmc": session.pmc_id,
             "day": rent.today(),
-            "property": property_id,
             "like": like(q),
             "show": show,
             "per_page": per_page,

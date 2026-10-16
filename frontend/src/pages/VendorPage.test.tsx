@@ -69,9 +69,9 @@ describe("VendorPage", () => {
     render(<VendorPage me={ME} id="v1" />);
     await screen.findByRole("heading", { level: 1 });
 
-    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
-    fireEvent.change(screen.getByLabelText("New name"), { target: { value: "Vendor One" } });
-    fireEvent.click(screen.getByRole("button", { name: "Save name" }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit" }));
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "Vendor One" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
 
     expect(await screen.findByText("Renamed Vendor One.")).toBeTruthy();
     const [path, init] = fetch.mock.calls.find(([, i]) => i?.method === "POST") ?? [];

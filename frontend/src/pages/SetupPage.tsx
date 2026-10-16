@@ -15,6 +15,7 @@ import { LeasesCard } from "./LeasesCard";
 import { PropertiesCard } from "./PropertiesCard";
 import { STAFF_NAV } from "./staffNav";
 import { TermsCard } from "./TermsCard";
+import { Form } from "../components/Form";
 
 // Staff set up the PMC's books: trust bank accounts, owners and vendors, expense accounts,
 // properties with their units, owners and late fee terms, management terms, and tenants with
@@ -63,7 +64,7 @@ function BanksCard({ books, refresh }: CardProps) {
           </li>
         ))}
       </ul>
-      <form
+      <Form
         className="flex flex-wrap items-end gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
@@ -78,7 +79,7 @@ function BanksCard({ books, refresh }: CardProps) {
         <Field label="Bank account name" id="bank-name" required maxLength={200} value={name}
           onChange={(e) => setName(e.target.value)} />
         <Button type="submit" variant="secondary">Add bank account</Button>
-      </form>
+      </Form>
       <Notice tone="error">{error}</Notice>
     </Card>
   );
@@ -107,7 +108,7 @@ function NameList({
           <li key={person.id}>{person.name}</li>
         ))}
       </ul>
-      <form
+      <Form
         className="flex flex-wrap items-end gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
@@ -117,7 +118,7 @@ function NameList({
         <Field label={label} id={`${path}-name`} required maxLength={200} value={name}
           onChange={(e) => setName(e.target.value)} />
         <Button type="submit" variant="secondary">Add</Button>
-      </form>
+      </Form>
       <Notice tone="error">{error}</Notice>
     </section>
   );
@@ -153,7 +154,7 @@ function ExpenseAccountsCard({ books, refresh }: CardProps) {
           ))}
         </ul>
       )}
-      <form
+      <Form
         className="flex flex-wrap items-end gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
@@ -175,7 +176,7 @@ function ExpenseAccountsCard({ books, refresh }: CardProps) {
           ))}
         </Select>
         <Button type="submit" variant="secondary">Add expense account</Button>
-      </form>
+      </Form>
       <Notice tone="error">{error}</Notice>
     </Card>
   );
