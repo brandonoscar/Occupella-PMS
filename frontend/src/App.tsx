@@ -20,6 +20,7 @@ import { LoginsPage } from "./pages/LoginsPage";
 import { ReconcilePage } from "./pages/ReconcilePage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { RentPage } from "./pages/RentPage";
+import { LeasePage, PropertiesPage, PropertyPage, UnitPage } from "./pages/RentalsPages";
 import { PMC_KEY, SignInPage } from "./pages/SignInPage";
 import { SetupPage } from "./pages/SetupPage";
 import { SettingsPage } from "./pages/SettingsPage";
@@ -65,13 +66,19 @@ function Home({ path }: { path: string }) {
   if (me.kind === "owner") return <OwnerHome me={me} />;
   if (me.kind === "staff") {
     const page = STAFF_PAGES[path];
-    return page ? page(me) : <DashboardPage me={me} />;
+    if (page) return page(me);
+    for (const [pattern, record] of RECORDS) {
+      const found = pattern.exec(path);
+      if (found?.[1]) return record(me, found[1]);
+    }
+    return <DashboardPage me={me} />;
   }
   return <TenantHome me={me} />;
 }
 
 // Staff's pages by path (ADR 0005's menu); any other path is the Dashboard.
 const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
+  "/properties": (me) => <PropertiesPage me={me} />,
   "/rent-roll": (me) => <RentPage me={me} />,
   "/owners": (me) => <OwnersPage me={me} />,
   "/move-out": (me) => <MoveOutPage me={me} />,
@@ -91,3 +98,10 @@ const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/settings/setup": (me) => <SetupPage me={me} />,
   "/settings/import": (me) => <SwitchPage me={me} />,
 };
+
+// A record's own page, by its address (ADR 0005).
+const RECORDS: [RegExp, (me: Me, id: string) => React.ReactNode][] = [
+  [/^\/properties\/([0-9a-f-]{36})$/, (me, id) => <PropertyPage me={me} id={id} />],
+  [/^\/units\/([0-9a-f-]{36})$/, (me, id) => <UnitPage me={me} id={id} />],
+  [/^\/leases\/([0-9a-f-]{36})$/, (me, id) => <LeasePage me={me} id={id} />],
+];

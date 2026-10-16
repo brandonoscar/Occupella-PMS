@@ -78,17 +78,35 @@ browser = [
 ]
 
 [[feature]]
+id = "rentals"
+statement = "Staff find a property a page at a time, open it (its owners' money and each unit's state and lease), a unit (every lease it has had) and a lease; rename a property or a unit, and archive one only while nothing is open on it, or bring it back; and search for a property, unit or tenant from any page."
+operations = [
+  "GET /api/properties",
+  "GET /api/properties/{property_id}",
+  "POST /api/properties/{property_id}/name",
+  "POST /api/properties/{property_id}/archive",
+  "GET /api/units/{unit_id}",
+  "POST /api/units/{unit_id}/name",
+  "POST /api/units/{unit_id}/archive",
+  "GET /api/search",
+]
+browser = [
+  "features.spec.ts › staff find a property, rename it and a unit, archive a vacant unit but not a property with a lease, and search for a tenant",
+]
+
+[[feature]]
 id = "rent-run"
-statement = "Staff charge every lease its rent and recurring charges for a due date, once, and the late fees of rent still open after its grace days, once."
-operations = ["GET /api/rent", "POST /api/rent/charge-rent", "POST /api/rent/late-fees"]
+statement = "Staff charge every lease its rent and recurring charges for a due date, once, and the late fees of rent still open after its grace days, once, and see on the rent roll what each lease owes, a page at a time."
+operations = ["GET /api/leases", "POST /api/rent/charge-rent", "POST /api/rent/late-fees"]
 browser = [
   "features.spec.ts › staff charge this month's rent and its late fees, and the Dashboard shows the rent that is late",
 ]
 
 [[feature]]
 id = "rent-work"
-statement = "Staff add a fee, a credit or a monthly charge to a lease and stop one; record a tenant's payment (what the lease owes to the owner, the rest prepaid rent), use prepaid rent, take a deposit, and record a bounce, which undoes the payment and charges the NSF fee."
+statement = "On a lease's own page, staff add a fee, a credit or a monthly charge to it and stop one; record a tenant's payment (what the lease owes to the owner, the rest prepaid rent), use prepaid rent, take a deposit, and record a bounce, which undoes the payment and charges the NSF fee."
 operations = [
+  "GET /api/leases/{lease_id}",
   "POST /api/rent/leases/{lease_id}/charges",
   "POST /api/rent/leases/{lease_id}/recurring-charges",
   "POST /api/rent/recurring-charges/{recurring_id}/stop",

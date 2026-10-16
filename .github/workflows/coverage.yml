@@ -26,8 +26,9 @@ jobs:
   coverage:
     name: coverage
     runs-on: ubuntu-24.04
-    # The whole suite runs under coverage here: about 20 minutes once move-out landed.
-    timeout-minutes: 40
+    # The whole suite runs under coverage here: about 40 minutes once ADR 0005's pages landed
+    # (20 at move-out), so the limit leaves it room to grow.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

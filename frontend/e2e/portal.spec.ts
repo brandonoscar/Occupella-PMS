@@ -330,6 +330,11 @@ test("staff record a tenant's payment, the rest held as prepaid rent, and then i
   await page.getByRole("button", { name: "Finish" }).click();
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Rent roll", exact: true }).click();
 
+  // The rent roll says what the lease owes; its own page records its rent work.
+  const row = page.getByRole("row", { name: "E2E Property 3, E2E Unit 5", exact: true });
+  await expect(row.getByTestId("owed")).toHaveText("Owes $800.00");
+  await row.getByRole("link", { name: "E2E Unit 5" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "E2E Unit 5, E2E Property 3" })).toBeVisible();
   const lease = page.getByRole("listitem", { name: "E2E Property 3, E2E Unit 5" });
   await expect(lease.getByTestId("owed")).toHaveText("Owes $800.00");
   await lease.getByText("Record for E2E Unit 5").click();

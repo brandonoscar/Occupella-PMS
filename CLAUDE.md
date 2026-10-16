@@ -113,8 +113,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the database to the screen, never a float. Staff's menu (`pages/staffNav.ts`, ADR 0005)
   groups their pages as Buildium does. They open on the Dashboard at `/`: the company's figures
   (`src/pms/api/dashboard.py`, each counted by its report) and what needs attention
-  (`src/pms/api/today.py`: read only, each part the work page's own answer). Rentals: the rent
-  work at `/rent-roll` (`src/pms/api/rent.py`), owners' money at `/owners`
+  (`src/pms/api/today.py`: read only, each part the work page's own answer). Rentals
+  (`src/pms/api/rentals.py`): properties a page at a time at `/properties`, each at
+  `/properties/<id>` (its owners' money, its units and their leases), a unit at `/units/<id>`
+  (every lease it had), the rent roll at `/rent-roll` (the rent run, then the leases a page at a
+  time) and a lease at `/leases/<id>` with its rent work (`src/pms/api/rent.py`); staff rename a
+  property or unit there and archive it. A search in the bar finds a property, unit or tenant
+  (`/api/search`). Lists come a page at a time (`Paged`: 50 by default, at most 200),
+  owners' money at `/owners`
   (`src/pms/api/payables.py`), move-outs at `/move-out` (`src/pms/api/moveout.py`). Leasing:
   applications and links at `/applicants`, lease offers at `/draft-leases`. Accounting:
   reconciling at `/banking` (`src/pms/api/reconcile.py`), bills at `/bills`, journal entries at
@@ -397,6 +403,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   back to each tenant from the security-deposit account. A tenant still on another lease keeps
   their deposit with it. It takes the disburse role. `trust_report_deposit_return` is the
   itemized statement for the tenants. READ COMMITTED; append-only.
+- Archiving (migration 0063, ADR 0005): nothing in a PMC is deleted; a property or unit is
+  archived instead, a row in `trust_archivals` (append-only, the latest for a record holding,
+  `trust_is_archived` reading it), naming who did it. It is refused while anything is open on
+  it: a lease in effect or to come, and for a property its owners' money or a bill neither paid
+  nor declined. Bringing one back is always allowed. An archived property leaves the properties
+  list unless staff ask for archived ones, an archived unit is marked on its property's page,
+  and both keep their history; it moves no money.
 - Documents (migration 0036): a vendor's W-9, a bill's receipt, a lease's move-out photo or an
   owner's document (`trust_documents`, each kind about its one kind of record of the PMC), a
   PDF, JPEG or PNG of at most 5 MB. Its bytes sit apart (`trust_document_files`, checked at

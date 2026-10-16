@@ -21,7 +21,7 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import psycopg
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException
 from psycopg import sql
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, StringConstraints
@@ -588,7 +588,7 @@ SELECT l.id, p.display_name, u.display_name, l.starts_on, l.ends_on,
 FROM trust_leases AS l
 JOIN trust_units AS u ON u.id = l.unit_id
 JOIN trust_properties AS p ON p.id = u.property_id
-WHERE l.pmc_id = %(pmc)s
+WHERE l.pmc_id = %(pmc)s AND (%(lease)s::uuid IS NULL OR l.id = %(lease)s)
 ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", l.starts_on, l.id
 """
 
@@ -601,7 +601,7 @@ SELECT lt.lease_id, t.id, t.display_name,
                  JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
                  WHERE a.tenant_id = t.id AND a.kind = 'tenant_deposit'), 0)
 FROM trust_lease_tenants AS lt JOIN trust_tenants AS t ON t.id = lt.tenant_id
-WHERE lt.pmc_id = %s
+WHERE lt.pmc_id = %(pmc)s AND (%(lease)s::uuid IS NULL OR lt.lease_id = %(lease)s)
 ORDER BY t.display_name COLLATE "C", t.id
 """
 
@@ -609,7 +609,7 @@ RENT_CHANGES = """
 SELECT c.lease_id, c.id, c.effective_on, c.monthly_rent, c.notice_given_on, c.served_by,
        c.lease_terms
 FROM trust_rent_changes AS c
-WHERE c.pmc_id = %s
+WHERE c.pmc_id = %(pmc)s AND (%(lease)s::uuid IS NULL OR c.lease_id = %(lease)s)
 ORDER BY c.effective_on, c.id
 """
 
@@ -619,6 +619,7 @@ SELECT r.lease_id, r.id, r.kind, r.memo, r.amount, r.starts_on, e.ends_on
 FROM trust_recurring_charges AS r
 LEFT JOIN trust_recurring_charge_ends AS e ON e.recurring_charge_id = r.id
 WHERE r.pmc_id = %(pmc)s AND (e.ends_on IS NULL OR %(as_of)s < e.ends_on)
+  AND (%(lease)s::uuid IS NULL OR r.lease_id = %(lease)s)
 ORDER BY r.starts_on, r.memo COLLATE "C", r.id
 """
 
@@ -641,27 +642,44 @@ FROM (SELECT t.metadata ->> 'key' AS key,
       FROM pgledger_transfers AS t
       JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id
       WHERE a.pmc_id = %(pmc)s AND t.metadata ->> 'kind' = 'tenant payment'
+        AND (%(lease)s::uuid IS NULL OR t.metadata ->> 'lease_id' = %(lease)s::text)
       GROUP BY t.metadata ->> 'key', t.metadata ->> 'lease_id', t.metadata ->> 'reference') AS p
 ORDER BY p.received_at DESC, p.created_at DESC, p.first_id
 """
 
 
-@router.get("")
-def leases(
-    session: Staff, conn: Conn, as_of: Annotated[date | None, Query()] = None
-) -> list[RentLease]:
+def leases(session: Staff, conn: Conn, as_of: date | None = None) -> list[RentLease]:
     """Leases in effect on `as_of` (today, UTC, by default) and any other lease that owes
-    something or is owed, with their open charges and tenant payments."""
-    day = as_of or today()
-    pmc = session.pmc_id
+    something or is owed, with their open charges and tenant payments (what the Dashboard's
+    late rent reads)."""
+    return built(conn, session.pmc_id, as_of or today())
+
+
+def lease_detail(
+    conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID, day: date
+) -> RentLease:
+    """One lease of the PMC as the rent page shows it, in effect or not, with every payment."""
+    found = built(conn, pmc_id, day, lease_id)
+    if not found:
+        raise HTTPException(404, "no such lease")
+    return found[0]
+
+
+def built(
+    conn: psycopg.Connection[Any], pmc: UUID, day: date, only: UUID | None = None
+) -> list[RentLease]:
+    """The PMC's leases as the rent page shows them, or the one lease `only` names. Of the
+    whole PMC: those in effect on the day, and others only while something is owed, each with
+    its latest 12 payments; one lease named: whatever it is, with all of them."""
+    names = {"pmc": pmc, "as_of": day, "lease": only}
     tenants: dict[UUID, list[LeaseTenant]] = {}
-    for lease, i, name, prepaid, deposit in conn.execute(TENANTS, (pmc,)).fetchall():
+    for lease, i, name, prepaid, deposit in conn.execute(TENANTS, names).fetchall():
         tenants.setdefault(lease, []).append(
             LeaseTenant(id=i, name=name, prepaid=cents(prepaid), deposit=cents(deposit))
         )
     payments: dict[UUID, list[Paid]] = {}
     for lease, transfer, event_at, amount, reference, bounced in conn.execute(
-        PAYMENTS, {"pmc": pmc}
+        PAYMENTS, names
     ).fetchall():
         payments.setdefault(lease, []).append(
             Paid(
@@ -673,7 +691,7 @@ def leases(
             )
         )
     charges: dict[UUID, list[OpenCharge]] = {}
-    for lease, c, due_on, kind, memo, amount, left in charges_open(conn, pmc):
+    for lease, c, due_on, kind, memo, amount, left in charges_open(conn, pmc, only):
         charges.setdefault(lease, []).append(
             OpenCharge(
                 id=c,
@@ -685,9 +703,7 @@ def leases(
             )
         )
     recurring: dict[UUID, list[RecurringCharge]] = {}
-    for lease, r, kind, memo, amount, starts, ends in conn.execute(
-        RECURRING, {"pmc": pmc, "as_of": day}
-    ).fetchall():
+    for lease, r, kind, memo, amount, starts, ends in conn.execute(RECURRING, names).fetchall():
         recurring.setdefault(lease, []).append(
             RecurringCharge(
                 id=r, kind=kind, memo=memo, amount=cents(amount), starts_on=starts, ends_on=ends
@@ -695,7 +711,7 @@ def leases(
         )
     changes: dict[UUID, list[RentChange]] = {}
     for lease, c, effective, monthly, notice, served, terms in conn.execute(
-        RENT_CHANGES, (pmc,)
+        RENT_CHANGES, names
     ).fetchall():
         changes.setdefault(lease, []).append(
             RentChange(
@@ -709,11 +725,9 @@ def leases(
         )
     insured = renters_insurance(conn, pmc, day)
     found = []
-    for i, prop, unit, starts, ends, rent, due, on_hold in conn.execute(
-        LEASES, {"pmc": pmc, "as_of": day}
-    ).fetchall():
+    for i, prop, unit, starts, ends, rent, due, on_hold in conn.execute(LEASES, names).fetchall():
         in_effect = starts <= day and (ends is None or day <= ends)
-        if not in_effect and due == 0:
+        if only is None and not in_effect and due == 0:
             continue
         found.append(
             RentLease(
@@ -728,7 +742,7 @@ def leases(
                 owed=cents(due),
                 on_hold=on_hold,
                 open_charges=charges.get(i, []),
-                payments=payments.get(i, [])[:12],
+                payments=payments.get(i, []) if only else payments.get(i, [])[:12],
                 recurring=recurring.get(i, []),
                 renters_insurance=insured.get(i),
             )

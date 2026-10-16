@@ -63,8 +63,7 @@ def policy(**change):
 
 
 def insurance(client, lease):
-    (found,) = [x for x in ok(client.get("/api/rent")) if x["id"] == str(lease)]
-    return found["renters_insurance"]
+    return ok(client.get(f"/api/leases/{lease}"))["renters_insurance"]
 
 
 def test_staff_require_it_and_the_tenant_records_their_policy(

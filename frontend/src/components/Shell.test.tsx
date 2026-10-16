@@ -39,7 +39,7 @@ describe("Shell", () => {
 
     const links = within(sections()).getAllByRole("link");
     expect(links.map((link) => link.textContent)).toEqual([
-      "Dashboard", "Rent roll", "Owners", "Move-outs", "Applicants", "Draft leases", "Banking", "Bills",
+      "Dashboard", "Properties", "Rent roll", "Owners", "Move-outs", "Applicants", "Draft leases", "Banking", "Bills",
       "Journal entries", "Budgets", "Work orders", "Vendors", "Files", "Reports", "Settings",
     ]);
     const groups = within(sections()).getAllByRole("group");
@@ -77,6 +77,15 @@ describe("Shell", () => {
     const rent = within(sections()).getByRole("link", { name: "Rent roll" });
     expect(fireEvent.click(rent, { ctrlKey: true })).toBe(true); // not prevented
     expect(window.location.pathname).toBe("/bills");
+  });
+
+  it("gives staff the search in the bar, and nobody else", () => {
+    render(<Shell me={STAFF} nav={STAFF_NAV}><p /></Shell>);
+    expect(within(screen.getByRole("banner")).getByLabelText("Search properties, units and tenants")).toBeTruthy();
+    cleanup();
+
+    render(<Shell me={OWNER}><p /></Shell>);
+    expect(screen.queryByLabelText("Search properties, units and tenants")).toBeNull();
   });
 
   it("names an owner's or a tenant's one page in the rail", () => {
