@@ -149,8 +149,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   application links and the public listings at `/rental-listings`, applications at
   `/applicants`, lease offers at `/draft-leases`, the leases ending in the next 90 days with
   their renewal status at `/renewals` (`src/pms/api/renewals.py`, the expirations report's rows). Accounting:
-  the trust bank accounts at `/banking`, each with its book balance and its month-end at
-  `/bank-accounts/<id>` (`src/pms/api/reconcile.py`), bills at `/bills` (Unpaid, Paid, Declined
+  the trust bank accounts at `/banking` (Add bank account), each at `/bank-accounts/<id>` in tabs:
+  its register and balance breakdown (`src/pms/api/banking.py`), its month-end
+  (`src/pms/api/reconcile.py`) and its statements, bills at `/bills` (Unpaid, Paid, Declined
   and All tabs; Record bill opens a side panel), the general ledger on
   screen at `/general-ledger` (`src/pms/api/general_ledger.py`: trust_report_general_ledger's
   rows by account, a page of accounts at a time; cash basis) with its Journal entry button to

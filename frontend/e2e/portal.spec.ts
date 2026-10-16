@@ -501,6 +501,7 @@ test("staff import last month's statement, match it to the books and prepare it;
 
   await page.getByRole("row", { name: "E2E operating trust account", exact: true }).getByRole("link").click();
   await expect(page.getByRole("heading", { level: 1, name: "E2E operating trust account" })).toBeVisible();
+  await page.getByRole("tab", { name: "Statements" }).click();
   // The seed's rents of last month: two owners' in one deposit, two more on their own.
   const csv = [
     "Date,Description,Amount,Reference",
@@ -517,6 +518,7 @@ test("staff import last month's statement, match it to the books and prepare it;
   await page.getByRole("button", { name: "Import statement" }).click();
   await expect(page.getByText(`Imported 3 lines, ${us(iso(first))} to ${us(iso(last))}.`)).toBeVisible();
 
+  await page.getByRole("tab", { name: "Reconciliations" }).click();
   await page.getByRole("button", { name: "Match the sure ones" }).click();
   await expect(page.getByText("2 lines matched.")).toBeVisible();
   const prepare = page.getByRole("button", { name: `Prepare through ${us(iso(last))}` });
@@ -615,12 +617,14 @@ test("staff bring a roster in, open an account with its old balances and a check
   await sections.getByRole("link", { name: "Banking", exact: true }).click();
   await page.getByRole("row", { name: "E2E cutover trust account", exact: true }).getByRole("link").click();
   await expect(page.getByRole("heading", { level: 1, name: "E2E cutover trust account" })).toBeVisible();
+  await page.getByRole("tab", { name: "Statements" }).click();
   await page.getByLabel("Statement file (CSV or OFX)").setInputFiles(file("statement.csv", "Date,Description,Amount\n"));
   await page.getByLabel("First day").fill(iso(cutover));
   await page.getByLabel("Last day").fill(iso(cutover));
   await page.getByLabel("Opening balance", { exact: true }).fill("1050.00");
   await page.getByRole("button", { name: "Import statement" }).click();
   await expect(page.getByText(`Imported 1 line, ${us(iso(cutover))} to ${us(iso(cutover))}.`)).toBeVisible();
+  await page.getByRole("tab", { name: "Reconciliations" }).click();
   await expect(page.getByText(/balance brought forward should be \$1,050.00/)).toBeVisible();
   await page.getByRole("button", { name: "Match the opening" }).click();
   await expect(page.getByText("The opening is matched.")).toBeVisible();

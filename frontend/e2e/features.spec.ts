@@ -376,7 +376,7 @@ test("staff group properties, and every list shows just the group's, the choice 
   await expect(page.getByRole("navigation", { name: "Pages" })).toContainText("1–4 of 4");
 });
 
-test("staff read each account's general ledger, open a trust bank account from Banking, and pay an owner's draw from Owner draws", async ({
+test("staff read each account's general ledger, open a trust bank account from Banking with its register and what it holds, and see what each owner may be paid", async ({
   page,
 }) => {
   const people = seed.features["general-ledger"]!;
@@ -403,6 +403,18 @@ test("staff read each account's general ledger, open a trust bank account from B
   await operating.getByRole("link").click();
   await expect(page.getByRole("heading", { level: 1, name: "Demo operating trust account" })).toBeVisible();
   await expect(page.getByTestId("book-cash")).toContainText("Book balance $");
+  // Last month waits for approval, so it opens on Reconciliations; its register is Transactions:
+  // each move of its cash with what it was and the balance after it.
+  await expect(page.getByRole("tab", { name: "Reconciliations" })).toHaveAttribute("aria-selected", "true");
+  await page.getByRole("tab", { name: "Transactions" }).click();
+  const register = page.getByRole("table", { name: "Register" });
+  await expect(register.getByRole("row", { name: /Rent payment/ }).first()).toBeVisible();
+  await expect(register).toContainText("Rent – ");
+  // What it holds, by kind, comes to its book cash.
+  await page.getByRole("tab", { name: "Balance breakdown" }).click();
+  const cash = ((await page.getByTestId("book-cash").textContent()) ?? "").replace("Book balance ", "");
+  await expect(page.getByTestId("breakdown-cash")).toHaveText(cash);
+  await expect(page.getByRole("table", { name: "By owner" }).getByRole("row", { name: "Demo Owner B, Aspen Row" })).toBeVisible();
 
   // Pay owners: what each owner's account may pay out; one holding only its reserve can't be chosen.
   await section(page, "Pay owners");
@@ -994,7 +1006,8 @@ test("an owner reads last month's statement and their year-end package, and down
   // Last month: rent received, the management fee, the draw; each property ends at its reserve.
   const statement = part(page, "Statement");
   const birch = statement.getByRole("table", { name: "Birch Flats" });
-  await expect(birch).toContainText("Received · Demo operating trust account");
+  // Each rent receipt names its tenants and home (its memo, src/pms/api/rent.py).
+  await expect(birch).toContainText("Rent – Morgan Demo, Birch Flats Unit A · Demo operating trust account");
   await expect(birch).toContainText("Owner draw · Demo operating trust account");
   await expect(birch).toContainText("· Demo Property Management");
   await expect(birch.getByRole("row", { name: /^Closing balance/ })).toContainText("$250.00");
@@ -1028,7 +1041,7 @@ test("a tenant sees their lease, what comes each month and two months of charges
   await joinPortal(page, people.taylor);
   await expect(page.getByRole("heading", { level: 1, name: "Welcome, Taylor Demo" })).toBeVisible();
   await expect(page.getByText("Cedar House, House")).toBeVisible();
-  await expect(page.getByText("Quinn Demo, Taylor Demo")).toBeVisible();
+  await expect(page.getByText("Quinn Demo, Taylor Demo", { exact: true })).toBeVisible();
   // Last month's rent is paid and this month's not charged yet: nothing is due.
   await expect(page.getByTestId("balance-due")).toHaveText("$0.00");
   await expect(part(page, "Coming up")).toContainText("Rent: $2,250.00");
@@ -1168,11 +1181,16 @@ test("staff set management terms with a leasing fee, late fees, a bank account a
 }) => {
   const people = seed.features.setup!;
   await joinAsStaff(page, people.manager);
-  await settings(page, "Company setup");
 
-  await page.getByRole("combobox", { name: "Kind" }).selectOption({ label: "Operating" });
-  await page.getByLabel("Bank account name").fill("Second operating account");
+  // A trust bank account added from Banking opens its own page, and the setup lists it.
+  await section(page, "Banking");
   await page.getByRole("button", { name: "Add bank account" }).click();
+  const adding = page.getByRole("dialog", { name: "Add bank account" });
+  await adding.getByLabel("Holds").selectOption({ label: "Operating: rent and owners' money" });
+  await adding.getByLabel("Bank account name").fill("Second operating account");
+  await adding.getByRole("button", { name: "Add bank account" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Second operating account" })).toBeVisible();
+  await settings(page, "Company setup");
   await expect(part(page, "Trust bank accounts")).toContainText("Second operating account (Operating)");
   const vendors = page.getByRole("region", { name: "Vendors" });
   await vendors.getByLabel("Vendor's name").fill("Demo Electric Co");

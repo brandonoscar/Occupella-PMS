@@ -8,7 +8,16 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from helpers import approve, approve_bank, make_pmc, post
+from helpers import (
+    add_tenant,
+    add_unit,
+    approve,
+    approve_bank,
+    charge,
+    make_pmc,
+    open_lease,
+    post,
+)
 from people import join_as_owner, join_as_staff, join_as_tenant
 
 TODAY = datetime.now(UTC).date()
@@ -243,6 +252,26 @@ def test_a_worksheet_before_any_statement_lists_only_the_books(client, conn, sta
     rent(conn, pmc, "10.00", date(2026, 1, 4))
     shown = sheet(client, pmc)
     assert (shown["through"], shown["rows"], len(shown["open_transfers"])) == (None, [], 1)
+
+
+def test_a_rent_receipt_on_the_books_side_names_the_tenants_and_the_home(client, conn, staff, pmc):
+    prop = pmc.owners[0].property_id
+    unit = add_unit(conn, pmc.pmc_id, prop, "Unit 4")
+    tenants = [add_tenant(conn, pmc.pmc_id, prop, name) for name in ("Tenant B", "Tenant A")]
+    lease = open_lease(conn, pmc.pmc_id, unit, TODAY - timedelta(days=40), None, "800.00", tenants)
+    charge(conn, pmc.pmc_id, lease, TODAY - timedelta(days=10), "800.00")
+    paid = {"request_id": str(uuid.uuid4()), "amount": "800.00", "received_on": str(TODAY)}
+    ok(client.post(f"/api/rent/leases/{lease}/payments", json=paid))
+    (where,) = conn.execute(
+        "SELECT display_name FROM trust_properties WHERE id = %s", (prop,)
+    ).fetchone()
+
+    [receipt] = sheet(client, pmc)["open_transfers"]
+
+    assert (receipt["amount"], receipt["memo"]) == (
+        "800.00",
+        f"Rent – Tenant A, Tenant B, {where} Unit 4",
+    )
 
 
 def test_lines_are_matched_to_transfers_and_undone(client, conn, staff, pmc):

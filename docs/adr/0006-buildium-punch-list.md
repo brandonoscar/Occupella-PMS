@@ -98,3 +98,17 @@ replaces the one-at-a-time draw. Management fees has its own page under Accounti
 agreement's fee for a period, worked out by the database and rolled back so looking moves
 nothing, then Collect fees (decision 4). The company's fees leave trust from Banking, and a
 lease's leasing fee from the lease's ⋯ menu.
+
+## Banking
+
+The fifth piece (`src/pms/api/banking.py`, no migration): Banking lists the trust bank accounts
+and adds one (Add bank account); an account's page has tabs. Transactions is its register: each
+move of its cash with what it was (rent payment, security deposit, returned payment, owner draw
+or contribution, bill payment, company fees, deposit returned, opening balance), who paid or was
+paid, its memo, its property and the balance after it, the last ninety days at first and a page
+at a time, the balance counting everything before the days shown. Reconciliations is its
+month-end, where a month waiting for approval opens. Balance breakdown is what it holds by kind,
+coming to its book cash (the tie-out), and each owner's money in it. Statements are its imported
+files and Import statement. A rent payment, a bounce and a deposit now carry a memo naming the
+tenants and the home, so the books side of a reconciliation reads as well as the bank's. Read
+only: the page moves no money.

@@ -711,6 +711,7 @@ LEFT JOIN LATERAL (
 WHERE a.pmc_id = %(pmc)s AND a.kind = 'owner_property'
   AND (%(owner)s::uuid IS NULL OR a.owner_id = %(owner)s)
   AND (%(owners)s::uuid[] IS NULL OR a.owner_id = ANY(%(owners)s::uuid[]))
+  AND (%(bank)s::uuid IS NULL OR a.bank_account_id = %(bank)s::uuid)
   AND {within}
 ORDER BY o.display_name COLLATE "C", p.display_name COLLATE "C", a.ledger_account_id
 """.format(within=scope.within("a.property_id"))
@@ -732,9 +733,11 @@ def owner_money(
     owners: list[UUID] | None = None,
     group: UUID | None = None,
     property_id: UUID | None = None,
+    bank: UUID | None = None,
 ) -> list[OwnerMoney]:
     """The PMC's owners' property accounts today (or one owner's, or some owners'; maybe only
-    those of a group's properties or one property), as `owners` lists them."""
+    those of a group's properties, one property or one trust bank account), as `owners` lists
+    them."""
     rows = conn.execute(
         OWNERS,
         {
@@ -742,6 +745,7 @@ def owner_money(
             "today": today(),
             "owner": owner,
             "owners": owners,
+            "bank": bank,
             **scope.params(group, property_id),
         },
     ).fetchall()
