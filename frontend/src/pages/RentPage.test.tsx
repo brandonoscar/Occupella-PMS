@@ -2,7 +2,8 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { RentLease } from "../rent";
-import { RentPage } from "./RentPage";
+import type { Paged, RentRollRow } from "../rentals";
+import { LeaseRow, RentPage } from "./RentPage";
 
 afterEach(() => {
   cleanup();
@@ -47,11 +48,23 @@ const LEASE: RentLease = {
   ],
 };
 
-// The API: the leases on GET; each POST answers with `answers[path]` (or 201 {}), or 409.
+const ROW: RentRollRow = {
+  id: "l1",
+  property: { id: "p1", name: "Property 1" },
+  unit: { id: "u1", name: "Unit 1" },
+  tenants: ["Tenant 1", "Tenant 2"],
+  starts_on: "2026-01-01",
+  ends_on: null,
+  monthly_rent: "1500.00",
+  owed: "1550.00",
+};
+const ROLL: Paged<RentRollRow> = { items: [ROW], total: 1, page: 1, per_page: 50 };
+
+// The API: the rent roll on GET; each POST answers with `answers[path]` (or 201 {}), or 409.
 function server(answers: Record<string, unknown> = {}, refuse: Record<string, string> = {}) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method !== "POST") {
-      return new Response(JSON.stringify(answers[path] ?? [LEASE]), { status: 200 });
+      return new Response(JSON.stringify(answers[path] ?? ROLL), { status: 200 });
     }
     if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
     return new Response(JSON.stringify(answers[path] ?? {}), { status: 201 });
@@ -65,16 +78,16 @@ const posted = (fetch: ReturnType<typeof server>) =>
     .filter(([, init]) => init?.method === "POST")
     .map(([path, init]) => [path, JSON.parse(String(init?.body))]);
 
-async function row() {
-  return screen.findByRole("listitem", { name: "Property 1, Unit 1" });
+// A lease's rent work, as its page shows it.
+function leaseRow(lease: RentLease = LEASE, refresh = () => {}) {
+  render(<ul><LeaseRow lease={lease} refresh={refresh} /></ul>);
+  return screen.getByRole("listitem", { name: "Property 1, Unit 1" });
 }
 
-describe("RentPage", () => {
+describe("LeaseRow", () => {
   it("shows what each lease owes, its tenants, open charges and payments", async () => {
     server();
-    render(<RentPage me={ME} />);
-
-    const lease = await row();
+    const lease = leaseRow();
     expect(within(lease).getByTestId("owed").textContent).toBe("Owes $1,550.00");
     expect(lease.textContent).toContain("Tenant 1: prepaid $50.00, deposit $1,500.00");
     expect(lease.textContent).toContain("2026-10-06 Late fee: $50.00 open");
@@ -91,34 +104,11 @@ describe("RentPage", () => {
     expect(within(lease).getAllByRole("button", { name: "It bounced" })).toHaveLength(1);
     expect(screen.queryByText(/payment hold/)).toBeNull();
   });
-
-  it("runs the rent and late fees and says how many were charged", async () => {
-    const fetch = server({
-      "/api/rent/charge-rent": { charged: 3, recurring: 1 },
-      "/api/rent/late-fees": { charged: 1 },
-    });
-    render(<RentPage me={ME} />);
-    await row();
-
-    fireEvent.change(screen.getByLabelText("Rent due on"), { target: { value: "2026-11-01" } });
-    fireEvent.click(screen.getByRole("button", { name: "Charge rent" }));
-    expect(await screen.findByText("3 rents and 1 recurring charge charged.")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Late fees as of"), { target: { value: "2026-11-06" } });
-    fireEvent.click(screen.getByRole("button", { name: "Assess late fees" }));
-    expect(await screen.findByText("1 late fee charged.")).toBeTruthy();
-
-    expect(posted(fetch)).toEqual([
-      ["/api/rent/charge-rent", { on: "2026-11-01" }],
-      ["/api/rent/late-fees", { on: "2026-11-06" }],
-    ]);
-  });
-
   it("records a payment once per request, and says where it went", async () => {
     const fetch = server({
       "/api/rent/leases/l1/payments": { transfers: ["a", "b"], to_owner: "1550.00", to_prepaid: "50.00" },
     });
-    render(<RentPage me={ME} />);
-    const lease = await row();
+    const lease = leaseRow();
 
     fireEvent.change(within(lease).getByLabelText("Payment received"), { target: { value: "1600.00" } });
     fireEvent.change(within(lease).getByLabelText("Received on"), { target: { value: "2026-10-02" } });
@@ -147,8 +137,7 @@ describe("RentPage", () => {
       "/api/rent/leases/l1/use-prepaid": { transfers: ["p"], to_owner: "50.00", to_prepaid: "0.00" },
       "/api/rent/payments/tr1/bounce": { transfers: ["r"], nsf_fee: "35.00" },
     });
-    render(<RentPage me={ME} />);
-    const lease = await row();
+    const lease = leaseRow();
 
     fireEvent.click(within(lease).getByRole("button", { name: "Use prepaid rent" }));
     expect(await within(lease).findByText("$50.00 paid what is owed.")).toBeTruthy();
@@ -189,8 +178,7 @@ describe("RentPage", () => {
 
   it("shows a lease's recurring charges, adds one and stops one", async () => {
     const fetch = server();
-    render(<RentPage me={ME} />);
-    const lease = await row();
+    const lease = leaseRow();
 
     expect(lease.textContent).toContain("Pet rent: $35.00 a month from 2026-01-01");
     expect(lease.textContent).toContain(
@@ -231,9 +219,8 @@ describe("RentPage", () => {
         served_by: "mail", lease_terms: null,
       }],
     };
-    const fetch = server({ "/api/rent": [changed], "/api/rent/leases/l1/rent-changes": { id: "rc2" } });
-    render(<RentPage me={ME} />);
-    const lease = await row();
+    const fetch = server({ "/api/rent/leases/l1/rent-changes": { id: "rc2" } });
+    const lease = leaseRow(changed);
 
     expect(within(lease).getByRole("list", { name: "Rent changes, Unit 1" }).textContent).toBe(
       "From 2026-12-01: $1,575.00 a month (notice by mail on 2026-10-15)",
@@ -266,9 +253,8 @@ describe("RentPage", () => {
         expires_on: null, liability_limit: null, standing: "none on file", below_minimum: false,
       },
     };
-    const fetch = server({ "/api/rent": [insured] });
-    render(<RentPage me={ME} />);
-    const lease = await row();
+    const fetch = server();
+    const lease = leaseRow(insured);
 
     const line = within(lease).getByTestId("renters-insurance");
     expect(line.textContent).toBe(
@@ -302,9 +288,7 @@ describe("RentPage", () => {
   });
 
   it("asks a lease with an end date for the term that allows a rent change", async () => {
-    server({ "/api/rent": [{ ...LEASE, ends_on: "2026-12-31" }] });
-    render(<RentPage me={ME} />);
-    const lease = await row();
+    const lease = leaseRow({ ...LEASE, ends_on: "2026-12-31" });
 
     expect(within(lease).getByLabelText("The lease term that allows it")).toBeTruthy();
   });
@@ -312,14 +296,11 @@ describe("RentPage", () => {
   it("shows a refusal on the lease, and a hold", async () => {
     vi.stubGlobal(
       "fetch",
-      vi.fn(async (path: string, init?: RequestInit) =>
-        init?.method === "POST"
-          ? new Response(JSON.stringify({ detail: `lease is on a payment hold (${path})` }), { status: 409 })
-          : new Response(JSON.stringify([{ ...LEASE, on_hold: true, payments: [], open_charges: [] }]), { status: 200 }),
+      vi.fn(async (path: string) =>
+        new Response(JSON.stringify({ detail: `lease is on a payment hold (${path})` }), { status: 409 }),
       ),
     );
-    render(<RentPage me={ME} />);
-    const lease = await row();
+    const lease = leaseRow({ ...LEASE, on_hold: true, payments: [], open_charges: [] });
 
     expect(within(lease).getByText(/On a payment hold/)).toBeTruthy();
     fireEvent.change(within(lease).getByLabelText("Payment received"), { target: { value: "10.00" } });
@@ -329,11 +310,66 @@ describe("RentPage", () => {
       await within(lease).findByText("lease is on a payment hold (/api/rent/leases/l1/payments)"),
     ).toBeTruthy();
   });
+});
 
-  it("says when no lease needs rent work, and when the leases can't be read", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
+describe("RentPage", () => {
+  async function roll() {
+    return screen.findByRole("row", { name: "Property 1, Unit 1" });
+  }
+
+  it("lists the leases a page at a time, each linking to its own page", async () => {
+    const fetch = server({
+      "/api/leases?page=1&show=current": { ...ROLL, total: 51 },
+    });
     render(<RentPage me={ME} />);
-    expect(await screen.findByText("No lease is in effect or owes anything.")).toBeTruthy();
+
+    const row = await roll();
+    expect(within(row).getAllByRole("cell").map((c) => c.textContent)).toEqual([
+      "Property 1", "Unit 1", "Tenant 1, Tenant 2", "$1,500.00", "From 2026-01-01, month to month", "Owes $1,550.00",
+    ]);
+    expect(within(row).getByRole("link", { name: "Unit 1" }).getAttribute("href")).toBe("/leases/l1");
+    expect(within(row).getByTestId("owed").getAttribute("data-tone")).toBe("caution");
+    const pages = screen.getByRole("navigation", { name: "Pages" });
+    expect(pages.textContent).toContain("1–1 of 51");
+
+    // The next page, a search and the owing leases each ask again, from the first page.
+    fireEvent.click(within(pages).getByRole("button", { name: "Next" }));
+    await vi.waitFor(() => expect(fetch.mock.calls.at(-1)?.[0]).toBe("/api/leases?page=2&show=current"));
+    fireEvent.change(screen.getByLabelText("Find a tenant, unit or property"), { target: { value: " Tenant 2 " } });
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.at(-1)?.[0]).toBe("/api/leases?page=1&show=current&q=Tenant+2"),
+    );
+    fireEvent.change(screen.getByLabelText("Show"), { target: { value: "owing" } });
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.at(-1)?.[0]).toBe("/api/leases?page=1&show=owing&q=Tenant+2"),
+    );
+  });
+
+  it("runs the rent and late fees and says how many were charged", async () => {
+    const fetch = server({
+      "/api/rent/charge-rent": { charged: 3, recurring: 1 },
+      "/api/rent/late-fees": { charged: 1 },
+    });
+    render(<RentPage me={ME} />);
+    await roll();
+
+    fireEvent.change(screen.getByLabelText("Rent due on"), { target: { value: "2026-11-01" } });
+    fireEvent.click(screen.getByRole("button", { name: "Charge rent" }));
+    expect(await screen.findByText("3 rents and 1 recurring charge charged.")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Late fees as of"), { target: { value: "2026-11-06" } });
+    fireEvent.click(screen.getByRole("button", { name: "Assess late fees" }));
+    expect(await screen.findByText("1 late fee charged.")).toBeTruthy();
+
+    expect(posted(fetch)).toEqual([
+      ["/api/rent/charge-rent", { on: "2026-11-01" }],
+      ["/api/rent/late-fees", { on: "2026-11-06" }],
+    ]);
+  });
+
+  it("says when no lease is listed, and when the leases can't be read", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ...ROLL, items: [], total: 0 }), { status: 200 })));
+    render(<RentPage me={ME} />);
+    expect((await screen.findByTestId("empty-state")).textContent).toBe("No lease is in effect today.");
     cleanup();
 
     vi.stubGlobal(
@@ -347,7 +383,7 @@ describe("RentPage", () => {
   it("shows why a run was refused", async () => {
     server({}, { "/api/rent/late-fees": "late fees are assessed as of today or an earlier day" });
     render(<RentPage me={ME} />);
-    await row();
+    await roll();
 
     fireEvent.click(screen.getByRole("button", { name: "Assess late fees" }));
 

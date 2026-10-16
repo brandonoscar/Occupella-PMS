@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { api } from "../api";
 import { navigate, usePath } from "../router";
+import { SearchBox } from "./SearchBox";
 
 // The name, set as occupella.com and Occupella's app set it: lowercase "occupella" in Fraunces.
 export function Wordmark() {
@@ -145,7 +146,9 @@ export function Shell({
           >
             <Menu size={16} strokeWidth={1.75} />
           </button>
-          <span className="flex-1" />
+          <span className="flex flex-1 justify-center px-2">
+            {me.kind === "staff" && nav.length > 0 && <SearchBox />}
+          </span>
           <span
             role="img"
             aria-label={`${me.name}, ${me.pmc_name}`}

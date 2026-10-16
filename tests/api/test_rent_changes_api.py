@@ -10,6 +10,8 @@ import pytest
 from helpers import add_unit, make_pmc, open_lease
 from people import join_as_owner, join_as_staff, join_as_tenant
 
+from pms.api import rent
+
 TODAY = datetime.now(UTC).date()
 FIRST = TODAY.replace(day=1)
 
@@ -62,12 +64,11 @@ def change(client, lease, **body):
 
 
 def the_lease(client, lease):
-    (found,) = [x for x in ok(client.get("/api/rent")) if x["id"] == str(lease)]
-    return found
+    return ok(client.get(f"/api/leases/{lease}"))
 
 
 def test_staff_change_a_month_to_month_rent_after_a_full_months_notice(
-    client, other_client, conn, app_conn, staff, pmc, lease
+    client, other_client, conn, app_conn, staff, pmc, lease, monkeypatch
 ):
     made = ok(change(client, lease), 201)
 
@@ -83,10 +84,10 @@ def test_staff_change_a_month_to_month_rent_after_a_full_months_notice(
             "lease_terms": None,
         }
     ]
-    # From its month on, the page shows it in force.
-    assert (
-        ok(client.get("/api/rent", params={"as_of": str(IN_TWO)}))[0]["monthly_rent"] == "1575.00"
-    )
+    # From its month on, the lease's page shows it in force.
+    with monkeypatch.context() as later:
+        later.setattr(rent, "today", lambda: IN_TWO)
+        assert the_lease(client, lease)["monthly_rent"] == "1575.00"
     # The tenant sees the change to come in their portal.
     join_as_tenant(other_client, conn, app_conn, pmc)
     (mine,) = ok(other_client.get("/api/tenant/leases"))

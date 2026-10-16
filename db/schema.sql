@@ -1334,6 +1334,67 @@ $$;
 
 
 --
+-- Name: trust_check_archival(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_archival() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_today date := (now() AT TIME ZONE 'UTC')::date;
+    v_name text;
+BEGIN
+    IF trust_is_archived(NEW.property_id, NEW.unit_id) = NEW.archived THEN
+        RAISE EXCEPTION 'trust: it is % already', CASE WHEN NEW.archived THEN 'archived' ELSE 'not archived' END
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NOT NEW.archived THEN
+        RETURN NEW;
+    END IF;
+    IF NEW.unit_id IS NOT NULL THEN
+        SELECT u.display_name INTO v_name FROM trust_units AS u WHERE u.id = NEW.unit_id;
+        IF EXISTS (SELECT 1 FROM trust_leases AS l
+                   WHERE l.unit_id = NEW.unit_id AND (l.ends_on IS NULL OR l.ends_on >= v_today))
+        THEN
+            RAISE EXCEPTION 'trust: % has a lease in effect or to come; end it before archiving',
+                v_name USING ERRCODE = 'check_violation';
+        END IF;
+        RETURN NEW;
+    END IF;
+    SELECT p.display_name INTO v_name FROM trust_properties AS p WHERE p.id = NEW.property_id;
+    IF EXISTS (SELECT 1 FROM trust_leases AS l JOIN trust_units AS u ON u.id = l.unit_id
+               WHERE u.property_id = NEW.property_id
+                 AND (l.ends_on IS NULL OR l.ends_on >= v_today))
+    THEN
+        RAISE EXCEPTION 'trust: % has a lease in effect or to come; end it before archiving',
+            v_name USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (SELECT 1 FROM trust_ledger_accounts AS a
+               JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
+               WHERE a.property_id = NEW.property_id AND a.kind = 'owner_property'
+                 AND b.balance <> 0)
+    THEN
+        RAISE EXCEPTION 'trust: % holds its owners'' money; draw it before archiving', v_name
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (SELECT 1 FROM trust_bills AS bill
+               JOIN trust_ledger_accounts AS a ON a.ledger_account_id = bill.ledger_account_id
+               WHERE a.property_id = NEW.property_id
+                 AND NOT EXISTS (SELECT 1 FROM trust_bill_payments AS p
+                                 WHERE p.bill_id = bill.id AND p.step = 'paid')
+                 AND NOT EXISTS (SELECT 1 FROM trust_bill_declines AS d
+                                 WHERE d.bill_id = bill.id))
+    THEN
+        RAISE EXCEPTION 'trust: % has a bill not paid; pay or decline it before archiving', v_name
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_bank_statement(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2611,6 +2672,24 @@ BEGIN
     SELECT count(*)::integer INTO v_entered FROM entered;
     RETURN v_entered;
 END;
+$$;
+
+
+--
+-- Name: trust_is_archived(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_is_archived(p_property_id uuid, p_unit_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT coalesce((
+        SELECT a.archived FROM trust_archivals AS a
+        WHERE (p_property_id IS NOT NULL AND a.property_id = p_property_id)
+           OR (p_unit_id IS NOT NULL AND a.unit_id = p_unit_id)
+        ORDER BY a.created_at DESC, a.id DESC
+        LIMIT 1
+    ), false)
 $$;
 
 
@@ -8250,6 +8329,22 @@ CREATE TABLE public.trust_applications (
 
 
 --
+-- Name: trust_archivals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_archivals (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    property_id uuid,
+    unit_id uuid,
+    archived boolean NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_archivals_check CHECK ((num_nonnulls(property_id, unit_id) = 1))
+);
+
+
+--
 -- Name: trust_audit_log; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9895,6 +9990,14 @@ ALTER TABLE ONLY public.trust_applications
 
 
 --
+-- Name: trust_archivals trust_archivals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_archivals
+    ADD CONSTRAINT trust_archivals_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_audit_log trust_audit_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11149,6 +11252,27 @@ CREATE INDEX trust_applications_link_id ON public.trust_applications USING btree
 
 
 --
+-- Name: trust_archivals_property; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_archivals_property ON public.trust_archivals USING btree (pmc_id, property_id, created_at);
+
+
+--
+-- Name: trust_archivals_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_archivals_recorded_by ON public.trust_archivals USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_archivals_unit; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_archivals_unit ON public.trust_archivals USING btree (pmc_id, unit_id, created_at);
+
+
+--
 -- Name: trust_audit_log_pmc_id_at; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -11744,6 +11868,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_archivals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_archivals FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_audit_log trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -12332,6 +12463,13 @@ CREATE TRIGGER trust_approve BEFORE INSERT ON public.trust_reconciliations FOR E
 
 
 --
+-- Name: trust_archivals trust_archival; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_archival BEFORE INSERT ON public.trust_archivals FOR EACH ROW EXECUTE FUNCTION public.trust_check_archival();
+
+
+--
 -- Name: pgledger_transfers trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -12385,6 +12523,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_appl
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_applications FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_archivals trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_archivals FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -13207,6 +13352,13 @@ CREATE TRIGGER trust_opened_at BEFORE INSERT OR UPDATE OF opened_at ON public.tr
 
 
 --
+-- Name: trust_archivals trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_archivals FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_inspections trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13537,6 +13689,38 @@ ALTER TABLE ONLY public.trust_applications
 
 ALTER TABLE ONLY public.trust_applications
     ADD CONSTRAINT trust_applications_pmc_id_link_id_fkey FOREIGN KEY (pmc_id, link_id) REFERENCES public.trust_application_links(pmc_id, id);
+
+
+--
+-- Name: trust_archivals trust_archivals_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_archivals
+    ADD CONSTRAINT trust_archivals_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_archivals trust_archivals_pmc_id_property_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_archivals
+    ADD CONSTRAINT trust_archivals_pmc_id_property_id_fkey FOREIGN KEY (pmc_id, property_id) REFERENCES public.trust_properties(pmc_id, id);
+
+
+--
+-- Name: trust_archivals trust_archivals_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_archivals
+    ADD CONSTRAINT trust_archivals_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_archivals trust_archivals_pmc_id_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_archivals
+    ADD CONSTRAINT trust_archivals_pmc_id_unit_id_fkey FOREIGN KEY (pmc_id, unit_id) REFERENCES public.trust_units(pmc_id, id);
 
 
 --
@@ -15664,4 +15848,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261015000059'),
     ('20261015000060'),
     ('20261015000061'),
-    ('20261015000062');
+    ('20261015000062'),
+    ('20261016000063');

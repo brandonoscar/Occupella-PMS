@@ -1,15 +1,22 @@
+import { FileText } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
+import { EmptyState } from "../components/EmptyState";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
+import { Pager } from "../components/Pager";
 import { Card, PageHeader, Shell } from "../components/Shell";
+import { Wide } from "../components/Wide";
 import { day, money } from "../money";
 import type { Bounce, Payment, RecurringCharge, RentChange, RentLease, RentRun } from "../rent";
+import type { Paged, RentRollRow } from "../rentals";
+import { termLabel } from "../rentals";
 import { InsuranceForms } from "./InsuranceForms";
+import { GoLink } from "./NeedsAttention";
 import {
   earliestRentChange,
   insuranceBadge,
@@ -30,35 +37,83 @@ function detail(failed: unknown): string {
   return failed instanceof ApiError ? failed.detail : String(failed);
 }
 
-// Staff's rent work: the month's rent (with each lease's recurring charges) and late fees for
-// every lease, and per lease its open charges, payments and recurring charges, with forms to
-// record a payment, a deposit, a fee or a credit once or every month, to use prepaid rent, to
-// stop a recurring charge and to undo a payment that bounced. The PMS records what reached the bank; it
-// takes no payments itself.
+// Rentals → Rent roll (ADR 0005): the month's rent run and late fees for every lease, then the
+// leases a page at a time (in effect, owing, or all; found by tenant, unit or property), each
+// opening its own page, where its rent work is recorded. The PMS records what reached the bank;
+// it takes no payments itself.
 export function RentPage({ me }: { me: Me }) {
-  const [leases, setLeases] = useState<RentLease[] | null>(null);
+  const [page, setPage] = useState<Paged<RentRollRow> | null>(null);
+  const [q, setQ] = useState("");
+  const [show, setShow] = useState<"current" | "owing" | "all">("current");
+  const [number, setNumber] = useState(1);
   const [error, setError] = useState("");
+  // Counts the rent runs, so the list shows what a run charged.
+  const [runs, setRuns] = useState(0);
 
-  function refresh() {
-    api.get<RentLease[]>("/api/rent").then(setLeases).catch((failed) => setError(detail(failed)));
-  }
-  useEffect(refresh, []);
+  useEffect(() => {
+    const query = new URLSearchParams({ page: String(number), show });
+    if (q.trim()) query.set("q", q.trim());
+    api
+      .get<Paged<RentRollRow>>(`/api/leases?${query}`)
+      .then(setPage)
+      .catch((failed) => setError(detail(failed)));
+  }, [q, show, number, runs]);
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title="Rent roll" />
-      <RunsCard refresh={refresh} />
+      <RunsCard refresh={() => setRuns((n) => n + 1)} />
       <Card title="Leases">
-        {leases === null ? (
+        <div className="mb-4 flex flex-wrap items-end gap-4">
+          <Field label="Find a tenant, unit or property" id="find-lease" type="search" value={q}
+            onChange={(event) => { setQ(event.target.value); setNumber(1); }} />
+          <Select label="Show" id="show-leases" value={show}
+            onChange={(event) => { setShow(event.target.value as typeof show); setNumber(1); }}>
+            <option value="current">In effect today</option>
+            <option value="owing">Owing</option>
+            <option value="all">All</option>
+          </Select>
+        </div>
+        {page === null ? (
           <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
-        ) : leases.length === 0 ? (
-          <Notice tone="info">No lease is in effect or owes anything.</Notice>
+        ) : page.items.length === 0 ? (
+          <EmptyState icon={FileText} title={q.trim() || show !== "current" ? "No leases found." : "No lease is in effect today."} />
         ) : (
-          <ul className="flex flex-col divide-y divide-line">
-            {leases.map((lease) => (
-              <LeaseRow key={lease.id} lease={lease} refresh={refresh} />
-            ))}
-          </ul>
+          <>
+            <Wide>
+              <table className="w-full text-base">
+                <thead>
+                  <tr>
+                    <th className="text-left">Property</th>
+                    <th className="text-left">Unit</th>
+                    <th className="text-left">Tenants</th>
+                    <th className="text-right">Rent</th>
+                    <th className="text-left">Term</th>
+                    <th className="text-right">Owes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {page.items.map((row) => (
+                    <tr key={row.id} aria-label={`${row.property.name}, ${row.unit.name}`}>
+                      <td>{row.property.name}</td>
+                      <td>
+                        <GoLink href={`/leases/${row.id}`} className="font-medium text-iris hover:text-iris-hover hover:underline">
+                          {row.unit.name}
+                        </GoLink>
+                      </td>
+                      <td className="text-ink-muted">{row.tenants.join(", ")}</td>
+                      <td className="text-right">{money(row.monthly_rent)}</td>
+                      <td className="text-sm text-ink-muted">{termLabel(row)}</td>
+                      <td className="text-right">
+                        <Badge tone={owedTone(row.owed)} data-testid="owed">{owedLabel(row.owed)}</Badge>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Wide>
+            <Pager page={page} onPage={setNumber} />
+          </>
         )}
       </Card>
     </Shell>
@@ -108,7 +163,8 @@ function RunsCard({ refresh }: { refresh: () => void }) {
   );
 }
 
-function LeaseRow({ lease, refresh }: { lease: RentLease; refresh: () => void }) {
+// A lease's rent work, on its own page (pages/RentalsPages.tsx, LeasePage).
+export function LeaseRow({ lease, refresh }: { lease: RentLease; refresh: () => void }) {
   const [said, setSaid] = useState("");
   const [error, setError] = useState("");
   const names = lease.tenants.map((t) => t.name).join(", ");

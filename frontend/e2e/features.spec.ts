@@ -78,6 +78,15 @@ async function section(page: Page, name: string): Promise<void> {
   await expect(page.getByRole("heading", { level: 1, name, exact: true })).toBeVisible();
 }
 
+// A lease's own page, from the rent roll: the unit's link on the lease's row. Returns its rent work.
+async function openLease(page: Page, name: string) {
+  await section(page, "Rent roll");
+  await page.getByRole("row", { name, exact: true }).getByRole("link").click();
+  const lease = page.getByRole("listitem", { name, exact: true });
+  await expect(lease).toBeVisible();
+  return lease;
+}
+
 // One of Settings' pages: Settings in the menu, then the page.
 async function settings(page: Page, name: string): Promise<void> {
   await section(page, "Settings");
@@ -104,7 +113,7 @@ test("staff charge this month's rent and its late fees, and the Dashboard shows 
   // Once per lease and due date: the same run again charges nothing.
   await page.getByRole("button", { name: "Charge rent" }).click();
   await expect(page.getByText("0 rents and 0 recurring charges charged.")).toBeVisible();
-  const lease = (name: string) => page.getByRole("listitem", { name });
+  const lease = (name: string) => page.getByRole("row", { name, exact: true });
   await expect(lease("Aspen Row, Unit 1").getByTestId("owed")).toHaveText("Owes $1,180.00");
   // Birch Flats Unit A owes its pet rent with its rent.
   await expect(lease("Birch Flats, Unit A").getByTestId("owed")).toHaveText("Owes $1,430.00");
@@ -138,6 +147,75 @@ test("staff charge this month's rent and its late fees, and the Dashboard shows 
   }
 });
 
+test("staff find a property, rename it and a unit, archive a vacant unit but not a property with a lease, and search for a tenant", async ({
+  page,
+}) => {
+  const people = seed.features.rentals!;
+  await joinAsStaff(page, people.manager);
+
+  // Properties, a page at a time, each with its owners and how full it is.
+  await section(page, "Properties");
+  const aspen = page.getByRole("row", { name: "Aspen Row", exact: true });
+  await expect(aspen).toContainText("Demo Owner B");
+  await expect(aspen).toContainText("1 of 2 occupied");
+  await expect(page.getByRole("navigation", { name: "Pages" })).toContainText("1–4 of 4");
+  await page.getByLabel("Find a property").fill("birch");
+  await expect(page.getByRole("row", { name: "Birch Flats", exact: true })).toBeVisible();
+  await expect(aspen).toHaveCount(0);
+  await page.getByLabel("Find a property").fill("");
+
+  // A property: what its owner's account holds, and each unit's state.
+  await aspen.getByRole("link", { name: "Aspen Row" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Aspen Row" })).toBeVisible();
+  await expect(part(page, "Owners")).toContainText("Demo Owner B");
+  const unit = (name: string) => page.getByRole("row", { name, exact: true });
+  await expect(unit("Unit 1")).toContainText("Occupied");
+  await expect(unit("Unit 1")).toContainText("Drew Sample");
+  await expect(unit("Unit 2")).toContainText("Vacant");
+
+  // A property with a lease in effect stays; the refusal says why, in words.
+  await page.getByRole("button", { name: "Archive", exact: true }).click();
+  await page.getByRole("button", { name: "Archive Aspen Row" }).click();
+  await expect(page.getByRole("alert")).toHaveText(
+    "Aspen Row has a lease in effect or to come; end it before archiving",
+  );
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await page.getByRole("button", { name: "Rename" }).click();
+  await page.getByLabel("New name").fill("Aspen Row East");
+  await page.getByRole("button", { name: "Save name" }).click();
+  await expect(page.getByText("Renamed Aspen Row East.")).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Aspen Row East" })).toBeVisible();
+
+  // The vacant unit: renamed, archived (it leaves the property's list as archived), brought back.
+  await unit("Unit 2").getByRole("link", { name: "Unit 2" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Unit 2, Aspen Row East" })).toBeVisible();
+  await expect(page.getByTestId("empty-state")).toContainText("No lease yet.");
+  await page.getByRole("button", { name: "Rename" }).click();
+  await page.getByLabel("New name").fill("Unit 2B");
+  await page.getByRole("button", { name: "Save name" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Unit 2B, Aspen Row East" })).toBeVisible();
+  await page.getByRole("button", { name: "Archive", exact: true }).click();
+  await page.getByRole("button", { name: "Archive Unit 2B" }).click();
+  await expect(page.getByText("Unit 2B is archived.")).toBeVisible();
+  await page.getByRole("main").getByRole("link", { name: "Aspen Row East" }).click();
+  await expect(unit("Unit 2B")).toContainText("Archived");
+  await unit("Unit 2B").getByRole("link", { name: "Unit 2B" }).click();
+  await page.getByRole("button", { name: "Bring back", exact: true }).click();
+  await page.getByRole("button", { name: "Bring back Unit 2B" }).click();
+  await expect(page.getByText("Unit 2B is back.")).toBeVisible();
+
+  // Search, from any page: a tenant opens their lease, a property its page.
+  const search = page.getByLabel("Search properties, units and tenants");
+  await search.fill("drew");
+  await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Drew Sample/ }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Unit 1, Aspen Row East" })).toBeVisible();
+  await expect(page.getByRole("listitem", { name: "Aspen Row East, Unit 1" })).toContainText("Drew Sample");
+  await search.fill("cedar");
+  await expect(page.getByRole("list", { name: "Search results" })).toContainText("Cedar House");
+  await search.press("Enter");
+  await expect(page.getByRole("heading", { level: 1, name: "Cedar House" })).toBeVisible();
+});
+
 test("staff add a fee, a credit and a monthly charge to a lease, take a deposit and prepaid rent, and a bounce undoes a payment and charges the NSF fee", async ({
   page,
 }) => {
@@ -154,8 +232,7 @@ test("staff add a fee, a credit and a monthly charge to a lease, take a deposit 
   await aspen.getByRole("button", { name: "Set NSF fee" }).click();
   await expect(aspen).toContainText("NSF fee $35.00");
 
-  await section(page, "Rent roll");
-  const lease = page.getByRole("listitem", { name: "Aspen Row, Unit 1" });
+  const lease = await openLease(page, "Aspen Row, Unit 1");
   const owed = lease.getByTestId("owed");
   await expect(owed).toHaveText("Paid up");
   await lease.getByText("Record for Unit 1").click();
@@ -1342,8 +1419,7 @@ test("staff raise a month-to-month rent after a full month's notice, and the ten
 }) => {
   const people = seed.features["rent-changes"]!;
   await joinAsStaff(page, people.manager);
-  await section(page, "Rent roll");
-  const house = page.getByRole("listitem", { name: "Cedar House, House" });
+  const house = await openLease(page, "Cedar House, House");
   await expect(house).toContainText("$2,250.00 a month");
   await house.getByText("Record for House").click();
 
@@ -1379,8 +1455,7 @@ test("staff require renters insurance on a lease, Today flags it, the tenant rec
 }) => {
   const people = seed.features["renters-insurance"]!;
   await joinAsStaff(page, people.manager);
-  await section(page, "Rent roll");
-  const house = page.getByRole("listitem", { name: "Cedar House, House" });
+  const house = await openLease(page, "Cedar House, House");
   await expect(house.getByTestId("renters-insurance")).toContainText("Renters insurance not required: none on file");
   await house.getByText("Record for House").click();
   await house.getByLabel("Requires renters insurance").check();
@@ -1414,7 +1489,7 @@ test("staff require renters insurance on a lease, Today flags it, the tenant rec
   await expect(page.getByRole("region", { name: "Renters insurance" })).toHaveCount(0);
 
   // The tenant mails in next year's renewal; staff record it, and this year's still counts.
-  await section(page, "Rent roll");
+  await openLease(page, "Cedar House, House");
   await house.getByText("Record for House").click();
   await house.getByLabel("Insurer").fill("Synthetic Mutual");
   await house.getByLabel("Policy number").fill("RI-0002");

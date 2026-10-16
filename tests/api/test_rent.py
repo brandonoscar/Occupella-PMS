@@ -83,8 +83,7 @@ def refused(answer, status, detail=None):
 
 
 def lease_row(client, home):
-    (row,) = [x for x in ok(client.get("/api/rent"), 200) if x["id"] == str(home.lease)]
-    return row
+    return ok(client.get(f"/api/leases/{home.lease}"), 200)
 
 
 def test_the_rent_run_charges_each_lease_once_a_due_date(client, staff, home):
@@ -108,7 +107,7 @@ def test_the_rent_run_charges_a_lease_starting_later_that_month_its_part_month(
     )
 
     run = ok(call(client, "charge-rent", on=date(2026, 3, 1)), 200)
-    (row,) = [x for x in ok(client.get("/api/rent"), 200) if x["id"] == str(lease)]
+    row = ok(client.get(f"/api/leases/{lease}"), 200)
 
     assert run == {"charged": 1, "recurring": 0}
     assert row["owed"] == "822.58"  # 1500.00 x 17 / 31
@@ -151,7 +150,7 @@ def test_the_rent_run_charges_a_lease_starting_later_that_month_its_part_month_o
     )
 
     run = ok(call(client, "charge-rent", on=date(2026, 3, 1)), 200)
-    (row,) = [x for x in ok(client.get("/api/rent"), 200) if x["id"] == str(lease)]
+    row = ok(client.get(f"/api/leases/{lease}"), 200)
 
     assert run == {"charged": 1, "recurring": 1}
     assert row["owed"] == "841.77"  # 1500.00 and 35.00, each x 17 / 31
@@ -515,22 +514,6 @@ def test_late_fees_are_assessed_up_to_today(client, conn, staff, home, pmc):
     assert lease_row(client, home)["owed"] == "1550.00"
 
 
-def test_a_lease_shows_while_in_effect_or_owing(client, conn, staff, home, pmc):
-    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, "Unit 2")
-    ended = open_lease(conn, pmc.pmc_id, unit, START, START + 10 * DAY, "900.00", [home.tenant])
-    unit_three = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, "Unit 3")
-    settled = open_lease(
-        conn, pmc.pmc_id, unit_three, START, START + 10 * DAY, "900.00", [home.tenant]
-    )
-    charge(conn, pmc.pmc_id, ended, START, "900.00")
-
-    shown = {row["id"] for row in ok(client.get("/api/rent"), 200)}
-    long_ago = {row["id"] for row in ok(client.get(f"/api/rent?as_of={START}"), 200)}
-
-    assert shown == {str(home.lease), str(ended)}
-    assert long_ago == {str(home.lease), str(ended), str(settled)}
-
-
 def test_a_charge_names_the_staff_member_in_the_audit_log(client, conn, staff, home):
     made = ok(
         call(
@@ -595,7 +578,6 @@ def other_pmc_lease(conn):
 
 
 ENDPOINTS = [
-    ("get", "/api/rent"),
     ("post", "/api/rent/charge-rent"),
     ("post", "/api/rent/late-fees"),
     ("post", f"/api/rent/leases/{uuid.uuid4()}/charges"),
