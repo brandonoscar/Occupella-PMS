@@ -9,7 +9,7 @@ from tools import check_features
 
 OPERATIONS = {
     "GET /api/rent",
-    "POST /api/rent/charge-rent",
+    "POST /api/rent/run",
     "GET /api/reconcile/{bank_account_id}",
     "POST /api/reconcile/statements",
     "POST /api/reconcile/matches/{match_id}/undo",
@@ -22,7 +22,7 @@ def registry(**changes):
     feature = {
         "id": "rent-run",
         "statement": "Staff charge rent.",
-        "operations": ["GET /api/rent", "POST /api/rent/charge-rent"],
+        "operations": ["GET /api/rent", "POST /api/rent/run"],
         "browser": [RENT_TEST],
     }
     month_end = {
@@ -45,7 +45,7 @@ def test_the_repos_own_registry_claims_everything_the_api_serves():
     operations = check_features.served(check_features.ROOT)
     on_file = tomllib.loads((check_features.ROOT / check_features.FILE).read_text())
     # The API as served, the fake partners' routes included.
-    assert {"GET /health", "POST /api/rent/charge-rent", "POST /api/fake-esign/sign"} <= operations
+    assert {"GET /health", "POST /api/rent/run", "POST /api/fake-esign/sign"} <= operations
     assert check_features.check(on_file, operations) == []
 
 
@@ -55,11 +55,11 @@ def test_a_complete_registry_passes():
 
 def test_an_operation_no_feature_claims_fails():
     problems = check_features.check(registry(operations=["GET /api/rent"]), OPERATIONS)
-    assert problems == ["POST /api/rent/charge-rent is served but no feature claims it."]
+    assert problems == ["POST /api/rent/run is served but no feature claims it."]
 
 
 def test_an_operation_the_api_doesnt_serve_fails():
-    named = ["GET /api/rent", "POST /api/rent/charge-rent", "POST /api/rent/gone"]
+    named = ["GET /api/rent", "POST /api/rent/run", "POST /api/rent/gone"]
     problems = check_features.check(registry(operations=named), OPERATIONS)
     assert problems == ["rent-run: the API serves no POST /api/rent/gone."]
 
@@ -156,7 +156,7 @@ def access(method, path, status):
 
 EVERY_CALL = [
     access("GET", "/api/rent", 200),
-    access("POST", "/api/rent/charge-rent", 201),
+    access("POST", "/api/rent/run", 201),
     access("GET", "/api/reconcile/b1", 200),
     access("POST", "/api/reconcile/statements", 409),  # refused is still called
     access("POST", "/api/reconcile/matches/m1/undo", 200),

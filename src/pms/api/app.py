@@ -41,7 +41,7 @@ from psycopg import sql
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
-from pms import accounts, email, exports
+from pms import accounts, email, exports, nightly
 from pms.api import (
     budgets,
     custom_roles,
@@ -98,6 +98,9 @@ class Settings:
     # The email sender (pms.email): "fake", "smtp" (its settings from the environment), or
     # empty for none.
     email_sender: str = ""
+    # The nightly run (pms.nightly): rent, late fees and recurring bills post by themselves at
+    # start and every day at 06:00 UTC. On unless PMS_NIGHTLY is "off".
+    nightly: bool = False
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -112,6 +115,7 @@ class Settings:
             screening_partner=os.environ.get("PMS_SCREENING_PARTNER", ""),
             esign_partner=os.environ.get("PMS_ESIGN_PARTNER", ""),
             email_sender=os.environ.get("PMS_EMAIL_SENDER", ""),
+            nightly=os.environ.get("PMS_NIGHTLY", "on").lower() != "off",
         )
 
     @property
@@ -200,9 +204,17 @@ def create_app(settings: Settings) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         pool.open(wait=False)  # the app starts even if the database isn't up yet
+        runs = None
+        if settings.nightly:
+            runs = nightly.Scheduler(
+                settings.database_url, settings.db_role, settings.public_url, app.state.email
+            )
+            runs.start()
         try:
             yield
         finally:
+            if runs is not None:
+                runs.stop()
             pool.close()
 
     app = FastAPI(title="Occupella PMS", lifespan=lifespan, docs_url=None, redoc_url=None)

@@ -7,8 +7,6 @@ import {
   insuranceLine,
   rentChangeLine,
   chargeLabel,
-  owedLabel,
-  owedTone,
   paymentSummary,
   recurringLabel,
   rentRunSummary,
@@ -78,11 +76,6 @@ describe("rent", () => {
       "The $1,500.00 payment bounced and is undone; a $35.00 NSF fee is charged.",
     );
   });
-  it("reads what a lease owes", () => {
-    expect(owedLabel("1500.00")).toBe("Owes $1,500.00");
-    expect(owedLabel("0.00")).toBe("Paid up");
-    expect(owedLabel("-25.00")).toBe("In credit $25.00");
-  });
   it("reads an open charge", () => {
     const rent: OpenCharge = {
       id: "c", due_on: "2026-10-01", kind: "rent", memo: null, amount: "1500.00", open: "1500.00",
@@ -105,18 +98,16 @@ describe("rent", () => {
     );
   });
   it("says what the rent run charged", () => {
-    expect(rentRunSummary({ charged: 1, recurring: 1 })).toBe("1 rent and 1 recurring charge charged.");
-    expect(rentRunSummary({ charged: 0, recurring: 2 })).toBe("0 rents and 2 recurring charges charged.");
+    expect(rentRunSummary({ rents: 1, recurring: 1, late_fees: 1 })).toBe(
+      "1 rent, 1 recurring charge and 1 late fee charged.",
+    );
+    expect(rentRunSummary({ rents: 0, recurring: 2, late_fees: 3 })).toBe(
+      "0 rents, 2 recurring charges and 3 late fees charged.",
+    );
   });
   it("makes a new request id each time", () => {
     const one = requestId();
     expect(one).toMatch(/^[0-9a-f-]{36}$/);
     expect(requestId()).not.toBe(one);
-  });
-});
-
-describe("owedTone", () => {
-  it("marks owing as a caution, paid up as fine and in credit as news", () => {
-    expect(["1500.00", "0.00", "-25.00"].map(owedTone)).toEqual(["caution", "positive", "info"]);
   });
 });

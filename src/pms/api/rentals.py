@@ -377,13 +377,23 @@ class RentRollRow(BaseModel):
     people: list[Ref]
     starts_on: date
     ends_on: date | None
+    status: Literal["current", "future", "ended"]
+    # Days from today to its last day, for a lease in effect with an end date.
+    days_left: int | None
     monthly_rent: str
+    # The security deposits held for its tenants.
+    deposit: str
     owed: str
 
 
 RENT_ROLL = f"""
 SELECT l.id, p.id, p.display_name, u.id, u.display_name, {TENANT_NAMES},
        l.starts_on, l.ends_on, trust_rent_on(l.id, greatest(l.starts_on, %(day)s)), x.owed,
+       coalesce((SELECT sum(b.balance) FROM trust_lease_tenants AS lt
+                 JOIN trust_ledger_accounts AS a
+                   ON a.tenant_id = lt.tenant_id AND a.kind = 'tenant_deposit'
+                 JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
+                 WHERE lt.lease_id = l.id), 0),
        count(*) OVER ()
 FROM trust_leases AS l
 JOIN trust_units AS u ON u.id = l.unit_id
@@ -397,6 +407,8 @@ WHERE l.pmc_id = %(pmc)s
                   WHERE lt.lease_id = l.id AND t.display_name ILIKE %(like)s))
   AND CASE %(show)s
         WHEN 'current' THEN l.starts_on <= %(day)s AND (l.ends_on IS NULL OR %(day)s <= l.ends_on)
+        WHEN 'future' THEN %(day)s < l.starts_on
+        WHEN 'past' THEN l.ends_on < %(day)s
         WHEN 'owing' THEN x.owed > 0
         ELSE true
       END
@@ -412,19 +424,20 @@ def rent_roll(
     group: scope.Group = None,
     property_id: scope.Property = None,
     q: Search = None,
-    show: Literal["current", "owing", "all"] = "current",
+    show: Literal["current", "future", "past", "owing", "all"] = "current",
     page: Page = 1,
     per_page: PerPage = 50,
 ) -> Paged[RentRollRow]:
-    """The rent roll a page at a time: leases in effect today (or those that owe, or all),
-    maybe of a group or one property, or matching a tenant, unit or property name, each with
-    its rent and what it owes."""
+    """The rent roll a page at a time: leases in effect today (or those to come, those ended,
+    those that owe, or all), maybe of a group or one property, or matching a tenant, unit or
+    property name, each with its days left, rent, the deposits held and what it owes."""
+    day = rent.today()
     rows = conn.execute(
         RENT_ROLL,
         {
             **scope.params(group, property_id),
             "pmc": session.pmc_id,
-            "day": rent.today(),
+            "day": day,
             "like": like(q),
             "show": show,
             "per_page": per_page,
@@ -441,10 +454,15 @@ def rent_roll(
                 people=[Ref(id=t, name=n) for t, n in zip(ids, tenants, strict=True)],
                 starts_on=starts,
                 ends_on=ends,
+                status=status_of(starts, ends, day),
+                days_left=(ends - day).days
+                if ends is not None and status_of(starts, ends, day) == "current"
+                else None,
                 monthly_rent=rent.cents(monthly),
+                deposit=rent.cents(Decimal(deposit)),
                 owed=rent.cents(Decimal(owed)),
             )
-            for i, p, pn, u, un, tenants, ids, starts, ends, monthly, owed, _ in rows
+            for i, p, pn, u, un, tenants, ids, starts, ends, monthly, owed, deposit, _ in rows
         ],
         total=rows[0][-1] if rows else 0,
         page=page,
@@ -564,9 +582,9 @@ ORDER BY c.due_on, c.created_at, c.id::text
 """
 
 # A lease's payments, in the order its ledger lists them (trust_report_tenant_ledger), each
-# with its check or reference and whether it bounced.
+# with its check or reference (or else how it came) and whether it bounced.
 LEDGER_PAYMENTS = """
-SELECT tr.metadata ->> 'reference',
+SELECT coalesce(tr.metadata ->> 'reference', tr.metadata ->> 'method'),
        EXISTS (SELECT 1 FROM trust_payment_reversals AS r WHERE r.transfer_id = tr.id)
 FROM trust_charge_payments AS cp
 JOIN trust_charges AS c ON c.id = cp.charge_id

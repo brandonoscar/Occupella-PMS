@@ -14,8 +14,20 @@ export type Paid = {
   received_on: string;
   amount: string;
   reference: string | null;
+  method: PaymentMethod | null;
   bounced: boolean;
 };
+// How a payment came; recorded as said, nothing sent (ADR 0006).
+export type PaymentMethod = "check" | "money order" | "EFT" | "cash";
+export const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
+  { value: "check", label: "Check" },
+  { value: "money order", label: "Money order" },
+  { value: "EFT", label: "EFT" },
+  { value: "cash", label: "Cash" },
+];
+export function methodLabel(method: PaymentMethod): string {
+  return PAYMENT_METHODS.find((m) => m.value === method)?.label ?? method;
+}
 export type LeaseTenant = { id: string; name: string; prepaid: string; deposit: string };
 // A fee the lease owes every month besides its rent, or a credit it gets every month. ends_on is
 // the first due date it is no longer charged for.
@@ -68,8 +80,10 @@ export type Payment = { transfers: string[]; to_owner: string; to_prepaid: strin
 // A payment the bank returned: nsf_fee is the NSF fee the lease was charged for it, if the
 // property's terms charge one.
 export type Bounce = { transfers: string[]; nsf_fee: string | null };
-// What the rent run charged: leases their rent, and recurring charges.
-export type RentRun = { charged: number; recurring: number };
+// What a rent run charged: leases their rent, recurring charges and late fees.
+export type RentRun = { rents: number; recurring: number; late_fees: number };
+// A run as recorded: the nightly run (by null) or an admin's by hand.
+export type RentRunLine = RentRun & { at: string; due_on: string; late_fees_as_of: string; by: string | null };
 
 // A fresh id for one thing staff record: sent again (a double click, a retry), it records
 // nothing new.
@@ -92,22 +106,6 @@ export function paymentSummary(payment: Payment): string {
   return parts.join("; ") + ".";
 }
 
-// A lease's balance in words: what it owes, or what is owed back to it.
-export function owedLabel(owed: string): string {
-  const value = Number(owed);
-  if (value > 0) return `Owes ${money(owed)}`;
-  if (value < 0) return `In credit ${money(String(-value))}`;
-  return "Paid up";
-}
-
-// The badge a lease's balance wears: owing is a caution, paid up is fine, in credit is news.
-export function owedTone(owed: string): "caution" | "positive" | "info" {
-  const value = Number(owed);
-  if (value > 0) return "caution";
-  if (value < 0) return "info";
-  return "positive";
-}
-
 export function chargeLabel(charge: OpenCharge): string {
   const what = charge.memo ?? (charge.kind === "rent" ? "Rent" : "Fee");
   const part = charge.open === charge.amount ? "" : ` of ${money(charge.amount)}`;
@@ -121,9 +119,8 @@ export function recurringLabel(recurring: RecurringCharge): string {
 }
 
 export function rentRunSummary(run: RentRun): string {
-  const rents = `${run.charged} rent${run.charged === 1 ? "" : "s"}`;
-  const recurring = `${run.recurring} recurring charge${run.recurring === 1 ? "" : "s"}`;
-  return `${rents} and ${recurring} charged.`;
+  const count = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+  return `${count(run.rents, "rent")}, ${count(run.recurring, "recurring charge")} and ${count(run.late_fees, "late fee")} charged.`;
 }
 
 const SERVED: Record<RentChange["served_by"], string> = {

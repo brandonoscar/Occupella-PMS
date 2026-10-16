@@ -159,8 +159,8 @@ browser = [
 
 [[feature]]
 id = "rent-run"
-statement = "Staff charge every lease its rent and recurring charges for a due date, once, and the late fees of rent still open after its grace days, once, and see on the rent roll what each lease owes, a page at a time."
-operations = ["GET /api/leases", "POST /api/rent/charge-rent", "POST /api/rent/late-fees"]
+statement = "Rent, recurring charges and late fees post by themselves every night (pms.nightly); an admin runs them by hand from the rent roll's ⋯ menu (every lease's rent and recurring charges for a due date and the late fees of rent still open after its grace days, each once) and sees the latest runs. The rent roll lists every lease, current, to come, ended, owing or all, with its days left, rent, deposits held and balance, a page at a time, and Receive payment finds a lease by its tenant, unit or property and records a payment with how it came."
+operations = ["GET /api/leases", "POST /api/rent/run", "GET /api/rent/runs"]
 browser = [
   "features.spec.ts › staff charge this month's rent and its late fees, and the Dashboard shows the rent that is late",
 ]

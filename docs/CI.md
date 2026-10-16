@@ -252,7 +252,8 @@ compose up -d --wait db && docker compose run --rm migrate && docker compose run
 **e2e.yml** (every PR and push to main, called by licenses.yml): the portal (`frontend/`), end
 to end. Inside the pinned Node image it typechecks, unit-tests (vitest) and builds the React app.
 Then the API serves that build on a fresh Postgres (emails go to the fake sender's outbox,
-`PMS_EMAIL_SENDER=fake`), `frontend/e2e/seed.py` makes a synthetic PMC
+`PMS_EMAIL_SENDER=fake`, and the nightly rent run is off, `PMS_NIGHTLY=off`, so rent is charged
+only when a test runs it), `frontend/e2e/seed.py` makes a synthetic PMC
 with an owner who has statements and a tenant with rent due and a maintenance request, and
 Playwright, in its pinned image, drives Chromium (`frontend/e2e/portal.spec.ts`): the owner
 reads a statement, the tenant reads what is due and asks for a repair, staff enroll an
