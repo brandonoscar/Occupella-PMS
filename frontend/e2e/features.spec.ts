@@ -272,6 +272,51 @@ test("staff read each account's general ledger, open a trust bank account from B
   );
 });
 
+test("staff open a work order, assign it, find it on the vendor's page, rename the vendor, and see the leases to renew", async ({
+  page,
+}) => {
+  const people = seed.features["maintenance-pages"]!;
+  await joinAsStaff(page, people.manager);
+
+  // A work order staff open themselves, for a unit.
+  await section(page, "Work orders");
+  await page.getByRole("button", { name: "New work order" }).click();
+  const panel = page.getByRole("dialog", { name: "New work order" });
+  await panel.getByRole("combobox", { name: "Property", exact: true }).selectOption({ label: "Aspen Row" });
+  await panel.getByRole("combobox", { name: "Unit", exact: true }).selectOption({ label: "Unit 2" });
+  await panel.getByLabel("What needs doing").fill("Window latch");
+  await panel.getByRole("button", { name: "Open work order" }).click();
+  await expect(panel).toContainText('Work order "Window latch" opened.');
+  await panel.getByRole("button", { name: "Close" }).click();
+  const latch = page.getByRole("row", { name: "Window latch", exact: true });
+  await expect(latch).toContainText("Unit 2, Aspen Row");
+  await expect(latch).toContainText("Open");
+
+  // Its own page: assigned to a vendor, with a note.
+  await latch.getByRole("link", { name: "Window latch" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Window latch" })).toBeVisible();
+  await page.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Roofing Co" });
+  await page.getByLabel("Note (optional)").fill("Tuesday morning");
+  await page.getByRole("button", { name: "Record" }).click();
+  await expect(page.getByText("Assigned.")).toBeVisible();
+  await expect(page.getByRole("list", { name: "Steps" })).toContainText("to Demo Roofing Co: Tuesday morning");
+
+  // The vendor's page lists it; the vendor is renamed there.
+  await section(page, "Vendors");
+  await page.getByRole("link", { name: "Demo Roofing Co", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Demo Roofing Co" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Work orders" })).toContainText("Window latch");
+  await page.getByRole("button", { name: "Rename" }).click();
+  await page.getByLabel("New name").fill("Demo Roofing Company");
+  await page.getByRole("button", { name: "Save name" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Demo Roofing Company" })).toBeVisible();
+
+  // Renewals: the demo's leases run month to month, so none ends in the next 90 days.
+  await section(page, "Renewals");
+  await expect(page.getByTestId("empty-state")).toContainText("No lease ends in the next 90 days.");
+  await expect(page.getByRole("link", { name: "Draft a renewal" })).toHaveAttribute("href", "/draft-leases");
+});
+
 test("staff find a tenant and an owner, keep their contact details and a vendor's, rename them, and archive only what has nothing open", async ({
   page,
 }) => {
@@ -889,7 +934,7 @@ test("staff list a vacant unit on the public page; someone applies from it, staf
 }) => {
   const people = seed.features.listings!;
   await joinAsStaff(page, people.manager);
-  await section(page, "Applicants");
+  await section(page, "Listings");
   await page.getByRole("combobox", { name: "Unit", exact: true }).selectOption({ label: "Aspen Row, Unit 2" });
   await page.getByLabel("Rent a month").fill("1240.00");
   await page.getByRole("button", { name: "Open a link" }).click();
@@ -929,6 +974,7 @@ test("staff list a vacant unit on the public page; someone applies from it, staf
   await expect(visitor.getByTestId("application-status")).toContainText("Approved");
 
   // Taken off the page, it is gone from it.
+  await section(page, "Listings");
   await page.getByRole("listitem", { name: "Aspen Row, Unit 2" }).getByRole("button", { name: "Take off the page" }).click();
   await expect(
     page.getByRole("listitem", { name: "Aspen Row, Unit 2" }).getByRole("button", { name: "List on the public page" }),

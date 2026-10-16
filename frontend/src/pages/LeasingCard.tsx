@@ -35,7 +35,16 @@ const SELECT = "h-9 rounded-sm border border-line-strong bg-sunken px-2 text-sm 
 // vacancy page, and the applications that come through them, screened through the server's
 // partner and decided. A decline or conditional approval that rests on a screening records its
 // adverse action notice with it.
-export function LeasingCard({ pmcId, onChange }: { pmcId?: string; onChange?: () => void }) {
+export function LeasingCard({
+  pmcId,
+  onChange,
+  part = "all",
+}: {
+  pmcId?: string;
+  onChange?: () => void;
+  // Leasing's pages each show a part (ADR 0005): Listings the links, Applicants the applications.
+  part?: "all" | "links" | "applications";
+}) {
   const [units, setUnits] = useState<Unit[]>([]);
   const [links, setLinks] = useState<Link[]>([]);
   // Every application, decided or not: the open ones to decide, the decided ones' notices.
@@ -110,8 +119,10 @@ export function LeasingCard({ pmcId, onChange }: { pmcId?: string; onChange?: ()
   const notices = (all ?? []).filter((a) => a.decision?.adverse_action);
 
   return (
-    <Card title="Leasing">
+    <Card title={{ all: "Leasing", links: "Application links", applications: "Applications" }[part]}>
       <Notice tone="error">{error}</Notice>
+      {part !== "applications" && (
+      <>
       <h3 className="mb-3 text-md font-medium">Application links</h3>
       <form
         className="mb-4 flex flex-wrap items-end gap-3"
@@ -206,7 +217,11 @@ export function LeasingCard({ pmcId, onChange }: { pmcId?: string; onChange?: ()
           . Point applicants to it; nothing is sent to listing sites.
         </p>
       )}
+      </>
+      )}
 
+      {part !== "links" && (
+      <>
       <h3 className="mb-3 text-md font-medium">Applications to decide</h3>
       {applications === null ? (
         <Notice tone="info">Loading</Notice>
@@ -313,6 +328,8 @@ export function LeasingCard({ pmcId, onChange }: { pmcId?: string; onChange?: ()
             ))}
           </ul>
         </>
+      )}
+      </>
       )}
     </Card>
   );

@@ -70,6 +70,20 @@ const posts = (fetch: ReturnType<typeof server>) =>
     .map(([path, init]) => [path, JSON.parse(String(init?.body))]);
 
 describe("LeasingCard", () => {
+  it("shows Listings the links alone, and Applicants the applications alone", async () => {
+    server();
+    render(<LeasingCard pmcId="p1" part="links" />);
+    expect(await screen.findByRole("heading", { level: 2, name: "Application links" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Open a link" })).toBeTruthy();
+    expect(screen.queryByText("Applications to decide")).toBeNull();
+    cleanup();
+
+    render(<LeasingCard part="applications" />);
+    expect(await screen.findByRole("listitem", { name: "Application from Applicant A" })).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 2, name: "Applications" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Open a link" })).toBeNull();
+  });
+
   it("lists a link on the public page with its description, and takes one off", async () => {
     const fetch = server(LINKS);
     render(<LeasingCard pmcId="p1" />);

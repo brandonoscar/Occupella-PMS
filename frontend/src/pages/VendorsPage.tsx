@@ -13,6 +13,7 @@ import { Card, PageHeader, Shell } from "../components/Shell";
 import { day, money } from "../money";
 import type { Vendor } from "../vendors";
 import { COVERAGES, standingTone, vendorInsuranceHref } from "../vendors";
+import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 
@@ -45,7 +46,8 @@ export function VendorsPage({ me }: { me: Me }) {
             {vendors.map((vendor) => (
               <li key={vendor.id} className="flex flex-col gap-2 py-4" aria-label={vendor.name}>
                 <p className="flex items-center gap-3">
-                  <span className="font-medium">{vendor.name}</span>
+                  <GoLink href={`/vendors/${vendor.id}`}
+                    className="font-medium text-iris hover:text-iris-hover hover:underline">{vendor.name}</GoLink>
                   <Badge tone={vendor.w9_on_file ? "positive" : "caution"}>
                     {vendor.w9_on_file ? "W-9 on file" : "no W-9"}
                   </Badge>

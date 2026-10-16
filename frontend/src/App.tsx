@@ -18,7 +18,10 @@ import { OwnerDrawsPage } from "./pages/OwnerDrawsPage";
 import { OwnerPage, OwnersPage } from "./pages/OwnersPage";
 import { TenantPage, TenantsPage } from "./pages/TenantsPages";
 import { JournalPage } from "./pages/JournalPage";
-import { ApplicantsPage, DraftLeasesPage, WorkOrdersPage } from "./pages/LeasingPages";
+import { ApplicantsPage, DraftLeasesPage, RentalListingsPage } from "./pages/LeasingPages";
+import { RenewalsPage } from "./pages/RenewalsPage";
+import { VendorPage } from "./pages/VendorPage";
+import { WorkOrderPage, WorkOrdersPage } from "./pages/WorkOrdersPages";
 import { LoginsPage } from "./pages/LoginsPage";
 import { BankingPage, ReconcilePage } from "./pages/ReconcilePage";
 import { ReportsPage } from "./pages/ReportsPage";
@@ -86,8 +89,10 @@ const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/tenants": (me) => <TenantsPage me={me} />,
   "/owners": (me) => <OwnersPage me={me} />,
   "/move-out": (me) => <MoveOutPage me={me} />,
+  "/rental-listings": (me) => <RentalListingsPage me={me} />,
   "/applicants": (me) => <ApplicantsPage me={me} />,
   "/draft-leases": (me) => <DraftLeasesPage me={me} />,
+  "/renewals": (me) => <RenewalsPage me={me} />,
   "/banking": (me) => <BankingPage me={me} />,
   "/bills": (me) => <BillsPage me={me} />,
   "/general-ledger": (me) => <GeneralLedgerPage me={me} />,
@@ -113,4 +118,6 @@ const RECORDS: [RegExp, (me: Me, id: string) => React.ReactNode][] = [
   [/^\/tenants\/([0-9a-f-]{36})$/, (me, id) => <TenantPage me={me} id={id} />],
   [/^\/owners\/([0-9a-f-]{36})$/, (me, id) => <OwnerPage me={me} id={id} />],
   [/^\/bank-accounts\/([0-9a-f-]{36})$/, (me, id) => <ReconcilePage me={me} id={id} />],
+  [/^\/work-orders\/([0-9a-f-]{36})$/, (me, id) => <WorkOrderPage me={me} id={id} />],
+  [/^\/vendors\/([0-9a-f-]{36})$/, (me, id) => <VendorPage me={me} id={id} />],
 ];

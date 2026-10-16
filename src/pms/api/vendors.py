@@ -1,5 +1,6 @@
 """Staff's vendors (migration 0058): each vendor's W-9, insurance and contact details (migration
-0064, recorded through `directory.py`), and recording a policy.
+0064, recorded through `directory.py`), and recording a policy; a vendor's own page with their
+bills and the work orders they were last assigned (ADR 0005), and renaming one.
 How a vendor's coverage stands on a day is trust_report_vendor_insurance's answer (current,
 expiring within 30 days, expired, none on file), which this page reads, so the two agree.
 A policy moves no money; a renewal is a new policy.
@@ -19,7 +20,9 @@ from pydantic import BaseModel, Field, StringConstraints, model_validator
 from pms import exports
 from pms.api.deps import Conn, Staff
 from pms.api.directory import Contact, contacts_of
-from pms.api.rent import today
+from pms.api.rent import cents, today
+from pms.api.rentals import Rename
+from pms.api.work_orders import assigned_to
 
 router = APIRouter(prefix="/api/vendors")
 
@@ -150,3 +153,68 @@ def record_policy(session: Staff, conn: Conn, vendor_id: UUID, policy: NewPolicy
     ).fetchone()
     assert row is not None
     return Created(id=row[0])
+
+
+class VendorBill(BaseModel):
+    id: UUID
+    reference: str
+    owner: str
+    property: str
+    bill_date: date
+    amount: str
+    paid: bool
+
+
+class VendorWorkOrder(BaseModel):
+    id: UUID
+    property: str
+    summary: str
+    status: str
+
+
+class VendorPage(VendorOut):
+    bills: list[VendorBill]
+    work_orders: list[VendorWorkOrder]
+
+
+@router.get("/{vendor_id}")
+def vendor_page(session: Staff, conn: Conn, vendor_id: UUID) -> VendorPage:
+    """A vendor: their W-9, coverage today, contact details, bills newest first and the work
+    orders they were last assigned."""
+    found = next((v for v in coverage(conn, session.pmc_id, today()) if v.id == vendor_id), None)
+    if found is None:
+        raise HTTPException(404, "no such vendor")
+    bills = [
+        VendorBill(
+            id=i, reference=ref, owner=o, property=p, bill_date=on, amount=cents(amt), paid=paid
+        )
+        for i, ref, o, p, on, amt, paid in conn.execute(
+            "SELECT b.id, b.reference, o.display_name, p.display_name, b.bill_date, b.amount,"
+            " EXISTS (SELECT 1 FROM trust_bill_payments AS x WHERE x.bill_id = b.id"
+            "         AND x.step = 'paid')"
+            " FROM trust_bills AS b"
+            " JOIN trust_ledger_accounts AS a ON a.ledger_account_id = b.ledger_account_id"
+            " JOIN trust_owners AS o ON o.id = a.owner_id"
+            " JOIN trust_properties AS p ON p.id = a.property_id"
+            " WHERE b.vendor_id = %s ORDER BY b.bill_date DESC, b.created_at DESC, b.id",
+            (vendor_id,),
+        ).fetchall()
+    ]
+    orders = [
+        VendorWorkOrder(id=w.id, property=w.property.name, summary=w.summary, status=w.status)
+        for w in assigned_to(conn, session.pmc_id, vendor_id)
+    ]
+    return VendorPage(**found.model_dump(), bills=bills, work_orders=orders)
+
+
+@router.post("/{vendor_id}/name", status_code=204)
+def rename_vendor(session: Staff, conn: Conn, vendor_id: UUID, body: Rename) -> None:
+    """Renames a vendor; the audit log keeps the name they had."""
+    if (
+        conn.execute(
+            "UPDATE trust_vendors SET display_name = %s WHERE pmc_id = %s AND id = %s RETURNING id",
+            (body.name, session.pmc_id, vendor_id),
+        ).fetchone()
+        is None
+    ):
+        raise HTTPException(404, "no such vendor")

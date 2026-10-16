@@ -467,6 +467,7 @@ FEATURES = (
     "rentals",
     "people",
     "general-ledger",
+    "maintenance-pages",
 )
 
 

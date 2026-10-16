@@ -122,6 +122,21 @@ browser = [
 ]
 
 [[feature]]
+id = "maintenance-pages"
+statement = "Staff list the work orders a page at a time (open, closed or all; found by what they are for, property, unit or vendor), open one for a property or unit, and on its page see its steps, the bills that name it and the request it answers and record what happens; a vendor's page has their W-9, insurance, contact details, bills and work orders, and they are renamed there; Renewals lists the leases ending in the next 90 days with where each renewal stands."
+operations = [
+  "GET /api/work-orders",
+  "GET /api/work-orders/{work_order_id}",
+  "POST /api/work-orders",
+  "GET /api/vendors/{vendor_id}",
+  "POST /api/vendors/{vendor_id}/name",
+  "GET /api/leasing/renewals",
+]
+browser = [
+  "features.spec.ts › staff open a work order, assign it, find it on the vendor's page, rename the vendor, and see the leases to renew",
+]
+
+[[feature]]
 id = "rent-run"
 statement = "Staff charge every lease its rent and recurring charges for a due date, once, and the late fees of rent still open after its grace days, once, and see on the rent roll what each lease owes, a page at a time."
 operations = ["GET /api/leases", "POST /api/rent/charge-rent", "POST /api/rent/late-fees"]

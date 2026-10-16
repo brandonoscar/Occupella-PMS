@@ -20,7 +20,8 @@ export function RecordActions({
 }: {
   path: string;
   name: string;
-  archived: boolean;
+  // Undefined: the record is renamed, never archived.
+  archived?: boolean;
   onChange: (said: string) => void;
 }) {
   const [renaming, setRenaming] = useState(false);
@@ -47,9 +48,11 @@ export function RecordActions({
         <Button variant="secondary" size="sm" onClick={() => { setDraft(name); setRenaming(!renaming); }}>
           Rename
         </Button>
-        <Button variant="ghost" size="sm" onClick={() => setAsking(!asking)}>
-          {archived ? "Bring back" : "Archive"}
-        </Button>
+        {archived !== undefined && (
+          <Button variant="ghost" size="sm" onClick={() => setAsking(!asking)}>
+            {archived ? "Bring back" : "Archive"}
+          </Button>
+        )}
       </div>
       {renaming && (
         <form

@@ -125,7 +125,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   fees. Staff keep a tenant's, owner's or vendor's contact details there, rename a tenant or owner
   and archive one. A search in the bar finds a property, unit, tenant or owner (`/api/search`).
   Lists come a page at a time (`Paged`: 50 by default, at most 200); move-outs at `/move-out` (`src/pms/api/moveout.py`). Leasing:
-  applications and links at `/applicants`, lease offers at `/draft-leases`. Accounting:
+  application links and the public listings at `/rental-listings`, applications at
+  `/applicants`, lease offers at `/draft-leases`, the leases ending in the next 90 days with
+  their renewal status at `/renewals` (`src/pms/api/renewals.py`, the expirations report's rows). Accounting:
   the trust bank accounts at `/banking`, each with its book balance and its month-end at
   `/bank-accounts/<id>` (`src/pms/api/reconcile.py`), bills at `/bills` (Unpaid, Paid, Declined
   and All tabs; Record bill opens a side panel), the general ledger on
@@ -133,7 +135,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   rows by account, a page of accounts at a time; cash basis) with its Journal entry button to
   `/journal` (`src/pms/api/journal.py`), owner draws at `/owner-draws`, budgets at `/budgets`
   (`src/pms/api/budgets.py`).
-  Maintenance: work orders at `/work-orders`, vendors and their insurance at `/vendors`
+  Maintenance: work orders a page at a time at `/work-orders`, each at `/work-orders/<id>`
+  (`src/pms/api/work_orders.py`: its steps, bills and request; staff open one there too, its
+  status the work orders report's word), tenants' requests below them, vendors and their
+  insurance at `/vendors`, each at `/vendors/<id>` with their bills and work orders
   (`src/pms/api/vendors.py`). Files at `/files` (`src/pms/api/documents.py`), every download at
   `/reports`, and Settings at `/settings`: staff roles and signers at `/settings/staff`
   (`src/pms/api/staff.py`), logins at `/settings/logins`, the books' setup at `/settings/setup`
