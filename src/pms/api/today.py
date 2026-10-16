@@ -1,6 +1,7 @@
 """Staff's day at a glance (/today): late rent, bills due, months not reconciled, applications
 waiting for a decision, lease offers waiting for signatures, journal entries waiting to be
-posted, vendor insurance expired or running out, and the company's earned fees still in trust.
+posted, vendor insurance expired or running out, the company's earned fees still in trust, and
+trust bank accounts with no broker on file or a signer's bond running out.
 
 Read only. Each part comes from the route of the page that does that work (rent, bills,
 month-end, leasing, the journal, vendors), so the two never disagree; this only picks out what needs
@@ -17,7 +18,7 @@ from uuid import UUID
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-from pms.api import journal, leasing, offers, payables, reconcile, rent, vendors
+from pms.api import journal, leasing, offers, payables, reconcile, rent, signers, vendors
 from pms.api.deps import Conn, Staff
 
 router = APIRouter(prefix="/api/today")
@@ -52,6 +53,13 @@ class Lapsing(BaseModel):
     standing: str
 
 
+class SignerNote(BaseModel):
+    bank_account_id: UUID
+    bank_account: str
+    signer: str | None
+    standing: str  # "no broker on file", "bond runs out in N days" or "bond ran out"
+
+
 class Today(BaseModel):
     on: date
     late_rent: list[LateLease]
@@ -63,6 +71,8 @@ class Today(BaseModel):
     vendor_insurance: list[Lapsing]  # expired, or expiring within 30 days
     # The company's earned fees still in a trust bank account, to take out (commingling).
     company_fees: list[payables.CompanyFees]
+    # Trust bank accounts whose broker isn't on file, and signers' bonds running out.
+    signers: list[SignerNote]
 
 
 def months_ended(start: date, on: date) -> list[str]:
@@ -137,5 +147,30 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
         ],
         company_fees=[
             f for f in payables.held_fees(conn, session.pmc_id, day) if Decimal(f.held) > 0
+        ],
+        signers=[
+            note
+            for account in signers.signers_on(conn, session.pmc_id, day)
+            for note in (
+                [
+                    SignerNote(
+                        bank_account_id=account.bank_account_id,
+                        bank_account=account.bank_account,
+                        signer=None,
+                        standing="no broker on file",
+                    )
+                ]
+                if not account.signers
+                else [
+                    SignerNote(
+                        bank_account_id=account.bank_account_id,
+                        bank_account=account.bank_account,
+                        signer=s.name,
+                        standing=s.standing,
+                    )
+                    for s in account.signers
+                    if s.standing.startswith("bond ")
+                ]
+            )
         ],
     )

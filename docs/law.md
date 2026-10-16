@@ -80,3 +80,41 @@ for each owner, and forbids paying out more of an owner's money than that owner'
 **Left to the company.** A bill the old system had set aside but not paid: carry its money over
 on the owner's line and the bill as unpaid, then set it aside and pay it here. (Money carried
 over on a vendor's line is paid out with a journal entry.)
+
+## Who signs each trust bank account (migration 0060)
+
+**The rule.** In every state the broker whose license the company runs under controls its trust
+accounts and stays liable for them, whoever signs; anyone else withdraws only with the broker's
+written authorization.
+
+- West Virginia (the strictest found): W. Va. Code 30-40-18(g) makes the broker the account's
+  designated trustee, with full authority over it; only one other licensed officer or member of
+  the firm may be authorized to disburse, a second only where two signatures are required, and
+  no unlicensed signer. The bank lists who may withdraw; the Real Estate Commission is told
+  within 10 days of opening or changing a trust account (30-40-18(k)).
+- California: 10 CCR 2834 lets the broker, a licensee, or an unlicensed employee bonded for at
+  least what they can reach sign, with the broker's written authorization; the broker stays
+  liable (2834(c)).
+- Arizona: A.R.S. 32-2174 (the designated broker authorizes signers and stays liable).
+- Florida: 61J2-14.010(1) (the broker signs every escrow account).
+- Oregon: the property manager signs; an owner never does (OAR 863-025-0025(9)).
+
+**What the PMS does.**
+- Each trust bank account can have its broker on file, named by an admin, and the signers the
+  broker authorized, each with the day of the written authorization and how they may sign: a
+  license number, or a fidelity bond (its amount and the day it runs out). A change is a new row
+  naming who made it; nothing is rewritten.
+- Once an account has its broker on file, the database refuses a payout from it (an owner
+  draw, a bill paid, a deposit returned, the company's fees taken out, a journal entry taking
+  cash out) recorded by anyone but the broker or a signer, and by a bonded signer whose bond has
+  run out. One broker per account; signers only while it has one.
+- Today lists each account with no broker on file and each bond running out within 30 days or
+  run out.
+
+**Left to the company.**
+- Naming the broker of each account: until then the roles alone decide who pays out, as before.
+- Its state's limits: in West Virginia, the broker and at most one other licensed signer, and no
+  bonded unlicensed one. The PMS records bonded signers because California allows them; a West
+  Virginia company should not add one.
+- Telling its regulator about a signer change (West Virginia: within 10 days).
+- The bank's own signature card, which the PMS can't see: keep it the same as this list.

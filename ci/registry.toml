@@ -254,6 +254,20 @@ tests = [
 ]
 
 [[invariant]]
+id = "payouts-take-a-signer-of-the-account"
+statement = "Once a trust bank account has its broker on file, a payout from it (an owner draw, a bill paid, a deposit returned, the company's fees taken out, a journal entry taking cash out) recorded by a named staff member goes through only if they are its broker or a signer the broker authorized, a bonded signer only while the bond is in force; an admin names the broker, only the broker changes the signers, one broker per account and signers only while it has one."
+tests = [
+  "tests/properties/test_signers_properties.py::test_only_the_broker_and_its_signers_pay_out_once_a_broker_is_on_file",
+  "tests/test_trust_account_signers.py::test_once_an_account_has_its_broker_only_its_signers_pay_out",
+  "tests/test_trust_account_signers.py::test_a_bonded_signer_pays_out_only_while_the_bond_is_in_force",
+  "tests/test_trust_account_signers.py::test_every_payout_from_the_account_takes_a_signer",
+  "tests/test_trust_account_signers.py::test_a_journal_entry_that_takes_cash_out_takes_a_signer",
+  "tests/test_trust_account_signers.py::test_only_an_admin_names_the_broker_and_only_the_broker_authorizes_signers",
+  "tests/test_trust_account_signers.py::test_one_broker_per_account_and_signers_only_while_it_has_one",
+  "tests/api/test_signers.py::test_an_admin_names_the_broker_who_authorizes_signers",
+]
+
+[[invariant]]
 id = "bill-set-aside-once-with-approval"
 statement = "A vendor's bill is entered once per vendor reference, against an owner's property account of its PMC; its money is set aside once, from that owner's account to the vendor's, and only with the owner's approval when it is over the approval limit in force on its date. A retry returns the original transfer."
 tests = [
@@ -1045,6 +1059,15 @@ tests = [
   "tests/test_vendor_insurance_and_inspections.py::test_a_vendor_is_covered_by_the_policy_running_on_the_day",
   "tests/test_vendor_insurance_and_inspections.py::test_vendor_insurance_needs_a_day_and_a_known_pmc",
   "tests/properties/test_vendor_insurance_properties.py::test_a_vendors_coverage_is_the_policy_running_on_the_day_else_the_latest_to_run_out",
+]
+
+[[report]]
+id = "trust-account-signers"
+statement = "Each trust bank account's broker and signers on a day (authorized by then, the latest row for each holding), the broker first then the signers by name, each licensed, bonded, bond runs out in N days up to 30, or bond ran out; an account with no broker on file says so. Compared to a checked-in golden file."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_trust_account_signers.py::test_the_report_lists_each_accounts_broker_and_signers_as_of_a_day",
+  "tests/properties/test_signers_properties.py::test_only_the_broker_and_its_signers_pay_out_once_a_broker_is_on_file",
 ]
 
 [[report]]

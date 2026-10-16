@@ -109,6 +109,7 @@ TABLES = {
     # Vendor insurance and inspections (migration 0058): staff record them; a renewal or a
     # redone inspection is a new row.
     "trust_vendor_insurance": {"SELECT", "INSERT"},
+    "trust_account_signers": {"SELECT", "INSERT"},
     "trust_inspections": {"SELECT", "INSERT"},
     "trust_inspection_items": {"SELECT", "INSERT"},
     "trust_listing_removals": {"SELECT", "INSERT"},
@@ -247,6 +248,11 @@ FUNCTIONS = {
     "trust_require_role(uuid,uuid,text,text)": {"trust_app"},
     # Whether a staff member's custom roles let them change an area: the app asks on every write.
     "trust_staff_may(uuid,uuid,text)": {"trust_app"},
+    # Who signs a trust bank account: the app's, as the signer trigger runs with its rights when
+    # it records a change. The refusal of a payout runs only inside the owner's write paths.
+    "trust_signer_of(uuid,uuid)": {"trust_app"},
+    "trust_broker_of(uuid)": {"trust_app"},
+    "trust_require_signer(uuid,date)": set(),
     # Helpers the fee, draw and bill functions call as the owner: nobody else.
     "trust_lock_owner_account(uuid,text)": set(),
     "trust_agreement_on(text,date)": set(),
@@ -289,6 +295,7 @@ FUNCTIONS = {
     "trust_report_balance_sheet(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_budget_vs_actual(uuid,uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_vendor_insurance(uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_trust_account_signers(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_inspection(uuid,uuid)": {"trust_app", "trust_ai_agent"},
     "trust_report_cash_flow(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_vacancy(uuid,date)": {"trust_app", "trust_ai_agent"},
@@ -353,6 +360,12 @@ FUNCTIONS = {
     "trust_name_recorder()": {"PUBLIC"},
     "trust_check_document_has_file()": {"PUBLIC"},
     "trust_check_recurring_charge_amount()": {"PUBLIC"},
+    "trust_check_signer_change()": {"PUBLIC"},
+    "trust_check_signers_have_a_broker()": {"PUBLIC"},
+    "trust_check_bill_payment_signer()": {"PUBLIC"},
+    "trust_check_deposit_return_signer()": {"PUBLIC"},
+    "trust_check_draw_signer()": {"PUBLIC"},
+    "trust_check_journal_signer()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.

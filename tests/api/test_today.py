@@ -26,6 +26,7 @@ from helpers import (
     propose_entry,
     record_decision,
     send_offer,
+    sign_for,
     sign_offer,
     staff_named,
     submit_application,
@@ -171,7 +172,10 @@ def test_journal_entries_wait_until_posted_or_declined(client, conn, staff, pmc)
     )
 
 
-def test_a_quiet_day_shows_nothing(client, staff):
+def test_a_quiet_day_shows_nothing(client, conn, staff, pmc):
+    # Each trust bank account has its broker on file.
+    for bank in (pmc.operating_bank_id, pmc.deposit_bank_id):
+        sign_for(conn, pmc.pmc_id, bank, staff.person_id, "broker", on=date(2026, 1, 1))
     answer = client.get("/api/today", params={"on": "2026-10-13"})
 
     assert answer.status_code == 200
@@ -185,6 +189,7 @@ def test_a_quiet_day_shows_nothing(client, staff):
         "journal_waiting": [],
         "vendor_insurance": [],
         "company_fees": [],
+        "signers": [],
     }
 
 
