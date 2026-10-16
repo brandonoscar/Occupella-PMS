@@ -10,6 +10,8 @@ fails the run (see CLAUDE.md, "The standing rule").
 Environment knobs, all optional:
   PMS_MIGRATIONS_DIR     apply migrations from here instead of db/migrations (mutation testing)
   PMS_SQL_COVERAGE_OUT   write PL/pgSQL coverage (plpgsql_check profiler) to this JSON file
+  PMS_TEST_SHARD         k/n: run only shard k of n (every nth test from the kth); the
+                         coverage job runs 1/2 and 2/2 side by side
   HYPOTHESIS_PROFILE     pr (default), nightly or mutation; example counts live in
                          ci/thresholds.toml
 
@@ -30,7 +32,7 @@ from hypothesis import HealthCheck, Phase, settings
 from psycopg import sql
 
 from tools import sql_coverage
-from tools.run_rules import marker_problems, outcome_problems
+from tools.run_rules import marker_problems, outcome_problems, shard
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -135,6 +137,14 @@ def pytest_collection_modifyitems(config, items):
     problems = marker_problems(items)
     if problems:
         raise pytest.UsageError("\n".join(problems))
+    spec = os.environ.get("PMS_TEST_SHARD")
+    if spec:
+        try:
+            kept, rest = shard(items, spec)
+        except ValueError as error:
+            raise pytest.UsageError(str(error)) from error
+        config.hook.pytest_deselected(items=rest)
+        items[:] = kept
     # Fast example tests first, slow property tests last, so `pytest -x` fails fast.
     items.sort(key=lambda item: "/properties/" in item.nodeid)
 

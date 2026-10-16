@@ -5,6 +5,12 @@ name: coverage
 #   - lines a PR changes need changed_lines_min coverage (diff-cover, Python and SQL);
 #   - the money module needs its statement and branch floors.
 # The same image also lints our PL/pgSQL statically (plpgsql_check), before the tests run.
+#
+# Three steps, so the suite runs in half the time and a PR still runs at most 8 jobs at once
+# (docs/CI.md, "Job budget"): the lint (about a minute, most of it building the image); then the
+# suite in two shards side by side (PMS_TEST_SHARD), each with its own coverage data; then
+# `coverage`, which adds the shards up and applies the gates. `coverage` is the required check,
+# and fails unless the lint and both shards passed.
 on:
   pull_request:
   push:
@@ -23,16 +29,69 @@ env:
   DATABASE_URL: postgres://postgres@localhost:5432/pms?sslmode=disable
 
 jobs:
-  coverage:
-    name: coverage
+  lint:
+    name: PL/pgSQL lint
     runs-on: ubuntu-24.04
-    # The whole suite runs under coverage here: about 40 minutes once ADR 0005's pages landed
-    # (20 at move-out), so the limit leaves it room to grow.
-    timeout-minutes: 60
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          persist-credentials: false
+      - name: Postgres 16 with plpgsql_check (throwaway, trust auth)
+        run: |
+          docker build -t pms-postgres-coverage -f ci/postgres-coverage.Dockerfile ci
+          docker run -d --name pg -p 5432:5432 -e POSTGRES_HOST_AUTH_METHOD=trust pms-postgres-coverage
+          for _ in $(seq 1 60); do
+            if docker logs pg 2>&1 | grep -q "PostgreSQL init process complete" \
+              && docker exec pg pg_isready -U postgres -h localhost >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          docker exec pg psql -U postgres -h localhost -Atc 'show shared_preload_libraries'
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dbmate
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+            "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
+          echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/bin/dbmate"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: pip install -r requirements-dev.txt
+      - name: Lint our PL/pgSQL (plpgsql_check, every warning class)
+        env:
+          COVERAGE_FILE: coverage/lint.coverage
+        run: |
+          mkdir -p coverage
+          coverage run -m tools.sql_lint
+      - name: Keep the lint's Python coverage for the gates
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-lint
+          path: coverage/
+          retention-days: 14
+
+  tests:
+    name: coverage tests ${{ matrix.shard }}/2
+    needs: lint
+    # The tests run whatever the lint found; `coverage` reports both.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    # Each shard is half the suite: about 20 minutes once ADR 0005's pages landed.
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
           persist-credentials: false
       - name: Postgres 16 with plpgsql_check (throwaway, trust auth)
         run: |
@@ -66,23 +125,70 @@ jobs:
           fi
           echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
       - run: pip install -r requirements-dev.txt
-      - name: Lint our PL/pgSQL (plpgsql_check, every warning class)
-        run: coverage run -m tools.sql_lint
-      - name: Every test, with Python and PL/pgSQL coverage
-        if: ${{ !cancelled() }}
+      - name: This shard's tests, with Python and PL/pgSQL coverage
         env:
-          PMS_SQL_COVERAGE_OUT: coverage/sql-raw.json
+          PMS_TEST_SHARD: ${{ matrix.shard }}/2
+          PMS_SQL_COVERAGE_OUT: coverage/sql-raw-${{ matrix.shard }}.json
+          COVERAGE_FILE: coverage/tests-${{ matrix.shard }}.coverage
           HYPOTHESIS_PROFILE: pr
         run: |
-          coverage run -a -m pytest -q -p no:cacheprovider
+          mkdir -p coverage
+          coverage run -m pytest -q -p no:cacheprovider
+      - name: Keep this shard's coverage for the gates
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-tests-${{ matrix.shard }}
+          path: coverage/
+          retention-days: 14
+
+  coverage:
+    name: coverage
+    needs: [lint, tests]
+    # Runs (and fails) when the lint or a shard failed, so the required check can't be skipped.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: The lint and both test shards passed
+        env:
+          LINT: ${{ needs.lint.result }}
+          TESTS: ${{ needs.tests.result }}
+        run: |
+          echo "PL/pgSQL lint: $LINT. Tests (both shards): $TESTS."
+          test "$LINT" = success && test "$TESTS" = success
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: coverage-*
+          path: shards
+          merge-multiple: true
+      - name: Add the shards up
+        run: |
+          ls shards
+          test -f shards/lint.coverage && test -f shards/tests-1.coverage \
+            && test -f shards/tests-2.coverage && test -f shards/sql-raw-1.json \
+            && test -f shards/sql-raw-2.json \
+            || { echo "::error::expected the lint's and both shards' coverage"; exit 1; }
+          mkdir -p coverage
+          coverage combine --keep shards/lint.coverage shards/tests-1.coverage shards/tests-2.coverage
           coverage xml -o coverage/python.xml
       - name: Money module floors and the overall baseline
         run: |
-          python -m tools.coverage_gate --sql-raw coverage/sql-raw.json \
+          python -m tools.coverage_gate --sql-raw shards/sql-raw-1.json shards/sql-raw-2.json \
             --python-xml coverage/python.xml --sql-xml-out coverage/sql.xml \
             --summary "$GITHUB_STEP_SUMMARY"
       - name: Lines changed by this PR
-        if: ${{ !cancelled() && github.event_name == 'pull_request' && hashFiles('coverage/python.xml') != '' }}
+        if: ${{ !cancelled() && github.event_name == 'pull_request' && hashFiles('coverage/sql.xml') != '' }}
         env:
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |

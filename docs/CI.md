@@ -205,12 +205,21 @@ Then it measures coverage, and fails when:
 - lines a PR changes are under 90% covered (diff-cover, Python and SQL);
 - the money functions are under 95% statement or branch coverage.
 
-Untested money code is where shortages hide. Running it locally needs Postgres started with
-`shared_preload_libraries=plpgsql_check`; `ci/postgres-coverage.Dockerfile` builds one. Then run
-`python -m tools.sql_lint`, then
-`PMS_SQL_COVERAGE_OUT=coverage/sql-raw.json coverage run -m pytest`, followed by
-`coverage xml -o coverage/python.xml` and `python -m tools.coverage_gate --sql-raw
-coverage/sql-raw.json --python-xml coverage/python.xml --sql-xml-out coverage/sql.xml`.
+Untested money code is where shortages hide.
+
+The suite runs in two shards side by side, to take half the time: after the lint, the job
+`coverage tests 1/2` runs every other test from the first (`PMS_TEST_SHARD=1/2`, see
+`tests/conftest.py`) and `coverage tests 2/2` the rest, each with its own Python and PL/pgSQL
+coverage data. Then the `coverage` job adds them up (`coverage combine`, and
+`tools/sql_coverage.py` `merge()` for the PL/pgSQL) and applies the gates. A shard's PL/pgSQL
+branches are counted from its statements, the way plpgsql_check counts them, and checked against
+plpgsql_check's own figure for every function before the shards are added up, so the sum is
+exactly what one run of the whole suite would measure. `coverage` is the required check: it runs
+even when the lint or a shard failed, and fails then.
+
+Running it locally needs Postgres started with `shared_preload_libraries=plpgsql_check`;
+`ci/postgres-coverage.Dockerfile` builds one. `scripts/check.sh` then runs the same steps as the
+workflow, the two shards one after the other.
 
 **mutation.yml** (nightly): mutation testing of the money logic. mutmut and Stryker only mutate
 Python and JavaScript, and the ledger is PL/pgSQL, so `tools/sql_mutation.py` does the same job
@@ -314,7 +323,8 @@ One command for every PR check that can run locally, in CI's order:
 - the portal's typecheck, unit tests and build, if `npm` is installed;
 - the upgrade check;
 - the PL/pgSQL lint, if the server has plpgsql_check;
-- every test, with the coverage gates and diff-cover if plpgsql_check is preloaded;
+- every test, with the coverage gates and diff-cover if plpgsql_check is preloaded (then in
+  coverage.yml's two shards, one after the other);
 - gitleaks, if installed.
 
 It ends with a summary. A check it couldn't run is listed as NOT RUN, never as passed: CodeQL and
@@ -332,7 +342,7 @@ These run on every PR, so they can all be required:
 | `migrations` | db.yml |
 | `properties` | ledger-invariants.yml |
 | `golden` | golden.yml |
-| `coverage` | coverage.yml |
+| `coverage` | coverage.yml (it fails unless its lint and both test shards passed) |
 | `codeql` | security.yml |
 | `deps-and-secrets` | security.yml |
 | `licenses` | licenses.yml |
@@ -344,8 +354,9 @@ Not required, because it doesn't run on every PR: `selfhost (PR)` (path-dependen
 
 Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20.
 - A PR runs the 9 required checks above. `e2e` is chained after `licenses` (a job of seconds)
-  and the self-host check after `migrations`, so a PR never has more than 8 jobs running at
-  once.
+  and the self-host check after `migrations`, and coverage's two test shards after its lint (a
+  job of about a minute, by when `deps-and-secrets`, a job of seconds, has finished), so a PR
+  never has more than 8 jobs running at once.
 - Nightly runs are staggered so they don't overlap:
   - 03:17 UTC ledger-invariants (16 property jobs and 1 timing job);
   - 04:17 mutation (4 shards, then 1 scoring job);
