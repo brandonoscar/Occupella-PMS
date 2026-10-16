@@ -118,3 +118,38 @@ written authorization.
   Virginia company should not add one.
 - Telling its regulator about a signer change (West Virginia: within 10 days).
 - The bank's own signature card, which the PMS can't see: keep it the same as this list.
+
+## A lease's rent changed from a month (migration 0061)
+
+**The rule.** A periodic tenancy (month to month) changes rent only after written notice of at
+least one full rental period, from the start of a period; a lease for a term changes rent during
+it only as its own terms allow. Some states ask for more:
+
+- West Virginia: no statute on rent increases and no rent control. Notice follows W. Va. Code
+  37-6-5, which ends a tenancy of less than a year on one full period's written notice (three
+  months for year to year); Legal Aid of West Virginia warns a plain 30 days often falls short.
+- Washington: RCW 59.18.140 (90 days for every tenancy, 30 for subsidized housing; no increase
+  during a term unless the lease allows it), with a cap since 2025.
+- Oregon: ORS 90.323 (none in the first year, then 90 days' notice, once in 12 months) and
+  90.324 (a cap).
+- California: Civil Code 827 (30 days, 90 for over 10% within 12 months) and 1947.12 (a cap
+  through 2030).
+- New York: Real Property Law 226-c (30, 60 or 90 days for 5% or more, by how long the tenant
+  has lived there).
+- Colorado: 60 days without a written lease (C.R.S. 38-12-701), once in 12 months (38-12-702).
+- Nevada: 60 days (NRS 118A.300).
+- Cities with rent control have their own rules (NOT VERIFIED which, beyond the states above).
+
+**What the PMS does.**
+- A rent change starts on the first of a month, after the lease starts and within it, and is
+  recorded with the day written notice was given and how it was served. The notice must have
+  been given by the first of the month before, a full month: the floor every state shares.
+- A lease with an end date changes rent during it only naming the lease term that allows it.
+- A month the rent run charged already keeps its rent; a change starts from a later month.
+- The rent run charges the rent in force each month (for the days in effect), a lease ended
+  mid-month keeps its days at the rent in force, the reports show it, and the tenant sees the
+  change coming in the portal with the day notice was given.
+
+**Left to the company.** Longer notice where its state or city asks (up to 90 days), rent caps,
+the first-year and once-a-year limits, extra days for notice served by mail, and the notice
+itself, which the PMS records but does not write or send.

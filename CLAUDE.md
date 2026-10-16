@@ -250,6 +250,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   none); `trust_charge_nsf_fee` charges the lease of a returned payment (postings under one key
   moving money back to a trust bank account's cash) the fee in force the day it came back
   (UTC), due that day, once per returned payment. Neither fee counts toward the other.
+- Rent changes (migration 0061, `docs/law.md`): a lease's new monthly rent from the first of a
+  month (`trust_rent_changes`, one per lease and month, append-only, naming who recorded it),
+  after the lease starts and within it, with written notice given by the first of the month
+  before and how it was served; a lease with an end date names the term that allows it, and a
+  month already charged keeps its rent. `trust_rent_on` is the rent in force on a day: the rent
+  run charges it, `trust_end_lease` adjusts at it, the rent roll, lease expirations, tenant
+  directory and vacancy reports show it. Staff record one on the rent page; the tenant sees it
+  coming in the portal.
 - Recurring charges (migration 0037): a fee a lease owes every month besides its rent (pet
   rent, parking) or a credit it gets every month (`trust_recurring_charges`, from a first due
   date; an end row stops it from a day). `trust_charge_recurring_due` charges each one in force

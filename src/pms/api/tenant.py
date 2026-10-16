@@ -51,14 +51,22 @@ class ComingDue(BaseModel):
     open: str
 
 
+class RentChangeNotice(BaseModel):
+    effective_on: date
+    monthly_rent: str
+    notice_given_on: date
+
+
 class Lease(BaseModel):
     lease_id: UUID
     property: str
     unit: str
     starts_on: date
     ends_on: date | None
-    # Money as text, so no float ever rounds a cent.
+    # Money as text, so no float ever rounds a cent. The rent in force today.
     monthly_rent: str
+    # Rent changes to come, each from the first of a month, with the day notice was given.
+    rent_changes: list[RentChangeNotice]
     tenants: list[str]
     balance_due: str
     in_effect: bool
@@ -93,7 +101,8 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
     """Every lease the tenant is on, newest first, with its balance due at the end of today."""
     on = today()
     rows = conn.execute(
-        "SELECT l.id, p.display_name, u.display_name, l.starts_on, l.ends_on, l.monthly_rent,"
+        "SELECT l.id, p.display_name, u.display_name, l.starts_on, l.ends_on,"
+        " trust_rent_on(l.id, %s),"
         " array(SELECT t.display_name FROM trust_lease_tenants AS everyone"
         "       JOIN trust_tenants AS t ON t.id = everyone.tenant_id"
         '       WHERE everyone.lease_id = l.id ORDER BY t.display_name COLLATE "C", t.id),'
@@ -106,8 +115,24 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
         " JOIN trust_properties AS p ON p.id = u.property_id"
         " WHERE mine.pmc_id = %s AND mine.tenant_id = %s"
         " ORDER BY l.starts_on DESC, l.id",
-        (on, session.pmc_id, session.person_id),
+        (on, on, session.pmc_id, session.person_id),
     ).fetchall()
+    coming: dict[UUID, list[RentChangeNotice]] = {}
+    for lease, effective, monthly_rent, notice in conn.execute(
+        "SELECT c.lease_id, c.effective_on, c.monthly_rent, c.notice_given_on"
+        " FROM trust_rent_changes AS c"
+        " JOIN trust_lease_tenants AS mine ON mine.lease_id = c.lease_id"
+        " WHERE mine.pmc_id = %s AND mine.tenant_id = %s AND c.effective_on > %s"
+        " ORDER BY c.effective_on",
+        (session.pmc_id, session.person_id, on),
+    ).fetchall():
+        coming.setdefault(lease, []).append(
+            RentChangeNotice(
+                effective_on=effective,
+                monthly_rent=exports.text(monthly_rent),
+                notice_given_on=notice,
+            )
+        )
     return [
         Lease(
             lease_id=lease,
@@ -116,6 +141,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
             starts_on=starts,
             ends_on=ends,
             monthly_rent=exports.text(rent),
+            rent_changes=coming.get(lease, []),
             tenants=list(names),
             balance_due=exports.text(balance),
             in_effect=starts <= on and (ends is None or on <= ends),

@@ -461,6 +461,7 @@ FEATURES = (
     "company-fees",
     "cutover-bills",
     "signers",
+    "rent-changes",
 )
 
 

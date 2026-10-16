@@ -1,5 +1,5 @@
 // Staff's rent work as the API sends it (src/pms/api/rent.py), and how it reads.
-import { money } from "./money";
+import { day, money } from "./money";
 
 export type OpenCharge = {
   id: string;
@@ -27,13 +27,23 @@ export type RecurringCharge = {
   starts_on: string;
   ends_on: string | null;
 };
+export type RentChange = {
+  id: string;
+  effective_on: string;
+  monthly_rent: string;
+  notice_given_on: string;
+  served_by: "in person" | "mail" | "posted" | "email" | "other";
+  lease_terms: string | null;
+};
 export type RentLease = {
   id: string;
   property: string;
   unit: string;
   starts_on: string;
   ends_on: string | null;
+  // The rent in force on the day; every change recorded, past and to come, in rent_changes.
   monthly_rent: string;
+  rent_changes: RentChange[];
   tenants: LeaseTenant[];
   owed: string;
   on_hold: boolean;
@@ -101,4 +111,28 @@ export function rentRunSummary(run: RentRun): string {
   const rents = `${run.charged} rent${run.charged === 1 ? "" : "s"}`;
   const recurring = `${run.recurring} recurring charge${run.recurring === 1 ? "" : "s"}`;
   return `${rents} and ${recurring} charged.`;
+}
+
+const SERVED: Record<RentChange["served_by"], string> = {
+  mail: "by mail",
+  "in person": "in person",
+  posted: "posted at the unit",
+  email: "by email",
+  other: "given another way",
+};
+
+// "From 2026-12-01: $1,575.00 a month (notice by mail on 2026-10-15)".
+export function rentChangeLine(change: RentChange): string {
+  const terms = change.lease_terms ? `; ${change.lease_terms}` : "";
+  return (
+    `From ${change.effective_on}: ${money(change.monthly_rent)} a month ` +
+    `(notice ${SERVED[change.served_by]} on ${change.notice_given_on}${terms})`
+  );
+}
+
+// The first month a rent change may start with written notice given today: notice of a full
+// month is given by the first of the month before (docs/law.md).
+export function earliestRentChange(today: Date): string {
+  const months = today.getUTCDate() === 1 ? 1 : 2;
+  return day(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + months, 1)));
 }

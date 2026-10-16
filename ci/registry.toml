@@ -268,6 +268,21 @@ tests = [
 ]
 
 [[invariant]]
+id = "rent-in-force-is-charged"
+statement = "A lease's rent changes only from the first of a month after it starts and within it, after written notice given by the first of the month before, a lease with an end date naming the term that allows it, and never for a month already charged; the rent run charges each month the rent in force for the days the lease is in effect, a lease's end adjusts at it, and the reports show it."
+tests = [
+  "tests/properties/test_rent_change_properties.py::test_the_rent_in_force_is_charged_each_month_and_changes_follow_the_rules",
+  "tests/test_rent_changes.py::test_the_rent_run_charges_the_rent_in_force_each_month",
+  "tests/test_rent_changes.py::test_a_later_change_takes_over_from_its_month",
+  "tests/test_rent_changes.py::test_written_notice_of_a_full_month_comes_first",
+  "tests/test_rent_changes.py::test_a_lease_with_an_end_date_changes_rent_only_as_its_terms_allow",
+  "tests/test_rent_changes.py::test_a_month_already_charged_keeps_its_rent",
+  "tests/test_rent_changes.py::test_a_lease_ended_mid_month_keeps_the_days_at_the_rent_in_force",
+  "tests/test_rent_changes.py::test_the_reports_show_the_rent_in_force_on_their_day",
+  "tests/api/test_rent_changes_api.py::test_staff_change_a_month_to_month_rent_after_a_full_months_notice",
+]
+
+[[invariant]]
 id = "bill-set-aside-once-with-approval"
 statement = "A vendor's bill is entered once per vendor reference, against an owner's property account of its PMC; its money is set aside once, from that owner's account to the vendor's, and only with the owner's approval when it is over the approval limit in force on its date. A retry returns the original transfer."
 tests = [

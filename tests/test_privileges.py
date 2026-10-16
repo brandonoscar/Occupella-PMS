@@ -110,6 +110,7 @@ TABLES = {
     # redone inspection is a new row.
     "trust_vendor_insurance": {"SELECT", "INSERT"},
     "trust_account_signers": {"SELECT", "INSERT"},
+    "trust_rent_changes": {"SELECT", "INSERT"},
     "trust_inspections": {"SELECT", "INSERT"},
     "trust_inspection_items": {"SELECT", "INSERT"},
     "trust_listing_removals": {"SELECT", "INSERT"},
@@ -220,6 +221,7 @@ FUNCTIONS = {
     "trust_pay_bill(uuid,uuid,timestamptz)": {"trust_app"},
     "trust_charge_rent_due(uuid,date)": {"trust_app"},
     "trust_rent_for_month(date,date,numeric,date)": {"trust_app"},
+    "trust_rent_on(uuid,date)": {"trust_app"},
     "trust_open_charges(uuid,uuid,timestamptz)": {"trust_app"},
     "trust_charge_recurring_due(uuid,date)": {"trust_app"},
     "trust_assess_late_fees(uuid,date)": {"trust_app"},
@@ -366,6 +368,7 @@ FUNCTIONS = {
     "trust_check_deposit_return_signer()": {"PUBLIC"},
     "trust_check_draw_signer()": {"PUBLIC"},
     "trust_check_journal_signer()": {"PUBLIC"},
+    "trust_check_rent_change()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.

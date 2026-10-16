@@ -1148,13 +1148,14 @@ BEGIN
     -- Leases' ends don't change while the run charges (trust_end_lease waits for it).
     PERFORM pg_advisory_xact_lock_shared(hashtextextended('lease days of ' || p_pmc_id, 0));
 
-    -- Every lease in effect on the due date: its rent for the days of the month it is in effect.
+    -- Every lease in effect on the due date: its rent for the days of the month it is in effect,
+    -- at the rent in force that month (migration 0061).
     INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)
     SELECT l.pmc_id, l.id, p_due_on, 'rent', r.amount,
            'Rent due ' || to_char(p_due_on, 'YYYY-MM-DD') || r.days
     FROM trust_leases AS l
     CROSS JOIN LATERAL trust_rent_for_month(
-        l.starts_on, l.ends_on, l.monthly_rent, p_due_on
+        l.starts_on, l.ends_on, trust_rent_on(l.id, p_due_on), p_due_on
     ) AS r
     WHERE l.pmc_id = p_pmc_id AND l.starts_on <= p_due_on
       AND (l.ends_on IS NULL OR p_due_on <= l.ends_on)
@@ -1938,6 +1939,43 @@ $$;
 
 
 --
+-- Name: trust_check_rent_change(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_rent_change() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_lease trust_leases;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('lease days of ' || NEW.pmc_id, 0));
+    SELECT l.* INTO v_lease FROM trust_leases AS l WHERE l.id = NEW.lease_id AND l.pmc_id = NEW.pmc_id;
+    IF NEW.effective_on <= v_lease.starts_on
+        OR (v_lease.ends_on IS NOT NULL AND NEW.effective_on > v_lease.ends_on) THEN
+        RAISE EXCEPTION 'trust: a rent change starts on the first of a month after the lease starts '
+            '(%) and before it ends', v_lease.starts_on
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF v_lease.ends_on IS NOT NULL AND NEW.lease_terms IS NULL THEN
+        RAISE EXCEPTION 'trust: a lease with an end date changes its rent during it only as its '
+            'terms allow; name the term'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (
+        SELECT c.id FROM trust_charges AS c
+        WHERE c.lease_id = NEW.lease_id AND c.kind = 'rent' AND c.due_on >= NEW.effective_on
+    ) THEN
+        RAISE EXCEPTION 'trust: rent from % is charged already; change it from a later month',
+            to_char(NEW.effective_on, 'YYYY-MM-DD')
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_request_work_order(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2477,13 +2515,13 @@ BEGIN
                    (CASE WHEN c.kind = 'credit' THEN -1 ELSE 1 END) * greatest((
                        SELECT r.amount FROM trust_rent_for_month(
                            v_old.starts_on, v_old.ends_on,
-                           coalesce(rc.amount, v_old.monthly_rent), c.due_on
+                           coalesce(rc.amount, trust_rent_on(p_lease_id, c.due_on)), c.due_on
                        ) AS r
                    ), 0) AS was,
                    (CASE WHEN c.kind = 'credit' THEN -1 ELSE 1 END) * greatest((
                        SELECT r.amount FROM trust_rent_for_month(
                            v_new.starts_on, v_new.ends_on,
-                           coalesce(rc.amount, v_new.monthly_rent), c.due_on
+                           coalesce(rc.amount, trust_rent_on(p_lease_id, c.due_on)), c.due_on
                        ) AS r
                    ), 0) AS now
             FROM trust_charges AS c
@@ -4067,6 +4105,23 @@ $$;
 
 
 --
+-- Name: trust_rent_on(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_rent_on(p_lease_id uuid, p_day date) RETURNS numeric
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT coalesce((
+        SELECT c.monthly_rent FROM trust_rent_changes AS c
+        WHERE c.lease_id = p_lease_id AND c.effective_on <= p_day
+        ORDER BY c.effective_on DESC
+        LIMIT 1
+    ), (SELECT l.monthly_rent FROM trust_leases AS l WHERE l.id = p_lease_id))
+$$;
+
+
+--
 -- Name: trust_report_audit_log(uuid, date, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5560,7 +5615,9 @@ BEGIN
                CASE WHEN l.ends_on - p_as_of <= 30 THEN 1
                     WHEN l.ends_on - p_as_of <= 60 THEN 2
                     ELSE 3 END AS grp,
-               l.monthly_rent AS rent,
+               coalesce((SELECT rc.monthly_rent FROM trust_rent_changes AS rc
+                                WHERE rc.lease_id = l.id AND rc.effective_on <= p_as_of
+                                ORDER BY rc.effective_on DESC LIMIT 1), l.monthly_rent) AS rent,
                coalesce((SELECT max(f.stage) FROM offers AS f WHERE f.lease_id = l.id), 0) AS stage
         FROM trust_leases AS l
         JOIN trust_units AS u ON u.id = l.unit_id
@@ -6112,7 +6169,11 @@ BEGIN
         GROUP BY t.tenant_id
     ),
     leases AS (
-        SELECT l.id, l.unit_id, l.starts_on, l.ends_on, l.monthly_rent,
+        SELECT l.id, l.unit_id, l.starts_on, l.ends_on,
+               -- The rent in force on the day (migration 0061).
+               coalesce((SELECT rc.monthly_rent FROM trust_rent_changes AS rc
+                                WHERE rc.lease_id = l.id AND rc.effective_on <= p_as_of
+                                ORDER BY rc.effective_on DESC LIMIT 1), l.monthly_rent) AS monthly_rent,
                l.starts_on <= p_as_of AND p_as_of <= coalesce(l.ends_on, 'infinity'::date)
                    AS is_current,
                coalesce((
@@ -6355,7 +6416,10 @@ BEGIN
         JOIN trust_properties AS tp ON tp.id = t.property_id
         -- Their lease in effect on the day; or else the next one; or else the last one.
         LEFT JOIN LATERAL (
-            SELECT l.id AS lease_id, l.unit_id, l.starts_on, l.ends_on, l.monthly_rent AS rent,
+            SELECT l.id AS lease_id, l.unit_id, l.starts_on, l.ends_on,
+                   coalesce((SELECT rc.monthly_rent FROM trust_rent_changes AS rc
+                                    WHERE rc.lease_id = l.id AND rc.effective_on <= p_as_of
+                                    ORDER BY rc.effective_on DESC LIMIT 1), l.monthly_rent) AS rent,
                    CASE WHEN l.starts_on <= p_as_of
                              AND (l.ends_on IS NULL OR l.ends_on >= p_as_of) THEN 1
                         WHEN l.starts_on > p_as_of THEN 2
@@ -6907,7 +6971,11 @@ BEGIN
         FROM trust_units AS u
         JOIN trust_properties AS pr ON pr.id = u.property_id
         LEFT JOIN LATERAL (
-            SELECT l.ends_on, l.monthly_rent FROM trust_leases AS l
+            SELECT l.ends_on,
+                   coalesce((SELECT rc.monthly_rent FROM trust_rent_changes AS rc
+                                    WHERE rc.lease_id = l.id AND rc.effective_on <= l.ends_on
+                                    ORDER BY rc.effective_on DESC LIMIT 1), l.monthly_rent) AS monthly_rent
+            FROM trust_leases AS l
             WHERE l.unit_id = u.id AND l.ends_on < p_as_of
             ORDER BY l.ends_on DESC
             LIMIT 1
@@ -9318,6 +9386,29 @@ CREATE TABLE public.trust_recurring_charges (
 
 
 --
+-- Name: trust_rent_changes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_rent_changes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    effective_on date NOT NULL,
+    monthly_rent numeric NOT NULL,
+    notice_given_on date NOT NULL,
+    served_by text NOT NULL,
+    lease_terms text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_rent_changes_check CHECK ((notice_given_on <= ((effective_on - '1 mon'::interval))::date)),
+    CONSTRAINT trust_rent_changes_effective_on_check CHECK ((EXTRACT(day FROM effective_on) = (1)::numeric)),
+    CONSTRAINT trust_rent_changes_lease_terms_check CHECK (((lease_terms ~ '\S'::text) AND (length(lease_terms) <= 500))),
+    CONSTRAINT trust_rent_changes_monthly_rent_check CHECK (((monthly_rent > (0)::numeric) AND (monthly_rent = round(monthly_rent, 2)) AND (monthly_rent <= (1000000)::numeric))),
+    CONSTRAINT trust_rent_changes_served_by_check CHECK ((served_by = ANY (ARRAY['in person'::text, 'mail'::text, 'posted'::text, 'email'::text, 'other'::text])))
+);
+
+
+--
 -- Name: trust_screenings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10681,6 +10772,22 @@ ALTER TABLE ONLY public.trust_recurring_charges
 
 
 --
+-- Name: trust_rent_changes trust_rent_changes_lease_id_effective_on_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rent_changes
+    ADD CONSTRAINT trust_rent_changes_lease_id_effective_on_key UNIQUE (lease_id, effective_on);
+
+
+--
+-- Name: trust_rent_changes trust_rent_changes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rent_changes
+    ADD CONSTRAINT trust_rent_changes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_screenings trust_screenings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11295,6 +11402,20 @@ CREATE INDEX trust_recurring_charges_lease_id ON public.trust_recurring_charges 
 --
 
 CREATE UNIQUE INDEX trust_recurring_charges_lease_kind ON public.trust_recurring_charges USING btree (pmc_id, lease_id, id, kind);
+
+
+--
+-- Name: trust_rent_changes_pmc_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_rent_changes_pmc_lease ON public.trust_rent_changes USING btree (pmc_id, lease_id);
+
+
+--
+-- Name: trust_rent_changes_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_rent_changes_recorded_by ON public.trust_rent_changes USING btree (pmc_id, recorded_by);
 
 
 --
@@ -11935,6 +12056,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_rent_changes trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_rent_changes FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_screenings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -12572,6 +12700,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_recu
 
 
 --
+-- Name: trust_rent_changes trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_rent_changes FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_screenings trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -12901,6 +13036,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_inspections FOR E
 
 
 --
+-- Name: trust_rent_changes trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_rent_changes FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_vendor_insurance trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -12912,6 +13054,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_vendor_insurance 
 --
 
 CREATE TRIGGER trust_recurring_charge_amount BEFORE INSERT ON public.trust_charges FOR EACH ROW WHEN ((new.recurring_charge_id IS NOT NULL)) EXECUTE FUNCTION public.trust_check_recurring_charge_amount();
+
+
+--
+-- Name: trust_rent_changes trust_rent_change; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_rent_change BEFORE INSERT ON public.trust_rent_changes FOR EACH ROW EXECUTE FUNCTION public.trust_check_rent_change();
 
 
 --
@@ -14871,6 +15020,30 @@ ALTER TABLE ONLY public.trust_recurring_charges
 
 
 --
+-- Name: trust_rent_changes trust_rent_changes_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rent_changes
+    ADD CONSTRAINT trust_rent_changes_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_rent_changes trust_rent_changes_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rent_changes
+    ADD CONSTRAINT trust_rent_changes_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_rent_changes trust_rent_changes_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rent_changes
+    ADD CONSTRAINT trust_rent_changes_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_screenings trust_screenings_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15241,4 +15414,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261015000057'),
     ('20261015000058'),
     ('20261015000059'),
-    ('20261015000060');
+    ('20261015000060'),
+    ('20261015000061');
