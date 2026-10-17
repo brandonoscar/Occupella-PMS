@@ -195,7 +195,7 @@ function NewWorkOrderForm({ opened }: { opened: (id: string) => void }) {
       .catch((failed) => setUnread(detail(failed)));
   }, []);
   if (books === null) return <Notice tone={unread ? "error" : "info"}>{unread || "Loading"}</Notice>;
-  if (books.properties.length === 0) return <Notice tone="info">Add a property from Settings, Company setup first.</Notice>;
+  if (books.properties.length === 0) return <Notice tone="info">Add a property from Properties first.</Notice>;
   const units = books.properties.find((p) => p.id === property)?.units ?? [];
   return (
     <Form

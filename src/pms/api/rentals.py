@@ -18,7 +18,8 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, StringConstraints
 
-from pms.api import rent, scope
+from pms import exports
+from pms.api import rent, scope, setup
 from pms.api.deps import Conn, Staff, refusal
 from pms.api.setup import Name
 
@@ -132,6 +133,8 @@ class OwnerAccount(BaseModel):
     account: str
     bank_account: str
     balance: str
+    # The management terms in force today, if any.
+    agreement: setup.Agreement | None
 
 
 class LeaseLine(BaseModel):
@@ -161,6 +164,9 @@ class Property(BaseModel):
     archived: bool
     owners: list[OwnerAccount]
     units: list[UnitLine]
+    # The late fee and NSF fee terms in force today, if any.
+    late_fees: setup.LateFees | None
+    nsf_fee: setup.NsfFee | None
 
 
 # A lease's (on l) tenants: their names, and their ids in the same order.
@@ -217,8 +223,8 @@ def lease_lines(
 
 @router.get("/properties/{property_id}")
 def property_page(session: Staff, conn: Conn, property_id: UUID) -> Property:
-    """A property: its owners' accounts and what each holds, and its units, each with the lease
-    in effect today (or the next to start)."""
+    """A property: its owners' accounts, what each holds and its management terms, its units,
+    each with the lease in effect today (or the next to start), and its late and NSF fee terms."""
     day = rent.today()
     row = conn.execute(
         "SELECT p.display_name, trust_is_archived(p.id, NULL) FROM trust_properties AS p"
@@ -228,17 +234,52 @@ def property_page(session: Staff, conn: Conn, property_id: UUID) -> Property:
     if row is None:
         raise HTTPException(404, "no such property")
     owners = [
-        OwnerAccount(owner_id=o, owner=n, account=a, bank_account=b, balance=rent.cents(bal))
-        for o, n, a, b, bal in conn.execute(
-            "SELECT o.id, o.display_name, a.ledger_account_id, k.display_name, b.balance"
+        OwnerAccount(
+            owner_id=o,
+            owner=n,
+            account=a,
+            bank_account=b,
+            balance=rent.cents(bal),
+            agreement=None
+            if starts is None
+            else setup.Agreement(
+                starts_on=starts,
+                fee_percent=exports.text(fee),
+                minimum_fee=exports.text(minimum),
+                flat_fee=exports.text(flat),
+                leasing_fee_percent=exports.text(leasing),
+                reserve=exports.text(reserve),
+                approval_limit=exports.text(limit),
+            ),
+        )
+        for o, n, a, b, bal, starts, fee, minimum, flat, leasing, reserve, limit in conn.execute(
+            "SELECT o.id, o.display_name, a.ledger_account_id, k.display_name, b.balance,"
+            " m.starts_on, m.fee_percent, m.minimum_fee, m.flat_fee, m.leasing_fee_percent,"
+            " m.reserve, m.approval_limit"
             " FROM trust_ledger_accounts AS a JOIN trust_owners AS o ON o.id = a.owner_id"
             " JOIN trust_bank_accounts AS k ON k.id = a.bank_account_id"
             " JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id"
+            " LEFT JOIN LATERAL (SELECT * FROM trust_management_agreements AS m"
+            "   WHERE m.ledger_account_id = a.ledger_account_id AND m.starts_on <= %s"
+            "   ORDER BY m.starts_on DESC LIMIT 1) AS m ON true"
             " WHERE a.property_id = %s AND a.kind = 'owner_property'"
             ' ORDER BY o.display_name COLLATE "C", o.id',
-            (property_id,),
+            (day, property_id),
         ).fetchall()
     ]
+    fees = conn.execute(
+        "SELECT f.starts_on, f.grace_days, f.flat_fee, f.percent, f.maximum, s.starts_on, s.fee"
+        " FROM (SELECT 1) AS one"
+        " LEFT JOIN LATERAL (SELECT * FROM trust_late_fee_policies AS f"
+        "   WHERE f.property_id = %(property)s AND f.starts_on <= %(day)s"
+        "   ORDER BY f.starts_on DESC LIMIT 1) AS f ON true"
+        " LEFT JOIN LATERAL (SELECT * FROM trust_nsf_fee_policies AS s"
+        "   WHERE s.property_id = %(property)s AND s.starts_on <= %(day)s"
+        "   ORDER BY s.starts_on DESC LIMIT 1) AS s ON true",
+        {"property": property_id, "day": day},
+    ).fetchone()
+    assert fees is not None
+    late_starts, grace, flat_fee, percent, maximum, nsf_starts, nsf = fees
     # Each unit's lease in effect today, or else the soonest to start (a unit has one lease at a
     # time, so at most one is in effect).
     leases: dict[UUID, LeaseLine] = {}
@@ -261,7 +302,25 @@ def property_page(session: Staff, conn: Conn, property_id: UUID) -> Property:
             (property_id,),
         ).fetchall()
     ]
-    return Property(id=property_id, name=row[0], archived=row[1], owners=owners, units=units)
+    return Property(
+        id=property_id,
+        name=row[0],
+        archived=row[1],
+        owners=owners,
+        units=units,
+        late_fees=None
+        if late_starts is None
+        else setup.LateFees(
+            starts_on=late_starts,
+            grace_days=grace,
+            flat_fee=exports.text(flat_fee),
+            percent=exports.text(percent),
+            maximum=setup.money(maximum),
+        ),
+        nsf_fee=None
+        if nsf_starts is None
+        else setup.NsfFee(starts_on=nsf_starts, fee=exports.text(nsf)),
+    )
 
 
 class Rename(BaseModel):

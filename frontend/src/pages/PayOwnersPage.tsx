@@ -74,7 +74,7 @@ export function PayOwnersPage({ me }: { me: Me }) {
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : owners.length === 0 ? (
         <EmptyState icon={Wallet} title="No owner has a property account here."
-          body="Open one from Settings, Company setup." />
+          body="Open one from a property's page, Add owner." />
       ) : (
         <Form className="flex flex-col gap-4" onSubmit={(event) => {
           event.preventDefault();

@@ -146,6 +146,21 @@ async function openOwner(page: Page, name: string): Promise<void> {
   await expect(page.getByRole("heading", { level: 1, name, exact: true })).toBeVisible();
 }
 
+// A property's own page, from Properties: its name's link on its row.
+async function openProperty(page: Page, name: string): Promise<void> {
+  await section(page, "Properties");
+  await page.getByRole("row", { name, exact: true }).getByRole("link", { name, exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name, exact: true })).toBeVisible();
+}
+
+// One of a page's setup side panels, opened by its button.
+async function setupPanel(page: Page, button: string, title = button, scope: Page | Locator = page) {
+  await scope.getByRole("button", { name: button, exact: true }).click();
+  const panel = page.getByRole("dialog", { name: title });
+  await expect(panel).toBeVisible();
+  return panel;
+}
+
 const DOLLARS = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
 
 // Record contribution, from an owner's Financials tab, into one of their properties.
@@ -670,15 +685,14 @@ test("staff add a fee, a credit and a monthly charge to a lease, take a deposit 
   const people = seed.features.recurring!;
   await joinAsStaff(page, people.manager);
 
-  // The property's NSF fee, in Setup.
-  await settings(page, "Company setup");
-  const aspen = page.getByRole("listitem", { name: "Aspen Row" });
-  await expect(aspen).toContainText("No NSF fee");
-  await aspen.getByText("Add to Aspen Row").click();
-  await aspen.getByLabel("NSF fee from").fill(firstOfThisMonth());
-  await aspen.getByLabel("NSF fee", { exact: true }).fill("35.00");
-  await aspen.getByRole("button", { name: "Set NSF fee" }).click();
-  await expect(aspen).toContainText("NSF fee $35.00");
+  // The property's NSF fee, on its page.
+  await openProperty(page, "Aspen Row");
+  await expect(page.getByTestId("nsf-fee")).toHaveText("No NSF fee");
+  const nsf = await setupPanel(page, "Set NSF fee");
+  await nsf.getByLabel("NSF fee from").fill(firstOfThisMonth());
+  await nsf.getByLabel("NSF fee", { exact: true }).fill("35.00");
+  await nsf.getByRole("button", { name: "Set NSF fee" }).click();
+  await expect(page.getByTestId("nsf-fee")).toHaveText("NSF fee $35.00");
 
   const lease = await openLease(page, "Aspen Row, Unit 1");
   const owed = lease.getByTestId("balance-due");
@@ -1023,8 +1037,18 @@ test("only staff holding a role do its work: an admin grants pay-out and adds st
   await expect(admin.getByRole("checkbox", { name: "Demo Manager: Admin" })).toBeChecked();
   await admin.getByLabel("Name").fill("Demo Leasing Agent");
   await admin.getByRole("button", { name: "Add" }).click();
-  await expect(admin.getByText("Added Demo Leasing Agent; invite them from Settings, Logins.")).toBeVisible();
+  await expect(admin.getByText("Added Demo Leasing Agent; invite them from their row.")).toBeVisible();
   await expect(admin.getByRole("checkbox", { name: "Demo Leasing Agent: Approve" })).not.toBeChecked();
+  // Invited from their row: the link is shown once, to send them.
+  const agent = admin.getByRole("row").filter({ has: admin.getByRole("checkbox", { name: "Demo Leasing Agent: Admin" }) });
+  await expect(agent).toContainText("No login");
+  await agent.getByRole("button", { name: "Invite" }).click();
+  const invite = admin.getByRole("dialog", { name: "Invite Demo Leasing Agent" });
+  await invite.getByLabel("Email to sign in with").fill("leasing.agent@example.com");
+  await invite.getByRole("button", { name: "Invite to sign in" }).click();
+  await expect(invite.getByLabel("Invite link, Demo Leasing Agent")).toHaveValue(/\/invite#/);
+  await invite.getByRole("button", { name: "Close" }).click();
+  await expect(agent).toContainText("Invited");
 
   // Now the bookkeeper pays it, from its own page.
   await page.reload();
@@ -1051,9 +1075,8 @@ test("only staff holding a role do its work: an admin grants pay-out and adds st
 
   // The admin disables the bookkeeper's login, once asked: they are signed out for good.
   await settings(admin, "Logins");
-  const bookkeeper = admin.getByRole("row", { name: /^Demo Bookkeeper/ });
-  await bookkeeper.getByRole("button", { name: "Disable", exact: true }).click();
-  await bookkeeper.getByRole("button", { name: "Disable login" }).click();
+  const bookkeeper = admin.getByRole("row", { name: "Demo Bookkeeper", exact: true });
+  await chooseAction(admin, "Demo Bookkeeper", "Disable");
   await expect(admin.getByText("Demo Bookkeeper's login is disabled; they are signed out.")).toBeVisible();
   await expect(bookkeeper.getByText("Disabled", { exact: true })).toBeVisible();
   await page.reload();
@@ -1305,7 +1328,7 @@ test("staff set management terms with a leasing fee, late fees, a bank account a
   const people = seed.features.setup!;
   await joinAsStaff(page, people.manager);
 
-  // A trust bank account added from Banking opens its own page, and the setup lists it.
+  // A trust bank account added from Banking opens its own page; a vendor added from Vendors, theirs.
   await section(page, "Banking");
   await page.getByRole("button", { name: "Add bank account" }).click();
   const adding = page.getByRole("dialog", { name: "Add bank account" });
@@ -1313,43 +1336,44 @@ test("staff set management terms with a leasing fee, late fees, a bank account a
   await adding.getByLabel("Bank account name").fill("Second operating account");
   await adding.getByRole("button", { name: "Add bank account" }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Second operating account" })).toBeVisible();
-  await settings(page, "Company setup");
-  await expect(part(page, "Trust bank accounts")).toContainText("Second operating account (Operating)");
-  const vendors = page.getByRole("region", { name: "Vendors" });
-  await vendors.getByLabel("Vendor's name").fill("Demo Electric Co");
-  await vendors.getByRole("button", { name: "Add" }).click();
-  await expect(vendors.getByRole("listitem").filter({ hasText: "Demo Electric Co" })).toBeVisible();
+  await section(page, "Vendors");
+  const vendor = await setupPanel(page, "Add vendor");
+  await vendor.getByLabel("Vendor's name").fill("Demo Electric Co");
+  await vendor.getByRole("button", { name: "Add vendor" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Demo Electric Co" })).toBeVisible();
 
-  // New terms for Aspen Row from today: a 50% leasing fee on leases starting from now.
-  const terms = part(page, "Management terms");
-  await terms.getByRole("combobox", { name: "For" }).selectOption({ label: "Demo Owner B, Aspen Row" });
+  // New terms for Aspen Row from today, from its page: a 50% leasing fee on leases starting from now.
+  await openProperty(page, "Aspen Row");
+  const owners = page.getByRole("table", { name: "Owners" });
+  const terms = await setupPanel(page, "Set terms", "Set management terms", owners.getByRole("row", { name: "Demo Owner B" }));
+  await expect(terms.getByRole("combobox", { name: "For" })).toHaveValue(/.+/);
   await terms.getByLabel("In force from").fill(today());
   await terms.getByLabel("Fee, percent of rent and recurring fees collected").fill("10");
   await terms.getByLabel("Leasing fee, percent of rent").fill("50");
   await terms.getByLabel("Reserve").fill("200.00");
   await terms.getByLabel("Owner approves bills over").fill("300.00");
   await terms.getByRole("button", { name: "Set terms" }).click();
-  await expect(terms.getByRole("listitem").filter({ hasText: "Demo Owner B, Aspen Row" })).toContainText(`from ${us(today())}`);
+  await expect(owners.getByRole("row", { name: "Demo Owner B" })).toContainText(`from ${us(today())}`);
 
   // Late fees for Aspen Row: three days' grace, then $25.00.
-  const aspen = page.getByRole("listitem", { name: "Aspen Row" });
-  await aspen.getByText("Add to Aspen Row").click();
-  await aspen.getByLabel("Late fees from").fill(today());
-  await aspen.getByLabel("Grace days").fill("3");
-  await aspen.getByLabel("Flat fee").fill("25.00");
-  await aspen.getByRole("button", { name: "Set late fees" }).click();
-  await expect(aspen).toContainText("After 3 days' grace: $25.00");
+  const late = await setupPanel(page, "Set late fees");
+  await late.getByLabel("Late fees from").fill(today());
+  await late.getByLabel("Grace days").fill("3");
+  await late.getByLabel("Flat fee").fill("25.00");
+  await late.getByRole("button", { name: "Set late fees" }).click();
+  await expect(page.getByTestId("late-fees")).toContainText("After 3 days' grace: $25.00");
 
-  // A new tenant on the vacant unit, from today.
-  await page.getByRole("combobox", { name: "Tenant of" }).selectOption({ label: "Aspen Row" });
-  await page.getByLabel("Tenant's name").fill("Avery Sample");
-  await page.getByRole("button", { name: "Add tenant" }).click();
-  await page.getByRole("combobox", { name: "Unit", exact: true }).selectOption({ label: "Aspen Row, Unit 2" });
-  await page.getByLabel("Starts").fill(today());
-  await page.getByLabel("Rent a month").fill("1240.00");
-  await page.getByLabel("Avery Sample").check();
-  await page.getByRole("button", { name: "Add lease" }).click();
-  await expect(aspen).toContainText(`Unit 2: Avery Sample: ${us(today())} – Month to month, $1,240.00 a month`);
+  // A new tenant on the vacant unit, from today, from the unit's page.
+  await page.getByRole("row", { name: "Unit 2" }).getByRole("link", { name: "Unit 2" }).click();
+  const lease = await setupPanel(page, "Add lease in place", "Add lease");
+  await lease.getByLabel("Tenant's name").fill("Avery Sample");
+  await lease.getByRole("button", { name: "Add tenant" }).click();
+  await expect(lease.getByLabel("Avery Sample")).toBeChecked();
+  await lease.getByLabel("Starts").fill(today());
+  await lease.getByLabel("Rent a month").fill("1240.00");
+  await lease.getByRole("button", { name: "Add lease" }).click();
+  await expect(page.getByRole("row", { name: "Avery Sample" })).toContainText(`${us(today())} – Month to month`);
+  await expect(page.getByRole("row", { name: "Avery Sample" })).toContainText("$1,240.00");
 
   // Its leasing fee is half a month's rent, once the owner has the money for it, taken from
   // the lease's ⋯ menu.
@@ -1361,16 +1385,17 @@ test("staff set management terms with a leasing fee, late fees, a bank account a
   await expect(page.getByRole("main")).toContainText("A leasing fee of $620.00 is taken.");
   await expect((await ownerProperty(page, "Demo Owner B", "Aspen Row")).getByRole("cell").nth(2)).toHaveText("$200.00");
 
-  // A second owner of Aspen Row, held in the new operating account.
-  await settings(page, "Company setup");
-  await aspen.getByText("Add to Aspen Row").click();
-  await aspen.getByRole("combobox", { name: "Owner", exact: true }).selectOption({ label: "Demo Owner A" });
-  await aspen.getByRole("combobox", { name: "Held in" }).selectOption({ label: "Second operating account" });
-  await aspen.getByRole("button", { name: "Add owner" }).click();
-  await expect(aspen.getByText(/^Owned by/)).toContainText("Demo Owner A");
-  await expect(
-    terms.getByRole("combobox", { name: "For" }).getByRole("option", { name: "Demo Owner A, Aspen Row" }),
-  ).toHaveCount(1);
+  // A second owner of Aspen Row, held in the new operating account, from its page.
+  await openProperty(page, "Aspen Row");
+  const second = await setupPanel(page, "Add owner");
+  await second.getByRole("combobox", { name: "Owner", exact: true }).selectOption({ label: "Demo Owner A" });
+  await second.getByRole("combobox", { name: "Held in" }).selectOption({ label: "Second operating account" });
+  await second.getByRole("button", { name: "Add owner" }).click();
+  await expect(owners.getByRole("row", { name: "Demo Owner A" })).toContainText("Second operating account");
+  // Their terms are set from their own page too.
+  await openOwner(page, "Demo Owner A");
+  const theirs = await setupPanel(page, "Set terms", "Set management terms");
+  await expect(theirs.getByRole("combobox", { name: "For" }).getByRole("option", { name: "Demo Owner A, Aspen Row" })).toHaveCount(1);
 });
 
 test("staff open a report from Reports, see it on screen narrowed to one property, export it in each format, take an owner's report over last year, download the whole ledger, and every staff report in each format", async ({ page }) => {
@@ -1558,14 +1583,15 @@ test("staff put bills in expense accounts on Schedule E lines, and the owner rea
   const people = seed.features.expenses!;
   await joinAsStaff(page, people.manager);
 
-  // The demo's expense accounts, and one more.
-  await settings(page, "Company setup");
-  const accounts = part(page, "Expense accounts");
-  await expect(accounts).toContainText("Repairs (Schedule E line 14: Repairs)");
-  await accounts.getByLabel("Expense account").fill("Insurance");
-  await accounts.getByRole("combobox", { name: "Schedule E line" }).selectOption({ label: "9: Insurance" });
-  await accounts.getByRole("button", { name: "Add expense account" }).click();
-  await expect(accounts).toContainText("Insurance (Schedule E line 9: Insurance)");
+  // The demo's expense accounts in Settings, Chart of accounts, and one more.
+  await settings(page, "Chart of accounts");
+  const accounts = page.getByRole("table", { name: "Chart of accounts" });
+  await expect(accounts.getByRole("row", { name: "Repairs" })).toContainText("14: Repairs");
+  const account = await setupPanel(page, "Add account");
+  await account.getByLabel("Expense account").fill("Insurance");
+  await account.getByRole("combobox", { name: "Schedule E line" }).selectOption({ label: "9: Insurance" });
+  await account.getByRole("button", { name: "Add account" }).click();
+  await expect(accounts.getByRole("row", { name: "Insurance" })).toContainText("9: Insurance");
 
   // A water bill entered in Water; a hose in none, then put in Water; a repair split across
   // Repairs and Water. All set aside.

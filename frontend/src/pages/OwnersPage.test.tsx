@@ -7,6 +7,7 @@ import type { Paged } from "../rentals";
 import { OwnerPage, OwnersPage, agreementLine, lastTwelveMonths } from "./OwnersPage";
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   vi.unstubAllGlobals();
   window.history.pushState(null, "", "/");
@@ -173,6 +174,25 @@ describe("OwnerPage", () => {
     render(<OwnerPage me={ME} id="o1" />);
     expect(await screen.findByText("Disabled")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /invite/i })).toBeNull();
+  });
+
+  it("sets an account's management terms from a side panel", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-17T12:00:00Z") });
+    const fetch = server({ "/api/setup/agreements": { id: "g9" } });
+    render(<OwnerPage me={ME} id="o1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Set terms" }));
+    const panel = screen.getByRole("dialog", { name: "Set management terms" });
+    expect(within(within(panel).getByLabelText("For")).getAllByRole("option").map((o) => o.textContent)).toEqual(
+      ACCOUNTS.map((a) => `Owner 1, ${a.property}`),
+    );
+    fireEvent.change(within(panel).getByLabelText("Fee, percent of rent and recurring fees collected"), { target: { value: "9" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Set terms" }));
+    expect(await screen.findByText(`New terms for Owner 1, ${ACCOUNTS[0]!.property} from 2026-10-17.`)).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(posted(fetch)).toEqual([["/api/setup/agreements", {
+      account: ACCOUNTS[0]!.account, starts_on: "2026-10-17", fee_percent: "9", minimum_fee: "0", flat_fee: "0",
+      leasing_fee_percent: "0", reserve: "0", approval_limit: "0",
+    }]]);
   });
 
   it("says why an invite was refused", async () => {

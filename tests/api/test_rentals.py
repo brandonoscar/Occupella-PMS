@@ -79,6 +79,60 @@ def test_a_property_shows_its_owners_money_and_each_units_lease(client, conn, st
     assert units["Unit 3"]["lease"] is None
 
 
+def test_a_property_shows_the_terms_in_force_today(client, conn, staff, pmc):
+    owner = pmc.owners[0]
+    bare = ok(client.get(f"/api/properties/{owner.property_id}"))
+    assert (bare["late_fees"], bare["nsf_fee"], bare["owners"][0]["agreement"]) == (
+        None,
+        None,
+        None,
+    )
+
+    for path, body in (
+        (
+            "agreements",
+            {
+                "account": owner.account,
+                "starts_on": str(TODAY - 9 * DAY),
+                "fee_percent": "8",
+                "reserve": "200.00",
+            },
+        ),
+        (
+            "agreements",
+            {"account": owner.account, "starts_on": str(TODAY + 5 * DAY), "fee_percent": "9"},
+        ),
+        (
+            "late-fees",
+            {
+                "property_id": str(owner.property_id),
+                "starts_on": str(TODAY),
+                "grace_days": 3,
+                "flat_fee": "25.00",
+            },
+        ),
+        (
+            "nsf-fees",
+            {"property_id": str(owner.property_id), "starts_on": str(TODAY - DAY), "fee": "35.00"},
+        ),
+    ):
+        ok(client.post(f"/api/setup/{path}", json=body), 201)
+
+    found = ok(client.get(f"/api/properties/{owner.property_id}"))
+    terms = found["owners"][0]["agreement"]
+    assert (terms["starts_on"], terms["fee_percent"], terms["reserve"]) == (
+        str(TODAY - 9 * DAY),
+        "8",
+        "200.00",
+    )
+    assert (found["late_fees"]["grace_days"], found["late_fees"]["flat_fee"]) == (3, "25.00")
+    assert found["late_fees"]["maximum"] is None
+    assert found["nsf_fee"] == {"starts_on": str(TODAY - DAY), "fee": "35.00"}
+    # Another property's terms are its own.
+    other = ok(client.get(f"/api/properties/{pmc.owners[1].property_id}"))
+    assert (other["late_fees"], other["nsf_fee"]) == (None, None)
+
+
 def test_a_unit_shows_every_lease_it_has_had_newest_first(client, conn, staff, pmc):
     prop = pmc.owners[0].property_id
     unit, old = lease_at(conn, pmc, prop, "Unit 1", "Tenant A", TODAY - 400 * DAY)

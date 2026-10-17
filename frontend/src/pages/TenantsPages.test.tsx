@@ -137,7 +137,10 @@ describe("TenantPage", () => {
     );
     expect(contact.textContent).toContain("555-555-0101");
     expect(contact.textContent).toContain("100 Example Street, Apt 2Sampletown, ZZ 00000");
-    expect(document.body.textContent).toContain("PortalInvitedtenant1.login@example.com");
+    const portal = screen.getByRole("heading", { name: "Portal" }).closest("section") as HTMLElement;
+    expect(portal.textContent).toContain("Invitedtenant1.login@example.com");
+    expect((within(portal).getByLabelText("Email to sign in with") as HTMLInputElement).value).toBe("tenant1.login@example.com");
+    expect(within(portal).getByRole("button", { name: "Send a new invite" })).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Leases" }));
     const rows = screen.getAllByRole("row", { name: "Property 1, Unit 1" });
     expect(rows.map((row) => within(row).getAllByRole("cell").map((c) => c.textContent))).toEqual([
@@ -145,6 +148,15 @@ describe("TenantPage", () => {
       ["Unit 1, Property 1", "01/01/2025 – 12/31/2025", "Ended", "$1,500.00", "$0.00"],
     ]);
     expect(within(rows[0]!).getByRole("link").getAttribute("href")).toBe("/leases/l1");
+  });
+
+  it("invites them to the portal from their page", async () => {
+    const fetch = server({ "/api/tenants/t1": { ...TENANT, portal: "no login", login_email: null } });
+    render(<TenantPage me={ME} id="t1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Invite to the portal" }));
+    await vi.waitFor(() => expect(posted(fetch)).toEqual([
+      ["/api/invites", { kind: "tenant", person_id: "t1", email: TENANT.contact.email }],
+    ]));
   });
 
   it("edits their contact details whole, and says why a save or an archive was refused", async () => {

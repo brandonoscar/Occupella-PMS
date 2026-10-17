@@ -2,7 +2,6 @@ import { Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
-import { Badge } from "../components/Badge";
 import { Button, LinkButton } from "../components/Button";
 import { ContactCard } from "../components/ContactCard";
 import { EmptyState } from "../components/EmptyState";
@@ -25,12 +24,13 @@ import type { OwnerMoney } from "../payables";
 import { incomeStatementHref } from "../payables";
 import { requestId } from "../rent";
 import type { Paged } from "../rentals";
-import { PORTAL } from "../rentals";
 import { navigate } from "../router";
 import { scopeParams, useScope } from "../scope";
 import type { StatementData } from "../statement";
 import { group } from "../statement";
 import { FilesCard } from "./FilesCard";
+import { PortalCard } from "./PortalCard";
+import { TermsPanel } from "./SetupPanels";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
@@ -192,44 +192,14 @@ export function OwnerPage({ me, id }: { me: Me; id: string }) {
 }
 
 function OwnerSummary({ owner, refresh }: { owner: Owner; refresh: () => void }) {
-  const [email, setEmail] = useState(owner.login_email ?? owner.contact.email ?? "");
-  const [link, setLink] = useState("");
+  const [setting, setSetting] = useState(false);
   const [said, setSaid] = useState("");
-  const [error, setError] = useState("");
   const property = (account: string) => owner.accounts.find((a) => a.account === account)?.property ?? account;
   return (
     <div className="flex flex-col gap-6">
       <ContactCard path={`/api/owners/${owner.id}`} contact={owner.contact} refresh={refresh} name={owner.name} />
-      <Card title="Portal">
-        <p className="flex flex-wrap items-center gap-2 text-base">
-          <Badge tone={PORTAL[owner.portal].tone}>{PORTAL[owner.portal].word}</Badge>
-          {owner.login_email && <span className="text-ink-muted">{owner.login_email}</span>}
-        </p>
-        {owner.portal !== "disabled" && (
-          <Form className="mt-3 flex flex-wrap items-end gap-3" onSubmit={async (event) => {
-            event.preventDefault();
-            setError("");
-            try {
-              const made = await api.post<{ url: string }>("/api/invites", { kind: "owner", person_id: owner.id, email: email.trim() });
-              setLink(made.url);
-              setSaid(`Invite link made for ${email.trim()}; give it to ${owner.name}.`);
-              refresh();
-            } catch (failed) {
-              setError(detail(failed));
-            }
-          }}>
-            <Field label="Email to sign in with" id="owner-login-email" type="email" required value={email}
-              onChange={(event) => setEmail(event.target.value)} />
-            <Button type="submit" variant="secondary">
-              {owner.portal === "no login" ? "Invite to the portal" : "Send a new invite"}
-            </Button>
-          </Form>
-        )}
-        {link && <input readOnly aria-label={`Invite link, ${owner.name}`} value={link}
-          className="mt-3 w-full rounded-sm border border-line-strong bg-sunken px-2 py-1.5 font-mono text-sm break-all text-ink" />}
-        <Said>{said}</Said>
-        <Notice tone="error">{error}</Notice>
-      </Card>
+      <PortalCard kind="owner" personId={owner.id} name={owner.name} portal={owner.portal}
+        loginEmail={owner.login_email} email={owner.contact.email} refresh={refresh} />
       <Card title="Management agreements">
         {owner.agreements.length === 0 ? (
           <p className="text-sm text-ink-subtle">None: no reserve is kept and no fee is taken.</p>
@@ -242,7 +212,15 @@ function OwnerSummary({ owner, refresh }: { owner: Owner; refresh: () => void })
             ))}
           </ul>
         )}
+        {owner.accounts.length > 0 && (
+          <div className="mt-3"><Button variant="secondary" onClick={() => setSetting(true)}>Set terms</Button></div>
+        )}
       </Card>
+      <Said>{said}</Said>
+      {setting && (
+        <TermsPanel panel={{ say: setSaid, refresh, close: () => setSetting(false) }}
+          accounts={owner.accounts.map((a) => ({ account: a.account, label: `${owner.name}, ${a.property}` }))} />
+      )}
     </div>
   );
 }
@@ -264,7 +242,7 @@ export function agreementLine(terms: Agreement): string {
 
 function OwnerProperties({ accounts }: { accounts: OwnerMoney[] }) {
   if (accounts.length === 0) {
-    return <EmptyState icon={Users} title="No property account yet." body="Open one from Settings, Company setup." />;
+    return <EmptyState icon={Users} title="No property account yet." body="Open one from a property's page, Add owner." />;
   }
   return (
     <Wide>
