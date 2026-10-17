@@ -7,7 +7,6 @@ import type { Panel } from "./SetupPanels";
 import {
   AddLeasePanel, AddOwnerPanel, AddPropertyPanel, AddUnitPanel, LateFeesPanel, NsfFeePanel, TermsPanel,
 } from "./SetupPanels";
-import { SetupPage } from "./SetupPage";
 
 afterEach(() => {
   cleanup();
@@ -254,14 +253,5 @@ describe("ChartOfAccountsPage", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ...BOOKS, expense_accounts: [] }), { status: 200 })));
     render(<ChartOfAccountsPage me={ME} />);
     expect(await screen.findByText("No expense accounts yet")).toBeTruthy();
-  });
-});
-
-describe("SetupPage", () => {
-  it("shows the company, as one of Settings' pages", () => {
-    window.history.replaceState(null, "", "/settings/setup");
-    render(<SetupPage me={ME} />);
-    expect(screen.getByText("Synthetic PMC")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Settings" }).getAttribute("aria-current")).toBe("page");
   });
 });

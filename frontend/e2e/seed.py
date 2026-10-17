@@ -469,6 +469,7 @@ FEATURES = (
     "general-ledger",
     "maintenance-pages",
     "groups",
+    "company",
 )
 
 

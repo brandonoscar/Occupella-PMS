@@ -45,6 +45,7 @@ from pms import accounts, email, exports, nightly
 from pms.api import (
     banking,
     budgets,
+    company,
     custom_roles,
     dashboard,
     directory,
@@ -425,6 +426,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(signers.router)
     app.include_router(moveout.router)
     app.include_router(documents.router)
+    app.include_router(company.router)
     app.include_router(notes.router)
     app.include_router(today.router)
     app.include_router(dashboard.router)

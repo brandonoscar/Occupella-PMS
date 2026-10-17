@@ -2165,3 +2165,75 @@ test("staff require renters insurance on a lease, Today flags it, the tenant rec
     `Synthetic Mutual RI-0001 through ${us(daysFromToday(365))}`,
   );
 });
+
+// A 1x1 PNG, synthetic, for the company's logo.
+const LOGO = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", "base64");
+
+test("staff keep the company's name, address, logo and the fees new properties start with; a property added then starts with them, and owners and tenants see their manager", async ({
+  page,
+  browser,
+}) => {
+  const people = seed.features.company!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "Company setup");
+  await expect(page.getByText("No mailing address yet")).toBeVisible();
+
+  // Its name and mailing address, in a side panel.
+  await page.getByRole("button", { name: "Edit company" }).click();
+  const editing = page.getByRole("dialog", { name: "Edit company" });
+  await editing.getByLabel("Company name").fill("Demo Property Management Group");
+  await editing.getByLabel("Street address").fill("100 Example Street");
+  await editing.getByLabel("City").fill("Sampletown");
+  await editing.getByLabel("State").fill("ZZ");
+  await editing.getByLabel("ZIP code").fill("00000");
+  await editing.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved Demo Property Management Group.")).toBeVisible();
+  await expect(page.getByLabel("Company", { exact: true })).toContainText("Sampletown, ZZ 00000");
+
+  // Its logo, a PNG.
+  await page.getByLabel("Upload a logo").setInputFiles({ name: "logo.png", mimeType: "image/png", buffer: LOGO });
+  await expect(page.getByText("The logo is saved.")).toBeVisible();
+  await expect(page.getByRole("img", { name: "Demo Property Management Group logo" })).toBeVisible();
+
+  // The fees a property added from now on starts with.
+  await page.getByRole("button", { name: "Set default fees" }).click();
+  const fees = page.getByRole("dialog", { name: "Set default fees" });
+  await fees.getByLabel("Charge late fees").check();
+  await fees.getByLabel("Grace days").fill("4");
+  await fees.getByLabel("Flat fee").fill("40.00");
+  await fees.getByLabel("NSF fee (empty for none)").fill("30.00");
+  await fees.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("default-late-fees")).toHaveText("After 4 days' grace: $40.00");
+  await expect(page.getByTestId("default-nsf-fee")).toHaveText("NSF fee $30.00");
+
+  // A property added now starts with them; one already there keeps its own.
+  await section(page, "Properties");
+  await page.getByRole("button", { name: "Add property" }).click();
+  const adding = page.getByRole("dialog", { name: "Add property" });
+  await adding.getByLabel("Property name").fill("Juniper Court");
+  await adding.getByLabel("Owner").selectOption({ label: "Demo Owner A" });
+  await adding.getByRole("button", { name: "Add property" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Juniper Court" })).toBeVisible();
+  await expect(page.getByTestId("late-fees")).toContainText("After 4 days' grace: $40.00");
+  await expect(page.getByTestId("nsf-fee")).toHaveText("NSF fee $30.00");
+  await openProperty(page, "Aspen Row");
+  await expect(page.getByTestId("nsf-fee")).toHaveText("No NSF fee");
+
+  // An owner and a tenant see who manages their home, and where to write to them.
+  for (const invite of [people.owner_a!, people.taylor!]) {
+    const portal = await (await browser.newContext()).newPage();
+    await joinPortal(portal, invite);
+    const manager = portal.locator("section", { has: portal.getByRole("heading", { name: "Your property manager" }) });
+    await expect(manager).toContainText("Demo Property Management Group100 Example StreetSampletown, ZZ 00000");
+    await expect(manager.getByRole("img", { name: "Demo Property Management Group logo" })).toBeVisible();
+    const logo = await portal.request.get("/api/company/logo");
+    expect(logo.headers()["content-type"]).toBe("image/png");
+    await portal.context().close();
+  }
+
+  // Removed, there is no logo.
+  await settings(page, "Company setup");
+  await page.getByRole("button", { name: "Remove logo" }).click();
+  await expect(page.getByText("The logo is removed.")).toBeVisible();
+  await expect(page.getByText("No logo yet")).toBeVisible();
+});

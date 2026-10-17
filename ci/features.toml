@@ -541,3 +541,18 @@ operations = [
 browser = [
   "features.spec.ts › staff record a lease's move-in and move-out inspections room by room, and download them side by side",
 ]
+
+[[feature]]
+id = "company"
+statement = "Staff keep the company's name, mailing address and logo (a PNG or JPEG), and the late fee and NSF fee terms each property added from then on starts with, from its first day; a property already there keeps its own. Owners and tenants see their manager's name, mailing address and logo in the portal."
+operations = [
+  "GET /api/company",
+  "POST /api/company",
+  "POST /api/company/logo",
+  "POST /api/company/logo/remove",
+  "GET /api/company/logo",
+  "GET /api/company/card",
+]
+browser = [
+  "features.spec.ts › staff keep the company's name, address, logo and the fees new properties start with; a property added then starts with them, and owners and tenants see their manager",
+]

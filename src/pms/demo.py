@@ -53,6 +53,7 @@ from psycopg import sql
 from pms import accounts, nightly
 from pms.api import (
     budgets,
+    company,
     custom_roles,
     documents,
     groups,
@@ -722,6 +723,29 @@ def showcase(conn: psycopg.Connection[Any], demo: Demo, today: date, public_url:
     bills_of_every_status(b, demo, today, public_url)
     work_orders_at_every_step(b, demo, units, today)
     files(b, demo)
+    company_profile(b, demo)
+
+
+def company_profile(b: Builder, demo: Demo) -> None:
+    """The company's mailing address and the fee terms a property added from now on starts with,
+    set last, so the demo's own properties keep the terms each was given."""
+    with b.as_staff(demo.manager) as s:
+        company.save_company(
+            s,
+            b.conn,
+            company.NewCompany(
+                name="Demo Property Management",
+                address=company.Address(
+                    address_line_1="100 Example Street",
+                    address_line_2="Suite 200",
+                    city="Sampletown",
+                    state="ZZ",
+                    postal_code="00000",
+                ),
+                late_fees=company.LateFeeTerms(grace_days=5, flat_fee=D("50.00")),
+                nsf_fee=D("35.00"),
+            ),
+        )
 
 
 def new_property(

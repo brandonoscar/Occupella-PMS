@@ -177,6 +177,33 @@ def test_a_document_is_one_of_its_kinds(conn, pmc):
         )
 
 
+def logo(conn, pmc, column=None, about=None, content=PNG, content_type="image/png"):
+    named = f"{column}, " if column else ""
+    with conn.transaction():
+        made = conn.execute(
+            f"INSERT INTO trust_documents (pmc_id, kind, {named}title, content_type, size, sha256)"
+            f" VALUES (%s, 'company_logo', {'%s, ' if column else ''}'Company logo', %s, %s,"
+            " sha256(%s)) RETURNING id",
+            (pmc.pmc_id, *([about] if column else []), content_type, len(content), content),
+        ).fetchone()[0]
+        conn.execute(
+            "INSERT INTO trust_document_files (document_id, pmc_id, content) VALUES (%s, %s, %s)",
+            (made, pmc.pmc_id, content),
+        )
+    return made
+
+
+def test_the_company_logo_is_an_image_about_no_one_record(conn, pmc, about):
+    """Migration 0075: the company's logo is a PNG or JPEG, and about the company alone."""
+    assert logo(conn, pmc) is not None
+    assert logo(conn, pmc, content=JPEG, content_type="image/jpeg") is not None
+    with refused("trust_documents_logo_check"):
+        logo(conn, pmc, content=PDF, content_type="application/pdf")
+    for kind, column in COLUMN.items():
+        with refused(r"trust_documents_\w*check"):
+            logo(conn, pmc, column, about[kind])
+
+
 @pytest.mark.parametrize("kind", KINDS)
 def test_a_document_is_about_its_own_pmcs_records(conn, pmc, about, kind):
     other = make_pmc(conn)

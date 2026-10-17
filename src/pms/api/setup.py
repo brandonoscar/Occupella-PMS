@@ -439,14 +439,42 @@ def open_owner_account(
 
 @router.post("/properties", status_code=201)
 def add_property(session: Staff, conn: Conn, new: NewProperty) -> Created:
-    """A property and its first owner's account for it, in an operating trust bank account."""
+    """A property and its first owner's account for it, in an operating trust bank account, with
+    the company's default late fee and NSF fee terms from today."""
     prop = insert(
         conn,
         "INSERT INTO trust_properties (pmc_id, display_name) VALUES (%s, %s) RETURNING id",
         (session.pmc_id, new.name),
     )
     open_owner_account(conn, session.pmc_id, new.owner_id, prop, new.bank_account_id)
+    with_default_fees(conn, session.pmc_id, prop)
     return Created(id=prop)
+
+
+def with_default_fees(conn: psycopg.Connection[Any], pmc_id: UUID, prop: UUID) -> None:
+    """A new property's late fee and NSF fee terms from its first day (today, UTC): the
+    company's defaults as they stand (src/pms/api/company.py), if it has any."""
+    defaults = conn.execute(
+        "SELECT late_grace_days, late_flat_fee, late_percent, late_maximum, nsf_fee"
+        " FROM trust_company_profiles WHERE pmc_id = %s ORDER BY created_at DESC, id DESC LIMIT 1",
+        (pmc_id,),
+    ).fetchone()
+    if defaults is None:
+        return
+    grace, flat, percent, maximum, nsf = defaults
+    if grace is not None:
+        conn.execute(
+            "INSERT INTO trust_late_fee_policies (pmc_id, property_id, starts_on, grace_days,"
+            " flat_fee, percent, maximum)"
+            " VALUES (%s, %s, (now() AT TIME ZONE 'UTC')::date, %s, %s, %s, %s)",
+            (pmc_id, prop, grace, flat, percent, maximum),
+        )
+    if nsf is not None:
+        conn.execute(
+            "INSERT INTO trust_nsf_fee_policies (pmc_id, property_id, starts_on, fee)"
+            " VALUES (%s, %s, (now() AT TIME ZONE 'UTC')::date, %s)",
+            (pmc_id, prop, nsf),
+        )
 
 
 class NewOwnerAccount(BaseModel):

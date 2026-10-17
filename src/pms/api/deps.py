@@ -165,6 +165,7 @@ AREA_PATHS = (
     ("/api/reconcile/", "month-end"),
     ("/api/switching/", "switching"),
     ("/api/setup/", "setup"),
+    ("/api/company", "setup"),
     ("/api/properties/", "setup"),
     ("/api/property-groups", "setup"),
     ("/api/units/", "setup"),

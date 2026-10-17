@@ -187,7 +187,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `src/pms/api/reports.py`, and Export), and Settings at `/settings`: staff roles and signers at `/settings/staff`
   (`src/pms/api/staff.py`; an admin invites a staff member from their row), logins at
   `/settings/logins` (read only, by status; Disable in a row's menu), the company at
-  `/settings/setup`, expense accounts at `/settings/accounts` (Chart of accounts). The books'
+  `/settings/setup` (`src/pms/api/company.py`: its name, address, logo and the fees new
+  properties start with), expense accounts at `/settings/accounts` (Chart of accounts). The books'
   setup (`src/pms/api/setup.py`: plain inserts and the database's own write paths, nothing that
   moves money) opens in side panels where each thing is used (`pages/SetupPanels.tsx`, ADR
   0006): a property from Properties; a unit, another owner, management terms and late and NSF
@@ -203,7 +204,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`src/pms/api/tenant.py`) show the session's tenant only: a lease named in a path is answered
   only if they are on it, and reads as not found otherwise. They show what each lease charges
   every month and what is charged already but due later, and once a deposit was returned at
-  move-out, its statement (`trust_report_deposit_return`) to download. The portal takes no payments.
+  move-out, its statement (`trust_report_deposit_return`) to download. Both portals show the
+  manager's name, mailing address and logo (`/api/company/card`). The portal takes no payments.
 - Leasing (`src/pms/api/leasing.py`, `src/pms/leasing/`): applicants have no login. They apply
   through a link staff open for a unit (`/apply#<token>`) and follow it with a status link;
   both tokens travel in JSON bodies and are kept only as SHA-256. Screening goes through
@@ -523,7 +525,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   insert against the type's first bytes, the size and SHA-256 its row says, and there at
   commit): never audited and never read by `trust_ai_agent`. A removal is a row
   (`trust_document_removals`); nothing is deleted. The PMS reads nothing out of a file. An
-  owner downloads their own owner documents in the portal.
+  owner downloads their own owner documents in the portal. The company's logo is a document too
+  (`company_logo`, migration 0075: a PNG or JPEG about no one record, the latest not removed
+  holding), kept by `src/pms/api/company.py` and in no list of files.
+- The company (migration 0075, ADR 0006): its name is `trust_pmcs.display_name`, which staff
+  rename; its mailing address (whole or none) and the late fee and NSF fee terms a property added
+  from then on starts with, from its first day (UTC), are `trust_company_profiles`
+  (append-only, the latest row holding, naming who recorded it; saving the same again writes
+  nothing). A default changes no property already there. The AI role never reads it.
 - Vendor payments: `trust_report_vendor_payments` lists what each vendor was paid through
   `trust_pay_bill` in a calendar year (UTC), for 1099 preparation. It files nothing, holds no
   tax IDs and applies no threshold. What the old system paid a vendor in the cutover's year
