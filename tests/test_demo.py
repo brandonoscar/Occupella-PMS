@@ -9,7 +9,7 @@ from decimal import Decimal
 import pytest
 
 from pms import demo
-from pms.api import payables, reconcile, rent, today
+from pms.api import offers, payables, reconcile, rent, today
 
 DAY = timedelta(days=1)
 
@@ -365,13 +365,25 @@ def test_the_founders_seed_puts_something_on_every_list(conn, app_conn, built):
         " JOIN trust_units AS u ON u.id = l.unit_id"
         ' WHERE s.pmc_id = %s ORDER BY u.display_name COLLATE "C"'
     ) == [("Unit 409",), ("Unit 410",)]
-    assert rows(
-        "SELECT o.renews_lease_id IS NOT NULL, count(g.signed_at), count(*)"
-        " FROM trust_lease_offers AS o"
-        " JOIN trust_lease_offer_signers AS s ON s.offer_id = o.id"
-        " LEFT JOIN trust_signatures AS g ON g.offer_id = s.offer_id AND g.position = s.position"
-        " WHERE o.pmc_id = %s GROUP BY o.id ORDER BY 1"
-    ) == [(False, 0, 2), (True, 1, 2)]
+    assert sorted(
+        rows(
+            "SELECT o.renews_lease_id IS NOT NULL, count(g.signed_at), count(*)"
+            " FROM trust_lease_offers AS o"
+            " JOIN trust_lease_offer_signers AS s ON s.offer_id = o.id"
+            " LEFT JOIN trust_signatures AS g"
+            " ON g.offer_id = s.offer_id AND g.position = s.position"
+            " WHERE o.pmc_id = %s GROUP BY o.id"
+        )
+    ) == [(False, 0, 2), (True, 0, 2), (True, 1, 2)]
+    # Draft leases: the applicant's sent with its deposit and parking, a renewal half signed and
+    # Cedar House's renewal a draft.
+    with demo.Builder(app_conn, pmc).as_staff(built.manager):
+        drafts, _ = offers.offers_of(app_conn, pmc, show="open")
+    assert sorted((o.property, o.status, o.security_deposit) for o in drafts) == [
+        ("Cedar House", "draft", None),
+        ("Harbor Tower", "sent", f"{demo.harbor_rent(demo.APPLICANTS[2][0]):.2f}"),
+        ("Oak Terrace", "partially signed", None),
+    ]
     # Eight bills: two due this week, one overdue, one waiting for its owner, three paid and
     # this month's landscaping, entered by the nightly run.
     with demo.Builder(app_conn, pmc).as_staff(built.manager):

@@ -1,10 +1,13 @@
 """Leasing basics, part two: lease offers, e-signing them, and completing them into leases.
 
 Staff offer a lease to an approved application, or a renewal of a lease, with the PMC's own
-lease document (a PDF uploaded as base64; the PMS writes no lease text). The offer goes to the
-server's e-sign partner (pms.leasing.esign) for its signers, and staff send each signer their
-link. Signatures are recorded as the partner reports them. When everyone has signed, staff
-complete the offer: trust_complete_lease_offer opens the lease.
+lease document (a PDF uploaded as base64; the PMS writes no lease text), the security deposit it
+asks and the monthly fees and credits it will owe besides rent. Leasing, Draft leases (ADR 0006)
+keeps an offer as a draft until staff send it, or sends it at once: it goes to the server's
+e-sign partner (pms.leasing.esign) for its signers, and staff send each signer their link.
+Signatures are recorded as the partner reports them. When everyone has signed, staff activate
+it: trust_complete_lease_offer opens the lease, with the offer's monthly charges as its recurring
+charges. Staff void an offer that is not a lease yet; it takes nothing more (migration 0071).
 
 Tenants see the renewal offers on their leases and get their own signing link, matched by the
 email of their login.
@@ -24,12 +27,21 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from pms import accounts, exports
+from pms.api import scope
 from pms.api.deps import Conn, Staff, Tenant, refusal
+from pms.api.rentals import Page, Paged, PerPage
 from pms.leasing import esign
 
 router = APIRouter()
 MAX_DOCUMENT = 5_000_000  # bytes, as the database checks
 Rent = Annotated[Decimal, Field(gt=0, le=Decimal("1000000"), decimal_places=2)]
+# Where an offer stands: kept as a draft, sent and signed by none, some or all of its signers,
+# made the lease, or voided.
+OfferStatus = Literal["draft", "sent", "partially signed", "signed", "leased", "void"]
+# Which offers a list shows: those still to become a lease (draft, sent or signed), those that
+# became leases, the void ones, or all.
+OffersShown = Literal["open", "leased", "void", "all"]
+VOIDED = "this lease offer was voided; it takes nothing more"
 
 
 class SignerIn(BaseModel):
@@ -37,15 +49,32 @@ class SignerIn(BaseModel):
     email: str = Field(min_length=3, max_length=254)
 
 
+class ChargeIn(BaseModel):
+    """A fee the lease will owe every month besides rent (pet rent, parking), or a credit."""
+
+    kind: Literal["fee", "credit"]
+    memo: str = Field(min_length=1, max_length=200)
+    amount: Rent
+
+
 class OfferIn(BaseModel):
     starts_on: date
     ends_on: date | None = None
     monthly_rent: Rent
+    # The security deposit the lease asks for, if any; held only once it is received.
+    security_deposit: Rent | None = None
+    recurring_charges: list[ChargeIn] = Field(default_factory=list, max_length=10)
     document_title: str = Field(min_length=1, max_length=200)
     # The PDF, base64: 5 MB comes to about 6.7 million characters.
     document_base64: str = Field(min_length=8, max_length=6_700_000)
     # Who signs; for a new lease, the application's applicants when left out.
     signers: list[SignerIn] | None = Field(default=None, min_length=1, max_length=6)
+    # Send it for signing now, or keep it as a draft to send later.
+    send: bool = True
+
+
+class Void(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)
 
 
 class SignerOut(BaseModel):
@@ -55,21 +84,40 @@ class SignerOut(BaseModel):
     signed_at: datetime | None
 
 
+class ChargeOut(BaseModel):
+    kind: Literal["fee", "credit"]
+    memo: str
+    amount: str
+
+
+class VoidOut(BaseModel):
+    reason: str | None
+    recorded_at: datetime
+    # Who voided it, by name; None when the server's command line did.
+    recorded_by: str | None
+
+
 class OfferOut(BaseModel):
     id: UUID
     kind: Literal["new lease", "renewal"]
     application_id: UUID | None
     renews_lease_id: UUID | None
+    property_id: UUID
     property: str
+    unit_id: UUID
     unit: str
     starts_on: date
     ends_on: date | None
     monthly_rent: str
+    security_deposit: str | None
+    recurring_charges: list[ChargeOut]
     document_title: str
     offered_at: datetime
     sent: bool
     signers: list[SignerOut]
     lease_id: UUID | None
+    status: OfferStatus
+    void: VoidOut | None
 
 
 class SigningLink(BaseModel):
@@ -134,18 +182,45 @@ def signers_of(people: list[SignerIn]) -> list[tuple[str, str]]:
     return found
 
 
-OFFERS = """
-SELECT o.id, o.application_id, o.renews_lease_id, p.display_name, u.display_name,
-       o.starts_on, o.ends_on, o.monthly_rent, o.document_title, o.offered_at,
-       r.offer_id IS NOT NULL, c.lease_id
+OFFERS = f"""
+SELECT o.id, o.application_id, o.renews_lease_id, p.id, p.display_name, u.id, u.display_name,
+       o.starts_on, o.ends_on, o.monthly_rent, o.security_deposit, o.document_title, o.offered_at,
+       r.offer_id IS NOT NULL, c.lease_id, st.status,
+       v.offer_id IS NOT NULL, v.reason, v.recorded_at, vs.display_name, count(*) OVER ()
 FROM trust_lease_offers AS o
 JOIN trust_units AS u ON u.id = o.unit_id
 JOIN trust_properties AS p ON p.id = u.property_id
 LEFT JOIN trust_signature_requests AS r ON r.offer_id = o.id
 LEFT JOIN trust_lease_offer_completions AS c ON c.offer_id = o.id
+LEFT JOIN trust_lease_offer_voids AS v ON v.offer_id = o.id
+LEFT JOIN trust_staff AS vs ON vs.id = v.recorded_by
+CROSS JOIN LATERAL (
+    SELECT count(*) AS signers, count(g.position) AS signed
+    FROM trust_lease_offer_signers AS s
+    LEFT JOIN trust_signatures AS g ON g.offer_id = s.offer_id AND g.position = s.position
+    WHERE s.offer_id = o.id
+) AS n
+CROSS JOIN LATERAL (
+    SELECT CASE
+        WHEN c.offer_id IS NOT NULL THEN 'leased'
+        WHEN v.offer_id IS NOT NULL THEN 'void'
+        WHEN r.offer_id IS NULL THEN 'draft'
+        WHEN n.signed = 0 THEN 'sent'
+        WHEN n.signed < n.signers THEN 'partially signed'
+        ELSE 'signed'
+    END AS status
+) AS st
 WHERE o.pmc_id = %(pmc)s AND (%(offer)s::uuid IS NULL OR o.id = %(offer)s::uuid)
   AND (%(leases)s::uuid[] IS NULL OR o.renews_lease_id = ANY(%(leases)s::uuid[]))
+  AND (%(application)s::uuid IS NULL OR o.application_id = %(application)s::uuid)
+  AND {scope.within("p.id")}
+  AND CASE %(show)s
+      WHEN 'open' THEN st.status IN ('draft', 'sent', 'partially signed', 'signed')
+      WHEN 'all' THEN true
+      ELSE st.status = %(show)s
+  END
 ORDER BY o.offered_at DESC, o.id
+LIMIT %(limit)s OFFSET %(offset)s
 """
 
 
@@ -154,8 +229,29 @@ def offers_of(
     pmc_id: UUID,
     offer: UUID | None = None,
     leases: list[UUID] | None = None,
-) -> list[OfferOut]:
-    rows = conn.execute(OFFERS, {"pmc": pmc_id, "offer": offer, "leases": leases}).fetchall()
+    *,
+    application: UUID | None = None,
+    show: OffersShown = "all",
+    group: UUID | None = None,
+    property_id: UUID | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+) -> tuple[list[OfferOut], int]:
+    """The PMC's offers shown (or one, or those renewing some leases or of an application),
+    newest first, a page of them when given a limit; and how many there are in all."""
+    rows = conn.execute(
+        OFFERS,
+        {
+            "pmc": pmc_id,
+            "offer": offer,
+            "leases": leases,
+            "application": application,
+            "show": show,
+            "limit": limit,
+            "offset": offset,
+            **scope.params(group, property_id),
+        },
+    ).fetchall()
     ids = [row[0] for row in rows]
     signers: dict[UUID, list[SignerOut]] = {i: [] for i in ids}
     for offer_id, position, name, email, signed_at in conn.execute(
@@ -168,29 +264,67 @@ def offers_of(
         signers[offer_id].append(
             SignerOut(position=position, name=name, email=email, signed_at=signed_at)
         )
-    return [
+    charges: dict[UUID, list[ChargeOut]] = {i: [] for i in ids}
+    for offer_id, kind, memo, amount in conn.execute(
+        "SELECT offer_id, kind, memo, amount FROM trust_lease_offer_charges"
+        " WHERE offer_id = ANY(%s) ORDER BY offer_id, position",
+        (ids,),
+    ).fetchall():
+        charges[offer_id].append(ChargeOut(kind=kind, memo=memo, amount=exports.text(amount)))
+    found = [
         OfferOut(
             id=i,
             kind="new lease" if application else "renewal",
             application_id=application,
             renews_lease_id=renews,
+            property_id=prop_id,
             property=prop,
+            unit_id=unit_id,
             unit=unit,
             starts_on=starts,
             ends_on=ends,
             monthly_rent=exports.text(rent),
+            security_deposit=None if deposit is None else exports.text(deposit),
+            recurring_charges=charges[i],
             document_title=title,
             offered_at=at,
             sent=sent,
             signers=signers[i],
             lease_id=lease,
+            status=status,
+            void=VoidOut(reason=why, recorded_at=voided_at, recorded_by=voided_by)
+            if voided
+            else None,
         )
-        for i, application, renews, prop, unit, starts, ends, rent, title, at, sent, lease in rows
+        for (
+            i,
+            application,
+            renews,
+            prop_id,
+            prop,
+            unit_id,
+            unit,
+            starts,
+            ends,
+            rent,
+            deposit,
+            title,
+            at,
+            sent,
+            lease,
+            status,
+            voided,
+            why,
+            voided_at,
+            voided_by,
+            _,
+        ) in rows
     ]
+    return found, rows[0][-1] if rows else 0
 
 
 def offer_of(conn: psycopg.Connection[Any], pmc_id: UUID, offer: UUID) -> OfferOut:
-    found = offers_of(conn, pmc_id, offer)
+    found, _ = offers_of(conn, pmc_id, offer)
     if not found:
         raise HTTPException(404, "no such lease offer")
     return found[0]
@@ -221,7 +355,7 @@ def record_signatures(
     conn: psycopg.Connection[Any], partner: esign.Partner, offer: OfferOut
 ) -> None:
     """Records the signatures the partner reports that aren't recorded yet."""
-    if not offer.sent or offer.lease_id is not None:
+    if offer.status not in ("sent", "partially signed"):
         return
     signed = partner.signed(reference_of(conn, offer.id))
     with conn.cursor() as cur:
@@ -231,6 +365,38 @@ def record_signatures(
             " ON CONFLICT (offer_id, position) DO NOTHING",
             [(position, at, offer.id) for position, at in signed.items()],
         )
+
+
+def send_offer(
+    conn: psycopg.Connection[Any], session: accounts.Session, partner: esign.Partner, offer: UUID
+) -> Offered:
+    """Sends an offer to the partner for its signers and records the request."""
+    row = conn.execute(
+        "SELECT document_title, document FROM trust_lease_offers WHERE id = %s", (offer,)
+    ).fetchone()
+    assert row is not None
+    title, document = row[0], bytes(row[1])
+    people = conn.execute(
+        "SELECT position, display_name, email FROM trust_lease_offer_signers"
+        " WHERE offer_id = %s ORDER BY position",
+        (offer,),
+    ).fetchall()
+    # The partner keeps an envelope even if this transaction then fails; a real partner voids
+    # what it never hears about again.
+    reference = partner.send(
+        title, document, tuple(esign.Signer(n, name, email) for n, name, email in people)
+    )
+    try:
+        conn.execute(
+            "INSERT INTO trust_signature_requests (pmc_id, offer_id, partner, partner_reference,"
+            " sent_by) VALUES (%s, %s, %s, %s, %s)",
+            (session.pmc_id, offer, partner.name, reference, session.person_id),
+        )
+    except psycopg.errors.CheckViolation as refused:
+        # Voided since it was read.
+        raise HTTPException(409, refusal(refused)) from None
+    found = offer_of(conn, session.pmc_id, offer)
+    return Offered(offer=found, links=links_of(partner, reference, found))
 
 
 def make_offer(
@@ -244,18 +410,21 @@ def make_offer(
     unit: UUID,
     default_signers: list[SignerIn],
 ) -> Offered:
-    partner = partner_of(request)
+    partner = partner_of(request) if new.send else None
     if new.ends_on is not None and new.ends_on < new.starts_on:
         raise HTTPException(422, "a lease ends on or after the day it starts")
     document = document_of(new)
     people = signers_of(new.signers or default_signers)
     if not people:
         raise HTTPException(422, "name who signs")
+    charges = [(c.kind, c.memo.strip(), c.amount) for c in new.recurring_charges]
+    if not all(memo for _, memo, _ in charges):
+        raise HTTPException(422, "every monthly charge says what it is for")
     try:
         row = conn.execute(
             "INSERT INTO trust_lease_offers (pmc_id, application_id, renews_lease_id, unit_id,"
-            " starts_on, ends_on, monthly_rent, document_title, document, offered_by)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            " starts_on, ends_on, monthly_rent, security_deposit, document_title, document,"
+            " offered_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (
                 session.pmc_id,
                 application,
@@ -264,6 +433,7 @@ def make_offer(
                 new.starts_on,
                 new.ends_on,
                 new.monthly_rent,
+                new.security_deposit,
                 new.document_title.strip(),
                 document,
                 session.person_id,
@@ -282,20 +452,17 @@ def make_offer(
                 for n, (name, email) in enumerate(people, 1)
             ],
         )
-    # The partner keeps an envelope even if this transaction then fails; a real partner voids
-    # what it never hears about again.
-    reference = partner.send(
-        new.document_title.strip(),
-        document,
-        tuple(esign.Signer(n, name, email) for n, (name, email) in enumerate(people, 1)),
-    )
-    conn.execute(
-        "INSERT INTO trust_signature_requests (pmc_id, offer_id, partner, partner_reference,"
-        " sent_by) VALUES (%s, %s, %s, %s, %s)",
-        (session.pmc_id, offer_id, partner.name, reference, session.person_id),
-    )
-    offer = offer_of(conn, session.pmc_id, offer_id)
-    return Offered(offer=offer, links=links_of(partner, reference, offer))
+        cur.executemany(
+            "INSERT INTO trust_lease_offer_charges (pmc_id, offer_id, position, kind, memo,"
+            " amount) VALUES (%s, %s, %s, %s, %s, %s)",
+            [
+                (session.pmc_id, offer_id, n, kind, memo, amount)
+                for n, (kind, memo, amount) in enumerate(charges, 1)
+            ],
+        )
+    if partner is None:
+        return Offered(offer=offer_of(conn, session.pmc_id, offer_id), links=[])
+    return send_offer(conn, session, partner, offer_id)
 
 
 # --- staff --------------------------------------------------------------------------------
@@ -392,18 +559,73 @@ def offer_renewal(
 def offers(
     session: Staff,
     conn: Conn,
-    show: Annotated[Literal["open", "all"], Query()] = "open",
-) -> list[OfferOut]:
-    """The PMC's lease offers: by default those not yet a lease."""
-    found = offers_of(conn, session.pmc_id)
-    return found if show == "all" else [o for o in found if o.lease_id is None]
+    show: Annotated[OffersShown, Query()] = "open",
+    application: Annotated[UUID | None, Query()] = None,
+    group: scope.Group = None,
+    property_id: scope.Property = None,
+    page: Page = 1,
+    per_page: PerPage = 50,
+) -> Paged[OfferOut]:
+    """The PMC's lease offers, newest first, a page at a time: by default those still to become
+    a lease (drafts, sent, signed); or the ones that became leases, the void ones, or all. Maybe
+    of one application, or of a property group or property."""
+    found, total = offers_of(
+        conn,
+        session.pmc_id,
+        application=application,
+        show=show,
+        group=group,
+        property_id=property_id,
+        limit=per_page,
+        offset=(page - 1) * per_page,
+    )
+    return Paged(items=found, total=total, page=page, per_page=per_page)
+
+
+@router.get("/api/leasing/offers/{offer_id}")
+def offer(session: Staff, conn: Conn, offer_id: UUID) -> OfferOut:
+    """One of the PMC's lease offers, for its own page."""
+    return offer_of(conn, session.pmc_id, offer_id)
+
+
+@router.post("/api/leasing/offers/{offer_id}/send")
+def send(request: Request, session: Staff, conn: Conn, offer_id: UUID) -> Offered:
+    """Sends a draft offer to its signers through the partner: the links to give them."""
+    found = offer_of(conn, session.pmc_id, offer_id)
+    if found.status == "void":
+        raise HTTPException(409, VOIDED)
+    if found.status != "draft":
+        raise HTTPException(409, "this offer was sent already; its links are under Resend")
+    return send_offer(conn, session, partner_of(request), offer_id)
+
+
+@router.post("/api/leasing/offers/{offer_id}/void")
+def void(session: Staff, conn: Conn, offer_id: UUID, why: Void) -> OfferOut:
+    """Voids an offer that is not a lease yet, and why: it is never sent, signed or made the
+    lease after. Signers who have its links can no longer sign it here."""
+    found = offer_of(conn, session.pmc_id, offer_id)
+    if found.status == "void":
+        raise HTTPException(409, "this offer is voided already")
+    if found.status == "leased":
+        raise HTTPException(409, "this offer is a lease already")
+    try:
+        conn.execute(
+            "INSERT INTO trust_lease_offer_voids (pmc_id, offer_id, reason) VALUES (%s, %s, %s)",
+            (session.pmc_id, offer_id, (why.reason or "").strip() or None),
+        )
+    except psycopg.errors.CheckViolation as refused:
+        # Made the lease since it was read.
+        raise HTTPException(409, refusal(refused)) from None
+    return offer_of(conn, session.pmc_id, offer_id)
 
 
 @router.get("/api/leasing/offers/{offer_id}/links")
 def links(request: Request, session: Staff, conn: Conn, offer_id: UUID) -> list[SigningLink]:
     """Each signer's link again, to send once more."""
-    offer = offer_of(conn, session.pmc_id, offer_id)
-    return links_of(partner_of(request), reference_of(conn, offer_id), offer)
+    found = offer_of(conn, session.pmc_id, offer_id)
+    if found.status == "void":
+        raise HTTPException(409, VOIDED)
+    return links_of(partner_of(request), reference_of(conn, offer_id), found)
 
 
 @router.post("/api/leasing/offers/{offer_id}/signatures")
@@ -416,9 +638,14 @@ def check_signatures(request: Request, session: Staff, conn: Conn, offer_id: UUI
 
 @router.post("/api/leasing/offers/{offer_id}/complete")
 def complete(request: Request, session: Staff, conn: Conn, offer_id: UUID) -> OfferOut:
-    """Opens the offer's lease once everyone has signed (trust_complete_lease_offer)."""
-    offer = offer_of(conn, session.pmc_id, offer_id)
-    record_signatures(conn, partner_of(request), offer)
+    """Opens the offer's lease once everyone has signed (trust_complete_lease_offer), with the
+    offer's monthly charges as its recurring charges."""
+    found = offer_of(conn, session.pmc_id, offer_id)
+    if found.status == "void":
+        raise HTTPException(409, VOIDED)
+    if found.status == "draft":
+        raise HTTPException(409, "this offer is a draft: send it to its signers first")
+    record_signatures(conn, partner_of(request), found)
     try:
         conn.execute(
             "SELECT trust_complete_lease_offer(%s, %s, %s)",
@@ -461,8 +688,13 @@ def tenant_leases(conn: psycopg.Connection[Any], session: accounts.Session) -> l
 def tenant_offer(
     conn: psycopg.Connection[Any], session: accounts.Session, offer_id: UUID
 ) -> OfferOut:
-    """A renewal offer on one of the tenant's leases, or 404 for any other."""
-    found = offers_of(conn, session.pmc_id, offer_id, tenant_leases(conn, session))
+    """A renewal offer sent to sign on one of the tenant's leases, or 404 for any other (a draft
+    or a void one is not the tenant's to see)."""
+    found = [
+        o
+        for o in offers_of(conn, session.pmc_id, offer_id, tenant_leases(conn, session))[0]
+        if o.status not in ("draft", "void")
+    ]
     if not found:
         raise HTTPException(404, "no such renewal offer of yours")
     return found[0]
@@ -487,9 +719,9 @@ def as_signed_now(conn: psycopg.Connection[Any], request: Request, offer: OfferO
 
 @router.get("/api/tenant/renewals")
 def tenant_renewals(request: Request, session: Tenant, conn: Conn) -> list[OfferOut]:
-    """Renewal offers on the tenant's leases that aren't a lease yet."""
-    found = offers_of(conn, session.pmc_id, None, tenant_leases(conn, session))
-    return [as_signed_now(conn, request, o) for o in found if o.lease_id is None]
+    """Renewal offers sent to sign on the tenant's leases that aren't a lease yet, nor void."""
+    found, _ = offers_of(conn, session.pmc_id, None, tenant_leases(conn, session), show="open")
+    return [as_signed_now(conn, request, o) for o in found if o.status != "draft"]
 
 
 @router.post("/api/tenant/renewals/{offer_id}/signing-link")

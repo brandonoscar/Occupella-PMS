@@ -813,9 +813,10 @@ def leasing_pipeline(
 ) -> None:
     """An application link on each vacant unit at Harbor Tower (two of them on the public
     vacancy page) and applications through them: one received, one screened, one approved and
-    sent its lease to sign, one declined with its adverse action notice and one its applicant
-    withdrew. Oak Terrace's lease ending in 45 days has its renewal out, signed by one of its two
-    tenants. The applicants apply themselves: no staff member to name."""
+    sent its lease to sign (asking a deposit, and parking every month), one declined with its
+    adverse action notice and one its applicant withdrew. Oak Terrace's lease ending in 45 days
+    has its renewal out, signed by one of its two tenants, and Cedar House's renewal is a draft.
+    The applicants apply themselves: no staff member to name."""
     conn = b.conn
     move_in = first_of_month(today, -1)
     links: dict[str, leasing.OpenedLink] = {}
@@ -902,6 +903,10 @@ def leasing_pipeline(
                         starts_on=move_in,
                         ends_on=first_of_month(today, -13) - DAY,
                         monthly_rent=harbor_rent(unit),
+                        security_deposit=harbor_rent(unit),
+                        recurring_charges=[
+                            offers.ChargeIn(kind="fee", memo="Parking", amount=D("75.00"))
+                        ],
                         document_title=f"Harbor Tower {unit} lease",
                         document_base64=base64.b64encode(PDF).decode(),
                     ),
@@ -930,6 +935,26 @@ def leasing_pipeline(
     request.app.state.esign.sign(first.url.split("#", 1)[1], first.name)
     with b.as_staff(demo.manager) as s:
         offers.check_signatures(request, s, conn, offered.offer.id)
+    # Cedar House's renewal for next year, kept as a draft until its terms are agreed.
+    with b.as_staff(demo.manager) as s:
+        offers.offer_renewal(
+            request,
+            s,
+            conn,
+            demo.leases[("Cedar House", "House")],
+            offers.OfferIn(
+                starts_on=first_of_month(today, -3),
+                ends_on=first_of_month(today, -15) - DAY,
+                monthly_rent=D("2400.00"),
+                document_title="Cedar House renewal",
+                document_base64=base64.b64encode(PDF).decode(),
+                signers=[
+                    offers.SignerIn(name="Taylor Demo", email="taylor.demo@example.com"),
+                    offers.SignerIn(name="Quinn Demo", email="quinn.demo@example.com"),
+                ],
+                send=False,
+            ),
+        )
 
 
 def bills_of_every_status(b: Builder, demo: Demo, today: date, public_url: str) -> None:

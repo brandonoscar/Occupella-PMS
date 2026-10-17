@@ -27,7 +27,9 @@ const RENEWAL: Offer = {
   kind: "renewal",
   application_id: null,
   renews_lease_id: "l1",
+  property_id: "p1",
   property: "Property 1",
+  unit_id: "u1",
   unit: "Unit 1",
   starts_on: "2027-07-01",
   ends_on: "2028-06-30",
@@ -40,6 +42,10 @@ const RENEWAL: Offer = {
     { position: 2, name: "Tenant 2", email: "tenant2@example.com", signed_at: "2026-10-11T19:00:00Z" },
   ],
   lease_id: null,
+  security_deposit: null,
+  recurring_charges: [],
+  status: "partially signed",
+  void: null,
 };
 
 function server(renewals: Offer[], link: Response = new Response(JSON.stringify({ url: "http://x/esign#t" }))) {

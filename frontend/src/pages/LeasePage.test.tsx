@@ -212,7 +212,7 @@ describe("LeasePage", () => {
     expect(screen.getByRole("table", { name: "Payments received" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Actions for this lease" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Renew lease" }));
-    expect(window.location.pathname).toBe("/draft-leases");
+    expect(window.location.pathname + window.location.search).toBe("/draft-leases?lease=l1");
     fireEvent.click(screen.getByRole("button", { name: "Actions for this lease" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Move out" }));
     expect(window.location.pathname).toBe("/move-out");
