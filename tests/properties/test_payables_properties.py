@@ -11,6 +11,9 @@ Invariants checked after every step (ci/registry.toml maps them to this test):
     more is refused with nothing written;
   - its unpaid bills are the database's own (trust_unpaid_bills), which a draw keeps back;
   - a bill is set aside only from money the owner holds, and paid once it was;
+  - Pay bills sets aside (if it wasn't) and pays every bill it names, or nothing at all when one
+    of them can't be (the refusal naming that bill); sent again it pays nothing twice, and each
+    payment keeps how it was sent;
   - sending a draw again pays nothing twice;
   - Pay owners pays every account it names what it asks, or nothing at all when one of them
     can't pay (the refusal naming that owner and property); sent again it pays nothing twice,
@@ -155,8 +158,48 @@ class PayablesMachine(RuleBasedStateMachine):
     @rule(data=st.data())
     def pay(self, data):
         bill = data.draw(st.sampled_from([b for b in self.bills if b.aside and not b.paid]))
-        self.call(payables.pay, bill.id, payables.Day(on=TODAY))
+        self.call(payables.pay, bill.id, payables.Paying(on=TODAY))
         bill.paid = True
+
+    @precondition(lambda self: any(not b.paid and not b.dated_ahead for b in self.bills))
+    @rule(data=st.data(), method=st.sampled_from(["check", "EFT"]))
+    def pay_bills(self, data, method):
+        """Pay bills: each bill chosen set aside if it wasn't and paid, all of them or none."""
+        chosen = data.draw(
+            st.lists(
+                st.sampled_from([b for b in self.bills if not b.paid and not b.dated_ahead]),
+                min_size=1,
+                max_size=3,
+                unique_by=lambda b: b.id,
+            )
+        )
+        run = payables.PayBills(on=TODAY, method=method, bill_ids=[b.id for b in chosen])
+        held = self.held
+        for bill in chosen:
+            if bill.aside:
+                continue
+            if bill.amount > held:
+                event("pay bills: refused, not enough money for one")
+                short = bill.amount - held
+                said = (
+                    f"Vendor 1 INV-{self.bills.index(bill)}: not enough money:"
+                    f" the owner's account would be ${short:,.2f} short"
+                )
+                self.refused(said, payables.pay_bills, run)
+                return
+            held -= bill.amount
+        event(f"pay bills: {len(chosen)} paid")
+        paid = self.call(payables.pay_bills, run)
+        assert self.call(payables.pay_bills, run) == paid  # sent again: nothing twice
+        assert [(p.bill_id, Decimal(p.amount)) for p in paid] == [(b.id, b.amount) for b in chosen]
+        methods = self.conn.execute(
+            "SELECT method FROM trust_payout_methods WHERE transfer_id = ANY(%s)",
+            ([p.transfer_id for p in paid],),
+        ).fetchall()
+        assert methods == [(method,)] * len(chosen)
+        for bill in chosen:
+            bill.aside = bill.paid = True
+        self.held = held
 
     # --- draws ------------------------------------------------------------------------------
 
@@ -327,7 +370,10 @@ class PayablesMachine(RuleBasedStateMachine):
 
     @invariant()
     def bill_statuses_follow_their_steps(self):
-        listed = {b.id: b.status for b in self.call(payables.bills, "all")}
+        with self.conn.transaction():
+            listed = {
+                b.id: b.status for b in payables.find_bills(self.conn, self.session.pmc_id)[0]
+            }
         for bill in self.bills:
             assert listed[bill.id] == (
                 "paid" if bill.paid else "set aside" if bill.aside else "to set aside"

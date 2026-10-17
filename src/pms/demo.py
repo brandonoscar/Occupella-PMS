@@ -339,7 +339,7 @@ def books(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
             ),
         ).id
         payables.set_aside(s, conn, bill, payables.Day(on=month_ago + 11 * DAY))
-        payables.pay(s, conn, bill, payables.Day(on=month_ago + 14 * DAY))
+        payables.pay(s, conn, bill, payables.Paying(on=month_ago + 14 * DAY))
     close_month(b, demo, manager, month_ago, last_month)
     reconcile_month(b, demo, month_ago, last_month, approve=True)
 
@@ -380,7 +380,7 @@ def books(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
         )
         payables.set_aside(s, conn, roof, payables.Day(on=last_month + 10 * DAY))
         demo.outstanding = payables.pay(
-            s, conn, roof, payables.Day(on=this_month - DAY)
+            s, conn, roof, payables.Paying(on=this_month - DAY)
         ).transfer_id
     close_month(b, demo, manager, last_month, this_month)
     reconcile_month(b, demo, last_month, this_month, approve=False, skip={demo.outstanding})

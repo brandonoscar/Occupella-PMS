@@ -100,8 +100,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   development and CI; "smtp" with `PMS_SMTP_*` and `PMS_EMAIL_FROM` from the environment, over
   STARTTLS; none by default) and records each attempt (`trust_email_deliveries`, delivered at
   most once, given up after five failures). `python -m pms.email deliver` delivers what waits.
-  Staff see each bill's email and the outbox at `/bills`. Emails are not audited, and the AI
-  never reads them.
+  Staff see each bill's email, and whether it went, on the bill's page (`/bills/<id>`). Emails
+  are not audited, and the AI never reads them.
 - The portal (`frontend/`): React 19, Vite and Tailwind v4, following Occupella's `DESIGN.md`
   and looking like Occupella's app (founder, 2026-10-14): its light theme, a full-height
   light-blue left sidebar with the wordmark, the sections (lucide icons) and Sign out, a white
@@ -151,8 +151,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   their renewal status at `/renewals` (`src/pms/api/renewals.py`, the expirations report's rows). Accounting:
   the trust bank accounts at `/banking` (Add bank account), each at `/bank-accounts/<id>` in tabs:
   its register and balance breakdown (`src/pms/api/banking.py`), its month-end
-  (`src/pms/api/reconcile.py`) and its statements, bills at `/bills` (Unpaid, Paid, Declined
-  and All tabs; Record bill opens a side panel), the general ledger on
+  (`src/pms/api/reconcile.py`) and its statements, bills at `/bills` (Unpaid, Paid,
+  Recurring and Declined tabs, a page at a time by group, vendor and due day; Record bill, maybe
+  split across expense accounts and with its invoice, opens a side panel), a bill at
+  `/bills/<id>` (its lines, files, email and history; set aside and pay), Pay bills at
+  `/pay-bills` (several at once, all or none, each property's cash shown), the general ledger on
   screen at `/general-ledger` (`src/pms/api/general_ledger.py`: trust_report_general_ledger's
   rows by account, a page of accounts at a time; cash basis) with its Journal entry button to
   `/journal` (`src/pms/api/journal.py`), Pay owners at `/owner-draws` (several owners at once, all
@@ -505,13 +508,16 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - Expense accounts and the income statement (migration 0052): a PMC's expense accounts
   (`trust_expense_accounts`, a name once per PMC) each sit on an expense line of Schedule E
   (5 to 19; `SCHEDULE_E` in `src/pms/api/setup.py` holds the labels the report uses). A bill's
-  latest row in `trust_bill_expense_accounts` is its account (a correction is a new row), and a
-  recurring bill's latest goes on each month `trust_enter_recurring_bills` enters. It describes
+  latest row in `trust_bill_expense_accounts` is its account (a correction is a new row); lines
+  naming that row (`trust_bill_splits`, migration 0069: each account once, coming to the bill at
+  commit) split it across several instead. A recurring bill's latest goes on each month
+  `trust_enter_recurring_bills` enters. It describes
   money already moved and moves none. `trust_report_income_statement` sums an owner's property
   accounts over days (UTC), cash basis: collected from tenants (as the year-end counts it) by
   what each charge is (rent, recurring charges, late fees, NSF fees, other; a lease end's
   adjustment is what it adjusts), management fees (line 11), leasing fees (line 8), bills set
-  aside by expense account (those in none on no line), net income, then by Schedule E line. It
+  aside by expense account (a split bill by its lines; those in none on no line), net income,
+  then by Schedule E line. It
   files nothing. Owners read and download a year's in the portal (`/api/owner/income-statement`);
   staff download any owner's from the owners page.
 - Journal entries (migration 0053): a correction between a PMC's ledger accounts that no other

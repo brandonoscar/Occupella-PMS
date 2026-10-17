@@ -1117,6 +1117,14 @@ tests = [
 ]
 
 [[invariant]]
+id = "pay-bills-all-or-none"
+statement = "Pay bills sets aside from its owner's money (if it wasn't) and pays from its trust bank account every bill it names, or nothing at all when one of them can't be paid, the refusal naming that bill; sent again it pays nothing twice, and each payment keeps how it was first recorded as sent (check or EFT)."
+tests = [
+  "tests/properties/test_payables_properties.py::test_payables_invariants_hold_under_random_bills_contributions_and_draws",
+  "tests/api/test_bills_api.py::test_pay_bills_pays_none_when_one_cant_be_paid",
+]
+
+[[invariant]]
 id = "pay-owners-all-or-none"
 statement = "Pay owners pays every owner's property account it names what it asks (everything available when no amount is given), never more than the balance less the reserve and unpaid bills, or nothing at all when one of them can't be paid, the refusal naming that owner and property; sent again it pays nothing twice, and each payout keeps how it was first recorded as sent (check or EFT), once per owner draw or bill paid of the PMC. The management fees page says what Collect fees would take and moves nothing."
 tests = [

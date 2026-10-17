@@ -88,6 +88,8 @@ TABLES = {
     "trust_expense_accounts": {"SELECT", "INSERT"},
     "trust_bill_expense_accounts": {"SELECT", "INSERT"},
     "trust_bill_expense_accounts_id_seq": set(),
+    "trust_bill_splits": {"SELECT", "INSERT"},
+    "trust_bill_splits_id_seq": set(),
     "trust_recurring_bill_expense_accounts": {"SELECT", "INSERT"},
     "trust_recurring_bill_expense_accounts_id_seq": set(),
     # Journal entries (migration 0053): written only by their three functions, so a posting is
@@ -395,6 +397,7 @@ FUNCTIONS = {
     "trust_check_draw_signer()": {"PUBLIC"},
     "trust_check_journal_signer()": {"PUBLIC"},
     "trust_check_rent_change()": {"PUBLIC"},
+    "trust_check_bill_split()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.

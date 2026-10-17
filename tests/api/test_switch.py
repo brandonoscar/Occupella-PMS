@@ -297,7 +297,7 @@ def test_unpaid_bills_come_over_and_hold_back_draws(client, conn, staff, pmc):
     # Sent again, nothing is added twice.
     assert ok(imported(client, "bills", *lines)) == {"added": 0, "kept": 3}
 
-    bills = {b["reference"]: b for b in ok(client.get("/api/payables/bills"))}
+    bills = {b["reference"]: b for b in ok(client.get("/api/payables/bills"))["items"]}
     assert {
         r: (b["bill_date"], b["due_on"], b["amount"], b["status"]) for r, b in bills.items()
     } == {

@@ -365,7 +365,7 @@ test("staff record a tenant's payment, the rest held as prepaid rent, and then i
   await expect(lease.getByTestId("prepaid")).toHaveText("$0.00");
 });
 
-test("staff enter a vendor's bill, record the owner's approval, set it aside and pay it, then draw the rest", async ({
+test("staff record a vendor's bill with its invoice, record the owner's approval, set it aside and pay it on its page, then draw the rest", async ({
   page,
 }) => {
   await page.goto(`/invite#${seed.bills_invite}`);
@@ -378,30 +378,38 @@ test("staff enter a vendor's bill, record the owner's approval, set it aside and
   await sections.getByRole("link", { name: "Bills" }).click();
 
   await page.getByRole("button", { name: "Record bill" }).click();
-  await page.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Vendor E2E" });
-  await page
+  const recording = page.getByRole("dialog", { name: "Record bill" });
+  await recording.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Vendor E2E" });
+  await recording
     .getByRole("combobox", { name: "Owner and property", exact: true })
     .selectOption({ label: "Payee E2E, E2E Property 7" });
-  await page.getByLabel("Vendor's reference").fill("E2E-INV-1");
-  await page.getByLabel("Amount", { exact: true }).fill("300.00");
-  await page.getByLabel("What for").fill("Gutter repair");
-  await page.getByRole("button", { name: "Enter bill" }).click();
-  await expect(page.getByText("Bill E2E-INV-1 entered.")).toBeVisible();
-  await page.getByRole("dialog", { name: "Record bill" }).getByRole("button", { name: "Close" }).click();
+  await recording.getByLabel("Ref #").fill("E2E-INV-1");
+  await recording.getByLabel("Amount", { exact: true }).fill("300.00");
+  await recording.getByLabel("Memo").fill("Gutter repair");
+  await recording.getByLabel("Invoice (PDF, JPEG or PNG)").setInputFiles({
+    name: "invoice-e2e.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 synthetic invoice\n"),
+  });
+  await recording.getByRole("button", { name: "Record bill" }).click();
+  await expect(page.getByText("Bill E2E-INV-1 recorded.")).toBeVisible();
 
-  // No agreement: every bill needs the owner's approval first.
-  const bill = page.getByRole("listitem", { name: "Vendor E2E E2E-INV-1" });
-  await expect(bill.getByTestId("status")).toHaveText("needs approval");
-  await bill.getByLabel("Approved by").fill("Payee E2E");
-  await bill.getByRole("button", { name: "Record approval" }).click();
-  await expect(bill.getByTestId("status")).toHaveText("to set aside");
-  await bill.getByRole("button", { name: "Set aside" }).click();
-  await expect(bill.getByTestId("status")).toHaveText("set aside");
-  await bill.getByRole("button", { name: "Pay" }).click();
-  await bill.getByRole("button", { name: "Confirm" }).click();
-  await expect(bill).toHaveCount(0);
-  await page.getByRole("tab", { name: "All", exact: true }).click();
-  await expect(bill.getByTestId("status")).toHaveText("paid");
+  // No agreement: every bill needs the owner's approval first. Its own page takes each step.
+  const bill = page.getByRole("row", { name: "Vendor E2E E2E-INV-1", exact: true });
+  await expect(bill.getByTestId("status")).toHaveText("Awaiting owner approval");
+  await bill.getByRole("cell").first().click();
+  await expect(page.getByRole("heading", { level: 1, name: "Vendor E2E E2E-INV-1" })).toBeVisible();
+  await expect(page.getByRole("list", { name: "Files, Vendor E2E E2E-INV-1" })).toContainText("invoice-e2e");
+  await page.getByRole("button", { name: "Record approval" }).click();
+  await page.getByRole("dialog", { name: "Record approval" }).getByLabel("Approved by").fill("Payee E2E");
+  await page.getByRole("dialog", { name: "Record approval" }).getByRole("button", { name: "Record approval" }).click();
+  await expect(page.getByTestId("status")).toHaveText("Approved");
+  await page.getByRole("button", { name: "Set aside" }).click();
+  await page.getByRole("dialog", { name: "Set aside" }).getByRole("button", { name: "Set aside" }).click();
+  await expect(page.getByTestId("status")).toHaveText("Set aside");
+  await page.getByRole("button", { name: "Pay", exact: true }).click();
+  await page.getByRole("dialog", { name: "Pay" }).getByRole("button", { name: "Pay $300.00" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByTestId("status")).toHaveText("Paid");
+  await expect(page.getByRole("list", { name: "History" })).toContainText("Paid by check");
 
   // Pay owners pays the rest out: everything available, by check.
   await sections.getByRole("link", { name: "Pay owners" }).click();
@@ -462,7 +470,8 @@ test("staff keep an owner's document and the owner downloads it from the portal"
   await page.getByLabel("Title").fill("Management agreement 2026");
   await page.getByRole("button", { name: "Upload" }).click();
   await expect(page.getByText("Uploaded Management agreement 2026.")).toBeVisible();
-  const kept = page.getByRole("list", { name: "Documents" }).getByRole("listitem");
+  // The bill's invoice another test kept is on the list too.
+  const kept = page.getByRole("list", { name: "Documents" }).getByRole("listitem").filter({ hasText: "Management agreement 2026" });
   await expect(kept).toContainText("Owner document, Owner E2E");
 
   // The owner, who joined in the first test, signs in on their own and downloads it.

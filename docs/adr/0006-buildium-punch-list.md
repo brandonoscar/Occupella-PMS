@@ -112,3 +112,20 @@ coming to its book cash (the tie-out), and each owner's money in it. Statements 
 files and Import statement. A rent payment, a bounce and a deposit now carry a memo naming the
 tenants and the home, so the books side of a reconciliation reads as well as the bank's. Read
 only: the page moves no money.
+
+## Bills
+
+The sixth piece (migration 0069, `src/pms/api/payables.py`): Bills lists bills a page at a time
+in tabs, Unpaid, Paid, Recurring and Declined (kept: a declined bill is closed, not paid),
+narrowed by property group, vendor and the day they are due by, each Due, Vendor, Property,
+Memo, Ref #, Amount and its status (awaiting owner approval, approved, set aside, overdue, paid,
+declined), the row opening the bill and its next step in its ⋯ menu. Record bill opens a side
+panel: the bill, one expense account or lines splitting it across several (they come to the
+bill, checked at commit; the income statement counts each line in its account), and the vendor's
+invoice, kept with the bill as its receipt in the same request. A bill's page has its summary,
+its lines, its files, the email asking its owner to decide it and whether it went (Bills' list of
+emails to owners is gone), and its history; it sets the bill aside and pays it, by check or EFT.
+Pay bills chooses bills ready to pay, shows what each property's owner account holds against
+them, and sets aside and pays them all at once, every one or none, recorded as sent by check or
+EFT. The nightly run enters each month's recurring bills; the Enter recurring bills button is
+gone.

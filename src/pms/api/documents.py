@@ -143,6 +143,12 @@ class Created(BaseModel):
 @router.post("", status_code=201)
 def upload(session: Staff, conn: Conn, new: NewDocument) -> Created:
     """Keeps a file as a document about one of the PMC's vendors, bills, leases or owners."""
+    return Created(id=keep(conn, session.pmc_id, new))
+
+
+def keep(conn: psycopg.Connection[Any], pmc_id: UUID, new: NewDocument) -> UUID:
+    """Keeps a file as a document of the PMC, checked: its type, its size and what it is
+    about. A bill's invoice comes this way too, with the bill (src/pms/api/payables.py)."""
     try:
         content = base64.b64decode(new.content_base64, validate=True)
     except (binascii.Error, ValueError):
@@ -151,7 +157,7 @@ def upload(session: Staff, conn: Conn, new: NewDocument) -> Created:
         raise HTTPException(422, "a document is a file of at most 5 MB")
     if not content.startswith(MAGIC[new.content_type]):
         raise HTTPException(422, f"the file isn't a {EXTENSION[new.content_type].upper()}")
-    subjects = conn.execute(SUBJECTS[new.kind], {"pmc": session.pmc_id}).fetchall()
+    subjects = conn.execute(SUBJECTS[new.kind], {"pmc": pmc_id}).fetchall()
     if new.about_id not in {i for i, _ in subjects}:
         raise HTTPException(404, "nothing of this PMC for the document to be about")
     insert = sql.SQL(
@@ -161,7 +167,7 @@ def upload(session: Staff, conn: Conn, new: NewDocument) -> Created:
     row = conn.execute(
         insert,
         (
-            session.pmc_id,
+            pmc_id,
             new.kind,
             new.about_id,
             new.title,
@@ -173,9 +179,9 @@ def upload(session: Staff, conn: Conn, new: NewDocument) -> Created:
     assert row is not None
     conn.execute(
         "INSERT INTO trust_document_files (document_id, pmc_id, content) VALUES (%s, %s, %s)",
-        (row[0], session.pmc_id, content),
+        (row[0], pmc_id, content),
     )
-    return Created(id=row[0])
+    return UUID(str(row[0]))
 
 
 def file_name(title: str, content_type: str) -> str:

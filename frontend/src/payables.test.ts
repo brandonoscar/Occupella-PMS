@@ -11,7 +11,9 @@ import {
   lastMonthPeriod,
   nextStep,
   recurringLabel,
-  statusTone,
+  billBadge,
+  billsPaidSummary,
+  linesNote,
 } from "./payables";
 
 describe("payables", () => {
@@ -100,11 +102,31 @@ describe("payables", () => {
   });
 });
 
-describe("statusTone", () => {
-  it("marks a bill waiting on its owner as a caution, paid as done and declined as closed", () => {
-    expect((["needs approval", "to set aside", "set aside", "paid", "declined"] as const).map(statusTone)).toEqual([
-      "caution", "info", "info", "positive", "neutral",
+describe("billBadge", () => {
+  it("says a bill's status in Buildium's words, overdue before its next step", () => {
+    const bill = { status: "needs approval", overdue: false } as Bill;
+    const words = (["needs approval", "to set aside", "set aside", "paid", "declined"] as const).map((status) =>
+      billBadge({ ...bill, status, overdue: false }));
+    expect(words).toEqual([
+      { word: "Awaiting owner approval", tone: "caution" },
+      { word: "Approved", tone: "info" },
+      { word: "Set aside", tone: "info" },
+      { word: "Paid", tone: "positive" },
+      { word: "Declined", tone: "neutral" },
     ]);
+    expect(billBadge({ ...bill, overdue: true })).toEqual({ word: "Overdue", tone: "danger" });
+  });
+});
+
+describe("billsPaidSummary and linesNote", () => {
+  it("says how many bills Pay bills paid, their total and how", () => {
+    const paid = (amount: string) => ({ bill_id: "b", vendor: "V", reference: "R", amount, transfer_id: "t" });
+    expect(billsPaidSummary([paid("0.10"), paid("0.20")], "EFT")).toBe("2 bills of $0.30 paid, by EFT.");
+    expect(billsPaidSummary([paid("75.00")], "check")).toBe("1 bill of $75.00 paid, by check.");
+  });
+  it("says what split lines come to against the bill, an empty line as nothing", () => {
+    expect(linesNote(["200.00", "50.5"], "300.00")).toBe("Lines come to $250.50 of $300.00.");
+    expect(linesNote(["", ""], "")).toBe("Lines come to $0.00 of $0.00.");
   });
 });
 

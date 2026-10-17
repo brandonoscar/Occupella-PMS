@@ -1667,6 +1667,38 @@ $$;
 
 
 --
+-- Name: trust_check_bill_split(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_bill_split() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bill trust_bills;
+    v_total numeric;
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM trust_bill_expense_accounts AS x
+        WHERE x.id = NEW.categorized_id AND x.bill_id = NEW.bill_id AND x.pmc_id = NEW.pmc_id
+    ) THEN
+        RAISE EXCEPTION 'trust: a bill''s lines split a row of that bill''s expense account'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT * INTO v_bill FROM trust_bills AS b WHERE b.id = NEW.bill_id;
+    SELECT sum(s.amount) INTO v_total
+    FROM trust_bill_splits AS s WHERE s.categorized_id = NEW.categorized_id;
+    IF v_total <> v_bill.amount THEN
+        RAISE EXCEPTION 'trust: bill %''s lines come to %, not its amount %',
+            v_bill.reference, v_total, v_bill.amount
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: trust_check_budget(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5524,19 +5556,23 @@ BEGIN
         JOIN pgledger_transfers AS tr ON tr.id = f.transfer_id
         WHERE f.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
     ),
-    -- Each bill's expense account: its latest.
+    -- Each bill's expense account: its latest row.
     categorized AS (
-        SELECT DISTINCT ON (x.bill_id) x.bill_id, x.expense_account_id
+        SELECT DISTINCT ON (x.bill_id) x.id, x.bill_id, x.expense_account_id
         FROM trust_bill_expense_accounts AS x
         WHERE x.pmc_id = p_pmc_id
         ORDER BY x.bill_id, x.id DESC
     ),
-    -- Bills, when their money left the owner's account (set aside to pay them).
+    -- Bills, when their money left the owner's account (set aside to pay them): a split bill
+    -- (migration 0069) by its lines, each in its expense account, which come to the bill.
     spent AS (
-        SELECT tr.from_account_id AS account, cz.expense_account_id AS expense, tr.amount
+        SELECT tr.from_account_id AS account,
+               coalesce(sp.expense_account_id, cz.expense_account_id) AS expense,
+               coalesce(sp.amount, tr.amount) AS amount
         FROM trust_bill_payments AS b
         JOIN pgledger_transfers AS tr ON tr.id = b.transfer_id
         LEFT JOIN categorized AS cz ON cz.bill_id = b.bill_id
+        LEFT JOIN trust_bill_splits AS sp ON sp.categorized_id = cz.id
         WHERE b.pmc_id = p_pmc_id AND b.step = 'set_aside'
           AND tr.event_at >= v_start AND tr.event_at < v_end
     ),
@@ -8684,6 +8720,37 @@ CREATE TABLE public.trust_bill_payments (
 
 
 --
+-- Name: trust_bill_splits; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_bill_splits (
+    id bigint NOT NULL,
+    pmc_id uuid NOT NULL,
+    bill_id uuid NOT NULL,
+    categorized_id bigint NOT NULL,
+    expense_account_id uuid NOT NULL,
+    amount numeric NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_bill_splits_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2))))
+);
+
+
+--
+-- Name: trust_bill_splits_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_bill_splits ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.trust_bill_splits_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: trust_budgets; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10402,6 +10469,22 @@ ALTER TABLE ONLY public.trust_bill_payments
 
 
 --
+-- Name: trust_bill_splits trust_bill_splits_categorized_id_expense_account_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_splits
+    ADD CONSTRAINT trust_bill_splits_categorized_id_expense_account_id_key UNIQUE (categorized_id, expense_account_id);
+
+
+--
+-- Name: trust_bill_splits trust_bill_splits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_splits
+    ADD CONSTRAINT trust_bill_splits_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_bills trust_bills_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11644,6 +11727,27 @@ CREATE INDEX trust_bill_payments_transfer_id ON public.trust_bill_payments USING
 
 
 --
+-- Name: trust_bill_splits_bill; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bill_splits_bill ON public.trust_bill_splits USING btree (pmc_id, bill_id);
+
+
+--
+-- Name: trust_bill_splits_expense_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bill_splits_expense_account ON public.trust_bill_splits USING btree (pmc_id, expense_account_id);
+
+
+--
+-- Name: trust_bill_splits_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bill_splits_recorded_by ON public.trust_bill_splits USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_bills_ledger_account_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -12407,6 +12511,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_bill_splits trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bill_splits FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_bills trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13100,6 +13211,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bill
 
 
 --
+-- Name: trust_bill_splits trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bill_splits FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_bills trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13709,6 +13827,13 @@ CREATE TRIGGER trust_bill_decision BEFORE INSERT ON public.trust_bill_declines F
 
 
 --
+-- Name: trust_bill_splits trust_bill_split; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_bill_split AFTER INSERT ON public.trust_bill_splits DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_bill_split();
+
+
+--
 -- Name: trust_budgets trust_budget_account; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13895,6 +14020,13 @@ CREATE TRIGGER trust_payout_method BEFORE INSERT ON public.trust_payout_methods 
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_archivals FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_bill_splits trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_bill_splits FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -14591,6 +14723,46 @@ ALTER TABLE ONLY public.trust_bill_payments
 
 ALTER TABLE ONLY public.trust_bill_payments
     ADD CONSTRAINT trust_bill_payments_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
+-- Name: trust_bill_splits trust_bill_splits_categorized_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_splits
+    ADD CONSTRAINT trust_bill_splits_categorized_id_fkey FOREIGN KEY (categorized_id) REFERENCES public.trust_bill_expense_accounts(id);
+
+
+--
+-- Name: trust_bill_splits trust_bill_splits_pmc_id_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_splits
+    ADD CONSTRAINT trust_bill_splits_pmc_id_bill_id_fkey FOREIGN KEY (pmc_id, bill_id) REFERENCES public.trust_bills(pmc_id, id);
+
+
+--
+-- Name: trust_bill_splits trust_bill_splits_pmc_id_expense_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_splits
+    ADD CONSTRAINT trust_bill_splits_pmc_id_expense_account_id_fkey FOREIGN KEY (pmc_id, expense_account_id) REFERENCES public.trust_expense_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_bill_splits trust_bill_splits_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_splits
+    ADD CONSTRAINT trust_bill_splits_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bill_splits trust_bill_splits_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_splits
+    ADD CONSTRAINT trust_bill_splits_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -16628,4 +16800,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261016000065'),
     ('20261016000066'),
     ('20261016000067'),
-    ('20261016000068');
+    ('20261016000068'),
+    ('20261016000069');

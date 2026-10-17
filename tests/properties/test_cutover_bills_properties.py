@@ -89,7 +89,7 @@ def check_bills(conn, bills, resend):
 
     with conn.transaction():
         owners = {o.account: o for o in payables.owners(session, conn)}
-        listed = {b.reference: b.status for b in payables.bills(session, conn, "all")}
+        listed = {b.reference: b.status for b in payables.find_bills(conn, session.pmc_id)[0]}
     for n, owner in enumerate(pmc.owners):
         unpaid = sum((b[1] for b in bills if b[0] == n and not b[3]), Decimal(0))
         row = owners[owner.account]
