@@ -232,3 +232,18 @@ ones last assigned to them) and Files (their W-9s). The Vendor insurance (PDF) d
 Reports. Decision 3 holds: no tax ID is kept; a 1099 vendor is a yes or no, and the PMS files
 nothing. A profile is a row of `trust_vendor_profiles`, append-only, the latest holding.
 
+## Reports
+
+The twelfth piece, step 11 (`src/pms/api/reports.py`, `frontend/src/reports.ts`). Reports lists
+every report in a group: Financial, Rentals, Owners, Vendors (the vendor payments report is the
+1099 summary), Maintenance and Compliance. Each opens its own page with the filters its
+arguments take: a day; days, with This month, Last month, Year to date and Last year; an owner;
+a year; and, when its lines have a property, All properties, a property group or one property.
+Its lines show on screen as the report wrote them (`format=json`, the first 500; Export has them
+all), and Export downloads it as PDF, Excel or CSV with the same filters. Narrowed to a group or
+property, a report keeps the lines of its properties and its header lines, leaves out every
+other line without a property (a total across all properties would no longer add up), and its
+last line says what it was narrowed to; a report without a property column is not narrowed.
+The whole ledger moves to Settings, Data export. There is no accrual basis: the PMS keeps cash
+basis only (decision, ADR 0006).
+
