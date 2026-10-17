@@ -18,6 +18,7 @@ import { LEASE_STATUS, occupancy, termLabel, unitState } from "../rentals";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { Said } from "../components/Said";
+import { FilesCard } from "./FilesCard";
 
 function detail(failed: unknown): string {
   return failed instanceof ApiError ? failed.detail : String(failed);
@@ -172,13 +173,14 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
               </Wide>
             )}
           </Card>
+          <FilesCard kind="property_document" aboutId={id} name={property.name} />
         </>
       )}
     </Shell>
   );
 }
 
-// A unit and every lease it has had, newest first.
+// A unit, every lease it has had (newest first) and its files.
 export function UnitPage({ me, id }: { me: Me; id: string }) {
   const [unit, setUnit] = useState<Unit | null>(null);
   const [said, setSaid] = useState("");
@@ -236,6 +238,7 @@ export function UnitPage({ me, id }: { me: Me; id: string }) {
               </Wide>
             )}
           </Card>
+          <FilesCard kind="unit_document" aboutId={id} name={`${unit.name}, ${unit.property.name}`} />
         </>
       )}
     </Shell>

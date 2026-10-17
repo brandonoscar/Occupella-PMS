@@ -177,8 +177,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   requests below them, vendors a page at a time at `/vendors` (ADR 0006: trade, phone, email, W-9,
   insurance; Add vendor in a side panel), each at `/vendors/<id>` in tabs: Summary (trade, 1099,
   how paid, contact), Insurance (policies, Add policy), Bills, Work orders and Files
-  (`src/pms/api/vendors.py`). Files at `/files` (`src/pms/api/documents.py`), and an owner's,
-  vendor's or lease's page has a Files card of its own documents (`pages/FilesCard.tsx`); every report at
+  (`src/pms/api/vendors.py`). Files at `/files` (`src/pms/api/documents.py`: every file a page
+  at a time, newest first, by category and property group; Upload in a side panel), and a
+  property's, unit's, tenant's, lease's, owner's or vendor's page has a Files card of its own
+  documents (`pages/FilesCard.tsx`); every report at
   `/reports` in groups, each at `/reports/<name>` (ADR 0006: its filters, its rows on screen from
   `format=json`, narrowed to a property group or property when its lines have one by
   `src/pms/api/reports.py`, and Export), and Settings at `/settings`: staff roles and signers at `/settings/staff`
@@ -508,7 +510,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   no report prints them.
 - Documents (migration 0036): a vendor's W-9, a bill's receipt, a lease's move-out photo, an
   owner's document or a work order's photo (`trust_documents`, each kind about its one kind of
-  record of the PMC; work order photos since migration 0072), a
+  record of the PMC; work order photos since migration 0072), or since migration 0074 a
+  property's, unit's, tenant's, lease's or vendor's document, a
   PDF, JPEG or PNG of at most 5 MB. Its bytes sit apart (`trust_document_files`, checked at
   insert against the type's first bytes, the size and SHA-256 its row says, and there at
   commit): never audited and never read by `trust_ai_agent`. A removal is a row

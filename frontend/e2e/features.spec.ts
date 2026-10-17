@@ -1442,46 +1442,73 @@ test("staff open a report from Reports, see it on screen narrowed to one propert
   }
 });
 
-test("staff keep a vendor's W-9, a bill's receipt and a move-out photo, refuse a file that isn't what it says, and remove one", async ({
+test("staff keep a vendor's W-9, a bill's receipt, a move-out photo and a property's document from Files, narrow the list, refuse a file that isn't what it says, and remove one", async ({
   page,
 }) => {
   const people = seed.features.documents!;
   await joinAsStaff(page, people.bookkeeper);
   await section(page, "Files");
-  const keep = async (kind: string, about: string, aboutLabel: string, file: { name: string; mimeType: string; buffer: Buffer }) => {
-    await page.getByRole("combobox", { name: "Kind" }).selectOption({ label: kind });
-    // A bill or a lease is named with its day; pick it by what it starts with.
-    const select = page.getByRole("combobox", { name: about });
-    const value = await select.locator("option").filter({ hasText: aboutLabel }).first().getAttribute("value");
+  // Upload: the file, what it is attached to (a bill or a lease is named with its day; pick it
+  // by what it starts with) and its category.
+  const keep = async (about: string, record: string, category: string, file: { name: string; mimeType: string; buffer: Buffer }) => {
+    await page.getByRole("button", { name: "Upload", exact: true }).click();
+    const panel = page.getByRole("dialog", { name: "Upload" });
+    await panel.getByLabel("File").setInputFiles(file);
+    await panel.getByRole("combobox", { name: "Attached to" }).selectOption({ label: about });
+    const select = panel.getByRole("combobox", { name: about, exact: true });
+    const value = await select.locator("option").filter({ hasText: record }).first().getAttribute("value");
     await select.selectOption(value ?? "");
-    await page.getByLabel("File").setInputFiles(file);
-    await page.getByRole("button", { name: "Upload" }).click();
+    await panel.getByRole("combobox", { name: "Category" }).selectOption({ label: category });
+    await panel.getByRole("button", { name: "Upload", exact: true }).click();
+    return panel;
   };
   const pdf = (text: string) => Buffer.from(`%PDF-1.4\n% ${text}\n`);
   const png = Buffer.from("89504e470d0a1a0a0000000d49484452", "hex");
-  await keep("W-9", "Vendor", "Demo Plumbing Co", { name: "w9-plumbing.pdf", mimeType: "application/pdf", buffer: pdf("synthetic W-9") });
+  await keep("Vendor", "Demo Plumbing Co", "W-9", { name: "w9-plumbing.pdf", mimeType: "application/pdf", buffer: pdf("synthetic W-9") });
   await expect(page.getByText("Uploaded w9-plumbing.")).toBeVisible();
-  await keep("Receipt", "Bill", "Demo Roofing Co RF-2207", { name: "roof-receipt.pdf", mimeType: "application/pdf", buffer: pdf("synthetic receipt") });
+  await keep("Bill", "Demo Roofing Co RF-2207", "Receipt", { name: "roof-receipt.pdf", mimeType: "application/pdf", buffer: pdf("synthetic receipt") });
   await expect(page.getByText("Uploaded roof-receipt.")).toBeVisible();
-  await keep("Move-out photo", "Lease", "Aspen Row / Unit 1: Drew Sample", { name: "kitchen.png", mimeType: "image/png", buffer: png });
+  await keep("Lease", "Aspen Row / Unit 1: Drew Sample", "Move-out photo", { name: "kitchen.png", mimeType: "image/png", buffer: png });
   await expect(page.getByText("Uploaded kitchen.")).toBeVisible();
-  const kept = page.getByRole("list", { name: "Documents" }).getByRole("listitem");
-  await expect(kept).toHaveCount(3);
+  await keep("Property", "Cedar House", "Property document", { name: "deed.pdf", mimeType: "application/pdf", buffer: pdf("synthetic deed") });
+  await expect(page.getByText("Uploaded deed.")).toBeVisible();
+  const kept = page.getByRole("table", { name: "Files" }).locator("tbody tr");
+  await expect(kept).toHaveCount(4);
+  const deed = page.getByRole("row", { name: "deed" });
+  await expect(deed).toContainText("Property document");
+  await expect(deed.getByRole("link", { name: "Cedar House" })).toHaveAttribute("href", /^\/properties\//);
+
+  // Narrowed by category, then to Aspen Row: the move-out photo's lease is there; the W-9's
+  // vendor is at no property.
+  await page.getByRole("combobox", { name: "Category" }).selectOption({ label: "Receipt" });
+  await expect(kept).toHaveCount(1);
+  await page.getByRole("combobox", { name: "Category" }).selectOption({ label: "All categories" });
+  await page.getByRole("combobox", { name: "Properties shown" }).selectOption({ label: "Aspen Row" });
+  await expect(page.getByRole("row", { name: "kitchen" })).toBeVisible();
+  await expect(page.getByRole("row", { name: "w9-plumbing" })).toHaveCount(0);
+  await page.getByRole("combobox", { name: "Properties shown" }).selectOption({ label: "All properties" });
+  await expect(kept).toHaveCount(4);
 
   // A file whose bytes aren't the type its name says is refused, and nothing is kept.
-  await page.getByRole("combobox", { name: "Kind" }).selectOption({ label: "W-9" });
-  await page.getByLabel("File").setInputFiles({ name: "not-a.pdf", mimeType: "application/pdf", buffer: Buffer.from("plain text") });
-  await page.getByRole("button", { name: "Upload" }).click();
-  await expect(page.getByRole("alert")).toHaveText("the file isn't a PDF");
-  await expect(kept).toHaveCount(3);
+  const refused = await keep("Vendor", "Demo Plumbing Co", "W-9", { name: "not-a.pdf", mimeType: "application/pdf", buffer: Buffer.from("plain text") });
+  await expect(refused.getByRole("alert")).toHaveText("the file isn't a PDF");
+  await refused.getByRole("button", { name: "Close" }).click();
+  await expect(kept).toHaveCount(4);
 
-  // Removed, it leaves the list (a removal is kept as a row; nothing is deleted).
-  await page.getByRole("button", { name: "Remove kitchen" }).click();
+  // Removed from its row's menu, it leaves the list (a removal is kept as a row; nothing is
+  // deleted).
+  await page.getByRole("button", { name: "Actions for kitchen" }).click();
+  await page.getByRole("menuitem", { name: "Remove" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Remove" }).click();
   await expect(page.getByText("Removed kitchen.")).toBeVisible();
-  await expect(kept).toHaveCount(2);
+  await expect(kept).toHaveCount(3);
   const file = await page.request.get((await page.getByRole("link", { name: "w9-plumbing" }).getAttribute("href")) ?? "");
   expect(file.status()).toBe(200);
   expect(Buffer.from(await file.body()).equals(pdf("synthetic W-9"))).toBe(true);
+
+  // The property's page has its document on its Files card.
+  await deed.getByRole("link", { name: "Cedar House" }).click();
+  await expect(page.getByRole("list", { name: "Files, Cedar House" })).toContainText("deed");
 
   // The vendor's page has their W-9s on its Files tab, and takes another there.
   await section(page, "Vendors");

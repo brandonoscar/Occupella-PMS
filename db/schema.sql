@@ -9229,9 +9229,10 @@ CREATE TABLE public.trust_documents (
     uploaded_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     work_order_id uuid,
-    CONSTRAINT trust_documents_check CHECK (((kind = 'w9'::text) = (vendor_id IS NOT NULL))),
+    property_id uuid,
+    unit_id uuid,
+    tenant_id uuid,
     CONSTRAINT trust_documents_check1 CHECK (((kind = 'receipt'::text) = (bill_id IS NOT NULL))),
-    CONSTRAINT trust_documents_check2 CHECK (((kind = 'move_out_photo'::text) = (lease_id IS NOT NULL))),
     CONSTRAINT trust_documents_check3 CHECK (((kind = 'owner_document'::text) = (owner_id IS NOT NULL))),
     CONSTRAINT trust_documents_content_type_check CHECK ((content_type = ANY (ARRAY['application/pdf'::text, 'image/jpeg'::text, 'image/png'::text]))),
     CONSTRAINT trust_documents_sha256_check CHECK ((length(sha256) = 32)),
@@ -10959,7 +10960,15 @@ ALTER TABLE ONLY public.trust_document_removals
 --
 
 ALTER TABLE public.trust_documents
-    ADD CONSTRAINT trust_documents_kind_check CHECK ((kind = ANY (ARRAY['w9'::text, 'receipt'::text, 'move_out_photo'::text, 'owner_document'::text, 'work_order_photo'::text]))) NOT VALID;
+    ADD CONSTRAINT trust_documents_kind_check CHECK ((kind = ANY (ARRAY['w9'::text, 'receipt'::text, 'move_out_photo'::text, 'owner_document'::text, 'work_order_photo'::text, 'property_document'::text, 'unit_document'::text, 'tenant_document'::text, 'lease_document'::text, 'vendor_document'::text]))) NOT VALID;
+
+
+--
+-- Name: trust_documents trust_documents_lease_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_documents
+    ADD CONSTRAINT trust_documents_lease_check CHECK (((kind = ANY (ARRAY['move_out_photo'::text, 'lease_document'::text])) = (lease_id IS NOT NULL))) NOT VALID;
 
 
 --
@@ -10976,6 +10985,38 @@ ALTER TABLE ONLY public.trust_documents
 
 ALTER TABLE ONLY public.trust_documents
     ADD CONSTRAINT trust_documents_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_documents trust_documents_property_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_documents
+    ADD CONSTRAINT trust_documents_property_check CHECK (((kind = 'property_document'::text) = (property_id IS NOT NULL))) NOT VALID;
+
+
+--
+-- Name: trust_documents trust_documents_tenant_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_documents
+    ADD CONSTRAINT trust_documents_tenant_check CHECK (((kind = 'tenant_document'::text) = (tenant_id IS NOT NULL))) NOT VALID;
+
+
+--
+-- Name: trust_documents trust_documents_unit_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_documents
+    ADD CONSTRAINT trust_documents_unit_check CHECK (((kind = 'unit_document'::text) = (unit_id IS NOT NULL))) NOT VALID;
+
+
+--
+-- Name: trust_documents trust_documents_vendor_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_documents
+    ADD CONSTRAINT trust_documents_vendor_check CHECK (((kind = ANY (ARRAY['w9'::text, 'vendor_document'::text])) = (vendor_id IS NOT NULL))) NOT VALID;
 
 
 --
@@ -12216,6 +12257,27 @@ CREATE INDEX trust_cutover_items_bank_account_id ON public.trust_cutover_items U
 --
 
 CREATE INDEX trust_documents_pmc_id_kind ON public.trust_documents USING btree (pmc_id, kind);
+
+
+--
+-- Name: trust_documents_property_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_documents_property_id ON public.trust_documents USING btree (property_id);
+
+
+--
+-- Name: trust_documents_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_documents_tenant_id ON public.trust_documents USING btree (tenant_id);
+
+
+--
+-- Name: trust_documents_unit_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_documents_unit_id ON public.trust_documents USING btree (unit_id);
 
 
 --
@@ -15747,6 +15809,30 @@ ALTER TABLE ONLY public.trust_documents
 
 
 --
+-- Name: trust_documents trust_documents_pmc_id_property_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_documents
+    ADD CONSTRAINT trust_documents_pmc_id_property_id_fkey FOREIGN KEY (pmc_id, property_id) REFERENCES public.trust_properties(pmc_id, id) NOT VALID;
+
+
+--
+-- Name: trust_documents trust_documents_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_documents
+    ADD CONSTRAINT trust_documents_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id) NOT VALID;
+
+
+--
+-- Name: trust_documents trust_documents_pmc_id_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_documents
+    ADD CONSTRAINT trust_documents_pmc_id_unit_id_fkey FOREIGN KEY (pmc_id, unit_id) REFERENCES public.trust_units(pmc_id, id) NOT VALID;
+
+
+--
 -- Name: trust_documents trust_documents_pmc_id_uploaded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -17522,4 +17608,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261016000070'),
     ('20261016000071'),
     ('20261016000072'),
-    ('20261016000073');
+    ('20261016000073'),
+    ('20261016000074');

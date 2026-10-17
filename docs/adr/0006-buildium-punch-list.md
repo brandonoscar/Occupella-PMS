@@ -247,3 +247,16 @@ last line says what it was narrowed to; a report without a property column is no
 The whole ledger moves to Settings, Data export. There is no accrual basis: the PMS keeps cash
 basis only (decision, ADR 0006).
 
+## Files
+
+Step 12a (migration 0074, `src/pms/api/documents.py`). A file may be attached to any record a
+property manager keeps one for: a property, unit, lease, tenant, owner, vendor, work order or
+bill, each with its own categories (a lease's documents and move-out photos, a vendor's
+documents and W-9s). Files lists every file of the company in one table, newest first, a page at
+a time: its name (to download), what it is attached to (to that record's page), its category,
+the day it came and who uploaded it, with Remove in its row's menu. It narrows by category and
+by property group or property, by where each file's record is (an owner's file is at each of
+the owner's properties; a vendor's is at none, so a narrowed list leaves it out). Upload opens a
+side panel: the file, its name, what it is attached to and its category. Each record's page
+has a Files card of its own files. The owner portal still serves an owner only their owner
+documents; the PMS reads nothing out of a file, and the AI role never reads one.

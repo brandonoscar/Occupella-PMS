@@ -18,7 +18,10 @@ const LIBRARY: Library = {
     { id: "d3", kind: "w9", about_id: "o1", about: "Vendor 1", title: "W-9", content_type: "image/png",
       size: 10, uploaded_by: null, uploaded_at: "2026-10-01T15:00:00Z" },
   ],
-  subjects: { w9: [], receipt: [], move_out_photo: [], owner_document: [], work_order_photo: [] },
+  subjects: {
+    w9: [], receipt: [], move_out_photo: [], owner_document: [], work_order_photo: [], property_document: [],
+    unit_document: [], tenant_document: [], lease_document: [], vendor_document: [],
+  },
 };
 
 function server(library: unknown = LIBRARY, status = 200) {
@@ -72,6 +75,29 @@ describe("FilesCard", () => {
       ["/api/documents", { kind: "w9", about_id: "v1", title: "W-9 2026", content_type: "application/pdf", content_base64: "JVBERi0xLjQ=" }],
     ]);
     expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("");
+  });
+
+  it("lists and takes each category the record takes, a lease's documents beside its move-out photos", async () => {
+    const fetch = server({
+      ...LIBRARY,
+      documents: [
+        { ...LIBRARY.documents[0]!, id: "p1", kind: "move_out_photo", about_id: "l1", title: "Kitchen" },
+        { ...LIBRARY.documents[0]!, id: "p2", kind: "lease_document", about_id: "l1", title: "Signed lease" },
+      ],
+    });
+    render(<FilesCard kind="move_out_photo" also={["lease_document"]} aboutId="l1" name="Unit 1, Property 1" />);
+
+    const list = await screen.findByRole("list", { name: "Files, Unit 1, Property 1" });
+    expect(within(list).getAllByRole("listitem").map((i) => i.textContent?.split("Move-out")[0]?.split("Lease")[0])).toEqual([
+      "Kitchen", "Signed lease",
+    ]);
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "lease_document" } });
+    const file = new File(["%PDF-1.4"], "renewal.pdf", { type: "application/pdf" });
+    fireEvent.change(screen.getByLabelText("Lease document file"), { target: { files: [file] } });
+    await vi.waitFor(() => expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("renewal"));
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
+    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(1));
+    expect(posted(fetch)[0]?.[1]).toMatchObject({ kind: "lease_document", about_id: "l1", title: "renewal" });
   });
 
   it("says when the files can't be read", async () => {

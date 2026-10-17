@@ -273,6 +273,11 @@ def add_document(
         "move_out_photo": "lease_id",
         "owner_document": "owner_id",
         "work_order_photo": "work_order_id",
+        "property_document": "property_id",
+        "unit_document": "unit_id",
+        "tenant_document": "tenant_id",
+        "lease_document": "lease_id",
+        "vendor_document": "vendor_id",
     }[kind]
     with connection.transaction():
         document = _one(

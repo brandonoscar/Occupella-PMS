@@ -201,7 +201,7 @@ export function VendorPage({ me, id }: { me: Me; id: string }) {
           )}
         </Card>
       )}
-      {tab === "files" && <FilesCard kind="w9" aboutId={id} name={vendor.name} />}
+      {tab === "files" && <FilesCard kind="w9" also={["vendor_document"]} aboutId={id} name={vendor.name} />}
       {panel !== null && (
         <SidePanel title={panel === "profile" ? "Edit details" : "Add policy"} onClose={() => setPanel(null)}>
           <p className="text-base text-ink">{vendor.name}</p>

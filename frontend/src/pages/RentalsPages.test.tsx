@@ -67,6 +67,14 @@ const UNIT: Unit = {
 };
 
 
+const NO_FILES = {
+  documents: [],
+  subjects: {
+    w9: [], receipt: [], move_out_photo: [], owner_document: [], work_order_photo: [], property_document: [],
+    unit_document: [], tenant_document: [], lease_document: [], vendor_document: [],
+  },
+};
+
 // The API: `answers[path]` on GET (the paths asked are kept); a POST answers 204, or 409 with
 // `refuse[path]`.
 function server(answers: Record<string, unknown>, refuse: Record<string, string> = {}) {
@@ -75,6 +83,8 @@ function server(answers: Record<string, unknown>, refuse: Record<string, string>
       if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
       return new Response(null, { status: 204 });
     }
+    // Every record page's Files card reads the library; this one is empty.
+    if (path === "/api/documents" && !(path in answers)) return new Response(JSON.stringify(NO_FILES), { status: 200 });
     if (!(path in answers)) return new Response(JSON.stringify({ detail: "no such page" }), { status: 404 });
     return new Response(JSON.stringify(answers[path]), { status: 200 });
   });

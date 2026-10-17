@@ -17,6 +17,7 @@ import { LEASE_STATUS, PORTAL, termLabel } from "../rentals";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { NotesCard } from "../components/NotesCard";
+import { FilesCard } from "./FilesCard";
 import { Tabs } from "../components/Tabs";
 import { navigate } from "../router";
 import { ListBar } from "../components/ListBar";
@@ -95,15 +96,16 @@ export function TenantsPage({ me }: { me: Me }) {
   );
 }
 
-type TenantTab = "summary" | "leases" | "notes";
+type TenantTab = "summary" | "leases" | "notes" | "files";
 const TENANT_TABS: { value: TenantTab; label: string }[] = [
   { value: "summary", label: "Summary" },
   { value: "leases", label: "Leases" },
+  { value: "files", label: "Files" },
   { value: "notes", label: "Notes" },
 ];
 
 // A tenant: their contact details, what is held for them and whether they can sign in (Summary),
-// every lease they have been on (Leases), and Notes.
+// every lease they have been on (Leases), their Files and Notes.
 export function TenantPage({ me, id }: { me: Me; id: string }) {
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [said, setSaid] = useState("");
@@ -142,6 +144,7 @@ export function TenantPage({ me, id }: { me: Me; id: string }) {
                 <ContactCard path={`/api/tenants/${id}`} contact={tenant.contact} refresh={refresh} name={tenant.name} />
               </div>
             )}
+            {tab === "files" && <FilesCard kind="tenant_document" aboutId={id} name={tenant.name} />}
             {tab === "notes" && <NotesCard about="tenant" aboutId={id} name={tenant.name} />}
             {tab === "leases" && (
               <Card title="Leases">

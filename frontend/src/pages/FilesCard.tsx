@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
 import { Button } from "../components/Button";
 import { Field } from "../components/Field";
+import { Select } from "../components/Select";
 import { Notice } from "../components/Notice";
 import { Card } from "../components/Shell";
 import type { ContentType, Kind, Library } from "../documents";
@@ -13,10 +14,14 @@ import { Form } from "../components/Form";
 
 type Chosen = { type: ContentType | null; size: number; base64: string };
 
-// The Files card of an owner's, a vendor's or a lease's page (ADR 0005): the documents about that
-// record, each to download or remove, and one more to upload. It reads and writes what Files
-// does (/api/documents), kept to this record's one kind of document.
-export function FilesCard({ kind, aboutId, name }: { kind: Kind; aboutId: string; name: string }) {
+// The Files card of a record's page (ADR 0005, ADR 0006): the documents about that record, each
+// to download or remove, and one more to upload. It reads and writes what Files does
+// (/api/documents), kept to this record's kind of document and any `also` its record takes
+// (a lease's move-out photos beside its documents, a vendor's other documents beside their W-9s),
+// chosen as the upload's category.
+export function FilesCard({ kind, also = [], aboutId, name }: { kind: Kind; also?: Kind[]; aboutId: string; name: string }) {
+  const kinds = [kind, ...also];
+  const [category, setCategory] = useState<Kind>(kind);
   const [library, setLibrary] = useState<Library | null>(null);
   const [error, setError] = useState("");
   const { said, error: refused, record } = useRecord(refresh);
@@ -32,7 +37,7 @@ export function FilesCard({ kind, aboutId, name }: { kind: Kind; aboutId: string
   }
   useEffect(refresh, []);
 
-  const files = library?.documents.filter((d) => d.kind === kind && d.about_id === aboutId) ?? [];
+  const files = library?.documents.filter((d) => kinds.includes(d.kind) && d.about_id === aboutId) ?? [];
   const problem =
     file === null ? "" : file.type === null ? "A file is a PDF, a JPEG or a PNG." : file.size > MAX_BYTES ? "A file is at most 5 MB." : "";
   return (
@@ -65,7 +70,7 @@ export function FilesCard({ kind, aboutId, name }: { kind: Kind; aboutId: string
           onSubmit={async (event) => {
             event.preventDefault();
             if (file === null || problem) return;
-            const body = { kind, about_id: aboutId, title, content_type: file.type, content_base64: file.base64 };
+            const body = { kind: category, about_id: aboutId, title, content_type: file.type, content_base64: file.base64 };
             if (await record<{ id: string }>("/api/documents", body, () => `Uploaded ${title.trim()}.`)) {
               setTitle("");
               setFile(null);
@@ -73,8 +78,14 @@ export function FilesCard({ kind, aboutId, name }: { kind: Kind; aboutId: string
             }
           }}
         >
+          {also.length > 0 && (
+            <Select label="Category" id={`file-category-${aboutId}`} value={category}
+              onChange={(e) => setCategory(e.target.value as Kind)}>
+              {kinds.map((k) => <option key={k} value={k}>{kindLabel(k)}</option>)}
+            </Select>
+          )}
           <label htmlFor={`file-${aboutId}`} className="flex flex-col gap-1.5 text-sm text-ink-muted">
-            {kindLabel(kind)} file
+            {kindLabel(category)} file
             <input key={picker} id={`file-${aboutId}`} type="file" accept=".pdf,.jpg,.jpeg,.png" className="text-sm text-ink"
               onChange={async (e) => {
                 const picked = e.target.files?.[0];

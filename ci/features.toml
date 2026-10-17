@@ -337,9 +337,10 @@ browser = [
 
 [[feature]]
 id = "documents"
-statement = "Staff keep a vendor's W-9, a bill's receipt, a move-out photo or an owner's document (a PDF, JPEG or PNG that is what it says), download and remove one; an owner downloads their own documents."
+statement = "Staff list every file of the company a page at a time (by category and property group, each with the record it is attached to), and keep one on any record (a property, unit, lease, tenant, owner, vendor, work order or bill, in a category that record takes: a W-9, a receipt, a move-out photo, an owner's or any record's document; a PDF, JPEG or PNG that is what it says) from Files or the record's own page, download and remove one; an owner downloads their own documents."
 operations = [
   "GET /api/documents",
+  "GET /api/documents/files",
   "POST /api/documents",
   "GET /api/documents/{document_id}/file",
   "POST /api/documents/{document_id}/remove",
@@ -347,7 +348,7 @@ operations = [
   "GET /api/owner/documents/{document_id}/file",
 ]
 browser = [
-  "features.spec.ts › staff keep a vendor's W-9, a bill's receipt and a move-out photo, refuse a file that isn't what it says, and remove one",
+  "features.spec.ts › staff keep a vendor's W-9, a bill's receipt, a move-out photo and a property's document from Files, narrow the list, refuse a file that isn't what it says, and remove one",
   "portal.spec.ts › staff keep an owner's document and the owner downloads it from the portal",
 ]
 
