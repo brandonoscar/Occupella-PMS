@@ -178,12 +178,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   insurance; Add vendor in a side panel), each at `/vendors/<id>` in tabs: Summary (trade, 1099,
   how paid, contact), Insurance (policies, Add policy), Bills, Work orders and Files
   (`src/pms/api/vendors.py`). Files at `/files` (`src/pms/api/documents.py`), and an owner's,
-  vendor's or lease's page has a Files card of its own documents (`pages/FilesCard.tsx`); every download at
-  `/reports`, and Settings at `/settings`: staff roles and signers at `/settings/staff`
+  vendor's or lease's page has a Files card of its own documents (`pages/FilesCard.tsx`); every report at
+  `/reports` in groups, each at `/reports/<name>` (ADR 0006: its filters, its rows on screen from
+  `format=json`, narrowed to a property group or property when its lines have one by
+  `src/pms/api/reports.py`, and Export), and Settings at `/settings`: staff roles and signers at `/settings/staff`
   (`src/pms/api/staff.py`), logins at `/settings/logins`, the books' setup at `/settings/setup`
   (`src/pms/api/setup.py`: plain inserts and the database's own write paths, nothing that
-  moves money), and bringing a PMC over from another system at `/settings/import`
-  (`src/pms/api/switching.py`). A lease's inspections are on its move-out row
+  moves money), bringing a PMC over from another system at `/settings/import`
+  (`src/pms/api/switching.py`), and the whole ledger at `/settings/data-export`. A lease's inspections are on its move-out row
   (`src/pms/api/inspections.py`).
   npm packages are pinned exactly and their
   licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's

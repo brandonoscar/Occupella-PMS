@@ -1373,20 +1373,42 @@ test("staff set management terms with a leasing fee, late fees, a bank account a
   ).toHaveCount(1);
 });
 
-test("staff download every report the overview offers, and every staff report in each format", async ({ page }) => {
+test("staff open a report from Reports, see it on screen narrowed to one property, export it in each format, take an owner's report over last year, download the whole ledger, and every staff report in each format", async ({ page }) => {
   const people = seed.features.downloads!;
   await joinAsStaff(page, people.manager);
+
+  // The rent roll on screen, then narrowed to Cedar House: the other properties' lines and the
+  // totals across them are left out, and it says so.
   await section(page, "Reports");
-  await downloads(page, "Rent roll (PDF)", PDF);
-  await downloads(page, "Trial balance (Excel)", XLSX);
-  await downloads(page, "Balance sheet (PDF)", PDF);
-  await downloads(page, "Cash flow, last month (Excel)", XLSX);
-  await downloads(page, "Vacancy (PDF)", PDF);
-  await downloads(page, "Work orders (Excel)", XLSX);
-  await downloads(page, "Leases ending in 90 days (Excel)", XLSX);
-  await downloads(page, "Tenant directory (Excel)", XLSX);
-  await downloads(page, "Owner directory (Excel)", XLSX);
-  await downloads(page, "Vendor directory (Excel)", XLSX);
+  await page.getByRole("list", { name: "Rentals" }).getByRole("link", { name: "Rent roll" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Rent roll" })).toBeVisible();
+  const roll = page.getByRole("table", { name: "Rent roll" });
+  await expect(roll).toContainText("Aspen Row");
+  await expect(roll).toContainText("Cedar House");
+  await page.getByRole("combobox", { name: "Properties shown" }).selectOption({ label: "Cedar House" });
+  await expect(roll).toContainText("narrowed to Cedar House: lines across all properties left out");
+  await expect(roll).not.toContainText("Aspen Row");
+  await downloads(page, "PDF", PDF);
+  await downloads(page, "Excel", XLSX);
+  await downloads(page, "CSV", CSV);
+  const narrowed = (await page.getByRole("link", { name: "CSV", exact: true }).getAttribute("href")) ?? "";
+  expect(narrowed).toContain("property=");
+  const csv = await (await page.request.get(narrowed)).text();
+  expect(csv).toContain("Cedar House");
+  expect(csv).not.toContain("Aspen Row");
+
+  // An owner's income statement over last year.
+  await section(page, "Reports");
+  await page.getByRole("list", { name: "Financial" }).getByRole("link", { name: "Income statement" }).click();
+  await page.getByRole("combobox", { name: "Owner" }).selectOption({ label: "Demo Owner B" });
+  await page.getByRole("combobox", { name: "Days" }).selectOption({ label: "Last year" });
+  const year = new Date().getUTCFullYear() - 1;
+  await expect(page.getByLabel("From")).toHaveValue(`${year}-01-01`);
+  await expect(page.getByRole("table", { name: "Income statement" })).toContainText("net income");
+  await downloads(page, "PDF", PDF);
+
+  // The whole ledger, under Settings.
+  await settings(page, "Data export");
   await downloads(page, "Whole ledger (CSV, zip)", "application/zip");
 
   // The reports the API exports for staff (the AI reads the same), each as CSV, Excel and PDF.
@@ -1802,8 +1824,10 @@ test("staff add a vendor with their trade, 1099 and how they are paid, record a 
 
   // The vendor insurance report is on Reports.
   await section(page, "Reports");
-  await downloads(page, "Vendor insurance (PDF)", PDF);
-  const href = (await page.getByRole("link", { name: "Vendor insurance (PDF)" }).getAttribute("href")) ?? "";
+  await page.getByRole("list", { name: "Vendors" }).getByRole("link", { name: "Vendor insurance" }).click();
+  await expect(page.getByRole("table", { name: "Vendor insurance" })).toContainText("GL-0002");
+  await downloads(page, "PDF", PDF);
+  const href = (await page.getByRole("link", { name: "PDF", exact: true }).getAttribute("href")) ?? "";
   const csv = await (await page.request.get(href.replace("format=pdf", "format=csv"))).text();
   expect(csv).toContain(`Demo Plumbing Co,`);
   expect(csv).toContain(`general liability,Synthetic Mutual,GL-0002,${today()},${daysFromToday(365)},,current`);

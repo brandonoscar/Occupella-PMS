@@ -1,13 +1,10 @@
-import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 import type { Me } from "../api";
-import { day } from "../money";
+import { DataExportPage } from "./DataExportPage";
 import { ReportsPage } from "./ReportsPage";
 
-afterEach(() => {
-  cleanup();
-  vi.unstubAllGlobals();
-});
+afterEach(cleanup);
 
 const ME: Me = {
   kind: "staff",
@@ -20,23 +17,25 @@ const ME: Me = {
 };
 
 describe("ReportsPage", () => {
-  it("downloads today's reports and the whole ledger", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
+  it("lists every report in its group, each opening its own page", () => {
     render(<ReportsPage me={ME} />);
-    const today = day(new Date());
 
-    const href = (name: string) => screen.getByRole("link", { name }).getAttribute("href");
-    expect(await screen.findByRole("heading", { name: "Reports" })).toBeTruthy();
-    expect(href("Rent roll (PDF)")).toBe(`/api/reports/trust_report_rent_roll?arg=${today}&format=pdf`);
-    expect(href("Trial balance (Excel)")).toBe(
-      `/api/reports/trust_report_trial_balance?arg=${today}&format=xlsx`,
-    );
-    expect(href("Leases ending in 90 days (Excel)")).toBe(
-      `/api/reports/trust_report_lease_expirations?arg=${today}&format=xlsx`,
-    );
-    expect(href("Balance sheet (PDF)")).toBe(`/api/reports/trust_report_balance_sheet?arg=${today}&format=pdf`);
-    expect(screen.getAllByRole("link").map((link) => link.textContent)).toContain("Vendor directory (Excel)");
-    expect(href("Whole ledger (CSV, zip)")).toBe("/api/ledger.zip");
+    expect(within(screen.getByRole("list", { name: "Rentals" })).getAllByRole("link").map((l) => l.textContent)).toEqual([
+      "Rent roll", "Delinquency", "Vacancy", "Lease expirations", "Tenant directory", "Renters insurance",
+    ]);
+    expect(within(screen.getByRole("list", { name: "Vendors" })).getAllByRole("link").map((l) => l.textContent)).toEqual([
+      "Vendor directory", "Vendor insurance", "1099 summary", "Unpaid bills",
+    ]);
+    expect(within(screen.getByRole("list", { name: "Maintenance" })).getByRole("link", { name: "Work orders" }).getAttribute("href"))
+      .toBe("/reports/work_orders");
+    // The whole ledger lives under Settings, Data export.
+    expect(screen.queryByRole("link", { name: "Whole ledger (CSV, zip)" })).toBeNull();
   });
+});
 
+describe("DataExportPage", () => {
+  it("downloads the whole ledger", () => {
+    render(<DataExportPage me={ME} />);
+    expect(screen.getByRole("link", { name: "Whole ledger (CSV, zip)" }).getAttribute("href")).toBe("/api/ledger.zip");
+  });
 });

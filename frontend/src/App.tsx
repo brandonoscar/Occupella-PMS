@@ -32,7 +32,9 @@ import { VendorPage } from "./pages/VendorPage";
 import { WorkOrderPage, WorkOrdersPage } from "./pages/WorkOrdersPages";
 import { LoginsPage } from "./pages/LoginsPage";
 import { BankingPage, ReconcilePage } from "./pages/ReconcilePage";
+import { ReportPage } from "./pages/ReportPage";
 import { ReportsPage } from "./pages/ReportsPage";
+import { DataExportPage } from "./pages/DataExportPage";
 import { RentPage } from "./pages/RentPage";
 import { LeasePage } from "./pages/LeasePage";
 import { PropertiesPage, PropertyPage, UnitPage } from "./pages/RentalsPages";
@@ -120,6 +122,7 @@ const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/settings/groups": (me) => <GroupsPage me={me} />,
   "/settings/setup": (me) => <SetupPage me={me} />,
   "/settings/import": (me) => <SwitchPage me={me} />,
+  "/settings/data-export": (me) => <DataExportPage me={me} />,
 };
 
 // A record's own page, by its address (ADR 0005).
@@ -135,4 +138,5 @@ const RECORDS: [RegExp, (me: Me, id: string) => React.ReactNode][] = [
   [/^\/draft-leases\/([0-9a-f-]{36})$/, (me, id) => <DraftLeasePage me={me} id={id} />],
   [/^\/work-orders\/([0-9a-f-]{36})$/, (me, id) => <WorkOrderPage me={me} id={id} />],
   [/^\/vendors\/([0-9a-f-]{36})$/, (me, id) => <VendorPage me={me} id={id} />],
+  [/^\/reports\/([a-z_]+)$/, (me, name) => <ReportPage me={me} name={name} />],
 ];

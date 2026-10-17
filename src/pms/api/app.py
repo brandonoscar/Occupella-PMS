@@ -68,6 +68,8 @@ from pms.api import (
     renewals,
     rent,
     rentals,
+    reports,
+    scope,
     setup,
     signers,
     staff,
@@ -358,24 +360,35 @@ def create_app(settings: Settings) -> FastAPI:
             raise HTTPException(422, "you can't disable your own login")
         accounts.disable_login(conn, session.pmc_id, login_id)
 
-    @app.get("/api/reports/{name}")
+    @app.get("/api/reports/{name}", response_model=None)
     def report(
         name: str,
         session: Staff,
         conn: Conn,
-        fmt: Annotated[Literal["csv", "xlsx", "pdf"], Query(alias="format")] = "csv",
+        fmt: Annotated[Literal["csv", "xlsx", "pdf", "json"], Query(alias="format")] = "csv",
         args: Annotated[list[str] | None, Query(alias="arg")] = None,
-    ) -> Response:
+        group: scope.Group = None,
+        property_id: scope.Property = None,
+    ) -> Response | reports.Preview:
         # Every report takes the PMC first (tests/api pins it): it always comes from the
-        # session, never from the request.
+        # session, never from the request. "json" is the preview Reports shows on screen
+        # (src/pms/api/reports.py); a group or property narrows it and every format alike.
         try:
-            table = exports.run_report(conn, name, [session.pmc_id, *(args or [])])
+            table = reports.narrowed(
+                conn,
+                session.pmc_id,
+                exports.run_report(conn, name, [session.pmc_id, *(args or [])]),
+                group,
+                property_id,
+            )
         except exports.UnknownReport as unknown:
             raise HTTPException(404, str(unknown)) from None
         except exports.ExportError as refused:
             raise HTTPException(422, str(refused)) from None
         except (psycopg.errors.DataError, psycopg.errors.InvalidParameterValue) as bad:
             raise HTTPException(422, str(bad).splitlines()[0]) from None
+        if fmt == "json":
+            return reports.preview(table)
         return download(exports.export(table, fmt), name.removeprefix("trust_report_"), fmt)
 
     @app.get("/api/ledger.zip")

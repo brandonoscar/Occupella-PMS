@@ -67,4 +67,5 @@ export const SETTINGS = [
   { href: "/settings/groups", label: "Property groups" },
   { href: "/settings/setup", label: "Company setup" },
   { href: "/settings/import", label: "Import from another PMS" },
+  { href: "/settings/data-export", label: "Data export" },
 ] as const;
