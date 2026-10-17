@@ -624,7 +624,9 @@ def lease_ledger(session: Staff, conn: Conn, lease_id: UUID) -> Ledger:
             LedgerLine(
                 on=on,
                 kind=kind,
-                memo=memo or reference,
+                # A payment's check or reference, or how it came: the lease names its tenants and
+                # home already, as the receipt's memo does (src/pms/api/rent.py).
+                memo=reference if item == "payment" else memo,
                 charged=None if not charged else rent.cents(charged),
                 paid=None if not paid else rent.cents(paid),
                 balance=rent.cents(balance),

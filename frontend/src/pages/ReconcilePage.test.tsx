@@ -92,6 +92,12 @@ const TIED: Worksheet = {
   rows: SHEET.rows.map((r) => (r.line === 9 ? { ...r, amount: "0.00" } : r)).filter((r) => r.line <= 9),
 };
 
+const NO_MOVES = { items: [], total: 0, page: 1, per_page: 50 };
+const BREAKDOWN = { book_cash: "4075.00", held: [{ kind: "owner_property", label: "Owners' money", amount: "4075.00" }], owners: [] };
+
+// Opens one of the account's tabs.
+const open = async (tab: string) => fireEvent.click(await screen.findByRole("tab", { name: tab }));
+
 function server(
   sheet: Worksheet = SHEET,
   answers: Record<string, unknown> = {},
@@ -102,6 +108,8 @@ function server(
     if (init?.method !== "POST") {
       const body = path === "/api/reconcile" ? banks
         : path === "/api/payables/company-fees" ? (answers[path] ?? [])
+        : path.startsWith("/api/bank-accounts/") && path.includes("/register") ? (answers.register ?? NO_MOVES)
+        : path.startsWith("/api/bank-accounts/") ? (answers.breakdown ?? BREAKDOWN)
         : path.startsWith("/api/reconcile/b2") ? { ...sheet, through: null, rows: [], open_lines: [], open_transfers: [], matches: [] } : sheet;
       return new Response(JSON.stringify(body), { status: 200 });
     }
@@ -129,8 +137,13 @@ describe("ReconcilePage", () => {
     server();
     render(<ReconcilePage me={ME} id="b1" />);
 
+    // Nothing waits for approval: it opens on the register.
+    expect((await screen.findByRole("tab", { name: "Transactions" })).getAttribute("aria-selected")).toBe("true");
+    expect(await screen.findByText("No money moved in these days.")).toBeTruthy();
+    await open("Statements");
     const statements = await screen.findByRole("table", { name: "Statements" });
     expect(cells(statements)).toEqual([["01/01/2026 to 01/31/2026", "$0.00", "$4,075.00", "5", "CSV"]]);
+    await open("Reconciliations");
     const shown = screen.getByRole("table", { name: "Figures" });
     expect(shown.textContent).toContain("bank balance (statements)$4,075.00");
     // Off by the difference, until the books lack no line.
@@ -151,6 +164,7 @@ describe("ReconcilePage", () => {
   it("imports a statement file with its days and balances", async () => {
     const fetch = server(SHEET, { "/api/reconcile/statements": { lines: 2, first_day: "2026-02-01", last_day: "2026-02-28" } });
     render(<ReconcilePage me={ME} id="b1" />);
+    await open("Statements");
     await screen.findByRole("table", { name: "Statements" });
     const importing = screen.getByRole("button", { name: "Import statement" }) as HTMLButtonElement;
     expect(importing.disabled).toBe(true);
@@ -179,7 +193,7 @@ describe("ReconcilePage", () => {
   it("matches the lines and transfers picked once they come to the same", async () => {
     const fetch = server(SHEET, { "/api/reconcile/b1/auto-match": { matched: 1 } });
     render(<ReconcilePage me={ME} id="b1" />);
-    await screen.findByRole("table", { name: "Statements" });
+    await open("Reconciliations");
     const matching = screen.getByRole("button", { name: "Match these" }) as HTMLButtonElement;
 
     fireEvent.click(screen.getByLabelText("01/05/2026 Deposit (D1): $2,750.00"));
@@ -208,6 +222,7 @@ describe("ReconcilePage", () => {
   it("prepares a period whose books lack no line, and shows a refusal", async () => {
     const fetch = server(TIED, {}, {});
     render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
     const prepare = await screen.findByRole("button", { name: "Prepare through 01/31/2026" });
     expect(screen.queryByText(/Lines the books lack/)).toBeNull();
     expect(screen.getByText("Ties out").closest("[data-tone]")?.getAttribute("data-tone")).toBe("positive");
@@ -222,6 +237,7 @@ describe("ReconcilePage", () => {
 
     server(TIED, {}, { "/api/reconcile/b1/prepare": "the next period starts on 2026-02-01" });
     render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
     fireEvent.click(await screen.findByRole("button", { name: "Prepare through 01/31/2026" }));
     expect(await screen.findByText("the next period starts on 2026-02-01")).toBeTruthy();
   });
@@ -229,7 +245,9 @@ describe("ReconcilePage", () => {
   it("approves a period another staff member prepared, if this one may", async () => {
     const fetch = server(TIED, {}, {}, PREPARED);
     render(<ReconcilePage me={{ ...ME, roles: ["approve"] }} id="b1" />);
+    // A month waiting for approval opens on Reconciliations.
     const prepared = await screen.findByLabelText("Prepared");
+    expect(screen.getByRole("tab", { name: "Reconciliations" }).getAttribute("aria-selected")).toBe("true");
     expect(prepared.textContent).toContain("Prepared through 01/31/2026 by Staff 2: bank $4,075.00, books $4,075.00.");
     fireEvent.click(screen.getByRole("button", { name: "Approve through 01/31/2026" }));
 
@@ -251,10 +269,29 @@ describe("ReconcilePage", () => {
     expect(screen.getByRole("button", { name: "Prepare through 01/31/2026" })).toBeTruthy();
   });
 
+  it("stays on Reconciliations once the month it opened on is approved", async () => {
+    let banks: BankBooks[] = PREPARED;
+    vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        // Approved: the month no longer waits, and the account is closed through it.
+        banks = [{ ...BANKS[0]!, closed_through: "2026-01-31" }, BANKS[1]!];
+        return new Response("{}", { status: 201 });
+      }
+      const read = path === "/api/reconcile" ? banks : path.startsWith("/api/bank-accounts/") ? NO_MOVES : TIED;
+      return new Response(JSON.stringify(read), { status: 200 });
+    }));
+    render(<ReconcilePage me={{ ...ME, roles: ["approve"] }} id="b1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Approve through 01/31/2026" }));
+
+    expect(await screen.findByText("Approved through 01/31/2026; the account is closed through it.")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Reconciliations" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("table", { name: "Approved" })).toBeTruthy();
+  });
+
   it("reads the worksheet at another day, and an account with nothing yet", async () => {
     const fetch = server();
     render(<ReconcilePage me={ME} id="b1" />);
-    await screen.findByRole("table", { name: "Statements" });
+    await open("Reconciliations");
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Operating trust account");
     expect(screen.getByTestId("book-cash").textContent).toBe("Book balance $4,075.00");
     expect(within(screen.getByRole("main")).getByRole("link", { name: "Banking" }).getAttribute("href")).toBe("/banking");
@@ -266,7 +303,9 @@ describe("ReconcilePage", () => {
     cleanup();
     render(<ReconcilePage me={ME} id="b2" />);
 
+    await open("Statements");
     expect(await screen.findByText("No statement yet. The first one sets where the bank record starts.")).toBeTruthy();
+    await open("Reconciliations");
     expect(screen.getByText("Import a statement to see the reconciliation.")).toBeTruthy();
     expect(screen.getAllByText("None.")).toHaveLength(2);
     expect(screen.getByText("None yet.")).toBeTruthy();
@@ -302,6 +341,7 @@ describe("ReconcilePage", () => {
     };
     const fetch = server(migrated);
     render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
 
     expect(await screen.findByText(/the first statement's balance brought forward should be \$1,200.00/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Match the opening" }));
@@ -333,10 +373,12 @@ describe("ReconcilePage", () => {
         sheet = { ...sheet, open_lines: [], opening: { ...opening, matched: true } };
         return new Response(JSON.stringify({ id: "m1" }), { status: 201 });
       }
-      return new Response(JSON.stringify(path === "/api/reconcile" ? BANKS : sheet), { status: 200 });
+      const read = path === "/api/reconcile" ? BANKS : path.startsWith("/api/bank-accounts/") ? NO_MOVES : sheet;
+      return new Response(JSON.stringify(read), { status: 200 });
     });
     vi.stubGlobal("fetch", fetch);
     render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
 
     fireEvent.click(await screen.findByRole("button", { name: "Match the opening" }));
     // The refresh brings the matched opening; the confirmation stays, the form goes.
@@ -349,17 +391,20 @@ describe("ReconcilePage", () => {
     const opening = { book_cash: "1000.00", carried: "0.00", brought_forward: "1000.00", signed_off: false, matched: false };
     server({ ...SHEET, opening });
     render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
     expect(await screen.findByText("Sign off the cutover at Switching first.")).toBeTruthy();
     cleanup();
 
     server({ ...SHEET, opening: { ...opening, signed_off: true } });
     render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
     expect(await screen.findByText("No open bank line comes to $1,000.00.")).toBeTruthy();
     cleanup();
 
     // Matched, the card says so for good, with nothing left to do.
     server({ ...SHEET, opening: { ...opening, signed_off: true, matched: true } });
     render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
     expect(await screen.findByText("The opening is matched.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Match the opening" })).toBeNull();
   });
@@ -437,6 +482,31 @@ describe("BankingPage", () => {
     expect(within(panel).queryByRole("button", { name: "Take out company fees" })).toBeNull();
     fireEvent.click(within(panel).getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("adds a trust bank account of either kind and opens its page", async () => {
+    const fetch = server(SHEET, { "/api/setup/bank-accounts": { id: "b9" } });
+    render(<BankingPage me={ME} />);
+    await screen.findByRole("row", { name: "Operating trust account" });
+    fireEvent.click(screen.getByRole("button", { name: "Add bank account" }));
+    const panel = screen.getByRole("dialog", { name: "Add bank account" });
+    fireEvent.change(within(panel).getByLabelText("Holds"), { target: { value: "security_deposit" } });
+    fireEvent.change(within(panel).getByLabelText("Bank account name"), { target: { value: "Second deposit trust" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Add bank account" }));
+
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/bank-accounts/b9"));
+    expect(posted(fetch)).toEqual([["/api/setup/bank-accounts", { kind: "security_deposit", name: "Second deposit trust" }]]);
+    window.history.pushState(null, "", "/");
+  });
+
+  it("keeps the panel open with why a bank account was refused", async () => {
+    server(SHEET, {}, { "/api/setup/bank-accounts": "sign in first" });
+    render(<BankingPage me={ME} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add bank account" }));
+    const panel = screen.getByRole("dialog", { name: "Add bank account" });
+    fireEvent.change(within(panel).getByLabelText("Bank account name"), { target: { value: "Operating trust account" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Add bank account" }));
+    expect((await within(panel).findByRole("alert")).textContent).toBe("sign in first");
   });
 
   it("says when there is no trust bank account, and when they can't be read", async () => {

@@ -75,6 +75,23 @@ def lease_of(conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID) -> Lea
     return LeaseRow(lease_id, row[0], row[1])
 
 
+def lease_memo(conn: psycopg.Connection[Any], lease_id: UUID) -> str:
+    """Whose money and for which home, for a receipt's memo: "Morgan Demo, Birch Flats Unit A"
+    (the punch list, ADR 0006: the books side of a reconciliation said "No memo")."""
+    row = conn.execute(
+        "SELECT (SELECT string_agg(t.display_name, ', '"
+        '                           ORDER BY t.display_name COLLATE "C", t.id)'
+        "        FROM trust_lease_tenants AS lt JOIN trust_tenants AS t ON t.id = lt.tenant_id"
+        "        WHERE lt.lease_id = l.id), p.display_name, u.display_name"
+        " FROM trust_leases AS l JOIN trust_units AS u ON u.id = l.unit_id"
+        " JOIN trust_properties AS p ON p.id = u.property_id WHERE l.id = %s",
+        (lease_id,),
+    ).fetchone()
+    assert row is not None
+    names, prop, unit = row
+    return f"{names}, {prop} {unit}"
+
+
 # What lease l owes: its rent and fees, less its credits, less what payments matched, plus
 # what bounced back.
 OWED = """
@@ -227,7 +244,7 @@ def post(
         return None
 
 
-DESCRIBED = ("reference", "method")
+DESCRIBED = ("reference", "method", "memo")
 # How a tenant's payment came: recorded as said, nothing sent (ADR 0006).
 Method = Literal["check", "money order", "EFT", "cash"]
 
@@ -308,6 +325,7 @@ def record_payment(
         "received_on": received_on.isoformat(),
         "reference": reference,
         "method": method,
+        "memo": f"Rent – {lease_memo(conn, lease_id)}",
     }
     to_owner = min(amount, max(owed(conn, lease_id), ZERO))
     to_prepaid = amount - to_owner
@@ -417,7 +435,13 @@ def bounce(conn: psycopg.Connection[Any], pmc_id: UUID, transfer_id: str, on: da
     if on < rows[0][5].astimezone(UTC).date():
         raise HTTPException(422, "a payment bounces on or after the day it was received")
     key = f"bounce/{payment_key}"
-    metadata = {"key": key, "kind": "bounced payment", "lease_id": str(lease_id), "reference": None}
+    metadata = {
+        "key": key,
+        "kind": "bounced payment",
+        "lease_id": str(lease_id),
+        "reference": None,
+        "memo": f"Returned payment – {lease_memo(conn, lease_id)}",
+    }
     transfers = [(to, frm, Decimal(amount)) for _, frm, to, amount, _, _ in rows]
     posted = post(conn, pmc_id, key, transfers, on, metadata)
     if posted is None:
@@ -463,6 +487,11 @@ def record_deposit(
     if len(banks) > 1:
         raise HTTPException(422, "the PMC has more than one security deposit account; choose one")
     key = f"deposit/{request_id}"
+    who = conn.execute(
+        "SELECT t.display_name, p.display_name FROM trust_tenants AS t"
+        " JOIN trust_properties AS p ON p.id = t.property_id WHERE t.pmc_id = %s AND t.id = %s",
+        (pmc_id, tenant_id),
+    ).fetchone()
     metadata = {
         "key": key,
         "kind": "security deposit",
@@ -470,6 +499,7 @@ def record_deposit(
         "amount": cents(amount),
         "received_on": received_on.isoformat(),
         "reference": reference,
+        "memo": None if who is None else f"Security deposit – {who[0]}, {who[1]}",
     }
     deposit = tenant_account(conn, pmc_id, banks[0], "tenant_deposit", tenant_id)
     posted = post(

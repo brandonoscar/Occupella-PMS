@@ -56,7 +56,7 @@ browser = [
 
 [[feature]]
 id = "setup"
-statement = "Staff set up the books: trust bank accounts, owners, properties and their owners, units, tenants, vendors, leases, management terms, late fee terms and NSF fee terms."
+statement = "Staff set up the books: trust bank accounts (added from Banking), owners, properties and their owners, units, tenants, vendors, leases, management terms, late fee terms and NSF fee terms."
 operations = [
   "GET /api/setup",
   "POST /api/setup/bank-accounts",
@@ -136,10 +136,14 @@ browser = [
 
 [[feature]]
 id = "general-ledger"
-statement = "Staff read the general ledger on screen for any days: each account's prior balance, its entries with a running balance and its totals, a page of accounts at a time, found by account or bank, as trust_report_general_ledger has them; Banking opens each trust bank account with its book balance; Owner draws shows what each owner's account may pay out and records a draw."
-operations = ["GET /api/general-ledger"]
+statement = "Staff read the general ledger on screen for any days: each account's prior balance, its entries with a running balance and its totals, a page of accounts at a time, found by account or bank, as trust_report_general_ledger has them; Banking opens each trust bank account with its book balance, on its register (each move of its cash with what it was, who paid or was paid, its memo, its property and the balance after it, a page at a time) and its balance breakdown (what it holds by kind, coming to its book cash, and each owner's money in it); Pay owners shows what each owner's account may pay out."
+operations = [
+  "GET /api/general-ledger",
+  "GET /api/bank-accounts/{bank_account_id}/register",
+  "GET /api/bank-accounts/{bank_account_id}/breakdown",
+]
 browser = [
-  "features.spec.ts › staff read each account's general ledger, open a trust bank account from Banking, and pay an owner's draw from Owner draws",
+  "features.spec.ts › staff read each account's general ledger, open a trust bank account from Banking with its register and what it holds, and see what each owner may be paid",
 ]
 
 [[feature]]

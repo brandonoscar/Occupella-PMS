@@ -16,6 +16,8 @@ import { companyFeesDue } from "../payables";
 import { RowMenu } from "../components/RowMenu";
 import { SidePanel } from "../components/SidePanel";
 import { CompanyFeesForm } from "./CompanyFeesForm";
+import { BreakdownTab, RegisterTab } from "./BankAccountTabs";
+import { Tabs } from "../components/Tabs";
 import type { BankBooks, OpenItem, OpenLine, OpenTransfer, Worksheet } from "../reconcile";
 import {
   approver,
@@ -31,18 +33,22 @@ import {
   transferLabel,
 } from "../reconcile";
 import { GoLink } from "./NeedsAttention";
+import { navigate } from "../router";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 import { Said } from "../components/Said";
 import { Form } from "../components/Form";
+import type { BankKind } from "../setup";
 
 // Accounting → Banking (ADR 0005): each trust bank account with what the books hold in it, how
-// far it is reconciled and whether a month waits for approval, each opening its own page.
+// far it is reconciled and whether a month waits for approval, each opening its own page. Add
+// bank account adds one.
 export function BankingPage({ me }: { me: Me }) {
   const [banks, setBanks] = useState<BankBooks[] | null>(null);
   const [fees, setFees] = useState<CompanyFees[]>([]);
   const [error, setError] = useState("");
   const [transfer, setTransfer] = useState<CompanyFees | null>(null);
+  const [adding, setAdding] = useState(false);
   const [runs, setRuns] = useState(0);
   const { said, error: refused, record } = useRecord(() => setRuns((n) => n + 1));
   useEffect(() => {
@@ -61,14 +67,16 @@ export function BankingPage({ me }: { me: Me }) {
   };
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Banking" />
+      <PageHeader title="Banking" actions={
+        <Button variant="secondary" onClick={() => setAdding(true)}>Add bank account</Button>
+      } />
       <Said>{said}</Said>
       {transfer === null && <Notice tone="error">{refused}</Notice>}
       {banks === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : banks.length === 0 ? (
         <EmptyState icon={Landmark} title="No trust bank account yet."
-          body="Add one from Settings, Company setup." />
+          body="Add one with Add bank account." />
       ) : (
         <Wide>
           <table className="w-full text-base">
@@ -127,7 +135,41 @@ export function BankingPage({ me }: { me: Me }) {
           <Notice tone="error">{refused}</Notice>
         </SidePanel>
       )}
+      {adding && (
+        <SidePanel title="Add bank account" onClose={() => setAdding(false)}>
+          <AddBankAccount />
+        </SidePanel>
+      )}
     </Shell>
+  );
+}
+
+// A trust bank account of either kind: tenants' deposits sit in a security deposit one, and
+// everything else held in trust in an operating one. Added, its page opens.
+function AddBankAccount() {
+  const [kind, setKind] = useState<BankKind>("operating");
+  const [name, setName] = useState("");
+  const [error, setError] = useState("");
+  return (
+    <Form className="flex flex-col gap-3" onSubmit={async (event) => {
+      event.preventDefault();
+      setError("");
+      try {
+        const made = await api.post<{ id: string }>("/api/setup/bank-accounts", { kind, name });
+        navigate(`/bank-accounts/${made.id}`);
+      } catch (failed) {
+        setError(failed instanceof ApiError ? failed.detail : String(failed));
+      }
+    }}>
+      <Select label="Holds" id="new-bank-kind" value={kind} onChange={(event) => setKind(event.target.value as BankKind)}>
+        <option value="operating">Operating: rent and owners' money</option>
+        <option value="security_deposit">Security deposits</option>
+      </Select>
+      <Field label="Bank account name" id="new-bank-name" required maxLength={200} value={name}
+        onChange={(event) => setName(event.target.value)} />
+      <div><Button type="submit">Add bank account</Button></div>
+      <Notice tone="error">{error}</Notice>
+    </Form>
   );
 }
 
@@ -136,12 +178,23 @@ const KIND: Record<BankBooks["kind"], string> = {
   security_deposit: "Security deposits",
 };
 
-// A trust bank account's month-end: import its statements, match their lines to the transfers
-// in the books, and once the books lack no line one staff member prepares the period and
-// another, who may approve, approves it. The PMS compares what the bank says with the books; it
-// moves no money.
+type AccountTab = "transactions" | "reconciliations" | "breakdown" | "statements";
+const ACCOUNT_TABS: { value: AccountTab; label: string }[] = [
+  { value: "transactions", label: "Transactions" },
+  { value: "reconciliations", label: "Reconciliations" },
+  { value: "breakdown", label: "Balance breakdown" },
+  { value: "statements", label: "Statements" },
+];
+
+// A trust bank account's own page (ADR 0006): Transactions (its register), Reconciliations (its
+// month-end: match the statements' lines to the transfers in the books, and once the books lack
+// no line one staff member prepares the period and another, who may approve, approves it),
+// Balance breakdown and Statements (imported files and Import statement). A month waiting for
+// approval opens on Reconciliations. The PMS compares what the bank says with the books; it moves
+// no money.
 export function ReconcilePage({ me, id }: { me: Me; id: string }) {
   const [banks, setBanks] = useState<BankBooks[] | null>(null);
+  const [tab, setTab] = useState<AccountTab | null>(null);
   const [through, setThrough] = useState("");
   // The worksheet, with the trust bank account it was read for.
   const [read, setRead] = useState<{ bank: string; sheet: Worksheet } | null>(null);
@@ -149,6 +202,12 @@ export function ReconcilePage({ me, id }: { me: Me; id: string }) {
   const failed = (why: unknown) => setError(why instanceof ApiError ? why.detail : String(why));
   const bank = banks?.find((b) => b.id === id);
   const sheet = read && bank && read.bank === bank.id ? read.sheet : null;
+  const shown: AccountTab = tab ?? (bank?.prepared ? "reconciliations" : "transactions");
+  // The tab it opened on stays as the page refreshes: approving a month leaves it on
+  // Reconciliations, with the period just approved.
+  useEffect(() => {
+    if (tab === null && bank) setTab(bank.prepared ? "reconciliations" : "transactions");
+  }, [tab, bank]);
 
   function refresh() {
     setError("");
@@ -179,12 +238,21 @@ export function ReconcilePage({ me, id }: { me: Me; id: string }) {
             <span data-testid="book-cash">Book balance {money(bank.book_cash)}</span>
           </p>
           <Notice tone="error">{error}</Notice>
-          <StatementsCard bank={bank} refresh={refresh} />
-          {sheet.opening && <OpeningCard bank={bank} sheet={sheet} refresh={refresh} />}
-          <WorksheetCard me={me} bank={bank} sheet={sheet} through={through}
-            setThrough={setThrough} refresh={refresh} />
-          <MatchCard bank={bank} sheet={sheet} refresh={refresh} />
-          <ApprovedCard bank={bank} />
+          <div>
+            <Tabs label="Trust bank account" tabs={ACCOUNT_TABS} value={shown} onChange={setTab} />
+            {shown === "transactions" && <RegisterTab bankId={bank.id} />}
+            {shown === "reconciliations" && (
+              <div className="flex flex-col gap-6">
+                {sheet.opening && <OpeningCard bank={bank} sheet={sheet} refresh={refresh} />}
+                <WorksheetCard me={me} bank={bank} sheet={sheet} through={through}
+                  setThrough={setThrough} refresh={refresh} />
+                <MatchCard bank={bank} sheet={sheet} refresh={refresh} />
+                <ApprovedCard bank={bank} />
+              </div>
+            )}
+            {shown === "breakdown" && <BreakdownTab bankId={bank.id} />}
+            {shown === "statements" && <StatementsCard bank={bank} refresh={refresh} />}
+          </div>
         </>
       )}
     </Shell>
