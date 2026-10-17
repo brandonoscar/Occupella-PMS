@@ -457,34 +457,100 @@ test("staff read each account's general ledger, open a trust bank account from B
   await expect(reserved.getByLabel("Pay Demo Owner B, Aspen Row")).toBeDisabled();
 });
 
-test("staff open a work order, assign it, find it on the vendor's page, rename the vendor, and see the leases to renew", async ({
+test("staff open a work order with its details, schedule its vendor (not one whose insurance ran out), bill it, find it on the vendor's page, rename the vendor, and see the leases to renew", async ({
   page,
 }) => {
   const people = seed.features["maintenance-pages"]!;
   await joinAsStaff(page, people.manager);
 
-  // A work order staff open themselves, for a unit.
+  // The plumber's only policy ran out yesterday.
+  await section(page, "Vendors");
+  await page.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Plumbing Co" });
+  await page.getByRole("combobox", { name: "Coverage" }).selectOption("general liability");
+  await page.getByLabel("Carrier").fill("Synthetic Mutual");
+  await page.getByLabel("Policy number").fill("GL-0009");
+  await page.getByLabel("Starts").fill(firstOfMonthsAgo(11));
+  await page.getByLabel("Expires").fill(daysFromToday(-1));
+  await page.getByRole("button", { name: "Record policy" }).click();
+  await expect(page.getByText("Demo Plumbing Co's general liability policy GL-0009 is recorded.")).toBeVisible();
+
+  // A work order staff open themselves, for a unit, urgent and due tomorrow; it opens its page.
   await section(page, "Work orders");
   await page.getByRole("button", { name: "New work order" }).click();
   const panel = page.getByRole("dialog", { name: "New work order" });
   await panel.getByRole("combobox", { name: "Property", exact: true }).selectOption({ label: "Aspen Row" });
   await panel.getByRole("combobox", { name: "Unit", exact: true }).selectOption({ label: "Unit 2" });
-  await panel.getByLabel("What needs doing").fill("Window latch");
+  await panel.getByLabel("Title").fill("Window latch");
+  await panel.getByRole("combobox", { name: "Priority" }).selectOption({ label: "Urgent" });
+  await panel.getByLabel("Due (optional)").fill(daysFromToday(1));
+  await panel.getByLabel("What is wrong (optional)").fill("The bedroom window won't lock.");
+  await panel.getByRole("combobox", { name: "Entry" }).selectOption({ label: "Call the tenant before going in" });
   await panel.getByRole("button", { name: "Open work order" }).click();
-  await expect(panel).toContainText('Work order "Window latch" opened.');
-  await panel.getByRole("button", { name: "Close" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: /Window latch$/ })).toBeVisible();
+  await expect(page.getByTestId("status")).toHaveText("New");
+  await expect(page.getByTestId("priority")).toHaveText("Urgent");
+  await expect(page.getByLabel("Summary")).toContainText(us(daysFromToday(1)));
+  await expect(page.getByTestId("description")).toHaveText("The bedroom window won't lock.");
+
+  // Its details change in a side panel.
+  await page.getByRole("button", { name: "Edit details" }).click();
+  const details = page.getByRole("dialog", { name: "Edit details" });
+  await details.getByRole("combobox", { name: "Priority" }).selectOption({ label: "High" });
+  await details.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved the details.")).toBeVisible();
+  await expect(page.getByTestId("priority")).toHaveText("High");
+
+  // The plumber can't be assigned until their insurance is renewed; the roofer can.
+  await page.getByRole("button", { name: "Next step" }).click();
+  let next = page.getByRole("dialog", { name: "Next step" });
+  await next.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Plumbing Co" });
+  await next.getByRole("button", { name: "Record" }).click();
+  await expect(next.getByRole("alert")).toHaveText(
+    `the vendor's insurance expired on ${us(daysFromToday(-1))}; record its renewal before assigning them`,
+  );
+  await next.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Roofing Co" });
+  await next.getByLabel("Note (optional)").fill("Tuesday morning");
+  await next.getByRole("button", { name: "Record" }).click();
+  await expect(page.getByText("Assigned to Demo Roofing Co.")).toBeVisible();
+  await expect(page.getByTestId("status")).toHaveText("Assigned");
+
+  // Then the visit is scheduled.
+  await page.getByRole("button", { name: "Next step" }).click();
+  next = page.getByRole("dialog", { name: "Next step" });
+  await next.getByRole("combobox", { name: "What happens next" }).selectOption({ label: "Schedule the visit" });
+  await next.getByLabel("Visit on").fill(daysFromToday(2));
+  await next.getByRole("button", { name: "Record" }).click();
+  await expect(page.getByText(`Scheduled for ${us(daysFromToday(2))}.`)).toBeVisible();
+  await expect(page.getByTestId("status")).toHaveText("Scheduled");
+  const timeline = page.getByRole("list", { name: "Timeline" });
+  await expect(timeline).toContainText("Assigned to Demo Roofing Co: Tuesday morning");
+  await expect(timeline).toContainText(`Scheduled for ${us(daysFromToday(2))}`);
+
+  // A photo of it, and the roofer's bill naming it, its vendor and property filled in.
+  await page.getByLabel("Work order photo file").setInputFiles({
+    name: "latch.png", mimeType: "image/png", buffer: Buffer.from("89504e470d0a1a0a0000000d49484452", "hex"),
+  });
+  await page.getByRole("button", { name: "Upload" }).click();
+  await expect(page.getByText("Uploaded latch.")).toBeVisible();
+  await expect(page.getByRole("list", { name: "Files, Window latch" })).toContainText("latch");
+  await page.getByRole("button", { name: "Create bill" }).click();
+  const bill = page.getByRole("dialog", { name: "Create bill" });
+  await expect(bill.getByRole("combobox", { name: "Vendor", exact: true })).toHaveValue(/.+/);
+  await bill.getByLabel("Ref #").fill("RF-LATCH");
+  await bill.getByLabel("Amount").fill("45.00");
+  await bill.getByRole("button", { name: "Record bill" }).click();
+  await expect(page.getByText("Bill RF-LATCH recorded.")).toBeVisible();
+  await expect(page.getByRole("row", { name: "RF-LATCH" })).toContainText("Demo Roofing Co");
+
+  // On the list: its number, priority and status; narrowed to the scheduled ones.
+  await section(page, "Work orders");
+  await page.reload();
   const latch = page.getByRole("row", { name: "Window latch", exact: true });
   await expect(latch).toContainText("Unit 2, Aspen Row");
-  await expect(latch).toContainText("Open");
-
-  // Its own page: assigned to a vendor, with a note.
-  await latch.getByRole("link", { name: "Window latch" }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Window latch" })).toBeVisible();
-  await page.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Roofing Co" });
-  await page.getByLabel("Note (optional)").fill("Tuesday morning");
-  await page.getByRole("button", { name: "Record" }).click();
-  await expect(page.getByText("Assigned.")).toBeVisible();
-  await expect(page.getByRole("list", { name: "Steps" })).toContainText("to Demo Roofing Co: Tuesday morning");
+  await expect(latch).toContainText("High");
+  await page.getByRole("combobox", { name: "Status" }).selectOption({ label: "Scheduled" });
+  await expect(page.getByRole("table").getByRole("row")).toHaveCount(2);
+  await expect(latch).toContainText("Scheduled");
 
   // The vendor's page lists it; the vendor is renamed there.
   await section(page, "Vendors");

@@ -112,14 +112,18 @@ def test_staff_assign_and_complete_and_the_request_closes(client, filed, home):
 
     assigned = client.post(steps, json={"step": "assigned", "vendor_id": vendors[0]["id"]})
     seen = client.get("/api/maintenance/requests").json()[0]
+    scheduled = client.post(steps, json={"step": "scheduled", "scheduled_for": "2026-01-09"})
+    visit = client.get("/api/maintenance/requests").json()[0]
     completed = client.post(steps, json={"step": "completed", "note": "Washer replaced"})
 
     assert vendors == [{"id": str(home.pmc.vendor_id), "name": vendors[0]["name"]}]
-    assert (assigned.status_code, completed.status_code) == (201, 201)
+    assert (assigned.status_code, scheduled.status_code, completed.status_code) == (201,) * 3
     assert (seen["status"], seen["vendor"]) == ("assigned", vendors[0]["name"])
+    # A scheduled visit is still the vendor's: the request names them.
+    assert (visit["status"], visit["vendor"]) == ("scheduled", vendors[0]["name"])
     assert client.get("/api/maintenance/requests").json() == []
     everything = client.get("/api/maintenance/requests", params={"show": "all"}).json()
-    assert [r["status"] for r in everything] == ["completed"]
+    assert [(r["status"], r["vendor"]) for r in everything] == [("completed", vendors[0]["name"])]
 
 
 def test_nothing_follows_a_closed_work_order(client, filed):
@@ -137,6 +141,7 @@ def test_nothing_follows_a_closed_work_order(client, filed):
     ("step", "detail"),
     [
         ({"step": "assigned"}, "an assignment names a vendor, and only an assignment does"),
+        ({"step": "scheduled"}, "a schedule names the day the vendor comes, and only it does"),
         ({"step": "completed", "vendor_id": None, "extra": 1}, None),
         ({"step": "painted"}, None),
         ({"step": "completed", "note": "x" * 2001}, None),

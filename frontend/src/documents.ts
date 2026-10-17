@@ -1,6 +1,6 @@
 // Documents as the API sends them (src/pms/api/documents.py), and how they read.
 
-export type Kind = "w9" | "receipt" | "move_out_photo" | "owner_document";
+export type Kind = "w9" | "receipt" | "move_out_photo" | "owner_document" | "work_order_photo";
 export type ContentType = "application/pdf" | "image/jpeg" | "image/png";
 export type Subject = { id: string; label: string };
 export type Document = {
@@ -23,6 +23,7 @@ export const KINDS: { kind: Kind; label: string; about: string }[] = [
   { kind: "receipt", label: "Receipt", about: "Bill" },
   { kind: "move_out_photo", label: "Move-out photo", about: "Lease" },
   { kind: "owner_document", label: "Owner document", about: "Owner" },
+  { kind: "work_order_photo", label: "Work order photo", about: "Work order" },
 ];
 
 export const MAX_BYTES = 5 * 1024 * 1024;

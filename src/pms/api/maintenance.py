@@ -7,7 +7,7 @@ once there is, then "assigned", "completed" or "cancelled".
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/maintenance")
-Status = Literal["received", "opened", "assigned", "completed", "cancelled"]
+Status = Literal["received", "opened", "assigned", "scheduled", "completed", "cancelled"]
 CLOSED = ("completed", "cancelled")
 
 # Every request of a PMC with where it stands, newest first. {where} narrows it, and is only
@@ -40,13 +40,20 @@ LEFT JOIN trust_work_orders AS wo ON wo.id = w.work_order_id
 LEFT JOIN LATERAL (
     -- A closing step is the last one (a trigger refuses any after it), even when an earlier
     -- step of the same transaction shares its time.
-    SELECT s.step, s.taken_at, s.vendor_id
+    SELECT s.step, s.taken_at
     FROM trust_work_order_steps AS s
     WHERE s.work_order_id = w.work_order_id
     ORDER BY s.step IN ('completed', 'cancelled') DESC, s.taken_at DESC, s.created_at DESC
     LIMIT 1
 ) AS s ON true
-LEFT JOIN trust_vendors AS v ON v.id = s.vendor_id
+-- Its vendor: the one last assigned, through a schedule and a close.
+LEFT JOIN LATERAL (
+    SELECT s.vendor_id FROM trust_work_order_steps AS s
+    WHERE s.work_order_id = w.work_order_id AND s.step = 'assigned'
+    ORDER BY s.taken_at DESC, s.created_at DESC
+    LIMIT 1
+) AS a ON true
+LEFT JOIN trust_vendors AS v ON v.id = a.vendor_id
 WHERE r.pmc_id = %(pmc)s AND {where}
 ORDER BY r.submitted_at DESC, r.id
 """
@@ -138,9 +145,11 @@ class Vendor(BaseModel):
 
 
 class Step(BaseModel):
-    step: Literal["assigned", "completed", "cancelled"]
+    step: Literal["assigned", "scheduled", "completed", "cancelled"]
     # Only an assignment names a vendor (a check on trust_work_order_steps).
     vendor_id: UUID | None = None
+    # Only a schedule names the day the vendor comes.
+    scheduled_for: date | None = None
     note: str | None = Field(default=None, max_length=2000)
 
 
@@ -206,15 +215,25 @@ def record_step(session: Staff, conn: Conn, work_order_id: UUID, step: Step) -> 
         raise HTTPException(404, "no such work order")
     if (step.step == "assigned") != (step.vendor_id is not None):
         raise HTTPException(422, "an assignment names a vendor, and only an assignment does")
+    if (step.step == "scheduled") != (step.scheduled_for is not None):
+        raise HTTPException(422, "a schedule names the day the vendor comes, and only it does")
     try:
         conn.execute(
             "INSERT INTO trust_work_order_steps"
-            " (pmc_id, work_order_id, step, vendor_id, taken_at, note)"
-            " VALUES (%s, %s, %s, %s, now(), %s)",
-            (session.pmc_id, work_order_id, step.step, step.vendor_id, step.note),
+            " (pmc_id, work_order_id, step, vendor_id, scheduled_for, taken_at, note)"
+            " VALUES (%s, %s, %s, %s, %s, now(), %s)",
+            (
+                session.pmc_id,
+                work_order_id,
+                step.step,
+                step.vendor_id,
+                step.scheduled_for,
+                step.note,
+            ),
         )
     except psycopg.errors.ForeignKeyViolation:
         raise HTTPException(422, "no such vendor in this PMC") from None
     except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
-        # The work order is closed, or this step would come before its last one.
+        # The work order is closed, this step would come before its last one, a schedule before
+        # an assignment, or the vendor's insurance ran out.
         raise HTTPException(409, refusal(refused)) from None

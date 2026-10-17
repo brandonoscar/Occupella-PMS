@@ -170,9 +170,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   agreement's fee for a period, worked out and rolled back, then Collect fees), budgets at
   `/budgets` (`src/pms/api/budgets.py`). The company's fees leave trust from Banking (an
   operating account's ⋯ menu), a lease's leasing fee from the lease's ⋯ menu.
-  Maintenance: work orders a page at a time at `/work-orders`, each at `/work-orders/<id>`
-  (`src/pms/api/work_orders.py`: its steps, bills and request; staff open one there too, its
-  status the work orders report's word), tenants' requests below them, vendors and their
+  Maintenance: work orders a page at a time at `/work-orders` (ADR 0006: numbered, narrowed by
+  status and vendor), each at `/work-orders/<id>` (`src/pms/api/work_orders.py`: its details,
+  tenants to call, photos, timeline, bills and request; Next step, Edit details and Create bill
+  in side panels; staff open one there too, its status the work orders report's word), tenants'
+  requests below them, vendors and their
   insurance at `/vendors`, each at `/vendors/<id>` with their bills and work orders
   (`src/pms/api/vendors.py`). Files at `/files` (`src/pms/api/documents.py`), and an owner's,
   vendor's or lease's page has a Files card of its own documents (`pages/FilesCard.tsx`); every download at
@@ -291,8 +293,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   aside or paid, and from the day it was declined it holds nothing back from draws and is not
   unpaid in the reports.
 - Work orders: a job at a property (maybe one of its units). Its steps (assigned to a vendor,
-  completed, cancelled) are append-only and in order, and nothing follows a close. A bill may
-  name a work order of its property, never a cancelled one.
+  scheduled for a day, completed, cancelled) are append-only and in order, and nothing follows a
+  close. A bill may name a work order of its property, never a cancelled one. Migration 0072: a
+  visit is scheduled only once a vendor is assigned; a vendor whose insurance ran out (every
+  policy of theirs started by the day ended before it) is not assigned, while one with none on
+  file is; its details (priority, what is wrong, the day due, whether the vendor may let
+  themselves in) are append-only rows of `trust_work_order_details`, the latest holding, naming
+  who recorded them; its photos are documents (`work_order_photo`).
 - Rent automation: `trust_charge_rent_due` charges every lease in effect on a due date its rent,
   once per lease and date: for the days of the month it is in effect (migration 0045: monthly
   rent x days / days in the month, to the cent), and a lease starting later in the month its
@@ -496,8 +503,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   Staff see and change them on the person's page (`src/pms/api/directory.py`) and on Vendors.
   The AI role never reads them (`AI_NEVER_READS`), so the audit log hides their rows from it, and
   no report prints them.
-- Documents (migration 0036): a vendor's W-9, a bill's receipt, a lease's move-out photo or an
-  owner's document (`trust_documents`, each kind about its one kind of record of the PMC), a
+- Documents (migration 0036): a vendor's W-9, a bill's receipt, a lease's move-out photo, an
+  owner's document or a work order's photo (`trust_documents`, each kind about its one kind of
+  record of the PMC; work order photos since migration 0072), a
   PDF, JPEG or PNG of at most 5 MB. Its bytes sit apart (`trust_document_files`, checked at
   insert against the type's first bytes, the size and SHA-256 its row says, and there at
   commit): never audited and never read by `trust_ai_agent`. A removal is a row

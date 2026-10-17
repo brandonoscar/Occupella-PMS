@@ -513,7 +513,7 @@ HARBOR_VACANT = ("Unit 409", "Unit 410", "Unit 411", "Unit 412")
 HARBOR_ENDED = "Unit 408"
 # This month's rent at Harbor Tower: one tenant paid part of it, one none, one's payment bounced.
 HARBOR_PARTIAL, HARBOR_UNPAID, HARBOR_BOUNCED = "Unit 105", "Unit 107", "Unit 109"
-WorkOrderStep = Literal["assigned", "completed", "cancelled"]
+WorkOrderStep = Literal["assigned", "scheduled", "completed", "cancelled"]
 NSF_FEE = D("35.00")
 PDF = b"%PDF-1.4\n% synthetic demo document\n"
 PNG = b"\x89PNG\r\n\x1a\n synthetic demo photo"
@@ -1063,22 +1063,61 @@ def bills_of_every_status(b: Builder, demo: Demo, today: date, public_url: str) 
 
 
 def work_orders_at_every_step(b: Builder, demo: Demo, units: dict[str, UUID], today: date) -> None:
-    """Five work orders, one at each step: just opened, assigned to the plumber, assigned to the
-    roofer (whose insurance runs out in 20 days), completed with its bill, and cancelled."""
+    """Six work orders, one at each step: just opened (urgent, due tomorrow), waiting on the
+    electrician (whose insurance ran out, so they can't be assigned), assigned to the roofer
+    (whose insurance runs out in 20 days), the plumber's visit scheduled for two days from now,
+    completed with its bill, and cancelled."""
     conn = b.conn
-    orders: list[tuple[str, str | None, str, list[tuple[WorkOrderStep, str | None]]]] = [
-        ("Harbor Tower", "Unit 203", "Smoke detector chirping", []),
-        ("Oak Terrace", None, "Front walk light out", [("assigned", "Demo Electric Co")]),
-        ("Cedar House", None, "Inspect roof after the storm", [("assigned", "Demo Roofing Co")]),
+    orders: list[
+        tuple[str, str | None, str, work_orders.Details, list[tuple[WorkOrderStep, str | None]]]
+    ] = [
+        (
+            "Harbor Tower",
+            "Unit 203",
+            "Smoke detector chirping",
+            work_orders.Details(
+                priority="urgent",
+                description="The hallway smoke detector chirps every minute; likely the battery.",
+                due_on=today + DAY,
+                entry="call first",
+            ),
+            [],
+        ),
+        (
+            "Oak Terrace",
+            None,
+            "Front walk light out",
+            work_orders.Details(
+                description="For the electrician, once their insurance is renewed.",
+                due_on=today + 7 * DAY,
+                entry="allowed",
+            ),
+            [],
+        ),
+        (
+            "Cedar House",
+            None,
+            "Inspect roof after the storm",
+            work_orders.Details(priority="high", description="Shingles found in the yard."),
+            [("assigned", "Demo Roofing Co")],
+        ),
+        (
+            "Harbor Tower",
+            "Unit 305",
+            "Water heater rumbles",
+            work_orders.Details(priority="normal", entry="call first"),
+            [("assigned", "Demo Plumbing Co"), ("scheduled", None)],
+        ),
         (
             "Harbor Tower",
             "Unit 111",
             "Kitchen faucet drips",
+            work_orders.Details(priority="low", entry="not allowed"),
             [("assigned", "Demo Plumbing Co"), ("completed", None)],
         ),
-        ("Elm Court", None, "Repaint the mailbox", [("cancelled", None)]),
+        ("Elm Court", None, "Repaint the mailbox", work_orders.Details(), [("cancelled", None)]),
     ]
-    for prop, unit, summary, steps in orders:
+    for prop, unit, summary, details, steps in orders:
         with b.as_staff(demo.manager) as s:
             opened = work_orders.open_work_order(
                 s,
@@ -1087,6 +1126,7 @@ def work_orders_at_every_step(b: Builder, demo: Demo, units: dict[str, UUID], to
                     property_id=property_of(conn, demo, prop),
                     unit_id=units[unit] if unit and prop == "Harbor Tower" else None,
                     summary=summary,
+                    **details.model_dump(),
                 ),
             )
         for step, vendor in steps:
@@ -1095,17 +1135,26 @@ def work_orders_at_every_step(b: Builder, demo: Demo, units: dict[str, UUID], to
                     s,
                     conn,
                     opened.id,
-                    maintenance.Step(step=step, vendor_id=demo.vendors[vendor] if vendor else None),
+                    maintenance.Step(
+                        step=step,
+                        vendor_id=demo.vendors[vendor] if vendor else None,
+                        scheduled_for=today + 2 * DAY if step == "scheduled" else None,
+                    ),
                 )
 
 
 def files(b: Builder, demo: Demo) -> None:
     """A W-9 on file for the plumber, Demo Owner C's management agreement, a move-out photo of
-    Harbor Tower's ended lease and the roof repair's receipt."""
+    Harbor Tower's ended lease, the roof repair's receipt and a photo of the dripping faucet."""
     conn = b.conn
     roof = one(
         conn,
         "SELECT id FROM trust_bills WHERE pmc_id = %s AND reference = 'RF-2207'",
+        (demo.pmc_id,),
+    )
+    faucet = one(
+        conn,
+        "SELECT id FROM trust_work_orders WHERE pmc_id = %s AND summary = 'Kitchen faucet drips'",
         (demo.pmc_id,),
     )
     kept: list[tuple[documents.Kind, UUID, str, documents.ContentType, bytes]] = [
@@ -1125,6 +1174,7 @@ def files(b: Builder, demo: Demo) -> None:
             PNG,
         ),
         ("receipt", roof, "Roof repair receipt", "application/pdf", PDF),
+        ("work_order_photo", faucet, "Faucet before the repair", "image/png", PNG),
     ]
     with b.as_staff(demo.manager) as s:
         for kind, about, title, content_type, content in kept:

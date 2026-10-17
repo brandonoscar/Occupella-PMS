@@ -73,16 +73,21 @@ const TWO_LINES: DraftLine[] = [{ account: "", amount: "" }, { account: "", amou
 
 type Invoice = { title: string; type: ContentType | null; size: number; base64: string };
 
+// Where Record bill starts when a work order's Create bill opens it: its vendor, property, memo
+// and the work order the bill names.
+export type BillStart = { vendorId: string | null; propertyId: string; workOrderId: string; memo: string };
+
 // Record bill: a vendor's bill against an owner's property account, in an expense account or
 // split across several, maybe with the vendor's invoice kept as its receipt.
-export function RecordBillForm({ books, record }: { books: Portfolio; record: Recorder }) {
-  const [vendor, setVendor] = useState(books.vendors[0]?.id ?? "");
-  const [account, setAccount] = useState(books.accounts[0]?.account ?? "");
+export function RecordBillForm({ books, record, start }: { books: Portfolio; record: Recorder; start?: BillStart }) {
+  const [vendor, setVendor] = useState(start?.vendorId ?? books.vendors[0]?.id ?? "");
+  const [account, setAccount] = useState(
+    books.accounts.find((a) => a.property_id === start?.propertyId)?.account ?? books.accounts[0]?.account ?? "");
   const [reference, setReference] = useState("");
   const [dated, setDated] = useState(day(new Date()));
   const [due, setDue] = useState(day(new Date()));
   const [amount, setAmount] = useState("");
-  const [memo, setMemo] = useState("");
+  const [memo, setMemo] = useState(start?.memo ?? "");
   const [expense, setExpense] = useState("");
   const [split, setSplit] = useState(false);
   const [lines, setLines] = useState<DraftLine[]>(TWO_LINES);
@@ -101,6 +106,7 @@ export function RecordBillForm({ books, record }: { books: Portfolio; record: Re
         if (problem) return;
         const body = {
           vendor_id: vendor, account, reference, bill_date: dated, due_on: due, amount, memo,
+          ...(start ? { work_order_id: start.workOrderId } : {}),
           ...linesBody(split, expense, lines),
           ...(invoice ? { invoice: { title: invoice.title, content_type: invoice.type, content_base64: invoice.base64 } } : {}),
         };

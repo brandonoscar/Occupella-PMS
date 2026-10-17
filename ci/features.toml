@@ -148,17 +148,18 @@ browser = [
 
 [[feature]]
 id = "maintenance-pages"
-statement = "Staff list the work orders a page at a time (open, closed or all; found by what they are for, property, unit or vendor), open one for a property or unit, and on its page see its steps, the bills that name it and the request it answers and record what happens; a vendor's page has their W-9, insurance, contact details, bills and work orders, and they are renamed there; Renewals lists the leases ending in the next 90 days with where each renewal stands."
+statement = "Staff list the work orders a page at a time, numbered, with their priority, status, due day and when they last changed (open, closed or all; of one status or vendor; of a property group or property), open one for a property or unit with its priority, what is wrong, the day it is due and whether the vendor may let themselves in, and on its page change those, assign a vendor (never one whose insurance ran out), schedule the visit, close it, keep its photos, create the vendor's bill naming it and see the tenants to call, its timeline, its bills and the request it answers; a vendor's page has their W-9, insurance, contact details, bills and work orders, and they are renamed there; Renewals lists the leases ending in the next 90 days with where each renewal stands."
 operations = [
   "GET /api/work-orders",
   "GET /api/work-orders/{work_order_id}",
   "POST /api/work-orders",
+  "POST /api/work-orders/{work_order_id}/details",
   "GET /api/vendors/{vendor_id}",
   "POST /api/vendors/{vendor_id}/name",
   "GET /api/leasing/renewals",
 ]
 browser = [
-  "features.spec.ts › staff open a work order, assign it, find it on the vendor's page, rename the vendor, and see the leases to renew",
+  "features.spec.ts › staff open a work order with its details, schedule its vendor (not one whose insurance ran out), bill it, find it on the vendor's page, rename the vendor, and see the leases to renew",
 ]
 
 [[feature]]

@@ -5,8 +5,10 @@ describe("documents", () => {
   it("names each kind and what it is about", () => {
     expect(KINDS.map((k) => [k.kind, k.about])).toEqual([
       ["w9", "Vendor"], ["receipt", "Bill"], ["move_out_photo", "Lease"], ["owner_document", "Owner"],
+      ["work_order_photo", "Work order"],
     ]);
     expect(kindLabel("move_out_photo")).toBe("Move-out photo");
+    expect(kindLabel("work_order_photo")).toBe("Work order photo");
   });
 
   it("sends only PDFs, JPEGs and PNGs", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { daysLeftLabel, RENEWAL, STATUS, whereLabel } from "./workOrders";
+import { daysLeftLabel, ENTRY, PRIORITY, RENEWAL, STATUS, whereLabel } from "./workOrders";
 
 describe("work orders and renewals", () => {
   it("say where a work order is", () => {
@@ -13,7 +13,11 @@ describe("work orders and renewals", () => {
   });
 
   it("give each state its word and tone", () => {
-    expect(STATUS.open).toEqual({ word: "Open", tone: "caution" });
+    // Buildium's word for a work order nobody has been assigned yet.
+    expect(STATUS.open).toEqual({ word: "New", tone: "caution" });
+    expect(STATUS.scheduled).toEqual({ word: "Scheduled", tone: "info" });
+    expect(PRIORITY.urgent).toEqual({ word: "Urgent", tone: "danger" });
+    expect(ENTRY["call first"]).toBe("Call the tenant before going in");
     expect(STATUS.completed.tone).toBe("positive");
     expect(RENEWAL.none).toEqual({ word: "No renewal", tone: "caution" });
     expect(RENEWAL.renewed.tone).toBe("positive");

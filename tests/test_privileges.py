@@ -54,6 +54,7 @@ TABLES = {
     "trust_bill_payments": {"SELECT"},  # written only by trust_set_aside_bill, trust_pay_bill
     "trust_work_orders": {"SELECT", "INSERT"},
     "trust_work_order_steps": {"SELECT", "INSERT"},
+    "trust_work_order_details": {"SELECT", "INSERT"},
     "trust_late_fee_policies": {"SELECT", "INSERT"},
     "trust_late_fees": {"SELECT"},  # written only by trust_assess_late_fees
     "trust_nsf_fee_policies": {"SELECT", "INSERT"},
@@ -367,6 +368,7 @@ FUNCTIONS = {
     "trust_check_bill_account()": {"PUBLIC"},
     "trust_check_work_order()": {"PUBLIC"},
     "trust_check_work_order_step()": {"PUBLIC"},
+    "trust_check_work_order_step_vendor()": {"PUBLIC"},
     "trust_check_hold_release()": {"PUBLIC"},
     "trust_check_hold_allowance()": {"PUBLIC"},
     "trust_check_recurring_bill()": {"PUBLIC"},

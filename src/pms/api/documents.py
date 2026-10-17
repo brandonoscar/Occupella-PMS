@@ -27,7 +27,7 @@ from pms.api.deps import Conn, Staff
 
 router = APIRouter(prefix="/api/documents")
 
-Kind = Literal["w9", "receipt", "move_out_photo", "owner_document"]
+Kind = Literal["w9", "receipt", "move_out_photo", "owner_document", "work_order_photo"]
 ContentType = Literal["application/pdf", "image/jpeg", "image/png"]
 Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 MAX_BYTES = 5 * 1024 * 1024
@@ -43,9 +43,11 @@ COLUMN: dict[Kind, str] = {
     "receipt": "bill_id",
     "move_out_photo": "lease_id",
     "owner_document": "owner_id",
+    "work_order_photo": "work_order_id",
 }
 
-# What each kind of document may be about: the PMC's vendors, bills, leases and owners.
+# What each kind of document may be about: the PMC's vendors, bills, leases, owners and work
+# orders.
 SUBJECTS: dict[Kind, str] = {
     "w9": "SELECT v.id, v.display_name FROM trust_vendors AS v WHERE v.pmc_id = %(pmc)s"
     ' ORDER BY v.display_name COLLATE "C", v.id',
@@ -62,6 +64,9 @@ SUBJECTS: dict[Kind, str] = {
     ' ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", l.starts_on, l.id',
     "owner_document": "SELECT o.id, o.display_name FROM trust_owners AS o"
     ' WHERE o.pmc_id = %(pmc)s ORDER BY o.display_name COLLATE "C", o.id',
+    "work_order_photo": "SELECT w.id, p.display_name || ': ' || w.summary"
+    " FROM trust_work_orders AS w JOIN trust_properties AS p ON p.id = w.property_id"
+    " WHERE w.pmc_id = %(pmc)s ORDER BY w.opened_at DESC, w.id",
 }
 
 
@@ -89,7 +94,8 @@ class Library(BaseModel):
 
 
 DOCUMENTS = """
-SELECT d.id, d.kind, coalesce(d.vendor_id, d.bill_id, d.lease_id, d.owner_id), d.title,
+SELECT d.id, d.kind, coalesce(d.vendor_id, d.bill_id, d.lease_id, d.owner_id, d.work_order_id),
+       d.title,
        d.content_type, d.size, s.display_name, d.created_at
 FROM trust_documents AS d
 LEFT JOIN trust_staff AS s ON s.id = d.uploaded_by

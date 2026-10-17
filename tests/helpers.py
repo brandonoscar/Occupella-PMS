@@ -265,13 +265,14 @@ JPEG = b"\xff\xd8\xff\xe0 synthetic"
 def add_document(
     connection, pmc_id, kind, about, content=PDF, content_type="application/pdf", title="W-9"
 ) -> UUID:
-    """A document of a kind about one thing (a vendor, bill, lease or owner), with its file, in
-    one transaction."""
+    """A document of a kind about one thing (a vendor, bill, lease, owner or work order), with
+    its file, in one transaction."""
     column = {
         "w9": "vendor_id",
         "receipt": "bill_id",
         "move_out_photo": "lease_id",
         "owner_document": "owner_id",
+        "work_order_photo": "work_order_id",
     }[kind]
     with connection.transaction():
         document = _one(
@@ -445,12 +446,16 @@ def add_work_order(connection, pmc_id, property_id, unit_id, summary, opened_at)
     )
 
 
-def step_work_order(connection, pmc_id, work_order_id, step, taken_at, vendor_id=None) -> None:
-    """Record what happened to a work order: assigned (to vendor_id), completed or cancelled."""
+def step_work_order(
+    connection, pmc_id, work_order_id, step, taken_at, vendor_id=None, scheduled_for=None
+) -> None:
+    """Record what happened to a work order: assigned (to vendor_id), scheduled (for a day),
+    completed or cancelled."""
     connection.execute(
-        "INSERT INTO trust_work_order_steps (pmc_id, work_order_id, step, vendor_id, taken_at)"
-        " VALUES (%s, %s, %s, %s, %s)",
-        (pmc_id, work_order_id, step, vendor_id, taken_at),
+        "INSERT INTO trust_work_order_steps"
+        " (pmc_id, work_order_id, step, vendor_id, taken_at, scheduled_for)"
+        " VALUES (%s, %s, %s, %s, %s, %s)",
+        (pmc_id, work_order_id, step, vendor_id, taken_at, scheduled_for),
     )
 
 

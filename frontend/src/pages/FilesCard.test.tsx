@@ -18,7 +18,7 @@ const LIBRARY: Library = {
     { id: "d3", kind: "w9", about_id: "o1", about: "Vendor 1", title: "W-9", content_type: "image/png",
       size: 10, uploaded_by: null, uploaded_at: "2026-10-01T15:00:00Z" },
   ],
-  subjects: { w9: [], receipt: [], move_out_photo: [], owner_document: [] },
+  subjects: { w9: [], receipt: [], move_out_photo: [], owner_document: [], work_order_photo: [] },
 };
 
 function server(library: unknown = LIBRARY, status = 200) {
