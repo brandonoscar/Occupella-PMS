@@ -496,14 +496,14 @@ browser = [
 
 [[feature]]
 id = "budgets"
-statement = "Staff budget each owner's property for a year on the income statement's own lines (each income class, the management and leasing fees, each expense account, bills in none), a year spread over its months to the cent; a line's latest row is its budget and an unchanged month writes nothing. The owner's budget against what happened downloads like every report."
+statement = "Staff budget a property's year (each owner's share apart) in one grid on the income statement's own lines (each income class, the management and leasing fees, each expense account, bills in none), month by month with a line's total spread over its months to the cent, and save every line at once, all or none; a line's latest row is its budget and an unchanged month writes nothing. The Budget vs actual view lays the lines beside what happened, and the owner's budget against actual exports like every report."
 operations = [
   "GET /api/budgets",
   "POST /api/budgets",
   "GET /api/payables/owners",
 ]
 browser = [
-  "features.spec.ts › staff budget an owner's property for the year, line by line, and download it against what happened",
+  "features.spec.ts › staff budget a property's year in one grid, save it at once, see it against what happened and export it",
 ]
 
 [[feature]]

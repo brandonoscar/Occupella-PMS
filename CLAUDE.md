@@ -168,7 +168,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `/journal` (`src/pms/api/journal.py`), Pay owners at `/owner-draws` (several owners at once, all
   or none, recorded as sent by check or EFT), management fees at `/management-fees` (each
   agreement's fee for a period, worked out and rolled back, then Collect fees), budgets at
-  `/budgets` (`src/pms/api/budgets.py`). The company's fees leave trust from Banking (an
+  `/budgets` (`src/pms/api/budgets.py`: a property's year in one grid, saved at once, or beside
+  what happened). The company's fees leave trust from Banking (an
   operating account's ⋯ menu), a lease's leasing fee from the lease's ⋯ menu.
   Maintenance: work orders a page at a time at `/work-orders` (ADR 0006: numbered, narrowed by
   status and vendor), each at `/work-orders/<id>` (`src/pms/api/work_orders.py`: its details,
@@ -569,8 +570,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - Budgets (migration 0055): a month's budget of an owner's property account on one of the
   income statement's lines (each income class, the management and leasing fees, an expense
   account, bills in none; `trust_budgets`, append-only, a line's latest row counting). Staff
-  set a line's year at `/budgets` (`src/pms/api/budgets.py`), spread over its months to the
-  cent; a month left as it was writes nothing. `trust_report_budget_vs_actual` lays an owner's
+  set a property's lines month by month at `/budgets` (`src/pms/api/budgets.py`), every line in
+  one save, all or none (a line's total typed in spreads over its months to the cent); a month
+  left as it was writes nothing. `trust_report_budget_vs_actual` lays an owner's
   budget for the months that start within some days beside their income statement. A budget
   moves no money.
 - Vendor profiles (migration 0073, ADR 0006): a vendor's trade, whether they are a 1099 vendor

@@ -260,3 +260,13 @@ the owner's properties; a vendor's is at none, so a narrowed list leaves it out)
 side panel: the file, its name, what it is attached to and its category. Each record's page
 has a Files card of its own files. The owner portal still serves an owner only their owner
 documents; the PMS reads nothing out of a file, and the AI role never reads one.
+
+## Budgets
+
+Step 12b (`src/pms/api/budgets.py`, `frontend/src/pages/BudgetsPage.tsx`). Budgets picks a
+property (and, where a property has more than one owner, which owner's share) and a year, and
+shows one grid: the income statement's lines down the side, January to December and a Total
+across. A total typed in spreads over its months to the cent; the last row is the net income.
+One Save writes every line at once, all or none, and says how many months changed. Budget vs
+actual lays each line's budget beside what happened that year, from the budget vs actual report
+narrowed to the property (cash basis); Export downloads the owner's whole report.

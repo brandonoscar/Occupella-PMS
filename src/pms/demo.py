@@ -463,22 +463,22 @@ def every_page(conn: psycopg.Connection[Any], demo: Demo, today: date) -> None:
             ),
         )
         # Elm Court's year: its two rents each month, and a little for repairs.
-        lines: list[tuple[budgets.Line, UUID | None, D]] = [
-            ("rent", None, D("2975.00")),
-            ("expense account", demo.expense_accounts["Repairs"], D("100.00")),
-        ]
-        for budget_line, expense_account, monthly in lines:
-            budgets.set_budget(
-                s,
-                conn,
-                budgets.NewBudget(
-                    account=demo.accounts["Elm Court"],
-                    year=today.year,
-                    line=budget_line,
-                    expense_account_id=expense_account,
-                    months=[monthly] * 12,
-                ),
-            )
+        budgets.set_budget(
+            s,
+            conn,
+            budgets.NewBudget(
+                account=demo.accounts["Elm Court"],
+                year=today.year,
+                lines=[
+                    budgets.LineBudget(line="rent", months=[D("2975.00")] * 12),
+                    budgets.LineBudget(
+                        line="expense account",
+                        expense_account_id=demo.expense_accounts["Repairs"],
+                        months=[D("100.00")] * 12,
+                    ),
+                ],
+            ),
+        )
         renters_insurance(b, demo, s, lease_start, today)
         # Cedar House's rent goes up next month, on written notice given before this one.
         rent.change_rent(

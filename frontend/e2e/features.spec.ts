@@ -1705,31 +1705,35 @@ test("a bookkeeper proposes journal entries; the manager posts one, the ledger r
   await expect(entry(page, "Typed an extra zero")).toContainText("Declined by Demo Manager: An extra zero.");
 });
 
-test("staff budget an owner's property for the year, line by line, and download it against what happened", async ({ page }) => {
+test("staff budget a property's year in one grid, save it at once, see it against what happened and export it", async ({ page }) => {
   const people = seed.features.budgets!;
   await joinAsStaff(page, people.manager);
   await section(page, "Budgets");
   const year = Number(today().slice(0, 4));
-  await page.getByRole("combobox", { name: "Owner and property" }).selectOption({ label: "Demo Owner B, Aspen Row" });
-  const rent = page.getByRole("row", { name: /^Income: rent/ });
-  await expect(rent).toContainText("Not budgeted");
+  await page.getByRole("combobox", { name: "Property" }).selectOption({ label: "Aspen Row" });
+  const grid = page.getByRole("table", { name: "Budget" });
+  await expect(grid.getByLabel("Income: rent, total")).toHaveValue("0.00");
 
-  await rent.getByLabel("Income: rent, a year").fill("24000");
-  await rent.getByRole("button", { name: "Save income: rent" }).click();
-  await expect(page.getByText(`Income: rent: 12 months changed in ${year}.`)).toBeVisible();
-  await expect(rent).toContainText("$2,000.00 a month");
-
-  const repairs = page.getByRole("row", { name: /^Expense: Repairs/ });
-  await repairs.getByLabel("Expense: Repairs, a year").fill("1000");
-  await repairs.getByRole("button", { name: "Save expense: repairs" }).click();
-  await expect(page.getByText(`Expense: Repairs: 12 months changed in ${year}.`)).toBeVisible();
-  await expect(repairs).toContainText("Varies by month");
+  // A year's rent typed as its total spreads over the months; repairs month by month.
+  await grid.getByLabel("Income: rent, total").fill("24000");
+  await grid.getByLabel("Income: rent, total").press("Enter");
+  await expect(grid.getByLabel("Income: rent, June")).toHaveValue("2000.00");
+  await grid.getByLabel("Expense: Repairs, March").fill("400");
+  await grid.getByLabel("Expense: Repairs, September").fill("600");
+  await expect(grid.getByRole("row", { name: "Net income" })).toContainText("$23,000.00");
+  await page.getByRole("button", { name: "Save budget" }).click();
+  await expect(page.getByText(`Saved Aspen Row's ${year} budget: 14 months changed.`)).toBeVisible();
   // Saving the same again changes nothing.
-  await repairs.getByRole("button", { name: "Save expense: repairs" }).click();
-  await expect(page.getByText(`Expense: Repairs: 0 months changed in ${year}.`)).toBeVisible();
+  await page.getByRole("button", { name: "Save budget" }).click();
+  await expect(page.getByText(`Saved Aspen Row's ${year} budget: 0 months changed.`)).toBeVisible();
 
-  await downloads(page, `Demo Owner B's budget against actual, ${year} (Excel)`, XLSX);
-  const href = (await page.getByRole("link", { name: /budget against actual/ }).getAttribute("href")) ?? "";
+  await page.getByRole("tab", { name: "Budget vs actual" }).click();
+  const versus = page.getByRole("table", { name: "Budget vs actual" });
+  await expect(versus.getByRole("row", { name: "Income: rent" })).toContainText("$24,000.00");
+  await expect(versus.getByRole("row", { name: "Expense: Repairs" })).toContainText("$1,000.00");
+
+  await downloads(page, "Export", XLSX);
+  const href = (await page.getByRole("link", { name: "Export", exact: true }).getAttribute("href")) ?? "";
   const csv = await page.request.get(href.replace("format=xlsx", "format=csv"));
   expect(await csv.text()).toContain("Aspen Row,income: rent,24000.00,");
 });

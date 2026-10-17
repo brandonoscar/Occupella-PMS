@@ -27,10 +27,20 @@ export function spread(year: string): string[] {
   return [...Array(11).fill(fromCents(month)), fromCents(cents - 11 * month)];
 }
 
-// "$100.00 a month", or how it varies.
-export function monthly(line: BudgetLine): string {
-  const [first] = line.months;
-  return line.months.every((m) => m === first) ? `${first} a month` : "varies by month";
+export const MONTHS = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+// A month's budget as typed: whole cents, not negative, at most 100,000,000.00 (the API's limit).
+export function isAmount(text: string): boolean {
+  const plain = text.replace(/,/g, "").trim();
+  return /^\d+(\.\d{1,2})?$/.test(plain) && toCents(plain) <= 10_000_000_000;
+}
+
+// The months' total, as text; a month not yet an amount counts as nothing.
+export function total(months: string[]): string {
+  return fromCents(months.reduce((sum, m) => sum + (isAmount(m) ? toCents(m.replace(/,/g, "")) : 0), 0));
 }
 
 // "income: late fees" reads "Income: late fees".
@@ -38,12 +48,15 @@ export function lineLabel(line: BudgetLine): string {
   return line.label.charAt(0).toUpperCase() + line.label.slice(1);
 }
 
-export function budgetVsActualHref(ownerId: string, year: number): string {
+// The owner's year of budget against what happened, as the report writes it: for Export, or
+// (format "json", narrowed to one property) for the Budget vs actual view.
+export function budgetVsActualHref(ownerId: string, year: number, format = "xlsx", propertyId = ""): string {
   const query = new URLSearchParams([
     ["arg", ownerId],
     ["arg", `${year}-01-01`],
     ["arg", `${year}-12-31`],
-    ["format", "xlsx"],
+    ["format", format],
   ]);
+  if (propertyId) query.set("property_id", propertyId);
   return `/api/reports/trust_report_budget_vs_actual?${query}`;
 }

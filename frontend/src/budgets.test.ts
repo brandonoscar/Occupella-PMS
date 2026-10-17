@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { BudgetLine } from "./budgets";
-import { budgetVsActualHref, lineLabel, monthly, spread } from "./budgets";
+import { MONTHS, budgetVsActualHref, isAmount, lineLabel, spread, total } from "./budgets";
 
 const line = (months: string[]): BudgetLine => ({
   line: "rent", expense_account_id: null, label: "income: rent", months, year: "",
@@ -17,15 +17,25 @@ describe("budgets", () => {
     expect(() => spread("-1.00")).toThrow("a budget is not negative");
   });
 
-  it("says a month's amount when every month is the same", () => {
-    expect(monthly(line(Array(12).fill("100.00")))).toBe("100.00 a month");
-    expect(monthly(line([...Array(11).fill("83.33"), "83.37"]))).toBe("varies by month");
+  it("reads a month as typed: whole cents, not negative, within the API's limit", () => {
+    expect(["1200", "1,200.50", "0.5", " 7 "].every(isAmount)).toBe(true);
+    expect(["", "-1", "1.001", "12a", "100000000.01"].some(isAmount)).toBe(false);
+    expect(isAmount("100000000.00")).toBe(true);
+  });
+
+  it("totals the months, counting one not yet an amount as nothing, and names the line", () => {
+    expect(total(Array(12).fill("100.00"))).toBe("1200.00");
+    expect(total(["1,000.10", "oops", ...Array(10).fill("")])).toBe("1000.10");
+    expect(MONTHS).toHaveLength(12);
     expect(lineLabel(line([]))).toBe("Income: rent");
   });
 
   it("links the owner's year of budget against actual", () => {
     expect(budgetVsActualHref("o1", 2026)).toBe(
       "/api/reports/trust_report_budget_vs_actual?arg=o1&arg=2026-01-01&arg=2026-12-31&format=xlsx",
+    );
+    expect(budgetVsActualHref("o1", 2026, "json", "p1")).toBe(
+      "/api/reports/trust_report_budget_vs_actual?arg=o1&arg=2026-01-01&arg=2026-12-31&format=json&property_id=p1",
     );
   });
 });
