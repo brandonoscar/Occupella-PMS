@@ -636,6 +636,24 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and how they are paid (check or EFT), in `trust_vendor_profiles` (append-only, the latest row
   holding, naming who recorded it; the same again writes nothing). No tax ID is kept: it stays on
   the W-9. A profile decides nothing and moves no money; the AI role reads it.
+- A lease's people (migration 0080, `docs/law.md`): a tenant leaves a lease others stay on, once,
+  from a day within it (`trust_remove_lease_tenant`, writing `trust_lease_departures`, naming
+  who recorded it); the last tenant can't (the lease ends instead), nor anyone once its deposit
+  was returned. Their deposit moves, all of it, inside the security-deposit account to a tenant
+  who stays, or stays under their name until the lease's deposit is returned; one on another
+  lease still keeps it with that lease. A tenant who left gets no reminder or late notice, files
+  nothing more under the lease in the portal (they still read it), holds no prepaid rent a
+  payment brings, and a renewal leaves them out. Others living there (`trust_lease_occupants`),
+  pets and assistance animals (`trust_lease_pets`: no pet rent, fee or deposit for an assistance
+  animal), vehicles (`trust_lease_vehicles`) and guarantors (`trust_lease_guarantors`) are kept on
+  the lease's Tenants tab (`src/pms/api/household.py`, area setup) and taken off by a row of
+  `trust_lease_household_removals`, once; all append-only, and the AI role reads none of them. A
+  lease offer's signer is a tenant or a guarantor (`trust_lease_offer_signers.role`): guarantors
+  sign and become the lease's guarantors, never tenants, and an offer needs a tenant. A
+  property's lease-break fee terms (`trust_lease_break_fees`: a flat fee and months of rent, from
+  a day) are those in force on a lease's first day; `POST /api/move-out/{id}/end` charges the fee
+  (due on the new last day) only when staff ask and the lease ends before its end date. Any lease
+  is ended from its page's ⋯ menu, and Move-outs lists an ending lease with no deposit for 90 days.
 - Vendor insurance and inspections (migration 0058): a vendor's policies
   (`trust_vendor_insurance`: coverage, carrier, number, the days it runs, a limit; a renewal is
   a new policy), and a lease's move-in and move-out inspections (`trust_inspections`, their

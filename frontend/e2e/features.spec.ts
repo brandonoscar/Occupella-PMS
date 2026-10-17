@@ -2430,3 +2430,70 @@ test("staff waive a late fee from the lease page: it comes off that fee, and the
   await leaseTab(page, "Ledger");
   await expect(page.getByRole("main")).toContainText("Waived: Late fee, due");
 });
+
+test("staff take one tenant off a lease, keep who else lives there and who guarantees it, and break the lease with its fee", async ({
+  page,
+}) => {
+  const people = seed.features["lease-people"]!;
+  await joinAsStaff(page, people.manager);
+
+  // Cedar House's leases break for $250.00 and a month's rent, for leases from 2020 on.
+  await openProperty(page, "Cedar House");
+  const terms = await setupPanel(page, "Set lease-break fee");
+  await terms.getByLabel("For leases starting from").fill("2020-01-01");
+  await terms.getByLabel("Flat fee").fill("250.00");
+  await terms.getByLabel("Months of rent").fill("1");
+  await terms.getByRole("button", { name: "Set lease-break fee" }).click();
+  await expect(page.getByTestId("lease-break-fee")).toHaveText(
+    "Lease-break fee $250.00 and 1 month's rent (leases from 01/01/2020)",
+  );
+
+  // Quinn leaves; their deposit stays in trust, moved to Taylor, who stays on.
+  await openLease(page, "Cedar House, House");
+  await leaseTab(page, "Tenants");
+  await page.getByRole("row", { name: "Quinn Demo" }).getByRole("button", { name: "Actions for Quinn Demo" }).click();
+  await page.getByRole("menuitem", { name: "Take off the lease" }).click();
+  const leaving = page.getByRole("dialog", { name: "Take a tenant off the lease" });
+  await leaving.getByLabel("Their $1,125.00 deposit").selectOption({ label: "Moves to Taylor Demo" });
+  await leaving.getByRole("button", { name: "Take Quinn Demo off the lease" }).click();
+  await expect(page.getByText("Quinn Demo left the lease; their $1,125.00 deposit moved to Taylor Demo.")).toBeVisible();
+  await expect(page.getByRole("row", { name: "Quinn Demo" })).toContainText(`Left ${us(today())}`);
+
+  // Who else is on the lease: a guarantor, an assistance animal and a car, which is taken off.
+  const add = async (button: string, fields: Record<string, string>, done: string) => {
+    const panel = await setupPanel(page, button);
+    for (const [label, value] of Object.entries(fields)) await panel.getByLabel(label, { exact: true }).fill(value);
+    if (button === "Add pet") await panel.getByRole("checkbox").check();
+    await panel.getByRole("button", { name: button }).click();
+    await expect(page.getByText(done)).toBeVisible();
+  };
+  await add("Add guarantor", { Name: "Guarantor Demo", Email: "guarantor.demo@example.com" }, "Guarantor Demo guarantees the lease.");
+  await add("Add occupant", { Name: "Occupant Demo", "Relationship to the tenants": "Child" }, "Occupant Demo lives there too.");
+  await add("Add pet", { Name: "Pet Demo", "Kind (dog, cat...)": "Dog" }, "Pet Demo is on the lease.");
+  await add("Add vehicle", { Make: "Make Demo", Plate: "SYN-001" }, "The Make Demo is on the lease.");
+  await expect(page.getByRole("table", { name: "Pets and animals" })).toContainText("Assistance animal");
+  await expect(page.getByText(/no pet rent, fee or deposit is charged for it \(Fair Housing Act\)/)).toBeVisible();
+  await page.getByRole("button", { name: "Actions for Make Demo, SYN-001" }).click();
+  await page.getByRole("menuitem", { name: "Take off the lease" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Take off the lease" }).click();
+  await expect(page.getByText("Make Demo, SYN-001 is off the lease.")).toBeVisible();
+  await expect(page.getByRole("table", { name: "Vehicles" })).toHaveCount(0);
+
+  // The month-to-month lease gets a last day, then ends earlier: that breaks it, and its fee is
+  // charged once ticked.
+  const later = new Date(Date.now() + 60 * 86_400_000).toISOString().slice(0, 10);
+  const sooner = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+  let ending = await leasePanel(page, "End lease");
+  await ending.getByLabel("Last day").fill(later);
+  await ending.getByRole("button", { name: "End lease" }).click();
+  await expect(page.getByText(`The lease ends on ${us(later)}.`)).toBeVisible();
+  ending = await leasePanel(page, "End lease");
+  await ending.getByLabel("Last day").fill(sooner);
+  await ending.getByLabel("Charge the lease-break fee: $2,500.00").check();
+  await ending.getByRole("button", { name: "End lease" }).click();
+  await expect(page.getByText(`The lease ends on ${us(sooner)}; a $2,500.00 lease-break fee was charged.`)).toBeVisible();
+  // Due on the new last day: owed now, and on the lease's open charges.
+  await expect(page.getByTestId("balance-due")).toHaveText("$2,500.00");
+  await leaseTab(page, "Summary");
+  await expect(page.getByRole("list", { name: "Open charges" })).toContainText("Lease-break fee: $2,500.00 open");
+});

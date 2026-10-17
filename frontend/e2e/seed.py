@@ -474,6 +474,7 @@ FEATURES = (
     "automatic-email",
     "rent-in",
     "waive",
+    "lease-people",
 )
 
 

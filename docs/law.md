@@ -183,3 +183,34 @@ it through the lease. Where states limit it:
 **Left to the company.** Whether its lease may require insurance and how much (Oregon's cap and
 exemptions), any premium it buys for a tenant and the rules on charging for it (Virginia), and
 the notice to add the requirement to a tenancy.
+
+## A lease's people: assistance animals, a tenant leaving, a lease broken (migration 0080)
+
+**The rule.** An assistance animal (a service or support animal a person with a disability needs)
+is not a pet under the federal Fair Housing Act, which applies in every state: a housing provider
+waives a no-animal rule for it and charges no pet deposit or pet fee for it, though the tenant
+still answers for damage it does. HUD set this out in Notice FHEO-2020-01 (January 2020, replacing
+FHEO-2013-01), guidance without the force of law of its own. Sources read: a congressional fact
+sheet on the Notice (mcgarvey.house.gov), an Idaho Legal Aid packet citing it, and a 2021 HUD
+charge over a $400 deposit asked for an assistance animal (archives.hud.gov). The Notice's own
+wording and the statute's subsection (42 U.S.C. 3604(f)(3)(B), reasonable accommodations) are
+NOT VERIFIED: hud.gov was not read.
+
+A tenant leaving a lease others stay on, and a lease ended early, have no rule every state shares
+beyond the lease itself and the deposit staying in trust until it is returned (the deposit rules
+above). Whether a landlord must try to re-rent a broken lease before charging for it, and how
+much a lease-break fee may be, differ by state and stay the company's (NOT VERIFIED per state).
+
+**What the PMS does.**
+- A pet is marked as an assistance animal when it is one; the lease page then says that no pet
+  rent, fee or deposit is charged for it. The PMS doesn't stop staff from adding a charge (it
+  can't tell pet rent from other fees); it names the rule where the animal is recorded.
+- A tenant leaving names the day; their deposit moves, inside the security-deposit trust account,
+  to a tenant who stays, or stays under their name until the lease's deposit is returned. No money
+  leaves trust.
+- A lease-break fee is the property's terms in force on the lease's first day (what the lease was
+  signed under), charged only when staff end a lease before its end date and tick it.
+
+**Left to the company.** Whether a request for an assistance animal is granted (what it may ask
+for, and the Act's exemptions), whether a tenant may leave and on what terms, and whether its
+state lets it charge a lease-break fee and how much.

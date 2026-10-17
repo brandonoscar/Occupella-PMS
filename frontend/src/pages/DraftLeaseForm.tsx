@@ -34,6 +34,8 @@ export function DraftLeaseForm({ from = "", record, onMade }: {
   const [charges, setCharges] = useState<MonthlyCharge[]>([]);
   const [title, setTitle] = useState("");
   const [signers, setSigners] = useState("");
+  // Guarantors who sign too, one a line; they become the lease's guarantors, not tenants.
+  const [guarantors, setGuarantors] = useState("");
   const [document, setDocument] = useState("");
   const [problem, setProblem] = useState("");
   // Which of the two submit buttons was pressed: Send for signing, or Save draft.
@@ -95,6 +97,11 @@ export function DraftLeaseForm({ from = "", record, onMade }: {
       setProblem(people.error);
       return;
     }
+    const backing = guarantors.trim() ? parseSigners(guarantors) : { signers: [] };
+    if ("error" in backing) {
+      setProblem(`Guarantors: ${backing.error}`);
+      return;
+    }
     setProblem("");
     const [kind, id] = target.split(":");
     const path = kind === "application" ? `/api/leasing/applications/${id}/offer` : `/api/leasing/leases/${id}/renewal`;
@@ -106,7 +113,7 @@ export function DraftLeaseForm({ from = "", record, onMade }: {
       recurring_charges: charges,
       document_title: title,
       document_base64: document,
-      signers: people.signers,
+      signers: [...people.signers, ...backing.signers.map((g) => ({ ...g, role: "guarantor" }))],
       send,
     }, (made) => {
       onMade(made);
@@ -181,6 +188,11 @@ export function DraftLeaseForm({ from = "", record, onMade }: {
           <label htmlFor="draft-signers" className="flex flex-col gap-1.5 text-sm text-ink-muted">
             Who signs, one a line: Name, email
             <textarea id="draft-signers" rows={3} required value={signers} onChange={(e) => setSigners(e.target.value)}
+              className={TEXTAREA} />
+          </label>
+          <label htmlFor="draft-guarantors" className="flex flex-col gap-1.5 text-sm text-ink-muted">
+            Guarantors who sign too (optional), one a line: Name, email
+            <textarea id="draft-guarantors" rows={2} value={guarantors} onChange={(e) => setGuarantors(e.target.value)}
               className={TEXTAREA} />
           </label>
           <Notice tone="error">{problem}</Notice>

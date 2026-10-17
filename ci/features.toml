@@ -608,3 +608,21 @@ operations = [
 browser = [
   "features.spec.ts › staff waive a late fee from the lease page: it comes off that fee, and the ledger shows the waiver",
 ]
+
+[[feature]]
+id = "lease-people"
+statement = "Staff take one tenant off a lease others stay on (their deposit moving to a tenant who stays, or staying under their name until move-out), keep the lease's other occupants, pets and assistance animals, vehicles and guarantors, end any lease from its page, and charge a property's lease-break fee when a lease ends before its end date (the founder's review, q003, q007, q011, q012; migration 0080)."
+operations = [
+  "POST /api/move-out/{lease_id}/departures",
+  "GET /api/move-out/{lease_id}/break-fee",
+  "POST /api/setup/lease-break-fees",
+  "GET /api/leases/{lease_id}/household",
+  "POST /api/leases/{lease_id}/occupants",
+  "POST /api/leases/{lease_id}/pets",
+  "POST /api/leases/{lease_id}/vehicles",
+  "POST /api/leases/{lease_id}/guarantors",
+  "POST /api/leases/{lease_id}/{kind}/{item_id}/remove",
+]
+browser = [
+  "features.spec.ts › staff take one tenant off a lease, keep who else lives there and who guarantees it, and break the lease with its fee",
+]

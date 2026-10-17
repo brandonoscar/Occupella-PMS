@@ -100,6 +100,18 @@ def lease_of(conn: psycopg.Connection[Any], session: accounts.Session, lease_id:
         raise HTTPException(404, "no such lease of yours")
 
 
+def still_on(conn: psycopg.Connection[Any], session: accounts.Session, lease_id: UUID) -> None:
+    """Refuses a lease the tenant left by today while others stayed on it (migration 0080): they
+    still read it, but file nothing under it."""
+    row = conn.execute(
+        "SELECT left_on FROM trust_lease_departures"
+        " WHERE pmc_id = %s AND lease_id = %s AND tenant_id = %s AND left_on <= %s",
+        (session.pmc_id, lease_id, session.person_id, today()),
+    ).fetchone()
+    if row is not None:
+        raise HTTPException(409, f"you left this lease on {row[0]:%m/%d/%Y}")
+
+
 @router.get("/leases")
 def leases(session: Tenant, conn: Conn) -> list[Lease]:
     """Every lease the tenant is on, newest first, with its balance due at the end of today."""
@@ -274,6 +286,7 @@ def record_my_policy(
     """The tenant's own renters insurance policy for a lease they are on, with whatever insurer
     they chose; it is recorded as theirs."""
     lease_of(conn, session, lease_id)
+    still_on(conn, session, lease_id)
     return rent_api.add_policy(conn, session.pmc_id, lease_id, policy, session.person_id)
 
 
@@ -284,6 +297,7 @@ def file_request(session: Tenant, conn: Conn, new: NewRequest) -> maintenance.Re
     if not summary:
         raise HTTPException(422, "say what needs fixing")
     lease_of(conn, session, new.lease_id)
+    still_on(conn, session, new.lease_id)
     on = today()
     row = conn.execute(
         "SELECT starts_on <= %s AND (ends_on IS NULL OR %s <= ends_on) FROM trust_leases"

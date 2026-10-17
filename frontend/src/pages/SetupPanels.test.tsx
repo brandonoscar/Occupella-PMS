@@ -5,7 +5,8 @@ import type { Portfolio } from "../setup";
 import { ChartOfAccountsPage } from "./ChartOfAccountsPage";
 import type { Panel } from "./SetupPanels";
 import {
-  AddLeasePanel, AddOwnerPanel, AddPropertyPanel, AddUnitPanel, LateFeesPanel, NsfFeePanel, TermsPanel,
+  AddLeasePanel, AddOwnerPanel, AddPropertyPanel, AddUnitPanel, LateFeesPanel, LeaseBreakFeePanel, NsfFeePanel,
+  TermsPanel,
 } from "./SetupPanels";
 
 afterEach(() => {
@@ -188,6 +189,20 @@ describe("setup panels", () => {
       }],
       ["/api/setup/nsf-fees", { property_id: "p1", starts_on: "2026-10-17", fee: "35.00" }],
     ]);
+  });
+
+  it("sets the lease-break fee leases starting from a day break under", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-17T12:00:00Z") });
+    const fetch = server();
+    const p = panel();
+    render(<LeaseBreakFeePanel panel={p} propertyId="p1" />);
+    type("Flat fee", "250.00");
+    type("Months of rent", "1.5");
+    press("Set lease-break fee");
+    await vi.waitFor(() => expect(p.said).toEqual(["New lease-break fee for leases starting from 2026-10-17."]));
+    expect(posted(fetch)).toEqual([["/api/setup/lease-break-fees", {
+      property_id: "p1", starts_on: "2026-10-17", flat_fee: "250.00", rent_months: "1.5",
+    }]]);
   });
 
   it("adds a lease in place for the property's tenants, one of them added there first", async () => {

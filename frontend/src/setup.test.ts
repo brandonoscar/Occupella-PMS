@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Agreement, LateFees } from "./setup";
-import { agreementSummary, kindLabel, lateFeeSummary, leaseSummary, nsfFeeSummary } from "./setup";
+import { agreementSummary, kindLabel, lateFeeSummary, leaseBreakFeeSummary, leaseSummary, nsfFeeSummary } from "./setup";
 
 const NONE: Agreement = {
   starts_on: "2026-10-01",
@@ -54,6 +54,17 @@ describe("nsfFeeSummary", () => {
     expect(nsfFeeSummary({ starts_on: "2026-10-01", fee: "35.00" })).toBe("NSF fee $35.00");
     expect(nsfFeeSummary({ starts_on: "2026-10-01", fee: "0.00" })).toBe("No NSF fee");
     expect(nsfFeeSummary(null)).toBe("No NSF fee");
+  });
+});
+
+describe("leaseBreakFeeSummary", () => {
+  it("names the flat fee and the months of rent, or says there is none", () => {
+    const terms = { starts_on: "2026-01-01", flat_fee: "250.00", rent_months: "1.5" };
+    expect(leaseBreakFeeSummary(terms)).toBe("Lease-break fee $250.00 and 1.5 months' rent");
+    expect(leaseBreakFeeSummary({ ...terms, flat_fee: "0.00", rent_months: "1" })).toBe("Lease-break fee 1 month's rent");
+    expect(leaseBreakFeeSummary({ ...terms, rent_months: "0" })).toBe("Lease-break fee $250.00");
+    expect(leaseBreakFeeSummary({ ...terms, flat_fee: "0.00", rent_months: "0" })).toBe("No lease-break fee");
+    expect(leaseBreakFeeSummary(null)).toBe("No lease-break fee");
   });
 });
 

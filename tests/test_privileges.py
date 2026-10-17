@@ -174,6 +174,15 @@ TABLES = {
     "trust_documents": {"SELECT", "INSERT"},
     "trust_document_files": {"SELECT", "INSERT"},
     "trust_document_removals": {"SELECT", "INSERT"},
+    # A tenant leaving a lease: written only by trust_remove_lease_tenant. Who else lives there,
+    # guarantors and lease-break fee terms: staff add them with inserts; a removal is a row.
+    "trust_lease_departures": {"SELECT"},
+    "trust_lease_occupants": {"SELECT", "INSERT"},
+    "trust_lease_pets": {"SELECT", "INSERT"},
+    "trust_lease_vehicles": {"SELECT", "INSERT"},
+    "trust_lease_guarantors": {"SELECT", "INSERT"},
+    "trust_lease_household_removals": {"SELECT", "INSERT"},
+    "trust_lease_break_fees": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -225,6 +234,13 @@ AI_NEVER_READS = {
     "trust_notes",
     # The company's mailing address, with the fee terms new properties start with (ADR 0006).
     "trust_company_profiles",
+    # Who else lives in a home, their pets (an assistance animal speaks to a disability) and
+    # vehicles, and the lease's guarantors with their contact details (migration 0080).
+    "trust_lease_occupants",
+    "trust_lease_pets",
+    "trust_lease_vehicles",
+    "trust_lease_guarantors",
+    "trust_lease_household_removals",
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
 RENAMEABLE = [
@@ -272,6 +288,7 @@ FUNCTIONS = {
     "trust_prepare_bank_reconciliation(uuid,uuid,date)": {"trust_app"},
     "trust_approve_bank_reconciliation(uuid,uuid)": {"trust_app"},
     "trust_return_deposit(uuid,uuid,text,text,timestamptz)": {"trust_app"},
+    "trust_remove_lease_tenant(uuid,uuid,uuid,date,uuid)": {"trust_app"},
     "trust_propose_journal_entry(uuid,date,text,transfer_request[])": {"trust_app"},
     "trust_post_journal_entry(uuid,uuid)": {"trust_app"},
     "trust_decline_journal_entry(uuid,uuid,text)": {"trust_app"},
@@ -452,6 +469,7 @@ SECURITY_DEFINER = {
     "trust_prepare_bank_reconciliation(uuid,uuid,date)",
     "trust_approve_bank_reconciliation(uuid,uuid)",
     "trust_return_deposit(uuid,uuid,text,text,timestamptz)",
+    "trust_remove_lease_tenant(uuid,uuid,uuid,date,uuid)",
     "trust_propose_journal_entry(uuid,date,text,transfer_request[])",
     "trust_post_journal_entry(uuid,uuid)",
     "trust_decline_journal_entry(uuid,uuid,text)",

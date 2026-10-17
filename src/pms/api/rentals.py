@@ -164,9 +164,10 @@ class Property(BaseModel):
     archived: bool
     owners: list[OwnerAccount]
     units: list[UnitLine]
-    # The late fee and NSF fee terms in force today, if any.
+    # The late fee, NSF fee and lease-break fee terms in force today, if any.
     late_fees: setup.LateFees | None
     nsf_fee: setup.NsfFee | None
+    lease_break_fee: setup.LeaseBreakFee | None
 
 
 # A lease's (on l) tenants: their names, and their ids in the same order.
@@ -268,18 +269,23 @@ def property_page(session: Staff, conn: Conn, property_id: UUID) -> Property:
         ).fetchall()
     ]
     fees = conn.execute(
-        "SELECT f.starts_on, f.grace_days, f.flat_fee, f.percent, f.maximum, s.starts_on, s.fee"
+        "SELECT f.starts_on, f.grace_days, f.flat_fee, f.percent, f.maximum, s.starts_on, s.fee,"
+        " b.starts_on, b.flat_fee, b.rent_months"
         " FROM (SELECT 1) AS one"
         " LEFT JOIN LATERAL (SELECT * FROM trust_late_fee_policies AS f"
         "   WHERE f.property_id = %(property)s AND f.starts_on <= %(day)s"
         "   ORDER BY f.starts_on DESC LIMIT 1) AS f ON true"
         " LEFT JOIN LATERAL (SELECT * FROM trust_nsf_fee_policies AS s"
         "   WHERE s.property_id = %(property)s AND s.starts_on <= %(day)s"
-        "   ORDER BY s.starts_on DESC LIMIT 1) AS s ON true",
+        "   ORDER BY s.starts_on DESC LIMIT 1) AS s ON true"
+        " LEFT JOIN LATERAL (SELECT * FROM trust_lease_break_fees AS b"
+        "   WHERE b.property_id = %(property)s AND b.starts_on <= %(day)s"
+        "   ORDER BY b.starts_on DESC LIMIT 1) AS b ON true",
         {"property": property_id, "day": day},
     ).fetchone()
     assert fees is not None
-    late_starts, grace, flat_fee, percent, maximum, nsf_starts, nsf = fees
+    late_starts, grace, flat_fee, percent, maximum, nsf_starts, nsf = fees[:7]
+    break_starts, break_flat, break_months = fees[7:]
     # Each unit's lease in effect today, or else the soonest to start (a unit has one lease at a
     # time, so at most one is in effect).
     leases: dict[UUID, LeaseLine] = {}
@@ -320,6 +326,13 @@ def property_page(session: Staff, conn: Conn, property_id: UUID) -> Property:
         nsf_fee=None
         if nsf_starts is None
         else setup.NsfFee(starts_on=nsf_starts, fee=exports.text(nsf)),
+        lease_break_fee=None
+        if break_starts is None
+        else setup.LeaseBreakFee(
+            starts_on=break_starts,
+            flat_fee=exports.text(break_flat),
+            rent_months=exports.text(break_months),
+        ),
     )
 
 
@@ -549,6 +562,10 @@ class LeasePerson(BaseModel):
     phone: str | None
     portal: Portal
     login_email: str | None
+    # The day they left the lease while others stayed on it, and the tenant who took over their
+    # deposit then (None: it stayed under their name).
+    left_on: date | None
+    deposit_to: UUID | None
 
 
 class Lease(rent.RentLease):
@@ -562,9 +579,10 @@ class Lease(rent.RentLease):
 
 
 LEASE_PEOPLE = f"""
-SELECT t.id, t.display_name, c.email, c.phone, {PORTAL_STATUS}, g.email
+SELECT t.id, t.display_name, c.email, c.phone, {PORTAL_STATUS}, g.email, d.left_on, d.deposit_to
 FROM trust_lease_tenants AS lt
 JOIN trust_tenants AS t ON t.id = lt.tenant_id
+LEFT JOIN trust_lease_departures AS d ON d.lease_id = lt.lease_id AND d.tenant_id = lt.tenant_id
 LEFT JOIN LATERAL (
     SELECT k.email, k.phone FROM trust_contacts AS k WHERE k.tenant_id = t.id
     ORDER BY k.created_at DESC, k.id DESC LIMIT 1
@@ -591,8 +609,10 @@ def lease_page(session: Staff, conn: Conn, lease_id: UUID) -> Lease:
     detail = rent.lease_detail(conn, session.pmc_id, lease_id, day)
     holds = rent.holds_of(conn, session.pmc_id, lease_id, day)
     people = [
-        LeasePerson(id=i, name=n, email=e, phone=ph, portal=po, login_email=le)
-        for i, n, e, ph, po, le in conn.execute(LEASE_PEOPLE, (lease_id,)).fetchall()
+        LeasePerson(
+            id=i, name=n, email=e, phone=ph, portal=po, login_email=le, left_on=lo, deposit_to=to
+        )
+        for i, n, e, ph, po, le, lo, to in conn.execute(LEASE_PEOPLE, (lease_id,)).fetchall()
     ]
     return Lease(
         **detail.model_dump(),

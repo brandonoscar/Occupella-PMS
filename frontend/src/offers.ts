@@ -2,7 +2,9 @@
 import type { BadgeTone } from "./components/Badge";
 import { usDate } from "./money";
 
-export type Signer = { position: number; name: string; email: string; signed_at: string | null };
+// A signer is a tenant to be, or the lease's guarantor, who signs without becoming a tenant.
+export type SignerRole = "tenant" | "guarantor";
+export type Signer = { position: number; name: string; email: string; role: SignerRole; signed_at: string | null };
 
 // Where an offer stands: a draft, sent and signed by none, some or all of its signers, made the
 // lease, or voided.

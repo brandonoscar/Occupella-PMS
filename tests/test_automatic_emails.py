@@ -258,6 +258,26 @@ def test_no_reminder_without_an_email_a_lease_on_the_due_day_or_under_a_hold(con
     assert tenant != third
 
 
+def test_a_tenant_who_left_the_lease_hears_no_more_of_its_rent(conn, app_conn, pmc):
+    turn_on(conn, pmc.pmc_id, rent_reminder_days=5, late_notices=True)
+    first = tenant_of(conn, pmc)
+    second = add_tenant(conn, pmc.pmc_id, pmc.owners[0].property_id, "Tenant 2")
+    lease = lease_of(conn, pmc, tenants=[first, second])
+    contact(conn, pmc.pmc_id, "tenant_id", first, "tenant.one@example.com")
+    contact(conn, pmc.pmc_id, "tenant_id", second, "tenant.two@example.com")
+    # Tenant 1 leaves on October 15; Tenant 2 stays (migration 0080).
+    conn.execute(
+        "SELECT trust_remove_lease_tenant(%s, %s, %s, %s, NULL)",
+        (pmc.pmc_id, lease, first, date(2026, 10, 15)),
+    )
+    add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, date(2026, 9, 1), 5, "50.00")
+    ran = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16, URL, sending=True)
+    assert ran.late_fees == 1
+    assert notices.write_rent_reminders(app_conn, pmc.pmc_id, date(2026, 10, 27), 5, URL) == 1
+    for kind in ("late_notice", "rent_reminder"):
+        assert [row[3] for row in emails(conn, pmc.pmc_id, kind)] == [second]
+
+
 # --- late notices ---------------------------------------------------------------------------------
 
 

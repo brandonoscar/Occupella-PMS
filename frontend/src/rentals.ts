@@ -2,7 +2,7 @@
 // property, a unit, and search results; and how they read.
 import { money, usDate } from "./money";
 import type { Hold, RentLease } from "./rent";
-import type { Agreement, LateFees, NsfFee } from "./setup";
+import type { Agreement, LateFees, LeaseBreakFee, NsfFee } from "./setup";
 
 export type Paged<T> = { items: T[]; total: number; page: number; per_page: number };
 export type Ref = { id: string; name: string };
@@ -44,9 +44,10 @@ export type Property = {
   archived: boolean;
   owners: OwnerAccount[];
   units: UnitLine[];
-  // The late fee and NSF fee terms in force today, if any.
+  // The late fee, NSF fee and lease-break fee terms in force today, if any.
   late_fees: LateFees | null;
   nsf_fee: NsfFee | null;
+  lease_break_fee: LeaseBreakFee | null;
 };
 export type Unit = { id: string; name: string; archived: boolean; property: Ref; leases: LeaseLine[] };
 
@@ -135,7 +136,48 @@ export type LeasePerson = {
   phone: string | null;
   portal: Portal;
   login_email: string | null;
+  // The day they left while others stayed on the lease, and who took over their deposit then.
+  left_on: string | null;
+  deposit_to: string | null;
 };
+
+// Who else lives there and who guarantees the lease (GET /api/leases/{id}/household).
+export type Occupant = { id: string; name: string; relationship: string | null };
+export type Pet = {
+  id: string;
+  name: string;
+  kind: string;
+  breed: string | null;
+  weight_lbs: string | null;
+  // Not a pet under the Fair Housing Act: no pet rent, fee or deposit is charged for it.
+  assistance_animal: boolean;
+};
+export type Vehicle = {
+  id: string;
+  make: string;
+  model: string | null;
+  color: string | null;
+  plate: string;
+  plate_state: string | null;
+};
+export type Guarantor = { id: string; name: string; email: string | null; phone: string | null; signed: boolean };
+export type Household = { occupants: Occupant[]; pets: Pet[]; vehicles: Vehicle[]; guarantors: Guarantor[] };
+
+// What ending a lease on a day would charge as its lease-break fee (GET /api/move-out/{id}/break-fee).
+export type BreakFee = { early: boolean; fee: string | null; flat_fee: string | null; rent_months: string | null };
+
+// A pet as a line: "Pet 1, Dog (Breed 1), 42.5 lb".
+export function petLine(pet: Pet): string {
+  const kind = pet.breed ? `${pet.kind} (${pet.breed})` : pet.kind;
+  return [pet.name, kind, pet.weight_lbs ? `${pet.weight_lbs} lb` : ""].filter(Boolean).join(", ");
+}
+
+// A vehicle as a line: "Make 1 Model 1, Blue, SYN-001 (State 1)".
+export function vehicleLine(vehicle: Vehicle): string {
+  const plate = vehicle.plate_state ? `${vehicle.plate} (${vehicle.plate_state})` : vehicle.plate;
+  return [[vehicle.make, vehicle.model].filter(Boolean).join(" "), vehicle.color ?? "", plate]
+    .filter(Boolean).join(", ");
+}
 
 // A lease's own page (GET /api/leases/{id}): its rent work, where it stands and its people.
 export type LeaseDetail = RentLease & {

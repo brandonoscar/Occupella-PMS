@@ -174,7 +174,8 @@ AREA_PATHS = (
     ("/api/tenants/", "setup"),
     ("/api/owners/", "setup"),
     ("/api/vendors", "setup"),
-    ("/api/move-out/", "move-out"),
+    ("/api/move-out/", "move-out"),  # a tenant leaving a lease too
+    ("/api/leases/", "setup"),  # who lives there and guarantees it
     ("/api/inspections", "move-out"),
     ("/api/documents", "documents"),
     ("/api/notes", "documents"),

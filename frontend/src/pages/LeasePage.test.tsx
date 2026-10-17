@@ -23,8 +23,8 @@ const LEASE: LeaseDetail = {
     { id: "t2", name: "Tenant 2", prepaid: "0.00", deposit: "0.00" },
   ],
   people: [
-    { id: "t1", name: "Tenant 1", email: "t1@example.com", phone: "555-555-0101", portal: "active", login_email: "t1@example.com" },
-    { id: "t2", name: "Tenant 2", email: null, phone: null, portal: "no login", login_email: null },
+    { id: "t1", name: "Tenant 1", email: "t1@example.com", phone: "555-555-0101", portal: "active", login_email: "t1@example.com", left_on: null, deposit_to: null },
+    { id: "t2", name: "Tenant 2", email: null, phone: null, portal: "no login", login_email: null, left_on: null, deposit_to: null },
   ],
   owed: "1550.00",
   on_hold: false,
@@ -68,6 +68,12 @@ function server(lease: LeaseDetail = LEASE, answers: Record<string, unknown> = {
         "/api/documents": { documents: [], subjects: { w9: [], receipt: [], move_out_photo: [], owner_document: [] } },
       };
       if (path.startsWith("/api/notes")) return new Response("[]", { status: 200 });
+      if (path === "/api/leases/l1/household") {
+        return new Response(JSON.stringify({ occupants: [], pets: [], vehicles: [], guarantors: [] }), { status: 200 });
+      }
+      if (path.startsWith("/api/move-out/l1/break-fee")) {
+        return new Response(JSON.stringify({ early: false, fee: null, flat_fee: null, rent_months: null }), { status: 200 });
+      }
       if (!(path in reads)) return new Response(JSON.stringify({ detail: "no such page" }), { status: 404 });
       return new Response(JSON.stringify(reads[path]), { status: 200 });
     }
@@ -418,6 +424,44 @@ describe("LeasePage", () => {
     expect(await screen.findByText("Invite link made for t2@example.com; give it to Tenant 2.")).toBeTruthy();
     expect((within(two).getByLabelText("Invite link, Tenant 2") as HTMLInputElement).value).toBe("http://localhost/invite#abc");
     expect(posted(fetch)).toEqual([["/api/invites", { kind: "tenant", person_id: "t2", email: "t2@example.com" }]]);
+  });
+
+  it("takes one tenant off from their ⋯ menu, their deposit moving to who stays, and marks who left", async () => {
+    const fetch = server(LEASE, { "/api/move-out/l1/departures": { moved: "1500.00" } });
+    await open();
+    fireEvent.click(screen.getByRole("tab", { name: "Tenants" }));
+    fireEvent.click(within(screen.getByRole("row", { name: "Tenant 1" })).getByRole("button", { name: "Actions for Tenant 1" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Take off the lease" }));
+    const dialog = screen.getByRole("dialog", { name: "Take a tenant off the lease" });
+    fireEvent.change(within(dialog).getByLabelText("Their $1,500.00 deposit"), { target: { value: "t2" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Take Tenant 1 off the lease" }));
+    expect(await screen.findByText("Tenant 1 left the lease; their $1,500.00 deposit moved to Tenant 2.")).toBeTruthy();
+    expect(posted(fetch)[0]).toEqual(["/api/move-out/l1/departures", {
+      tenant_id: "t1", left_on: expect.any(String), deposit_to: "t2",
+    }]);
+    cleanup();
+
+    // Once one left, the one who stays can't be taken off: the lease ends instead.
+    server({
+      ...LEASE,
+      people: LEASE.people.map((p) => (p.id === "t1" ? { ...p, left_on: "2026-03-31", deposit_to: "t2" } : p)),
+    });
+    await open();
+    fireEvent.click(screen.getByRole("tab", { name: "Tenants" }));
+    expect(within(screen.getByRole("row", { name: "Tenant 1" })).getByText("Left 03/31/2026")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Actions for Tenant 2" })).toBeNull();
+    // Below them, who else is on the lease: none yet of guarantors, occupants, pets or vehicles.
+    expect(await screen.findAllByText("None on file.")).toHaveLength(4);
+  });
+
+  it("ends the lease from its ⋯ menu", async () => {
+    const fetch = server();
+    await open();
+    const dialog = panel("End lease", true);
+    fireEvent.change(within(dialog).getByLabelText("Last day"), { target: { value: "2026-11-30" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "End lease" }));
+    expect(await screen.findByText("The lease ends on 11/30/2026.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/move-out/l1/end", { ends_on: "2026-11-30", break_fee: false }]]);
   });
 
   it("opens its files and notes", async () => {

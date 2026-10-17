@@ -66,7 +66,10 @@ def lease_of(conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID) -> Lea
     row = conn.execute(
         "SELECT u.property_id, array(SELECT lt.tenant_id FROM trust_lease_tenants AS lt"
         "  JOIN trust_tenants AS t ON t.id = lt.tenant_id WHERE lt.lease_id = l.id"
-        '  ORDER BY t.display_name COLLATE "C", t.id)'
+        # Tenants staying on the lease first: the first holds what is paid ahead.
+        "  ORDER BY EXISTS (SELECT 1 FROM trust_lease_departures AS d"
+        "                   WHERE d.lease_id = lt.lease_id AND d.tenant_id = lt.tenant_id),"
+        '  t.display_name COLLATE "C", t.id)'
         " FROM trust_leases AS l JOIN trust_units AS u ON u.id = l.unit_id"
         " WHERE l.pmc_id = %s AND l.id = %s",
         (pmc_id, lease_id),

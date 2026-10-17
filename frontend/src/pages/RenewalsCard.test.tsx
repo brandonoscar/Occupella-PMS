@@ -38,8 +38,8 @@ const RENEWAL: Offer = {
   offered_at: "2026-10-11T18:00:00Z",
   sent: true,
   signers: [
-    { position: 1, name: "Tenant 1", email: "tenant1@example.com", signed_at: null },
-    { position: 2, name: "Tenant 2", email: "tenant2@example.com", signed_at: "2026-10-11T19:00:00Z" },
+    { position: 1, name: "Tenant 1", email: "tenant1@example.com", role: "tenant", signed_at: null },
+    { position: 2, name: "Tenant 2", email: "tenant2@example.com", role: "tenant", signed_at: "2026-10-11T19:00:00Z" },
   ],
   lease_id: null,
   security_deposit: null,
