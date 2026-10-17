@@ -138,7 +138,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
         {tab === "summary" && <Summary lease={lease} record={record} />}
         {tab === "ledger" && <LedgerTab lease={lease} ledger={ledger} record={record} />}
         {tab === "tenants" && <TenantsTab people={lease.people} refresh={refresh} />}
-        {tab === "files" && <FilesCard kind="move_out_photo" aboutId={id} name={`${lease.unit}, ${lease.property}`} />}
+        {tab === "files" && <FilesCard kind="move_out_photo" also={["lease_document"]} aboutId={id} name={`${lease.unit}, ${lease.property}`} />}
         {tab === "notes" && <NotesCard about="lease" aboutId={id} name={`${lease.unit}, ${lease.property}`} />}
       </div>
       {panel !== null && (

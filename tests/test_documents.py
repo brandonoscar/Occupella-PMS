@@ -4,7 +4,7 @@ PDF, JPEG or PNG its row says (its first bytes, size and SHA-256), and it has it
 The audit log records the document but never copies the file's bytes; the AI never reads them.
 Every file here is synthetic."""
 
-from datetime import date
+from datetime import UTC, date, datetime
 
 import psycopg
 import pytest
@@ -16,12 +16,26 @@ from helpers import (
     add_document,
     add_staff,
     add_unit,
+    add_work_order,
     enter_bill,
     make_pmc,
     open_lease,
 )
 
 FILES = {"application/pdf": PDF, "image/png": PNG, "image/jpeg": JPEG}
+# Each kind and the record it is about (migrations 0036, 0072 and 0074).
+COLUMN = {
+    "w9": "vendor_id",
+    "receipt": "bill_id",
+    "move_out_photo": "lease_id",
+    "owner_document": "owner_id",
+    "work_order_photo": "work_order_id",
+    "property_document": "property_id",
+    "unit_document": "unit_id",
+    "tenant_document": "tenant_id",
+    "lease_document": "lease_id",
+    "vendor_document": "vendor_id",
+}
 
 
 def refused(match, error=psycopg.errors.CheckViolation):
@@ -52,12 +66,24 @@ def about(conn, pmc):
     ).fetchone()[0]
     unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id)
     lease = open_lease(conn, pmc.pmc_id, unit, date(2026, 1, 1), None, "1000.00", [tenant])
+    order = add_work_order(
+        conn, pmc.pmc_id, pmc.owners[0].property_id, unit, "Leak", datetime(2026, 1, 5, tzinfo=UTC)
+    )
     return {
         "w9": pmc.vendor_id,
         "receipt": bill,
         "move_out_photo": lease,
         "owner_document": pmc.owners[0].owner_id,
+        "work_order_photo": order,
+        "property_document": pmc.owners[0].property_id,
+        "unit_document": unit,
+        "tenant_document": tenant,
+        "lease_document": lease,
+        "vendor_document": pmc.vendor_id,
     }
+
+
+KINDS = list(COLUMN)
 
 
 def document(conn, document_id):
@@ -74,6 +100,12 @@ def document(conn, document_id):
         ("receipt", "image/jpeg"),
         ("move_out_photo", "image/png"),
         ("owner_document", "application/pdf"),
+        ("work_order_photo", "image/jpeg"),
+        ("property_document", "application/pdf"),
+        ("unit_document", "image/png"),
+        ("tenant_document", "application/pdf"),
+        ("lease_document", "application/pdf"),
+        ("vendor_document", "application/pdf"),
     ],
 )
 def test_a_document_is_kept_with_its_file_and_who_uploaded_it(
@@ -120,18 +152,13 @@ def test_a_row_does_not_say_who_uploaded_or_removed_it(conn, pmc, about):
     ).fetchone() == (None, None)
 
 
-@pytest.mark.parametrize("kind", ["w9", "receipt", "move_out_photo", "owner_document"])
+@pytest.mark.parametrize("kind", KINDS)
 def test_each_kind_is_about_its_one_kind_of_thing(conn, pmc, about, kind):
-    other = next(k for k in about if k != kind)
-    column = {
-        "w9": "vendor_id",
-        "receipt": "bill_id",
-        "move_out_photo": "lease_id",
-        "owner_document": "owner_id",
-    }
+    # Another kind's record, in a column of its own.
+    other = next(k for k in about if COLUMN[k] != COLUMN[kind])
     for about_what in ({}, {kind: about[kind], other: about[other]}):
-        names = ", ".join(column[k] for k in about_what)
-        with refused("trust_documents_check"), conn.transaction():
+        names = ", ".join(COLUMN[k] for k in about_what)
+        with refused(r"trust_documents_\w*check"), conn.transaction():
             conn.execute(
                 f"INSERT INTO trust_documents (pmc_id, kind, {names + ', ' if names else ''}"
                 " title, content_type, size, sha256)"
@@ -141,7 +168,7 @@ def test_each_kind_is_about_its_one_kind_of_thing(conn, pmc, about, kind):
             )
 
 
-def test_a_document_is_one_of_four_kinds(conn, pmc):
+def test_a_document_is_one_of_its_kinds(conn, pmc):
     with refused("trust_documents_kind_check"), conn.transaction():
         conn.execute(
             "INSERT INTO trust_documents (pmc_id, kind, title, content_type, size, sha256)"
@@ -150,7 +177,7 @@ def test_a_document_is_one_of_four_kinds(conn, pmc):
         )
 
 
-@pytest.mark.parametrize("kind", ["w9", "receipt", "move_out_photo", "owner_document"])
+@pytest.mark.parametrize("kind", KINDS)
 def test_a_document_is_about_its_own_pmcs_records(conn, pmc, about, kind):
     other = make_pmc(conn)
     with refused("foreign key", psycopg.errors.ForeignKeyViolation):

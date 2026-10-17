@@ -510,16 +510,19 @@ test("staff keep an owner's document and the owner downloads it from the portal"
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Files", exact: true }).click();
 
   const pdf = Buffer.from("%PDF-1.4\n% synthetic management agreement\n");
-  await page.getByRole("combobox", { name: "Kind" }).selectOption({ label: "Owner document" });
-  await page.getByRole("combobox", { name: "Owner" }).selectOption({ label: "Owner E2E" });
-  await page.getByLabel("File").setInputFiles({ name: "agreement-2026.pdf", mimeType: "application/pdf", buffer: pdf });
-  await expect(page.getByLabel("Title")).toHaveValue("agreement-2026");
-  await page.getByLabel("Title").fill("Management agreement 2026");
   await page.getByRole("button", { name: "Upload" }).click();
+  const panel = page.getByRole("dialog", { name: "Upload" });
+  await panel.getByLabel("File").setInputFiles({ name: "agreement-2026.pdf", mimeType: "application/pdf", buffer: pdf });
+  await expect(panel.getByLabel("Name")).toHaveValue("agreement-2026");
+  await panel.getByLabel("Name").fill("Management agreement 2026");
+  await panel.getByRole("combobox", { name: "Attached to" }).selectOption("Owner");
+  await panel.getByRole("combobox", { name: "Owner" }).selectOption({ label: "Owner E2E" });
+  await expect(panel.getByRole("combobox", { name: "Category" })).toHaveValue("owner_document");
+  await panel.getByRole("button", { name: "Upload" }).click();
   await expect(page.getByText("Uploaded Management agreement 2026.")).toBeVisible();
-  // The bill's invoice another test kept is on the list too.
-  const kept = page.getByRole("list", { name: "Documents" }).getByRole("listitem").filter({ hasText: "Management agreement 2026" });
-  await expect(kept).toContainText("Owner document, Owner E2E");
+  const kept = page.getByRole("table", { name: "Files" }).getByRole("row", { name: "Management agreement 2026" });
+  await expect(kept).toContainText("Owner E2E");
+  await expect(kept).toContainText("Owner document");
 
   // The owner, who joined in the first test, signs in on their own and downloads it.
   const owner = await (await browser.newContext()).newPage();

@@ -1,6 +1,16 @@
 // Documents as the API sends them (src/pms/api/documents.py), and how they read.
 
-export type Kind = "w9" | "receipt" | "move_out_photo" | "owner_document" | "work_order_photo";
+export type Kind =
+  | "w9"
+  | "receipt"
+  | "move_out_photo"
+  | "owner_document"
+  | "work_order_photo"
+  | "property_document"
+  | "unit_document"
+  | "tenant_document"
+  | "lease_document"
+  | "vendor_document";
 export type ContentType = "application/pdf" | "image/jpeg" | "image/png";
 export type Subject = { id: string; label: string };
 export type Document = {
@@ -15,15 +25,35 @@ export type Document = {
   uploaded_at: string;
 };
 export type Library = { documents: Document[]; subjects: Record<Kind, Subject[]> };
+// A row of Files: a document and the page of the record it is about.
+export type FileRow = Document & { about_path: string };
 export type OwnerDocument = { id: string; title: string; content_type: ContentType; size: number; uploaded_at: string };
 
-// Each kind, as the page names it and what it is about.
+// Each kind (a file's category), as the page names it and what it is about.
 export const KINDS: { kind: Kind; label: string; about: string }[] = [
   { kind: "w9", label: "W-9", about: "Vendor" },
   { kind: "receipt", label: "Receipt", about: "Bill" },
   { kind: "move_out_photo", label: "Move-out photo", about: "Lease" },
   { kind: "owner_document", label: "Owner document", about: "Owner" },
   { kind: "work_order_photo", label: "Work order photo", about: "Work order" },
+  { kind: "property_document", label: "Property document", about: "Property" },
+  { kind: "unit_document", label: "Unit document", about: "Unit" },
+  { kind: "tenant_document", label: "Tenant document", about: "Tenant" },
+  { kind: "lease_document", label: "Lease document", about: "Lease" },
+  { kind: "vendor_document", label: "Vendor document", about: "Vendor" },
+];
+
+// What a file may be attached to, in the order Upload offers them, and the categories each takes
+// (the first one chosen at first).
+export const ATTACHED: { about: string; kinds: Kind[] }[] = [
+  { about: "Property", kinds: ["property_document"] },
+  { about: "Unit", kinds: ["unit_document"] },
+  { about: "Lease", kinds: ["lease_document", "move_out_photo"] },
+  { about: "Tenant", kinds: ["tenant_document"] },
+  { about: "Owner", kinds: ["owner_document"] },
+  { about: "Vendor", kinds: ["vendor_document", "w9"] },
+  { about: "Work order", kinds: ["work_order_photo"] },
+  { about: "Bill", kinds: ["receipt"] },
 ];
 
 export const MAX_BYTES = 5 * 1024 * 1024;
