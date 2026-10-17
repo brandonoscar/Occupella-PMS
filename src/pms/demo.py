@@ -135,7 +135,7 @@ class Demo:
     journal_entry: UUID | None = None
 
 
-def uid(created: setup.Created) -> UUID:
+def uid(created: setup.Created | vendors.Created) -> UUID:
     return UUID(str(created.id))
 
 
@@ -243,8 +243,16 @@ def books(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
     with b.as_staff(manager) as s:
         for owner in TERMS:
             demo.owners[owner] = uid(setup.add_owner(s, conn, setup.NewName(name=owner)))
-        for vendor in ("Demo Plumbing Co", "Demo Roofing Co"):
-            demo.vendors[vendor] = uid(setup.add_vendor(s, conn, setup.NewName(name=vendor)))
+        for vendor, trade, method in VENDORS[:2]:
+            demo.vendors[vendor] = uid(
+                vendors.add_vendor(
+                    s,
+                    conn,
+                    vendors.NewVendor(
+                        name=vendor, trade=trade, gets_1099=True, payment_method=method
+                    ),
+                )
+            )
         for name, line in (("Repairs", 14), ("Landscaping", 7), ("Water", 17)):
             demo.expense_accounts[name] = uid(
                 setup.add_expense_account(
@@ -514,6 +522,13 @@ HARBOR_ENDED = "Unit 408"
 # This month's rent at Harbor Tower: one tenant paid part of it, one none, one's payment bounced.
 HARBOR_PARTIAL, HARBOR_UNPAID, HARBOR_BOUNCED = "Unit 105", "Unit 107", "Unit 109"
 WorkOrderStep = Literal["assigned", "scheduled", "completed", "cancelled"]
+# The demo's vendors: what they do and how they are paid.
+VENDORS: tuple[tuple[str, str, vendors.Method], ...] = (
+    ("Demo Plumbing Co", "Plumbing", "EFT"),
+    ("Demo Roofing Co", "Roofing", "check"),
+    ("Demo Landscaping Co", "Landscaping", "EFT"),
+    ("Demo Electric Co", "Electrical", "check"),
+)
 NSF_FEE = D("35.00")
 PDF = b"%PDF-1.4\n% synthetic demo document\n"
 PNG = b"\x89PNG\r\n\x1a\n synthetic demo photo"
@@ -556,8 +571,20 @@ def showcase(conn: psycopg.Connection[Any], demo: Demo, today: date, public_url:
         demo.owners["Demo Owner C"] = uid(
             setup.add_owner(s, conn, setup.NewName(name="Demo Owner C"))
         )
-        for vendor in ("Demo Landscaping Co", "Demo Electric Co"):
-            demo.vendors[vendor] = uid(setup.add_vendor(s, conn, setup.NewName(name=vendor)))
+        for vendor, trade, method in VENDORS[2:]:
+            # The electrician is a corporation: no 1099.
+            demo.vendors[vendor] = uid(
+                vendors.add_vendor(
+                    s,
+                    conn,
+                    vendors.NewVendor(
+                        name=vendor,
+                        trade=trade,
+                        gets_1099=vendor != "Demo Electric Co",
+                        payment_method=method,
+                    ),
+                )
+            )
         # The electrician's policy ran out last month: assigning them warns of it.
         vendors.record_policy(
             s,

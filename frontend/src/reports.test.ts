@@ -25,8 +25,13 @@ describe("staffDownloads", () => {
       "Tenant directory (Excel)",
       "Owner directory (Excel)",
       "Vendor directory (Excel)",
+      "Vendor insurance (PDF)",
       "Whole ledger (CSV, zip)",
     ]);
+    // Moved here from Vendors (ADR 0006).
+    expect(links["Vendor insurance (PDF)"]).toBe(
+      "/api/reports/trust_report_vendor_insurance?arg=2026-03-01&format=pdf",
+    );
     expect(links["Whole ledger (CSV, zip)"]).toBe("/api/ledger.zip");
   });
 });

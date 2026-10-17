@@ -174,8 +174,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   status and vendor), each at `/work-orders/<id>` (`src/pms/api/work_orders.py`: its details,
   tenants to call, photos, timeline, bills and request; Next step, Edit details and Create bill
   in side panels; staff open one there too, its status the work orders report's word), tenants'
-  requests below them, vendors and their
-  insurance at `/vendors`, each at `/vendors/<id>` with their bills and work orders
+  requests below them, vendors a page at a time at `/vendors` (ADR 0006: trade, phone, email, W-9,
+  insurance; Add vendor in a side panel), each at `/vendors/<id>` in tabs: Summary (trade, 1099,
+  how paid, contact), Insurance (policies, Add policy), Bills, Work orders and Files
   (`src/pms/api/vendors.py`). Files at `/files` (`src/pms/api/documents.py`), and an owner's,
   vendor's or lease's page has a Files card of its own documents (`pages/FilesCard.tsx`); every download at
   `/reports`, and Settings at `/settings`: staff roles and signers at `/settings/staff`
@@ -567,6 +568,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   cent; a month left as it was writes nothing. `trust_report_budget_vs_actual` lays an owner's
   budget for the months that start within some days beside their income statement. A budget
   moves no money.
+- Vendor profiles (migration 0073, ADR 0006): a vendor's trade, whether they are a 1099 vendor
+  and how they are paid (check or EFT), in `trust_vendor_profiles` (append-only, the latest row
+  holding, naming who recorded it; the same again writes nothing). No tax ID is kept: it stays on
+  the W-9. A profile decides nothing and moves no money; the AI role reads it.
 - Vendor insurance and inspections (migration 0058): a vendor's policies
   (`trust_vendor_insurance`: coverage, carrier, number, the days it runs, a limit; a renewal is
   a new policy), and a lease's move-in and move-out inspections (`trust_inspections`, their

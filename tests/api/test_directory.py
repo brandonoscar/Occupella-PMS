@@ -242,8 +242,10 @@ def test_staff_archive_a_tenant_or_owner_only_when_nothing_is_open(client, conn,
 def test_a_vendors_contact_details_show_on_the_vendors_list(client, conn, staff, pmc):
     ok(client.post(f"/api/vendors/{pmc.vendor_id}/contact", json={"phone": "555-555-0102"}), 204)
 
-    (vendor,) = ok(client.get("/api/vendors"))
-    assert vendor["contact"] == {**EMPTY, "phone": "555-555-0102"}
+    (vendor,) = ok(client.get("/api/vendors"))["items"]
+    assert (vendor["phone"], vendor["email"]) == ("555-555-0102", None)
+    page = ok(client.get(f"/api/vendors/{pmc.vendor_id}"))
+    assert page["contact"] == {**EMPTY, "phone": "555-555-0102"}
 
 
 def test_everything_is_the_sessions_pmc(client, conn, staff, pmc):

@@ -44,8 +44,11 @@ export type WorkOrder = WorkOrderRow & {
 };
 
 export type VendorPageData = Vendor & {
+  insurance_standing: string;
   bills: { id: string; reference: string; owner: string; property: string; bill_date: string; amount: string; paid: boolean }[];
-  work_orders: { id: string; property: string; summary: string; status: WorkOrderStatus }[];
+  work_orders: {
+    id: string; number: number; property: string; unit: string | null; summary: string; status: WorkOrderStatus; opened_at: string;
+  }[];
 };
 
 export type Renewal = "none" | "drafted" | "sent" | "signed" | "renewed";

@@ -24,6 +24,7 @@ export function staffDownloads(now: Date): Download[] {
     { label: "Tenant directory (Excel)", href: report("tenant_directory", "xlsx", today) },
     { label: "Owner directory (Excel)", href: report("owner_directory", "xlsx", today) },
     { label: "Vendor directory (Excel)", href: report("vendor_directory", "xlsx", today) },
+    { label: "Vendor insurance (PDF)", href: report("vendor_insurance", "pdf", today) },
     { label: "Whole ledger (CSV, zip)", href: "/api/ledger.zip" },
   ];
 }

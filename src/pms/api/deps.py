@@ -170,7 +170,7 @@ AREA_PATHS = (
     ("/api/units/", "setup"),
     ("/api/tenants/", "setup"),
     ("/api/owners/", "setup"),
-    ("/api/vendors/", "setup"),
+    ("/api/vendors", "setup"),
     ("/api/move-out/", "move-out"),
     ("/api/inspections", "move-out"),
     ("/api/documents", "documents"),

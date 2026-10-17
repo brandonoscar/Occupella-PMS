@@ -520,13 +520,15 @@ browser = [
 
 [[feature]]
 id = "vendor-insurance"
-statement = "Staff record each vendor's insurance policies (a renewal is a new policy) and see, for every vendor, the W-9 on file and each coverage as it stands today: current, expiring within 30 days, or expired; Today lists what is not current, and the vendor insurance report downloads like every report."
+statement = "Staff list the vendors a page at a time with their trade, phone, email, W-9 on file or missing and how their insurance stands; add a vendor with their trade, whether they get a 1099, how they are paid and how to reach them (no tax ID is kept), and change those on their page; record each vendor's insurance policies there (a renewal is a new policy), each coverage as it stands today: current, expiring within 30 days, or expired; Today lists what is not current, and the vendor insurance report downloads from Reports like every report."
 operations = [
   "GET /api/vendors",
+  "POST /api/vendors",
+  "POST /api/vendors/{vendor_id}/profile",
   "POST /api/vendors/{vendor_id}/insurance",
 ]
 browser = [
-  "features.spec.ts › staff record a vendor's insurance, see it running out on Today, and record the renewal",
+  "features.spec.ts › staff add a vendor with their trade, 1099 and how they are paid, record a vendor's insurance on their page, see it running out on Today, and record the renewal",
 ]
 
 [[feature]]

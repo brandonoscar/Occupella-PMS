@@ -10366,6 +10366,24 @@ CREATE TABLE public.trust_vendor_payments_carried_over (
 
 
 --
+-- Name: trust_vendor_profiles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_vendor_profiles (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    vendor_id uuid NOT NULL,
+    trade text,
+    gets_1099 boolean NOT NULL,
+    payment_method text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_vendor_profiles_payment_method_check CHECK ((payment_method = ANY (ARRAY['check'::text, 'EFT'::text]))),
+    CONSTRAINT trust_vendor_profiles_trade_check CHECK (((btrim(trade) <> ''::text) AND (char_length(trade) <= 100)))
+);
+
+
+--
 -- Name: trust_vendors; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11849,6 +11867,14 @@ ALTER TABLE ONLY public.trust_vendor_payments_carried_over
 
 
 --
+-- Name: trust_vendor_profiles trust_vendor_profiles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_vendor_profiles
+    ADD CONSTRAINT trust_vendor_profiles_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_vendors trust_vendors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -12641,6 +12667,20 @@ CREATE INDEX trust_units_property_id ON public.trust_units USING btree (property
 
 
 --
+-- Name: trust_vendor_profiles_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_vendor_profiles_recorded_by ON public.trust_vendor_profiles USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_vendor_profiles_vendor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_vendor_profiles_vendor ON public.trust_vendor_profiles USING btree (pmc_id, vendor_id, created_at);
+
+
+--
 -- Name: trust_work_order_details_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -13394,6 +13434,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_vendor_payments_carried_over FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_vendor_profiles trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_vendor_profiles FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -14209,6 +14256,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_vend
 
 
 --
+-- Name: trust_vendor_profiles trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_vendor_profiles FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_vendors trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -14619,6 +14673,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_renters_insurance
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_vendor_insurance FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_vendor_profiles trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_vendor_profiles FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -17254,6 +17315,30 @@ ALTER TABLE ONLY public.trust_vendor_payments_carried_over
 
 
 --
+-- Name: trust_vendor_profiles trust_vendor_profiles_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_vendor_profiles
+    ADD CONSTRAINT trust_vendor_profiles_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_vendor_profiles trust_vendor_profiles_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_vendor_profiles
+    ADD CONSTRAINT trust_vendor_profiles_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_vendor_profiles trust_vendor_profiles_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_vendor_profiles
+    ADD CONSTRAINT trust_vendor_profiles_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
 -- Name: trust_vendors trust_vendors_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -17436,4 +17521,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261016000069'),
     ('20261016000070'),
     ('20261016000071'),
-    ('20261016000072');
+    ('20261016000072'),
+    ('20261016000073');
