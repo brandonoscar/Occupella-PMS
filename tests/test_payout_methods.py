@@ -57,7 +57,8 @@ def test_an_owner_draw_and_a_bill_paid_each_take_one(conn, pmc):
     method(conn, pmc, paid)
 
     assert conn.execute(
-        "SELECT transfer_id, method FROM trust_payout_methods WHERE pmc_id = %s ORDER BY method",
+        "SELECT transfer_id, method FROM trust_payout_methods WHERE pmc_id = %s"
+        ' ORDER BY method COLLATE "C"',
         (pmc.pmc_id,),
     ).fetchall() == [(draw, "EFT"), (paid, "check")]
     # Once per payout.
