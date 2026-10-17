@@ -2,7 +2,7 @@
 // its work order's latest step (src/pms/api/maintenance.py).
 import { usDate } from "./money";
 
-export type Status = "received" | "opened" | "assigned" | "completed" | "cancelled";
+export type Status = "received" | "opened" | "assigned" | "scheduled" | "completed" | "cancelled";
 
 export type MaintenanceRequest = {
   id: string;
@@ -26,6 +26,7 @@ const LABELS: Record<Status, string> = {
   received: "Received",
   opened: "Work order opened",
   assigned: "Someone is assigned",
+  scheduled: "A visit is scheduled",
   completed: "Done",
   cancelled: "Closed without work",
 };

@@ -398,25 +398,28 @@ def test_the_founders_seed_puts_something_on_every_list(conn, app_conn, built):
         ("RF-2207", "paid", False),
         ("RF-3004", "needs approval", False),
     ]
-    # Five work orders, one at each step, the roofer's among them.
+    # Six work orders, one at each step, the roofer's among them, each with its priority.
     assert rows(
         "SELECT w.summary, (SELECT s.step FROM trust_work_order_steps AS s"
-        "  WHERE s.work_order_id = w.id ORDER BY s.taken_at DESC, s.id DESC LIMIT 1)"
+        "  WHERE s.work_order_id = w.id ORDER BY s.created_at DESC, s.id DESC LIMIT 1),"
+        " (SELECT d.priority FROM trust_work_order_details AS d WHERE d.work_order_id = w.id)"
         " FROM trust_work_orders AS w WHERE w.pmc_id = %s ORDER BY w.summary"
     ) == [
-        ("Front walk light out", "assigned"),
-        ("Inspect roof after the storm", "assigned"),
-        ("Kitchen faucet drips", "completed"),
-        ("Repaint the mailbox", "cancelled"),
-        ("Smoke detector chirping", None),
+        ("Front walk light out", None, "normal"),
+        ("Inspect roof after the storm", "assigned", "high"),
+        ("Kitchen faucet drips", "completed", "low"),
+        ("Repaint the mailbox", "cancelled", None),
+        ("Smoke detector chirping", None, "urgent"),
+        ("Water heater rumbles", "scheduled", "normal"),
     ]
-    # Four vendors, a W-9 on file, and files on a lease, an owner and a bill too.
+    # Four vendors, a W-9 on file, and files on a lease, an owner, a bill and a work order too.
     assert rows("SELECT count(*) FROM trust_vendors WHERE pmc_id = %s") == [(4,)]
     assert rows("SELECT kind, title FROM trust_documents WHERE pmc_id = %s ORDER BY kind") == [
         ("move_out_photo", "Kitchen at move-out"),
         ("owner_document", "Management agreement"),
         ("receipt", "Roof repair receipt"),
         ("w9", "W-9, Demo Plumbing Co"),
+        ("work_order_photo", "Faucet before the repair"),
     ]
 
 

@@ -2581,6 +2581,42 @@ $$;
 
 
 --
+-- Name: trust_check_work_order_step_vendor(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_work_order_step_vendor() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_day date := (NEW.taken_at AT TIME ZONE 'UTC')::date;
+    v_expires date;
+BEGIN
+    IF NEW.step = 'scheduled' AND NOT EXISTS (
+        SELECT s.id FROM trust_work_order_steps AS s
+        WHERE s.work_order_id = NEW.work_order_id AND s.step = 'assigned'
+    ) THEN
+        RAISE EXCEPTION 'trust: a work order is scheduled once a vendor is assigned to it'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.step = 'assigned' THEN
+        SELECT i.expires_on INTO v_expires
+        FROM trust_vendor_insurance AS i
+        WHERE i.vendor_id = NEW.vendor_id AND i.starts_on <= v_day
+        ORDER BY i.expires_on DESC
+        LIMIT 1;
+        IF v_expires < v_day THEN
+            RAISE EXCEPTION 'trust: the vendor''s insurance expired on %; record its renewal '
+                'before assigning them', to_char(v_expires, 'MM/DD/YYYY')
+                USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_complete_lease_offer(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7780,7 +7816,7 @@ BEGIN
         UNION ALL
         SELECT 2, 0, NULL, NULL, NULL, 'total', NULL, NULL,
                count(*) FILTER (WHERE NOT o.closed) || ' open ('
-               || count(*) FILTER (WHERE o.state = 'assigned') || ' assigned), '
+               || count(*) FILTER (WHERE o.state IN ('assigned', 'scheduled')) || ' assigned), '
                || count(*) FILTER (WHERE o.state = 'completed') || ' completed, '
                || count(*) FILTER (WHERE o.state = 'cancelled') || ' cancelled',
                NULL, NULL, NULL, coalesce(sum(o.billed_total), 0.00)
@@ -9192,12 +9228,12 @@ CREATE TABLE public.trust_documents (
     sha256 bytea NOT NULL,
     uploaded_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    work_order_id uuid,
     CONSTRAINT trust_documents_check CHECK (((kind = 'w9'::text) = (vendor_id IS NOT NULL))),
     CONSTRAINT trust_documents_check1 CHECK (((kind = 'receipt'::text) = (bill_id IS NOT NULL))),
     CONSTRAINT trust_documents_check2 CHECK (((kind = 'move_out_photo'::text) = (lease_id IS NOT NULL))),
     CONSTRAINT trust_documents_check3 CHECK (((kind = 'owner_document'::text) = (owner_id IS NOT NULL))),
     CONSTRAINT trust_documents_content_type_check CHECK ((content_type = ANY (ARRAY['application/pdf'::text, 'image/jpeg'::text, 'image/png'::text]))),
-    CONSTRAINT trust_documents_kind_check CHECK ((kind = ANY (ARRAY['w9'::text, 'receipt'::text, 'move_out_photo'::text, 'owner_document'::text]))),
     CONSTRAINT trust_documents_sha256_check CHECK ((length(sha256) = 32)),
     CONSTRAINT trust_documents_size_check CHECK (((size >= 1) AND (size <= 5242880))),
     CONSTRAINT trust_documents_title_check CHECK (((title ~ '\S'::text) AND (length(title) <= 200)))
@@ -10343,6 +10379,26 @@ CREATE TABLE public.trust_vendors (
 
 
 --
+-- Name: trust_work_order_details; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_work_order_details (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    work_order_id uuid NOT NULL,
+    priority text NOT NULL,
+    description text,
+    due_on date,
+    entry text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_work_order_details_description_check CHECK (((btrim(description) <> ''::text) AND (char_length(description) <= 5000))),
+    CONSTRAINT trust_work_order_details_entry_check CHECK ((entry = ANY (ARRAY['allowed'::text, 'call first'::text, 'not allowed'::text]))),
+    CONSTRAINT trust_work_order_details_priority_check CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'high'::text, 'urgent'::text])))
+);
+
+
+--
 -- Name: trust_work_order_steps; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10355,8 +10411,8 @@ CREATE TABLE public.trust_work_order_steps (
     taken_at timestamp with time zone NOT NULL,
     note text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT trust_work_order_steps_check CHECK (((step = 'assigned'::text) = (vendor_id IS NOT NULL))),
-    CONSTRAINT trust_work_order_steps_step_check CHECK ((step = ANY (ARRAY['assigned'::text, 'completed'::text, 'cancelled'::text])))
+    scheduled_for date,
+    CONSTRAINT trust_work_order_steps_check CHECK (((step = 'assigned'::text) = (vendor_id IS NOT NULL)))
 );
 
 
@@ -10881,6 +10937,14 @@ ALTER TABLE ONLY public.trust_document_removals
 
 
 --
+-- Name: trust_documents trust_documents_kind_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_documents
+    ADD CONSTRAINT trust_documents_kind_check CHECK ((kind = ANY (ARRAY['w9'::text, 'receipt'::text, 'move_out_photo'::text, 'owner_document'::text, 'work_order_photo'::text]))) NOT VALID;
+
+
+--
 -- Name: trust_documents trust_documents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -10894,6 +10958,14 @@ ALTER TABLE ONLY public.trust_documents
 
 ALTER TABLE ONLY public.trust_documents
     ADD CONSTRAINT trust_documents_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_documents trust_documents_work_order_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_documents
+    ADD CONSTRAINT trust_documents_work_order_check CHECK (((kind = 'work_order_photo'::text) = (work_order_id IS NOT NULL))) NOT VALID;
 
 
 --
@@ -11793,11 +11865,35 @@ ALTER TABLE ONLY public.trust_vendors
 
 
 --
+-- Name: trust_work_order_details trust_work_order_details_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_work_order_details
+    ADD CONSTRAINT trust_work_order_details_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_work_order_steps trust_work_order_steps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.trust_work_order_steps
     ADD CONSTRAINT trust_work_order_steps_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_work_order_steps trust_work_order_steps_scheduled_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_work_order_steps
+    ADD CONSTRAINT trust_work_order_steps_scheduled_check CHECK (((step = 'scheduled'::text) = (scheduled_for IS NOT NULL))) NOT VALID;
+
+
+--
+-- Name: trust_work_order_steps trust_work_order_steps_step_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_work_order_steps
+    ADD CONSTRAINT trust_work_order_steps_step_check CHECK ((step = ANY (ARRAY['assigned'::text, 'scheduled'::text, 'completed'::text, 'cancelled'::text]))) NOT VALID;
 
 
 --
@@ -12094,6 +12190,13 @@ CREATE INDEX trust_cutover_items_bank_account_id ON public.trust_cutover_items U
 --
 
 CREATE INDEX trust_documents_pmc_id_kind ON public.trust_documents USING btree (pmc_id, kind);
+
+
+--
+-- Name: trust_documents_work_order_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_documents_work_order_id ON public.trust_documents USING btree (work_order_id);
 
 
 --
@@ -12535,6 +12638,20 @@ CREATE INDEX trust_staff_roles_pmc_id ON public.trust_staff_roles USING btree (p
 --
 
 CREATE INDEX trust_units_property_id ON public.trust_units USING btree (property_id);
+
+
+--
+-- Name: trust_work_order_details_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_work_order_details_recorded_by ON public.trust_work_order_details USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_work_order_details_work_order; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_work_order_details_work_order ON public.trust_work_order_details USING btree (work_order_id, created_at);
 
 
 --
@@ -13277,6 +13394,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_vendor_payments_carried_over FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_work_order_details trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_work_order_details FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -14092,6 +14216,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_vend
 
 
 --
+-- Name: trust_work_order_details trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_work_order_details FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_work_order_steps trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -14491,6 +14622,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_vendor_insurance 
 
 
 --
+-- Name: trust_work_order_details trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_work_order_details FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_charges trust_recurring_charge_amount; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -14579,6 +14717,13 @@ CREATE TRIGGER trust_transfer_scope BEFORE INSERT ON public.pgledger_transfers F
 --
 
 CREATE TRIGGER trust_work_order_step_order BEFORE INSERT ON public.trust_work_order_steps FOR EACH ROW EXECUTE FUNCTION public.trust_check_work_order_step();
+
+
+--
+-- Name: trust_work_order_steps trust_work_order_step_vendor; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_work_order_step_vendor BEFORE INSERT ON public.trust_work_order_steps FOR EACH ROW EXECUTE FUNCTION public.trust_check_work_order_step_vendor();
 
 
 --
@@ -15554,6 +15699,14 @@ ALTER TABLE ONLY public.trust_documents
 
 ALTER TABLE ONLY public.trust_documents
     ADD CONSTRAINT trust_documents_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
+-- Name: trust_documents trust_documents_pmc_id_work_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_documents
+    ADD CONSTRAINT trust_documents_pmc_id_work_order_id_fkey FOREIGN KEY (pmc_id, work_order_id) REFERENCES public.trust_work_orders(pmc_id, id) NOT VALID;
 
 
 --
@@ -17109,6 +17262,30 @@ ALTER TABLE ONLY public.trust_vendors
 
 
 --
+-- Name: trust_work_order_details trust_work_order_details_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_work_order_details
+    ADD CONSTRAINT trust_work_order_details_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_work_order_details trust_work_order_details_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_work_order_details
+    ADD CONSTRAINT trust_work_order_details_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_work_order_details trust_work_order_details_pmc_id_work_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_work_order_details
+    ADD CONSTRAINT trust_work_order_details_pmc_id_work_order_id_fkey FOREIGN KEY (pmc_id, work_order_id) REFERENCES public.trust_work_orders(pmc_id, id);
+
+
+--
 -- Name: trust_work_order_steps trust_work_order_steps_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -17258,4 +17435,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261016000068'),
     ('20261016000069'),
     ('20261016000070'),
-    ('20261016000071');
+    ('20261016000071'),
+    ('20261016000072');

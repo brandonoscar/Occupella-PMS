@@ -4,22 +4,43 @@ import type { BadgeTone } from "./components/Badge";
 import type { Ref } from "./rentals";
 import type { Vendor } from "./vendors";
 
-export type WorkOrderStatus = "open" | "assigned" | "completed" | "cancelled";
+export type WorkOrderStatus = "open" | "assigned" | "scheduled" | "completed" | "cancelled";
+export type Priority = "low" | "normal" | "high" | "urgent";
+// May the vendor let themselves in: yes, call the tenant first, or no.
+export type Entry = "allowed" | "call first" | "not allowed";
 
 export type WorkOrderRow = {
   id: string;
+  // Its number in the company, in the order work orders were opened.
+  number: number;
   property: Ref;
   unit: Ref | null;
   summary: string;
   opened_at: string;
   status: WorkOrderStatus;
+  vendor_id: string | null;
   vendor: string | null;
   billed: string;
+  priority: Priority;
+  due_on: string | null;
+  overdue: boolean;
+  scheduled_for: string | null;
+  updated_at: string;
+};
+export type WorkOrderStep = {
+  step: "assigned" | "scheduled" | "completed" | "cancelled";
+  vendor: string | null;
+  taken_at: string;
+  scheduled_for: string | null;
+  note: string | null;
 };
 export type WorkOrder = WorkOrderRow & {
-  steps: { step: "assigned" | "completed" | "cancelled"; vendor: string | null; taken_at: string; note: string | null }[];
+  description: string | null;
+  entry: Entry | null;
+  steps: WorkOrderStep[];
   bills: { id: string; vendor: string; reference: string; amount: string; paid: boolean }[];
   request: { id: string; tenant: string; summary: string; submitted_at: string } | null;
+  tenants: { name: string; contact: { email: string | null; phone: string | null } }[];
 };
 
 export type VendorPageData = Vendor & {
@@ -41,10 +62,24 @@ export type Expiring = {
 };
 
 export const STATUS: Record<WorkOrderStatus, { word: string; tone: BadgeTone }> = {
-  open: { word: "Open", tone: "caution" },
+  open: { word: "New", tone: "caution" },
   assigned: { word: "Assigned", tone: "info" },
+  scheduled: { word: "Scheduled", tone: "info" },
   completed: { word: "Completed", tone: "positive" },
   cancelled: { word: "Cancelled", tone: "neutral" },
+};
+
+export const PRIORITY: Record<Priority, { word: string; tone: BadgeTone }> = {
+  low: { word: "Low", tone: "neutral" },
+  normal: { word: "Normal", tone: "neutral" },
+  high: { word: "High", tone: "caution" },
+  urgent: { word: "Urgent", tone: "danger" },
+};
+
+export const ENTRY: Record<Entry, string> = {
+  allowed: "The vendor may let themselves in",
+  "call first": "Call the tenant before going in",
+  "not allowed": "Only with the tenant home",
 };
 
 export const RENEWAL: Record<Renewal, { word: string; tone: BadgeTone }> = {

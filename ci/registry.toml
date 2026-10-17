@@ -325,14 +325,17 @@ tests = [
 
 [[invariant]]
 id = "work-order-steps-in-order"
-statement = "A work order's unit is one of its property's; its steps are never dated before it was opened or before the step they follow, nothing follows a completed or cancelled work order, even from two transactions at once, and a bill for a work order is for that property and never for a cancelled one."
+statement = "A work order's unit is one of its property's; its steps are never dated before it was opened or before the step they follow, nothing follows a completed or cancelled work order, even from two transactions at once, and a bill for a work order is for that property and never for a cancelled one. A work order is scheduled only once a vendor is assigned to it, and a vendor whose insurance ran out by the step's day is not assigned (migration 0072)."
 tests = [
+  "tests/properties/test_work_order_properties.py::test_a_work_orders_steps_follow_in_order_and_no_lapsed_vendor_is_assigned",
   "tests/test_work_orders.py::test_a_work_orders_unit_is_one_of_its_propertys",
   "tests/test_work_orders.py::test_nothing_follows_a_closed_work_order",
   "tests/test_work_orders.py::test_steps_are_not_dated_before_the_work_order_or_the_step_before",
   "tests/test_work_orders.py::test_a_step_waits_for_a_close_in_progress_and_is_then_refused",
   "tests/test_work_orders.py::test_a_bill_is_for_a_work_order_of_its_property",
   "tests/test_work_orders.py::test_a_cancelled_work_order_takes_no_bills",
+  "tests/test_work_order_details.py::test_a_visit_is_scheduled_once_a_vendor_is_assigned",
+  "tests/test_work_order_details.py::test_a_vendor_whose_insurance_ran_out_is_not_assigned",
 ]
 
 [[invariant]]

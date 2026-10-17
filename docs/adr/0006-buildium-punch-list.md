@@ -195,3 +195,26 @@ money in the security-deposit trust account, so nothing here moves money. The PD
 own tab rather than inside the page: the API serves every response under `frame-ancestors 'none'`
 and `X-Frame-Options: DENY`, and that stays. The fake e-sign partner keeps a voided envelope; a
 real partner's void call comes with the real partner, which launch still needs.
+
+## Work orders
+
+The tenth piece, the first half of step 10 (migration 0072, `src/pms/api/work_orders.py`). Work
+orders lists every work order a page at a time, newest first, narrowed by property group or
+property, status (Open, Assigned, Scheduled, Completed, Cancelled, All statuses) and vendor: #
+(numbered in the order they were opened), Property / Unit, Title, Vendor, Priority, Status (New
+before any step), Due (red once past and not closed) and Updated; the row opens its page. New
+work order opens a side panel: property, unit or the whole property, title, priority (Low,
+Normal, High, Urgent), what is wrong, the day it is due and whether the vendor may let themselves
+in; it then opens the new work order's page. A work order's page has its summary, the tenants of
+its unit's lease today with their phone and email, its photos (a document kind of their own), its
+timeline and its bills; Next step assigns a vendor, schedules the visit for a day (only once a
+vendor is assigned), completes or cancels it; Edit details changes its details (a new row each
+time, naming who; the same again writes nothing); Create bill opens Record bill with its vendor,
+property and title filled in, naming the work order.
+
+A vendor whose insurance has run out (every policy of theirs started by the day ended before it)
+is not assigned: the database refuses it and the page says to record the renewal first. A vendor
+with no policy on file is not refused, as before; the vendors page and the Dashboard say so. A
+scheduled work order counts with the assigned ones in the work orders report (a golden case pins
+it), and a tenant's request reads "A visit is scheduled". Nothing here moves money.
+

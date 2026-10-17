@@ -23,6 +23,7 @@ const LIBRARY: Library = {
     receipt: [],
     move_out_photo: [{ id: "l1", label: "Property 1 / Unit 1: Tenant 1" }],
     owner_document: [{ id: "o1", label: "Owner 1" }, { id: "o2", label: "Owner 2" }],
+    work_order_photo: [{ id: "w1", label: "Property 1: Leaking tap" }],
   },
 };
 
