@@ -315,12 +315,12 @@ def test_unpaid_bills_come_over_and_hold_back_draws(client, conn, staff, pmc):
     # A draw takes no more than what the bills leave.
     refused(
         client.post(
-            "/api/payables/draws",
+            "/api/payables/draws/batch",
             json={
                 "request_id": str(uuid.uuid4()),
-                "account": account,
-                "amount": "350.01",
                 "on": str(TODAY),
+                "method": "check",
+                "payouts": [{"account": account, "amount": "350.01"}],
             },
         ),
         409,

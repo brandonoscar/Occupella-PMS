@@ -12,6 +12,11 @@ Invariants checked after every step (ci/registry.toml maps them to this test):
   - its unpaid bills are the database's own (trust_unpaid_bills), which a draw keeps back;
   - a bill is set aside only from money the owner holds, and paid once it was;
   - sending a draw again pays nothing twice;
+  - Pay owners pays every account it names what it asks, or nothing at all when one of them
+    can't pay (the refusal naming that owner and property); sent again it pays nothing twice,
+    and each payout keeps how it was sent;
+  - the management fees page says what Collect fees would take, moving nothing, and then that
+    it was taken;
   - the company takes out at most the fees its fee account holds, never an owner's money, and
     sending a withdrawal again takes nothing twice;
   - every trust bank account ties out.
@@ -64,6 +69,8 @@ class PayablesMachine(RuleBasedStateMachine):
         pmc = make_pmc(conn)
         self.session = Session(uuid.uuid4(), pmc.pmc_id, "staff", uuid.uuid4(), "s@example.com")
         self.account = pmc.owners[0].account
+        # A second owner's account that never holds anything: Pay owners can't pay from it.
+        self.empty = pmc.owners[1].account
         self.vendor = pmc.vendor_id
         add_agreement(
             conn,
@@ -83,6 +90,7 @@ class PayablesMachine(RuleBasedStateMachine):
         self.periods = 0
         self.company = Decimal(0)  # the company's fees in the trust bank account
         self.withdrawals: list[tuple[uuid.UUID, Decimal | None, Decimal]] = []
+        self.payouts: list[tuple[payables.PayOwners, Decimal]] = []
 
     def unpaid(self):
         return sum((b.amount for b in self.bills if not b.aside and not b.dated_ahead), Decimal(0))
@@ -152,26 +160,36 @@ class PayablesMachine(RuleBasedStateMachine):
 
     # --- draws ------------------------------------------------------------------------------
 
+    def paying(self, request, amount):
+        """Pay owners, this owner's account alone: everything available when amount is None."""
+        return payables.PayOwners(
+            request_id=request,
+            on=TODAY,
+            method="check",
+            payouts=[payables.Payout(account=self.account, amount=amount)],
+        )
+
     @rule(amount=st.none() | CENTS)
     def draw(self, amount):
         request = uuid.uuid4()
-        new = payables.Draw(request_id=request, account=self.account, amount=amount, on=TODAY)
+        new = self.paying(request, amount)
         available = self.available()
         if available == 0 or (amount is not None and amount > available):
             event("draw: refused, more than is available")
             held = f"the ${RESERVE:,.2f} reserve"
             if self.unpaid() > 0:
                 held += f" and ${self.unpaid():,.2f} of unpaid bills"
-            said = (
+            said = "Owner 1, Property 1: " + (
                 f"nothing is available to draw: what the account holds is kept for {held}"
                 if available == 0
                 else f"only ${available:,.2f} is available to draw (the balance less {held});"
                 f" ${amount:,.2f} is more than that"
             )
-            self.refused(said, payables.draw, new)
+            self.refused(said, payables.pay_owners, new)
             return
         event("draw: everything available" if amount is None else "draw: an amount")
-        taken = Decimal(self.call(payables.draw, new).amount)
+        (paid,) = self.call(payables.pay_owners, new)
+        taken = Decimal(paid.amount)
         assert taken == (available if amount is None else amount)
         self.held -= taken
         self.draws.append((request, amount, taken))
@@ -180,8 +198,41 @@ class PayablesMachine(RuleBasedStateMachine):
     @rule(data=st.data())
     def send_a_draw_again(self, data):
         request, amount, taken = data.draw(st.sampled_from(self.draws))
-        new = payables.Draw(request_id=request, account=self.account, amount=amount, on=TODAY)
-        assert Decimal(self.call(payables.draw, new).amount) == taken
+        (paid,) = self.call(payables.pay_owners, self.paying(request, amount))
+        assert Decimal(paid.amount) == taken
+
+    @rule(amount=CENTS, method=st.sampled_from(["check", "EFT"]), with_empty=st.booleans())
+    def pay_owners(self, amount, method, with_empty):
+        payouts = [payables.Payout(account=self.account, amount=amount)]
+        if with_empty:
+            payouts.append(payables.Payout(account=self.empty, amount=Decimal("0.01")))
+        run = payables.PayOwners(request_id=uuid.uuid4(), on=TODAY, method=method, payouts=payouts)
+        if amount > self.available() or with_empty:
+            event("pay owners: refused, all of it")
+            with pytest.raises(HTTPException) as raised:
+                self.call(payables.pay_owners, run)
+            assert raised.value.status_code == 409
+            assert re.match(r"^[^:]+, [^:]+: (only|nothing)", raised.value.detail)
+            return
+        event("pay owners")
+        (paid,) = self.call(payables.pay_owners, run)
+        assert Decimal(paid.amount) == amount
+        self.held -= amount
+        self.payouts.append((run, amount))
+        assert self.conn.execute(
+            "SELECT method FROM trust_payout_methods WHERE transfer_id = %s", (paid.transfer_id,)
+        ).fetchone() == (method,)
+
+    @precondition(lambda self: self.payouts)
+    @rule(data=st.data(), method=st.sampled_from(["check", "EFT"]))
+    def send_pay_owners_again(self, data, method):
+        run, amount = data.draw(st.sampled_from(self.payouts))
+        (paid,) = self.call(payables.pay_owners, run.model_copy(update={"method": method}))
+        assert Decimal(paid.amount) == amount
+        # How it was sent stays as first recorded.
+        assert self.conn.execute(
+            "SELECT method FROM trust_payout_methods WHERE transfer_id = %s", (paid.transfer_id,)
+        ).fetchone() == (run.method,)
 
     # --- the company's fees ------------------------------------------------------------------
 
@@ -194,7 +245,21 @@ class PayablesMachine(RuleBasedStateMachine):
         run = payables.FeeRun(
             period_start=start, period_end=start + timedelta(days=1), on=TODAY, account=self.account
         )
+        # What the page says Collect fees would take, which moves nothing.
+        (due,) = [
+            d
+            for d in self.call(payables.management_fees_due, run.period_start, run.period_end)
+            if d.account == self.account
+        ]
+        assert balance(self.conn, self.account) == self.held
         (fee,) = self.call(payables.management_fees, run)
+        assert (due.taken, due.fee, due.refused) == (False, fee.fee, fee.refused)
+        (after,) = [
+            d
+            for d in self.call(payables.management_fees_due, run.period_start, run.period_end)
+            if d.account == self.account
+        ]
+        assert after.taken == (fee.fee is not None)
         if self.held < FEE:
             event("management fee: refused, not enough money")
             assert (fee.fee, fee.refused) == (

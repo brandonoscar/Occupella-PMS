@@ -55,12 +55,12 @@ def listed(client, on=None):
 
 def draw(client, pmc, amount="10.00"):
     return client.post(
-        "/api/payables/draws",
+        "/api/payables/draws/batch",
         json={
             "request_id": str(uuid.uuid4()),
-            "account": pmc.owners[0].account,
-            "amount": amount,
             "on": str(TODAY),
+            "method": "check",
+            "payouts": [{"account": pmc.owners[0].account, "amount": amount}],
         },
     )
 

@@ -125,7 +125,7 @@ describe("Dashboard", () => {
     expect(within(fees).getByText(
       "Second trust: $20.00 of the company's fees, the oldest since 10/01/2026 (12 days); take them out by 10/26/2026",
     )).toBeTruthy();
-    expect(within(fees).getByRole("link", { name: "Open Owners" }).getAttribute("href")).toBe("/owners");
+    expect(within(fees).getByRole("link", { name: "Open Banking" }).getAttribute("href")).toBe("/banking");
   });
 
   it("lists trust accounts with no broker on file and signers' bonds running out", async () => {

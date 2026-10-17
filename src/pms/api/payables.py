@@ -22,7 +22,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, StringConstraints
 
 from pms import email, exports
-from pms.api import outbox
+from pms.api import outbox, scope
 from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/payables")
@@ -710,21 +710,41 @@ LEFT JOIN LATERAL (
 ) AS g ON true
 WHERE a.pmc_id = %(pmc)s AND a.kind = 'owner_property'
   AND (%(owner)s::uuid IS NULL OR a.owner_id = %(owner)s)
+  AND (%(owners)s::uuid[] IS NULL OR a.owner_id = ANY(%(owners)s::uuid[]))
+  AND {within}
 ORDER BY o.display_name COLLATE "C", p.display_name COLLATE "C", a.ledger_account_id
-"""
+""".format(within=scope.within("a.property_id"))
 
 
 @router.get("/owners")
-def owners(session: Staff, conn: Conn) -> list[OwnerMoney]:
-    """Each owner's property account today: what it holds, keeps back and may pay out."""
-    return owner_money(conn, session.pmc_id)
+def owners(
+    session: Staff, conn: Conn, group: scope.Group = None, property_id: scope.Property = None
+) -> list[OwnerMoney]:
+    """Each owner's property account today (maybe only a group's properties or one property's):
+    what it holds, keeps back and may pay out."""
+    return owner_money(conn, session.pmc_id, group=group, property_id=property_id)
 
 
 def owner_money(
-    conn: psycopg.Connection[Any], pmc: UUID, owner: UUID | None = None
+    conn: psycopg.Connection[Any],
+    pmc: UUID,
+    owner: UUID | None = None,
+    owners: list[UUID] | None = None,
+    group: UUID | None = None,
+    property_id: UUID | None = None,
 ) -> list[OwnerMoney]:
-    """The PMC's owners' property accounts today (or one owner's), as `owners` lists them."""
-    rows = conn.execute(OWNERS, {"pmc": pmc, "today": today(), "owner": owner}).fetchall()
+    """The PMC's owners' property accounts today (or one owner's, or some owners'; maybe only
+    those of a group's properties or one property), as `owners` lists them."""
+    rows = conn.execute(
+        OWNERS,
+        {
+            "pmc": pmc,
+            "today": today(),
+            "owner": owner,
+            "owners": owners,
+            **scope.params(group, property_id),
+        },
+    ).fetchall()
     return [
         OwnerMoney(
             account=account,
@@ -759,6 +779,92 @@ class Fee(BaseModel):
     refused: str | None
 
 
+class FeeDue(BaseModel):
+    account: str
+    owner: str
+    property: str
+    # Taken: the fee taken for the period already. Otherwise what taking it today would take,
+    # or why it can't be taken.
+    taken: bool
+    fee: str | None
+    refused: str | None
+
+
+FEE_ACCOUNTS = (
+    "SELECT a.ledger_account_id, o.display_name, p.display_name"
+    " FROM trust_ledger_accounts AS a JOIN trust_owners AS o ON o.id = a.owner_id"
+    " JOIN trust_properties AS p ON p.id = a.property_id"
+    " WHERE a.pmc_id = %s AND a.kind = 'owner_property'"
+    "   AND (%s::text IS NULL OR a.ledger_account_id = %s::text)"
+    "   AND EXISTS (SELECT 1 FROM trust_management_agreements AS g"
+    "     WHERE g.ledger_account_id = a.ledger_account_id AND g.starts_on <= %s)"
+    ' ORDER BY o.display_name COLLATE "C", p.display_name COLLATE "C", a.ledger_account_id'
+)
+FEE_REFUSALS = (
+    psycopg.errors.CheckViolation,
+    psycopg.errors.ExclusionViolation,
+    psycopg.errors.InvalidParameterValue,
+)
+
+
+@router.get("/management-fees")
+def management_fees_due(
+    session: Staff,
+    conn: Conn,
+    period_start: Annotated[date, Query()],
+    period_end: Annotated[date, Query()],
+) -> list[FeeDue]:
+    """Each owner's account with a management agreement in force at the period's end: the fee
+    taken for the period already, or what Collect fees would take today, worked out by
+    trust_post_management_fee itself and rolled back, so it moves nothing."""
+    if period_end <= period_start:
+        raise HTTPException(422, "a fee period ends after it starts")
+    due = []
+    for account, owner, prop in conn.execute(
+        FEE_ACCOUNTS, (session.pmc_id, None, None, period_end)
+    ).fetchall():
+        taken = conn.execute(
+            "SELECT fee FROM trust_management_fees WHERE ledger_account_id = %s"
+            " AND period_start = %s AND period_end = %s",
+            (account, period_start, period_end),
+        ).fetchone()
+        if taken is not None:
+            due.append(
+                FeeDue(
+                    account=account,
+                    owner=owner,
+                    property=prop,
+                    taken=True,
+                    fee=cents(taken[0]),
+                    refused=None,
+                )
+            )
+            continue
+        fee: Decimal | None = None
+        refused: str | None = None
+        try:
+            with conn.transaction():  # a savepoint, always rolled back: nothing is taken
+                fee = one(
+                    conn,
+                    "SELECT trust_post_management_fee(%s, %s, %s, %s, %s)",
+                    (session.pmc_id, account, period_start, period_end, at(today())),
+                )
+                raise psycopg.Rollback()
+        except FEE_REFUSALS as refusing:
+            refused = refusal(refusing)
+        due.append(
+            FeeDue(
+                account=account,
+                owner=owner,
+                property=prop,
+                taken=False,
+                fee=None if fee is None else cents(fee),
+                refused=refused,
+            )
+        )
+    return due
+
+
 @router.post("/management-fees")
 def management_fees(session: Staff, conn: Conn, run: FeeRun) -> list[Fee]:
     """Takes the management fee of a period from each owner's account (or one), once per
@@ -771,15 +877,7 @@ def management_fees(session: Staff, conn: Conn, run: FeeRun) -> list[Fee]:
     if run.account is not None:
         owner_account(conn, session.pmc_id, run.account)
     rows = conn.execute(
-        "SELECT a.ledger_account_id, o.display_name, p.display_name"
-        " FROM trust_ledger_accounts AS a JOIN trust_owners AS o ON o.id = a.owner_id"
-        " JOIN trust_properties AS p ON p.id = a.property_id"
-        " WHERE a.pmc_id = %s AND a.kind = 'owner_property'"
-        "   AND (%s::text IS NULL OR a.ledger_account_id = %s::text)"
-        "   AND EXISTS (SELECT 1 FROM trust_management_agreements AS g"
-        "     WHERE g.ledger_account_id = a.ledger_account_id AND g.starts_on <= %s)"
-        ' ORDER BY o.display_name COLLATE "C", p.display_name COLLATE "C", a.ledger_account_id',
-        (session.pmc_id, run.account, run.account, run.period_end),
+        FEE_ACCOUNTS, (session.pmc_id, run.account, run.account, run.period_end)
     ).fetchall()
     taken = []
     for account, owner, prop in rows:
@@ -793,11 +891,7 @@ def management_fees(session: Staff, conn: Conn, run: FeeRun) -> list[Fee]:
             taken.append(
                 Fee(account=account, owner=owner, property=prop, fee=cents(fee), refused=None)
             )
-        except (
-            psycopg.errors.CheckViolation,
-            psycopg.errors.ExclusionViolation,
-            psycopg.errors.InvalidParameterValue,
-        ) as refused:
+        except FEE_REFUSALS as refused:
             taken.append(
                 Fee(account=account, owner=owner, property=prop, fee=None, refused=refusal(refused))
             )
@@ -832,30 +926,84 @@ def leasing_fee(session: Staff, conn: Conn, new: LeasingFee) -> Taken:
     return Taken(amount=cents(fee))
 
 
-class Draw(BaseModel):
-    # Made by the page once per draw, so sending it again pays nothing twice.
-    request_id: UUID
+class Payout(BaseModel):
     account: Account
-    # Leave out to draw everything available.
+    # Leave out to pay everything available.
     amount: Amount | None = None
+
+
+class PayOwners(BaseModel):
+    # Made by the page once per payout run, so sending it again pays nothing twice.
+    request_id: UUID
     on: date
+    # How the payouts were sent; recorded, nothing sent (the PMS writes no bank file).
+    method: Literal["check", "EFT"]
+    payouts: Annotated[list[Payout], Field(min_length=1, max_length=500)]
 
 
-@router.post("/draws", status_code=201)
-def draw(session: Staff, conn: Conn, new: Draw) -> Taken:
-    """Records a payout to an owner from their property account: at most the balance less the
-    reserve and unpaid bills."""
-    not_after_today(new.on)
-    owner_account(conn, session.pmc_id, new.account)
-    try:
-        drawn = one(
+class OwnerPaid(BaseModel):
+    account: str
+    owner: str
+    property: str
+    amount: str
+    transfer_id: str
+
+
+@router.post("/draws/batch", status_code=201)
+def pay_owners(session: Staff, conn: Conn, run: PayOwners) -> list[OwnerPaid]:
+    """Pay owners (Buildium's owner draw): a draw from each property account chosen, each at
+    most what it has available (the balance less the reserve and unpaid bills), all of them or
+    none, each recorded with how it was sent. Sent again, it pays nothing twice. A refusal
+    names the owner and property it is about."""
+    not_after_today(run.on)
+    chosen = [payout.account for payout in run.payouts]
+    if len(set(chosen)) != len(chosen):
+        raise HTTPException(422, "pay each owner's property account once")
+    names = {
+        account: (owner, prop)
+        for account, owner, prop in conn.execute(
+            "SELECT a.ledger_account_id, o.display_name, p.display_name"
+            " FROM trust_ledger_accounts AS a JOIN trust_owners AS o ON o.id = a.owner_id"
+            " JOIN trust_properties AS p ON p.id = a.property_id"
+            " WHERE a.pmc_id = %s AND a.kind = 'owner_property' AND a.ledger_account_id = ANY(%s)",
+            (session.pmc_id, chosen),
+        ).fetchall()
+    }
+    paid = []
+    for payout in run.payouts:
+        if payout.account not in names:
+            raise HTTPException(404, "no such owner account")
+        owner, prop = names[payout.account]
+        key = f"draw/{run.request_id}/{payout.account}"
+        try:
+            drawn = one(
+                conn,
+                "SELECT trust_draw_owner(%s, %s, %s, %s, %s)",
+                (session.pmc_id, payout.account, key, payout.amount, at(run.on)),
+            )
+        except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
+            raise HTTPException(409, f"{owner}, {prop}: {refusal(refused)}") from None
+        transfer = one(
             conn,
-            "SELECT trust_draw_owner(%s, %s, %s, %s, %s)",
-            (session.pmc_id, new.account, f"draw/{new.request_id}", new.amount, at(new.on)),
+            "SELECT transfer_id FROM trust_owner_draws WHERE pmc_id = %s AND request_key = %s",
+            (session.pmc_id, key),
         )
-    except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
-        raise HTTPException(409, refusal(refused)) from None
-    return Taken(amount=cents(drawn))
+        # Sent again, the payout keeps the way it was first recorded as sent.
+        conn.execute(
+            "INSERT INTO trust_payout_methods (pmc_id, transfer_id, method) VALUES (%s, %s, %s)"
+            " ON CONFLICT (transfer_id) DO NOTHING",
+            (session.pmc_id, transfer, run.method),
+        )
+        paid.append(
+            OwnerPaid(
+                account=payout.account,
+                owner=owner,
+                property=prop,
+                amount=cents(drawn),
+                transfer_id=transfer,
+            )
+        )
+    return paid
 
 
 class Contribution(BaseModel):

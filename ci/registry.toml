@@ -1115,3 +1115,13 @@ tests = [
   "tests/test_nightly.py::test_one_company_that_fails_leaves_the_others_to_run",
   "tests/api/test_rent_runs_api.py::test_only_an_admin_runs_rent_by_hand",
 ]
+
+[[invariant]]
+id = "pay-owners-all-or-none"
+statement = "Pay owners pays every owner's property account it names what it asks (everything available when no amount is given), never more than the balance less the reserve and unpaid bills, or nothing at all when one of them can't be paid, the refusal naming that owner and property; sent again it pays nothing twice, and each payout keeps how it was first recorded as sent (check or EFT), once per owner draw or bill paid of the PMC. The management fees page says what Collect fees would take and moves nothing."
+tests = [
+  "tests/properties/test_payables_properties.py::test_payables_invariants_hold_under_random_bills_contributions_and_draws",
+  "tests/api/test_owners_pay_api.py::test_pay_owners_pays_none_when_one_cant_be_paid",
+  "tests/api/test_owners_pay_api.py::test_the_fees_page_says_what_collect_fees_takes_and_moves_nothing",
+  "tests/test_payout_methods.py::test_an_owner_draw_and_a_bill_paid_each_take_one",
+]

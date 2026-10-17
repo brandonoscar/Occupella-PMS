@@ -241,13 +241,16 @@ browser = [
 
 [[feature]]
 id = "owners-money"
-statement = "Staff take each period's management fees once and a lease's leasing fee once, and on an owner's page record their contributions and pay them only what is available: the balance less the reserve and unpaid bills."
+statement = "Staff see on Management fees what each agreement's fee for a period would take (worked out and rolled back, moving nothing) and collect them once; take a lease's leasing fee once from its ⋯ menu; on an owner's page (Summary with their portal login and agreements' terms, Properties, Financials with their statement and Record contribution, Statements, Files) record their contributions; and on Pay owners pay several owners at once, each only what is available (the balance less the reserve and unpaid bills), all or none, recorded as sent by check or EFT."
 operations = [
   "GET /api/owners/{owner_id}",
+  "GET /api/owners/{owner_id}/statement",
+  "GET /api/owners/{owner_id}/statement/download",
+  "GET /api/payables/management-fees",
   "POST /api/payables/management-fees",
   "POST /api/payables/leasing-fees",
   "POST /api/payables/contributions",
-  "POST /api/payables/draws",
+  "POST /api/payables/draws/batch",
 ]
 browser = [
   "features.spec.ts › staff take the month's management fees once, find no leasing fee due, and pay owners only what is available",
@@ -257,7 +260,7 @@ browser = [
 
 [[feature]]
 id = "company-fees"
-statement = "Staff see the company's earned fees still in each trust bank account, since when the oldest waited and the day to take them out by (25 days, the strictest state deadline found), on the owners page and on Today, and take them out to the company once per request, never more than is there."
+statement = "Staff see the company's earned fees still in each trust bank account, since when the oldest waited and the day to take them out by (25 days, the strictest state deadline found), on Banking and on Today, and take them out to the company from the account's ⋯ menu (Transfer company fees) once per request, never more than is there."
 operations = [
   "GET /api/payables/company-fees",
   "POST /api/payables/company-fees",

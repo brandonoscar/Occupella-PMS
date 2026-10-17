@@ -54,10 +54,24 @@ export type OwnerRow = {
   id: string;
   name: string;
   properties: string[];
+  // What their property accounts hold, keep back and may pay out today, together.
   held: string;
+  reserve: string;
+  available: string;
   email: string | null;
   phone: string | null;
   archived: boolean;
+};
+// A management agreement's terms, in force today on one of the owner's property accounts.
+export type Agreement = {
+  account: string;
+  starts_on: string;
+  fee_percent: string;
+  minimum_fee: string;
+  flat_fee: string;
+  leasing_fee_percent: string;
+  reserve: string;
+  approval_limit: string;
 };
 export type Owner = {
   id: string;
@@ -65,6 +79,10 @@ export type Owner = {
   archived: boolean;
   contact: Contact;
   accounts: OwnerMoney[];
+  agreements: Agreement[];
+  // Whether they can sign in to the portal, and their login's email.
+  portal: Portal;
+  login_email: string | null;
 };
 
 // The mailing address on its lines: "100 Example Street, Suite 1" then "Sampletown, ZZ 00000";

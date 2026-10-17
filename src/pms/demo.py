@@ -598,8 +598,15 @@ def close_month(b: Builder, demo: Demo, manager: UUID, start: date, end: date) -
         )
     for account in demo.accounts.values():
         with b.as_staff(manager) as s:
-            payables.draw(
-                s, conn, payables.Draw(request_id=uuid.uuid4(), account=account, on=end - DAY)
+            payables.pay_owners(
+                s,
+                conn,
+                payables.PayOwners(
+                    request_id=uuid.uuid4(),
+                    on=end - DAY,
+                    method="check",
+                    payouts=[payables.Payout(account=account)],
+                ),
             )
 
 

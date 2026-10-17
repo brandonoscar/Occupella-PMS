@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Bill, CompanyFees, OwnerMoney, Recurring } from "./payables";
 import {
+  paidSummary,
   companyFeesDue,
   companyFeesLabel,
   emailNote,
@@ -104,5 +105,13 @@ describe("statusTone", () => {
     expect((["needs approval", "to set aside", "set aside", "paid", "declined"] as const).map(statusTone)).toEqual([
       "caution", "info", "info", "positive", "neutral",
     ]);
+  });
+});
+
+describe("paidSummary", () => {
+  it("says how many payouts, their total and how they were sent", () => {
+    const paid = (amount: string) => ({ account: "a", owner: "O", property: "P", amount, transfer_id: "t" });
+    expect(paidSummary([paid("0.10"), paid("0.20")], "EFT")).toBe("2 payouts of $0.30 recorded, by EFT.");
+    expect(paidSummary([paid("900.00")], "check")).toBe("1 payout of $900.00 recorded, by check.");
   });
 });
