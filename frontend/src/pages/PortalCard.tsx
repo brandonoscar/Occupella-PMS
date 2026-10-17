@@ -20,9 +20,9 @@ type Invitee = {
   refresh: () => void;
 };
 
-// An invite to sign in (ADR 0006: invites are on the person's own page): the link is shown once,
-// to copy and send yourself, since the PMS sends no invite email, and a new one resets the
-// password. A disabled login takes no invite.
+// An invite to sign in (ADR 0006: invites are on the person's own page): emailed when the server
+// sends email (ADR 0007), and its link shown once too, to copy and send yourself if the email
+// doesn't arrive. A new one resets the password. A disabled login takes no invite.
 export function InviteForm({ kind, personId, name, portal, email, refresh }: Invitee) {
   const [address, setAddress] = useState(email ?? "");
   const [link, setLink] = useState("");
@@ -32,9 +32,11 @@ export function InviteForm({ kind, personId, name, portal, email, refresh }: Inv
     <div className="flex flex-col gap-3">
       <Form className="flex flex-wrap items-end gap-3" onSubmit={(event) => {
         event.preventDefault();
-        return record<{ url: string }>("/api/invites", { kind, person_id: personId, email: address.trim() }, (made) => {
+        return record<{ url: string; emailed: boolean }>("/api/invites", { kind, person_id: personId, email: address.trim() }, (made) => {
           setLink(made.url);
-          return `Invite link made for ${address.trim()}; give it to ${name}.`;
+          return made.emailed
+            ? `Invite emailed to ${address.trim()}. The link is below too, shown once.`
+            : `Invite link made for ${address.trim()}; give it to ${name}.`;
         });
       }}>
         <Field label="Email to sign in with" id={`login-email-${personId}`} type="email" required value={address}

@@ -3,8 +3,9 @@
 Staff invite a person (one of the PMC's staff, owners or tenants) by email. The invite is a
 link carrying a random token; only its SHA-256 is stored, it expires after INVITE_DAYS, and it
 is accepted once. Accepting sets the password, so a new invite is also how staff reset a
-forgotten one. Staff also enroll an authenticator app (TOTP) before their invite is used up,
-and every staff sign-in needs its code; a code works once.
+forgotten one; an owner or a tenant may ask for one by email themselves (request_reset,
+docs/adr/0007-email.md). Staff also enroll an authenticator app (TOTP) before their invite is
+used up, and every staff sign-in needs its code; a code works once.
 
 Passwords are hashed with argon2id. A sign-in that fails for any reason (no such login, wrong
 password, disabled, locked) gets the same answer, after the same work, so it doesn't tell an
@@ -39,6 +40,8 @@ MAX_FAILURES = 10
 LOCK_MINUTES = 15
 MIN_PASSWORD = 12
 MAX_PASSWORD = 1024
+# Password resets an owner or a tenant may ask for in an hour (docs/adr/0007-email.md).
+RESETS_PER_HOUR = 3
 # Each kind of person's queries, written out in full: no part of a query comes from a request.
 KINDS = {
     kind: {
@@ -111,6 +114,16 @@ class Invite:
     login_id: UUID
     token: str
     expires_at: datetime
+
+
+@dataclass(frozen=True)
+class Reset:
+    """A password reset to email: whose login, at which address, and its invite."""
+
+    kind: str
+    person_id: UUID
+    email: str
+    invite: Invite
 
 
 @dataclass(frozen=True)
@@ -187,6 +200,34 @@ def create_invite(
         (pmc_id, login_id, digest(token), created_by, INVITE_DAYS),
     )[0]
     return Invite(login_id, token, expires_at)
+
+
+def request_reset(conn: psycopg.Connection[Any], pmc_id: UUID, email: str) -> Reset | None:
+    """A new invite, to set a new password, for an owner's or a tenant's login with this email
+    that can sign in and asked fewer than RESETS_PER_HOUR times in the last hour; None
+    otherwise. The caller answers the same either way, so it doesn't tell who has a login. A
+    staff member resets through an admin's new invite instead: an emailed link must not get past
+    their authenticator. Accepting it sets the new password, so until then the old one works."""
+    found = _one(
+        conn,
+        "SELECT kind, coalesce(owner_id, tenant_id) FROM trust_logins"
+        " WHERE pmc_id = %s AND email = %s AND disabled_at IS NULL"
+        " AND kind IN ('owner', 'tenant')",
+        (pmc_id, normalize_email(email)),
+    )
+    if found is None:
+        return None
+    kind, person_id = found
+    asked = _one(
+        conn,
+        "SELECT count(*) FROM trust_emails WHERE pmc_id = %s AND kind = 'password_reset'"
+        " AND coalesce(owner_id, tenant_id) = %s AND created_at > now() - interval '1 hour'",
+        (pmc_id, person_id),
+    )[0]
+    if asked >= RESETS_PER_HOUR:
+        return None
+    invite = create_invite(conn, pmc_id, kind, person_id, email, None)
+    return Reset(kind, person_id, normalize_email(email), invite)
 
 
 def _open_invite(conn: psycopg.Connection[Any], token: str, lock: bool) -> Any:

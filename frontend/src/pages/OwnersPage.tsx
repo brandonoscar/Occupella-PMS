@@ -28,6 +28,7 @@ import { navigate } from "../router";
 import { scopeParams, useScope } from "../scope";
 import type { StatementData } from "../statement";
 import { group } from "../statement";
+import { EmailsCard } from "../components/EmailsCard";
 import { FilesCard } from "./FilesCard";
 import { PortalCard } from "./PortalCard";
 import { TermsPanel } from "./SetupPanels";
@@ -142,12 +143,13 @@ function AddOwner() {
   );
 }
 
-type OwnerTab = "summary" | "properties" | "financials" | "statements" | "files";
+type OwnerTab = "summary" | "properties" | "financials" | "statements" | "email" | "files";
 const OWNER_TABS: { value: OwnerTab; label: string }[] = [
   { value: "summary", label: "Summary" },
   { value: "properties", label: "Properties" },
   { value: "financials", label: "Financials" },
   { value: "statements", label: "Statements" },
+  { value: "email", label: "Email" },
   { value: "files", label: "Files" },
 ];
 
@@ -186,6 +188,7 @@ export function OwnerPage({ me, id }: { me: Me; id: string }) {
         {tab === "financials" && <OwnerFinancials owner={owner} refresh={refresh} />}
         {tab === "statements" && <OwnerStatements owner={owner} />}
         {tab === "files" && <FilesCard kind="owner_document" aboutId={id} name={owner.name} />}
+        {tab === "email" && <EmailsCard about="owner" aboutId={id} name={owner.name} emailOn={me.email_on} />}
       </div>
     </Shell>
   );

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Button } from "../components/Button";
@@ -23,6 +23,12 @@ export function SignInPage() {
   const [needsCode, setNeedsCode] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // Whether this server emails a link for a forgotten password (ADR 0007).
+  const [canReset, setCanReset] = useState(false);
+  useEffect(() => {
+    api.get<{ available: boolean }>("/api/password-reset").then((found) => setCanReset(found.available))
+      .catch(() => setCanReset(false));
+  }, []);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -66,6 +72,9 @@ export function SignInPage() {
           <Button type="submit" disabled={busy}>
             Sign in
           </Button>
+          {canReset && (
+            <a href={`/forgot-password?pmc=${pmcId}`} className="text-sm text-iris underline hover:text-iris-hover">Forgot your password?</a>
+          )}
         </Form>
       ) : (
         <Notice tone="info">

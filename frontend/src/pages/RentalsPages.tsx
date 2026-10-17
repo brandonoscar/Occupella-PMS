@@ -4,6 +4,7 @@ import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
+import { WriteEmail } from "../components/EmailsCard";
 import { EmptyState } from "../components/EmptyState";
 import { Notice } from "../components/Notice";
 import { Pager } from "../components/Pager";
@@ -104,11 +105,22 @@ export function PropertiesPage({ me }: { me: Me }) {
 }
 
 // A property: what its owners' accounts hold, and its units with each one's lease.
+type EmailedTenants = { emailed: { name: string; to: string }[]; without_email: string[] };
+
+// What emailing a property's tenants did: how many were written to, and who has no email.
+export function tenantsEmailed(sent: EmailedTenants): string {
+  const count = sent.emailed.length;
+  const emailed = `Emailed ${count} tenant${count === 1 ? "" : "s"}.`;
+  return sent.without_email.length
+    ? `${emailed} No email on file: ${sent.without_email.join(", ")}.`
+    : emailed;
+}
+
 export function PropertyPage({ me, id }: { me: Me; id: string }) {
   const [property, setProperty] = useState<Property | null>(null);
   const [said, setSaid] = useState("");
   const [error, setError] = useState("");
-  const [open, setOpen] = useState<"" | "unit" | "owner" | "terms" | "late" | "nsf">("");
+  const [open, setOpen] = useState<"" | "unit" | "owner" | "terms" | "late" | "nsf" | "email">("");
   const [account, setAccount] = useState("");
 
   function refresh() {
@@ -124,8 +136,11 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
       ) : (
         <>
           <PageHeader title={property.name} actions={
-            <RecordActions path={`/api/properties/${id}`} name={property.name} archived={property.archived}
-              onChange={(done) => { setSaid(done); refresh(); }} />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="secondary" onClick={() => setOpen("email")}>Email tenants</Button>
+              <RecordActions path={`/api/properties/${id}`} name={property.name} archived={property.archived}
+                onChange={(done) => { setSaid(done); refresh(); }} />
+            </div>
           } />
           <Said>{said}</Said>
           <Card title="Owners">
@@ -225,6 +240,19 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
           {open === "owner" && <AddOwnerPanel panel={panel} propertyId={id} />}
           {open === "late" && <LateFeesPanel panel={panel} propertyId={id} />}
           {open === "nsf" && <NsfFeePanel panel={panel} propertyId={id} />}
+          {open === "email" && (
+            <WriteEmail title={`Email tenants of ${property.name}`} onClose={panel.close}
+              note="Everyone on a lease in effect today gets their own copy, kept on their Email tab."
+              onSend={async (subject, body) => {
+                try {
+                  const sent = await api.post<EmailedTenants>("/api/emails/property", { property_id: id, subject, body });
+                  setSaid(tenantsEmailed(sent));
+                  return "";
+                } catch (failed) {
+                  return detail(failed);
+                }
+              }} />
+          )}
           {open === "terms" && (
             <TermsPanel panel={panel} accounts={property.owners
               .map((o) => ({ account: o.account, label: `${o.owner}, ${property.name}` }))

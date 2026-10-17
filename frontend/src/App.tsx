@@ -10,6 +10,7 @@ import { PayBillsPage } from "./pages/PayBillsPage";
 import { BudgetsPage } from "./pages/BudgetsPage";
 import { DashboardPage } from "./pages/DashboardPage";
 import { ESignPage } from "./pages/ESignPage";
+import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { InvitePage } from "./pages/InvitePage";
 import { ListingsPage } from "./pages/ListingsPage";
 import { OwnerHome } from "./pages/OwnerHome";
@@ -59,6 +60,7 @@ export function App() {
   // The fake e-sign partner's page; a signer's link carries what lets them in.
   if (path === "/esign") return <ESignPage />;
   if (path === "/sign-in") return <SignInPage />;
+  if (path === "/forgot-password") return <ForgotPasswordPage />;
   return <Home path={path} />;
 }
 

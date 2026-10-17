@@ -25,6 +25,8 @@ export type Me = {
   // The areas a staff member may change (src/pms/api/deps.py AREAS): every one unless their
   // custom roles say otherwise.
   areas?: string[];
+  // Whether the server sends email (PMS_EMAIL_SENDER); without it, emails wait to send.
+  email_on?: boolean;
 };
 export type Role = "admin" | "approve" | "disburse";
 
