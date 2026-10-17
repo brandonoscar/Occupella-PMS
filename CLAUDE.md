@@ -148,8 +148,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   Pay owners and Add owner. Staff keep a tenant's, owner's or vendor's contact details there, rename a tenant or owner
   and archive one. A search in the bar finds a property, unit, tenant or owner (`/api/search`).
   Lists come a page at a time (`Paged`: 50 by default, at most 200); move-outs at `/move-out` (`src/pms/api/moveout.py`). Leasing:
-  application links and the public listings at `/rental-listings`, applications at
-  `/applicants`, lease offers at `/draft-leases`, the leases ending in the next 90 days with
+  Listings at `/rental-listings` (`GET /api/leasing/vacancies`: each unit coming free within 90
+  days or with an open link, its rent and available day; List opens its link if it has none and
+  puts it on the public page, Unlist takes it off), Applicants at `/applicants` (Open, Rejected,
+  Withdrawn, All) with each application's page at `/applicants/<id>` (screen, approve or reject,
+  record a withdrawal, Create draft lease), lease offers at `/draft-leases`, the leases ending in the next 90 days with
   their renewal status at `/renewals` (`src/pms/api/renewals.py`, the expirations report's rows). Accounting:
   the trust bank accounts at `/banking` (Add bank account), each at `/bank-accounts/<id>` in tabs:
   its register and balance breakdown (`src/pms/api/banking.py`), its month-end
@@ -367,7 +370,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   emails. Screenings record a partner's recommendation and reasons. Each application has one
   decision, resting only on a screening of its own; a declined or conditional decision that
   rests on a screening has its adverse action notice (reasons, reporting agency, day given),
-  checked at commit, and no other decision has one. All append-only.
+  checked at commit, and no other decision has one. All append-only. An applicant's withdrawal
+  (migration 0070, `trust_application_withdrawals`, once, naming who recorded it) comes before
+  a decline or a lease made of it; after it the application takes no screening, decision or
+  offer, and none of its offers becomes a lease (each waits for a withdrawal under way).
 - Lease offers: a new lease for an approved (or conditionally approved) application at the unit
   it applied for, or the renewal of a lease at its unit, starting after it; the terms, the
   PMC's PDF (at most 5 MB) and its signers (names and emails). It is sent to the e-sign

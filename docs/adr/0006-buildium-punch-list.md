@@ -146,6 +146,28 @@ three paid; five work orders, one at each step; four vendors, one with a W-9 on 
 whose policy ran out; and files on a lease, a vendor, an owner and a bill. Everything this month
 is dated after last month's prepared reconciliation, so the demo still opens on it.
 
-Two of the punch list's states have no record in the PMS yet: an applicant who withdrew, and a
-lease offer kept as a draft before it is sent (an offer goes to the e-sign partner when it is
-made). They wait for the leasing pages (the build order's next step).
+Two of the punch list's states had no record in the PMS yet: an applicant who withdrew (the
+leasing pages below add it, and the demo has one), and a lease offer kept as a draft before it
+is sent (an offer goes to the e-sign partner when it is made), which waits for Draft leases.
+
+## Listings and Applicants
+
+The eighth piece, the first half of the build order's ninth step (migration 0070,
+`src/pms/api/leasing.py`, `src/pms/api/listings.py`). Listings lists each unit that comes free
+within 90 days (the first day no lease holds it) or has an open application link, narrowed by
+property group, a page at a time: its available day (or Leased), its rent (its link's, else its
+last lease's), the applications through its link and whether it is on the public vacancy page.
+List puts it there, opening a link at the rent asked if it has none (one request); Unlist takes
+it off; its ⋯ menu opens a link to post anywhere (shown once) or closes the open one. Copy public
+page link copies `/listings?pmc=<id>`. Applicants lists applications newest first in tabs, Open
+(new, screening, or approved and not a lease yet), Rejected, Withdrawn and All, narrowed by
+property group: Applicant, Unit, Applied, Status (New, Screening, Approved, Approved on
+conditions, Rejected, Withdrawn), Screening (the latest recommendation) and income to rent. An
+application's page has its summary, applicants, screenings and decision with its adverse action
+notice; Screen, Approve and Reject sit beside its title (a rejection resting on a screening
+records the notice, as before), Create draft lease opens Draft leases on it, and its ⋯ menu
+records a withdrawal. A withdrawal (`trust_application_withdrawals`) is recorded once, by staff,
+with why if the applicant said; it comes before a decline and before a lease is made of the
+application, and after it the database refuses a screening, a decision, an offer or a lease for
+it. The applicant's status link says Withdrawn. ADR 0002 holds: the PMS keeps names, emails and
+income; the partner keeps the rest, so the page shows no employment, history, pets or vehicles.

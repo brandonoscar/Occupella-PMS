@@ -352,7 +352,19 @@ def test_the_founders_seed_puts_something_on_every_list(conn, app_conn, built):
         " d.decision FROM trust_applications AS a"
         " LEFT JOIN trust_application_decisions AS d ON d.application_id = a.id"
         " WHERE a.pmc_id = %s ORDER BY a.submitted_at"
-    ) == [(0, None), (1, None), (1, "approved"), (1, "declined")]
+    ) == [(0, None), (1, None), (1, "approved"), (1, "declined"), (0, None)]
+    assert rows(
+        "SELECT p.display_name, w.reason FROM trust_application_withdrawals AS w"
+        " JOIN trust_applicants AS p ON p.application_id = w.application_id"
+        " WHERE w.pmc_id = %s"
+    ) == [("Kendall Applicant", "Took a home closer to work")]
+    # Two of Harbor Tower's vacant units are on the public page.
+    assert rows(
+        "SELECT u.display_name FROM trust_listings AS s"
+        " JOIN trust_application_links AS l ON l.id = s.link_id"
+        " JOIN trust_units AS u ON u.id = l.unit_id"
+        ' WHERE s.pmc_id = %s ORDER BY u.display_name COLLATE "C"'
+    ) == [("Unit 409",), ("Unit 410",)]
     assert rows(
         "SELECT o.renews_lease_id IS NOT NULL, count(g.signed_at), count(*)"
         " FROM trust_lease_offers AS o"
@@ -427,8 +439,8 @@ def test_every_write_but_the_first_staff_member_and_their_role_names_a_staff_mem
         (built.pmc_id,),
     ).fetchall() == [
         # Applicants apply themselves, through a link: they have no login to name.
-        ("trust_applicants", 5),
-        ("trust_applications", 4),
+        ("trust_applicants", 6),
+        ("trust_applications", 5),
         ("trust_pmcs", 1),
         ("trust_staff", 1),
         ("trust_staff_roles", 1),

@@ -1,16 +1,18 @@
 """Vacancy listings (product item 8): a PMC's public page of open units with their
 application links. Not syndication: nothing is sent anywhere.
 
-Staff list an open application link (with a description if they like) and take a listing off
-again. The public page (/listings?pmc=<PMC id>) asks GET /api/listings/<PMC id>, which needs no
-login and shows only what a listing is for: the property, unit, rent and description. An
-applicant applies through a listing as through its link (leasing.py), until it is removed or
-the link closed.
+Staff see on Leasing, Listings each unit that comes free within 90 days (or has an open link):
+when, at what rent, and whether it is listed (the founder's punch list, ADR 0006). They list an
+open application link (with a description if they like), or open a link and list it at once
+(leasing.py), and take a listing off again. The public page (/listings?pmc=<PMC id>) asks
+GET /api/listings/<PMC id>, which needs no login and shows only what a listing is for: the
+property, unit, rent and description. An applicant applies through a listing as through its
+link (leasing.py), until it is removed or the link closed.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Annotated
 from uuid import UUID
 
@@ -19,9 +21,13 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, StringConstraints
 
 from pms import exports
+from pms.api import scope
 from pms.api.deps import Conn, Staff
+from pms.api.rentals import Page, Paged, PerPage
 
 router = APIRouter()
+# How far ahead Listings looks for a unit coming free.
+AHEAD = timedelta(days=90)
 
 Description = Annotated[
     str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)
@@ -48,6 +54,127 @@ class PublicListing(BaseModel):
 class Vacancies(BaseModel):
     pmc: str
     listings: list[PublicListing]
+
+
+class Vacancy(BaseModel):
+    unit_id: UUID
+    property_id: UUID
+    property: str
+    unit: str
+    # The first day from today that no lease holds it, if within 90 days.
+    available_on: date | None
+    # The rent its latest lease charges or charged last, to ask again; None if never leased.
+    last_rent: str | None
+    # Its open application link (a listed one first, else the newest): the rent it asks and
+    # the applications that came through it.
+    link_id: UUID | None
+    link_rent: str | None
+    applications: int
+    # The link's listing on the public page, while it is there.
+    listing_id: UUID | None
+    description: str | None
+
+
+VACANCIES = f"""
+WITH units AS (
+    SELECT u.id, u.property_id, u.display_name,
+           (SELECT min(c.day) FROM (
+                SELECT %(day)s::date AS day
+                UNION SELECT l.ends_on + 1 FROM trust_leases AS l
+                WHERE l.unit_id = u.id AND l.ends_on >= %(day)s
+            ) AS c
+            WHERE NOT EXISTS (
+                SELECT 1 FROM trust_leases AS l
+                WHERE l.unit_id = u.id AND l.starts_on <= c.day
+                  AND (l.ends_on IS NULL OR l.ends_on >= c.day)
+            )) AS free_on
+    FROM trust_units AS u
+    WHERE u.pmc_id = %(pmc)s AND NOT trust_is_archived(NULL, u.id)
+)
+SELECT u.id, p.id, p.display_name, u.display_name,
+       CASE WHEN u.free_on <= %(until)s THEN u.free_on END,
+       (SELECT trust_rent_on(l.id, greatest(l.starts_on, least(l.ends_on, %(day)s)))
+        FROM trust_leases AS l WHERE l.unit_id = u.id
+        ORDER BY l.starts_on DESC, l.id LIMIT 1),
+       k.id, k.monthly_rent,
+       (SELECT count(*) FROM trust_applications AS a WHERE a.link_id = k.id),
+       k.listing_id, k.description, count(*) OVER ()
+FROM units AS u
+JOIN trust_properties AS p ON p.id = u.property_id
+LEFT JOIN LATERAL (
+    SELECT l.id, l.monthly_rent, s.id AS listing_id, s.description
+    FROM trust_application_links AS l
+    LEFT JOIN trust_listings AS s ON s.link_id = l.id AND NOT EXISTS (
+        SELECT 1 FROM trust_listing_removals AS r WHERE r.listing_id = s.id)
+    WHERE l.unit_id = u.id AND NOT EXISTS (
+        SELECT 1 FROM trust_application_link_closings AS c WHERE c.link_id = l.id)
+    ORDER BY s.id IS NULL, l.opened_at DESC, l.id
+    LIMIT 1
+) AS k ON true
+WHERE (u.free_on <= %(until)s OR k.id IS NOT NULL) AND {scope.within("p.id")}
+ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", u.id
+LIMIT %(limit)s OFFSET %(offset)s
+"""
+
+
+@router.get("/api/leasing/vacancies")
+def staff_vacancies(
+    session: Staff,
+    conn: Conn,
+    group: scope.Group = None,
+    property_id: scope.Property = None,
+    page: Page = 1,
+    per_page: PerPage = 50,
+) -> Paged[Vacancy]:
+    """The PMC's units that come free within 90 days or have an open application link, by
+    property and unit, a page at a time: when each is free, its last rent, its open link and
+    whether that is listed. Maybe of a property group or property."""
+    day = datetime.now(UTC).date()
+    rows = conn.execute(
+        VACANCIES,
+        {
+            "pmc": session.pmc_id,
+            "day": day,
+            "until": day + AHEAD,
+            "limit": per_page,
+            "offset": (page - 1) * per_page,
+            **scope.params(group, property_id),
+        },
+    ).fetchall()
+    return Paged(
+        items=[
+            Vacancy(
+                unit_id=unit_id,
+                property_id=prop_id,
+                property=prop,
+                unit=unit,
+                available_on=free_on,
+                last_rent=None if last is None else exports.text(last),
+                link_id=link,
+                link_rent=None if link_rent is None else exports.text(link_rent),
+                applications=applications,
+                listing_id=listing,
+                description=description,
+            )
+            for (
+                unit_id,
+                prop_id,
+                prop,
+                unit,
+                free_on,
+                last,
+                link,
+                link_rent,
+                applications,
+                listing,
+                description,
+                _,
+            ) in rows
+        ],
+        total=rows[0][-1] if rows else 0,
+        page=page,
+        per_page=per_page,
+    )
 
 
 @router.post("/api/leasing/links/{link_id}/listing", status_code=201)

@@ -26,7 +26,10 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field, model_validator
 
 from pms import accounts, exports
-from pms.api.deps import Conn, Staff, download
+from pms.api import scope
+from pms.api.deps import Conn, Staff, download, refusal
+from pms.api.listings import NewListing
+from pms.api.rentals import Page, Paged, PerPage
 from pms.leasing import screening
 
 router = APIRouter()
@@ -36,6 +39,7 @@ MAX_APPLICANTS = 6
 Money = Annotated[Decimal, Field(ge=0, le=Decimal("10000000"), decimal_places=2)]
 Token = Annotated[str, Field(min_length=20, max_length=100)]
 NOT_OPEN = "this application link is closed or doesn't exist"
+WITHDRAWN = "the applicants withdrew this application; it takes nothing more"
 
 
 def today() -> date:
@@ -93,14 +97,14 @@ class StatusToken(BaseModel):
     status_token: Token
 
 
-StatusName = Literal["received", "in review", "approved", "conditional", "declined"]
+StatusName = Literal["received", "in review", "approved", "conditional", "declined", "withdrawn"]
 
 
 class Status(BaseModel):
     property: str
     unit: str
     submitted_at: datetime
-    # "received" until staff screen it, "in review" after, then the decision.
+    # "received" until staff screen it, "in review" after, then the decision; or "withdrawn".
     status: StatusName
     conditions: str | None
 
@@ -195,7 +199,9 @@ def application_status(conn: Conn, asked: StatusToken) -> Status:
     """Where an application stands, for whoever holds its status token."""
     row = conn.execute(
         "SELECT p.display_name, u.display_name, a.submitted_at, d.decision, d.conditions,"
-        " EXISTS (SELECT 1 FROM trust_screenings AS s WHERE s.application_id = a.id)"
+        " EXISTS (SELECT 1 FROM trust_screenings AS s WHERE s.application_id = a.id),"
+        " EXISTS (SELECT 1 FROM trust_application_withdrawals AS w"
+        "   WHERE w.application_id = a.id)"
         " FROM trust_applications AS a"
         " JOIN trust_application_links AS l ON l.id = a.link_id"
         " JOIN trust_units AS u ON u.id = l.unit_id"
@@ -206,8 +212,10 @@ def application_status(conn: Conn, asked: StatusToken) -> Status:
     ).fetchone()
     if row is None:
         raise HTTPException(404, "no application has this link")
-    prop, unit, submitted, decision, conditions, screened = row
-    status: StatusName = decision or ("in review" if screened else "received")
+    prop, unit, submitted, decision, conditions, screened, withdrawn = row
+    status: StatusName = (
+        "withdrawn" if withdrawn else decision or ("in review" if screened else "received")
+    )
     return Status(
         property=prop, unit=unit, submitted_at=submitted, status=status, conditions=conditions
     )
@@ -216,32 +224,18 @@ def application_status(conn: Conn, asked: StatusToken) -> Status:
 # --- staff ------------------------------------------------------------------------------
 
 
-class Unit(BaseModel):
-    unit_id: UUID
-    property: str
-    unit: str
-    leased_today: bool
-
-
 class NewLink(BaseModel):
     unit_id: UUID
     monthly_rent: Annotated[Decimal, Field(gt=0, le=Decimal("1000000"), decimal_places=2)]
-
-
-class Link(BaseModel):
-    id: UUID
-    property: str
-    unit: str
-    monthly_rent: str
-    opened_at: datetime
-    applications: int
-    # Its listing on the PMC's public page, while it is there.
-    listing_id: UUID | None = None
+    # Put the link on the PMC's public page at once, with this description (or none).
+    listing: NewListing | None = None
 
 
 class OpenedLink(BaseModel):
     id: UUID
     url: str
+    # Its listing on the public page, when it was listed at once.
+    listing_id: UUID | None = None
 
 
 class Screening(BaseModel):
@@ -275,9 +269,30 @@ class DecisionOut(BaseModel):
     adverse_action: AdverseAction | None
 
 
+# Where an application stands, for staff: new until screened, screening until decided, then the
+# decision (a decline reads as rejected), or withdrawn whenever the applicant withdrew it.
+ApplicationStatus = Literal["new", "screening", "approved", "conditional", "rejected", "withdrawn"]
+# Which applications a list shows: open ones (new, screening, or approved and not a lease yet),
+# rejected or withdrawn ones, or all.
+ApplicationsShown = Literal["open", "rejected", "withdrawn", "all"]
+
+
+class Withdrawal(BaseModel):
+    reason: str | None
+    recorded_at: datetime
+    # Who recorded it, by name; None when the server's command line did.
+    recorded_by: str | None
+
+
+class Withdraw(BaseModel):
+    reason: str | None = Field(default=None, max_length=500)
+
+
 class ApplicationOut(BaseModel):
     id: UUID
+    property_id: UUID
     property: str
+    unit_id: UUID
     unit: str
     monthly_rent: str
     move_in_on: date
@@ -286,56 +301,16 @@ class ApplicationOut(BaseModel):
     applicants: list[ApplicantIn]
     screenings: list[Screening]
     decision: DecisionOut | None
-
-
-@router.get("/api/leasing/units")
-def units(session: Staff, conn: Conn) -> list[Unit]:
-    """The PMC's units, and whether a lease is in effect on each today."""
-    rows = conn.execute(
-        "SELECT u.id, p.display_name, u.display_name, EXISTS ("
-        "   SELECT 1 FROM trust_leases AS l WHERE l.unit_id = u.id AND l.starts_on <= %s"
-        "   AND (l.ends_on IS NULL OR l.ends_on >= %s))"
-        " FROM trust_units AS u JOIN trust_properties AS p ON p.id = u.property_id"
-        ' WHERE u.pmc_id = %s ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C",'
-        " u.id",
-        (today(), today(), session.pmc_id),
-    ).fetchall()
-    return [Unit(unit_id=i, property=p, unit=u, leased_today=leased) for i, p, u, leased in rows]
-
-
-@router.get("/api/leasing/links")
-def links(session: Staff, conn: Conn) -> list[Link]:
-    """The PMC's open application links, newest first."""
-    rows = conn.execute(
-        "SELECT l.id, p.display_name, u.display_name, l.monthly_rent, l.opened_at,"
-        " (SELECT count(*) FROM trust_applications AS a WHERE a.link_id = l.id),"
-        " (SELECT s.id FROM trust_listings AS s WHERE s.link_id = l.id AND NOT EXISTS ("
-        "   SELECT 1 FROM trust_listing_removals AS r WHERE r.listing_id = s.id))"
-        " FROM trust_application_links AS l"
-        " JOIN trust_units AS u ON u.id = l.unit_id"
-        " JOIN trust_properties AS p ON p.id = u.property_id"
-        " WHERE l.pmc_id = %s AND NOT EXISTS ("
-        "   SELECT 1 FROM trust_application_link_closings AS c WHERE c.link_id = l.id)"
-        " ORDER BY l.opened_at DESC, l.id",
-        (session.pmc_id,),
-    ).fetchall()
-    return [
-        Link(
-            id=i,
-            property=p,
-            unit=u,
-            monthly_rent=exports.text(rent),
-            opened_at=at,
-            applications=n,
-            listing_id=listing,
-        )
-        for i, p, u, rent, at, n, listing in rows
-    ]
+    status: ApplicationStatus
+    withdrawal: Withdrawal | None
+    # The lease made of it, once an offer of it became one.
+    lease_id: UUID | None
 
 
 @router.post("/api/leasing/links", status_code=201)
 def open_application_link(request: Request, session: Staff, conn: Conn, new: NewLink) -> OpenedLink:
-    """A link for applying to one of the PMC's units. Its URL is shown this once."""
+    """A link for applying to one of the PMC's units, maybe listed on the public page at once.
+    Its URL is shown this once."""
     if (
         conn.execute(
             "SELECT 1 FROM trust_units WHERE pmc_id = %s AND id = %s", (session.pmc_id, new.unit_id)
@@ -351,7 +326,19 @@ def open_application_link(request: Request, session: Staff, conn: Conn, new: New
         (session.pmc_id, new.unit_id, digest, new.monthly_rent, session.person_id),
     ).fetchone()
     assert row is not None
-    return OpenedLink(id=row[0], url=f"{public_url(request)}/apply#{token}")
+    listed = None
+    if new.listing is not None:
+        listed = conn.execute(
+            "INSERT INTO trust_listings (pmc_id, link_id, description, listed_by)"
+            " VALUES (%s, %s, %s, %s) RETURNING id",
+            (session.pmc_id, row[0], new.listing.description, session.person_id),
+        ).fetchone()
+        assert listed is not None
+    return OpenedLink(
+        id=row[0],
+        url=f"{public_url(request)}/apply#{token}",
+        listing_id=None if listed is None else listed[0],
+    )
 
 
 @router.post("/api/leasing/links/{link_id}/close", status_code=204)
@@ -374,24 +361,71 @@ def close_application_link(session: Staff, conn: Conn, link_id: UUID) -> None:
         raise HTTPException(409, "this link is closed already") from None
 
 
+APPLICATIONS = f"""
+SELECT a.id, p.id, p.display_name, u.id, u.display_name, l.monthly_rent, a.move_in_on,
+       a.monthly_income, a.submitted_at,
+       d.decision, d.conditions, d.screening_id, d.decided_at, av.reasons, av.notice_given_on,
+       w.application_id IS NOT NULL, w.reason, w.recorded_at, ws.display_name,
+       made.lease_id, st.status, count(*) OVER ()
+FROM trust_applications AS a
+JOIN trust_application_links AS l ON l.id = a.link_id
+JOIN trust_units AS u ON u.id = l.unit_id
+JOIN trust_properties AS p ON p.id = u.property_id
+LEFT JOIN trust_application_decisions AS d ON d.application_id = a.id
+LEFT JOIN trust_adverse_actions AS av ON av.application_id = a.id
+LEFT JOIN trust_application_withdrawals AS w ON w.application_id = a.id
+LEFT JOIN trust_staff AS ws ON ws.id = w.recorded_by
+LEFT JOIN LATERAL (
+    SELECT c.lease_id FROM trust_lease_offers AS o
+    JOIN trust_lease_offer_completions AS c ON c.offer_id = o.id
+    WHERE o.application_id = a.id
+) AS made ON true
+CROSS JOIN LATERAL (
+    SELECT CASE
+        WHEN w.application_id IS NOT NULL THEN 'withdrawn'
+        WHEN d.decision = 'declined' THEN 'rejected'
+        WHEN d.decision IS NOT NULL THEN d.decision
+        WHEN EXISTS (SELECT 1 FROM trust_screenings AS s WHERE s.application_id = a.id)
+            THEN 'screening'
+        ELSE 'new'
+    END AS status
+) AS st
+WHERE a.pmc_id = %(pmc)s AND (%(only)s::uuid IS NULL OR a.id = %(only)s::uuid)
+  AND {scope.within("p.id")}
+  AND CASE %(show)s
+      WHEN 'open' THEN st.status IN ('new', 'screening', 'approved', 'conditional')
+          AND made.lease_id IS NULL
+      WHEN 'all' THEN true
+      ELSE st.status = %(show)s
+  END
+ORDER BY a.submitted_at DESC, a.id
+LIMIT %(limit)s OFFSET %(offset)s
+"""
+
+
 def applications_of(
-    conn: psycopg.Connection[Any], pmc_id: UUID, only: UUID | None = None
-) -> list[ApplicationOut]:
-    """The PMC's applications (or one of them), newest first, with everything staff decide on."""
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    only: UUID | None = None,
+    *,
+    show: ApplicationsShown = "all",
+    group: UUID | None = None,
+    property_id: UUID | None = None,
+    limit: int | None = None,
+    offset: int = 0,
+) -> tuple[list[ApplicationOut], int]:
+    """The PMC's applications shown (or one of them), newest first, a page of them when given a
+    limit, with everything staff decide on; and how many there are in all."""
     rows = conn.execute(
-        "SELECT a.id, p.display_name, u.display_name, l.monthly_rent, a.move_in_on,"
-        " a.monthly_income, a.submitted_at,"
-        " d.decision, d.conditions, d.screening_id, d.decided_at,"
-        " av.reasons, av.notice_given_on"
-        " FROM trust_applications AS a"
-        " JOIN trust_application_links AS l ON l.id = a.link_id"
-        " JOIN trust_units AS u ON u.id = l.unit_id"
-        " JOIN trust_properties AS p ON p.id = u.property_id"
-        " LEFT JOIN trust_application_decisions AS d ON d.application_id = a.id"
-        " LEFT JOIN trust_adverse_actions AS av ON av.application_id = a.id"
-        " WHERE a.pmc_id = %s AND (%s::uuid IS NULL OR a.id = %s::uuid)"
-        " ORDER BY a.submitted_at DESC, a.id",
-        (pmc_id, only, only),
+        APPLICATIONS,
+        {
+            "pmc": pmc_id,
+            "only": only,
+            "show": show,
+            "limit": limit,
+            "offset": offset,
+            **scope.params(group, property_id),
+        },
     ).fetchall()
     ids = [row[0] for row in rows]
     people: dict[UUID, list[ApplicantIn]] = {i: [] for i in ids}
@@ -419,10 +453,12 @@ def applications_of(
                 reported_at=at,
             )
         )
-    return [
+    found = [
         ApplicationOut(
             id=i,
+            property_id=prop_id,
             property=prop,
+            unit_id=unit_id,
             unit=unit,
             monthly_rent=exports.text(rent),
             move_in_on=move_in,
@@ -441,10 +477,17 @@ def applications_of(
                 if reasons is None
                 else AdverseAction(reasons=list(reasons), notice_given_on=given_on),
             ),
+            status=status,
+            withdrawal=Withdrawal(reason=why, recorded_at=withdrawn_at, recorded_by=withdrawn_by)
+            if withdrawn
+            else None,
+            lease_id=lease,
         )
         for (
             i,
+            prop_id,
             prop,
+            unit_id,
             unit,
             rent,
             move_in,
@@ -456,12 +499,20 @@ def applications_of(
             decided_at,
             reasons,
             given_on,
+            withdrawn,
+            why,
+            withdrawn_at,
+            withdrawn_by,
+            lease,
+            status,
+            _,
         ) in rows
     ]
+    return found, rows[0][-1] if rows else 0
 
 
 def application_of(conn: psycopg.Connection[Any], pmc_id: UUID, i: UUID) -> ApplicationOut:
-    found = applications_of(conn, pmc_id, i)
+    found, _ = applications_of(conn, pmc_id, i)
     if not found:
         raise HTTPException(404, "no such application")
     return found[0]
@@ -471,11 +522,56 @@ def application_of(conn: psycopg.Connection[Any], pmc_id: UUID, i: UUID) -> Appl
 def applications(
     session: Staff,
     conn: Conn,
-    show: Annotated[Literal["open", "all"], Query()] = "open",
-) -> list[ApplicationOut]:
-    """The PMC's applications: by default those not decided yet."""
-    found = applications_of(conn, session.pmc_id)
-    return found if show == "all" else [a for a in found if a.decision is None]
+    show: Annotated[ApplicationsShown, Query()] = "open",
+    group: scope.Group = None,
+    property_id: scope.Property = None,
+    page: Page = 1,
+    per_page: PerPage = 50,
+) -> Paged[ApplicationOut]:
+    """The PMC's applications, newest first, a page at a time: by default the open ones (new,
+    being screened, or approved and not a lease yet); or the rejected ones, the withdrawn ones,
+    or all. Maybe of a property group or property."""
+    found, total = applications_of(
+        conn,
+        session.pmc_id,
+        show=show,
+        group=group,
+        property_id=property_id,
+        limit=per_page,
+        offset=(page - 1) * per_page,
+    )
+    return Paged(items=found, total=total, page=page, per_page=per_page)
+
+
+@router.get("/api/leasing/applications/{application_id}")
+def application(session: Staff, conn: Conn, application_id: UUID) -> ApplicationOut:
+    """One of the PMC's applications, for its own page."""
+    return application_of(conn, session.pmc_id, application_id)
+
+
+@router.post("/api/leasing/applications/{application_id}/withdraw", status_code=201)
+def withdraw(
+    session: Staff, conn: Conn, application_id: UUID, withdrawal: Withdraw
+) -> ApplicationOut:
+    """Records that the applicants withdrew the application, and why if they said. It takes
+    nothing more after: no screening, decision or lease."""
+    found = application_of(conn, session.pmc_id, application_id)
+    if found.status == "withdrawn":
+        raise HTTPException(409, "this application is withdrawn already")
+    if found.status == "rejected":
+        raise HTTPException(409, "a rejected application is not withdrawn")
+    if found.lease_id is not None:
+        raise HTTPException(409, "this application is a lease already")
+    try:
+        conn.execute(
+            "INSERT INTO trust_application_withdrawals (pmc_id, application_id, reason)"
+            " VALUES (%s, %s, %s)",
+            (session.pmc_id, application_id, (withdrawal.reason or "").strip() or None),
+        )
+    except psycopg.errors.CheckViolation as refused:
+        # A decision or a lease made since the application was read.
+        raise HTTPException(409, refusal(refused)) from None
+    return application_of(conn, session.pmc_id, application_id)
 
 
 @router.post("/api/leasing/applications/{application_id}/screen", status_code=201)
@@ -485,6 +581,8 @@ def screen(request: Request, session: Staff, conn: Conn, application_id: UUID) -
     if partner is None:
         raise HTTPException(503, "no screening partner is set up on this server")
     found = application_of(conn, session.pmc_id, application_id)
+    if found.withdrawal is not None:
+        raise HTTPException(409, WITHDRAWN)
     if found.decision is not None:
         raise HTTPException(409, "this application is decided already")
     result = partner.screen(
@@ -518,6 +616,8 @@ def decide(session: Staff, conn: Conn, application_id: UUID, decision: Decision)
     """The PMC's decision. A decline or a conditional approval that rests on a screening comes
     with its adverse action notice: its reasons and the day it was given."""
     found = application_of(conn, session.pmc_id, application_id)
+    if found.withdrawal is not None:
+        raise HTTPException(409, WITHDRAWN)
     if found.decision is not None:
         raise HTTPException(409, "this application is decided already")
     conditions = (decision.conditions or "").strip() or None

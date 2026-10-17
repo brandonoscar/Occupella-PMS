@@ -1334,6 +1334,61 @@ $$;
 
 
 --
+-- Name: trust_check_application_not_withdrawn(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_application_not_withdrawn() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NEW.application_id IS NULL THEN
+        RETURN NEW;  -- a renewal's offer
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended('lease offer of ' || NEW.application_id, 0));
+    IF EXISTS (
+        SELECT w.application_id FROM trust_application_withdrawals AS w
+        WHERE w.application_id = NEW.application_id
+    ) THEN
+        RAISE EXCEPTION 'trust: the applicant withdrew this application; it takes nothing more'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_application_withdrawal(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_application_withdrawal() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('lease offer of ' || NEW.application_id, 0));
+    IF EXISTS (
+        SELECT d.application_id FROM trust_application_decisions AS d
+        WHERE d.application_id = NEW.application_id AND d.decision = 'declined'
+    ) THEN
+        RAISE EXCEPTION 'trust: a declined application is not withdrawn'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (
+        SELECT o.id FROM trust_lease_offers AS o
+        JOIN trust_lease_offer_completions AS c ON c.offer_id = o.id
+        WHERE o.application_id = NEW.application_id
+    ) THEN
+        RAISE EXCEPTION 'trust: this application is a lease already; it is not withdrawn'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_archival(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1714,6 +1769,28 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'trust: % is not an owner''s property account in PMC %',
             NEW.ledger_account_id, NEW.pmc_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_completion_not_withdrawn(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_completion_not_withdrawn() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF EXISTS (
+        SELECT w.application_id FROM trust_lease_offers AS o
+        JOIN trust_application_withdrawals AS w ON w.application_id = o.application_id
+        WHERE o.id = NEW.offer_id
+    ) THEN
+        RAISE EXCEPTION 'trust: the applicant withdrew this application; it is made no lease'
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
@@ -8473,6 +8550,20 @@ CREATE TABLE public.trust_application_links (
 
 
 --
+-- Name: trust_application_withdrawals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_application_withdrawals (
+    application_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    reason text,
+    recorded_by uuid,
+    recorded_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_application_withdrawals_reason_check CHECK (((btrim(reason) <> ''::text) AND (char_length(reason) <= 500)))
+);
+
+
+--
 -- Name: trust_applications; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10277,6 +10368,14 @@ ALTER TABLE ONLY public.trust_application_links
 
 
 --
+-- Name: trust_application_withdrawals trust_application_withdrawals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_withdrawals
+    ADD CONSTRAINT trust_application_withdrawals_pkey PRIMARY KEY (application_id);
+
+
+--
 -- Name: trust_applications trust_applications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11636,6 +11735,13 @@ CREATE INDEX trust_application_links_unit_id ON public.trust_application_links U
 
 
 --
+-- Name: trust_application_withdrawals_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_application_withdrawals_recorded_by ON public.trust_application_withdrawals USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_applications_link_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -12413,6 +12519,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_application_withdrawals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_application_withdrawals FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_applications trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13036,6 +13149,41 @@ CREATE TRIGGER trust_application_link_open BEFORE INSERT ON public.trust_applica
 
 
 --
+-- Name: trust_application_decisions trust_application_not_withdrawn; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_application_not_withdrawn BEFORE INSERT ON public.trust_application_decisions FOR EACH ROW EXECUTE FUNCTION public.trust_check_application_not_withdrawn();
+
+
+--
+-- Name: trust_lease_offer_completions trust_application_not_withdrawn; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_application_not_withdrawn BEFORE INSERT ON public.trust_lease_offer_completions FOR EACH ROW EXECUTE FUNCTION public.trust_check_completion_not_withdrawn();
+
+
+--
+-- Name: trust_lease_offers trust_application_not_withdrawn; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_application_not_withdrawn BEFORE INSERT ON public.trust_lease_offers FOR EACH ROW EXECUTE FUNCTION public.trust_check_application_not_withdrawn();
+
+
+--
+-- Name: trust_screenings trust_application_not_withdrawn; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_application_not_withdrawn BEFORE INSERT ON public.trust_screenings FOR EACH ROW EXECUTE FUNCTION public.trust_check_application_not_withdrawn();
+
+
+--
+-- Name: trust_application_withdrawals trust_application_withdrawal_open; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_application_withdrawal_open BEFORE INSERT ON public.trust_application_withdrawals FOR EACH ROW EXECUTE FUNCTION public.trust_check_application_withdrawal();
+
+
+--
 -- Name: trust_cutover_signoffs trust_approve; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13110,6 +13258,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_appl
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_application_links FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_application_withdrawals trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_application_withdrawals FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -14016,6 +14171,13 @@ CREATE TRIGGER trust_payout_method BEFORE INSERT ON public.trust_payout_methods 
 
 
 --
+-- Name: trust_application_withdrawals trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_application_withdrawals FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_archivals trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -14379,6 +14541,30 @@ ALTER TABLE ONLY public.trust_application_links
 
 ALTER TABLE ONLY public.trust_application_links
     ADD CONSTRAINT trust_application_links_pmc_id_unit_id_fkey FOREIGN KEY (pmc_id, unit_id) REFERENCES public.trust_units(pmc_id, id);
+
+
+--
+-- Name: trust_application_withdrawals trust_application_withdrawals_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_withdrawals
+    ADD CONSTRAINT trust_application_withdrawals_pmc_id_application_id_fkey FOREIGN KEY (pmc_id, application_id) REFERENCES public.trust_applications(pmc_id, id);
+
+
+--
+-- Name: trust_application_withdrawals trust_application_withdrawals_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_withdrawals
+    ADD CONSTRAINT trust_application_withdrawals_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_application_withdrawals trust_application_withdrawals_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_withdrawals
+    ADD CONSTRAINT trust_application_withdrawals_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -16801,4 +16987,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261016000066'),
     ('20261016000067'),
     ('20261016000068'),
-    ('20261016000069');
+    ('20261016000069'),
+    ('20261016000070');

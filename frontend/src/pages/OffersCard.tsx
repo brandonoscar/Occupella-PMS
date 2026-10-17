@@ -5,6 +5,7 @@ import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Card } from "../components/Shell";
 import type { Application } from "../leasing";
+import type { Paged } from "../rentals";
 import { when } from "../maintenance";
 import { money, usDate } from "../money";
 import type { Offer, Offered, RenewableLease, SigningLink } from "../offers";
@@ -26,8 +27,8 @@ const SELECT = "h-9 rounded-sm border border-line-strong bg-sunken px-2 text-sm 
 // Staff's lease offers: a lease for an approved application or the renewal of a lease, with the
 // PMC's own lease document (a PDF), sent to its signers through the server's e-sign partner.
 // Staff send each signer their link, check who has signed, and make the offer the lease once
-// everyone has. `changed` counts the leasing card's decisions, so a new approval shows here.
-export function OffersCard({ changed = 0 }: { changed?: number }) {
+// everyone has. `application` names an approved application to start the offer from.
+export function OffersCard({ application: chosen = "" }: { application?: string }) {
   const [approved, setApproved] = useState<Application[]>([]);
   const [leases, setLeases] = useState<RenewableLease[]>([]);
   const [offers, setOffers] = useState<Offer[] | null>(null);
@@ -48,14 +49,21 @@ export function OffersCard({ changed = 0 }: { changed?: number }) {
 
   function refresh() {
     api
-      .get<Application[]>("/api/leasing/applications?show=all")
-      .then((all) => setApproved(all.filter((a) => a.decision && a.decision.decision !== "declined")))
+      .get<Paged<Application>>("/api/leasing/applications?show=open&per_page=200")
+      .then((open) => setApproved(open.items.filter((a) => a.status === "approved" || a.status === "conditional")))
       .catch(show);
     api.get<RenewableLease[]>("/api/leasing/leases").then(setLeases).catch(show);
     api.get<Offer[]>("/api/leasing/offers?show=all").then(setOffers).catch(show);
   }
 
-  useEffect(refresh, [changed]);
+  useEffect(refresh, []);
+  // Started from an application's Create draft lease: that application, once it is loaded.
+  const [started, setStarted] = useState(false);
+  useEffect(() => {
+    if (started || !chosen || !approved.some((a) => a.id === chosen)) return;
+    setStarted(true);
+    choose(`application:${chosen}`);
+  }, [approved, chosen, started]);
 
   async function act(work: () => Promise<unknown>) {
     setError("");

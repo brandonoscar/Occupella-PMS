@@ -59,6 +59,7 @@ from pms.api import (
     inspections,
     journal,
     leasing,
+    listings,
     maintenance,
     offers,
     payables,
@@ -798,26 +799,41 @@ APPLICANTS: list[tuple[str, list[str], D, str]] = [
     ("Unit 410", ["Rowan Applicant"], D("3900.00"), "screened"),
     ("Unit 411", ["Emery Applicant", "Blake Applicant"], D("7400.00"), "approved"),
     ("Unit 412", ["Hayden Applicant"], D("1800.00"), "declined"),
+    ("Unit 409", ["Kendall Applicant"], D("4600.00"), "withdrawn"),
 ]
+# The vacant units on the company's public vacancy page, with what it says of each.
+LISTED = {
+    "Unit 409": "Fourth floor, two bedrooms, river view.",
+    "Unit 410": "Fourth floor, one bedroom, laundry in the unit.",
+}
 
 
 def leasing_pipeline(
     b: Builder, demo: Demo, request: Any, units: dict[str, UUID], today: date
 ) -> None:
-    """An application link on each vacant unit at Harbor Tower and an application through it:
-    one received, one screened, one approved and sent its lease to sign, one declined with its
-    adverse action notice. Oak Terrace's lease ending in 45 days has its renewal out, signed by
-    one of its two tenants. The applicants apply themselves: no staff member to name."""
+    """An application link on each vacant unit at Harbor Tower (two of them on the public
+    vacancy page) and applications through them: one received, one screened, one approved and
+    sent its lease to sign, one declined with its adverse action notice and one its applicant
+    withdrew. Oak Terrace's lease ending in 45 days has its renewal out, signed by one of its two
+    tenants. The applicants apply themselves: no staff member to name."""
     conn = b.conn
     move_in = first_of_month(today, -1)
+    links: dict[str, leasing.OpenedLink] = {}
     for unit, names, income, step in APPLICANTS:
-        with b.as_staff(demo.manager) as s:
-            opened = leasing.open_application_link(
-                request,
-                s,
-                conn,
-                leasing.NewLink(unit_id=units[unit], monthly_rent=harbor_rent(unit)),
-            )
+        if unit not in links:
+            listed = LISTED.get(unit)
+            with b.as_staff(demo.manager) as s:
+                links[unit] = leasing.open_application_link(
+                    request,
+                    s,
+                    conn,
+                    leasing.NewLink(
+                        unit_id=units[unit],
+                        monthly_rent=harbor_rent(unit),
+                        listing=None if listed is None else listings.NewListing(description=listed),
+                    ),
+                )
+        opened = links[unit]
         with conn.transaction():
             leasing.apply(
                 request,
@@ -836,10 +852,17 @@ def leasing_pipeline(
             )
         application = one(
             conn,
-            "SELECT a.id FROM trust_applications AS a WHERE a.link_id = %s",
-            (opened.id,),
+            "SELECT a.id FROM trust_applications AS a"
+            " JOIN trust_applicants AS p ON p.application_id = a.id"
+            " WHERE a.link_id = %s AND p.position = 1 AND p.display_name = %s",
+            (opened.id, names[0]),
         )
-        if step == "received":
+        if step == "withdrawn":
+            with b.as_staff(demo.manager) as s:
+                leasing.withdraw(
+                    s, conn, application, leasing.Withdraw(reason="Took a home closer to work")
+                )
+        if step in ("received", "withdrawn"):
             continue
         with b.as_staff(demo.manager) as s:
             screened = leasing.screen(request, s, conn, application)

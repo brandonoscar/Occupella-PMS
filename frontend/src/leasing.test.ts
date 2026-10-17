@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { applicantStatus, applyVia, incomeMultiple, needsNotice, recommendationLabel } from "./leasing";
+import type { Application } from "./leasing";
+import {
+  applicantNames,
+  applicantStatus,
+  applicationBadge,
+  applyVia,
+  incomeMultiple,
+  latestScreening,
+  needsNotice,
+  recommendationLabel,
+} from "./leasing";
 
 describe("leasing helpers", () => {
   it("tells an applicant where their application stands", () => {
@@ -8,6 +18,36 @@ describe("leasing helpers", () => {
     expect(applicantStatus("approved")).toBe("Approved.");
     expect(applicantStatus("conditional")).toBe("Approved, on conditions:");
     expect(applicantStatus("declined")).toContain("Declined");
+    expect(applicantStatus("withdrawn")).toBe("Withdrawn.");
+  });
+
+  it("reads an application's status for staff in a badge", () => {
+    const all = ["new", "screening", "approved", "conditional", "rejected", "withdrawn"] as const;
+    expect(all.map((status) => applicationBadge(status))).toEqual([
+      { word: "New", tone: "info" },
+      { word: "Screening", tone: "caution" },
+      { word: "Approved", tone: "positive" },
+      { word: "Approved on conditions", tone: "positive" },
+      { word: "Rejected", tone: "danger" },
+      { word: "Withdrawn", tone: "neutral" },
+    ]);
+  });
+
+  it("names the applicants and what the latest screening recommends", () => {
+    const application = {
+      applicants: [{ name: "Applicant A", email: "a@example.com" }, { name: "Applicant B", email: "b@example.com" }],
+      screenings: [],
+    } as unknown as Application;
+    const screened = {
+      ...application,
+      screenings: [
+        { id: "s1", partner: "Fake", reference: "r1", recommendation: "decline", reasons: ["x"], reported_at: "2026-10-01T00:00:00Z" },
+        { id: "s2", partner: "Fake", reference: "r2", recommendation: "approve", reasons: [], reported_at: "2026-10-02T00:00:00Z" },
+      ],
+    } as Application;
+    expect(applicantNames(application)).toBe("Applicant A, Applicant B");
+    expect(latestScreening(application)).toBe("");
+    expect(latestScreening(screened)).toBe("Recommends approval");
   });
 
   it("names what a screening recommends", () => {

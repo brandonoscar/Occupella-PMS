@@ -8,9 +8,12 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const STATUS: Record<string, string> = { approved: "approved", declined: "rejected", conditional: "conditional" };
 const application = (id: string, name: string, decision: string | null) => ({
   id,
+  property_id: "p1",
   property: "Property 1",
+  unit_id: "u1",
   unit: "Unit 1",
   monthly_rent: "1500.00",
   move_in_on: "2027-01-01",
@@ -25,6 +28,9 @@ const application = (id: string, name: string, decision: string | null) => ({
     decided_at: "2026-10-11T19:00:00Z",
     adverse_action: null,
   },
+  status: decision ? STATUS[decision] : "new",
+  withdrawal: null,
+  lease_id: null,
 });
 
 const LEASE = {
@@ -85,12 +91,16 @@ function server({ refuseCompletion = false } = {}) {
       return answer(OPEN);
     }
     const answers: Record<string, unknown> = {
-      "/api/leasing/applications?show=all": [
-        application("a1", "Applicant A", "approved"),
-        application("a2", "Applicant B", "declined"),
-        application("a3", "Applicant C", "conditional"),
-        application("a4", "Applicant D", null),
-      ],
+      "/api/leasing/applications?show=open&per_page=200": {
+        items: [
+          application("a1", "Applicant A", "approved"),
+          application("a3", "Applicant C", "conditional"),
+          application("a4", "Applicant D", null),
+        ],
+        total: 3,
+        page: 1,
+        per_page: 200,
+      },
       "/api/leasing/leases": [LEASE],
       "/api/leasing/offers?show=all": offers,
       "/api/leasing/offers/o1/links": LINKS,
@@ -130,6 +140,23 @@ describe("OffersCard", () => {
       "Applicant A for Property 1, Unit 1",
       "Property 1, Unit 2: Tenant 1, Tenant 2",
     ]);
+  });
+
+  it("starts from the approved application its page sent it, once that is loaded", async () => {
+    server();
+    render(<OffersCard application="a1" />);
+
+    await screen.findByDisplayValue("Applicant A, a1@example.com");
+    expect((screen.getByLabelText("Offer") as HTMLSelectElement).value).toBe("application:a1");
+    expect((screen.getByLabelText("Rent a month") as HTMLInputElement).value).toBe("1500.00");
+  });
+
+  it("starts from nothing when the application named isn't one to offer", async () => {
+    server();
+    render(<OffersCard application="a4" />);
+
+    await screen.findByRole("option", { name: "Applicant A for Property 1, Unit 1" });
+    expect((screen.getByLabelText("Offer") as HTMLSelectElement).value).toBe("");
   });
 
   it("sends a lease for an application with its applicants and the PDF, and shows the links", async () => {
@@ -236,7 +263,7 @@ describe("OffersCard", () => {
 
   it("shows who has signed, gives the links again, checks signatures and makes the lease", async () => {
     const fetch = server();
-    render(<OffersCard changed={1} />);
+    render(<OffersCard />);
 
     const open = await screen.findByRole("listitem", { name: "Offer for Unit 2" });
     expect(open.textContent).toContain("Renewal at Property 1, Unit 2: 07/01/2027 – Month to month");
