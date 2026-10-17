@@ -104,6 +104,13 @@ describe("rent", () => {
     expect(rentRunSummary({ rents: 0, recurring: 2, late_fees: 3 })).toBe(
       "0 rents, 2 recurring charges and 3 late fees charged.",
     );
+    // A run by hand says the emails it wrote, when it wrote any.
+    expect(rentRunSummary({ rents: 1, recurring: 0, late_fees: 0, emails: 3 })).toBe(
+      "1 rent, 0 recurring charges and 0 late fees charged. 3 emails written.",
+    );
+    expect(rentRunSummary({ rents: 1, recurring: 0, late_fees: 0, emails: 0 })).toBe(
+      "1 rent, 0 recurring charges and 0 late fees charged.",
+    );
   });
   it("makes a new request id each time", () => {
     const one = requestId();

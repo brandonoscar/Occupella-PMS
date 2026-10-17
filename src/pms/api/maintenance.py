@@ -16,6 +16,8 @@ from fastapi import APIRouter, HTTPException, Query
 from psycopg import sql
 from pydantic import BaseModel, Field
 
+from pms import notices
+from pms.api import outbox
 from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/maintenance")
@@ -204,7 +206,8 @@ def open_work_order(session: Staff, conn: Conn, request_id: UUID) -> StaffReques
 
 @router.post("/work-orders/{work_order_id}/steps", status_code=201)
 def record_step(session: Staff, conn: Conn, work_order_id: UUID, step: Step) -> None:
-    """What happened to a work order, as of now."""
+    """What happened to a work order, as of now. An assignment or a schedule is emailed to the
+    vendor while the server sends email and the company's settings ask for it."""
     if (
         conn.execute(
             "SELECT 1 FROM trust_work_orders WHERE pmc_id = %s AND id = %s",
@@ -218,10 +221,10 @@ def record_step(session: Staff, conn: Conn, work_order_id: UUID, step: Step) -> 
     if (step.step == "scheduled") != (step.scheduled_for is not None):
         raise HTTPException(422, "a schedule names the day the vendor comes, and only it does")
     try:
-        conn.execute(
+        made = conn.execute(
             "INSERT INTO trust_work_order_steps"
             " (pmc_id, work_order_id, step, vendor_id, scheduled_for, taken_at, note)"
-            " VALUES (%s, %s, %s, %s, %s, now(), %s)",
+            " VALUES (%s, %s, %s, %s, %s, now(), %s) RETURNING id",
             (
                 session.pmc_id,
                 work_order_id,
@@ -237,3 +240,7 @@ def record_step(session: Staff, conn: Conn, work_order_id: UUID, step: Step) -> 
         # The work order is closed, this step would come before its last one, a schedule before
         # an assignment, or the vendor's insurance ran out.
         raise HTTPException(409, refusal(refused)) from None
+    found = made.fetchone()
+    assert found is not None
+    if outbox.SENDING.get():
+        notices.write_work_order(conn, session.pmc_id, found[0])

@@ -115,11 +115,17 @@ def test_one_company_that_fails_leaves_the_others_to_run(conn, app_conn, pmc, ca
 
 def test_every_company_runs_when_none_is_named(conn, app_conn, pmc, monkeypatch):
     ran = []
-    monkeypatch.setattr(nightly, "run_pmc", lambda c, pmc_id, day, url: ran.append(pmc_id))
+    monkeypatch.setattr(
+        nightly, "run_pmc", lambda c, pmc_id, day, url, sending: ran.append((pmc_id, sending))
+    )
 
     nightly.run_all(app_conn, OCT_16, URL)
 
-    assert pmc.pmc_id in ran
+    assert (pmc.pmc_id, False) in ran  # no automatic emails unless the server sends email
+    ran.clear()
+    nightly.run_all(app_conn, OCT_16, URL, sending=True)
+    assert (pmc.pmc_id, True) in ran
+    ran = [pmc_id for pmc_id, _ in ran]
     assert ran == sorted(ran)
 
 
@@ -168,18 +174,23 @@ def test_a_scheduler_that_cannot_reach_the_database_tries_again(caplog):
 def test_the_command_runs_every_company_once(monkeypatch, capsys, database_url):
     seen = []
 
-    def run_all(conn, day, url):
-        seen.append((day, url))
-        return [nightly.Ran(pmc_id=None, rents=2, recurring=1, late_fees=1, bills=3)]
+    def run_all(conn, day, url, sending):
+        seen.append((day, url, sending))
+        return [nightly.Ran(pmc_id=None, rents=2, recurring=1, late_fees=1, bills=3, emails=4)]
 
     monkeypatch.setattr(nightly, "run_all", run_all)
     monkeypatch.setenv("DATABASE_URL", database_url)
     monkeypatch.setenv("PMS_PUBLIC_URL", "https://pms.example.com")
+    monkeypatch.delenv("PMS_EMAIL_SENDER", raising=False)
 
     assert nightly.main([]) == 0
-    assert seen == [(datetime.now(UTC).date(), "https://pms.example.com")]
-    assert capsys.readouterr().out == "1 companies: 2 rents, 1 late fees, 3 bills\n"
+    assert seen == [(datetime.now(UTC).date(), "https://pms.example.com", False)]
+    assert capsys.readouterr().out == "1 companies: 2 rents, 1 late fees, 3 bills, 4 emails\n"
     assert nightly.main(["now"]) == 2
+    # A server that sends email writes the automatic emails too; `pms.email deliver` sends them.
+    monkeypatch.setenv("PMS_EMAIL_SENDER", "fake")
+    assert nightly.main([]) == 0
+    assert seen[-1][2] is True
 
 
 def test_the_api_runs_the_scheduler_unless_told_not_to(monkeypatch, database_url):

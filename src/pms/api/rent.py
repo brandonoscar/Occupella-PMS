@@ -26,7 +26,8 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, StringConstraints
 
-from pms import exports
+from pms import exports, notices
+from pms.api import outbox
 from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/rent")
@@ -809,6 +810,11 @@ class RentRun(BaseModel):
     late_fees: int  # rents charged a late fee
 
 
+class RentRunDone(RentRun):
+    # Rent reminders, late notices and owner statements written (src/pms/notices.py).
+    emails: int
+
+
 class RentRunLine(RentRun):
     at: datetime
     due_on: date
@@ -818,12 +824,14 @@ class RentRunLine(RentRun):
 
 
 @router.post("/run")
-def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRun:
+def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
     """Runs by hand what posts by itself every night (pms.nightly), an admin's catch-up: every
     lease's rent and recurring charges for a due date (each lease in effect on it for the days of
     the month it is in effect, and each starting later that month its first part month), then a
     late fee for each rent still open after its grace days as of a day. Each once per lease (or
-    recurring charge, or rent) and date, so running it again charges nothing new."""
+    recurring charge, or rent) and date, so running it again charges nothing new. While the
+    server sends email, it also writes today's emails the company's settings ask for, as the
+    nightly run does."""
     if run.late_fees_as_of > today():
         raise HTTPException(422, "late fees are assessed as of today or an earlier day")
     made = conn.execute(
@@ -834,7 +842,14 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRun:
         "SELECT rents, recurring, late_fees FROM trust_rent_runs WHERE id = %s", (made[0],)
     ).fetchone()
     assert row is not None
-    return RentRun(rents=row[0], recurring=row[1], late_fees=row[2])
+    written = (
+        notices.write_scheduled(conn, session.pmc_id, today(), outbox.PUBLIC_URL.get())
+        if outbox.SENDING.get()
+        else notices.Written()
+    )
+    return RentRunDone(
+        rents=row[0], recurring=row[1], late_fees=row[2], emails=sum(vars(written).values())
+    )
 
 
 @router.get("/runs")

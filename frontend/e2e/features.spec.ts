@@ -2293,3 +2293,43 @@ test("staff email a tenant from their page and every tenant of a property, an ow
   await expect(owner).toContainText("Set a new password");
   await expect(owner).toContainText("Password reset");
 });
+
+test("staff turn on the emails the PMS writes by itself, and a run of rent sends each owner last month's statement onto their Email tab", async ({
+  page,
+}) => {
+  const people = seed.features["automatic-email"]!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "Company setup");
+  const shown = page.getByLabel("Automatic emails", { exact: true });
+  await expect(shown).toContainText("Monthly statements to ownersOff");
+
+  // Owners' statements from the first of each month, and vendors' work orders.
+  await page.getByRole("button", { name: "Edit automatic emails" }).click();
+  const editing = page.getByRole("dialog", { name: "Automatic emails" });
+  await editing.getByLabel("Monthly statements to owners").check();
+  await editing.getByLabel("Day of the month they go").selectOption("1");
+  await editing.getByLabel("Work orders to vendors").check();
+  await editing.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved the automatic emails.")).toBeVisible();
+  await expect(editing).toHaveCount(0);
+  await expect(shown).toContainText("Last month's, from the 1st of each month");
+  await expect(shown).toContainText("Work orders to vendorsOn");
+
+  // What runs every night, run by hand: each owner with an email gets last month's statement.
+  await section(page, "Rent roll");
+  await page.getByRole("button", { name: "Actions for the rent roll" }).click();
+  await page.getByRole("menuitem", { name: "Run rent now" }).click();
+  await page.getByRole("dialog", { name: "Run rent now" }).getByRole("button", { name: "Run rent now" }).click();
+  await expect(page.getByRole("main")).toContainText(/charged\. 2 emails written\./);
+
+  const last = new Date();
+  last.setUTCDate(1);
+  last.setUTCMonth(last.getUTCMonth() - 1);
+  const month = last.toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+  await section(page, "Owners");
+  await page.getByRole("link", { name: "Demo Owner A", exact: true }).click();
+  await page.getByRole("tab", { name: "Email", exact: true }).click();
+  const owner = page.getByRole("list", { name: "Email, Demo Owner A" });
+  await expect(owner).toContainText(`Your statement for ${month}`);
+  await expect(owner).toContainText(`Monthly statement to ${people.emails.owner_a}`);
+});

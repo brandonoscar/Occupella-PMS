@@ -13,12 +13,13 @@ import { addressLines, logoHref } from "../company";
 import { MAX_BYTES, toBase64, typeOf } from "../documents";
 import { money } from "../money";
 import { lateFeeSummary, nsfFeeSummary } from "../setup";
+import { AutomaticEmailsCard } from "./AutomaticEmailsCard";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 
 // Settings → Company setup (ADR 0006, step 12): the company itself, its name, mailing address and
-// logo (which owners and tenants see in their portal) and the late fee and NSF fee terms each
-// property added from now on starts with. Everything else set up once lives where it is used:
+// logo (which owners and tenants see in their portal), the late fee and NSF fee terms each
+// property added from now on starts with, and the emails the PMS writes by itself (ADR 0007). Everything else set up once lives where it is used:
 // bank accounts on Banking, owners on Owners, vendors on Vendors, properties, units, leases in
 // place and their terms on Properties and each property's page, expense accounts in Chart of
 // accounts.
@@ -70,6 +71,7 @@ export function SetupPage({ me }: { me: Me }) {
             </dl>
             <div className="mt-3"><Button variant="secondary" onClick={() => setOpen("fees")}>Set default fees</Button></div>
           </Card>
+          <AutomaticEmailsCard />
           {open === "company" && (
             <SidePanel title="Edit company" onClose={close}>
               <CompanyForm company={company} save={(body, done) => record("/api/company", body, () => done).then((ok) => { if (ok) close(); })} />

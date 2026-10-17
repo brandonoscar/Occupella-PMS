@@ -25,8 +25,8 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field, model_validator
 
-from pms import accounts, exports
-from pms.api import scope
+from pms import accounts, exports, notices
+from pms.api import outbox, scope
 from pms.api.deps import Conn, Staff, download, refusal
 from pms.api.listings import NewListing
 from pms.api.rentals import Page, Paged, PerPage
@@ -614,7 +614,8 @@ def screen(request: Request, session: Staff, conn: Conn, application_id: UUID) -
 @router.post("/api/leasing/applications/{application_id}/decide", status_code=201)
 def decide(session: Staff, conn: Conn, application_id: UUID, decision: Decision) -> ApplicationOut:
     """The PMC's decision. A decline or a conditional approval that rests on a screening comes
-    with its adverse action notice: its reasons and the day it was given."""
+    with its adverse action notice: its reasons and the day it was given. The notice is emailed
+    to each applicant while the server sends email and the company's settings ask for it."""
     found = application_of(conn, session.pmc_id, application_id)
     if found.withdrawal is not None:
         raise HTTPException(409, WITHDRAWN)
@@ -669,6 +670,8 @@ def decide(session: Staff, conn: Conn, application_id: UUID, decision: Decision)
                 session.person_id,
             ),
         )
+        if outbox.SENDING.get():
+            notices.write_adverse_action(conn, session.pmc_id, application_id)
     return application_of(conn, session.pmc_id, application_id)
 
 

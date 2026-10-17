@@ -3,6 +3,7 @@ import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
 import { Button, LinkButton } from "../components/Button";
+import { EmailsCard } from "../components/EmailsCard";
 import { Field } from "../components/Field";
 import { Form } from "../components/Form";
 import { Notice } from "../components/Notice";
@@ -149,6 +150,7 @@ export function ApplicantPage({ me, id }: { me: Me; id: string }) {
           </div>
         </Card>
       )}
+      {found.decision?.adverse_action && <EmailsCard about="application" aboutId={id} name={names} />}
       {found.withdrawal && (
         <Card title="Withdrawn">
           <p className="text-base" data-testid="withdrawal">
