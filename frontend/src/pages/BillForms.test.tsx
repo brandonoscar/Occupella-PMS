@@ -59,7 +59,7 @@ describe("RecordBillForm", () => {
 
   it("asks for a vendor and an owner's property first", () => {
     render(<RecordBillForm books={{ ...BOOKS, vendors: [] }} record={vi.fn()} />);
-    expect(screen.getByText(/Add a vendor and a property with an owner/)).toBeTruthy();
+    expect(screen.getByText("Add a vendor from Vendors and a property with an owner from Properties first.")).toBeTruthy();
   });
 });
 

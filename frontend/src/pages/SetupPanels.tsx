@@ -1,0 +1,298 @@
+import { useEffect, useState } from "react";
+import { ApiError, api } from "../api";
+import { Button } from "../components/Button";
+import { Field } from "../components/Field";
+import { Form } from "../components/Form";
+import { Notice } from "../components/Notice";
+import { Said } from "../components/Said";
+import { Select } from "../components/Select";
+import { SidePanel } from "../components/SidePanel";
+import { day } from "../money";
+import type { Portfolio } from "../setup";
+import { useRecord } from "./useRecord";
+
+// The setup forms, each in a side panel on the page of what it changes (ADR 0006, step 12:
+// "everything else moves to where it's used"): a property from Properties; a unit, another owner,
+// management terms and late and NSF fee terms from the property's page; a lease already in place
+// from its unit's page; terms from the owner's page too. Each posts to /api/setup; on success it
+// says what it did (a toast on the page), closes and refreshes the page.
+
+export type Panel = {
+  // What the page shows a save did, as a toast.
+  say: (said: string) => void;
+  refresh: () => void;
+  close: () => void;
+};
+
+function useSave({ say, refresh, close }: Panel) {
+  const { error, record } = useRecord(refresh, say);
+  async function save<T>(path: string, body: unknown, done: (answer: T) => string): Promise<boolean> {
+    const saved = await record<T>(`/api/setup/${path}`, body, done);
+    if (saved) close();
+    return saved;
+  }
+  return { error, save };
+}
+
+// The company's owners, bank accounts and tenants, for a panel's choices.
+export function usePortfolio(): [Portfolio | null, string, () => void] {
+  const [books, setBooks] = useState<Portfolio | null>(null);
+  const [error, setError] = useState("");
+  const load = () => {
+    api.get<Portfolio>("/api/setup").then(setBooks)
+      .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
+  };
+  useEffect(load, []);
+  return [books, error, load];
+}
+
+function Loading({ error }: { error: string }) {
+  return <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>;
+}
+
+function OwnerAndBank({ books, owner, bank, setOwner, setBank, id }: {
+  books: Portfolio;
+  owner: string;
+  bank: string;
+  setOwner: (id: string) => void;
+  setBank: (id: string) => void;
+  id: string;
+}) {
+  const operating = books.bank_accounts.filter((b) => b.kind === "operating");
+  return (
+    <>
+      <Select label="Owner" id={`${id}-owner`} required value={owner} onChange={(e) => setOwner(e.target.value)}>
+        <option value="">Choose an owner</option>
+        {books.owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+      </Select>
+      <Select label="Held in" id={`${id}-bank`} required value={bank || (operating.length === 1 ? operating[0]!.id : "")}
+        onChange={(e) => setBank(e.target.value)}>
+        <option value="">Choose an operating account</option>
+        {operating.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+      </Select>
+    </>
+  );
+}
+
+const firstOperating = (books: Portfolio, bank: string) => {
+  const operating = books.bank_accounts.filter((b) => b.kind === "operating");
+  return bank || (operating.length === 1 ? operating[0]!.id : "");
+};
+
+// Properties → Add property: its name, its first owner and the operating account their money is
+// held in; then its page.
+export function AddPropertyPanel({ panel, opened }: { panel: Panel; opened: (id: string) => void }) {
+  const [books, unread] = usePortfolio();
+  const { error, save } = useSave(panel);
+  const [name, setName] = useState("");
+  const [owner, setOwner] = useState("");
+  const [bank, setBank] = useState("");
+  return (
+    <SidePanel title="Add property" onClose={panel.close}>
+      {books === null ? <Loading error={unread} /> : (
+        <Form className="flex flex-col gap-3" onSubmit={(event) => {
+          event.preventDefault();
+          return save<{ id: string }>("properties", { name, owner_id: owner, bank_account_id: firstOperating(books, bank) },
+            (made) => { opened(made.id); return `Added ${name.trim()}.`; });
+        }}>
+          <Field label="Property name" id="property-name" required maxLength={200} value={name}
+            onChange={(e) => setName(e.target.value)} />
+          <OwnerAndBank books={books} owner={owner} bank={bank} setOwner={setOwner} setBank={setBank} id="property" />
+          <div><Button type="submit">Add property</Button></div>
+          <Notice tone="error">{error}</Notice>
+        </Form>
+      )}
+    </SidePanel>
+  );
+}
+
+export function AddUnitPanel({ panel, propertyId }: { panel: Panel; propertyId: string }) {
+  const { error, save } = useSave(panel);
+  const [name, setName] = useState("");
+  return (
+    <SidePanel title="Add unit" onClose={panel.close}>
+      <Form className="flex flex-col gap-3" onSubmit={(event) => {
+        event.preventDefault();
+        return save("units", { property_id: propertyId, name }, () => `Added ${name.trim()}.`);
+      }}>
+        <Field label="Unit name" id="unit-name" required maxLength={200} value={name} onChange={(e) => setName(e.target.value)} />
+        <div><Button type="submit">Add unit</Button></div>
+        <Notice tone="error">{error}</Notice>
+      </Form>
+    </SidePanel>
+  );
+}
+
+// Another owner of the property, their money held in an operating account.
+export function AddOwnerPanel({ panel, propertyId }: { panel: Panel; propertyId: string }) {
+  const [books, unread] = usePortfolio();
+  const { error, save } = useSave(panel);
+  const [owner, setOwner] = useState("");
+  const [bank, setBank] = useState("");
+  return (
+    <SidePanel title="Add owner" onClose={panel.close}>
+      {books === null ? <Loading error={unread} /> : (
+        <Form className="flex flex-col gap-3" onSubmit={(event) => {
+          event.preventDefault();
+          const name = books.owners.find((o) => o.id === owner)?.name ?? "the owner";
+          return save(`properties/${propertyId}/owners`, { owner_id: owner, bank_account_id: firstOperating(books, bank) },
+            () => `Added ${name}'s account.`);
+        }}>
+          <OwnerAndBank books={books} owner={owner} bank={bank} setOwner={setOwner} setBank={setBank} id="add-owner" />
+          <div><Button type="submit">Add owner</Button></div>
+          <Notice tone="error">{error}</Notice>
+        </Form>
+      )}
+    </SidePanel>
+  );
+}
+
+const AMOUNTS = [
+  ["fee_percent", "Fee, percent of rent and recurring fees collected"],
+  ["minimum_fee", "Minimum fee"],
+  ["flat_fee", "Flat fee"],
+  ["leasing_fee_percent", "Leasing fee, percent of rent"],
+  ["reserve", "Reserve"],
+  ["approval_limit", "Owner approves bills over"],
+] as const;
+type Amount = (typeof AMOUNTS)[number][0];
+
+// Management terms of an owner's property account from a day: new terms are a new row from that
+// day; earlier ones stay as they were.
+export function TermsPanel({ panel, accounts }: { panel: Panel; accounts: { account: string; label: string }[] }) {
+  const { error, save } = useSave(panel);
+  const [account, setAccount] = useState(accounts[0]?.account ?? "");
+  const [from, setFrom] = useState(day(new Date()));
+  const [amounts, setAmounts] = useState<Record<Amount, string>>(
+    Object.fromEntries(AMOUNTS.map(([key]) => [key, ""])) as Record<Amount, string>,
+  );
+  return (
+    <SidePanel title="Set management terms" onClose={panel.close}>
+      <Form className="flex flex-col gap-3" onSubmit={(event) => {
+        event.preventDefault();
+        const label = accounts.find((a) => a.account === account)?.label ?? "";
+        return save("agreements", {
+          account, starts_on: from,
+          ...Object.fromEntries(AMOUNTS.map(([key]) => [key, amounts[key].trim() || "0"])),
+        }, () => `New terms for ${label} from ${from}.`);
+      }}>
+        <Select label="For" id="terms-account" required value={account} onChange={(e) => setAccount(e.target.value)}>
+          {accounts.map((a) => <option key={a.account} value={a.account}>{a.label}</option>)}
+        </Select>
+        <Field label="In force from" id="terms-from" type="date" required value={from} onChange={(e) => setFrom(e.target.value)} />
+        {AMOUNTS.map(([key, label]) => (
+          <Field key={key} label={label} id={`terms-${key}`} inputMode="decimal" value={amounts[key]}
+            onChange={(e) => setAmounts({ ...amounts, [key]: e.target.value })} />
+        ))}
+        <div><Button type="submit">Set terms</Button></div>
+        <Notice tone="error">{error}</Notice>
+      </Form>
+    </SidePanel>
+  );
+}
+
+export function LateFeesPanel({ panel, propertyId }: { panel: Panel; propertyId: string }) {
+  const { error, save } = useSave(panel);
+  const [fees, setFees] = useState({ starts_on: day(new Date()), grace_days: "5", flat_fee: "", percent: "", maximum: "" });
+  const set = (key: keyof typeof fees) => (e: React.ChangeEvent<HTMLInputElement>) => setFees({ ...fees, [key]: e.target.value });
+  return (
+    <SidePanel title="Set late fees" onClose={panel.close}>
+      <Form className="flex flex-col gap-3" onSubmit={(event) => {
+        event.preventDefault();
+        return save("late-fees", {
+          property_id: propertyId, starts_on: fees.starts_on, grace_days: Number(fees.grace_days),
+          flat_fee: fees.flat_fee.trim() || "0", percent: fees.percent.trim() || "0", maximum: fees.maximum.trim() || null,
+        }, () => `New late fee terms from ${fees.starts_on}.`);
+      }}>
+        <Field label="Late fees from" id="fees-from" type="date" required value={fees.starts_on} onChange={set("starts_on")} />
+        <Field label="Grace days" id="fees-grace" inputMode="numeric" required value={fees.grace_days} onChange={set("grace_days")} />
+        <Field label="Flat fee" id="fees-flat" inputMode="decimal" value={fees.flat_fee} onChange={set("flat_fee")} />
+        <Field label="Percent of unpaid" id="fees-percent" inputMode="decimal" value={fees.percent} onChange={set("percent")} />
+        <Field label="Up to" id="fees-maximum" inputMode="decimal" value={fees.maximum} onChange={set("maximum")} />
+        <div><Button type="submit">Set late fees</Button></div>
+        <Notice tone="error">{error}</Notice>
+      </Form>
+    </SidePanel>
+  );
+}
+
+export function NsfFeePanel({ panel, propertyId }: { panel: Panel; propertyId: string }) {
+  const { error, save } = useSave(panel);
+  const [from, setFrom] = useState(day(new Date()));
+  const [fee, setFee] = useState("");
+  return (
+    <SidePanel title="Set NSF fee" onClose={panel.close}>
+      <Form className="flex flex-col gap-3" onSubmit={(event) => {
+        event.preventDefault();
+        return save("nsf-fees", { property_id: propertyId, starts_on: from, fee: fee.trim() }, () => `New NSF fee from ${from}.`);
+      }}>
+        <Field label="NSF fee from" id="nsf-from" type="date" required value={from} onChange={(e) => setFrom(e.target.value)} />
+        <Field label="NSF fee" id="nsf-fee" inputMode="decimal" required value={fee} onChange={(e) => setFee(e.target.value)} />
+        <div><Button type="submit">Set NSF fee</Button></div>
+        <Notice tone="error">{error}</Notice>
+      </Form>
+    </SidePanel>
+  );
+}
+
+// A lease already in place on the unit (a new tenant's lease comes through Leasing, Draft
+// leases): its days, rent and tenants, who may be added here first.
+export function AddLeasePanel({ panel, unitId, propertyId, propertyName }: {
+  panel: Panel;
+  unitId: string;
+  propertyId: string;
+  propertyName: string;
+}) {
+  const [books, unread, reload] = usePortfolio();
+  const { error, save } = useSave(panel);
+  const adding = useRecord(reload);
+  const [lease, setLease] = useState({ starts_on: "", ends_on: "", rent: "" });
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [tenant, setTenant] = useState("");
+  const tenants = books?.tenants.filter((t) => t.property_id === propertyId) ?? [];
+  const toggle = (id: string, on: boolean) => setChosen((now) => (on ? [...now, id] : now.filter((t) => t !== id)));
+  return (
+    <SidePanel title="Add lease" onClose={panel.close}>
+      {books === null ? <Loading error={unread} /> : (
+        <Form className="flex flex-col gap-3" onSubmit={(event) => {
+          event.preventDefault();
+          return save("leases", {
+            unit_id: unitId, starts_on: lease.starts_on, ends_on: lease.ends_on || null,
+            monthly_rent: lease.rent.trim(), tenant_ids: chosen,
+          }, () => "Added the lease.");
+        }}>
+          <Field label="Starts" id="lease-starts" type="date" required value={lease.starts_on}
+            onChange={(e) => setLease({ ...lease, starts_on: e.target.value })} />
+          <Field label="Ends (empty for month to month)" id="lease-ends" type="date" value={lease.ends_on}
+            onChange={(e) => setLease({ ...lease, ends_on: e.target.value })} />
+          <Field label="Rent a month" id="lease-rent" inputMode="decimal" required value={lease.rent}
+            onChange={(e) => setLease({ ...lease, rent: e.target.value })} />
+          <fieldset className="flex flex-col gap-2 text-sm text-ink-muted">
+            <legend className="mb-1">On the lease</legend>
+            {tenants.length === 0 && <span>No tenant of {propertyName} yet.</span>}
+            {tenants.map((t) => (
+              <label key={t.id} className="flex items-center gap-2 text-ink">
+                <input type="checkbox" checked={chosen.includes(t.id)} onChange={(e) => toggle(t.id, e.target.checked)} />
+                {t.name}
+              </label>
+            ))}
+          </fieldset>
+          <div className="flex flex-wrap items-end gap-3">
+            <Field label="Tenant's name" id="tenant-name" maxLength={200} value={tenant} onChange={(e) => setTenant(e.target.value)} />
+            <Button type="button" variant="secondary" disabled={!tenant.trim()} onClick={async () => {
+              const name = tenant.trim();
+              const added = await adding.record<{ id: string }>("/api/setup/tenants", { property_id: propertyId, name }, (made) => {
+                setChosen((now) => [...now, made.id]);
+                return `Added ${name} as a tenant of ${propertyName}.`;
+              });
+              if (added) setTenant("");
+            }}>Add tenant</Button>
+          </div>
+          <Said>{adding.said}</Said>
+          <div><Button type="submit" disabled={chosen.length === 0}>Add lease</Button></div>
+          <Notice tone="error">{adding.error || error}</Notice>
+        </Form>
+      )}
+    </SidePanel>
+  );
+}

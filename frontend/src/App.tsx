@@ -40,6 +40,7 @@ import { LeasePage } from "./pages/LeasePage";
 import { PropertiesPage, PropertyPage, UnitPage } from "./pages/RentalsPages";
 import { PMC_KEY, SignInPage } from "./pages/SignInPage";
 import { SetupPage } from "./pages/SetupPage";
+import { ChartOfAccountsPage } from "./pages/ChartOfAccountsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { StaffPage } from "./pages/StaffPage";
 import { SwitchPage } from "./pages/SwitchPage";
@@ -121,6 +122,7 @@ const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/settings/logins": (me) => <LoginsPage me={me} />,
   "/settings/groups": (me) => <GroupsPage me={me} />,
   "/settings/setup": (me) => <SetupPage me={me} />,
+  "/settings/accounts": (me) => <ChartOfAccountsPage me={me} />,
   "/settings/import": (me) => <SwitchPage me={me} />,
   "/settings/data-export": (me) => <DataExportPage me={me} />,
 };

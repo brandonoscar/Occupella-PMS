@@ -178,7 +178,7 @@ describe("WorkOrdersPage", () => {
     fireEvent.change(screen.getByLabelText("Status"), { target: { value: "all" } });
     await vi.waitFor(() => expect(screen.getByTestId("empty-state").textContent).toContain("No work orders found."));
     fireEvent.click(screen.getByRole("button", { name: "New work order" }));
-    expect(await screen.findByText("Add a property from Settings, Company setup first.")).toBeTruthy();
+    expect(await screen.findByText("Add a property from Properties first.")).toBeTruthy();
     cleanup();
 
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));

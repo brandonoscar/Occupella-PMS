@@ -16,7 +16,7 @@
 
 [[feature]]
 id = "logins"
-statement = "Staff invite a staff member, owner or tenant by email; the invite sets a password (and for staff an authenticator); people sign in and out; a wrong email or password is refused without saying which; an admin disables a login for good, which signs it out."
+statement = "Staff invite a staff member (from the staff page), owner or tenant (from their own page) by email; the invite sets a password (and for staff an authenticator); people sign in and out; a wrong email or password is refused without saying which; Logins lists everyone's login by status, and an admin disables one for good from its row's menu, which signs it out."
 operations = [
   "POST /api/invites",
   "POST /api/invites/view",
@@ -56,7 +56,7 @@ browser = [
 
 [[feature]]
 id = "setup"
-statement = "Staff set up the books: trust bank accounts (added from Banking), owners, properties and their owners, units, tenants, vendors, leases, management terms, late fee terms and NSF fee terms."
+statement = "Staff set up the books where each thing is used: trust bank accounts from Banking, owners from Owners, a property from Properties, and on a property's page its units, another owner, management terms (on the owner's page too), late fee terms and NSF fee terms, and on a unit's page a lease already in place with its tenants."
 operations = [
   "GET /api/setup",
   "POST /api/setup/bank-accounts",
@@ -65,14 +65,13 @@ operations = [
   "POST /api/setup/properties/{property_id}/owners",
   "POST /api/setup/units",
   "POST /api/setup/tenants",
-  "POST /api/setup/vendors",
   "POST /api/setup/leases",
   "POST /api/setup/agreements",
   "POST /api/setup/late-fees",
   "POST /api/setup/nsf-fees",
 ]
 browser = [
-  "portal.spec.ts › staff set up a property from nothing, lease a unit and see it on the rent roll",
+  "portal.spec.ts › staff set up a property from nothing where each thing lives, lease a unit and see it on the rent roll",
   "features.spec.ts › staff set management terms with a leasing fee, late fees, a bank account and a vendor, and a new lease takes its leasing fee",
   "features.spec.ts › staff add a fee, a credit and a monthly charge to a lease, take a deposit and prepaid rent, and a bounce undoes a payment and charges the NSF fee",
 ]
@@ -358,7 +357,7 @@ statement = "Staff open each report from Reports, grouped as Buildium groups the
 operations = ["GET /api/reports/{name}", "GET /api/ledger.zip"]
 browser = [
   "features.spec.ts › staff open a report from Reports, see it on screen narrowed to one property, export it in each format, take an owner's report over last year, download the whole ledger, and every staff report in each format",
-  "portal.spec.ts › staff set up a property from nothing, lease a unit and see it on the rent roll",
+  "portal.spec.ts › staff set up a property from nothing where each thing lives, lease a unit and see it on the rent roll",
 ]
 
 [[feature]]

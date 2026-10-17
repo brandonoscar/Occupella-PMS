@@ -93,7 +93,7 @@ export function RecordBillForm({ books, record, start }: { books: Portfolio; rec
   const [lines, setLines] = useState<DraftLine[]>(TWO_LINES);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   if (books.vendors.length === 0 || books.accounts.length === 0) {
-    return <Notice tone="info">Add a vendor and a property with an owner in Settings, Company setup, first.</Notice>;
+    return <Notice tone="info">Add a vendor from Vendors and a property with an owner from Properties first.</Notice>;
   }
   const problem = invoice === null ? ""
     : invoice.type === null ? "An invoice is a PDF, a JPEG or a PNG."

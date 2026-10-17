@@ -49,13 +49,21 @@ const PROPERTY: Property = {
   id: "p1",
   name: "Property 1",
   archived: false,
-  owners: [{ owner_id: "o1", owner: "Owner 1", account: "a1", bank_account: "Operating 1", balance: "2400.00" }],
+  owners: [{
+    owner_id: "o1", owner: "Owner 1", account: "a1", bank_account: "Operating 1", balance: "2400.00",
+    agreement: {
+      starts_on: "2026-10-01", fee_percent: "8", minimum_fee: "0", flat_fee: "0", leasing_fee_percent: "0",
+      reserve: "250.00", approval_limit: "500.00",
+    },
+  }],
   units: [
     { id: "u1", name: "Unit 1", archived: false, lease: LINE },
     { id: "u2", name: "Unit 2", archived: false, lease: { ...LINE, id: "l2", status: "future", starts_on: "2026-11-01", owed: "0.00" } },
     { id: "u3", name: "Unit 3", archived: false, lease: null },
     { id: "u4", name: "Unit 4", archived: true, lease: null },
   ],
+  late_fees: { starts_on: "2026-10-01", grace_days: 5, flat_fee: "50.00", percent: "0", maximum: null },
+  nsf_fee: null,
 };
 
 const UNIT: Unit = {
@@ -113,7 +121,9 @@ describe("PropertiesPage", () => {
     expect(within(first).getByRole("link", { name: "Property 1" }).getAttribute("href")).toBe("/properties/p1");
     expect(within(screen.getByRole("row", { name: "Property 2" })).getAllByRole("cell")[2]?.textContent).toBe("Vacant");
     expect(within(screen.getByRole("row", { name: "Property 3" })).getAllByRole("cell")[2]?.textContent).toBe("No units");
-    expect(screen.getByRole("link", { name: "Add property" }).getAttribute("href")).toBe("/settings/setup");
+    fireEvent.click(screen.getByRole("button", { name: "Add property" }));
+    expect(screen.getByRole("dialog", { name: "Add property" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
 
     const pages = screen.getByRole("navigation", { name: "Pages" });
     expect(pages.textContent).toContain("1–3 of 60");
@@ -133,7 +143,7 @@ describe("PropertiesPage", () => {
     expect(window.location.search).toBe("?group=g1");
     fireEvent.change(screen.getByRole("combobox", { name: "Status" }), { target: { value: "archived" } });
     expect((await screen.findByTestId("empty-state")).textContent).toContain("No archived properties.");
-    expect(asked(fetch).filter((path) => path !== "/api/property-groups")).toEqual([
+    expect(asked(fetch).filter((path) => path !== "/api/property-groups" && path !== "/api/setup")).toEqual([
       "/api/properties?page=1&archived=false",
       "/api/properties?page=2&archived=false",
       "/api/properties?page=1&archived=false&group=g1",
@@ -166,10 +176,15 @@ describe("PropertyPage", () => {
     render(<PropertyPage me={ME} id="p1" />);
 
     expect(await screen.findByRole("heading", { name: "Property 1" })).toBeTruthy();
-    const owners = screen.getAllByRole("table")[0]!;
+    const owners = screen.getByRole("table", { name: "Owners" });
     expect(within(owners).getAllByRole("cell").map((c) => c.textContent)).toEqual([
-      "Owner 1", "Operating 1", "$2,400.00",
+      "Owner 1", "Operating 1",
+      "8% of rent and recurring fees collected; keeps $250.00 in reserve; owner approves bills over $500.00 (from 10/01/2026)",
+      "$2,400.00", "Set terms",
     ]);
+    expect(within(owners).getByRole("link", { name: "Owner 1" }).getAttribute("href")).toBe("/owners/o1");
+    expect(screen.getByTestId("late-fees").textContent).toBe("After 5 days' grace: $50.00 (from 10/01/2026)");
+    expect(screen.getByTestId("nsf-fee").textContent).toBe("No NSF fee");
     const units = ["Unit 1", "Unit 2", "Unit 3", "Unit 4"].map((name) => screen.getByRole("row", { name }));
     expect(units.map((row) => within(row).getAllByRole("cell")[1]?.textContent)).toEqual([
       "Occupied", "Starts 11/01/2026", "Vacant", "Archived",
@@ -219,12 +234,40 @@ describe("PropertyPage", () => {
     await screen.findByRole("heading", { name: "Property 3" });
 
     expect(screen.getAllByTestId("empty-state").map((e) => e.textContent)).toEqual([
-      "No owner's account yet.Open one from Settings, Company setup.",
-      "No units yet.Add units from Settings, Company setup.",
+      "No owner's account yet.",
+      "No units yet.",
     ]);
     choose("Property 3", "Bring back");
     expect(await screen.findByText("Property 3 is back.")).toBeTruthy();
     expect(asked(fetch)).toContainEqual(["/api/properties/p3/archive", { archived: false }]);
+  });
+
+  it("sets up its units, owners, terms and fees in side panels, saying what each did and reading it again", async () => {
+    const fetch = server({ "/api/properties/p1": PROPERTY });
+    render(<PropertyPage me={ME} id="p1" />);
+    await screen.findByRole("heading", { name: "Property 1" });
+
+    for (const [button, title] of [
+      ["Add unit", "Add unit"], ["Add owner", "Add owner"], ["Set late fees", "Set late fees"], ["Set NSF fee", "Set NSF fee"],
+    ] as const) {
+      fireEvent.click(screen.getByRole("button", { name: button }));
+      expect(screen.getByRole("dialog", { name: title })).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    }
+    fireEvent.click(within(screen.getByRole("row", { name: "Owner 1" })).getByRole("button", { name: "Set terms" }));
+    const terms = screen.getByRole("dialog", { name: "Set management terms" });
+    expect(within(within(terms).getByLabelText("For")).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Owner 1, Property 1",
+    ]);
+    fireEvent.click(within(terms).getByRole("button", { name: "Close" }));
+
+    fireEvent.click(screen.getByRole("button", { name: "Add unit" }));
+    fireEvent.change(screen.getByLabelText("Unit name"), { target: { value: "Unit 5" } });
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Add unit" }));
+    expect(await screen.findByText("Added Unit 5.")).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(asked(fetch)).toContainEqual(["/api/setup/units", { property_id: "p1", name: "Unit 5" }]);
+    expect(asked(fetch).filter((path) => path === "/api/properties/p1")).toHaveLength(2);
   });
 
   it("says when there is no such property", async () => {
@@ -260,6 +303,10 @@ describe("UnitPage", () => {
     await screen.findByRole("heading", { name: "Unit 3, Property 1" });
 
     expect(screen.getByTestId("empty-state").textContent).toContain("No lease yet.");
+    // A lease already in place is added here, for the property's tenants.
+    fireEvent.click(screen.getByRole("button", { name: "Add lease in place" }));
+    expect(screen.getByRole("dialog", { name: "Add lease" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
     choose("Unit 3", "Archive");
     expect(await screen.findByText("Unit 3 is archived.")).toBeTruthy();
     expect(asked(fetch)).toContainEqual(["/api/units/u3/archive", { archived: true }]);

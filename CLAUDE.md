@@ -84,8 +84,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - Logins (`src/pms/accounts.py`, migration 0028): staff invite a staff member, owner or tenant
   by email; the link carries a token kept only as its SHA-256, in the URL fragment. Accepting
   sets an argon2id password (and for staff an authenticator, TOTP); a new invite resets a
-  password. Staff disable a login from Settings, Logins, for good: its sessions end and it takes no
-  new invite. `trust_login_secrets` is never audited. The first staff member, their first admin
+  password. Staff invite from the person's own page (staff from the staff page) and disable a
+  login from Settings, Logins, for good: its sessions end and it takes no new invite. `trust_login_secrets` is never audited. The first staff member, their first admin
   role and their invite come from `python -m pms.admin`. A demo PMC to show the PMS with
   comes from `python -m pms.demo` (`src/pms/demo.py`): synthetic, built through the API's own
   route functions as its staff, with last month's reconciliation waiting for approval and
@@ -185,9 +185,15 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `/reports` in groups, each at `/reports/<name>` (ADR 0006: its filters, its rows on screen from
   `format=json`, narrowed to a property group or property when its lines have one by
   `src/pms/api/reports.py`, and Export), and Settings at `/settings`: staff roles and signers at `/settings/staff`
-  (`src/pms/api/staff.py`), logins at `/settings/logins`, the books' setup at `/settings/setup`
-  (`src/pms/api/setup.py`: plain inserts and the database's own write paths, nothing that
-  moves money), bringing a PMC over from another system at `/settings/import`
+  (`src/pms/api/staff.py`; an admin invites a staff member from their row), logins at
+  `/settings/logins` (read only, by status; Disable in a row's menu), the company at
+  `/settings/setup`, expense accounts at `/settings/accounts` (Chart of accounts). The books'
+  setup (`src/pms/api/setup.py`: plain inserts and the database's own write paths, nothing that
+  moves money) opens in side panels where each thing is used (`pages/SetupPanels.tsx`, ADR
+  0006): a property from Properties; a unit, another owner, management terms and late and NSF
+  fee terms on the property's page (`GET /api/properties/<id>` gives the terms in force); a
+  lease already in place on a unit's page; terms on the owner's page too. An owner or tenant is
+  invited from their own page (`pages/PortalCard.tsx`). Bringing a PMC over from another system at `/settings/import`
   (`src/pms/api/switching.py`), and the whole ledger at `/settings/data-export`. A lease's inspections are on its move-out row
   (`src/pms/api/inspections.py`).
   npm packages are pinned exactly and their

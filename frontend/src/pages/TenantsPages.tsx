@@ -18,6 +18,7 @@ import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { NotesCard } from "../components/NotesCard";
 import { FilesCard } from "./FilesCard";
+import { PortalCard } from "./PortalCard";
 import { Tabs } from "../components/Tabs";
 import { navigate } from "../router";
 import { ListBar } from "../components/ListBar";
@@ -57,7 +58,7 @@ export function TenantsPage({ me }: { me: Me }) {
         !error && <Notice tone="info">Loading</Notice>
       ) : page.items.length === 0 ? (
         <EmptyState icon={Users} title={archived ? "No archived tenants." : "No tenants found."}
-          body="Add a tenant from Settings, Company setup." />
+          body="A tenant comes with a lease: one in place from a unit's page, a new one through Leasing." />
       ) : (
         <>
           <Wide>
@@ -136,12 +137,9 @@ export function TenantPage({ me, id }: { me: Me; id: string }) {
             <Tabs label="Tenant" tabs={TENANT_TABS} value={tab} onChange={setTab} />
             {tab === "summary" && (
               <div className="flex flex-col gap-6">
-                <p className="flex items-center gap-2 text-base">
-                  <span className="text-ink-muted">Portal</span>
-                  <Badge tone={PORTAL[tenant.portal].tone}>{PORTAL[tenant.portal].word}</Badge>
-                  {tenant.login_email && <span className="text-ink-muted">{tenant.login_email}</span>}
-                </p>
                 <ContactCard path={`/api/tenants/${id}`} contact={tenant.contact} refresh={refresh} name={tenant.name} />
+                <PortalCard kind="tenant" personId={id} name={tenant.name} portal={tenant.portal}
+                  loginEmail={tenant.login_email} email={tenant.contact.email} refresh={refresh} />
               </div>
             )}
             {tab === "files" && <FilesCard kind="tenant_document" aboutId={id} name={tenant.name} />}

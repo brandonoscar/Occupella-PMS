@@ -270,3 +270,17 @@ across. A total typed in spreads over its months to the cent; the last row is th
 One Save writes every line at once, all or none, and says how many months changed. Budget vs
 actual lays each line's budget beside what happened that year, from the budget vs actual report
 narrowed to the property (cash basis); Export downloads the owner's whole report.
+
+## Settings
+
+Step 12c. Company setup is the company itself; everything else set up there moves to where it
+is used, each form in a side panel (`frontend/src/pages/SetupPanels.tsx`, the same
+`/api/setup` write paths): bank accounts on Banking, owners on Owners, vendors on Vendors, a
+property from Properties (then its page), and on a property's page its units, another owner,
+each owner's management terms and the late fee and NSF fee terms in force, which the property's
+page now shows; a lease already in place (with its tenants, added there) on a unit's page;
+management terms on the owner's page too. Expense accounts are Settings, Chart of accounts.
+Logins is a read-only list of everyone's login, narrowed by status, a login's Disable in its
+row's menu; invites are on each person's own page (an owner's or a tenant's Portal card, and
+each staff member's row on the staff page). The company's address, logo and default fee terms
+come next (step 12d).

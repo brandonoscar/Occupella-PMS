@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
+import { Button } from "../components/Button";
 import { EmptyState } from "../components/EmptyState";
 import { Notice } from "../components/Notice";
 import { Pager } from "../components/Pager";
@@ -19,6 +20,11 @@ import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { Said } from "../components/Said";
 import { FilesCard } from "./FilesCard";
+import { navigate } from "../router";
+import { agreementSummary, lateFeeSummary, nsfFeeSummary } from "../setup";
+import { usDate } from "../money";
+import type { Panel } from "./SetupPanels";
+import { AddLeasePanel, AddOwnerPanel, AddPropertyPanel, AddUnitPanel, LateFeesPanel, NsfFeePanel, TermsPanel } from "./SetupPanels";
 
 function detail(failed: unknown): string {
   return failed instanceof ApiError ? failed.detail : String(failed);
@@ -42,6 +48,8 @@ export function PropertiesPage({ me }: { me: Me }) {
   const [archived, setArchived] = useState(false);
   const [number, setNumber] = useState(1);
   const [error, setError] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [said, setSaid] = useState("");
 
   useEffect(() => {
     const query = new URLSearchParams({ page: String(number), archived: String(archived), ...scopeParams(scope) });
@@ -53,15 +61,19 @@ export function PropertiesPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Properties" actions={<GoLink href="/settings/setup" className="inline-flex h-9 items-center rounded-sm bg-iris px-3.5 text-base font-medium text-canvas hover:bg-iris-hover">Add property</GoLink>} />
+      <PageHeader title="Properties" actions={<Button onClick={() => setAdding(true)}>Add property</Button>} />
+      <Said>{said}</Said>
+      {adding && (
+        <AddPropertyPanel panel={{ say: setSaid, refresh: () => undefined, close: () => setAdding(false) }}
+          opened={(id) => navigate(`/properties/${id}`)} />
+      )}
       <ListBar scope={scope} onScope={(next) => { setScope(next); setNumber(1); }}
         archived={archived} onArchived={(next) => { setArchived(next); setNumber(1); }} />
       <Notice tone="error">{error}</Notice>
       {page === null ? (
         !error && <Notice tone="info">Loading</Notice>
       ) : page.items.length === 0 ? (
-        <EmptyState icon={Building2} title={archived ? "No archived properties." : "No properties found."}
-          body="Add a property from Settings, Company setup." />
+        <EmptyState icon={Building2} title={archived ? "No archived properties." : "No properties found."} />
       ) : (
         <>
           <Wide>
@@ -96,11 +108,14 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
   const [property, setProperty] = useState<Property | null>(null);
   const [said, setSaid] = useState("");
   const [error, setError] = useState("");
+  const [open, setOpen] = useState<"" | "unit" | "owner" | "terms" | "late" | "nsf">("");
+  const [account, setAccount] = useState("");
 
   function refresh() {
     api.get<Property>(`/api/properties/${id}`).then(setProperty).catch((failed) => setError(detail(failed)));
   }
   useEffect(refresh, [id]);
+  const panel: Panel = { say: setSaid, refresh, close: () => setOpen("") };
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
@@ -115,33 +130,64 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
           <Said>{said}</Said>
           <Card title="Owners">
             {property.owners.length === 0 ? (
-              <EmptyState icon={Building2} title="No owner's account yet." body="Open one from Settings, Company setup." />
+              <EmptyState icon={Building2} title="No owner's account yet." />
             ) : (
             <Wide>
-              <table className="w-full text-base">
+              <table className="w-full text-base" aria-label="Owners">
                 <thead>
                   <tr>
                     <th className="text-left">Owner</th>
                     <th className="text-left">Trust bank account</th>
+                    <th className="text-left">Management terms</th>
                     <th className="text-right">Holds</th>
+                    <th><span className="sr-only">Actions</span></th>
                   </tr>
                 </thead>
                 <tbody>
                   {property.owners.map((owner) => (
-                    <tr key={owner.account}>
-                      <td>{owner.owner}</td>
+                    <tr key={owner.account} aria-label={owner.owner}>
+                      <td><RecordLink href={`/owners/${owner.owner_id}`}>{owner.owner}</RecordLink></td>
                       <td className="text-ink-muted">{owner.bank_account}</td>
+                      <td className="text-sm text-ink-muted">
+                        {owner.agreement
+                          ? `${agreementSummary(owner.agreement)} (from ${usDate(owner.agreement.starts_on)})`
+                          : "No terms in force"}
+                      </td>
                       <td className="text-right">{money(owner.balance)}</td>
+                      <td className="text-right">
+                        <Button size="sm" variant="secondary" onClick={() => { setAccount(owner.account); setOpen("terms"); }}>
+                          Set terms
+                        </Button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </Wide>
             )}
+            <div className="mt-3"><Button variant="secondary" onClick={() => setOpen("owner")}>Add owner</Button></div>
+          </Card>
+          <Card title="Fees">
+            <dl className="grid grid-cols-1 gap-3 text-base sm:grid-cols-2">
+              <div>
+                <dt className="text-sm text-ink-muted">Late fees</dt>
+                <dd data-testid="late-fees">
+                  {property.late_fees
+                    ? `${lateFeeSummary(property.late_fees)} (from ${usDate(property.late_fees.starts_on)})`
+                    : "No late fee terms"}
+                </dd>
+                <Button size="sm" variant="secondary" onClick={() => setOpen("late")}>Set late fees</Button>
+              </div>
+              <div>
+                <dt className="text-sm text-ink-muted">NSF fee</dt>
+                <dd data-testid="nsf-fee">{nsfFeeSummary(property.nsf_fee)}</dd>
+                <Button size="sm" variant="secondary" onClick={() => setOpen("nsf")}>Set NSF fee</Button>
+              </div>
+            </dl>
           </Card>
           <Card title="Units">
             {property.units.length === 0 ? (
-              <EmptyState icon={Building2} title="No units yet." body="Add units from Settings, Company setup." />
+              <EmptyState icon={Building2} title="No units yet." />
             ) : (
               <Wide>
                 <table className="w-full text-base">
@@ -172,8 +218,18 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
                 </table>
               </Wide>
             )}
+            <div className="mt-3"><Button variant="secondary" onClick={() => setOpen("unit")}>Add unit</Button></div>
           </Card>
           <FilesCard kind="property_document" aboutId={id} name={property.name} />
+          {open === "unit" && <AddUnitPanel panel={panel} propertyId={id} />}
+          {open === "owner" && <AddOwnerPanel panel={panel} propertyId={id} />}
+          {open === "late" && <LateFeesPanel panel={panel} propertyId={id} />}
+          {open === "nsf" && <NsfFeePanel panel={panel} propertyId={id} />}
+          {open === "terms" && (
+            <TermsPanel panel={panel} accounts={property.owners
+              .map((o) => ({ account: o.account, label: `${o.owner}, ${property.name}` }))
+              .sort((a, b) => (a.account === account ? -1 : b.account === account ? 1 : 0))} />
+          )}
         </>
       )}
     </Shell>
@@ -185,6 +241,7 @@ export function UnitPage({ me, id }: { me: Me; id: string }) {
   const [unit, setUnit] = useState<Unit | null>(null);
   const [said, setSaid] = useState("");
   const [error, setError] = useState("");
+  const [adding, setAdding] = useState(false);
 
   function refresh() {
     api.get<Unit>(`/api/units/${id}`).then(setUnit).catch((failed) => setError(detail(failed)));
@@ -210,7 +267,7 @@ export function UnitPage({ me, id }: { me: Me; id: string }) {
           <Said>{said}</Said>
           <Card title="Leases">
             {unit.leases.length === 0 ? (
-              <EmptyState icon={Building2} title="No lease yet." body="A lease comes through Leasing, Draft leases." />
+              <EmptyState icon={Building2} title="No lease yet." body="A new tenant's lease comes through Leasing, Draft leases." />
             ) : (
               <Wide>
                 <table className="w-full text-base">
@@ -237,7 +294,12 @@ export function UnitPage({ me, id }: { me: Me; id: string }) {
                 </table>
               </Wide>
             )}
+            <div className="mt-3"><Button variant="secondary" onClick={() => setAdding(true)}>Add lease in place</Button></div>
           </Card>
+          {adding && (
+            <AddLeasePanel panel={{ say: setSaid, refresh, close: () => setAdding(false) }} unitId={id}
+              propertyId={unit.property.id} propertyName={unit.property.name} />
+          )}
           <FilesCard kind="unit_document" aboutId={id} name={`${unit.name}, ${unit.property.name}`} />
         </>
       )}

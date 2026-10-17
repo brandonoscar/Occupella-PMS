@@ -396,17 +396,6 @@ def add_owner(session: Staff, conn: Conn, new: NewName) -> Created:
     )
 
 
-@router.post("/vendors", status_code=201)
-def add_vendor(session: Staff, conn: Conn, new: NewName) -> Created:
-    return Created(
-        id=insert(
-            conn,
-            "INSERT INTO trust_vendors (pmc_id, display_name) VALUES (%s, %s) RETURNING id",
-            (session.pmc_id, new.name),
-        )
-    )
-
-
 class NewExpenseAccount(BaseModel):
     name: Name
     schedule_e_line: Annotated[int, Field(ge=5, le=19)]

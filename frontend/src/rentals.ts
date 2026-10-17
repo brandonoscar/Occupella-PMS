@@ -2,6 +2,7 @@
 // property, a unit, and search results; and how they read.
 import { money, usDate } from "./money";
 import type { RentLease } from "./rent";
+import type { Agreement, LateFees, NsfFee } from "./setup";
 
 export type Paged<T> = { items: T[]; total: number; page: number; per_page: number };
 export type Ref = { id: string; name: string };
@@ -34,6 +35,8 @@ export type OwnerAccount = {
   account: string;
   bank_account: string;
   balance: string;
+  // The management terms in force today, if any.
+  agreement: Agreement | null;
 };
 export type Property = {
   id: string;
@@ -41,6 +44,9 @@ export type Property = {
   archived: boolean;
   owners: OwnerAccount[];
   units: UnitLine[];
+  // The late fee and NSF fee terms in force today, if any.
+  late_fees: LateFees | null;
+  nsf_fee: NsfFee | null;
 };
 export type Unit = { id: string; name: string; archived: boolean; property: Ref; leases: LeaseLine[] };
 
