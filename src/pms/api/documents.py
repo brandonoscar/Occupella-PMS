@@ -1,7 +1,9 @@
 """Staff's documents (migration 0036): a vendor's W-9, a bill's receipt, a lease's move-out
 photos and an owner's documents, uploaded as PDF, JPEG or PNG files of at most 5 MB; since
 migration 0074 (ADR 0006) any property's, unit's, tenant's, lease's or vendor's documents too,
-and every file of the company a page at a time, by category and property group.
+and every file of the company a page at a time, by category and property group. The company's
+logo is a document too (migration 0075), kept and served by src/pms/api/company.py and listed
+with none of these.
 
 A file is checked twice: here for its type's first bytes and its size, and by the database,
 which keeps its bytes apart from the audited record and refuses a file that isn't what its
@@ -153,7 +155,7 @@ SELECT d.id, d.kind,
        d.content_type, d.size, s.display_name, d.created_at
 FROM trust_documents AS d
 LEFT JOIN trust_staff AS s ON s.id = d.uploaded_by
-WHERE d.pmc_id = %(pmc)s
+WHERE d.pmc_id = %(pmc)s AND d.kind <> 'company_logo'
   AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)
 ORDER BY d.created_at DESC, d.id
 """
@@ -216,7 +218,7 @@ SELECT d.id, d.kind,
        d.title, d.content_type, d.size, s.display_name, d.created_at, count(*) OVER ()
 FROM trust_documents AS d
 LEFT JOIN trust_staff AS s ON s.id = d.uploaded_by
-WHERE d.pmc_id = %(pmc)s
+WHERE d.pmc_id = %(pmc)s AND d.kind <> 'company_logo'
   AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)
   AND (%(kind)s::text IS NULL OR d.kind = %(kind)s)
   AND {where}

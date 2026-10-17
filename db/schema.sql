@@ -9040,6 +9040,40 @@ CREATE TABLE public.trust_charges (
 
 
 --
+-- Name: trust_company_profiles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_company_profiles (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    address_line_1 text,
+    address_line_2 text,
+    city text,
+    state text,
+    postal_code text,
+    late_grace_days integer,
+    late_flat_fee numeric,
+    late_percent numeric,
+    late_maximum numeric,
+    nsf_fee numeric,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_company_profiles_address_line_1_check CHECK (((btrim(address_line_1) <> ''::text) AND (char_length(address_line_1) <= 200))),
+    CONSTRAINT trust_company_profiles_address_line_2_check CHECK (((btrim(address_line_2) <> ''::text) AND (char_length(address_line_2) <= 200))),
+    CONSTRAINT trust_company_profiles_check CHECK (((num_nonnulls(address_line_1, city, state, postal_code) = ANY (ARRAY[0, 4])) AND ((address_line_2 IS NULL) OR (address_line_1 IS NOT NULL)))),
+    CONSTRAINT trust_company_profiles_check1 CHECK (((num_nonnulls(late_grace_days, late_flat_fee, late_percent) = ANY (ARRAY[0, 3])) AND ((late_maximum IS NULL) OR (late_grace_days IS NOT NULL)))),
+    CONSTRAINT trust_company_profiles_city_check CHECK (((btrim(city) <> ''::text) AND (char_length(city) <= 100))),
+    CONSTRAINT trust_company_profiles_late_flat_fee_check CHECK (((late_flat_fee >= (0)::numeric) AND (late_flat_fee = round(late_flat_fee, 2)))),
+    CONSTRAINT trust_company_profiles_late_grace_days_check CHECK (((late_grace_days >= 0) AND (late_grace_days <= 365))),
+    CONSTRAINT trust_company_profiles_late_maximum_check CHECK (((late_maximum >= (0)::numeric) AND (late_maximum = round(late_maximum, 2)))),
+    CONSTRAINT trust_company_profiles_late_percent_check CHECK (((late_percent >= (0)::numeric) AND (late_percent <= (100)::numeric))),
+    CONSTRAINT trust_company_profiles_nsf_fee_check CHECK (((nsf_fee >= (0)::numeric) AND (nsf_fee = round(nsf_fee, 2)))),
+    CONSTRAINT trust_company_profiles_postal_code_check CHECK (((btrim(postal_code) <> ''::text) AND (char_length(postal_code) <= 20))),
+    CONSTRAINT trust_company_profiles_state_check CHECK (((btrim(state) <> ''::text) AND (char_length(state) <= 50)))
+);
+
+
+--
 -- Name: trust_contacts; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10844,6 +10878,14 @@ ALTER TABLE ONLY public.trust_charges
 
 
 --
+-- Name: trust_company_profiles trust_company_profiles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_company_profiles
+    ADD CONSTRAINT trust_company_profiles_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_contacts trust_contacts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -10960,7 +11002,7 @@ ALTER TABLE ONLY public.trust_document_removals
 --
 
 ALTER TABLE public.trust_documents
-    ADD CONSTRAINT trust_documents_kind_check CHECK ((kind = ANY (ARRAY['w9'::text, 'receipt'::text, 'move_out_photo'::text, 'owner_document'::text, 'work_order_photo'::text, 'property_document'::text, 'unit_document'::text, 'tenant_document'::text, 'lease_document'::text, 'vendor_document'::text]))) NOT VALID;
+    ADD CONSTRAINT trust_documents_kind_check CHECK ((kind = ANY (ARRAY['w9'::text, 'receipt'::text, 'move_out_photo'::text, 'owner_document'::text, 'work_order_photo'::text, 'property_document'::text, 'unit_document'::text, 'tenant_document'::text, 'lease_document'::text, 'vendor_document'::text, 'company_logo'::text]))) NOT VALID;
 
 
 --
@@ -10969,6 +11011,14 @@ ALTER TABLE public.trust_documents
 
 ALTER TABLE public.trust_documents
     ADD CONSTRAINT trust_documents_lease_check CHECK (((kind = ANY (ARRAY['move_out_photo'::text, 'lease_document'::text])) = (lease_id IS NOT NULL))) NOT VALID;
+
+
+--
+-- Name: trust_documents trust_documents_logo_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_documents
+    ADD CONSTRAINT trust_documents_logo_check CHECK (((kind <> 'company_logo'::text) OR (content_type = ANY (ARRAY['image/png'::text, 'image/jpeg'::text])))) NOT VALID;
 
 
 --
@@ -12211,6 +12261,20 @@ CREATE UNIQUE INDEX trust_charges_one_rent_per_due_date ON public.trust_charges 
 
 
 --
+-- Name: trust_company_profiles_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_company_profiles_pmc ON public.trust_company_profiles USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_company_profiles_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_company_profiles_recorded_by ON public.trust_company_profiles USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_contacts_owner; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -13030,6 +13094,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_company_profiles trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_company_profiles FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_contacts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13797,6 +13868,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_char
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_charges FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_company_profiles trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_company_profiles FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -14658,6 +14736,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_archivals FOR EAC
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_bill_splits FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_company_profiles trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_company_profiles FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -15550,6 +15635,22 @@ ALTER TABLE ONLY public.trust_charges
 
 ALTER TABLE ONLY public.trust_charges
     ADD CONSTRAINT trust_charges_recurring_charge_fkey FOREIGN KEY (pmc_id, lease_id, recurring_charge_id, kind) REFERENCES public.trust_recurring_charges(pmc_id, lease_id, id, kind);
+
+
+--
+-- Name: trust_company_profiles trust_company_profiles_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_company_profiles
+    ADD CONSTRAINT trust_company_profiles_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_company_profiles trust_company_profiles_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_company_profiles
+    ADD CONSTRAINT trust_company_profiles_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -17609,4 +17710,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261016000071'),
     ('20261016000072'),
     ('20261016000073'),
-    ('20261016000074');
+    ('20261016000074'),
+    ('20261017000075');

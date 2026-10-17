@@ -119,6 +119,7 @@ TABLES = {
     "trust_renters_insurance": {"SELECT", "INSERT"},
     "trust_archivals": {"SELECT", "INSERT"},
     "trust_contacts": {"SELECT", "INSERT"},
+    "trust_company_profiles": {"SELECT", "INSERT"},
     # Property groups (migration 0065): a group is renamed (UPDATE of display_name only), a
     # property joins or leaves it by an insert.
     "trust_property_groups": {"SELECT", "INSERT"},
@@ -218,6 +219,8 @@ AI_NEVER_READS = {
     "trust_contacts",
     # What staff write about people and their homes (ADR 0006).
     "trust_notes",
+    # The company's mailing address, with the fee terms new properties start with (ADR 0006).
+    "trust_company_profiles",
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
 RENAMEABLE = [

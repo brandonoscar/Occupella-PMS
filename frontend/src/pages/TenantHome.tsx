@@ -18,6 +18,7 @@ import { RenewalsCard } from "./RenewalsCard";
 import { useRecord } from "./useRecord";
 import { Said } from "../components/Said";
 import { Form } from "../components/Form";
+import { ManagerCard } from "./ManagerCard";
 
 // What the lease charges every month: its rent, and each recurring fee or credit not stopped
 // (ends_on is the first due date it is no longer charged for).
@@ -330,6 +331,7 @@ export function TenantHome({ me }: { me: Me }) {
           </Card>
         </>
       )}
+      <ManagerCard />
     </Shell>
   );
 }

@@ -432,11 +432,18 @@ def test_the_founders_seed_puts_something_on_every_list(conn, app_conn, built):
         ("w9", "W-9, Demo Plumbing Co"),
         ("work_order_photo", "Faucet before the repair"),
     ]
+    # The company's address and the fee terms a property added from now on starts with; the
+    # demo's own properties keep their own.
+    assert rows(
+        "SELECT address_line_1, city, late_grace_days, late_flat_fee, nsf_fee"
+        " FROM trust_company_profiles WHERE pmc_id = %s"
+    ) == [("100 Example Street", "Sampletown", 5, Decimal("50.00"), Decimal("35.00"))]
 
 
 def test_the_books_alone_leave_every_other_page_for_the_feature_tests(conn, app_conn):
     # Each browser test of a feature starts from the books (frontend/e2e/seed.py): no broker
-    # named, no policy, inspection, budget, rent change, insurance terms, role or entry yet.
+    # named, no policy, inspection, budget, rent change, insurance terms, role, entry or company
+    # profile yet.
     books = demo.books(app_conn)
 
     for table in (
@@ -448,6 +455,7 @@ def test_the_books_alone_leave_every_other_page_for_the_feature_tests(conn, app_
         "trust_rent_changes",
         "trust_renters_insurance_terms",
         "trust_journal_entries",
+        "trust_company_profiles",
     ):
         assert conn.execute(
             f"SELECT count(*) FROM {table} WHERE pmc_id = %s", (books.pmc_id,)

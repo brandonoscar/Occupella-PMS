@@ -284,3 +284,14 @@ Logins is a read-only list of everyone's login, narrowed by status, a login's Di
 row's menu; invites are on each person's own page (an owner's or a tenant's Portal card, and
 each staff member's row on the staff page). The company's address, logo and default fee terms
 come next (step 12d).
+
+## Company
+
+Step 12d (migration 0075, `src/pms/api/company.py`). Company setup is the company's name, its
+mailing address and its logo, and the late fee and NSF fee terms each property added from then
+on starts with, from its first day; a property already there keeps its own terms, and its page
+changes them. The name is the company's own record, which staff rename; the address and the
+default terms are a profile, append-only with the latest row holding. The logo is a PNG or JPEG
+kept as a document of its own kind, a new one taking the last one's place. Owners and tenants
+see their manager's name, mailing address (where a notice to the manager goes) and logo on their
+portal's home page. The AI role reads none of it but the name.
