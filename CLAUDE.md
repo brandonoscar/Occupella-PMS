@@ -89,7 +89,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   role and their invite come from `python -m pms.admin`. A demo PMC to show the PMS with
   comes from `python -m pms.demo` (`src/pms/demo.py`): synthetic, built through the API's own
   route functions as its staff, with last month's reconciliation waiting for approval and
-  something on every other page (`demo.books` is its books alone, for the feature tests).
+  something on every other page, the founder's seed among it (six properties, one of 48 units,
+  two groups, applicants, offers, bills, work orders and files at every step; ADR 0006).
+  `demo.books` is its books alone, for the feature tests.
   Payments, any email but ADR 0004's and the real screening and e-sign partners are still
   out (`docs/adr/0002-portals-and-exports.md`).
 - Email (`src/pms/email.py`, migration 0042, `docs/adr/0004-email.md`): entering a bill over

@@ -17,6 +17,13 @@ on file for Cedar House and missing for Aspen Row; Cedar House's rent going up n
 month's written notice; and a journal entry the bookkeeper proposed, waiting for the manager.
 The Dashboard lists what waits, last month's fees in trust among it.
 
+Then the founder's demo seed (`showcase`, ADR 0006), so every list has something to click
+into: Harbor Tower (48 units) and Oak Terrace, two property groups, this month's rent with three
+tenants owing (part paid, unpaid, a bounce with its NSF fee), a lease ending in 45 days, one to
+come and one ended with its deposit held, applicants at each step, a lease out to sign and a
+renewal half signed, bills of every status, work orders at every step, four vendors (a W-9 on
+file, an expired policy) and files.
+
 Every name is synthetic, and every email is at example.com. The dates follow today's: the two
 months are the two before this one.
 
@@ -25,6 +32,7 @@ usage: python -m pms.demo
 
 from __future__ import annotations
 
+import base64
 import csv
 import io
 import os
@@ -35,18 +43,24 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, Literal
 from uuid import UUID
 
 import psycopg
 from psycopg import sql
 
-from pms import accounts
+from pms import accounts, nightly
 from pms.api import (
     budgets,
     custom_roles,
+    documents,
+    groups,
     inspections,
     journal,
+    leasing,
+    maintenance,
+    offers,
     payables,
     reconcile,
     rent,
@@ -54,7 +68,9 @@ from pms.api import (
     signers,
     staff,
     vendors,
+    work_orders,
 )
+from pms.leasing import esign, screening
 
 D = Decimal
 DAY = timedelta(days=1)
@@ -164,12 +180,17 @@ def statement_csv(lines: list[tuple[date, D, str]]) -> str:
     return out.getvalue()
 
 
-def build(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
+def build(
+    conn: psycopg.Connection[Any],
+    today: date | None = None,
+    public_url: str = "http://localhost:8000",
+) -> Demo:
     """Builds a demo PMC on a connection acting as trust_app (autocommit), dated from today:
-    its books, and something on every other page."""
+    its books, something on every other page, and the founder's demo seed (ADR 0006)."""
     today = today or datetime.now(UTC).date()
     demo = books(conn, today)
     every_page(conn, demo, today)
+    showcase(conn, demo, today, public_url)
     return demo
 
 
@@ -481,6 +502,597 @@ def every_page(conn: psycopg.Connection[Any], demo: Demo, today: date) -> None:
         ).id
 
 
+# --- the founder's demo seed (ADR 0006): something to click into on every page ---------------
+
+# Harbor Tower: four floors of twelve, its rent by floor. The last four units are vacant and the
+# eighth on the top floor's lease ended last month, its deposit not yet returned.
+HARBOR_FLOORS = 4
+HARBOR_PER_FLOOR = 12
+HARBOR_VACANT = ("Unit 409", "Unit 410", "Unit 411", "Unit 412")
+HARBOR_ENDED = "Unit 408"
+# This month's rent at Harbor Tower: one tenant paid part of it, one none, one's payment bounced.
+HARBOR_PARTIAL, HARBOR_UNPAID, HARBOR_BOUNCED = "Unit 105", "Unit 107", "Unit 109"
+WorkOrderStep = Literal["assigned", "completed", "cancelled"]
+NSF_FEE = D("35.00")
+PDF = b"%PDF-1.4\n% synthetic demo document\n"
+PNG = b"\x89PNG\r\n\x1a\n synthetic demo photo"
+
+
+def harbor_rent(unit: str) -> D:
+    return D("1050.00") + D("25.00") * int(unit.split()[1][0])
+
+
+class _Request:
+    """What the leasing routes read off a request: the server's settings and partners, here the
+    fakes the demo applies, screens and signs with."""
+
+    def __init__(self, public_url: str) -> None:
+        state = SimpleNamespace(
+            settings=SimpleNamespace(public_url=public_url),
+            screening=screening.FakeScreening(),
+            esign=esign.FakeESign(public_url),
+        )
+        self.app = SimpleNamespace(state=state)
+
+
+def on_or_before(day: date, today: date) -> date:
+    return min(day, today)
+
+
+def showcase(conn: psycopg.Connection[Any], demo: Demo, today: date, public_url: str) -> None:
+    """The founder's demo seed (ADR 0006), so every page has something to open: two more
+    properties (Harbor Tower, 48 units, and Oak Terrace), two property groups, this month's rent
+    charged with two tenants owing and a bounce with its NSF fee, a lease ending in 45 days, one
+    to come and one ended with its deposit held, applicants at every step on the vacant units,
+    lease offers sent and partly signed, bills of every status, work orders at every step, four
+    vendors with a W-9 on file and an expired policy, and files on a lease, a vendor, an owner
+    and a bill. Everything this month is dated after last month's prepared reconciliation."""
+    b = Builder(conn, demo.pmc_id)
+    this_month = demo.months[2]
+    lease_start = first_of_month(today, 11)
+    request: Any = _Request(public_url)
+    with b.as_staff(demo.manager) as s:
+        demo.owners["Demo Owner C"] = uid(
+            setup.add_owner(s, conn, setup.NewName(name="Demo Owner C"))
+        )
+        for vendor in ("Demo Landscaping Co", "Demo Electric Co"):
+            demo.vendors[vendor] = uid(setup.add_vendor(s, conn, setup.NewName(name=vendor)))
+        # The electrician's policy ran out last month: assigning them warns of it.
+        vendors.record_policy(
+            s,
+            conn,
+            demo.vendors["Demo Electric Co"],
+            vendors.NewPolicy(
+                coverage="general liability",
+                carrier="Demo Casualty Co",
+                policy_number="GL-DEMO-3001",
+                starts_on=first_of_month(today, 13),
+                expires_on=this_month - 5 * DAY,
+                limit_amount=D("500000.00"),
+            ),
+        )
+    harbor = new_property(
+        b,
+        demo,
+        "Demo Owner C",
+        "Harbor Tower",
+        lease_start,
+        (D("8"), D("0"), D("500.00"), D("500.00")),
+    )
+    oak = new_property(b, demo, "Demo Owner B", "Oak Terrace", lease_start, TERMS["Demo Owner B"])
+    units: dict[str, UUID] = {}
+    with b.as_staff(demo.manager) as s:
+        setup.add_nsf_fee(
+            s, conn, setup.NewNsfFee(property_id=harbor, starts_on=lease_start, fee=NSF_FEE)
+        )
+        for floor in range(1, HARBOR_FLOORS + 1):
+            for n in range(1, HARBOR_PER_FLOOR + 1):
+                unit = f"Unit {floor}{n:02d}"
+                units[unit] = uid(
+                    setup.add_unit(s, conn, setup.NewUnit(property_id=harbor, name=unit))
+                )
+        for unit in units:
+            if unit in HARBOR_VACANT:
+                continue
+            tenant = f"Resident {unit.split()[1]}"
+            demo.tenants[tenant] = uid(
+                setup.add_tenant(s, conn, setup.NewUnit(property_id=harbor, name=tenant))
+            )
+            ends = this_month - 16 * DAY if unit == HARBOR_ENDED else None
+            demo.leases[("Harbor Tower", unit)] = uid(
+                setup.add_lease(
+                    s,
+                    conn,
+                    setup.NewLease(
+                        unit_id=units[unit],
+                        starts_on=lease_start,
+                        ends_on=ends,
+                        monthly_rent=harbor_rent(unit),
+                        tenant_ids=[demo.tenants[tenant]],
+                    ),
+                )
+            )
+        # Oak Terrace: two tenants whose lease ends in 45 days, and a lease from next month.
+        oak_units = {
+            name: uid(setup.add_unit(s, conn, setup.NewUnit(property_id=oak, name=name)))
+            for name in ("Unit 1", "Unit 2")
+        }
+        for person in ("Avery Demo", "Jordan Sample", "Parker Demo"):
+            demo.tenants[person] = uid(
+                setup.add_tenant(s, conn, setup.NewUnit(property_id=oak, name=person))
+            )
+        demo.leases[("Oak Terrace", "Unit 1")] = uid(
+            setup.add_lease(
+                s,
+                conn,
+                setup.NewLease(
+                    unit_id=oak_units["Unit 1"],
+                    starts_on=lease_start,
+                    ends_on=today + 45 * DAY,
+                    monthly_rent=D("1325.00"),
+                    tenant_ids=[demo.tenants["Avery Demo"], demo.tenants["Jordan Sample"]],
+                ),
+            )
+        )
+        demo.leases[("Oak Terrace", "Unit 2")] = uid(
+            setup.add_lease(
+                s,
+                conn,
+                setup.NewLease(
+                    unit_id=oak_units["Unit 2"],
+                    starts_on=first_of_month(today, -1),
+                    monthly_rent=D("1290.00"),
+                    tenant_ids=[demo.tenants["Parker Demo"]],
+                ),
+            )
+        )
+        groups.create_group(
+            s,
+            conn,
+            groups.NewGroup(
+                name="North portfolio",
+                property_ids=[
+                    property_of(conn, demo, p) for p in ("Elm Court", "Birch Flats", "Harbor Tower")
+                ],
+            ),
+        )
+        groups.create_group(
+            s,
+            conn,
+            groups.NewGroup(
+                name="South portfolio",
+                property_ids=[
+                    property_of(conn, demo, p) for p in ("Cedar House", "Aspen Row", "Oak Terrace")
+                ],
+            ),
+        )
+    # Harbor Tower's and Oak Terrace's deposits came over from the old system this month.
+    with b.as_staff(demo.manager) as s:
+        for (prop, unit), lease in demo.leases.items():
+            if prop not in ("Harbor Tower", "Oak Terrace") or (prop, unit) == (
+                "Oak Terrace",
+                "Unit 2",
+            ):
+                continue
+            monthly = harbor_rent(unit) if prop == "Harbor Tower" else D("1325.00")
+            people = lease_tenants(conn, lease)
+            for tenant_id in people:
+                rent.deposit(
+                    s,
+                    conn,
+                    rent.NewDeposit(
+                        request_id=uuid.uuid4(),
+                        tenant_id=tenant_id,
+                        amount=monthly / len(people),
+                        received_on=this_month,
+                        reference="Deposit brought over",
+                        bank_account_id=demo.deposits,
+                    ),
+                )
+    this_months_rent(b, demo, today)
+    leasing_pipeline(b, demo, request, units, today)
+    bills_of_every_status(b, demo, today, public_url)
+    work_orders_at_every_step(b, demo, units, today)
+    files(b, demo)
+
+
+def new_property(
+    b: Builder, demo: Demo, owner: str, prop: str, since: date, terms: tuple[D, D, D, D]
+) -> UUID:
+    """A property of an owner's, in the operating account, with its management terms and late
+    fees."""
+    conn = b.conn
+    with b.as_staff(demo.manager) as s:
+        property_id = uid(
+            setup.add_property(
+                s,
+                conn,
+                setup.NewProperty(
+                    name=prop, owner_id=demo.owners[owner], bank_account_id=demo.operating
+                ),
+            )
+        )
+        demo.accounts[prop] = one(
+            conn,
+            "SELECT ledger_account_id FROM trust_ledger_accounts"
+            " WHERE property_id = %s AND kind = 'owner_property'",
+            (property_id,),
+        )
+        percent, minimum, reserve, limit = terms
+        setup.add_agreement(
+            s,
+            conn,
+            setup.NewAgreement(
+                account=demo.accounts[prop],
+                starts_on=since,
+                fee_percent=percent,
+                minimum_fee=minimum,
+                reserve=reserve,
+                approval_limit=limit,
+            ),
+        )
+        setup.add_late_fees(
+            s,
+            conn,
+            setup.NewLateFees(
+                property_id=property_id, starts_on=since, grace_days=5, flat_fee=LATE_FEE
+            ),
+        )
+    return property_id
+
+
+def property_of(conn: psycopg.Connection[Any], demo: Demo, prop: str) -> UUID:
+    return UUID(
+        str(
+            one(
+                conn,
+                "SELECT property_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
+                (demo.accounts[prop],),
+            )
+        )
+    )
+
+
+def lease_tenants(conn: psycopg.Connection[Any], lease: UUID) -> list[UUID]:
+    return [
+        row[0]
+        for row in conn.execute(
+            "SELECT tenant_id FROM trust_lease_tenants WHERE lease_id = %s ORDER BY tenant_id",
+            (lease,),
+        ).fetchall()
+    ]
+
+
+def this_months_rent(b: Builder, demo: Demo, today: date) -> None:
+    """This month's rent charged to every lease in effect and paid, but at Harbor Tower: one
+    tenant paid part of it, one none, and one's payment bounced, charging the NSF fee. Late fees
+    come with the nightly run."""
+    conn = b.conn
+    this_month = demo.months[2]
+    with b.as_staff(demo.manager) as s:
+        rent.run_rent(s, conn, rent.RunRent(due_on=this_month, late_fees_as_of=this_month))
+    for n, ((prop, unit), lease) in enumerate(demo.leases.items()):
+        if rent.owed(conn, lease) <= 0 or (prop, unit) == ("Harbor Tower", HARBOR_UNPAID):
+            continue
+        day = on_or_before(this_month + (1 + n % 4) * DAY, today)
+        with b.as_staff(demo.manager) as s:
+            if (prop, unit) == ("Harbor Tower", HARBOR_PARTIAL):
+                rent.pay(
+                    s,
+                    conn,
+                    lease,
+                    rent.NewPayment(request_id=uuid.uuid4(), amount=D("400.00"), received_on=day),
+                )
+                continue
+            paid = rent.pay(s, conn, lease, payment(conn, lease, day))
+        if (prop, unit) == ("Harbor Tower", HARBOR_BOUNCED):
+            with b.as_staff(demo.manager) as s:
+                rent.bounced(
+                    s, conn, paid.transfers[0], rent.Day(on=on_or_before(day + 2 * DAY, today))
+                )
+
+
+# Applicants on the vacant units, one at each step: (unit, names, monthly income, the step).
+APPLICANTS: list[tuple[str, list[str], D, str]] = [
+    ("Unit 409", ["Sage Applicant"], D("5200.00"), "received"),
+    ("Unit 410", ["Rowan Applicant"], D("3900.00"), "screened"),
+    ("Unit 411", ["Emery Applicant", "Blake Applicant"], D("7400.00"), "approved"),
+    ("Unit 412", ["Hayden Applicant"], D("1800.00"), "declined"),
+]
+
+
+def leasing_pipeline(
+    b: Builder, demo: Demo, request: Any, units: dict[str, UUID], today: date
+) -> None:
+    """An application link on each vacant unit at Harbor Tower and an application through it:
+    one received, one screened, one approved and sent its lease to sign, one declined with its
+    adverse action notice. Oak Terrace's lease ending in 45 days has its renewal out, signed by
+    one of its two tenants. The applicants apply themselves: no staff member to name."""
+    conn = b.conn
+    move_in = first_of_month(today, -1)
+    for unit, names, income, step in APPLICANTS:
+        with b.as_staff(demo.manager) as s:
+            opened = leasing.open_application_link(
+                request,
+                s,
+                conn,
+                leasing.NewLink(unit_id=units[unit], monthly_rent=harbor_rent(unit)),
+            )
+        with conn.transaction():
+            leasing.apply(
+                request,
+                conn,
+                leasing.ApplicationIn(
+                    token=opened.url.split("#", 1)[1],
+                    move_in_on=move_in,
+                    monthly_income=income,
+                    applicants=[
+                        leasing.ApplicantIn(
+                            name=name, email=f"{name.split()[0].lower()}.applicant@example.com"
+                        )
+                        for name in names
+                    ],
+                ),
+            )
+        application = one(
+            conn,
+            "SELECT a.id FROM trust_applications AS a WHERE a.link_id = %s",
+            (opened.id,),
+        )
+        if step == "received":
+            continue
+        with b.as_staff(demo.manager) as s:
+            screened = leasing.screen(request, s, conn, application)
+        if step == "screened":
+            continue
+        with b.as_staff(demo.manager) as s:
+            if step == "approved":
+                leasing.decide(
+                    s,
+                    conn,
+                    application,
+                    leasing.Decision(decision="approved", screening_id=screened.screenings[-1].id),
+                )
+            else:
+                leasing.decide(
+                    s,
+                    conn,
+                    application,
+                    leasing.Decision(
+                        decision="declined",
+                        screening_id=screened.screenings[-1].id,
+                        adverse_action=leasing.AdverseAction(
+                            reasons=list(screened.screenings[-1].reasons)
+                            or ["Income below three times the rent"],
+                            notice_given_on=today,
+                        ),
+                    ),
+                )
+        if step == "approved":
+            with b.as_staff(demo.manager) as s:
+                offers.offer_lease(
+                    request,
+                    s,
+                    conn,
+                    application,
+                    offers.OfferIn(
+                        starts_on=move_in,
+                        ends_on=first_of_month(today, -13) - DAY,
+                        monthly_rent=harbor_rent(unit),
+                        document_title=f"Harbor Tower {unit} lease",
+                        document_base64=base64.b64encode(PDF).decode(),
+                    ),
+                )
+    # Oak Terrace Unit 1's renewal: sent to its two tenants, and one has signed.
+    lease = demo.leases[("Oak Terrace", "Unit 1")]
+    with b.as_staff(demo.manager) as s:
+        offered = offers.offer_renewal(
+            request,
+            s,
+            conn,
+            lease,
+            offers.OfferIn(
+                starts_on=today + 46 * DAY,
+                ends_on=today + 46 * DAY + 364 * DAY,
+                monthly_rent=D("1360.00"),
+                document_title="Oak Terrace Unit 1 renewal",
+                document_base64=base64.b64encode(PDF).decode(),
+                signers=[
+                    offers.SignerIn(name="Avery Demo", email="avery.demo@example.com"),
+                    offers.SignerIn(name="Jordan Sample", email="jordan.sample@example.com"),
+                ],
+            ),
+        )
+    first = offered.links[0]
+    request.app.state.esign.sign(first.url.split("#", 1)[1], first.name)
+    with b.as_staff(demo.manager) as s:
+        offers.check_signatures(request, s, conn, offered.offer.id)
+
+
+def bills_of_every_status(b: Builder, demo: Demo, today: date, public_url: str) -> None:
+    """Bills of every status this month: two due this week, one overdue, one over Demo Owner A's
+    $500.00 limit waiting for them, one paid, with the two paid before; and the landscaper's
+    monthly bill at Harbor Tower, entered by the nightly run (with this month's late fees)."""
+    conn = b.conn
+    this_month = demo.months[2]
+    entered = on_or_before(this_month + DAY, today)
+    bills = [
+        (
+            "Demo Landscaping Co",
+            "Harbor Tower",
+            "LND-3001",
+            entered,
+            today + 3 * DAY,
+            D("260.00"),
+            "Leaf cleanup",
+            "Landscaping",
+        ),
+        (
+            "Demo Plumbing Co",
+            "Oak Terrace",
+            "PLB-3002",
+            entered,
+            today + 5 * DAY,
+            D("180.00"),
+            "Water heater flush",
+            "Repairs",
+        ),
+        (
+            "Demo Plumbing Co",
+            "Elm Court",
+            "PLB-3003",
+            today - 20 * DAY,
+            today - 3 * DAY,
+            D("240.00"),
+            "Garbage disposal, Unit 1",
+            "Repairs",
+        ),
+        (
+            "Demo Roofing Co",
+            "Cedar House",
+            "RF-3004",
+            entered,
+            today + 14 * DAY,
+            D("900.00"),
+            "Gutter replacement",
+            "Repairs",
+        ),
+        (
+            "Demo Electric Co",
+            "Harbor Tower",
+            "ELC-3005",
+            entered,
+            entered + 10 * DAY,
+            D("320.00"),
+            "Hallway lighting",
+            "Repairs",
+        ),
+    ]
+    made: dict[str, UUID] = {}
+    with b.as_staff(demo.manager) as s:
+        for vendor, prop, reference, dated, due, amount, memo, account in bills:
+            made[reference] = payables.enter_bill(
+                s,
+                conn,
+                payables.NewBill(
+                    vendor_id=demo.vendors[vendor],
+                    account=demo.accounts[prop],
+                    reference=reference,
+                    bill_date=min(dated, due),
+                    due_on=due,
+                    amount=amount,
+                    memo=memo,
+                    expense_account_id=demo.expense_accounts[account],
+                ),
+            ).id
+        payables.add_recurring(
+            s,
+            conn,
+            payables.NewRecurring(
+                vendor_id=demo.vendors["Demo Landscaping Co"],
+                account=demo.accounts["Harbor Tower"],
+                reference_prefix="LAWN",
+                amount=D("400.00"),
+                memo="Monthly grounds service",
+                # Due the day it comes: this month's is entered today, not overdue yet.
+                day_of_month=min(today.day, 28),
+                starts_on=this_month,
+                expense_account_id=demo.expense_accounts["Landscaping"],
+            ),
+        )
+    with b.as_staff(demo.manager) as s:
+        payables.pay_bills(
+            s,
+            conn,
+            payables.PayBills(
+                on=on_or_before(entered + DAY, today), method="EFT", bill_ids=[made["ELC-3005"]]
+            ),
+        )
+    # Tonight's run, as the manager runs it by hand: late fees on rent still open past its
+    # grace, and this month's recurring bills.
+    with b.as_staff(demo.manager):
+        nightly.run_pmc(conn, demo.pmc_id, today, public_url)
+
+
+def work_orders_at_every_step(b: Builder, demo: Demo, units: dict[str, UUID], today: date) -> None:
+    """Five work orders, one at each step: just opened, assigned to the plumber, assigned to the
+    roofer (whose insurance runs out in 20 days), completed with its bill, and cancelled."""
+    conn = b.conn
+    orders: list[tuple[str, str | None, str, list[tuple[WorkOrderStep, str | None]]]] = [
+        ("Harbor Tower", "Unit 203", "Smoke detector chirping", []),
+        ("Oak Terrace", None, "Front walk light out", [("assigned", "Demo Electric Co")]),
+        ("Cedar House", None, "Inspect roof after the storm", [("assigned", "Demo Roofing Co")]),
+        (
+            "Harbor Tower",
+            "Unit 111",
+            "Kitchen faucet drips",
+            [("assigned", "Demo Plumbing Co"), ("completed", None)],
+        ),
+        ("Elm Court", None, "Repaint the mailbox", [("cancelled", None)]),
+    ]
+    for prop, unit, summary, steps in orders:
+        with b.as_staff(demo.manager) as s:
+            opened = work_orders.open_work_order(
+                s,
+                conn,
+                work_orders.NewWorkOrder(
+                    property_id=property_of(conn, demo, prop),
+                    unit_id=units[unit] if unit and prop == "Harbor Tower" else None,
+                    summary=summary,
+                ),
+            )
+        for step, vendor in steps:
+            with b.as_staff(demo.manager) as s:
+                maintenance.record_step(
+                    s,
+                    conn,
+                    opened.id,
+                    maintenance.Step(step=step, vendor_id=demo.vendors[vendor] if vendor else None),
+                )
+
+
+def files(b: Builder, demo: Demo) -> None:
+    """A W-9 on file for the plumber, Demo Owner C's management agreement, a move-out photo of
+    Harbor Tower's ended lease and the roof repair's receipt."""
+    conn = b.conn
+    roof = one(
+        conn,
+        "SELECT id FROM trust_bills WHERE pmc_id = %s AND reference = 'RF-2207'",
+        (demo.pmc_id,),
+    )
+    kept: list[tuple[documents.Kind, UUID, str, documents.ContentType, bytes]] = [
+        ("w9", demo.vendors["Demo Plumbing Co"], "W-9, Demo Plumbing Co", "application/pdf", PDF),
+        (
+            "owner_document",
+            demo.owners["Demo Owner C"],
+            "Management agreement",
+            "application/pdf",
+            PDF,
+        ),
+        (
+            "move_out_photo",
+            demo.leases[("Harbor Tower", HARBOR_ENDED)],
+            "Kitchen at move-out",
+            "image/png",
+            PNG,
+        ),
+        ("receipt", roof, "Roof repair receipt", "application/pdf", PDF),
+    ]
+    with b.as_staff(demo.manager) as s:
+        for kind, about, title, content_type, content in kept:
+            documents.upload(
+                s,
+                conn,
+                documents.NewDocument(
+                    kind=kind,
+                    about_id=about,
+                    title=title,
+                    content_type=content_type,
+                    content_base64=base64.b64encode(content).decode(),
+                ),
+            )
+
+
 def staff_and_signers(b: Builder, demo: Demo, since: date) -> None:
     """The manager is each trust bank account's broker and the bookkeeper a bonded signer of
     the operating one (docs/law.md); a leasing agent holds a custom role allowing leasing,
@@ -676,7 +1288,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     del argv
     with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as conn:
         conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier("trust_app")))
-        demo = build(conn)
+        demo = build(conn, public_url=os.environ.get("PMS_PUBLIC_URL", "http://localhost:8000"))
         with conn.transaction():
             links = {
                 "the manager, who approves last month's reconciliation": invite(

@@ -701,8 +701,10 @@ test("the demo opens on last month waiting for its manager, who approves it and 
   await page.getByLabel("The same password again").fill(PASSWORD);
   await page.getByRole("button", { name: "Set password" }).click();
   await expect(page.getByRole("heading", { name: "Your properties" })).toBeVisible();
+  // Each holds its reserve and this month's rent, which its tenants paid.
   const holdings = page.locator("section", { hasText: "What each property holds today" });
+  await expect(holdings.getByRole("row").filter({ hasText: "Demo operating trust account" })).toHaveCount(3);
   for (const name of ["Birch Flats", "Cedar House", "Elm Court"]) {
-    await expect(holdings.getByRole("row", { name: new RegExp(name) })).toContainText("$250.00");
+    await expect(holdings.getByRole("row", { name: new RegExp(name) })).toContainText("Demo operating trust account");
   }
 });

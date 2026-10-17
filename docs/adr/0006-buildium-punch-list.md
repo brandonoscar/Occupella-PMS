@@ -129,3 +129,23 @@ Pay bills chooses bills ready to pay, shows what each property's owner account h
 them, and sets aside and pays them all at once, every one or none, recorded as sent by check or
 EFT. The nightly run enters each month's recurring bills; the Enter recurring bills button is
 gone.
+
+## The demo seed
+
+The seventh piece (`showcase` in `src/pms/demo.py`): the demo PMC gets something to click into
+on every list. Two more properties, Harbor Tower (48 units, a third owner's) and Oak Terrace,
+make six, in two groups, North portfolio and South portfolio. This month's rent is charged to
+every lease in effect and paid but three: one paid part, one none, one's payment bounced with
+its NSF fee; the nightly run (as the manager runs it by hand) charges the late fees and enters
+the landscaper's monthly bill. Oak Terrace has a lease ending in 45 days, its renewal out to
+both tenants and signed by one, and a lease starting next month; Harbor Tower has a lease that
+ended last month with its deposit still held. The vacant units have an applicant at each step
+the PMS knows (received, screened, approved and sent its lease, declined with its notice). There
+are bills due this week, one overdue, one waiting for its owner over the $500.00 limit and
+three paid; five work orders, one at each step; four vendors, one with a W-9 on file and one
+whose policy ran out; and files on a lease, a vendor, an owner and a bill. Everything this month
+is dated after last month's prepared reconciliation, so the demo still opens on it.
+
+Two of the punch list's states have no record in the PMS yet: an applicant who withdrew, and a
+lease offer kept as a draft before it is sent (an offer goes to the e-sign partner when it is
+made). They wait for the leasing pages (the build order's next step).
