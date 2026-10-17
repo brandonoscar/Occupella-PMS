@@ -180,7 +180,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `/draft-leases/<id>` (Send, Resend, Check signatures, Activate lease, Void), the leases ending in the next 90 days with
   their renewal status at `/renewals` (`src/pms/api/renewals.py`, the expirations report's rows). Accounting:
   the trust bank accounts at `/banking` (Add bank account), each at `/bank-accounts/<id>` in tabs:
-  its register and balance breakdown (`src/pms/api/banking.py`), its month-end
+  its register and balance breakdown (`src/pms/api/banking.py`), its deposits, its month-end
   (`src/pms/api/reconcile.py`) and its statements, bills at `/bills` (Unpaid, Paid,
   Recurring and Declined tabs, a page at a time by group, vendor and due day; Record bill, maybe
   split across expense accounts and with its invoice, opens a side panel), a bill at
@@ -397,7 +397,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   transfer's UTC date, `trust_apply_payment` refuses to match a payment to the lease's charges
   unless the PMC allowed that transfer on every hold in force. Holds, releases and allowances
   are append-only rows the app inserts; a hold's trigger takes the lease's lock so matches and holds
-  wait for each other. No state's rule is built in.
+  wait for each other. No state's rule is built in. Staff place one from the lease page's ⋯ menu
+  (one not released at a time), release it from a day (naming who did) and accept a payment past
+  it on Receive payment, which allows that payment on every hold in force, naming who accepted it,
+  in the same transaction (`src/pms/api/rent.py`).
 - Owner contributions: `trust_record_owner_contribution` moves cash into an owner's property
   account as its own kind (`trust_owner_contributions`), once per request key, and
   `trust_apply_payment` never matches one to a tenant's charge.
@@ -444,7 +447,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   included), and a bounce moves back what the payment moved, reverses its matches and charges
   the property's NSF fee, once. A
   lease's rent work takes an advisory lock on the lease. The PMS records what the bank did;
-  it sends no money.
+  it sends no money. A payment came by check, cashier's check, money order, EFT or cash. Each has
+  a receipt (`src/pms/api/receipts.py`): a PDF saying who paid, for which home, when, how much and
+  how, what it paid of each charge, what was held as prepaid rent and, once it bounced, that it
+  came back, with the company's name and address; staff print it from the lease's Ledger tab and
+  the tenant downloads their own in the portal (another's reads as not found).
 - Bills and owners' money (`src/pms/api/payables.py`): staff enter, approve, set aside and pay
   bills, run recurring bills, record owner draws and contributions, and take management and
   leasing fees, each through its `trust_*` write path. What the owners page shows as available
@@ -463,6 +470,12 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   missing from the books. All append-only. The three-way reconciliation report adds what had
   not cleared by a period's last day to its statement balance and lists it, from that day's
   bank reconciliation (migration 0050); without an imported statement of that day it says so.
+  Bank deposits (migration 0078, `src/pms/api/bank_deposits.py`, the account's Deposits tab):
+  what staff take to the bank together. Each item is a transfer that brought money into the
+  deposit's account by its day (a payment's whole, prepaid rent too), in at most one deposit,
+  checked by a trigger; append-only, naming who recorded it. A deposit moves no money; it has a
+  slip (PDF), and at month-end auto-match pairs its one bank line with all of it (and ticking one
+  of its transfers ticks the deposit).
 - Switching (migration 0033): after a trust bank account's opening balances, the checks and
   deposits the bank had not cleared at the cutover are carried over (`trust_cutover_items`, the
   cash each moved in the old books, issued by the cutover) until a staff member signs off the

@@ -6,7 +6,7 @@ import { RowMenu } from "../components/RowMenu";
 import { Select } from "../components/Select";
 import { Badge } from "../components/Badge";
 import { day, money, usDate } from "../money";
-import type { Bounce, Payment, PaymentMethod, RecurringCharge, RentChange, RentLease } from "../rent";
+import type { Bounce, Hold, Payment, PaymentMethod, RecurringCharge, RentChange, RentLease } from "../rent";
 import {
   PAYMENT_METHODS,
   bounceSummary,
@@ -37,6 +37,8 @@ export function PaymentRow({ payment, record }: { payment: RentLease["payments"]
             {[payment.method && methodLabel(payment.method), payment.reference].filter(Boolean).join(" · ")}
           </span>
         )}
+        <a href={`/api/rent/payments/${encodeURIComponent(payment.transfer_id)}/receipt`}
+          className="text-sm text-iris hover:text-iris-hover hover:underline">Receipt (PDF)</a>
       </td>
       <td className="text-right">{money(payment.amount)}</td>
       <td className="text-right">
@@ -75,6 +77,7 @@ export function PaymentForm({ lease, record }: { lease: RentLease; record: Recor
   const [on, setOn] = useState(day(new Date()));
   const [reference, setReference] = useState("");
   const [method, setMethod] = useState<PaymentMethod>("check");
+  const [pastHold, setPastHold] = useState(false);
   const hasPrepaid = lease.tenants.some((t) => Number(t.prepaid) > 0);
   return (
     <div className="flex flex-wrap items-end gap-3">
@@ -82,7 +85,10 @@ export function PaymentForm({ lease, record }: { lease: RentLease; record: Recor
         className="flex flex-wrap items-end gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
-          const body = { request_id: id, amount, received_on: on, method, reference: reference || null };
+          const body = {
+            request_id: id, amount, received_on: on, method, reference: reference || null,
+            ...(lease.on_hold && pastHold ? { past_hold: true } : {}),
+          };
           if (await record<Payment>(`/api/rent/leases/${lease.id}/payments`, body, paymentSummary)) {
             setId(requestId());
             setAmount("");
@@ -100,6 +106,12 @@ export function PaymentForm({ lease, record }: { lease: RentLease; record: Recor
         </Select>
         <Field label="Check or reference" id={`pay-ref-${lease.id}`} maxLength={200}
           value={reference} onChange={(e) => setReference(e.target.value)} />
+        {lease.on_hold && (
+          <label className="flex basis-full items-center gap-2 text-sm text-ink">
+            <input type="checkbox" checked={pastHold} onChange={(e) => setPastHold(e.target.checked)} />
+            Accept this payment past the payment hold
+          </label>
+        )}
         <Button type="submit">Record payment</Button>
       </Form>
       {hasPrepaid && (
@@ -296,6 +308,43 @@ export function DepositForm({ lease, record }: { lease: RentLease; record: Recor
       <Field label="Deposit received on" id={`deposit-on-${lease.id}`} type="date" required value={on}
         onChange={(e) => setOn(e.target.value)} />
       <Button type="submit" variant="secondary">Record deposit</Button>
+    </Form>
+  );
+}
+
+// A payment hold placed when an eviction is filed: from its first day a payment is refused unless
+// staff accept it past the hold.
+export function HoldForm({ lease, record }: { lease: RentLease; record: Recorder }) {
+  const [since, setSince] = useState(day(new Date()));
+  const [reason, setReason] = useState("Eviction filed");
+  return (
+    <Form className="flex flex-col gap-3" onSubmit={(event) => {
+      event.preventDefault();
+      return record<Hold>(`/api/rent/leases/${lease.id}/holds`, { starts_on: since, reason },
+        (hold) => `On a payment hold since ${usDate(hold.starts_on)}.`).then(() => undefined);
+    }}>
+      <Field label="Hold payments from" id={`hold-since-${lease.id}`} type="date" required value={since}
+        onChange={(e) => setSince(e.target.value)} />
+      <Field label="Why" id={`hold-why-${lease.id}`} required maxLength={500} value={reason}
+        onChange={(e) => setReason(e.target.value)} />
+      <p className="text-sm text-ink-muted">From then on a payment is refused unless you accept it past the hold.</p>
+      <div><Button type="submit">Place hold</Button></div>
+    </Form>
+  );
+}
+
+export function ReleaseForm({ hold, record }: { hold: Hold; record: Recorder }) {
+  const [ends, setEnds] = useState(day(new Date()));
+  return (
+    <Form className="flex flex-col gap-3" onSubmit={(event) => {
+      event.preventDefault();
+      return record<Hold>(`/api/rent/holds/${hold.id}/release`, { ends_on: ends },
+        (released) => `The payment hold is released from ${usDate(released.ends_on ?? ends)}.`).then(() => undefined);
+    }}>
+      <p className="text-base text-ink">On hold since {usDate(hold.starts_on)}: {hold.reason}</p>
+      <Field label="Accept payments again from" id={`release-${hold.id}`} type="date" required value={ends}
+        onChange={(e) => setEnds(e.target.value)} />
+      <div><Button type="submit">Release hold</Button></div>
     </Form>
   );
 }

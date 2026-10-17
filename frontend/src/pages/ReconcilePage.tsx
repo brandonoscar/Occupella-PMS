@@ -16,7 +16,7 @@ import { companyFeesDue } from "../payables";
 import { RowMenu } from "../components/RowMenu";
 import { SidePanel } from "../components/SidePanel";
 import { CompanyFeesForm } from "./CompanyFeesForm";
-import { BreakdownTab, RegisterTab } from "./BankAccountTabs";
+import { BreakdownTab, DepositsTab, RegisterTab } from "./BankAccountTabs";
 import { Tabs } from "../components/Tabs";
 import type { BankBooks, OpenItem, OpenLine, OpenTransfer, Worksheet } from "../reconcile";
 import {
@@ -30,6 +30,7 @@ import {
   lastDayOf,
   lineLabel,
   sum,
+  toggleTransfer,
   transferLabel,
 } from "../reconcile";
 import { GoLink } from "./NeedsAttention";
@@ -178,9 +179,10 @@ const KIND: Record<BankBooks["kind"], string> = {
   security_deposit: "Security deposits",
 };
 
-type AccountTab = "transactions" | "reconciliations" | "breakdown" | "statements";
+type AccountTab = "transactions" | "deposits" | "reconciliations" | "breakdown" | "statements";
 const ACCOUNT_TABS: { value: AccountTab; label: string }[] = [
   { value: "transactions", label: "Transactions" },
+  { value: "deposits", label: "Deposits" },
   { value: "reconciliations", label: "Reconciliations" },
   { value: "breakdown", label: "Balance breakdown" },
   { value: "statements", label: "Statements" },
@@ -241,6 +243,7 @@ export function ReconcilePage({ me, id }: { me: Me; id: string }) {
           <div>
             <Tabs label="Trust bank account" tabs={ACCOUNT_TABS} value={shown} onChange={setTab} />
             {shown === "transactions" && <RegisterTab bankId={bank.id} />}
+            {shown === "deposits" && <DepositsTab bankId={bank.id} />}
             {shown === "reconciliations" && (
               <div className="flex flex-col gap-6">
                 {sheet.opening && <OpeningCard bank={bank} sheet={sheet} refresh={refresh} />}
@@ -506,7 +509,7 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
           <legend className="mb-2 text-sm font-medium">Transfers not matched</legend>
           {sheet.open_transfers.length === 0 ? <p className="text-sm text-ink-subtle">None.</p> : (
             <Checks items={sheet.open_transfers} label={transferLabel} chosen={moved}
-              toggle={(id) => toggle(moved, setMoved, id)} />
+              toggle={(id) => setMoved(toggleTransfer(sheet.open_transfers, moved, id))} />
           )}
         </fieldset>
         {sheet.open_items.length > 0 && (

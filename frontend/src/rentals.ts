@@ -1,7 +1,7 @@
 // Rentals as the API sends them (src/pms/api/rentals.py): pages of properties and leases, a
 // property, a unit, and search results; and how they read.
 import { money, usDate } from "./money";
-import type { RentLease } from "./rent";
+import type { Hold, RentLease } from "./rent";
 import type { Agreement, LateFees, NsfFee } from "./setup";
 
 export type Paged<T> = { items: T[]; total: number; page: number; per_page: number };
@@ -143,6 +143,8 @@ export type LeaseDetail = RentLease & {
   unit_id: string;
   status: LeaseStatus;
   people: LeasePerson[];
+  // Its payment holds (an eviction filed), newest first.
+  holds: Hold[];
 };
 
 export type LedgerKind =

@@ -40,6 +40,12 @@ const LEASE: LeaseDetail = {
     { id: "r1", kind: "fee", memo: "Pet rent", amount: "35.00", starts_on: "2026-01-01", ends_on: null },
     { id: "r2", kind: "credit", memo: "Concession", amount: "100.00", starts_on: "2026-02-01", ends_on: "2026-12-01" },
   ],
+  holds: [],
+};
+const HELD: LeaseDetail = {
+  ...LEASE,
+  on_hold: true,
+  holds: [{ id: "h1", starts_on: "2026-10-01", reason: "Eviction filed", ends_on: null, released_by: null, allowed: 0, in_force: true }],
 };
 
 const LEDGER: Ledger = {
@@ -187,8 +193,8 @@ describe("LeasePage", () => {
     // Each payment as it came in, whole; It bounced is in the ⋯ menu of the one that hasn't.
     const received = screen.getByRole("table", { name: "Payments received" });
     expect(within(received).getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").map((c) => c.textContent))).toEqual([
-      ["09/01/2026Check 101", "$1,500.00", ""],
-      ["08/01/2026EFT", "$1,500.00", "Bounced"],  // how it came, when no reference says
+      ["09/01/2026Check 101Receipt (PDF)", "$1,500.00", ""],
+      ["08/01/2026EFTReceipt (PDF)", "$1,500.00", "Bounced"],  // how it came, when no reference says
     ]);
     const bounced = () => {
       fireEvent.click(within(received).getByRole("button", { name: "Actions for 09/01/2026 payment of $1,500.00" }));
@@ -315,7 +321,7 @@ describe("LeasePage", () => {
   });
 
   it("keeps a refused payment's panel open with the reason, and says when the lease is on a hold", async () => {
-    server({ ...LEASE, on_hold: true }, {}, { "/api/rent/leases/l1/payments": "lease is on a payment hold" });
+    server(HELD, {}, { "/api/rent/leases/l1/payments": "lease is on a payment hold" });
     await open();
     expect(screen.getByText(/On a payment hold/)).toBeTruthy();
     const form = panel("Receive payment");
@@ -328,6 +334,53 @@ describe("LeasePage", () => {
     fireEvent.click(within(form).getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getAllByText("lease is on a payment hold")).toHaveLength(1);
+  });
+
+  it("links each payment to its receipt", async () => {
+    server();
+    await open();
+    fireEvent.click(screen.getByRole("tab", { name: "Ledger" }));
+    const table = screen.getByRole("table", { name: "Payments received" });
+    expect(within(table).getAllByRole("link", { name: "Receipt (PDF)" }).map((a) => a.getAttribute("href"))).toEqual([
+      "/api/rent/payments/tr1/receipt",
+      "/api/rent/payments/tr0/receipt",
+    ]);
+  });
+
+  it("places a payment hold from its ⋯ menu", async () => {
+    const fetch = server(LEASE, {
+      "/api/rent/leases/l1/holds": { id: "h1", starts_on: "2026-10-01", reason: "Eviction filed", ends_on: null, released_by: null, allowed: 0, in_force: true },
+    });
+    await open();
+    const form = panel("Place payment hold", true);
+    fireEvent.change(within(form).getByLabelText("Hold payments from"), { target: { value: "2026-10-01" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Place hold" }));
+    expect(await screen.findByText("On a payment hold since 10/01/2026.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/rent/leases/l1/holds", { starts_on: "2026-10-01", reason: "Eviction filed" }]]);
+    // A lease with no hold has nothing to accept a payment past.
+    expect(within(panel("Receive payment")).queryByLabelText("Accept this payment past the payment hold")).toBeNull();
+  });
+
+  it("says since when and why a lease is on hold, accepts one payment past it and releases it", async () => {
+    const fetch = server(HELD, {
+      "/api/rent/holds/h1/release": { ...HELD.holds[0], ends_on: "2026-10-20", released_by: "Staff 1", in_force: false },
+    });
+    await open();
+    expect(screen.getByText(/Since 10\/01\/2026: Eviction filed\. A payment is refused unless you accept it past the hold\./)).toBeTruthy();
+    const pay = panel("Receive payment");
+    fireEvent.change(within(pay).getByLabelText("Payment received"), { target: { value: "700.00" } });
+    fireEvent.click(within(pay).getByLabelText("Accept this payment past the payment hold"));
+    fireEvent.click(within(pay).getByRole("button", { name: "Record payment" }));
+    await vi.waitFor(() => expect(posted(fetch).map(([path]) => path)).toContain("/api/rent/leases/l1/payments"));
+    const [, body] = posted(fetch).find(([path]) => path === "/api/rent/leases/l1/payments") ?? [];
+    expect(body).toMatchObject({ amount: "700.00", past_hold: true });
+
+    const release = panel("Release payment hold", true);
+    expect(within(release).getByText("On hold since 10/01/2026: Eviction filed")).toBeTruthy();
+    fireEvent.change(within(release).getByLabelText("Accept payments again from"), { target: { value: "2026-10-20" } });
+    fireEvent.click(within(release).getByRole("button", { name: "Release hold" }));
+    expect(await screen.findByText("The payment hold is released from 10/20/2026.")).toBeTruthy();
+    expect(posted(fetch).at(-1)).toEqual(["/api/rent/holds/h1/release", { ends_on: "2026-10-20" }]);
   });
 
   it("lists its tenants with their contact and portal, and makes an invite link", async () => {

@@ -557,6 +557,8 @@ class Lease(rent.RentLease):
     status: Literal["current", "future", "ended"]
     # Each tenant on it with their contact details and whether they can sign in to the portal.
     people: list[LeasePerson]
+    # Its payment holds (an eviction filed), newest first.
+    holds: list[rent.Hold]
 
 
 LEASE_PEOPLE = f"""
@@ -587,6 +589,7 @@ def lease_page(session: Staff, conn: Conn, lease_id: UUID) -> Lease:
         raise HTTPException(404, "no such lease")
     day = rent.today()
     detail = rent.lease_detail(conn, session.pmc_id, lease_id, day)
+    holds = rent.holds_of(conn, session.pmc_id, lease_id, day)
     people = [
         LeasePerson(id=i, name=n, email=e, phone=ph, portal=po, login_email=le)
         for i, n, e, ph, po, le in conn.execute(LEASE_PEOPLE, (lease_id,)).fetchall()
@@ -597,6 +600,7 @@ def lease_page(session: Staff, conn: Conn, lease_id: UUID) -> Lease:
         property_id=row[1],
         status=status_of(row[2], row[3], day),
         people=people,
+        holds=holds,
     )
 
 

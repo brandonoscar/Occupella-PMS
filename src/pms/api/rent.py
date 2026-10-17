@@ -247,7 +247,7 @@ def post(
 
 DESCRIBED = ("reference", "method", "memo")
 # How a tenant's payment came: recorded as said, nothing sent (ADR 0006).
-Method = Literal["check", "money order", "EFT", "cash"]
+Method = Literal["check", "cashier's check", "money order", "EFT", "cash"]
 
 
 def earlier(
@@ -310,10 +310,13 @@ def record_payment(
     reference: str | None = None,
     account: str | None = None,
     method: Method | None = None,
+    past_hold_by: str | None = None,
 ) -> Recorded:
     """A tenant's payment into the operating trust bank account: the owner's account takes
     what the lease owes, matched to its charges oldest first; the rest is the first tenant's
-    prepaid rent. The same request id again returns the payment as it was recorded."""
+    prepaid rent. The same request id again returns the payment as it was recorded. A lease on
+    a payment hold refuses it, unless staff accept it past the hold (`past_hold_by` names them):
+    then every hold in force that day allows it, in the same transaction."""
     lease = lease_of(conn, pmc_id, lease_id)
     owner, bank = owner_account(conn, pmc_id, lease.property_id, account)
     lock_lease(conn, lease_id)
@@ -341,8 +344,37 @@ def record_payment(
     if posted is None:
         return replay(conn, pmc_id, key, metadata, owner)
     if to_owner > 0:
+        if past_hold_by is not None:
+            allow_past_holds(conn, pmc_id, lease_id, posted[0], received_on, past_hold_by)
         match(conn, pmc_id, lease_id, posted[0], to_owner)
     return Recorded(posted, to_owner, to_prepaid)
+
+
+# The payment holds of a lease in force on a day: from a hold's first day until its release ends
+# it, as trust_apply_payment reads them.
+IN_FORCE = """
+SELECT h.id FROM trust_payment_holds AS h
+LEFT JOIN trust_payment_hold_releases AS r ON r.hold_id = h.id
+WHERE h.pmc_id = %(pmc)s AND h.lease_id = %(lease)s AND h.starts_on <= %(day)s
+  AND (r.ends_on IS NULL OR %(day)s < r.ends_on)
+"""
+
+
+def allow_past_holds(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    lease_id: UUID,
+    transfer_id: str,
+    day: date,
+    by: str,
+) -> None:
+    """Lets one payment past every hold of the lease in force on its day, naming who did."""
+    for (hold,) in conn.execute(IN_FORCE, {"pmc": pmc_id, "lease": lease_id, "day": day}):
+        conn.execute(
+            "INSERT INTO trust_payment_hold_allowances (hold_id, transfer_id, pmc_id, allowed_by)"
+            " VALUES (%s, %s, %s, %s)",
+            (hold, transfer_id, pmc_id, by),
+        )
 
 
 def replay(
@@ -1093,6 +1125,8 @@ class NewPayment(BaseModel):
     method: Method | None = None
     # The owner's account it pays, when the property has more than one.
     account: Annotated[str, Field(min_length=1, max_length=100)] | None = None
+    # Accept it although the lease is on a payment hold (an eviction filed): the PMC's choice.
+    past_hold: bool = False
 
 
 class Payment(BaseModel):
@@ -1129,6 +1163,7 @@ def pay(session: Staff, conn: Conn, lease_id: UUID, new: NewPayment) -> Payment:
                 new.reference,
                 new.account,
                 new.method,
+                staff_name(conn, session.pmc_id, session.person_id) if new.past_hold else None,
             )
         )
     except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
@@ -1211,3 +1246,110 @@ def bounced(session: Staff, conn: Conn, transfer_id: str, returned: Day) -> Boun
     return Bounced(
         transfers=done.transfers, nsf_fee=None if done.nsf_fee is None else cents(done.nsf_fee)
     )
+
+
+# --- payment holds (an eviction filed) ------------------------------------------------------------
+
+Reason = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+
+
+class Hold(BaseModel):
+    id: UUID
+    starts_on: date
+    reason: str
+    # The day its release ends it, and who released it; none while it isn't released.
+    ends_on: date | None
+    released_by: str | None
+    # Payments staff accepted past it.
+    allowed: int
+    in_force: bool
+
+
+HOLDS = """
+SELECT h.id, h.starts_on, h.reason, r.ends_on, r.released_by,
+       (SELECT count(*) FROM trust_payment_hold_allowances AS a WHERE a.hold_id = h.id)
+FROM trust_payment_holds AS h
+LEFT JOIN trust_payment_hold_releases AS r ON r.hold_id = h.id
+WHERE h.pmc_id = %s AND h.lease_id = %s
+ORDER BY h.starts_on DESC, h.created_at DESC, h.id
+"""
+
+
+def holds_of(conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID, day: date) -> list[Hold]:
+    """A lease's payment holds, newest first."""
+    return [
+        Hold(
+            id=i,
+            starts_on=starts,
+            reason=reason,
+            ends_on=ends,
+            released_by=by,
+            allowed=allowed,
+            in_force=starts <= day and (ends is None or day < ends),
+        )
+        for i, starts, reason, ends, by, allowed in conn.execute(HOLDS, (pmc_id, lease_id))
+    ]
+
+
+def staff_name(conn: psycopg.Connection[Any], pmc_id: UUID, staff_id: UUID) -> str:
+    row = conn.execute(
+        "SELECT display_name FROM trust_staff WHERE pmc_id = %s AND id = %s", (pmc_id, staff_id)
+    ).fetchone()
+    assert row is not None  # the session's own staff member
+    return str(row[0])
+
+
+class NewHold(BaseModel):
+    starts_on: date
+    reason: Reason
+
+
+@router.post("/leases/{lease_id}/holds", status_code=201)
+def place_hold(session: Staff, conn: Conn, lease_id: UUID, new: NewHold) -> Hold:
+    """Puts a lease on a payment hold from a day (an eviction filed): from then on a payment to
+    it is refused unless staff accept it past the hold. One hold at a time: a lease with one not
+    released is refused another."""
+    lease_of(conn, session.pmc_id, lease_id)
+    if new.starts_on > today():
+        raise HTTPException(422, "a hold starts today or on an earlier day")
+    lock_lease(conn, lease_id)
+    if any(h.ends_on is None for h in holds_of(conn, session.pmc_id, lease_id, today())):
+        raise HTTPException(409, "this lease is on a payment hold already: release it first")
+    made = conn.execute(
+        "INSERT INTO trust_payment_holds (pmc_id, lease_id, starts_on, reason)"
+        " VALUES (%s, %s, %s, %s) RETURNING id",
+        (session.pmc_id, lease_id, new.starts_on, new.reason),
+    ).fetchone()
+    assert made is not None
+    return next(h for h in holds_of(conn, session.pmc_id, lease_id, today()) if h.id == made[0])
+
+
+class Release(BaseModel):
+    ends_on: date
+
+
+@router.post("/holds/{hold_id}/release", status_code=201)
+def release_hold(session: Staff, conn: Conn, hold_id: UUID, release: Release) -> Hold:
+    """Ends a payment hold from a day, after it started, naming who released it; once."""
+    row = conn.execute(
+        "SELECT lease_id FROM trust_payment_holds WHERE pmc_id = %s AND id = %s",
+        (session.pmc_id, hold_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, "no such hold")
+    try:
+        conn.execute(
+            "INSERT INTO trust_payment_hold_releases (hold_id, pmc_id, ends_on, released_by)"
+            " VALUES (%s, %s, %s, %s)",
+            (
+                hold_id,
+                session.pmc_id,
+                release.ends_on,
+                staff_name(conn, session.pmc_id, session.person_id),
+            ),
+        )
+    except psycopg.errors.UniqueViolation:
+        raise HTTPException(409, "this hold is released already") from None
+    except psycopg.errors.CheckViolation:
+        raise HTTPException(422, "a hold ends after the day it started") from None
+    return next(h for h in holds_of(conn, session.pmc_id, row[0], today()) if h.id == hold_id)

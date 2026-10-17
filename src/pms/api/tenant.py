@@ -77,6 +77,8 @@ class Lease(BaseModel):
     deposit_returned: bool
     # A lease in effect: whether it requires renters insurance, and the policy on file.
     renters_insurance: rent_api.RentersInsurance | None
+    # Each payment to it, newest first, each with its receipt to download.
+    payments: list[rent_api.Paid]
 
 
 class NewRequest(BaseModel):
@@ -120,6 +122,24 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
         (on, on, session.pmc_id, session.person_id),
     ).fetchall()
     insured = rent_api.renters_insurance(conn, session.pmc_id, on)
+    paid: dict[UUID, list[rent_api.Paid]] = {}
+    for lease, transfer, event_at, amount, reference, method, bounced in (
+        found
+        for row in rows
+        for found in conn.execute(
+            rent_api.PAYMENTS, {"pmc": session.pmc_id, "lease": row[0]}
+        ).fetchall()
+    ):
+        paid.setdefault(lease, []).append(
+            rent_api.Paid(
+                transfer_id=transfer,
+                received_on=event_at.astimezone(UTC).date(),
+                amount=rent_api.cents(amount),
+                reference=reference,
+                method=method,
+                bounced=bounced,
+            )
+        )
     coming: dict[UUID, list[RentChangeNotice]] = {}
     for lease, effective, monthly_rent, notice in conn.execute(
         "SELECT c.lease_id, c.effective_on, c.monthly_rent, c.notice_given_on"
@@ -158,6 +178,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
             ],
             deposit_returned=returned,
             renters_insurance=insured.get(lease),
+            payments=paid.get(lease, []),
         )
         for lease, prop, unit, starts, ends, rent, names, balance, returned in rows
     ]

@@ -43,6 +43,7 @@ from pydantic import BaseModel, Field
 
 from pms import accounts, email, exports, nightly
 from pms.api import (
+    bank_deposits,
     banking,
     budgets,
     company,
@@ -66,6 +67,7 @@ from pms.api import (
     owner,
     payables,
     people,
+    receipts,
     reconcile,
     renewals,
     rent,
@@ -468,6 +470,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(people.router)
     app.include_router(setup.router)
     app.include_router(rent.router)
+    app.include_router(receipts.router)
     app.include_router(rentals.router)
     app.include_router(groups.router)
     app.include_router(directory.router)
@@ -477,6 +480,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(payables.router)
     app.include_router(reconcile.router)
     app.include_router(banking.router)
+    app.include_router(bank_deposits.router)
     app.include_router(journal.router)
     app.include_router(budgets.router)
     app.include_router(custom_roles.router)

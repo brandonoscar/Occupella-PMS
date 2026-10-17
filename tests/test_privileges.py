@@ -155,6 +155,8 @@ TABLES = {
     "trust_bank_matches": {"SELECT"},
     "trust_bank_match_lines": {"SELECT"},
     "trust_bank_match_transfers": {"SELECT"},
+    "trust_bank_deposits": {"SELECT", "INSERT"},
+    "trust_bank_deposit_items": {"SELECT", "INSERT"},
     "trust_bank_unmatches": {"SELECT"},
     # The switching tool: items carried over and the sign-off; their matches by function only.
     "trust_cutover_items": {"SELECT", "INSERT"},
@@ -304,6 +306,7 @@ FUNCTIONS = {
     # Checks a payment hold as the owner, to take its lease's lock: no role calls it on its own.
     "trust_check_payment_hold()": set(),
     "trust_check_bill_decision()": set(),
+    "trust_check_bank_deposit_item()": set(),  # a trigger's: no one calls it
     # Reports read trust records, so only the app and the AI; they run with the caller's own
     # read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app", "trust_ai_agent"},

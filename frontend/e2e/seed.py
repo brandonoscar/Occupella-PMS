@@ -472,6 +472,7 @@ FEATURES = (
     "company",
     "email",
     "automatic-email",
+    "rent-in",
 )
 
 

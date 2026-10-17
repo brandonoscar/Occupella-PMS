@@ -51,7 +51,11 @@ export type OpenLine = {
   description: string;
   reference: string | null;
 };
-export type OpenTransfer = { id: string; on: string; amount: string; memo: string | null };
+// A transfer in a bank deposit names it and its day: its one bank line matches the whole deposit.
+export type OpenTransfer = {
+  id: string; on: string; amount: string; memo: string | null;
+  deposit_id?: string | null; deposited_on?: string | null;
+};
 // A check or deposit carried over from the old system that the bank had not cleared.
 export type OpenItem = {
   id: string;
@@ -130,7 +134,15 @@ export function lineLabel(line: OpenLine): string {
 }
 
 export function transferLabel(transfer: OpenTransfer): string {
-  return `${usDate(transfer.on)} ${transfer.memo ?? "No memo"}: ${money(transfer.amount)}`;
+  const deposit = transfer.deposited_on ? ` · deposit of ${usDate(transfer.deposited_on)}` : "";
+  return `${usDate(transfer.on)} ${transfer.memo ?? "No memo"}: ${money(transfer.amount)}${deposit}`;
+}
+
+// Ticking a transfer in a bank deposit ticks (or unticks) the whole deposit with it.
+export function toggleTransfer(all: OpenTransfer[], chosen: string[], id: string): string[] {
+  const deposit = all.find((t) => t.id === id)?.deposit_id ?? null;
+  const ids = deposit === null ? [id] : all.filter((t) => t.deposit_id === deposit).map((t) => t.id);
+  return chosen.includes(id) ? chosen.filter((x) => !ids.includes(x)) : [...chosen, ...ids.filter((x) => !chosen.includes(x))];
 }
 
 // A period ends at midnight UTC after its last day; the day staff read is that last day.

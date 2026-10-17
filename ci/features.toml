@@ -581,3 +581,20 @@ operations = [
 browser = [
   "features.spec.ts › staff turn on the emails the PMS writes by itself, and a run of rent sends each owner last month's statement onto their Email tab",
 ]
+
+[[feature]]
+id = "rent-in"
+statement = "Staff put a lease on a payment hold when an eviction is filed (a payment is then refused unless they accept it past the hold, naming who did) and release it from a day; take a cashier's check; print a receipt for each payment, which the tenant downloads in the portal too; and take payments to the bank together as a deposit with its slip, whose one bank line matches all of it at month-end (the founder's review, q019 to q032)."
+operations = [
+  "POST /api/rent/leases/{lease_id}/holds",
+  "POST /api/rent/holds/{hold_id}/release",
+  "GET /api/rent/payments/{transfer_id}/receipt",
+  "GET /api/tenant/payments/{transfer_id}/receipt",
+  "GET /api/bank-accounts/{bank_account_id}/undeposited",
+  "GET /api/bank-accounts/{bank_account_id}/deposits",
+  "POST /api/bank-accounts/{bank_account_id}/deposits",
+  "GET /api/bank-accounts/deposits/{deposit_id}/slip",
+]
+browser = [
+  "features.spec.ts › staff put a lease on a payment hold, accept a cashier's check past it and release it, print receipts, take payments to the bank together and print the slip; the tenant downloads their receipt",
+]

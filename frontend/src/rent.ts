@@ -18,9 +18,10 @@ export type Paid = {
   bounced: boolean;
 };
 // How a payment came; recorded as said, nothing sent (ADR 0006).
-export type PaymentMethod = "check" | "money order" | "EFT" | "cash";
+export type PaymentMethod = "check" | "cashier's check" | "money order" | "EFT" | "cash";
 export const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "check", label: "Check" },
+  { value: "cashier's check", label: "Cashier's check" },
   { value: "money order", label: "Money order" },
   { value: "EFT", label: "EFT" },
   { value: "cash", label: "Cash" },
@@ -169,4 +170,22 @@ export function insuranceBadge(insurance: RentersInsurance): { word: string; ton
     word: insurance.standing,
     tone: insurance.standing === "expired" || insurance.standing === "none on file" ? "danger" : "caution",
   };
+}
+
+// A payment hold (an eviction filed): from its first day a payment to the lease is refused unless
+// staff accept it past the hold; a release ends it from a day.
+export type Hold = {
+  id: string;
+  starts_on: string;
+  reason: string;
+  ends_on: string | null;
+  released_by: string | null;
+  allowed: number;
+  in_force: boolean;
+};
+export function holdLine(hold: Hold): string {
+  const since = `Since ${usDate(hold.starts_on)}: ${hold.reason}`;
+  const ended = hold.ends_on === null ? "" : `, released from ${usDate(hold.ends_on)}${hold.released_by ? ` by ${hold.released_by}` : ""}`;
+  const allowed = hold.allowed === 0 ? "" : `; ${hold.allowed} payment${hold.allowed === 1 ? "" : "s"} accepted past it`;
+  return `${since}${ended}${allowed}`;
 }

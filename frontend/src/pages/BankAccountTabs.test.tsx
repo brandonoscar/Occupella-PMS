@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { Breakdown, RegisterLine } from "../banking";
-import { BreakdownTab, RegisterTab } from "./BankAccountTabs";
+import type { BankDeposit, Breakdown, RegisterLine, Undeposited } from "../banking";
+import { BreakdownTab, DepositsTab, RegisterTab } from "./BankAccountTabs";
 
 afterEach(() => {
   cleanup();
@@ -117,5 +117,53 @@ describe("BreakdownTab", () => {
     server(() => "only staff may do that");
     render(<BreakdownTab bankId="b2" />);
     expect((await screen.findByRole("alert")).textContent).toBe("only staff may do that");
+  });
+});
+
+describe("DepositsTab", () => {
+  const WAITING: Undeposited[] = [
+    { id: "t1", transfer_ids: ["t1", "t1b"], on: "2026-10-14", type: "Rent payment", party: "Tenant A", memo: "Check 101", amount: "1600.00" },
+    { id: "t2", transfer_ids: ["t2"], on: "2026-10-15", type: "Rent payment", party: "Tenant B", memo: "Check 102", amount: "200.50" },
+  ];
+  const DONE: BankDeposit = { id: "d1", deposited_on: "2026-10-16", total: "1800.50", items: 3, recorded_by: "Staff 1", matched: false };
+
+  it("takes what was ticked to the bank together and links each deposit's slip", async () => {
+    let deposited = false;
+    const fetch = vi.fn(async (path: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        deposited = true;
+        return new Response(JSON.stringify(DONE), { status: 201 });
+      }
+      if (path.endsWith("/undeposited")) return new Response(JSON.stringify(deposited ? [] : WAITING));
+      return new Response(JSON.stringify(deposited ? [DONE] : []));
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<DepositsTab bankId="b1" />);
+
+    const list = await screen.findByRole("list", { name: "Not deposited yet" });
+    expect(within(list).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "10/14/2026 Rent payment, Tenant A (Check 101): $1,600.00",
+      "10/15/2026 Rent payment, Tenant B (Check 102): $200.50",
+    ]);
+    expect(screen.getByText("No deposit recorded yet.")).toBeTruthy();
+    fireEvent.click(within(list).getByLabelText(/Tenant A/));
+    fireEvent.click(within(list).getByLabelText(/Tenant B/));
+    fireEvent.change(screen.getByLabelText("Deposited on"), { target: { value: "2026-10-16" } });
+    fireEvent.click(screen.getByRole("button", { name: "Record deposit of $1,800.50" }));
+
+    expect(await screen.findByText("Deposit of $1,800.50 recorded for 10/16/2026.")).toBeTruthy();
+    const [path, init] = fetch.mock.calls.find(([, i]) => i?.method === "POST") ?? [];
+    expect(path).toBe("/api/bank-accounts/b1/deposits");
+    expect(JSON.parse(String(init?.body))).toEqual({ deposited_on: "2026-10-16", transfer_ids: ["t1", "t1b", "t2"] });
+    const table = await screen.findByRole("table", { name: "Deposits" });
+    expect(cells(table)).toEqual([["10/16/2026", "3", "$1,800.50", "Staff 1", "Not matched yet", "Slip (PDF)"]]);
+    expect(within(table).getByRole("link", { name: "Slip (PDF)" }).getAttribute("href")).toBe("/api/bank-accounts/deposits/d1/slip");
+    expect(screen.getByText("Everything that came in is in a deposit.")).toBeTruthy();
+  });
+
+  it("says why a deposit was refused, and when the account can't be read", async () => {
+    server((path) => (path.endsWith("/deposits") ? "no such trust bank account" : WAITING));
+    render(<DepositsTab bankId="b1" />);
+    expect((await screen.findByRole("alert")).textContent).toBe("no such trust bank account");
   });
 });

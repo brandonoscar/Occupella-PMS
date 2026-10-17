@@ -2333,3 +2333,71 @@ test("staff turn on the emails the PMS writes by itself, and a run of rent sends
   await expect(owner).toContainText(`Your statement for ${month}`);
   await expect(owner).toContainText(`Monthly statement to ${people.emails.owner_a}`);
 });
+
+test("staff put a lease on a payment hold, accept a cashier's check past it and release it, print receipts, take payments to the bank together and print the slip; the tenant downloads their receipt", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["rent-in"]!;
+  const tenant = await (await browser.newContext()).newPage();
+  await joinPortal(tenant, people.drew);
+  await joinAsStaff(page, people.manager);
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  const usYesterday = `${yesterday.slice(5, 7)}/${yesterday.slice(8, 10)}/${yesterday.slice(0, 4)}`;
+
+  // An eviction filed: payments are refused from yesterday.
+  await openLease(page, "Aspen Row, Unit 1");
+  const hold = await leasePanel(page, "Place payment hold");
+  await hold.getByLabel("Hold payments from").fill(yesterday);
+  await hold.getByRole("button", { name: "Place hold" }).click();
+  await expect(page.getByText(`On a payment hold since ${usYesterday}.`)).toBeVisible();
+  await expect(page.getByRole("main")).toContainText(`Since ${usYesterday}: Eviction filed.`);
+
+  // The PMC accepts one cashier's check past the hold.
+  const pay = await leasePanel(page, "Receive payment");
+  await pay.getByLabel("Payment received").fill("100.00");
+  await pay.getByLabel("Method").selectOption({ label: "Cashier's check" });
+  await pay.getByLabel("Check or reference").fill("CC 9");
+  await pay.getByLabel("Accept this payment past the payment hold").check();
+  await pay.getByRole("button", { name: "Record payment" }).click();
+  await expect(pay).toHaveCount(0);
+
+  // Released from today: the next payment needs no acceptance.
+  const release = await leasePanel(page, "Release payment hold");
+  await release.getByRole("button", { name: "Release hold" }).click();
+  await expect(page.getByText(/^The payment hold is released from /)).toBeVisible();
+  const next = await leasePanel(page, "Receive payment");
+  await next.getByLabel("Payment received").fill("50.00");
+  await next.getByLabel("Check or reference").fill("Check 12");
+  await expect(next.getByLabel("Accept this payment past the payment hold")).toHaveCount(0);
+  await next.getByRole("button", { name: "Record payment" }).click();
+  await expect(next).toHaveCount(0);
+
+  // Each payment's receipt, from the ledger.
+  await leaseTab(page, "Ledger");
+  const received = page.getByRole("table", { name: "Payments received" });
+  await expect(received).toContainText("Cashier's check · CC 9");
+  await downloads(page, "Receipt (PDF)", PDF);
+
+  // Both go to the bank together, with a slip.
+  await section(page, "Banking");
+  await page.getByRole("row", { name: "Demo operating trust account", exact: true }).getByRole("link").click();
+  await page.getByRole("tab", { name: "Deposits", exact: true }).click();
+  const waiting = page.getByRole("list", { name: "Not deposited yet" });
+  await waiting.getByLabel(/\(CC 9\): \$100\.00$/).check();
+  await waiting.getByLabel(/\(Check 12\): \$50\.00$/).check();
+  await page.getByRole("button", { name: "Record deposit of $150.00" }).click();
+  await expect(page.getByText(/^Deposit of \$150\.00 recorded for /)).toBeVisible();
+  await expect(waiting.getByText(/CC 9/)).toHaveCount(0);
+  await expect(page.getByRole("table", { name: "Deposits" })).toContainText("Not matched yet");
+  await downloads(page, "Slip (PDF)", PDF);
+
+  // The tenant downloads their own receipt.
+  await tenant.reload();
+  const theirs = tenant.getByRole("list", { name: "Payments" });
+  await expect(theirs).toContainText("Cashier's check CC 9");
+  const href = (await theirs.getByRole("link", { name: "Receipt (PDF)" }).first().getAttribute("href")) ?? "";
+  const answer = await tenant.request.get(href);
+  expect(answer.status()).toBe(200);
+  expect(answer.headers()["content-type"]).toContain(PDF);
+});

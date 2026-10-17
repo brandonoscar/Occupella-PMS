@@ -15,7 +15,7 @@ import { SidePanel } from "../components/SidePanel";
 import { Tabs } from "../components/Tabs";
 import { Wide } from "../components/Wide";
 import { money, usDate } from "../money";
-import { chargeLabel, insuranceBadge, insuranceLine, rentChangeLine } from "../rent";
+import { chargeLabel, holdLine, insuranceBadge, insuranceLine, rentChangeLine } from "../rent";
 import type { LeaseDetail, LeasePerson, Ledger } from "../rentals";
 import { LEASE_STATUS, LEDGER_KIND, PORTAL, rentLabel, termLabel } from "../rentals";
 import { FilesCard } from "./FilesCard";
@@ -25,10 +25,12 @@ import type { Recorder } from "./LeaseForms";
 import {
   ChargeForm,
   DepositForm,
+  HoldForm,
   PaymentForm,
   PaymentRow,
   RecurringForm,
   RecurringLine,
+  ReleaseForm,
   RentChangeForm,
 } from "./LeaseForms";
 import { navigate } from "../router";
@@ -36,7 +38,7 @@ import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 
-type Panel = "payment" | "charge" | "rent" | "recurring" | "insurance" | "deposit" | "leasing";
+type Panel = "payment" | "charge" | "rent" | "recurring" | "insurance" | "deposit" | "leasing" | "hold" | "release";
 const PANELS: Record<Panel, string> = {
   payment: "Receive payment",
   charge: "Enter charge",
@@ -45,6 +47,8 @@ const PANELS: Record<Panel, string> = {
   insurance: "Renters insurance",
   deposit: "Record deposit",
   leasing: "Take leasing fee",
+  hold: "Place payment hold",
+  release: "Release payment hold",
 };
 type Tab = "summary" | "ledger" | "tenants" | "files" | "notes";
 const TABS: { value: Tab; label: string }[] = [
@@ -95,12 +99,17 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
   }
   const names = lease.tenants.map((t) => t.name).join(", ");
   const owes = Number(lease.owed) > 0;
+  // The hold not yet released, if any: one at a time.
+  const open = lease.holds.find((h) => h.ends_on === null) ?? null;
   const actions: RowAction[] = [
     { label: "Change rent", onSelect: () => setPanel("rent") },
     { label: "Add recurring charge", onSelect: () => setPanel("recurring") },
     { label: "Renters insurance", onSelect: () => setPanel("insurance") },
     { label: "Record deposit", onSelect: () => setPanel("deposit") },
     { label: "Take leasing fee", onSelect: () => setPanel("leasing") },
+    open === null
+      ? { label: "Place payment hold", onSelect: () => setPanel("hold") }
+      : { label: "Release payment hold", onSelect: () => setPanel("release") },
     { label: "Record NSF", onSelect: () => setTab("ledger") },
     { label: "Renew lease", onSelect: () => navigate(`/draft-leases?lease=${id}`) },
     { label: "Move out", onSelect: () => navigate("/move-out") },
@@ -129,7 +138,11 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
           </span>
         </p>
       </div>
-      {lease.on_hold && <Notice tone="error">On a payment hold: payments are refused unless the hold allows them.</Notice>}
+      {lease.on_hold && (
+        <Notice tone="error">
+          {`On a payment hold. ${lease.holds.filter((h) => h.in_force).map(holdLine).join(". ")}. A payment is refused unless you accept it past the hold.`}
+        </Notice>
+      )}
       <Said>{said}</Said>
       {/* A side panel's refusal shows in the panel, once. */}
       {panel === null && <Notice tone="error">{refused}</Notice>}
@@ -150,6 +163,8 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
           {panel === "insurance" && <InsuranceForms lease={lease} record={recordThenClose} />}
           {panel === "deposit" && <DepositForm lease={lease} record={recordThenClose} />}
           {panel === "leasing" && <LeasingFeeForm lease={lease} record={recordThenClose} />}
+          {panel === "hold" && <HoldForm lease={lease} record={recordThenClose} />}
+          {panel === "release" && open !== null && <ReleaseForm hold={open} record={recordThenClose} />}
           <Notice tone="error">{refused}</Notice>
         </SidePanel>
       )}
