@@ -1,8 +1,13 @@
-"""Email the PMS sends, behind one interface (docs/adr/0004-email.md).
+"""Email the PMS sends, behind one interface (docs/adr/0004-email.md, docs/adr/0007-email.md).
 
-One email so far: when a bill over an owner's approval limit is entered, its owner is told it
-waits for them, with a link to sign in to the portal and approve or decline it. Nothing in the
-email decides anything.
+The emails: a bill over an owner's approval limit tells its owner it waits for them (nothing in
+it decides anything); a portal invite, and a password reset an owner or a tenant asks for, each
+with the link that sets a password; and what staff write to a tenant, an owner or a vendor.
+
+An invite's or a reset's link signs someone in, so it is never written to the outbox: the email
+keeps a placeholder (LINK), and the link waits in this process's memory (hold_link) until the
+email is handed to the sender. One not sent within LINK_MINUTES is given up on, once, and staff
+send a new one.
 
 Each email is written to trust_emails in the transaction that causes it, so it exists only if
 its cause does. After that commits, deliver_pending() hands each email not yet delivered to the
@@ -23,10 +28,14 @@ import os
 import smtplib
 import ssl
 import sys
+import threading
+import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from decimal import Decimal
 from email.message import EmailMessage
+from email.utils import formataddr
 from typing import Any, Literal, Protocol
 from uuid import UUID
 
@@ -34,6 +43,10 @@ import psycopg
 from psycopg import sql
 
 MAX_ATTEMPTS = 5
+# Where an invite's or a reset's link goes in its body, and how long the link is held for it.
+LINK = "{{link}}"
+LINK_MINUTES = 10
+LINK_LOST = "its sign-in link is held only until it is sent, and it was not sent: send a new one"
 
 
 @dataclass(frozen=True)
@@ -41,6 +54,8 @@ class Message:
     to: str
     subject: str
     body: str
+    # The company's name, shown beside the server's From address.
+    from_name: str = ""
 
 
 class Sender(Protocol):
@@ -72,7 +87,7 @@ class SmtpSender:
 
     def send(self, message: Message) -> None:
         email = EmailMessage()
-        email["From"] = self.from_address
+        email["From"] = formataddr((message.from_name, self.from_address))
         email["To"] = message.to
         email["Subject"] = message.subject
         email.set_content(message.body)
@@ -105,6 +120,162 @@ def sender_named(name: str, env: Mapping[str, str]) -> Sender | None:
 
 def dollars(amount: Decimal) -> str:
     return f"${amount:,.2f}"
+
+
+# --- the sign-in links of invites and resets, held in memory -------------------------------------
+
+_links: dict[UUID, tuple[str, float]] = {}
+_links_lock = threading.Lock()
+
+
+def hold_link(email_id: UUID, link: str) -> None:
+    """Holds an invite's or a reset's link until its email is handed to the sender."""
+    now = time.monotonic()
+    with _links_lock:
+        for held, (_, since) in list(_links.items()):
+            if now - since > LINK_MINUTES * 60:
+                del _links[held]
+        _links[email_id] = (link, now)
+
+
+def _held_link(email_id: UUID) -> str | None:
+    with _links_lock:
+        held = _links.get(email_id)
+    return None if held is None or time.monotonic() - held[1] > LINK_MINUTES * 60 else held[0]
+
+
+def _drop_link(email_id: UUID) -> None:
+    with _links_lock:
+        _links.pop(email_id, None)
+
+
+# --- invites, resets and messages -----------------------------------------------------------------
+
+# Each kind of person an email goes to: their name, and the column naming them. No part of a
+# query comes from a request.
+PEOPLE = {
+    "staff": ("SELECT display_name FROM trust_staff WHERE pmc_id = %s AND id = %s", "staff_id"),
+    "owner": ("SELECT display_name FROM trust_owners WHERE pmc_id = %s AND id = %s", "owner_id"),
+    "tenant": (
+        "SELECT display_name FROM trust_tenants WHERE pmc_id = %s AND id = %s",
+        "tenant_id",
+    ),
+    "vendor": (
+        "SELECT display_name FROM trust_vendors WHERE pmc_id = %s AND id = %s",
+        "vendor_id",
+    ),
+}
+WHERE = {"staff": "Occupella PMS", "owner": "the owner portal", "tenant": "the tenant portal"}
+
+
+def _names(
+    conn: psycopg.Connection[Any], pmc_id: UUID, kind: str, person_id: UUID
+) -> tuple[str, str]:
+    """The person's name and their company's."""
+    person = conn.execute(PEOPLE[kind][0], (pmc_id, person_id)).fetchone()
+    company = conn.execute(
+        "SELECT display_name FROM trust_pmcs WHERE pmc_id = %s", (pmc_id,)
+    ).fetchone()
+    if person is None or company is None:
+        raise LookupError(f"no {kind} {person_id} in PMC {pmc_id}")
+    return person[0], company[0]
+
+
+def _write(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    kind: str,
+    to_kind: str,
+    person_id: UUID,
+    to: str,
+    subject: str,
+    body: str,
+    sent_by: UUID | None = None,
+) -> UUID:
+    column = PEOPLE[to_kind][1]
+    row = conn.execute(
+        "INSERT INTO trust_emails (pmc_id, kind, to_address, subject, body, sent_by, needs_link,"
+        f" {column}) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, kind, to, subject, body, sent_by, kind in ("invite", "password_reset"), person_id),
+    ).fetchone()
+    assert row is not None
+    return UUID(str(row[0]))
+
+
+def write_invite(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    kind: str,
+    person_id: UUID,
+    to: str,
+    link: str,
+    expires_at: datetime,
+) -> UUID:
+    """Writes a portal invite's email, in the caller's transaction, and holds its link."""
+    name, company = _names(conn, pmc_id, kind, person_id)
+    extra = " You'll also set up an authenticator app." if kind == "staff" else ""
+    body = (
+        f"Hello {name},\n\n"
+        f"{company} invites you to sign in to {WHERE[kind]}. Set your password with this link;"
+        f" it works once, until {expires_at:%m/%d/%Y}:{extra}\n{LINK}\n\n"
+        f"{company}\n"
+    )
+    email_id = _write(
+        conn, pmc_id, "invite", kind, person_id, to, f"{company} invites you to sign in", body
+    )
+    hold_link(email_id, link)
+    return email_id
+
+
+def write_password_reset(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    kind: str,
+    person_id: UUID,
+    to: str,
+    link: str,
+    expires_at: datetime,
+) -> UUID:
+    """Writes the email a password reset sends, in the caller's transaction, and holds its link."""
+    name, company = _names(conn, pmc_id, kind, person_id)
+    body = (
+        f"Hello {name},\n\n"
+        f"Someone asked to set a new password for your {company} login ({to}). If it was you,"
+        f" use this link; it works once, until {expires_at:%m/%d/%Y}:\n{LINK}\n\n"
+        f"If it wasn't you, ignore this email: your password stays as it is.\n\n{company}\n"
+    )
+    email_id = _write(
+        conn,
+        pmc_id,
+        "password_reset",
+        kind,
+        person_id,
+        to,
+        f"Set a new password for {company}",
+        body,
+    )
+    hold_link(email_id, link)
+    return email_id
+
+
+def write_message(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    kind: str,
+    person_id: UUID,
+    to: str,
+    subject: str,
+    text: str,
+    sent_by: UUID,
+) -> UUID:
+    """Writes what a staff member wrote to a tenant, an owner or a vendor, signed with their name
+    and the company's, in the caller's transaction."""
+    _, company = _names(conn, pmc_id, kind, person_id)
+    staff = conn.execute(PEOPLE["staff"][0], (pmc_id, sent_by)).fetchone()
+    if staff is None:
+        raise LookupError(f"no staff {sent_by} in PMC {pmc_id}")
+    body = f"{text}\n\n{staff[0]}\n{company}\n"
+    return _write(conn, pmc_id, "message", kind, person_id, to, subject, body, sent_by)
 
 
 # --- a bill waiting for its owner ------------------------------------------------------------
@@ -175,13 +346,15 @@ def write_bill_approval(
 # --- delivery ----------------------------------------------------------------------------------
 
 PENDING = """
-SELECT e.id, e.pmc_id, e.to_address, e.subject, e.body
+SELECT e.id, e.pmc_id, e.to_address, e.subject, e.body, e.needs_link,
+       e.created_at < now() - make_interval(mins => %(minutes)s), p.display_name
 FROM trust_emails AS e
+JOIN trust_pmcs AS p ON p.pmc_id = e.pmc_id
 WHERE NOT EXISTS (SELECT 1 FROM trust_email_deliveries AS d
-                  WHERE d.email_id = e.id AND d.error IS NULL)
-  AND (SELECT count(*) FROM trust_email_deliveries AS d WHERE d.email_id = e.id) < %s
+                  WHERE d.email_id = e.id AND (d.error IS NULL OR d.error = %(lost)s))
+  AND (SELECT count(*) FROM trust_email_deliveries AS d WHERE d.email_id = e.id) < %(attempts)s
 ORDER BY e.created_at, e.id
-LIMIT %s
+LIMIT %(limit)s
 """
 
 
@@ -196,9 +369,13 @@ def deliver_pending(conn: psycopg.Connection[Any], sender: Sender, limit: int = 
     its own, and records the attempt. Two deliveries at once never send the same email: each
     takes the email's advisory lock and skips one another holds."""
     sent = failed = 0
-    for email_id, pmc_id, to, subject, body in conn.execute(
-        PENDING, (MAX_ATTEMPTS, limit)
+    for email_id, pmc_id, to, subject, body, needs_link, stale, company in conn.execute(
+        PENDING,
+        {"minutes": LINK_MINUTES, "lost": LINK_LOST, "attempts": MAX_ATTEMPTS, "limit": limit},
     ).fetchall():
+        link = _held_link(email_id) if needs_link else None
+        if needs_link and link is None and not stale:
+            continue  # its link is held by the process that wrote it, which sends it
         with conn.transaction():
             locked = conn.execute(
                 "SELECT pg_try_advisory_xact_lock(hashtextextended(%s, 0))", (str(email_id),)
@@ -209,17 +386,22 @@ def deliver_pending(conn: psycopg.Connection[Any], sender: Sender, limit: int = 
             ).fetchone()
             if not (locked and locked[0]) or delivered:
                 continue  # another delivery has it, or had it
-            try:
-                sender.send(Message(to, subject, body))
-                error = None
-            except (OSError, smtplib.SMTPException) as refused:
-                error = f"{type(refused).__name__}: {refused}"[:1000]
+            if needs_link and link is None:
+                error = LINK_LOST  # given up on, once
+            else:
+                try:
+                    text = body.replace(LINK, link) if link is not None else body
+                    sender.send(Message(to, subject, text, company))
+                    error = None
+                except (OSError, smtplib.SMTPException) as refused:
+                    error = f"{type(refused).__name__}: {refused}"[:1000]
             conn.execute(
                 "INSERT INTO trust_email_deliveries (email_id, pmc_id, sender, error)"
                 " VALUES (%s, %s, %s, %s)",
                 (email_id, pmc_id, sender.name, error),
             )
         if error is None:
+            _drop_link(email_id)
             sent += 1
         else:
             failed += 1

@@ -2237,3 +2237,59 @@ test("staff keep the company's name, address, logo and the fees new properties s
   await expect(page.getByText("The logo is removed.")).toBeVisible();
   await expect(page.getByText("No logo yet")).toBeVisible();
 });
+
+test("staff email a tenant from their page and every tenant of a property, an owner resets a forgotten password by email, and each email shows on the person's Email tab", async ({
+  page,
+}) => {
+  const people = seed.features.email!;
+
+  // A forgotten password: sign-in offers it (the server emails), and the answer never says
+  // whether the email has a login.
+  await page.goto(`/sign-in?pmc=${people.pmc_id}`);
+  await page.getByRole("link", { name: "Forgot your password?" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Set a new password" })).toBeVisible();
+  await page.getByLabel("Email you sign in with").fill(people.emails.owner_a!);
+  await page.getByRole("button", { name: "Email me a link" }).click();
+  await expect(page.getByRole("status")).toContainText("a link to set a new password is on its way");
+
+  await joinAsStaff(page, people.manager);
+
+  // A tenant, from their page's Email tab: written in a side panel, kept on the tab.
+  const search = page.getByLabel("Search properties, units, tenants and owners");
+  await search.fill("drew");
+  await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Drew Sample/ }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Drew Sample" })).toBeVisible();
+  await page.getByRole("tab", { name: "Email", exact: true }).click();
+  await page.getByRole("button", { name: "Write email" }).click();
+  const panel = page.getByRole("dialog", { name: "Email Drew Sample" });
+  await panel.getByLabel("Subject").fill("Parking lot repaving");
+  await panel.getByLabel("Message").fill("Please move your car from the lot on Friday.");
+  await panel.getByRole("button", { name: "Send email" }).click();
+  await expect(page.getByText(/^Email sent to .+@example\.com\.$/)).toBeVisible();
+  await expect(panel).toHaveCount(0);
+  const drew = page.getByRole("list", { name: "Email, Drew Sample" });
+  await expect(drew).toContainText("Parking lot repaving");
+  // Sent by the server's (fake) sender after the request: read again, it says so.
+  await page.reload();
+  await page.getByRole("tab", { name: "Email", exact: true }).click();
+  await expect(drew.getByRole("listitem").first()).toContainText("Sent");
+
+  // Every tenant living at a property, from its page.
+  await section(page, "Properties");
+  await page.getByRole("link", { name: "Aspen Row", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Aspen Row" })).toBeVisible();
+  await page.getByRole("button", { name: "Email tenants" }).click();
+  const all = page.getByRole("dialog", { name: "Email tenants of Aspen Row" });
+  await all.getByLabel("Subject").fill("Water shutoff Tuesday");
+  await all.getByLabel("Message").fill("The water is off Tuesday from 9 to 11.");
+  await all.getByRole("button", { name: "Send email" }).click();
+  await expect(page.getByText(/^Emailed \d+ tenants?\./)).toBeVisible();
+
+  // The owner's reset is on their Email tab, its link never kept.
+  await section(page, "Owners");
+  await page.getByRole("link", { name: "Demo Owner A", exact: true }).click();
+  await page.getByRole("tab", { name: "Email", exact: true }).click();
+  const owner = page.getByRole("list", { name: "Email, Demo Owner A" });
+  await expect(owner).toContainText("Set a new password");
+  await expect(owner).toContainText("Password reset");
+});

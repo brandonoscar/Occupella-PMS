@@ -18,6 +18,7 @@ import { day, money, usDate } from "../money";
 import { COVERAGES, PAYMENT, standingTone, standingWord } from "../vendors";
 import type { VendorPageData } from "../workOrders";
 import { STATUS } from "../workOrders";
+import { EmailsCard } from "../components/EmailsCard";
 import { FilesCard } from "./FilesCard";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
@@ -28,12 +29,13 @@ import { ProfileFields, profileBody } from "./VendorsPage";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
-type Tab = "summary" | "insurance" | "bills" | "work-orders" | "files";
+type Tab = "summary" | "insurance" | "bills" | "work-orders" | "email" | "files";
 const TABS: { value: Tab; label: string }[] = [
   { value: "summary", label: "Summary" },
   { value: "insurance", label: "Insurance" },
   { value: "bills", label: "Bills" },
   { value: "work-orders", label: "Work orders" },
+  { value: "email", label: "Email" },
   { value: "files", label: "Files" },
 ];
 type Panel = "profile" | "policy";
@@ -202,6 +204,7 @@ export function VendorPage({ me, id }: { me: Me; id: string }) {
         </Card>
       )}
       {tab === "files" && <FilesCard kind="w9" also={["vendor_document"]} aboutId={id} name={vendor.name} />}
+      {tab === "email" && <EmailsCard about="vendor" aboutId={id} name={vendor.name} emailOn={me.email_on} />}
       {panel !== null && (
         <SidePanel title={panel === "profile" ? "Edit details" : "Add policy"} onClose={() => setPanel(null)}>
           <p className="text-base text-ink">{vendor.name}</p>

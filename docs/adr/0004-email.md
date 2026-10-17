@@ -1,5 +1,8 @@
 # ADR 0004: Email to an owner when a bill waits for them
 
+Extended on 2026-10-17 by `docs/adr/0007-email.md`: invites, password resets and what staff
+write to tenants, owners and vendors go through this outbox too.
+
 Decided by the founder on 2026-10-13, with product item 2 of the second list (rental owners
 approve or decline bills over their approval limit in the owner portal): "it's over the approval
 limit it should send an email, like asking for approval". Asked whether to bring email into

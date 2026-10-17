@@ -556,3 +556,17 @@ operations = [
 browser = [
   "features.spec.ts › staff keep the company's name, address, logo and the fees new properties start with; a property added then starts with them, and owners and tenants see their manager",
 ]
+
+[[feature]]
+id = "email"
+statement = "Staff email a tenant, an owner or a vendor from their page's Email tab, and every tenant living at a property from its page; each email is signed with the staff member's name and the company's and kept on the person's Email tab with whether it went (an invite, a password reset or a bill waiting for an owner's approval too). An owner or a tenant resets a forgotten password from sign-in by an emailed link, never kept in the outbox; the answer never says whether the email has a login (docs/adr/0007-email.md)."
+operations = [
+  "GET /api/emails",
+  "POST /api/emails",
+  "POST /api/emails/property",
+  "GET /api/password-reset",
+  "POST /api/password-reset",
+]
+browser = [
+  "features.spec.ts › staff email a tenant from their page and every tenant of a property, an owner resets a forgotten password by email, and each email shows on the person's Email tab",
+]

@@ -147,6 +147,7 @@ AREAS = {
     "leasing": "leasing",
     "maintenance": "maintenance",
     "people": "who can sign in",
+    "email": "email to tenants, owners and vendors",
 }
 # The paths that change each area. A staff request that changes anything under one of them
 # needs the area (tests/api/test_custom_roles.py checks every staff write is here or is said
@@ -180,6 +181,7 @@ AREA_PATHS = (
     ("/api/maintenance/", "maintenance"),
     ("/api/work-orders", "maintenance"),
     ("/api/invites", "people"),
+    ("/api/emails", "email"),
 )
 READS = ("GET", "HEAD", "OPTIONS")
 

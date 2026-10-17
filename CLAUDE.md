@@ -30,13 +30,14 @@ portal, the tenant portal and leasing basics, with the API and logins they need.
 2026-10-12 (`docs/adr/0003-staff-back-office.md`): the staff back office for the accounting,
 bank statement import, a switching tool, staff roles, move-out and documents. Since
 2026-10-13 (`docs/adr/0004-email.md`): one email, to a rental owner when a bill waits for
-their approval. Since 2026-10-15 (`docs/adr/0005-property-management-pages.md`): pages built
+their approval; since 2026-10-17 (`docs/adr/0007-email.md`) invites, password resets and what
+staff write to tenants, owners and vendors. Since 2026-10-15 (`docs/adr/0005-property-management-pages.md`): pages built
 around properties, units, leases, tenants, owners and vendors, with paged lists, edits (never
 deletes: archive) and contact details the AI never reads. Since 2026-10-16
 (`docs/adr/0006-buildium-punch-list.md`): the founder's punch list, built in its order (property
 groups first; rent, recurring charges, late fees and recurring bills to post by themselves each
-night; fees still move only when staff ask). Still out of scope: Stripe and online payments, bank files, 1099 filing, any
-other email, and state rules beyond the no-negative rule. If one of these looks needed, stop
+night; fees still move only when staff ask). Still out of scope: Stripe and online payments, text messages, bank files (ACH, check
+printing), 1099 filing, and state rules beyond the no-negative rule. If one of these looks needed, stop
 and ask the founder.
 
 ## The standing rule: tests come with the code
@@ -92,8 +93,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   something on every other page, the founder's seed among it (six properties, one of 48 units,
   two groups, applicants, offers, bills, work orders and files at every step; ADR 0006).
   `demo.books` is its books alone, for the feature tests.
-  Payments, any email but ADR 0004's and the real screening and e-sign partners are still
-  out (`docs/adr/0002-portals-and-exports.md`).
+  Payments and the real screening and e-sign partners are still out
+  (`docs/adr/0002-portals-and-exports.md`).
 - Email (`src/pms/email.py`, migration 0042, `docs/adr/0004-email.md`): entering a bill over
   the owner's approval limit writes, in the same transaction, an email to the owner's active
   portal login (`trust_emails`, once per bill) naming the bill and linking to the portal; it
@@ -103,7 +104,17 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   STARTTLS; none by default) and records each attempt (`trust_email_deliveries`, delivered at
   most once, given up after five failures). `python -m pms.email deliver` delivers what waits.
   Staff see each bill's email, and whether it went, on the bill's page (`/bills/<id>`). Emails
-  are not audited, and the AI never reads them.
+  are not audited, and the AI never reads them. Since migration 0076 (`docs/adr/0007-email.md`)
+  the outbox also carries portal invites (emailed when the server sends email; the page still
+  shows the link once), password resets an owner or a tenant asks for at sign-in (`/forgot-password`,
+  `POST /api/password-reset`: the same answer whether or not the email has a login, three an hour
+  at most; staff reset through an admin's invite, keeping their authenticator) and what staff
+  write (`src/pms/api/emails.py`): a tenant's, owner's or vendor's Email tab
+  (`components/EmailsCard.tsx`) writes to them and lists every email the PMS wrote them with
+  whether it went, and a property's Email tenants writes to each tenant living there today. An
+  email goes to the person's contact email, else their login's. An invite's or a reset's link is
+  never written to the outbox: it waits in the writing process's memory until sent, ten minutes at
+  most, then the email is given up on once. Writing email is the custom roles' area 'email'.
 - The portal (`frontend/`): React 19, Vite and Tailwind v4, following Occupella's `DESIGN.md`
   and looking like Occupella's app (founder, 2026-10-14): its light theme, a full-height
   light-blue left sidebar with the wordmark, the sections (lucide icons) and Sign out, a white

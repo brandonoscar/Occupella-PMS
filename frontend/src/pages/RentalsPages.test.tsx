@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { Paged, Property, PropertyRow, Unit } from "../rentals";
-import { PropertiesPage, PropertyPage, UnitPage } from "./RentalsPages";
+import { PropertiesPage, PropertyPage, UnitPage, tenantsEmailed } from "./RentalsPages";
 
 afterEach(() => {
   cleanup();
@@ -268,6 +268,51 @@ describe("PropertyPage", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(asked(fetch)).toContainEqual(["/api/setup/units", { property_id: "p1", name: "Unit 5" }]);
     expect(asked(fetch).filter((path) => path === "/api/properties/p1")).toHaveLength(2);
+  });
+
+  it("emails every tenant living there in a side panel and says who has no email", async () => {
+    const fetch = vi.fn(async (path: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        return body.subject === "Refused"
+          ? new Response(JSON.stringify({ detail: "no tenant lives there today" }), { status: 422 })
+          : new Response(JSON.stringify({
+            emailed: [{ name: "Tenant A", to: "a@example.com" }, { name: "Tenant C", to: "c@example.com" }],
+            without_email: ["Tenant B"],
+          }), { status: 201 });
+      }
+      if (path === "/api/properties/p1") return new Response(JSON.stringify(PROPERTY), { status: 200 });
+      return new Response(JSON.stringify(NO_FILES), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<PropertyPage me={ME} id="p1" />);
+    await screen.findByRole("heading", { name: "Property 1" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Email tenants" }));
+    let panel = screen.getByRole("dialog", { name: "Email tenants of Property 1" });
+    expect(within(panel).getByText(/Everyone on a lease in effect today/)).toBeTruthy();
+    fireEvent.change(within(panel).getByLabelText("Subject"), { target: { value: "Refused" } });
+    fireEvent.change(within(panel).getByLabelText("Message"), { target: { value: "x" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Send email" }));
+    expect((await within(panel).findByRole("alert")).textContent).toBe("no tenant lives there today");
+
+    fireEvent.change(within(panel).getByLabelText("Subject"), { target: { value: "Water shutoff" } });
+    fireEvent.change(within(panel).getByLabelText("Message"), { target: { value: "Off Tuesday 9 to 11." } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Send email" }));
+    expect(await screen.findByText("Emailed 2 tenants. No email on file: Tenant B.")).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    const posts = fetch.mock.calls.filter(([, init]) => init?.method === "POST");
+    expect(posts.at(-1)?.[0]).toBe("/api/emails/property");
+    expect(JSON.parse(String(posts.at(-1)?.[1]?.body))).toEqual({
+      property_id: "p1", subject: "Water shutoff", body: "Off Tuesday 9 to 11.",
+    });
+    panel = screen.queryByRole("dialog") as HTMLElement;
+    expect(panel).toBeNull();
+  });
+
+  it("words what emailing the tenants did", () => {
+    expect(tenantsEmailed({ emailed: [{ name: "A", to: "a@example.com" }], without_email: [] })).toBe("Emailed 1 tenant.");
+    expect(tenantsEmailed({ emailed: [], without_email: ["A", "B"] })).toBe("Emailed 0 tenants. No email on file: A, B.");
   });
 
   it("says when there is no such property", async () => {

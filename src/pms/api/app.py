@@ -50,6 +50,7 @@ from pms.api import (
     dashboard,
     directory,
     documents,
+    emails,
     fake_esign,
     general_ledger,
     groups,
@@ -153,6 +154,20 @@ class InviteToken(BaseModel):
     token: Token
 
 
+class ResetRequest(BaseModel):
+    pmc_id: UUID
+    email: Email
+
+
+class ResetAvailable(BaseModel):
+    # Whether this server sends email, so a forgotten password can be reset from sign-in.
+    available: bool
+
+
+class ResetAsked(BaseModel):
+    detail: str
+
+
 class AcceptInvite(InviteToken):
     password: Password
 
@@ -173,12 +188,16 @@ class Me(BaseModel):
     # The areas a staff member may change (deps.AREAS): every one unless their custom roles
     # say otherwise; none for an owner or a tenant.
     areas: list[str]
+    # Whether this server sends email (PMS_EMAIL_SENDER); without it, emails wait in the outbox.
+    email_on: bool
 
 
 class InviteLink(BaseModel):
     login_id: UUID
     url: str
     expires_at: datetime
+    # Whether the invite was also emailed (the server sends email).
+    emailed: bool
 
 
 class InviteDetails(BaseModel):
@@ -303,6 +322,7 @@ def create_app(settings: Settings) -> FastAPI:
             pmc_name=pmc_name,
             roles=staff.roles_of(conn, session) if session.kind == "staff" else [],
             areas=custom_roles.areas_of(conn, session) if session.kind == "staff" else [],
+            email_on=app.state.email is not None,
         )
 
     @app.get("/health")
@@ -337,7 +357,47 @@ def create_app(settings: Settings) -> FastAPI:
         )
         # The token rides in the fragment, so it never reaches a server log or a referrer.
         url = f"{settings.public_url.rstrip('/')}/invite#{made.token}"
-        return InviteLink(login_id=made.login_id, url=url, expires_at=made.expires_at)
+        # Emailed too when the server sends email (ADR 0007); the link is never kept in the
+        # outbox, so the page still shows it once, in case the email doesn't arrive.
+        emailed = app.state.email is not None
+        if emailed:
+            email.write_invite(
+                conn,
+                session.pmc_id,
+                body.kind,
+                body.person_id,
+                accounts.normalize_email(body.email),
+                url,
+                made.expires_at,
+            )
+        return InviteLink(
+            login_id=made.login_id, url=url, expires_at=made.expires_at, emailed=emailed
+        )
+
+    @app.get("/api/password-reset")
+    def reset_available() -> ResetAvailable:
+        return ResetAvailable(available=app.state.email is not None)
+
+    @app.post("/api/password-reset", status_code=202)
+    def ask_reset(body: ResetRequest, conn: Conn) -> ResetAsked:
+        """Emails an owner or a tenant a link to set a new password (ADR 0007). The answer is the
+        same whether or not the email has a login, so it tells no one who does."""
+        if app.state.email is not None:
+            reset = accounts.request_reset(conn, body.pmc_id, body.email)
+            if reset is not None:
+                email.write_password_reset(
+                    conn,
+                    body.pmc_id,
+                    reset.kind,
+                    reset.person_id,
+                    reset.email,
+                    f"{settings.public_url.rstrip('/')}/invite#{reset.invite.token}",
+                    reset.invite.expires_at,
+                )
+        return ResetAsked(
+            detail="If that email signs in here as an owner or a tenant, a link to set a new"
+            " password is on its way."
+        )
 
     @app.post("/api/invites/view")
     def view_invite(body: InviteToken, conn: Conn) -> InviteDetails:
@@ -428,6 +488,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(documents.router)
     app.include_router(company.router)
     app.include_router(notes.router)
+    app.include_router(emails.router)
     app.include_router(today.router)
     app.include_router(dashboard.router)
     if settings.static_dir is not None:

@@ -470,6 +470,7 @@ FEATURES = (
     "maintenance-pages",
     "groups",
     "company",
+    "email",
 )
 
 

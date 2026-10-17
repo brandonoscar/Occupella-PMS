@@ -9117,8 +9117,7 @@ CREATE TABLE public.trust_custom_role_areas (
     area text NOT NULL,
     granted boolean NOT NULL,
     changed_by uuid,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT trust_custom_role_areas_area_check CHECK ((area = ANY (ARRAY['rent'::text, 'bills'::text, 'owners'::text, 'budgets'::text, 'journal'::text, 'month-end'::text, 'switching'::text, 'setup'::text, 'move-out'::text, 'documents'::text, 'leasing'::text, 'maintenance'::text, 'people'::text])))
+    created_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -9303,9 +9302,14 @@ CREATE TABLE public.trust_emails (
     subject text NOT NULL,
     body text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    tenant_id uuid,
+    owner_id uuid,
+    vendor_id uuid,
+    staff_id uuid,
+    sent_by uuid,
+    needs_link boolean DEFAULT false NOT NULL,
     CONSTRAINT trust_emails_body_check CHECK (((body <> ''::text) AND (length(body) <= 10000))),
     CONSTRAINT trust_emails_check CHECK (((kind = 'bill_approval'::text) = (bill_id IS NOT NULL))),
-    CONSTRAINT trust_emails_kind_check CHECK ((kind = 'bill_approval'::text)),
     CONSTRAINT trust_emails_subject_check CHECK (((subject <> ''::text) AND (length(subject) <= 200))),
     CONSTRAINT trust_emails_to_address_check CHECK (((to_address <> ''::text) AND (length(to_address) <= 320)))
 );
@@ -10894,6 +10898,14 @@ ALTER TABLE ONLY public.trust_contacts
 
 
 --
+-- Name: trust_custom_role_areas trust_custom_role_areas_area_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_custom_role_areas
+    ADD CONSTRAINT trust_custom_role_areas_area_check CHECK ((area = ANY (ARRAY['rent'::text, 'bills'::text, 'owners'::text, 'budgets'::text, 'journal'::text, 'month-end'::text, 'switching'::text, 'setup'::text, 'move-out'::text, 'documents'::text, 'leasing'::text, 'maintenance'::text, 'people'::text, 'email'::text]))) NOT VALID;
+
+
+--
 -- Name: trust_custom_role_areas trust_custom_role_areas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11086,6 +11098,14 @@ ALTER TABLE ONLY public.trust_email_deliveries
 
 
 --
+-- Name: trust_emails trust_emails_kind_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_emails
+    ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text]))) NOT VALID;
+
+
+--
 -- Name: trust_emails trust_emails_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -11099,6 +11119,20 @@ ALTER TABLE ONLY public.trust_emails
 
 ALTER TABLE ONLY public.trust_emails
     ADD CONSTRAINT trust_emails_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_emails trust_emails_recipient_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_emails
+    ADD CONSTRAINT trust_emails_recipient_check CHECK ((
+CASE kind
+    WHEN 'invite'::text THEN ((num_nonnulls(tenant_id, owner_id, staff_id) = 1) AND (vendor_id IS NULL))
+    WHEN 'password_reset'::text THEN ((num_nonnulls(tenant_id, owner_id) = 1) AND (vendor_id IS NULL) AND (staff_id IS NULL))
+    WHEN 'message'::text THEN ((num_nonnulls(tenant_id, owner_id, vendor_id) = 1) AND (staff_id IS NULL))
+    ELSE ((tenant_id IS NULL) AND (vendor_id IS NULL) AND (staff_id IS NULL))
+END AND ((kind = 'message'::text) = (sent_by IS NOT NULL)) AND ((kind = ANY (ARRAY['invite'::text, 'password_reset'::text])) = needs_link))) NOT VALID;
 
 
 --
@@ -12363,6 +12397,27 @@ CREATE UNIQUE INDEX trust_email_deliveries_once ON public.trust_email_deliveries
 --
 
 CREATE UNIQUE INDEX trust_emails_one_per_bill_approval ON public.trust_emails USING btree (bill_id) WHERE (kind = 'bill_approval'::text);
+
+
+--
+-- Name: trust_emails_owner_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_emails_owner_id ON public.trust_emails USING btree (owner_id) WHERE (owner_id IS NOT NULL);
+
+
+--
+-- Name: trust_emails_tenant_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_emails_tenant_id ON public.trust_emails USING btree (tenant_id) WHERE (tenant_id IS NOT NULL);
+
+
+--
+-- Name: trust_emails_vendor_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_emails_vendor_id ON public.trust_emails USING btree (vendor_id) WHERE (vendor_id IS NOT NULL);
 
 
 --
@@ -15990,6 +16045,46 @@ ALTER TABLE ONLY public.trust_emails
 
 
 --
+-- Name: trust_emails trust_emails_pmc_id_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pmc_id_owner_id_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id) NOT VALID;
+
+
+--
+-- Name: trust_emails trust_emails_pmc_id_sent_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pmc_id_sent_by_fkey FOREIGN KEY (pmc_id, sent_by) REFERENCES public.trust_staff(pmc_id, id) NOT VALID;
+
+
+--
+-- Name: trust_emails trust_emails_pmc_id_staff_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pmc_id_staff_id_fkey FOREIGN KEY (pmc_id, staff_id) REFERENCES public.trust_staff(pmc_id, id) NOT VALID;
+
+
+--
+-- Name: trust_emails trust_emails_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id) NOT VALID;
+
+
+--
+-- Name: trust_emails trust_emails_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id) NOT VALID;
+
+
+--
 -- Name: trust_expense_accounts trust_expense_accounts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -17711,4 +17806,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261016000072'),
     ('20261016000073'),
     ('20261016000074'),
-    ('20261017000075');
+    ('20261017000075'),
+    ('20261017000076');
