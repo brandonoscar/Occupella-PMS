@@ -15,7 +15,7 @@ import { SidePanel } from "../components/SidePanel";
 import { Tabs } from "../components/Tabs";
 import { Wide } from "../components/Wide";
 import { money, usDate } from "../money";
-import { chargeLabel, holdLine, insuranceBadge, insuranceLine, rentChangeLine } from "../rent";
+import { holdLine, insuranceBadge, insuranceLine, rentChangeLine } from "../rent";
 import type { LeaseDetail, LeasePerson, Ledger } from "../rentals";
 import { LEASE_STATUS, LEDGER_KIND, PORTAL, rentLabel, termLabel } from "../rentals";
 import { FilesCard } from "./FilesCard";
@@ -26,6 +26,7 @@ import {
   ChargeForm,
   DepositForm,
   HoldForm,
+  OpenChargeRow,
   PaymentForm,
   PaymentRow,
   RecurringForm,
@@ -194,8 +195,8 @@ function Summary({ lease, record }: { lease: LeaseDetail; record: Recorder }) {
       )}
       {lease.open_charges.length > 0 && (
         <Card title="Open charges">
-          <ul className="text-base text-ink-muted">
-            {lease.open_charges.map((c) => <li key={c.id}>{chargeLabel(c)}</li>)}
+          <ul className="flex flex-col divide-y divide-line text-base text-ink-muted" aria-label="Open charges">
+            {lease.open_charges.map((c) => <OpenChargeRow key={c.id} charge={c} record={record} />)}
           </ul>
         </Card>
       )}

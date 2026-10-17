@@ -336,6 +336,24 @@ describe("LeasePage", () => {
     expect(screen.getAllByText("lease is on a payment hold")).toHaveLength(1);
   });
 
+  it("waives an open charge, all of it or part, with why, from its ⋯ menu", async () => {
+    const fetch = server(LEASE, { "/api/rent/charges/c2/waive": { amount: "20.00", open: "30.00" } });
+    await open();
+    const charges = screen.getByRole("list", { name: "Open charges" });
+    expect(within(charges).getAllByRole("listitem").map((li) => li.querySelector("span")?.textContent)).toEqual([
+      "10/01/2026 Rent due 2026-10-01: $1,500.00 open",
+      "10/06/2026 Late fee: $50.00 open",
+    ]);
+    fireEvent.click(within(charges).getByRole("button", { name: "Actions for Late fee due 10/06/2026" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Waive" }));
+    expect((within(charges).getByLabelText("Amount to waive") as HTMLInputElement).value).toBe("50.00");
+    fireEvent.change(within(charges).getByLabelText("Amount to waive"), { target: { value: "20.00" } });
+    fireEvent.change(within(charges).getByLabelText("Why"), { target: { value: "First time late" } });
+    fireEvent.click(within(charges).getByRole("button", { name: "Waive $20.00" }));
+    expect(await screen.findByText("Waived $20.00 of Late fee.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/rent/charges/c2/waive", { amount: "20.00", reason: "First time late" }]]);
+  });
+
   it("links each payment to its receipt", async () => {
     server();
     await open();

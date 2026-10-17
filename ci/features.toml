@@ -598,3 +598,13 @@ operations = [
 browser = [
   "features.spec.ts › staff put a lease on a payment hold, accept a cashier's check past it and release it, print receipts, take payments to the bank together and print the slip; the tenant downloads their receipt",
 ]
+
+[[feature]]
+id = "waive"
+statement = "Staff waive a charge (a late fee, an NSF fee, any fee or rent), all of it or part, with why, from the lease page: a credit linked to it that comes off that charge first, never past what is left of it, shown on the ledger (the founder's review, q019; migration 0079)."
+operations = [
+  "POST /api/rent/charges/{charge_id}/waive",
+]
+browser = [
+  "features.spec.ts › staff waive a late fee from the lease page: it comes off that fee, and the ledger shows the waiver",
+]

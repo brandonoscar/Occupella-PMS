@@ -1353,3 +1353,61 @@ def release_hold(session: Staff, conn: Conn, hold_id: UUID, release: Release) ->
     except psycopg.errors.CheckViolation:
         raise HTTPException(422, "a hold ends after the day it started") from None
     return next(h for h in holds_of(conn, session.pmc_id, row[0], today()) if h.id == hold_id)
+
+
+# --- waiving a charge -------------------------------------------------------------------------
+
+
+class Waive(BaseModel):
+    amount: Amount
+    reason: Reason
+
+
+class Waived(BaseModel):
+    credit_id: UUID
+    charge_id: UUID
+    amount: str
+    # What is still open of the charge once waived.
+    open: str
+
+
+KINDS = {"rent": "Rent", "fee": "Fee"}
+
+
+@router.post("/charges/{charge_id}/waive", status_code=201)
+def waive(session: Staff, conn: Conn, charge_id: UUID, waive: Waive) -> Waived:
+    """Takes a charge (a late fee, an NSF fee, any fee or rent) off its lease, all of it or part,
+    with why: a credit of today linked to it, which comes off that charge first. Never more than
+    is left of it once its payments and earlier waivers count."""
+    row = conn.execute(
+        "SELECT lease_id, kind, due_on, memo FROM trust_charges WHERE pmc_id = %s AND id = %s",
+        (session.pmc_id, charge_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, "no such charge")
+    lease, kind, due_on, memo = row
+    if kind == "credit":
+        raise HTTPException(422, "a credit is not waived")
+    lock_lease(conn, lease)
+    what = memo or KINDS.get(kind, kind)
+    credit = conn.execute(
+        "INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)"
+        " VALUES (%s, %s, %s, 'credit', %s, %s) RETURNING id",
+        (session.pmc_id, lease, today(), waive.amount, f"Waived: {what}, due {due_on:%m/%d/%Y}"),
+    ).fetchone()
+    assert credit is not None
+    try:
+        conn.execute(
+            "INSERT INTO trust_charge_waivers (credit_charge_id, pmc_id, waived_charge_id, reason)"
+            " VALUES (%s, %s, %s, %s)",
+            (credit[0], session.pmc_id, charge_id, waive.reason),
+        )
+    except psycopg.errors.CheckViolation as refused:  # more than is left of it
+        raise HTTPException(409, refusal(refused)) from None
+    left = next(
+        (Decimal(o) for _, c, *_, o in charges_open(conn, session.pmc_id, lease) if c == charge_id),
+        ZERO,
+    )
+    return Waived(
+        credit_id=credit[0], charge_id=charge_id, amount=cents(waive.amount), open=cents(left)
+    )

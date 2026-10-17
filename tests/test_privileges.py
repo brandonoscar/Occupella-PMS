@@ -39,6 +39,7 @@ TABLES = {
     "trust_leases": {"SELECT"},  # written only by trust_open_lease and trust_end_lease
     "trust_lease_tenants": {"SELECT"},  # written only by trust_open_lease
     "trust_charges": {"SELECT", "INSERT"},
+    "trust_charge_waivers": {"SELECT", "INSERT"},
     "trust_charge_payments": {"SELECT"},  # written only by trust_apply_payment
     "trust_payment_reversals": {"SELECT"},  # written only by trust_reverse_payment
     "trust_management_agreements": {"SELECT", "INSERT"},
@@ -307,6 +308,7 @@ FUNCTIONS = {
     "trust_check_payment_hold()": set(),
     "trust_check_bill_decision()": set(),
     "trust_check_bank_deposit_item()": set(),  # a trigger's: no one calls it
+    "trust_check_charge_waiver()": set(),
     # Reports read trust records, so only the app and the AI; they run with the caller's own
     # read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app", "trust_ai_agent"},
@@ -456,6 +458,7 @@ SECURITY_DEFINER = {
     "trust_audit()",  # writes the audit log, which no other role may write
     "trust_check_payment_hold()",  # locks the hold's lease, which the app can't
     "trust_check_bill_decision()",  # locks the bill's owner account, which the app can't
+    "trust_check_charge_waiver()",  # locks the waived charge, which the app can't
     # Reads lease offers for the AI role, which never reads them, and returns only each lease's
     # renewal status (founder decision, 2026-10-13).
     "trust_report_lease_expirations(uuid,date)",

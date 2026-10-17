@@ -352,7 +352,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   its rents in the order their grace ends so one run charges what a run every day would (a late
   fee is an open charge too; migration 0056). READ COMMITTED. What is open of a charge (`trust_open_charges`, migration 0049) is its amount less
   payments matched, plus what bounced, less its share of the lease's credits, which come off
-  the oldest open charges first (by due date, then id), as the delinquency report counts them. A property's NSF fee is in force from a date too (migration 0044, 0 charges
+  the oldest open charges first (by due date, then id), as the delinquency report counts them.
+  A waiver (migration 0079, `trust_charge_waivers`; staff waive from an open charge's ⋯ menu on
+  the lease page, `POST /api/rent/charges/<id>/waive`, area rent) is a credit linked to the charge
+  it waives, with why, naming who: it comes off that charge first, never past what is left of it
+  once payments and earlier waivers count (its trigger takes the charge's lock, as a match does);
+  `trust_apply_payment` never matches past what was paid and waived, and `trust_return_deposit`
+  keeps nothing for what was waived. A property's NSF fee is in force from a date too (migration 0044, 0 charges
   none); `trust_charge_nsf_fee` charges the lease of a returned payment (postings under one key
   moving money back to a trust bank account's cash) the fee in force the day it came back
   (UTC), due that day, once per returned payment. Neither fee counts toward the other.

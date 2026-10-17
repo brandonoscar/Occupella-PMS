@@ -473,6 +473,7 @@ FEATURES = (
     "email",
     "automatic-email",
     "rent-in",
+    "waive",
 )
 
 

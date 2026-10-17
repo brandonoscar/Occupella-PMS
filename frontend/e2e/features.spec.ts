@@ -2401,3 +2401,32 @@ test("staff put a lease on a payment hold, accept a cashier's check past it and 
   expect(answer.status()).toBe(200);
   expect(answer.headers()["content-type"]).toContain(PDF);
 });
+
+test("staff waive a late fee from the lease page: it comes off that fee, and the ledger shows the waiver", async ({
+  page,
+}) => {
+  const people = seed.features.waive!;
+  await joinAsStaff(page, people.manager);
+  const lease = await openLease(page, "Elm Court, Unit 1");
+  const before = (await page.getByTestId("balance-due").textContent()) ?? "";
+
+  // A late fee, then waived: the whole of it, with why.
+  const charge = await leasePanel(page, "Enter charge");
+  await charge.getByLabel("Add a").selectOption("fee");
+  await charge.getByLabel("Amount").fill("50.00");
+  await charge.getByLabel("What for").fill("Late fee");
+  await charge.getByRole("button", { name: "Add" }).click();
+  await expect(charge).toHaveCount(0);
+  const open = lease.getByRole("list", { name: "Open charges" });
+  await expect(open).toContainText("Late fee: $50.00 open");
+  await open.getByRole("button", { name: /^Actions for Late fee due / }).click();
+  await page.getByRole("menuitem", { name: "Waive" }).click();
+  await open.getByLabel("Why").fill("First time late");
+  await open.getByRole("button", { name: "Waive $50.00" }).click();
+  await expect(page.getByText("Waived $50.00 of Late fee.")).toBeVisible();
+  await expect(page.getByText("Late fee: $50.00 open")).toHaveCount(0);
+  await expect(page.getByTestId("balance-due")).toHaveText(before);
+
+  await leaseTab(page, "Ledger");
+  await expect(page.getByRole("main")).toContainText("Waived: Late fee, due");
+});

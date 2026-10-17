@@ -603,8 +603,13 @@ BEGIN
     FROM trust_charge_payments AS p WHERE p.charge_id = p_charge_id;
     SELECT v_paid - coalesce(sum(r.amount), 0) INTO v_paid
     FROM trust_payment_reversals AS r WHERE r.charge_id = p_charge_id;
+    -- What waivers took off it (credits linked to it, migration 0079) is settled too.
+    SELECT v_paid + coalesce(sum(k.amount), 0) INTO v_paid
+    FROM trust_charge_waivers AS w
+    JOIN trust_charges AS k ON k.id = w.credit_charge_id
+    WHERE w.waived_charge_id = p_charge_id;
     IF v_paid + p_amount > v_charge.amount THEN
-        RAISE EXCEPTION 'trust: charge % is % and already paid %; % more is too much',
+        RAISE EXCEPTION 'trust: charge % is % and already paid or waived %; % more is too much',
             p_charge_id, v_charge.amount, v_paid, p_amount
             USING ERRCODE = 'check_violation';
     END IF;
@@ -1809,6 +1814,65 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'trust: % is not an owner''s property account in PMC %',
             NEW.ledger_account_id, NEW.pmc_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_charge_waiver(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_charge_waiver() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_credit trust_charges;
+    v_charge trust_charges;
+    v_paid numeric;
+    v_waived numeric;
+BEGIN
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'trust: waive a charge at READ COMMITTED, not %',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
+    SELECT c.* INTO v_credit FROM trust_charges AS c
+    WHERE c.id = NEW.credit_charge_id AND c.pmc_id = NEW.pmc_id;
+    IF NOT FOUND THEN
+        RETURN NEW;  -- no such charge of the PMC: the foreign key refuses it
+    END IF;
+    IF v_credit.kind <> 'credit' THEN
+        RAISE EXCEPTION 'trust: a waiver is a credit, not a %', v_credit.kind
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT c.* INTO v_charge FROM trust_charges AS c
+    WHERE c.id = NEW.waived_charge_id AND c.pmc_id = NEW.pmc_id
+    FOR NO KEY UPDATE;
+    IF NOT FOUND THEN
+        RETURN NEW;
+    END IF;
+    IF v_charge.kind = 'credit' THEN
+        RAISE EXCEPTION 'trust: a credit is not waived; it is owed to no one'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF v_charge.lease_id <> v_credit.lease_id THEN
+        RAISE EXCEPTION 'trust: a waiver is a credit of the waived charge''s own lease'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT coalesce(sum(p.amount), 0) INTO v_paid
+    FROM trust_charge_payments AS p WHERE p.charge_id = v_charge.id;
+    SELECT v_paid - coalesce(sum(r.amount), 0) INTO v_paid
+    FROM trust_payment_reversals AS r WHERE r.charge_id = v_charge.id;
+    SELECT coalesce(sum(k.amount), 0) INTO v_waived
+    FROM trust_charge_waivers AS w JOIN trust_charges AS k ON k.id = w.credit_charge_id
+    WHERE w.waived_charge_id = v_charge.id;
+    IF v_paid + v_waived + v_credit.amount > v_charge.amount THEN
+        RAISE EXCEPTION 'trust: % is left of charge % (% paid, % waived); % can''t be waived',
+            v_charge.amount - v_paid - v_waived, v_charge.id, v_paid, v_waived, v_credit.amount
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
@@ -3529,24 +3593,50 @@ CREATE FUNCTION public.trust_open_charges(p_pmc_id uuid, p_lease_id uuid, p_at t
                    FROM trust_payment_reversals AS r
                    JOIN pgledger_transfers AS t ON t.id = r.reversal_id
                    WHERE r.charge_id = c.id AND t.event_at < p_at
-               ), 0) AS left_owing
+               ), 0) AS left_owing,
+               EXISTS (SELECT 1 FROM trust_charge_waivers AS w
+                       WHERE w.credit_charge_id = c.id) AS waiver
         FROM trust_charges AS c
         WHERE c.pmc_id = p_pmc_id AND (p_lease_id IS NULL OR c.lease_id = p_lease_id)
     ),
-    credits AS (
-        SELECT k.lease_id, sum(k.amount) AS amount
+    -- What waivers due before the moment's day take off the charge each one names.
+    waived AS (
+        SELECT w.waived_charge_id AS id, sum(k.amount) AS amount
         FROM charged AS k
-        WHERE k.kind = 'credit' AND k.due_on < (p_at AT TIME ZONE 'UTC')::date
-        GROUP BY k.lease_id
+        JOIN trust_charge_waivers AS w ON w.credit_charge_id = k.id
+        WHERE k.due_on < (p_at AT TIME ZONE 'UTC')::date
+        GROUP BY w.waived_charge_id
+    ),
+    -- Each charge after its own waivers, and what of them it could not take.
+    settled AS (
+        SELECT k.lease_id, k.id, k.due_on,
+               k.left_owing - least(greatest(k.left_owing, 0), coalesce(w.amount, 0)) AS left_owing,
+               coalesce(w.amount, 0) - least(greatest(k.left_owing, 0), coalesce(w.amount, 0))
+                   AS spare
+        FROM charged AS k
+        LEFT JOIN waived AS w ON w.id = k.id
+        WHERE k.kind <> 'credit'
+    ),
+    -- The rest come off the oldest open charges: credits that waive nothing, and what a waiver
+    -- could not take off its own charge.
+    credits AS (
+        SELECT x.lease_id, sum(x.amount) AS amount
+        FROM (
+            SELECT k.lease_id, k.amount FROM charged AS k
+            WHERE k.kind = 'credit' AND NOT k.waiver
+              AND k.due_on < (p_at AT TIME ZONE 'UTC')::date
+            UNION ALL
+            SELECT s.lease_id, s.spare FROM settled AS s WHERE s.spare > 0
+        ) AS x
+        GROUP BY x.lease_id
     ),
     owing AS (
-        SELECT k.lease_id, k.id, k.left_owing,
-               coalesce(sum(k.left_owing) OVER (
-                   PARTITION BY k.lease_id ORDER BY k.due_on, k.id
+        SELECT s.lease_id, s.id, s.left_owing,
+               coalesce(sum(s.left_owing) OVER (
+                   PARTITION BY s.lease_id ORDER BY s.due_on, s.id
                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
                ), 0) AS owing_before
-        FROM charged AS k
-        WHERE k.kind <> 'credit'
+        FROM settled AS s
     )
     SELECT o.lease_id, o.id,
            o.left_owing
@@ -5382,26 +5472,52 @@ BEGIN
         FROM trust_charges AS c
         WHERE c.pmc_id = p_pmc_id
     ),
-    open_charges AS (
-        -- Each charge due by the day with what is left of it, oldest first.
-        SELECT c.lease_id, c.due_on, c.amount - p.amount AS left_owing,
-               sum(c.amount - p.amount) OVER (
-                   PARTITION BY c.lease_id ORDER BY c.due_on, c.id
-                   ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-               ) AS owing_before
+    waived AS (
+        -- What waivers due by the day take off the charge each one names (migration 0079).
+        SELECT w.waived_charge_id AS id, sum(k.amount) AS amount
+        FROM trust_charge_waivers AS w
+        JOIN trust_charges AS k ON k.id = w.credit_charge_id
+        WHERE w.pmc_id = p_pmc_id AND k.due_on <= p_as_of
+        GROUP BY w.waived_charge_id
+    ),
+    settled AS (
+        -- Each charge less what was paid of it and what its own waivers take (up to what was
+        -- left), and what of its waivers it could not take.
+        SELECT c.id, c.lease_id, c.due_on, c.kind,
+               c.amount - p.amount
+               - least(greatest(c.amount - p.amount, 0), coalesce(w.amount, 0)) AS left_owing,
+               coalesce(w.amount, 0)
+               - least(greatest(c.amount - p.amount, 0), coalesce(w.amount, 0)) AS spare
         FROM trust_charges AS c
         JOIN paid AS p ON p.id = c.id
-        WHERE c.pmc_id = p_pmc_id AND c.kind <> 'credit' AND c.due_on <= p_as_of
+        LEFT JOIN waived AS w ON w.id = c.id
+        WHERE c.pmc_id = p_pmc_id AND c.kind <> 'credit'
+    ),
+    open_charges AS (
+        -- Each charge due by the day with what is left of it, oldest first.
+        SELECT s.lease_id, s.due_on, s.left_owing,
+               sum(s.left_owing) OVER (
+                   PARTITION BY s.lease_id ORDER BY s.due_on, s.id
+                   ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+               ) AS owing_before
+        FROM settled AS s
+        WHERE s.due_on <= p_as_of
     ),
     offsets AS (
-        -- Per lease, what comes off the oldest charges: credits due by the day, and payments
-        -- by then toward charges not yet due.
+        -- Per lease, what comes off the oldest charges: credits due by the day that waive
+        -- nothing, what a waiver could not take off its own charge, and payments by then toward
+        -- charges not yet due.
         SELECT c.lease_id,
-               sum(CASE WHEN c.kind = 'credit' AND c.due_on <= p_as_of THEN c.amount ELSE 0 END)
+               sum(CASE WHEN c.kind = 'credit' AND c.due_on <= p_as_of
+                         AND NOT EXISTS (SELECT 1 FROM trust_charge_waivers AS w
+                                         WHERE w.credit_charge_id = c.id)
+                        THEN c.amount ELSE 0 END)
                + sum(CASE WHEN c.kind <> 'credit' AND c.due_on > p_as_of THEN p.amount ELSE 0 END)
+               + coalesce(sum(s.spare), 0)
                    AS amount
         FROM trust_charges AS c
         JOIN paid AS p ON p.id = c.id
+        LEFT JOIN settled AS s ON s.id = c.id
         WHERE c.pmc_id = p_pmc_id
         GROUP BY c.lease_id
     ),
@@ -8072,7 +8188,11 @@ BEGIN
                        - coalesce((SELECT sum(p.amount) FROM trust_charge_payments AS p
                                    WHERE p.charge_id = c.id), 0)
                        + coalesce((SELECT sum(r.amount) FROM trust_payment_reversals AS r
-                                   WHERE r.charge_id = c.id), 0) AS open
+                                   WHERE r.charge_id = c.id), 0)
+                       -- What a waiver took off it is not kept from the deposit (0079).
+                       - coalesce((SELECT sum(k.amount) FROM trust_charge_waivers AS w
+                                   JOIN trust_charges AS k ON k.id = w.credit_charge_id
+                                   WHERE w.waived_charge_id = c.id), 0) AS open
                 FROM trust_charges AS c
                 WHERE c.lease_id = p_lease_id AND c.kind <> 'credit'
                 ORDER BY c.due_on, c.created_at, c.id
@@ -9082,6 +9202,21 @@ CREATE TABLE public.trust_charge_payments (
     amount numeric NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_charge_payments_amount_check CHECK ((amount > (0)::numeric))
+);
+
+
+--
+-- Name: trust_charge_waivers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_charge_waivers (
+    credit_charge_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    waived_charge_id uuid NOT NULL,
+    reason text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_charge_waivers_reason_check CHECK (((reason ~ '\S'::text) AND (char_length(reason) <= 500)))
 );
 
 
@@ -10980,6 +11115,14 @@ ALTER TABLE ONLY public.trust_charge_payments
 
 
 --
+-- Name: trust_charge_waivers trust_charge_waivers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_charge_waivers
+    ADD CONSTRAINT trust_charge_waivers_pkey PRIMARY KEY (credit_charge_id);
+
+
+--
 -- Name: trust_charges trust_charges_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -12422,6 +12565,20 @@ CREATE INDEX trust_charge_payments_transfer_id ON public.trust_charge_payments U
 
 
 --
+-- Name: trust_charge_waivers_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_charge_waivers_recorded_by ON public.trust_charge_waivers USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_charge_waivers_waived; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_charge_waivers_waived ON public.trust_charge_waivers USING btree (pmc_id, waived_charge_id);
+
+
+--
 -- Name: trust_charges_lease_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -13353,6 +13510,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_charge_waivers trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_charge_waivers FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_charges trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -14151,6 +14315,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_char
 
 
 --
+-- Name: trust_charge_waivers trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_charge_waivers FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_charges trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -14823,6 +14994,13 @@ CREATE TRIGGER trust_changed_by BEFORE INSERT ON public.trust_staff_custom_roles
 
 
 --
+-- Name: trust_charge_waivers trust_charge_waiver_fits; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_charge_waiver_fits BEFORE INSERT ON public.trust_charge_waivers FOR EACH ROW EXECUTE FUNCTION public.trust_check_charge_waiver();
+
+
+--
 -- Name: trust_payment_hold_allowances trust_check_hold_allowance; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -15044,6 +15222,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_bank_deposits FOR
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_bill_splits FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_charge_waivers trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_charge_waivers FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -15966,6 +16151,38 @@ ALTER TABLE ONLY public.trust_charge_payments
 
 ALTER TABLE ONLY public.trust_charge_payments
     ADD CONSTRAINT trust_charge_payments_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
+-- Name: trust_charge_waivers trust_charge_waivers_pmc_id_credit_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_charge_waivers
+    ADD CONSTRAINT trust_charge_waivers_pmc_id_credit_charge_id_fkey FOREIGN KEY (pmc_id, credit_charge_id) REFERENCES public.trust_charges(pmc_id, id);
+
+
+--
+-- Name: trust_charge_waivers trust_charge_waivers_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_charge_waivers
+    ADD CONSTRAINT trust_charge_waivers_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_charge_waivers trust_charge_waivers_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_charge_waivers
+    ADD CONSTRAINT trust_charge_waivers_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_charge_waivers trust_charge_waivers_pmc_id_waived_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_charge_waivers
+    ADD CONSTRAINT trust_charge_waivers_pmc_id_waived_charge_id_fkey FOREIGN KEY (pmc_id, waived_charge_id) REFERENCES public.trust_charges(pmc_id, id);
 
 
 --
@@ -18165,4 +18382,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261017000075'),
     ('20261017000076'),
     ('20261017000077'),
-    ('20261018000078');
+    ('20261018000078'),
+    ('20261018000079');

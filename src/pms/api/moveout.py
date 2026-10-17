@@ -107,6 +107,9 @@ SELECT c.id, c.due_on, c.kind, c.memo,
                             WHERE p.charge_id = c.id), 0)
                 + coalesce((SELECT sum(r.amount) FROM trust_payment_reversals AS r
                             WHERE r.charge_id = c.id), 0)
+                - coalesce((SELECT sum(k.amount) FROM trust_charge_waivers AS w
+                            JOIN trust_charges AS k ON k.id = w.credit_charge_id
+                            WHERE w.waived_charge_id = c.id), 0)
 FROM trust_charges AS c
 WHERE c.lease_id = %s AND c.kind <> 'credit'
 ORDER BY c.due_on, c.created_at, c.id

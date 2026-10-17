@@ -6,10 +6,11 @@ import { RowMenu } from "../components/RowMenu";
 import { Select } from "../components/Select";
 import { Badge } from "../components/Badge";
 import { day, money, usDate } from "../money";
-import type { Bounce, Hold, Payment, PaymentMethod, RecurringCharge, RentChange, RentLease } from "../rent";
+import type { Bounce, Hold, OpenCharge, Payment, PaymentMethod, RecurringCharge, RentChange, RentLease } from "../rent";
 import {
   PAYMENT_METHODS,
   bounceSummary,
+  chargeLabel,
   earliestRentChange,
   methodLabel,
   paymentSummary,
@@ -346,5 +347,37 @@ export function ReleaseForm({ hold, record }: { hold: Hold; record: Recorder }) 
         onChange={(e) => setEnds(e.target.value)} />
       <div><Button type="submit">Release hold</Button></div>
     </Form>
+  );
+}
+
+// An open charge as a row; Waive is in its ⋯ menu and asks how much (all that is open, at first)
+// and why before it is recorded, since it takes the charge off what the lease owes for good.
+export function OpenChargeRow({ charge, record }: { charge: OpenCharge; record: Recorder }) {
+  const [asking, setAsking] = useState(false);
+  const [amount, setAmount] = useState(charge.open);
+  const [reason, setReason] = useState("");
+  const what = charge.memo ?? (charge.kind === "rent" ? "Rent" : "Fee");
+  return (
+    <li className="flex flex-wrap items-center justify-between gap-2 py-1">
+      <span>{chargeLabel(charge)}</span>
+      {asking ? (
+        <Form className="flex flex-wrap items-end gap-2" onSubmit={async (event) => {
+          event.preventDefault();
+          const done = await record<{ amount: string }>(`/api/rent/charges/${charge.id}/waive`,
+            { amount, reason }, (answer) => `Waived ${money(answer.amount)} of ${what}.`);
+          if (done) setAsking(false);
+        }}>
+          <Field label="Amount to waive" id={`waive-${charge.id}`} inputMode="decimal" required
+            value={amount} onChange={(e) => setAmount(e.target.value)} />
+          <Field label="Why" id={`waive-why-${charge.id}`} required maxLength={500}
+            value={reason} onChange={(e) => setReason(e.target.value)} />
+          <Button type="submit" variant="danger" size="sm">Waive {money(amount)}</Button>
+          <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(false)}>Cancel</Button>
+        </Form>
+      ) : (
+        <RowMenu label={`${what} due ${usDate(charge.due_on)}`}
+          actions={[{ label: "Waive", danger: true, onSelect: () => setAsking(true) }]} />
+      )}
+    </li>
   );
 }
