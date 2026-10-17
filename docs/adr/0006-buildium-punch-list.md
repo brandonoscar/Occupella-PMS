@@ -218,3 +218,17 @@ with no policy on file is not refused, as before; the vendors page and the Dashb
 scheduled work order counts with the assigned ones in the work orders report (a golden case pins
 it), and a tenant's request reads "A visit is scheduled". Nothing here moves money.
 
+## Vendors
+
+The eleventh piece, the second half of step 10 (migration 0073, `src/pms/api/vendors.py`).
+Vendors lists every vendor a page at a time, by name: Vendor, Trade, Phone, Email, W-9 (On file
+or Missing) and Insurance (Current, Expires in N days, Expired or None on file, by the coverage
+that runs out first); the row opens their page. Add vendor opens a side panel: name, trade, how
+they are paid (check or EFT), whether they are a 1099 vendor, email and phone; it then opens the
+new vendor's page. A vendor's page has tabs: Summary (trade, 1099, how they are paid, W-9, and
+their contact details; Edit details in a side panel), Insurance (each policy with its standing,
+and Add policy, the form that was on the list), Bills (each linking to its page), Work orders (the
+ones last assigned to them) and Files (their W-9s). The Vendor insurance (PDF) download moves to
+Reports. Decision 3 holds: no tax ID is kept; a 1099 vendor is a yes or no, and the PMS files
+nothing. A profile is a row of `trust_vendor_profiles`, append-only, the latest holding.
+

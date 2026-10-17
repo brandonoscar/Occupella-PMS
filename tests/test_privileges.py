@@ -112,6 +112,7 @@ TABLES = {
     # Vendor insurance and inspections (migration 0058): staff record them; a renewal or a
     # redone inspection is a new row.
     "trust_vendor_insurance": {"SELECT", "INSERT"},
+    "trust_vendor_profiles": {"SELECT", "INSERT"},
     "trust_account_signers": {"SELECT", "INSERT"},
     "trust_rent_changes": {"SELECT", "INSERT"},
     "trust_renters_insurance_terms": {"SELECT", "INSERT"},

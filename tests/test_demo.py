@@ -414,6 +414,17 @@ def test_the_founders_seed_puts_something_on_every_list(conn, app_conn, built):
     ]
     # Four vendors, a W-9 on file, and files on a lease, an owner, a bill and a work order too.
     assert rows("SELECT count(*) FROM trust_vendors WHERE pmc_id = %s") == [(4,)]
+    # Each with their trade, whether they get a 1099 and how they are paid.
+    assert rows(
+        "SELECT v.display_name, p.trade, p.gets_1099, p.payment_method FROM trust_vendors AS v"
+        " JOIN trust_vendor_profiles AS p ON p.vendor_id = v.id WHERE v.pmc_id = %s"
+        ' ORDER BY v.display_name COLLATE "C"'
+    ) == [
+        ("Demo Electric Co", "Electrical", False, "check"),
+        ("Demo Landscaping Co", "Landscaping", True, "EFT"),
+        ("Demo Plumbing Co", "Plumbing", True, "EFT"),
+        ("Demo Roofing Co", "Roofing", True, "check"),
+    ]
     assert rows("SELECT kind, title FROM trust_documents WHERE pmc_id = %s ORDER BY kind") == [
         ("move_out_photo", "Kitchen at move-out"),
         ("owner_document", "Management agreement"),

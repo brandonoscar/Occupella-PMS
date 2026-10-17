@@ -465,13 +465,16 @@ test("staff open a work order with its details, schedule its vendor (not one who
 
   // The plumber's only policy ran out yesterday.
   await section(page, "Vendors");
-  await page.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Plumbing Co" });
-  await page.getByRole("combobox", { name: "Coverage" }).selectOption("general liability");
-  await page.getByLabel("Carrier").fill("Synthetic Mutual");
-  await page.getByLabel("Policy number").fill("GL-0009");
-  await page.getByLabel("Starts").fill(firstOfMonthsAgo(11));
-  await page.getByLabel("Expires").fill(daysFromToday(-1));
-  await page.getByRole("button", { name: "Record policy" }).click();
+  await page.getByRole("row", { name: "Demo Plumbing Co", exact: true }).click();
+  await page.getByRole("tab", { name: "Insurance" }).click();
+  await page.getByRole("button", { name: "Add policy" }).click();
+  const policy = page.getByRole("dialog", { name: "Add policy" });
+  await policy.getByRole("combobox", { name: "Coverage" }).selectOption("general liability");
+  await policy.getByLabel("Carrier").fill("Synthetic Mutual");
+  await policy.getByLabel("Policy number").fill("GL-0009");
+  await policy.getByLabel("Starts").fill(firstOfMonthsAgo(11));
+  await policy.getByLabel("Expires").fill(daysFromToday(-1));
+  await policy.getByRole("button", { name: "Record policy" }).click();
   await expect(page.getByText("Demo Plumbing Co's general liability policy GL-0009 is recorded.")).toBeVisible();
 
   // A work order staff open themselves, for a unit, urgent and due tomorrow; it opens its page.
@@ -552,11 +555,14 @@ test("staff open a work order with its details, schedule its vendor (not one who
   await expect(page.getByRole("table").getByRole("row")).toHaveCount(2);
   await expect(latch).toContainText("Scheduled");
 
-  // The vendor's page lists it; the vendor is renamed there.
+  // The vendor's page lists it and the bill; the vendor is renamed there.
   await section(page, "Vendors");
-  await page.getByRole("link", { name: "Demo Roofing Co", exact: true }).click();
+  await page.getByRole("row", { name: "Demo Roofing Co", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Demo Roofing Co" })).toBeVisible();
-  await expect(page.getByRole("list", { name: "Work orders" })).toContainText("Window latch");
+  await page.getByRole("tab", { name: "Work orders" }).click();
+  await expect(page.getByRole("table", { name: "Work orders" })).toContainText("Window latch");
+  await page.getByRole("tab", { name: "Bills" }).click();
+  await expect(page.getByRole("table", { name: "Bills" })).toContainText("RF-LATCH");
   await page.getByRole("button", { name: "Edit", exact: true }).click();
   await page.getByLabel("Name", { exact: true }).fill("Demo Roofing Company");
   await page.getByRole("button", { name: "Save", exact: true }).click();
@@ -639,15 +645,17 @@ test("staff find a tenant and an owner, keep their contact details and a vendor'
     "Demo Owner A Trust holds their money; draw it before archiving",
   );
 
-  // A vendor's contact details, on Vendors.
+  // A vendor's contact details, on their page; the list shows the phone.
   await section(page, "Vendors");
-  const plumbing = page.getByRole("listitem", { name: "Demo Plumbing Co" });
-  await plumbing.getByText("Contact details for Demo Plumbing Co").click();
+  await page.getByRole("row", { name: "Demo Plumbing Co", exact: true }).click();
+  const plumbing = page.getByRole("group", { name: "Contact details, Demo Plumbing Co" });
   await plumbing.getByRole("button", { name: "Edit contact details" }).click();
   await plumbing.getByLabel("Phone", { exact: true }).fill("555-555-0177");
   await plumbing.getByRole("button", { name: "Save contact details" }).click();
   await expect(plumbing).toContainText("Contact details saved.");
   await expect(plumbing).toContainText("555-555-0177");
+  await section(page, "Vendors");
+  await expect(page.getByRole("row", { name: "Demo Plumbing Co", exact: true })).toContainText("555-555-0177");
 
   // Search finds an owner too.
   const search = page.getByLabel("Search properties, units, tenants and owners");
@@ -1453,9 +1461,11 @@ test("staff keep a vendor's W-9, a bill's receipt and a move-out photo, refuse a
   expect(file.status()).toBe(200);
   expect(Buffer.from(await file.body()).equals(pdf("synthetic W-9"))).toBe(true);
 
-  // The vendor's page has their W-9s on its Files card, and takes another there.
+  // The vendor's page has their W-9s on its Files tab, and takes another there.
   await section(page, "Vendors");
-  await page.getByRole("link", { name: "Demo Plumbing Co", exact: true }).click();
+  await expect(page.getByRole("row", { name: "Demo Plumbing Co", exact: true })).toContainText("On file");
+  await page.getByRole("row", { name: "Demo Plumbing Co", exact: true }).click();
+  await page.getByRole("tab", { name: "Files" }).click();
   const files = page.getByRole("list", { name: "Files, Demo Plumbing Co" });
   await expect(files).toContainText("w9-plumbing");
   await page.getByLabel("W-9 file").setInputFiles({ name: "w9-2026.pdf", mimeType: "application/pdf", buffer: pdf("synthetic W-9 2026") });
@@ -1717,47 +1727,81 @@ test("an admin makes a custom role and gives it: its holder changes only what it
 // A day some whole days from today (UTC).
 const daysFromToday = (days: number) => new Date(Date.now() + days * 86_400_000).toISOString().slice(0, 10);
 
-test("staff record a vendor's insurance, see it running out on Today, and record the renewal", async ({ page }) => {
+test("staff add a vendor with their trade, 1099 and how they are paid, record a vendor's insurance on their page, see it running out on Today, and record the renewal", async ({ page }) => {
   const people = seed.features.vendors!;
   await joinAsStaff(page, people.manager);
   await section(page, "Vendors");
-  const plumbing = page.getByRole("listitem", { name: "Demo Plumbing Co" });
-  await expect(plumbing).toContainText("No insurance on file.");
+  const plumbing = page.getByRole("row", { name: "Demo Plumbing Co", exact: true });
+  await expect(plumbing).toContainText("Plumbing");
+  await expect(plumbing.getByTestId("standing")).toHaveText("None on file");
 
-  // A policy that runs out in ten days, and one that ran out yesterday.
-  const record = async (coverage: string, number: string, starts: string, expires: string) => {
-    await page.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Plumbing Co" });
-    await page.getByRole("combobox", { name: "Coverage" }).selectOption(coverage);
-    await page.getByLabel("Carrier").fill("Synthetic Mutual");
-    await page.getByLabel("Policy number").fill(number);
-    await page.getByLabel("Starts").fill(starts);
-    await page.getByLabel("Expires").fill(expires);
-    await page.getByRole("button", { name: "Record policy" }).click();
+  // Add vendor: a side panel, then their page.
+  await page.getByRole("button", { name: "Add vendor" }).click();
+  const adding = page.getByRole("dialog", { name: "Add vendor" });
+  await adding.getByLabel("Vendor's name").fill("Demo Glass Co");
+  await adding.getByLabel("Trade (optional)").fill("Glazing");
+  await adding.getByLabel("Paid by").selectOption({ label: "EFT" });
+  await adding.getByLabel("1099 vendor").check();
+  await adding.getByLabel("Email (optional)").fill("glass@example.com");
+  await adding.getByRole("button", { name: "Add vendor" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Demo Glass Co" })).toBeVisible();
+  await expect(page.getByLabel("Summary")).toContainText("Glazing");
+  await expect(page.getByLabel("Summary")).toContainText("1099 vendorYes");
+  await page.getByRole("button", { name: "Edit details" }).click();
+  const details = page.getByRole("dialog", { name: "Edit details" });
+  await details.getByLabel("Paid by").selectOption({ label: "Check" });
+  await details.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved Demo Glass Co.")).toBeVisible();
+  await expect(page.getByLabel("Summary")).toContainText("Paid byCheck");
+  await section(page, "Vendors");
+  await expect(page.getByRole("row", { name: "Demo Glass Co", exact: true })).toContainText("glass@example.com");
+
+  // On the plumber's Insurance tab: a policy that runs out in ten days, and one that ran out
+  // yesterday.
+  await page.getByRole("row", { name: "Demo Plumbing Co", exact: true }).click();
+  await page.getByRole("tab", { name: "Insurance" }).click();
+  const record = async (coverage: string, number: string, starts: string, expires: string, limit = "") => {
+    await page.getByRole("button", { name: "Add policy" }).click();
+    const panel = page.getByRole("dialog", { name: "Add policy" });
+    await panel.getByRole("combobox", { name: "Coverage" }).selectOption(coverage);
+    await panel.getByLabel("Carrier").fill("Synthetic Mutual");
+    await panel.getByLabel("Policy number").fill(number);
+    await panel.getByLabel("Starts").fill(starts);
+    await panel.getByLabel("Expires").fill(expires);
+    await panel.getByLabel("Limit (optional)").fill(limit);
+    await panel.getByRole("button", { name: "Record policy" }).click();
+    return panel;
   };
   await record("general liability", "GL-0001", firstOfMonthsAgo(11), daysFromToday(10));
   await expect(page.getByText("Demo Plumbing Co's general liability policy GL-0001 is recorded.")).toBeVisible();
-  await page.getByLabel("Limit (optional)").fill("1000000");
-  await record("workers compensation", "WC-0001", firstOfMonthsAgo(23), daysFromToday(-1));
+  await record("workers compensation", "WC-0001", firstOfMonthsAgo(23), daysFromToday(-1), "1000000");
   await expect(page.getByText("Demo Plumbing Co's workers compensation policy WC-0001 is recorded.")).toBeVisible();
-  const liability = page.getByRole("listitem", { name: "Demo Plumbing Co, general liability" });
-  await expect(liability.getByTestId("standing")).toHaveText("expires in 10 days");
-  const workers = page.getByRole("listitem", { name: "Demo Plumbing Co, workers compensation" });
-  await expect(workers.getByTestId("standing")).toHaveText("expired");
-  await expect(workers).toContainText("limit $1,000,000.00");
+  const liability = page.getByRole("row", { name: "general liability" });
+  await expect(liability).toContainText("Expires in 10 days");
+  const workers = page.getByRole("row", { name: "workers compensation" });
+  await expect(workers).toContainText("Expired");
+  await expect(workers).toContainText("$1,000,000.00");
+  await expect(page.getByTestId("standing")).toHaveText("Insurance: Expired");
 
   // A policy can't expire before it starts.
-  await record("other", "OT-0001", daysFromToday(5), daysFromToday(4));
-  await expect(page.getByRole("alert")).toHaveText("check what you entered and try again");
+  const wrong = await record("other", "OT-0001", daysFromToday(5), daysFromToday(4));
+  await expect(wrong.getByRole("alert")).toHaveText("check what you entered and try again");
+  await wrong.getByRole("button", { name: "Close" }).click();
 
   // Today lists both; the renewal takes the place of the policy running out.
   await section(page, "Dashboard");
   await expect(page.getByText(`Demo Plumbing Co, general liability: expires in 10 days (${us(daysFromToday(10))})`)).toBeVisible();
   await expect(page.getByText(`Demo Plumbing Co, workers compensation: expired (${us(daysFromToday(-1))})`)).toBeVisible();
   await section(page, "Vendors");
+  await page.getByRole("row", { name: "Demo Plumbing Co", exact: true }).click();
+  await page.getByRole("tab", { name: "Insurance" }).click();
   await record("general liability", "GL-0002", today(), daysFromToday(365));
   await expect(page.getByText("Demo Plumbing Co's general liability policy GL-0002 is recorded.")).toBeVisible();
-  await expect(liability.getByTestId("standing")).toHaveText("current");
+  await expect(liability).toContainText("Current");
   await expect(liability).toContainText("GL-0002");
+
+  // The vendor insurance report is on Reports.
+  await section(page, "Reports");
   await downloads(page, "Vendor insurance (PDF)", PDF);
   const href = (await page.getByRole("link", { name: "Vendor insurance (PDF)" }).getAttribute("href")) ?? "";
   const csv = await (await page.request.get(href.replace("format=pdf", "format=csv"))).text();
