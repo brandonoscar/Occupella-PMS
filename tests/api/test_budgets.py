@@ -1,6 +1,7 @@
-"""Budgets (src/pms/api/budgets.py): staff set a line's budget for each month of a year, on an
-owner's property account; a change is a new row and a month left as it was writes nothing.
-The budget against the income statement downloads like every report."""
+"""Budgets (src/pms/api/budgets.py): staff set an owner's property account's lines for each month
+of a year, every line in one save (the Budgets grid, ADR 0006 step 12), all or none; a change is
+a new row and a month left as it was writes nothing. The budget against the income statement
+downloads like every report."""
 
 import pytest
 from helpers import make_pmc
@@ -39,32 +40,26 @@ def budget(client, account, year=YEAR):
     return ok(client.get("/api/budgets", params={"account": account, "year": year}))
 
 
+def save(client, account, *lines, year=YEAR):
+    return client.post("/api/budgets", json={"account": account, "year": year, "lines": lines})
+
+
 def line_of(found, label):
     (line,) = [x for x in found["lines"] if x["label"] == label]
     return line
 
 
-def test_staff_set_a_lines_budget_month_by_month(client, conn, pmc, staff, repairs):
+def test_staff_set_every_line_month_by_month_in_one_save(client, conn, pmc, staff, repairs):
     account = pmc.owners[0].account
     months = [f"{n}00.00" for n in range(1, 13)]
     assert ok(
-        client.post(
-            "/api/budgets",
-            json={"account": account, "year": YEAR, "line": "rent", "months": months},
+        save(
+            client,
+            account,
+            {"line": "rent", "months": months},
+            {"line": "expense account", "expense_account_id": str(repairs), "months": EVEN},
         )
-    ) == {"changed": 12}
-    ok(
-        client.post(
-            "/api/budgets",
-            json={
-                "account": account,
-                "year": YEAR,
-                "line": "expense account",
-                "expense_account_id": str(repairs),
-                "months": EVEN,
-            },
-        )
-    )
+    ) == {"changed": 24}
 
     found = budget(client, account)
     assert (found["owner"], found["property"], found["year"]) == ("Owner 1", "Property 1", YEAR)
@@ -90,11 +85,13 @@ def test_staff_set_a_lines_budget_month_by_month(client, conn, pmc, staff, repai
 
 def test_a_change_writes_only_the_months_it_changes(client, conn, pmc, staff):
     account = pmc.owners[0].account
-    body = {"account": account, "year": YEAR, "line": "management fees", "months": EVEN}
-    ok(client.post("/api/budgets", json=body))
-    assert ok(client.post("/api/budgets", json=body)) == {"changed": 0}
+    fees = {"line": "management fees", "months": EVEN}
+    ok(save(client, account, fees))
+    assert ok(save(client, account, fees, {"line": "late fees", "months": ["0.00"] * 12})) == {
+        "changed": 0
+    }
     changed = ["100.00"] * 11 + ["150.00"]
-    assert ok(client.post("/api/budgets", json=body | {"months": changed})) == {"changed": 1}
+    assert ok(save(client, account, fees | {"months": changed})) == {"changed": 1}
 
     assert line_of(budget(client, account), "expense: management fees")["months"][-1] == "150.00"
     assert conn.execute(
@@ -109,11 +106,7 @@ def test_a_change_writes_only_the_months_it_changes(client, conn, pmc, staff):
 
 def test_the_budget_against_actual_downloads_for_an_owner(client, pmc, staff):
     account = pmc.owners[0].account
-    ok(
-        client.post(
-            "/api/budgets", json={"account": account, "year": YEAR, "line": "rent", "months": EVEN}
-        )
-    )
+    ok(save(client, account, {"line": "rent", "months": EVEN}))
     owner = budget(client, account)["owner_id"]
 
     answer = client.get(
@@ -132,7 +125,7 @@ def test_the_budget_against_actual_downloads_for_an_owner(client, pmc, staff):
 
 def test_only_the_pmcs_staff_set_or_read_budgets(client, other_client, conn, app_conn, pmc, staff):
     account = pmc.owners[0].account
-    body = {"account": account, "year": YEAR, "line": "rent", "months": EVEN}
+    body = {"account": account, "year": YEAR, "lines": [{"line": "rent", "months": EVEN}]}
     for answer in (
         other_client.get("/api/budgets", params={"account": account, "year": YEAR}),
         other_client.post("/api/budgets", json=body),
@@ -163,15 +156,32 @@ def test_only_the_pmcs_staff_set_or_read_budgets(client, other_client, conn, app
         {"months": ["-1.00"] * 12},
         {"months": ["1.001"] * 12},
         {"months": ["100000000.01"] * 12},
-        {"year": 1899},
         {"line": "parking"},
         {"line": "expense account"},
         {"expense_account_id": "3f1c2b9a-0000-4000-8000-000000000001"},
     ],
 )
 def test_a_budget_is_twelve_months_of_whole_cents_on_a_known_line(client, conn, pmc, staff, change):
-    body = {"account": pmc.owners[0].account, "year": YEAR, "line": "rent", "months": EVEN}
-    refused(client.post("/api/budgets", json=body | change), 422)
+    good = {"line": "late fees", "months": EVEN}
+    refused(
+        save(client, pmc.owners[0].account, good, {"line": "rent", "months": EVEN} | change), 422
+    )
+    assert conn.execute(
+        "SELECT count(*) FROM trust_budgets WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone() == (0,)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"year": 1899, "lines": [{"line": "rent", "months": EVEN}]},
+        {"year": YEAR, "lines": []},
+        {"year": YEAR, "lines": [{"line": "rent", "months": EVEN}] * 2},
+        {"year": YEAR},
+    ],
+)
+def test_a_save_is_a_known_year_and_each_line_once(client, conn, pmc, staff, body):
+    refused(client.post("/api/budgets", json={"account": pmc.owners[0].account} | body), 422)
     assert conn.execute(
         "SELECT count(*) FROM trust_budgets WHERE pmc_id = %s", (pmc.pmc_id,)
     ).fetchone() == (0,)
@@ -181,10 +191,7 @@ def test_a_budget_names_an_owners_account_and_an_expense_account_of_the_company(
     client, conn, pmc, staff
 ):
     refused(
-        client.post(
-            "/api/budgets",
-            json={"account": pmc.operating_cash, "year": YEAR, "line": "rent", "months": EVEN},
-        ),
+        save(client, pmc.operating_cash, {"line": "rent", "months": EVEN}),
         404,
         "no such owner's property account",
     )
@@ -194,20 +201,20 @@ def test_a_budget_names_an_owners_account_and_an_expense_account_of_the_company(
         " VALUES (%s, 'Repairs', 14) RETURNING id",
         (theirs.pmc_id,),
     ).fetchone()[0]
+    # One line on an expense account of another company: none of the save is written.
     refused(
-        client.post(
-            "/api/budgets",
-            json={
-                "account": pmc.owners[0].account,
-                "year": YEAR,
-                "line": "expense account",
-                "expense_account_id": str(elsewhere),
-                "months": EVEN,
-            },
+        save(
+            client,
+            pmc.owners[0].account,
+            {"line": "rent", "months": EVEN},
+            {"line": "expense account", "expense_account_id": str(elsewhere), "months": EVEN},
         ),
         404,
         "no such expense account",
     )
+    assert conn.execute(
+        "SELECT count(*) FROM trust_budgets WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone() == (0,)
     refused(
         client.get("/api/budgets", params={"account": pmc.owners[0].account, "year": "soon"}), 422
     )

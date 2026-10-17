@@ -1,7 +1,8 @@
 """Staff's budgets (migration 0055): what an owner's property is expected to bring in and cost
 each month, on the income statement's own lines: each income class, the management and leasing
 fees, each expense account and bills in none. A line's latest row is its budget, so a change
-is a new row; a month left as it was writes nothing. A budget moves no money.
+is a new row; a month left as it was writes nothing. A budget moves no money. The Budgets page
+(ADR 0006, step 12) is one grid of a property's lines by month, saved at once.
 
 trust_report_budget_vs_actual lays an owner's budget beside their income statement; staff
 download it through /api/reports like every report.
@@ -132,51 +133,66 @@ def budget(
     )
 
 
-class NewBudget(BaseModel):
-    account: str = Field(min_length=1, max_length=100)
-    year: Year
+class LineBudget(BaseModel):
     line: Line
     expense_account_id: UUID | None = None
     months: list[Amount] = Field(min_length=12, max_length=12)
 
     @model_validator(mode="after")
-    def names_its_expense_account(self) -> NewBudget:
+    def names_its_expense_account(self) -> LineBudget:
         if (self.line == "expense account") != (self.expense_account_id is not None):
             raise ValueError("an expense account's line names the expense account, and only it")
         return self
 
 
+class NewBudget(BaseModel):
+    """The Budgets grid's one Save: any of an account's lines for a year, all or none."""
+
+    account: str = Field(min_length=1, max_length=100)
+    year: Year
+    lines: list[LineBudget] = Field(min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def each_line_once(self) -> NewBudget:
+        keys = [(x.line, x.expense_account_id) for x in self.lines]
+        if len(set(keys)) != len(keys):
+            raise ValueError("each line is budgeted once")
+        return self
+
+
 class Changed(BaseModel):
-    changed: int  # months whose budget this changed
+    changed: int  # months whose budget this changed, across the lines
 
 
 @router.post("")
 def set_budget(session: Staff, conn: Conn, new: NewBudget) -> Changed:
-    """Sets a line's budget for each month of a year; a month already at that amount is left
-    as it is."""
+    """Sets each line's budget for each month of a year, in one transaction; a month already at
+    that amount is left as it is."""
     account_of(conn, session.pmc_id, new.account)
-    if (
-        new.expense_account_id is not None
-        and conn.execute(
-            "SELECT 1 FROM trust_expense_accounts WHERE pmc_id = %s AND id = %s",
-            (session.pmc_id, new.expense_account_id),
-        ).fetchone()
-        is None
-    ):
+    named = {x.expense_account_id for x in new.lines if x.expense_account_id is not None}
+    known = {
+        i
+        for (i,) in conn.execute(
+            "SELECT id FROM trust_expense_accounts WHERE pmc_id = %s AND id = ANY(%s)",
+            (session.pmc_id, list(named)),
+        ).fetchall()
+    }
+    if named - known:
         raise HTTPException(404, "no such expense account")
-    before = latest(conn, new.account, new.year).get((new.line, new.expense_account_id))
+    before = latest(conn, new.account, new.year)
     changed = [
-        (n, amount)
-        for n, amount in enumerate(new.months, start=1)
-        if amount != (before[n - 1] if before else Decimal(0))
+        (n, x.line, x.expense_account_id, amount)
+        for x in new.lines
+        for n, amount in enumerate(x.months, start=1)
+        if amount != before.get((x.line, x.expense_account_id), [Decimal(0)] * 12)[n - 1]
     ]
     with conn.cursor() as cursor:
         cursor.executemany(
             "INSERT INTO trust_budgets (pmc_id, ledger_account_id, month, line,"
             " expense_account_id, amount) VALUES (%s, %s, make_date(%s, %s, 1), %s, %s, %s)",
             [
-                (session.pmc_id, new.account, new.year, n, new.line, new.expense_account_id, a)
-                for n, a in changed
+                (session.pmc_id, new.account, new.year, n, line, expense, amount)
+                for n, line, expense, amount in changed
             ],
         )
     return Changed(changed=len(changed))
