@@ -76,7 +76,8 @@ def emails(conn, pmc_id, kind):
     return conn.execute(
         "SELECT to_address, subject, body, tenant_id, owner_id, vendor_id, lease_id, charge_id,"
         " period, work_order_step_id, application_id, applicant_id"
-        " FROM trust_emails WHERE pmc_id = %s AND kind = %s ORDER BY to_address, created_at",
+        " FROM trust_emails WHERE pmc_id = %s AND kind = %s"
+        ' ORDER BY to_address COLLATE "C", created_at',
         (pmc_id, kind),
     ).fetchall()
 
@@ -365,7 +366,7 @@ def test_the_night_writes_only_what_is_on_and_only_while_the_server_sends_email(
     ).fetchone() == (0,)
     assert nightly.run_pmc(app_conn, pmc.pmc_id, day, URL, sending=True).emails == 2
     assert conn.execute(
-        "SELECT kind FROM trust_emails WHERE pmc_id = %s ORDER BY kind", (pmc.pmc_id,)
+        'SELECT kind FROM trust_emails WHERE pmc_id = %s ORDER BY kind COLLATE "C"', (pmc.pmc_id,)
     ).fetchall() == [("owner_statement",), ("rent_reminder",)]
 
 

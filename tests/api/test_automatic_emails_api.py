@@ -48,7 +48,8 @@ def ok(answer, status=200):
 
 def kinds(conn, pmc_id):
     return conn.execute(
-        "SELECT kind, count(*) FROM trust_emails WHERE pmc_id = %s GROUP BY kind ORDER BY kind",
+        "SELECT kind, count(*) FROM trust_emails WHERE pmc_id = %s"
+        ' GROUP BY kind ORDER BY kind COLLATE "C"',
         (pmc_id,),
     ).fetchall()
 
@@ -57,6 +58,8 @@ def kinds(conn, pmc_id):
 
 
 def test_staff_turn_emails_on_and_saving_the_same_writes_nothing(client, conn, staff, pmc):
+    others = "SELECT count(*) FROM trust_email_settings WHERE pmc_id <> %s"
+    before = conn.execute(others, (pmc.pmc_id,)).fetchone()
     assert ok(client.get("/api/emails/settings")) == {**OFF, "sending": False}
     client.app.state.email = email.FakeSender()
     assert ok(client.post("/api/emails/settings", json=ON)) == {**ON, "sending": True}
@@ -68,10 +71,8 @@ def test_staff_turn_emails_on_and_saving_the_same_writes_nothing(client, conn, s
     ).fetchone() == (1, str(staff.person_id))
     # Turned off again: a row of its own.
     assert ok(client.post("/api/emails/settings", json={})) == {**OFF, "sending": True}
-    # Another company's settings are its own.
-    assert conn.execute(
-        "SELECT count(*) FROM trust_email_settings WHERE pmc_id <> %s", (pmc.pmc_id,)
-    ).fetchone() == (0,)
+    # Another company's settings are its own: none was written.
+    assert conn.execute(others, (pmc.pmc_id,)).fetchone() == before
 
 
 @pytest.mark.parametrize("caller", ["nobody", "owner", "tenant"])
