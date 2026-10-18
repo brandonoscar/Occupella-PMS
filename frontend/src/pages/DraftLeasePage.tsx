@@ -13,7 +13,7 @@ import { Wide } from "../components/Wide";
 import { when } from "../maintenance";
 import { money, usDate } from "../money";
 import type { Offer, Offered, SigningLink } from "../offers";
-import { offerBadge, signedCount, term } from "../offers";
+import { offerBadge, sentLine, signedCount, term } from "../offers";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
@@ -72,7 +72,7 @@ export function DraftLeasePage({ me, id }: { me: Me; id: string }) {
           {found.status === "draft" && (
             <Button onClick={() => record<Offered>(`/api/leasing/offers/${id}/send`, {}, (sent) => {
               setLinks(sent.links);
-              return `Sent to ${sent.offer.signers.length} signer${sent.offer.signers.length === 1 ? "" : "s"}.`;
+              return sentLine(sent);
             })}>
               Send
             </Button>

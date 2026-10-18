@@ -18,7 +18,9 @@ Invariants checked after every step (ci/registry.toml maps them to this test):
     applicant reaches a link through exactly those listings (migration 20261013000047);
   - each withdrawal is the model's: once per application, never of a declined one, and nothing
     (no screening, no decision) recorded for an application after it (migration
-    20261016000070).
+    20261016000070);
+  - a decision says why exactly when it goes against the recommendation of its application's
+    latest screening (migration 20261018000089).
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
@@ -49,6 +51,8 @@ from pms.api import leasing as leasing_api
 from pms.api import listings as listings_api
 
 RECOMMENDATIONS = {"approve": [], "conditional": ["Income"], "decline": ["Income"]}
+# The decision that goes with each recommendation; any other goes against it.
+AGREES = {"approve": "approved", "conditional": "conditional", "decline": "declined"}
 
 
 class LeasingMachine(RuleBasedStateMachine):
@@ -65,7 +69,10 @@ class LeasingMachine(RuleBasedStateMachine):
         self.links: dict = {}  # link -> open?
         self.applications: dict = {}  # application -> its link
         self.screenings: dict = {}  # screening -> its application
+        # screening -> (when it was reported, its recommendation), as the database recorded it
+        self.reported: dict = {}
         self.decisions: dict = {}  # application -> (decision, screening or None, notice?)
+        self.overridden: set = set()  # applications decided against their latest screening
         self.listings: dict = {}  # listing -> (its link, taken off?)
         self.withdrawn: set = set()  # applications withdrawn
         self.snapshot: list = []
@@ -166,6 +173,10 @@ class LeasingMachine(RuleBasedStateMachine):
             RECOMMENDATIONS[recommendation],
         )
         self.screenings[screening] = application
+        (at,) = self.conn.execute(
+            "SELECT reported_at FROM trust_screenings WHERE id = %s", (screening,)
+        ).fetchone()
+        self.reported[screening] = (at, recommendation)
 
     @precondition(lambda self: self.applications)
     @rule(
@@ -174,8 +185,9 @@ class LeasingMachine(RuleBasedStateMachine):
         on_a_screening=st.booleans(),
         own_screening=st.booleans(),
         with_notice=st.booleans(),
+        with_reason=st.booleans(),
     )
-    def decide(self, data, decision, on_a_screening, own_screening, with_notice):
+    def decide(self, data, decision, on_a_screening, own_screening, with_notice, with_reason):
         application = data.draw(st.sampled_from(list(self.applications)))
         mine = [s for s, a in self.screenings.items() if a == application]
         others = [s for s, a in self.screenings.items() if a != application]
@@ -193,14 +205,23 @@ class LeasingMachine(RuleBasedStateMachine):
                     decision,
                     screening,
                     conditions,
+                    "The owner's own rule" if with_reason else None,
                 )
                 if with_notice:
                     record_adverse_action(self.conn, self.pmc_id, application, self.staff)
 
         needs_notice = decision != "approved" and screening is not None
-        # In the order the database checks: the screening and a withdrawal (BEFORE triggers),
-        # then one decision per application (the key), then the notice (at commit).
-        if application in self.withdrawn or (screening is not None and screening not in mine):
+        # Against the latest screening's recommendation (latest by when it was reported, then
+        # id, as the database orders them), a decision says why; no other does.
+        latest = max(((self.reported[s][0], s) for s in mine), default=None)
+        against = latest is not None and decision != AGREES[self.reported[latest[1]][1]]
+        # In the order the database checks: the screening, a withdrawal and the reason (BEFORE
+        # triggers), then one decision per application (the key), then the notice (at commit).
+        if (
+            application in self.withdrawn
+            or (screening is not None and screening not in mine)
+            or against != with_reason
+        ):
             refusal = psycopg.errors.CheckViolation
         elif application in self.decisions:
             refusal = psycopg.errors.UniqueViolation
@@ -209,6 +230,8 @@ class LeasingMachine(RuleBasedStateMachine):
         else:
             do()
             self.decisions[application] = (decision, screening, with_notice)
+            if with_reason:
+                self.overridden.add(application)
             return
         with pytest.raises(refusal):
             do()
@@ -280,6 +303,12 @@ class LeasingMachine(RuleBasedStateMachine):
             (self.pmc_id,),
         ).fetchall()
         assert {row[0]: row[1:4] for row in rows} == self.decisions
+        (overridden,) = self.conn.execute(
+            "SELECT array_agg(application_id) FROM trust_application_decisions"
+            " WHERE pmc_id = %s AND override_reason IS NOT NULL",
+            (self.pmc_id,),
+        ).fetchone()
+        assert set(overridden or []) == self.overridden
         for application, decision, screening, notice, screened in rows:
             assert screening is None or screened == application
             assert notice == (decision != "approved" and screening is not None)

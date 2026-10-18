@@ -14,7 +14,7 @@ import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import type { Application, Decision } from "../leasing";
-import { applicantNames, applicationBadge, incomeMultiple, needsNotice, recommendationLabel } from "../leasing";
+import { againstScreening, applicantNames, applicationBadge, incomeMultiple, needsNotice, recommendationLabel } from "../leasing";
 import { when } from "../maintenance";
 import { day, money, usDate } from "../money";
 import { GoLink } from "./NeedsAttention";
@@ -138,6 +138,12 @@ export function ApplicantPage({ me, id }: { me: Me; id: string }) {
               {DECIDED[found.decision.decision]} {when(found.decision.decided_at)}
               {found.decision.conditions ? `: ${found.decision.conditions}` : "."}
             </p>
+            {found.decision.override_reason && (
+              <p className="flex flex-wrap items-center gap-2" data-testid="override">
+                <Badge tone="caution">Against the screening's recommendation</Badge>
+                <span className="text-ink-muted">{found.decision.override_reason}</span>
+              </p>
+            )}
             {found.decision.adverse_action && (
               <div className="flex flex-wrap items-center gap-3">
                 <span className="text-ink-muted">
@@ -196,7 +202,9 @@ export function DecideForm({ application, rejecting, record }: {
   const [conditions, setConditions] = useState("");
   const [reasons, setReasons] = useState(last?.reasons.join("\n") ?? "");
   const [noticeOn, setNoticeOn] = useState(day(new Date()));
+  const [why, setWhy] = useState("");
   const notice = needsNotice(decision, screening || null);
+  const against = againstScreening(application, decision);
   const names = applicantNames(application);
   return (
     <Form className="flex flex-col gap-3" onSubmit={(event) => {
@@ -208,6 +216,7 @@ export function DecideForm({ application, rejecting, record }: {
         adverse_action: notice
           ? { reasons: reasons.split("\n").filter((reason) => reason.trim()), notice_given_on: noticeOn }
           : null,
+        override_reason: against ? why.trim() : null,
       };
       void record(`/api/leasing/applications/${application.id}/decide`, body,
         () => `${DECIDED[decision]}: ${names}.`);
@@ -228,6 +237,10 @@ export function DecideForm({ application, rejecting, record }: {
       {decision === "conditional" && (
         <Field label="Conditions" id="decide-conditions" required maxLength={2000} value={conditions}
           onChange={(e) => setConditions(e.target.value)} />
+      )}
+      {against && (
+        <Field label="Why decide against the screening's recommendation" id="decide-why" required maxLength={500}
+          value={why} onChange={(e) => setWhy(e.target.value)} />
       )}
       {notice && (
         <>

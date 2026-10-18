@@ -1,7 +1,14 @@
 // Rental applications as the API sends them (src/pms/api/leasing.py), and how they read.
 import type { BadgeTone } from "./components/Badge";
 
-export type Listing = { pmc: string; property: string; unit: string; monthly_rent: string };
+export type Listing = {
+  pmc: string;
+  property: string;
+  unit: string;
+  monthly_rent: string;
+  // The company's screening criteria in words, the same for every applicant (migration 0089).
+  criteria?: string | null;
+};
 
 // A unit on a PMC's public vacancy page, and the page.
 export type Vacancy = {
@@ -11,6 +18,8 @@ export type Vacancy = {
   monthly_rent: string;
   description: string | null;
   listed_at: string;
+  // The unit's listing photos, oldest first (migration 0087).
+  photos: string[];
 };
 export type Vacancies = { pmc: string; listings: Vacancy[] };
 
@@ -28,6 +37,8 @@ export type ApplicantStatus = {
   submitted_at: string;
   status: "received" | "in review" | "approved" | "conditional" | "declined" | "withdrawn";
   conditions: string | null;
+  // The adverse action notice of a decision that rests on a screening (q080).
+  notice?: string | null;
 };
 
 export type Applicant = { name: string; email: string };
@@ -49,7 +60,18 @@ export type Decision = {
   screening_id: string | null;
   decided_at: string;
   adverse_action: AdverseAction | null;
+  // Why the decision went against the latest screening's recommendation (migration 0089).
+  override_reason?: string | null;
 };
+
+// The decision that goes with each recommendation; any other goes against it and says why.
+const AGREES: Record<string, Decision["decision"]> = { approve: "approved", conditional: "conditional", decline: "declined" };
+
+// Whether deciding this goes against the application's latest screening.
+export function againstScreening(application: { screenings: { recommendation: string }[] }, decision: Decision["decision"]): boolean {
+  const latest = application.screenings.at(-1);
+  return latest !== undefined && AGREES[latest.recommendation] !== decision;
+}
 
 // Where an application stands for staff: new until screened, screening until decided, then the
 // decision (a decline reads as rejected), or withdrawn.
@@ -113,10 +135,17 @@ export type OpenUnit = {
   link_id: string | null;
   link_rent: string | null;
   applications: number;
-  // The link's listing on the public page, while it is there.
+  // The link's listing on the public page, while it is there, since when and for how many days.
   listing_id: string | null;
   description: string | null;
+  listed_at: string | null;
+  days_listed: number | null;
+  // How many listing photos the unit has (migration 0087).
+  photos: number;
 };
+
+// A unit's listing photo, as staff keep them.
+export type ListingPhoto = { id: string; title: string; uploaded_at: string };
 
 // What an applicant reads about their application.
 export function applicantStatus(status: ApplicantStatus["status"]): string {

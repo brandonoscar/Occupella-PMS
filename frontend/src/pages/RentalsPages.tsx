@@ -347,7 +347,7 @@ export function UnitPage({ me, id }: { me: Me; id: string }) {
             <AddLeasePanel panel={{ say: setSaid, refresh, close: () => setAdding(false) }} unitId={id}
               propertyId={unit.property.id} propertyName={unit.property.name} />
           )}
-          <FilesCard kind="unit_document" aboutId={id} name={`${unit.name}, ${unit.property.name}`} />
+          <FilesCard kind="unit_document" also={["listing_photo"]} aboutId={id} name={`${unit.name}, ${unit.property.name}`} />
         </>
       )}
     </Shell>

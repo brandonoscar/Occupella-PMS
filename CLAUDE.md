@@ -173,8 +173,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and archive one. A search in the bar finds a property, unit, tenant or owner (`/api/search`).
   Lists come a page at a time (`Paged`: 50 by default, at most 200); move-outs at `/move-out` (`src/pms/api/moveout.py`). Leasing:
   Listings at `/rental-listings` (`GET /api/leasing/vacancies`: each unit coming free within 90
-  days or with an open link, its rent and available day; List opens its link if it has none and
-  puts it on the public page, Unlist takes it off), Applicants at `/applicants` (Open, Rejected,
+  days or with an open link, its rent and available day, days listed and photos; List opens its
+  link if it has none and puts it on the public page, Unlist takes it off, Photos keeps the unit's
+  listing photos), Leads at `/leads` (migration 0088, `src/pms/api/leads.py`: Open, Closed, All;
+  Add lead; each at `/leads/<id>` with its showings, Schedule showing and Close lead), Applicants at
+  `/applicants` (Open, Rejected,
   Withdrawn, All) with each application's page at `/applicants/<id>` (screen, approve or reject,
   record a withdrawal, Create draft lease), Draft leases at `/draft-leases` (Waiting for
   signatures, Leases made, Void, All; New draft lease in a side panel) with each at
@@ -240,11 +243,18 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the PMC's own lease PDF (the PMS writes no lease text) and are signed through
   `pms.leasing.esign.Partner`, picked by `PMS_ESIGN_PARTNER` ("fake" for development and CI,
   none by default; the fake's signing page, `/esign#<token>`, is served only while it is on).
+  Since migration 0090 (q081), sending an offer while the server sends email emails each signer
+  their own signing link (`signing_request`, once per signer; the link held in memory like an
+  invite's, never in the outbox), and Send says whom.
   A tenant signs a renewal of their own lease from the portal, as the signer with their
   login's email. Staff may list an open link on the PMC's public vacancy page
   (`/listings?pmc=<id>`, `src/pms/api/listings.py`, migration 0047): no login, it shows each
   listed unit's property, unit, rent and description, and an applicant applies through the
   listing as through its link until it is removed or the link closed. Nothing is syndicated.
+  Since migration 0087 a listed unit shows its photos there (`listing_photo` documents about the
+  unit: JPEG or PNG, twelve at most, oldest first), each served to anyone by
+  `GET /api/listings/<pmc>/photos/<id>` only while the unit is listed and the photo not removed;
+  staff keep them from Listings (`GET /api/leasing/units/<id>/photos`) or the unit's Files.
 - Every table we add carries `pmc_id uuid`. It maps to Occupella's `companies.id` at merge time.
 - Table names: `pgledger_*` from upstream, `trust_*` for ours. Our functions and triggers are
   `trust_*` too. A report function is `trust_report_<name>`. `tests/test_schema_conventions.py`
@@ -282,7 +292,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   it a new table's SELECT only if `trust_app` has it, and never a write path. It never reads
   logins, invites, sessions or credentials, nor rental applications, applicants and their
   screenings, nor lease offers and signatures, nor documents' files, nor contact details, nor notes,
-  nor vendors' links (`AI_NEVER_READS` in
+  nor vendors' links, nor leads and showings, nor screening criteria (`AI_NEVER_READS` in
   `tests/test_privileges.py`), nor their rows in the audit log: row-level security shows it only
   the audit rows of tables it may read (migration 0043).
 - A new table starts with `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it
@@ -483,6 +493,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   says the work is done with a note: a step naming the link (`vendor_link_id`), which a trigger
   allows only for those two steps, by the vendor last assigned, while the link stands. The
   timeline marks it "(by the vendor)". The AI role reads neither table.
+- Leads and showings (migration 0088, the founder's review q083): a prospect who asked about
+  renting before applying (`trust_leads`: a name, an email or a phone, maybe a property and one of
+  its units, a source, a move-in day, what they asked), showings of a unit at a time, maybe by a
+  staff member (`trust_showings`), how each went once (`trust_showing_outcomes`: shown, no-show,
+  cancelled) and the lead closed once (`trust_lead_closings`: applied or lost, why). A closed lead
+  takes no showing (a trigger, the closing and showings waiting for each other). All append-only,
+  audited, naming who; area leasing. Nothing records what a fair housing law protects, and the AI
+  role reads none of it.
 - Rental applications: an application comes through an open application link of a unit
   (closing a link and an application wait for each other); its applicants are names and
   emails. Screenings record a partner's recommendation and reasons. Each application has one
@@ -492,6 +510,15 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (migration 0070, `trust_application_withdrawals`, once, naming who recorded it) comes before
   a decline or a lease made of it; after it the application takes no screening, decision or
   offer, and none of its offers becomes a lease (each waits for a withdrawal under way).
+  Screening criteria (migration 0089, the founder's review q085, `src/pms/api/screening_criteria.py`):
+  a company's criteria (`trust_screening_criteria`: the income, as times the rent, approved and
+  approved on conditions, and the criteria in words; append-only, the latest row holding, naming
+  who; Company setup, area leasing), which the partner applies (`screening.Criteria`; without
+  any, `screening.DEFAULT`, 3 and 2 times), each screening naming them (`criteria_id`), and the
+  apply page shows every applicant in words. A decision against the recommendation of its
+  application's latest screening says why (`override_reason`, a trigger; no other decision
+  does), and the applicant's page marks it. The applicant's status page shows the adverse action
+  notice (q080).
 - Lease offers: a new lease for an approved (or conditionally approved) application at the unit
   it applied for, or the renewal of a lease at its unit, starting after it; the terms, the
   PMC's PDF (at most 5 MB) and its signers (names and emails). It is sent to the e-sign

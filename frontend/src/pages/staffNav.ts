@@ -30,6 +30,7 @@ export const STAFF_NAV: NavEntry[] = [
     icon: KeyRound,
     items: [
       { href: "/rental-listings", label: "Listings" },
+      { href: "/leads", label: "Leads" },
       { href: "/applicants", label: "Applicants" },
       { href: "/draft-leases", label: "Draft leases" },
       { href: "/renewals", label: "Renewals" },

@@ -56,6 +56,18 @@ describe("ApplyPage", () => {
     });
   });
 
+  it("shows every applicant the company's screening criteria", async () => {
+    window.history.replaceState(null, "", "/apply#link-token");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      pmc: "Synthetic PMC", property: "Property 1", unit: "Unit 1", monthly_rent: "1500.00",
+      criteria: "Household income of 2.5 times the rent.",
+    }))));
+    render(<ApplyPage />);
+
+    const criteria = await screen.findByTestId("screening-criteria");
+    expect(criteria.textContent).toBe("How Synthetic PMC screens every applicantHousehold income of 2.5 times the rent.");
+  });
+
   it("applies through a listing from the public page", async () => {
     window.history.replaceState(null, "", "/apply?listing=v1");
     const fetch = server(

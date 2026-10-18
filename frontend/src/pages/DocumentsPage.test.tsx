@@ -26,7 +26,7 @@ const ROW: FileRow = {
 const PAGE: Paged<FileRow> = { items: [ROW], total: 1, page: 1, per_page: 50 };
 const NONE = {
   w9: [], receipt: [], move_out_photo: [], owner_document: [], work_order_photo: [], property_document: [],
-  unit_document: [], tenant_document: [], lease_document: [], vendor_document: [], request_photo: [],
+  unit_document: [], tenant_document: [], lease_document: [], vendor_document: [], request_photo: [], listing_photo: [],
 };
 const LIBRARY: Library = {
   documents: [],

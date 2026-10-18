@@ -8,6 +8,11 @@ open application link (with a description if they like), or open a link and list
 GET /api/listings/<PMC id>, which needs no login and shows only what a listing is for: the
 property, unit, rent and description. An applicant applies through a listing as through its
 link (leasing.py), until it is removed or the link closed.
+
+Since migration 0087 (the founder's review, q076 and q084) a listed unit shows its photos: the
+unit's listing_photo documents not removed (src/pms/api/documents.py), oldest first, each served
+to anyone by GET /api/listings/<PMC id>/photos/<id> only while the unit is listed. Staff see how
+many days each listing has been up.
 """
 
 from __future__ import annotations
@@ -17,7 +22,7 @@ from typing import Annotated
 from uuid import UUID
 
 import psycopg
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, StringConstraints
 
 from pms import exports
@@ -49,6 +54,8 @@ class PublicListing(BaseModel):
     monthly_rent: str
     description: str | None
     listed_at: datetime
+    # The unit's listing photos, oldest first (migration 0087).
+    photos: list[UUID]
 
 
 class Vacancies(BaseModel):
@@ -70,9 +77,20 @@ class Vacancy(BaseModel):
     link_id: UUID | None
     link_rent: str | None
     applications: int
-    # The link's listing on the public page, while it is there.
+    # The link's listing on the public page, while it is there, and since when.
     listing_id: UUID | None
     description: str | None
+    listed_at: datetime | None
+    # Days since it was listed, counting the day it was (q084); None when not listed.
+    days_listed: int | None
+    # The unit's listing photos (migration 0087).
+    photos: int
+
+
+class ListingPhoto(BaseModel):
+    id: UUID
+    title: str
+    uploaded_at: datetime
 
 
 VACANCIES = f"""
@@ -98,11 +116,15 @@ SELECT u.id, p.id, p.display_name, u.display_name,
         ORDER BY l.starts_on DESC, l.id LIMIT 1),
        k.id, k.monthly_rent,
        (SELECT count(*) FROM trust_applications AS a WHERE a.link_id = k.id),
-       k.listing_id, k.description, count(*) OVER ()
+       k.listing_id, k.description, k.listed_at,
+       (SELECT count(*) FROM trust_documents AS d
+        WHERE d.unit_id = u.id AND d.kind = 'listing_photo'
+          AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)),
+       count(*) OVER ()
 FROM units AS u
 JOIN trust_properties AS p ON p.id = u.property_id
 LEFT JOIN LATERAL (
-    SELECT l.id, l.monthly_rent, s.id AS listing_id, s.description
+    SELECT l.id, l.monthly_rent, s.id AS listing_id, s.description, s.listed_at
     FROM trust_application_links AS l
     LEFT JOIN trust_listings AS s ON s.link_id = l.id AND NOT EXISTS (
         SELECT 1 FROM trust_listing_removals AS r WHERE r.listing_id = s.id)
@@ -115,6 +137,25 @@ WHERE (u.free_on <= %(until)s OR k.id IS NOT NULL) AND {scope.within("p.id")}
 ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", u.id
 LIMIT %(limit)s OFFSET %(offset)s
 """
+
+
+# A unit's listing photos not removed, oldest first.
+PHOTOS = (
+    "SELECT d.id FROM trust_documents AS d WHERE d.unit_id = {unit} AND d.kind = 'listing_photo'"
+    " AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)"
+    " ORDER BY d.created_at, d.id"
+)
+# A PMC's listings on its public page: not removed, their links open.
+LISTED = (
+    "trust_listings AS s"
+    " JOIN trust_application_links AS l ON l.id = s.link_id"
+    " JOIN trust_units AS u ON u.id = l.unit_id"
+    " JOIN trust_properties AS p ON p.id = u.property_id"
+    " WHERE s.pmc_id = %s"
+    "   AND NOT EXISTS (SELECT 1 FROM trust_listing_removals AS r WHERE r.listing_id = s.id)"
+    "   AND NOT EXISTS ("
+    "     SELECT 1 FROM trust_application_link_closings AS c WHERE c.link_id = l.id)"
+)
 
 
 @router.get("/api/leasing/vacancies")
@@ -155,6 +196,11 @@ def staff_vacancies(
                 applications=applications,
                 listing_id=listing,
                 description=description,
+                listed_at=listed_at,
+                days_listed=None
+                if listed_at is None
+                else (day - listed_at.astimezone(UTC).date()).days + 1,
+                photos=photos,
             )
             for (
                 unit_id,
@@ -168,6 +214,8 @@ def staff_vacancies(
                 applications,
                 listing,
                 description,
+                listed_at,
+                photos,
                 _,
             ) in rows
         ],
@@ -236,15 +284,9 @@ def vacancies(conn: Conn, pmc_id: UUID) -> Vacancies:
     if pmc is None:
         raise HTTPException(404, "no such PMC")
     rows = conn.execute(
-        "SELECT s.id, p.display_name, u.display_name, l.monthly_rent, s.description, s.listed_at"
-        " FROM trust_listings AS s"
-        " JOIN trust_application_links AS l ON l.id = s.link_id"
-        " JOIN trust_units AS u ON u.id = l.unit_id"
-        " JOIN trust_properties AS p ON p.id = u.property_id"
-        " WHERE s.pmc_id = %s"
-        "   AND NOT EXISTS (SELECT 1 FROM trust_listing_removals AS r WHERE r.listing_id = s.id)"
-        "   AND NOT EXISTS ("
-        "     SELECT 1 FROM trust_application_link_closings AS c WHERE c.link_id = l.id)"
+        "SELECT s.id, p.display_name, u.display_name, l.monthly_rent, s.description, s.listed_at,"
+        f" array({PHOTOS.format(unit='u.id')})"
+        f" FROM {LISTED}"
         ' ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", s.id',
         (pmc_id,),
     ).fetchall()
@@ -258,7 +300,47 @@ def vacancies(conn: Conn, pmc_id: UUID) -> Vacancies:
                 monthly_rent=exports.text(rent),
                 description=text,
                 listed_at=at,
+                photos=photos,
             )
-            for i, prop, unit, rent, text, at in rows
+            for i, prop, unit, rent, text, at, photos in rows
         ],
     )
+
+
+@router.get("/api/listings/{pmc_id}/photos/{photo_id}")
+def listing_photo(conn: Conn, pmc_id: UUID, photo_id: UUID) -> Response:
+    """A listed unit's photo, to anyone; not found once the photo is removed or the unit is no
+    longer listed. No login."""
+    row = conn.execute(
+        "SELECT d.content_type, f.content FROM trust_documents AS d"
+        " JOIN trust_document_files AS f ON f.document_id = d.id"
+        " WHERE d.id = %s AND d.kind = 'listing_photo'"
+        "   AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)"
+        f"  AND EXISTS (SELECT 1 FROM {LISTED} AND u.id = d.unit_id)",
+        (photo_id, pmc_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, "no such photo")
+    return Response(
+        bytes(row[1]),
+        media_type=row[0],
+        headers={"Content-Security-Policy": "default-src 'none'; sandbox"},
+    )
+
+
+@router.get("/api/leasing/units/{unit_id}/photos")
+def unit_photos(session: Staff, conn: Conn, unit_id: UUID) -> list[ListingPhoto]:
+    """A unit's listing photos, oldest first, to add to or remove (src/pms/api/documents.py)."""
+    if (
+        conn.execute(
+            "SELECT 1 FROM trust_units WHERE pmc_id = %s AND id = %s", (session.pmc_id, unit_id)
+        ).fetchone()
+        is None
+    ):
+        raise HTTPException(404, "no such unit")
+    rows = conn.execute(
+        "SELECT d.id, d.title, d.created_at FROM trust_documents AS d"
+        f" WHERE d.id IN ({PHOTOS.format(unit='%s')}) ORDER BY d.created_at, d.id",
+        (unit_id,),
+    ).fetchall()
+    return [ListingPhoto(id=i, title=title, uploaded_at=at) for i, title, at in rows]

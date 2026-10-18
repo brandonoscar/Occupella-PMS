@@ -9,7 +9,9 @@ A file is checked twice: here for its type's first bytes and its size, and by th
 which keeps its bytes apart from the audited record and refuses a file that isn't what its
 record says. A document staff remove is no longer listed or served; its record stays. An owner
 reads their own documents in the owner portal (src/pms/api/owner.py). The PMS reads nothing out
-of a file: a W-9's tax ID stays in it.
+of a file: a W-9's tax ID stays in it. A unit's listing photos (migration 0087) are JPEGs or
+PNGs, at most twelve a unit, which the public vacancy page shows while it is listed
+(src/pms/api/listings.py).
 """
 
 from __future__ import annotations
@@ -45,10 +47,13 @@ Kind = Literal[
     "lease_document",
     "vendor_document",
     "request_photo",
+    "listing_photo",
 ]
 ContentType = Literal["application/pdf", "image/jpeg", "image/png"]
 Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
 MAX_BYTES = 5 * 1024 * 1024
+# How many photos a unit's listing shows at most.
+LISTING_PHOTOS = 12
 # The first bytes of each type, as the database checks them too.
 MAGIC = {
     "application/pdf": b"%PDF-",
@@ -68,11 +73,18 @@ COLUMN: dict[Kind, str] = {
     "lease_document": "lease_id",
     "vendor_document": "vendor_id",
     "request_photo": "request_id",
+    "listing_photo": "unit_id",
 }
 
 VENDORS = (
     "SELECT v.id, v.display_name FROM trust_vendors AS v WHERE v.pmc_id = %(pmc)s"
     ' ORDER BY v.display_name COLLATE "C", v.id'
+)
+UNITS = (
+    "SELECT u.id, p.display_name || ' / ' || u.display_name"
+    " FROM trust_units AS u JOIN trust_properties AS p ON p.id = u.property_id"
+    ' WHERE u.pmc_id = %(pmc)s ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C",'
+    " u.id"
 )
 LEASES = (
     "SELECT l.id, p.display_name || ' / ' || u.display_name || ': '"
@@ -100,10 +112,7 @@ SUBJECTS: dict[Kind, str] = {
     " WHERE w.pmc_id = %(pmc)s ORDER BY w.opened_at DESC, w.id",
     "property_document": "SELECT p.id, p.display_name FROM trust_properties AS p"
     ' WHERE p.pmc_id = %(pmc)s ORDER BY p.display_name COLLATE "C", p.id',
-    "unit_document": "SELECT u.id, p.display_name || ' / ' || u.display_name"
-    " FROM trust_units AS u JOIN trust_properties AS p ON p.id = u.property_id"
-    ' WHERE u.pmc_id = %(pmc)s ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C",'
-    " u.id",
+    "unit_document": UNITS,
     "tenant_document": "SELECT t.id, t.display_name || ' (' || p.display_name || ')'"
     " FROM trust_tenants AS t JOIN trust_properties AS p ON p.id = t.property_id"
     ' WHERE t.pmc_id = %(pmc)s ORDER BY t.display_name COLLATE "C", t.id',
@@ -114,6 +123,8 @@ SUBJECTS: dict[Kind, str] = {
     " FROM trust_maintenance_requests AS r JOIN trust_leases AS l ON l.id = r.lease_id"
     " JOIN trust_units AS u ON u.id = l.unit_id JOIN trust_properties AS p ON p.id = u.property_id"
     " WHERE r.pmc_id = %(pmc)s ORDER BY r.submitted_at DESC, r.id",
+    # A unit's photos for the public vacancy page (migration 0087).
+    "listing_photo": UNITS,
 }
 
 # Where each kind's record has its page.
@@ -127,6 +138,7 @@ PAGE: dict[Kind, str] = {
     "work_order_photo": "/work-orders/",
     "property_document": "/properties/",
     "unit_document": "/units/",
+    "listing_photo": "/units/",
     "tenant_document": "/tenants/",
     # A request is listed on Work orders, under its own anchor.
     "request_photo": "/work-orders#request-",
@@ -327,6 +339,19 @@ def keep(conn: psycopg.Connection[Any], pmc_id: UUID, new: NewDocument) -> UUID:
     subjects = conn.execute(SUBJECTS[new.kind], {"pmc": pmc_id}).fetchall()
     if new.about_id not in {i for i, _ in subjects}:
         raise HTTPException(404, "nothing of this PMC for the document to be about")
+    if new.kind == "listing_photo":
+        if new.content_type == "application/pdf":
+            raise HTTPException(422, "a listing photo is a JPEG or PNG")
+        # One unit's photos wait for each other, so two uploads at once keep to the most.
+        conn.execute(
+            "SELECT pg_advisory_xact_lock(hashtextextended('trust listing photos ' || %s, 0))",
+            (str(new.about_id),),
+        )
+        shown = conn.execute(LISTING_PHOTOS_OF, (new.about_id,)).fetchone()
+        if shown is not None and shown[0] >= LISTING_PHOTOS:
+            raise HTTPException(
+                409, f"a unit shows at most {LISTING_PHOTOS} photos; remove one first"
+            )
     insert = sql.SQL(
         "INSERT INTO trust_documents (pmc_id, kind, {}, title, content_type, size, sha256)"
         " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id"
@@ -349,6 +374,12 @@ def keep(conn: psycopg.Connection[Any], pmc_id: UUID, new: NewDocument) -> UUID:
         (row[0], pmc_id, content),
     )
     return UUID(str(row[0]))
+
+
+LISTING_PHOTOS_OF = (
+    "SELECT count(*) FROM trust_documents AS d WHERE d.unit_id = %s AND d.kind = 'listing_photo'"
+    " AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)"
+)
 
 
 def file_name(title: str, content_type: str) -> str:

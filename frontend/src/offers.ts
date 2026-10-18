@@ -38,7 +38,16 @@ export type Offer = {
 
 export type SigningLink = { position: number; name: string; email: string; url: string };
 
-export type Offered = { offer: Offer; links: SigningLink[] };
+// Whom the PMS emailed their link (migration 0090), while the server sends email.
+export type Offered = { offer: Offer; links: SigningLink[]; emailed?: string[] };
+
+// What Send says: whom it went to, and whom the PMS emailed their own link.
+export function sentLine(sent: Offered): string {
+  const count = sent.offer.signers.length;
+  const emailed = sent.emailed ?? [];
+  return `Sent to ${count} signer${count === 1 ? "" : "s"}.` +
+    (emailed.length > 0 ? ` Each was emailed their link: ${emailed.join(", ")}.` : "");
+}
 
 export type RenewableLease = {
   lease_id: string;

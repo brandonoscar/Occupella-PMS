@@ -279,6 +279,7 @@ def add_document(
         "lease_document": "lease_id",
         "vendor_document": "vendor_id",
         "request_photo": "request_id",
+        "listing_photo": "unit_id",
     }[kind]
     with connection.transaction():
         document = _one(
@@ -538,13 +539,21 @@ def record_screening(
 
 
 def record_decision(
-    connection, pmc_id, application_id, staff_id, decision, screening_id=None, conditions=None
+    connection,
+    pmc_id,
+    application_id,
+    staff_id,
+    decision,
+    screening_id=None,
+    conditions=None,
+    override_reason=None,
 ) -> None:
+    """A decision; one against the latest screening's recommendation says why (migration 0089)."""
     connection.execute(
         "INSERT INTO trust_application_decisions"
-        " (pmc_id, application_id, decision, conditions, screening_id, decided_by)"
-        " VALUES (%s, %s, %s, %s, %s, %s)",
-        (pmc_id, application_id, decision, conditions, screening_id, staff_id),
+        " (pmc_id, application_id, decision, conditions, screening_id, decided_by, override_reason)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        (pmc_id, application_id, decision, conditions, screening_id, staff_id, override_reason),
     )
 
 

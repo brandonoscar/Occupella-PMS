@@ -213,14 +213,16 @@ def test_a_decision_against_the_applicant_on_a_screening_needs_its_notice_at_com
         conn, place.pmc_id, application, place.staff, recommendation, reasons
     )
 
+    # A decline against an approving screening says why (migration 0089).
+    why = "The owner's own rule" if recommendation == "approve" else None
     refused = pytest.raises(psycopg.errors.CheckViolation, match="record the adverse action notice")
     with refused, conn.transaction():
         record_decision(
-            conn, place.pmc_id, application, place.staff, decision, screening, conditions
+            conn, place.pmc_id, application, place.staff, decision, screening, conditions, why
         )
     with conn.transaction():
         record_decision(
-            conn, place.pmc_id, application, place.staff, decision, screening, conditions
+            conn, place.pmc_id, application, place.staff, decision, screening, conditions, why
         )
         record_adverse_action(conn, place.pmc_id, application, place.staff)
 
@@ -234,7 +236,9 @@ def test_an_adverse_action_belongs_only_to_such_a_decision(conn, place, decision
         if decision == "approved on a screening":
             record_decision(conn, place.pmc_id, application, place.staff, "approved", screening)
         else:
-            record_decision(conn, place.pmc_id, application, place.staff, "declined")
+            record_decision(
+                conn, place.pmc_id, application, place.staff, "declined", override_reason="Ours"
+            )
         record_adverse_action(conn, place.pmc_id, application, place.staff)
 
 
@@ -245,7 +249,9 @@ def test_a_notice_added_later_to_a_decision_that_needs_none_is_refused(conn, pla
     if decision == "approved on a screening":
         record_decision(conn, place.pmc_id, application, place.staff, "approved", screening)
     else:
-        record_decision(conn, place.pmc_id, application, place.staff, "declined")
+        record_decision(
+            conn, place.pmc_id, application, place.staff, "declined", override_reason="Ours"
+        )
 
     refused = pytest.raises(psycopg.errors.CheckViolation, match="an adverse action belongs")
     with refused, conn.transaction():

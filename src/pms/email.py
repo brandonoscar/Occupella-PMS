@@ -4,6 +4,9 @@ The emails: a bill over an owner's approval limit tells its owner it waits for t
 it decides anything); a portal invite, and a password reset an owner or a tenant asks for, each
 with the link that sets a password; and what staff write to a tenant, an owner or a vendor.
 
+Since migration 0090 (the founder's review, q081), sending a lease offer for signing emails each
+signer their own signing link, which is held in memory the same way.
+
 An invite's or a reset's link signs someone in, so it is never written to the outbox: the email
 keeps a placeholder (LINK), and the link waits in this process's memory (hold_link) until the
 email is handed to the sender. One not sent within LINK_MINUTES is given up on, once, and staff
@@ -351,6 +354,41 @@ def write_bill_approval(
         ),
     ).fetchone()
     return "written" if written else "written already"
+
+
+def write_signing_request(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    offer_id: UUID,
+    position: int,
+    name: str,
+    to: str,
+    what: str,
+    link: str,
+) -> UUID | None:
+    """Writes the email that gives one signer of an offer their signing link, in the caller's
+    transaction, and holds the link; None when that signer was emailed already."""
+    company = conn.execute(
+        "SELECT display_name FROM trust_pmcs WHERE pmc_id = %s", (pmc_id,)
+    ).fetchone()
+    assert company is not None
+    body = (
+        f"Hello {name},\n\n"
+        f"{company[0]} sent you {what} to sign. Open it and sign with this link, which is yours"
+        f" alone:\n{LINK}\n\n{company[0]}\n"
+    )
+    row = conn.execute(
+        "INSERT INTO trust_emails (pmc_id, kind, offer_id, signer_position, to_address, subject,"
+        " body, needs_link) VALUES (%s, 'signing_request', %s, %s, %s, %s, %s, true)"
+        " ON CONFLICT (offer_id, signer_position) WHERE kind = 'signing_request' DO NOTHING"
+        " RETURNING id",
+        (pmc_id, offer_id, position, to, f"{company[0]}: {what} to sign"[:200], body),
+    ).fetchone()
+    if row is None:
+        return None
+    email_id = UUID(str(row[0]))
+    hold_link(email_id, link)
+    return email_id
 
 
 # --- delivery ----------------------------------------------------------------------------------

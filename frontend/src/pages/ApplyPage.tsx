@@ -77,6 +77,12 @@ export function ApplyPage() {
             company may ask each of you for more by email; this form asks only for what is
             below.
           </p>
+          {listing.criteria && (
+            <div className="mb-6 rounded-sm border border-line px-4 py-3" data-testid="screening-criteria">
+              <p className="text-sm font-medium text-ink">How {listing.pmc} screens every applicant</p>
+              <p className="mt-1 whitespace-pre-line text-base text-ink-secondary">{listing.criteria}</p>
+            </div>
+          )}
           <Form className="flex flex-col gap-4" onSubmit={submit}>
             <Field label="Move-in day" id="move-in" type="date" required value={moveIn}
               onChange={(e) => setMoveIn(e.target.value)} />

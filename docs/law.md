@@ -331,3 +331,71 @@ and no more (NOT VERIFIED as a rule of any state; it is the PMS's own care).
 
 **Left to the company.** The entry notice its state asks before the visit (the link's schedule
 is not one), and checking the work before paying the vendor's bill.
+
+## A listing's photos and days listed (migration 0087)
+
+**The rule.** The federal Fair Housing Act, which applies in every state, forbids making, printing
+or publishing any notice, statement or advertisement for renting a dwelling that indicates a
+preference, limitation or discrimination based on race, color, religion, sex, handicap, familial
+status or national origin (42 U.S.C. 3604(c); HUD's rule on advertisements, 24 CFR 100.75). A
+listing's photos and description are an advertisement. Many states and cities add protected
+classes (source of income, for one) (NOT VERIFIED state by state). How long a unit has been listed
+is the company's own figure; no state rule on it was found.
+
+**What the PMS does.**
+- The public page shows the photos staff add to a listed unit (JPEG or PNG, twelve at most), and
+  only while it is listed; a removed photo leaves it. The PMS reads nothing out of a photo.
+- Listings shows how many days each listing has been up, counting the day it went up.
+
+**Left to the company.** What its photos and words show and say (no people in a way that signals
+who may live there, nothing that discourages anyone of a protected class), and its state's and
+city's protected classes.
+
+## Leads and showings (migration 0088)
+
+**The rule.** The federal Fair Housing Act, which applies in every state, forbids refusing to rent
+or negotiate, or making a dwelling unavailable, and setting different terms, conditions or
+services, because of race, color, religion, sex, handicap, familial status or national origin,
+and forbids saying a dwelling is not available for inspection or rental when it is (42 U.S.C.
+3604(a), (b) and (d)). HUD's rule lists steering and discouraging prospects among the prohibited
+practices (24 CFR 100.50 to 100.70; its sections read from memory, NOT VERIFIED against the CFR's
+text). Many states and cities add protected classes (NOT VERIFIED state by state).
+
+**What the PMS does.**
+- Every lead is recorded the same way: a name, a way to reach them, what they asked about, where
+  they came from, when they would move in. Nothing a fair housing law protects is asked or kept.
+- Each showing and how it went, and why a lead was lost, are kept with who recorded them, so the
+  company can show it treated prospects alike.
+
+**Left to the company.** Treating every prospect alike (the same units offered, the same terms,
+the same follow-up), and what its staff write in a lead's note or a closing's reason.
+
+## Screening criteria, decisions against a screening and the notice (migrations 0089 and 0090)
+
+**The rule.**
+- The federal Fair Housing Act, which applies in every state, forbids refusing to rent, or setting
+  different terms, because of race, color, religion, sex, handicap, familial status or national
+  origin (42 U.S.C. 3604(a) and (b)). Applying the same written criteria to every applicant, and
+  writing down why a decision departs from them, is how a landlord shows it did not; HUD's
+  guidance says so for criminal-history screening in particular (HUD Office of General Counsel,
+  April 4, 2016; read from memory, NOT VERIFIED against its text).
+- The federal Fair Credit Reporting Act, in every state, asks a landlord who takes adverse action
+  based in whole or in part on a consumer report to give the applicant notice: the reporting
+  agency's name and contact, that the agency did not decide, and the right to a free copy within
+  60 days and to dispute it (15 U.S.C. 1681m(a)). The PMS already records it (migration 0030) and
+  emails it (migration 0077); the status page now shows it too.
+- Some states and cities limit what screening may weigh (source of income, criminal history,
+  credit for voucher holders) (NOT VERIFIED state by state; none is built in).
+
+**What the PMS does.**
+- A company sets its criteria once, and the screening partner applies them to every applicant;
+  each screening names the criteria it applied. The apply page shows every applicant the same
+  words before they apply.
+- A decision that goes against the latest screening's recommendation is refused unless it says
+  why, and the applicant's page marks it, so each departure is on the record.
+- A declined or conditionally approved applicant reads the adverse action notice on their status
+  page. Sending a lease for signing emails each signer their own link (the e-sign partner may
+  also email them).
+
+**Left to the company.** Its criteria themselves (legal in its state and city), applying them the
+same way to every applicant, and its reasons when it departs from them.

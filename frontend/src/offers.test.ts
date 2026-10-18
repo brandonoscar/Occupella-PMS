@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Offer } from "./offers";
-import { base64Of, dayAfter, isPdf, offerBadge, parseSigners, signedCount, signersText, term } from "./offers";
+import { base64Of, dayAfter, isPdf, offerBadge, parseSigners, sentLine, signedCount, signersText, term } from "./offers";
 
 const OFFER: Offer = {
   id: "o1",
@@ -27,6 +27,17 @@ const OFFER: Offer = {
   status: "partially signed",
   void: null,
 };
+
+describe("sentLine", () => {
+  it("says whom Send went to and whom the PMS emailed their link", () => {
+    expect(sentLine({ offer: OFFER, links: [] })).toBe("Sent to 2 signers.");
+    expect(sentLine({ offer: OFFER, links: [], emailed: [] })).toBe("Sent to 2 signers.");
+    expect(sentLine({ offer: OFFER, links: [], emailed: ["a@example.com", "b@example.com"] })).toBe(
+      "Sent to 2 signers. Each was emailed their link: a@example.com, b@example.com.",
+    );
+    expect(sentLine({ offer: { ...OFFER, signers: OFFER.signers.slice(0, 1) }, links: [] })).toBe("Sent to 1 signer.");
+  });
+});
 
 describe("offerBadge and signedCount", () => {
   it("counts who has signed", () => {
