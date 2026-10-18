@@ -258,3 +258,76 @@ disclosed, with no secret profit from anyone else.
 - The approval limit counts the vendor's amount, not the bill with its markup; a company whose
   agreement counts both asks the owner on that basis.
 - Taking the markup out of trust with the company's other fees (migration 0059).
+
+## Maintenance: emergencies, photos, entry and the visit (migration 0084)
+
+**The rule.** A landlord keeps a home fit to live in and fixes what makes it unfit within a
+reasonable time, sooner when it is an emergency (no heat, no water, a leak, a gas smell). What is
+reasonable is the state's, not the PMS's:
+
+- West Virginia: W. Va. Code 37-6-30 sets the landlord's duty to keep the home fit and in repair
+  (read in search excerpts; the section's text is NOT VERIFIED). Ch. 37, art. 6 has no
+  entry-notice section, per a survey of the chapter; the Attorney General's renters' guide, as
+  quoted, says a landlord enters only with the tenant's consent or reasonable notice, unless an
+  emergency repair requires it (both NOT VERIFIED against the code).
+- California: Civil Code 1954 lets a landlord enter only for the reasons it lists (an emergency,
+  repairs, showings...), with written, reasonable notice (24 hours presumed reasonable) except in
+  an emergency or when the tenant agrees at the time (read in secondary sources; the statute's
+  text is NOT VERIFIED). The strictest found.
+- That every state shares a duty of habitability and an emergency exception to entry notice is
+  NOT VERIFIED state by state; no state was found without them.
+
+**What the PMS does.**
+- A tenant marks a request an emergency and may file up to three photos with it (JPEG, PNG or
+  PDF, 5 MB each, kept as documents about the request; the AI never reads a file).
+- An emergency's work order opens urgent, and each staff member on call (Work orders, On call;
+  append-only, naming who changed it) is emailed at once while the server sends email. The work
+  order says whom it went to. No text message is sent (out of scope).
+- The tenant's word on entry ("someone may come in while I'm out", or not) is copied to the work
+  order's entry ("may let themselves in", or "call the tenant first"), and the vendor's email says
+  it.
+- A scheduled visit names its day and, if staff say, its window ("8-10 am"); the tenant sees both
+  in the portal, and the vendor's email gives the window.
+- Each work order counts its days open, to the day it closed.
+
+**Left to the company.** Whether a request is an emergency in its state's terms and how fast it
+must act; the written entry notice its state asks (the portal's visit day and window may not be
+one); and anything a tenant may do when a repair waits too long (repair and deduct, withholding).
+
+### Charging a tenant for a repair, and recurring work (migration 0085)
+
+**The rule.** A tenant answers for damage beyond normal wear and tear that they, their household
+or their guests cause; a landlord may charge them for its repair, and may take it from the
+security deposit at move-out under the deposit rules above. What counts as normal wear and tear,
+and what a lease may shift to a tenant, is each state's (NOT VERIFIED state by state; West
+Virginia's W. Va. Code 37-6A-1 counts "damages" beyond ordinary wear and tear against a deposit,
+read in search excerpts, NOT VERIFIED). No state was found that limits recurring upkeep a landlord
+schedules itself.
+
+**What the PMS does.**
+- A charge for a work order is an ordinary one-off fee of a lease at the work order's unit (or at
+  a unit of its property when it is the whole property's), naming the work order; never a credit.
+  The owner still pays the vendor's bill; what the tenant pays of the charge goes to the owner's
+  account as any charge does. The work order lists what tenants were charged and what is open.
+- A recurring work order opens on its day every so many months, once per day, with its priority
+  and vendor (none when the vendor's insurance ran out); it moves no money.
+
+**Left to the company.** Whether the damage is the tenant's and not wear and tear, and any notice
+or itemization its state asks before charging it.
+
+### A vendor's link (migration 0086)
+
+**The rule.** No state rule was found on how a landlord tells a vendor about a job or hears back
+from one. A tenant's privacy is: the vendor needs where to go, what is wrong and how to get in,
+and no more (NOT VERIFIED as a rule of any state; it is the PMS's own care).
+
+**What the PMS does.**
+- A vendor with a link sees only the open work orders last assigned to them: the property and
+  unit, what is wrong, priority, the day due, entry in the words their email uses, and the visit.
+  No tenant's name, phone or email reaches them through it.
+- They schedule a visit or say the work is done, and nothing else; the work order's timeline says
+  it came from the vendor. Reassigned, a work order leaves their link; taken back, the link opens
+  nothing. The token is kept only as its SHA-256.
+
+**Left to the company.** The entry notice its state asks before the visit (the link's schedule
+is not one), and checking the work before paying the vendor's bill.

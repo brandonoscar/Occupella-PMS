@@ -231,6 +231,43 @@ browser = [
 ]
 
 [[feature]]
+id = "emergencies"
+statement = "Staff say who is on call; a tenant files an emergency with a photo, whoever is on call is emailed, its work order opens urgent with the tenant's word on entry and the photo, and the tenant sees the visit's day and window once it is scheduled; each work order counts its days open."
+operations = [
+  "GET /api/maintenance/on-call",
+  "POST /api/maintenance/on-call",
+]
+browser = [
+  "features.spec.ts › staff go on call; a tenant files an emergency with a photo and staff see it through to a visit the tenant sees, day and window",
+]
+
+[[feature]]
+id = "recurring-work-orders"
+statement = "Staff add a job that comes back every few months at a property or unit; the ones already due open at once and the nightly run opens the rest on their days; staff stop one from a day, and charge a tenant a fee for a work order (a repair they caused) on a lease at its unit."
+operations = [
+  "GET /api/work-orders/recurring",
+  "POST /api/work-orders/recurring",
+  "POST /api/work-orders/recurring/{recurring_id}/end",
+]
+browser = [
+  "features.spec.ts › staff add a filter change every 3 months, the ones due open at once, stop it, and charge the tenant for a work order",
+]
+
+[[feature]]
+id = "vendor-links"
+statement = "Staff make a vendor a private link (shown once, replacing any older) and take it back; with only the link, the vendor sees the work orders assigned to them, schedules a visit with its window and says the work is done, and staff see those steps as the vendor's."
+operations = [
+  "GET /api/vendors/{vendor_id}/link",
+  "POST /api/vendors/{vendor_id}/link",
+  "POST /api/vendors/{vendor_id}/link/revoke",
+  "POST /api/vendor-link/work-orders",
+  "POST /api/vendor-link/work-orders/{work_order_id}/steps",
+]
+browser = [
+  "features.spec.ts › staff send a plumber their link; the plumber schedules the visit and says it is done; staff take the link back",
+]
+
+[[feature]]
 id = "renters-insurance"
 statement = "Staff set whether a lease requires renters insurance and the least liability it asks, and record a policy; the tenant records their own from the portal, with any insurer; the rent page, the portal and Today show how each lease stands."
 operations = [

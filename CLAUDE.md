@@ -281,7 +281,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the reports. It holds no other grant: no write on any table, no function that writes. Grant
   it a new table's SELECT only if `trust_app` has it, and never a write path. It never reads
   logins, invites, sessions or credentials, nor rental applications, applicants and their
-  screenings, nor lease offers and signatures, nor documents' files, nor contact details, nor notes (`AI_NEVER_READS` in
+  screenings, nor lease offers and signatures, nor documents' files, nor contact details, nor notes,
+  nor vendors' links (`AI_NEVER_READS` in
   `tests/test_privileges.py`), nor their rows in the audit log: row-level security shows it only
   the audit rows of tables it may read (migration 0043).
 - A new table starts with `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it
@@ -457,7 +458,31 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   a key to `trust_lease_tenants` refuses anyone else). Staff open at most one work order for it,
   at the lease's unit (`trust_maintenance_request_work_orders`, one each way), and its status is
   that work order's latest step. The portal files them only under a lease in effect, at most
-  10 a day per lease.
+  10 a day per lease. Since migration 0084 (`docs/law.md`) a tenant marks one an emergency and
+  files up to three photos with it (`request_photo` documents about it); its work order opens
+  urgent with the tenant's word on entry copied, and each staff member on call
+  (`trust_on_call_staff`: append-only, the latest row holding, naming who changed it; Work orders,
+  On call, `/api/maintenance/on-call`, area maintenance) is emailed at their login's email while
+  the server sends email (`emergency_request`, once per request and staff member; no texts), the
+  work order naming whom. A schedule step may name a visit window ("8-10 am",
+  `trust_work_order_steps.visit_window`), which the tenant sees with the day and the vendor's email
+  gives; work orders count their days open. Since migration 0085 a tenant is charged for a work
+  order (a repair they caused) by a fee naming it (`trust_charges.work_order_id`, only a fee, only
+  a lease at its unit or property; the work order's Charge the tenant, through
+  `POST /api/rent/leases/<id>/charges`), and a job comes back by itself
+  (`trust_recurring_work_orders`: every 1 to 12 months on a day 1 to 28 from a day, maybe with a
+  vendor and a priority; an end row stops it; append-only, naming who), opened once per day by
+  `trust_open_recurring_work_orders`, which the nightly run and adding one call (Work orders,
+  Recurring; `src/pms/api/recurring_work_orders.py`, area maintenance).
+  Since migration 0086 a vendor has no login but a link staff make from the vendor's Work orders
+  tab (`src/pms/api/vendor_links.py`; `trust_vendor_links`, the token kept only as its SHA-256 and
+  shown once, a new one taking back the old; `trust_vendor_link_revocations`, Take back; both
+  append-only, naming who, area setup). With it (`/vendor#<token>`, the token in JSON bodies) the
+  vendor sees the work orders last assigned to them and still open (where, what, priority, the day
+  due, entry, the visit; no tenant's contact details), schedules a visit (a day, maybe a window) or
+  says the work is done with a note: a step naming the link (`vendor_link_id`), which a trigger
+  allows only for those two steps, by the vendor last assigned, while the link stands. The
+  timeline marks it "(by the vendor)". The AI role reads neither table.
 - Rental applications: an application comes through an open application link of a unit
   (closing a link and an application wait for each other); its applicants are names and
   emails. Screenings record a partner's recommendation and reasons. Each application has one
@@ -573,7 +598,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - Rent posts by itself (migration 0067, ADR 0006, `src/pms/nightly.py`): every night each PMC's
   rent and recurring charges for the month (due on its first day, or on a lease's own due day
   once it comes; migration 0081), the late fees of rents past
-  their grace as of the day, and the recurring bills due, with their owners' emails. Rent and late
+  their grace as of the day, the recurring bills due, with their owners' emails, and the recurring
+  work orders due (migration 0085). Rent and late
   fees go through `trust_run_rent`, which records the run (`trust_rent_runs`, append-only, naming
   nobody); an admin runs it by hand from the rent roll (Run rent now), and a named staff member
   without admin is refused. Each part charges once per date, so a run again charges nothing new.
@@ -601,7 +627,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   no report prints them.
 - Documents (migration 0036): a vendor's W-9, a bill's receipt, a lease's move-out photo, an
   owner's document or a work order's photo (`trust_documents`, each kind about its one kind of
-  record of the PMC; work order photos since migration 0072), or since migration 0074 a
+  record of the PMC; work order photos since migration 0072; a maintenance request's photos since
+  migration 0084), or since migration 0074 a
   property's, unit's, tenant's, lease's or vendor's document, a
   PDF, JPEG or PNG of at most 5 MB. Its bytes sit apart (`trust_document_files`, checked at
   insert against the type's first bytes, the size and SHA-256 its row says, and there at

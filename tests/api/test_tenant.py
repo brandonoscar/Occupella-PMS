@@ -350,15 +350,21 @@ def test_a_tenant_files_a_request_and_their_co_tenant_sees_it(
         "filed_by",
         "summary",
         "entry_allowed",
+        "emergency",
         "submitted_at",
         "status",
         "status_at",
+        "visit_on",
+        "visit_window",
+        "photos",
     }
-    assert (request["filed_by"], request["summary"], request["status"]) == (
-        "Tenant 1",
-        "Tap drips",
-        "received",
-    )
+    assert (
+        request["filed_by"],
+        request["summary"],
+        request["status"],
+        request["emergency"],
+        request["photos"],
+    ) == ("Tenant 1", "Tap drips", "received", False, 0)
     assert other_client.get("/api/tenant/requests").json() == [request]
 
 

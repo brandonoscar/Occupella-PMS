@@ -55,9 +55,13 @@ const REQUEST = {
   filed_by: "Tenant 1",
   summary: "Tap drips",
   entry_allowed: true,
+  emergency: false,
   submitted_at: "2026-10-11T18:05:00Z",
   status: "received",
   status_at: "2026-10-11T18:05:00Z",
+  visit_on: null,
+  visit_window: null,
+  photos: 0,
 };
 
 // Answers each API path with its canned body, and records what was posted.
@@ -197,9 +201,70 @@ describe("TenantHome", () => {
       lease_id: "1",
       summary: "Tap drips",
       entry_allowed: true,
+      emergency: false,
+      photos: [],
     });
     const list = screen.getByText("Tap drips").closest("li");
     expect(within(list as HTMLElement).getByText("Received")).toBeTruthy();
+  });
+
+  it("sends an emergency with its photos, and shows a scheduled visit's day and window", async () => {
+    const urgent = { ...REQUEST, id: "r2", summary: "No heat", emergency: true, photos: 2 };
+    const scheduled = {
+      ...REQUEST, summary: "Tap drips", status: "scheduled", visit_on: "2026-11-03", visit_window: "8-10 am", photos: 1,
+    };
+    const fetch = server({
+      "GET /api/tenant/leases": [lease("1", true)],
+      "GET /api/tenant/requests": [scheduled],
+      "GET /api/tenant/renewals": [],
+      "GET /api/tenant/leases/1/ledger": LEDGER,
+      "POST /api/tenant/requests": urgent,
+    });
+    render(<TenantHome me={ME} />);
+    expect((await screen.findByTestId("visit")).textContent).toBe("Visit on 11/03/2026, 8-10 am");
+    expect(screen.getByText(/1 photo\./)).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("What needs fixing?"), { target: { value: "No heat" } });
+    fireEvent.click(screen.getByLabelText("This is an emergency (no heat, no water, a leak, a gas smell)"));
+    const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "radiator.png", { type: "image/png" });
+    const jpeg = new File([new Uint8Array([0xff, 0xd8, 0xff])], "boiler.jpg", { type: "image/jpeg" });
+    fireEvent.change(screen.getByLabelText("Photos (up to 3, JPEG, PNG or PDF)"), { target: { files: [png, jpeg] } });
+    expect((await screen.findByTestId("photos-chosen")).textContent).toBe("Photos: radiator, boiler");
+    fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+
+    expect(await screen.findByText("Sent to Synthetic PMC as an emergency. If anyone is in danger, call 911.")).toBeTruthy();
+    const posted = fetch.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(JSON.parse(String(posted?.[1]?.body))).toEqual({
+      lease_id: "1",
+      summary: "No heat",
+      entry_allowed: false,
+      emergency: true,
+      photos: [
+        { title: "radiator", content_type: "image/png", content_base64: "iVBORw==" },
+        { title: "boiler", content_type: "image/jpeg", content_base64: "/9j/" },
+      ],
+    });
+    const filed = screen.getByText("No heat").closest("li") as HTMLElement;
+    expect(within(filed).getByText("Emergency")).toBeTruthy();
+    expect(within(filed).getByText(/2 photos\./)).toBeTruthy();
+  });
+
+  it("sends no request with a photo it can't take", async () => {
+    const fetch = server({
+      "GET /api/tenant/leases": [lease("1", true)],
+      "GET /api/tenant/requests": [],
+      "GET /api/tenant/renewals": [],
+      "GET /api/tenant/leases/1/ledger": LEDGER,
+    });
+    render(<TenantHome me={ME} />);
+    fireEvent.change(await screen.findByLabelText("What needs fixing?"), { target: { value: "Tap drips" } });
+    const page = new File(["<html>"], "tap.html", { type: "text/html" });
+    fireEvent.change(screen.getByLabelText("Photos (up to 3, JPEG, PNG or PDF)"), { target: { files: [page] } });
+    await screen.findByTestId("photos-chosen");
+    fireEvent.click(screen.getByRole("button", { name: "Send request" }));
+
+    expect(await screen.findByText("A photo is a JPEG, a PNG or a PDF.")).toBeTruthy();
+    expect(fetch.mock.calls.some(([, init]) => init?.method === "POST")).toBe(false);
   });
 
   it("says the day of the month rent is due", async () => {

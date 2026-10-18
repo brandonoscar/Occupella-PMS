@@ -46,6 +46,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { StaffPage } from "./pages/StaffPage";
 import { SwitchPage } from "./pages/SwitchPage";
 import { TenantHome } from "./pages/TenantHome";
+import { VendorLinkPage } from "./pages/VendorLinkPage";
 import { VendorsPage } from "./pages/VendorsPage";
 import { navigate, usePath } from "./router";
 
@@ -59,6 +60,8 @@ export function App() {
   if (path === "/listings") return <ListingsPage />;
   // The fake e-sign partner's page; a signer's link carries what lets them in.
   if (path === "/esign") return <ESignPage />;
+  // A vendor's work orders; their link carries what lets them in.
+  if (path === "/vendor") return <VendorLinkPage />;
   if (path === "/sign-in") return <SignInPage />;
   if (path === "/forgot-password") return <ForgotPasswordPage />;
   return <Home path={path} />;

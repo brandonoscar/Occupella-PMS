@@ -10,7 +10,10 @@ holding; none at all until it does):
 - a work order to its vendor when it is assigned to them or their visit is scheduled (once per
   step);
 - the adverse action notice to each applicant of an application declined or approved on
-  conditions on a screening, when the decision is recorded (once per applicant and application).
+  conditions on a screening, when the decision is recorded (once per applicant and application);
+- an emergency a tenant files, to each staff member on call (migration 0084; once per request and
+  staff member, to their login's email). No setting turns it on: the company's list of who is
+  on call does.
 
 Each is written to the outbox in the transaction that causes it (src/pms/email.py), and only while
 the server sends email: none piles up to go out late on a server that sends none. A lease under a
@@ -403,7 +406,7 @@ WITH numbered AS (
     SELECT w.*, row_number() OVER (ORDER BY w.created_at, w.id) AS number
     FROM trust_work_orders AS w WHERE w.pmc_id = %(pmc)s
 )
-SELECT s.step, s.scheduled_for, s.note,
+SELECT s.step, s.scheduled_for, s.visit_window, s.note,
        coalesce(s.vendor_id,
                 (SELECT a.vendor_id FROM trust_work_order_steps AS a
                  WHERE a.work_order_id = s.work_order_id AND a.step = 'assigned'
@@ -438,7 +441,21 @@ def write_work_order(conn: psycopg.Connection[Any], pmc_id: UUID, step_id: UUID)
     row = conn.execute(STEP, {"pmc": pmc_id, "step": step_id}).fetchone()
     if row is None:
         raise LookupError(f"no work order step {step_id} in PMC {pmc_id}")
-    step, on, note, vendor, number, summary, prop, unit, priority, description, due, entry = row
+    (
+        step,
+        on,
+        window,
+        note,
+        vendor,
+        number,
+        summary,
+        prop,
+        unit,
+        priority,
+        description,
+        due,
+        entry,
+    ) = row
     if step not in ("assigned", "scheduled") or vendor is None:
         return "not this step"
     to = address(conn, pmc_id, "vendor", vendor)
@@ -460,7 +477,7 @@ def write_work_order(conn: psycopg.Connection[Any], pmc_id: UUID, step_id: UUID)
         *([f"Details: {description}"] if description else []),
         f"Priority: {priority or 'normal'}",
         *([f"Due by: {us(due)}"] if due else []),
-        *([f"Visit: {us(on)}"] if on else []),
+        *([f"Visit window: {window}"] if window else []),
         *([ENTRY[entry].format(company=company)] if entry else []),
         *([f"Note: {note}"] if note else []),
     ]
@@ -483,6 +500,77 @@ def write_work_order(conn: psycopg.Connection[Any], pmc_id: UUID, step_id: UUID)
         },
     )
     return "written"
+
+
+# --- an emergency, to whoever is on call ---------------------------------------------------------
+
+ON_CALL = """
+SELECT DISTINCT ON (o.staff_id) o.staff_id, o.on_call
+FROM trust_on_call_staff AS o WHERE o.pmc_id = %s
+ORDER BY o.staff_id, o.created_at DESC, o.id DESC
+"""
+# A staff member's active login: accepted (a password set) and not disabled.
+STAFF_LOGIN = """
+SELECT s.display_name, l.email
+FROM trust_staff AS s
+JOIN trust_logins AS l ON l.pmc_id = s.pmc_id AND l.kind = 'staff' AND l.staff_id = s.id
+JOIN trust_login_secrets AS x ON x.login_id = l.id
+WHERE s.pmc_id = %s AND s.id = %s AND l.disabled_at IS NULL
+"""
+EMERGENCY = """
+SELECT r.summary, r.entry_allowed, p.display_name, u.display_name, t.display_name
+FROM trust_maintenance_requests AS r
+JOIN trust_leases AS l ON l.id = r.lease_id
+JOIN trust_units AS u ON u.id = l.unit_id
+JOIN trust_properties AS p ON p.id = u.property_id
+JOIN trust_tenants AS t ON t.id = r.tenant_id
+WHERE r.pmc_id = %s AND r.id = %s AND r.emergency
+"""
+
+
+def on_call(conn: psycopg.Connection[Any], pmc_id: UUID) -> list[UUID]:
+    """The staff members on call for emergencies: each one's latest row says."""
+    return [staff for staff, on in conn.execute(ON_CALL, (pmc_id,)).fetchall() if on]
+
+
+def write_emergency(
+    conn: psycopg.Connection[Any], pmc_id: UUID, request_id: UUID, public_url: str
+) -> int:
+    """Tells each staff member on call, at their login's email, of an emergency a tenant just
+    filed; in the caller's transaction, once per request and staff member. The number written."""
+    row = conn.execute(EMERGENCY, (pmc_id, request_id)).fetchone()
+    if row is None:
+        return 0  # not an emergency
+    summary, entry, prop, unit, tenant = row
+    company = company_of(conn, pmc_id)
+    written = 0
+    for staff in on_call(conn, pmc_id):
+        login = conn.execute(STAFF_LOGIN, (pmc_id, staff)).fetchone()
+        if login is None:
+            continue  # no login to email
+        name, address = login
+        body = (
+            f"Hello {name},\n\n"
+            f"{tenant} filed an emergency maintenance request for {prop}, {unit}:\n\n"
+            f"{summary}\n\n"
+            + ("They allow entry." if entry else "Call them before going in.")
+            + "\n\nOpen a work order for it on Work orders:\n"
+            + f"{public_url.rstrip('/')}/work-orders\n\n"
+            f"{company}\n"
+        )
+        written += _insert(
+            conn,
+            pmc_id,
+            "emergency_request",
+            {
+                "staff_id": staff,
+                "request_id": request_id,
+                "to_address": str(address),
+                "subject": one_line(f"Emergency at {prop}, {unit}: {summary}")[:200],
+                "body": body,
+            },
+        )
+    return written
 
 
 # --- an applicant's adverse action notice ------------------------------------------------------

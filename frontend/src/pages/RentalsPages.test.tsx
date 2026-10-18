@@ -80,7 +80,7 @@ const NO_FILES = {
   documents: [],
   subjects: {
     w9: [], receipt: [], move_out_photo: [], owner_document: [], work_order_photo: [], property_document: [],
-    unit_document: [], tenant_document: [], lease_document: [], vendor_document: [],
+    unit_document: [], tenant_document: [], lease_document: [], vendor_document: [], request_photo: [],
   },
 };
 

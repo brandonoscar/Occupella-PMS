@@ -7,8 +7,10 @@ import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import type { Ledger } from "../ledger";
 import { entryWords, readLedger } from "../ledger";
+import type { ContentType } from "../documents";
+import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
 import type { MaintenanceRequest } from "../maintenance";
-import { statusLabel, when } from "../maintenance";
+import { PHOTOS_PER_REQUEST, photosLabel, photosProblem, statusLabel, visitLabel, when } from "../maintenance";
 import { day, money, usDate } from "../money";
 import type { StatementData } from "../statement";
 import type { Paid, RentersInsurance } from "../rent";
@@ -79,6 +81,9 @@ export function firstLease(leases: Lease[]): Lease | null {
   return leases.find((lease) => lease.in_effect) ?? leases[0] ?? null;
 }
 
+// A photo chosen to go with a request: null type for a file a document can't be.
+type Photo = { title: string; type: ContentType | null; size: number; base64: string };
+
 // A tenant's lease, what they owe, its charges and payments, and their maintenance requests.
 // Rent is paid to the PMC as before: the portal takes no payments.
 export function TenantHome({ me }: { me: Me }) {
@@ -88,6 +93,8 @@ export function TenantHome({ me }: { me: Me }) {
   const [requests, setRequests] = useState<MaintenanceRequest[]>([]);
   const [summary, setSummary] = useState("");
   const [entryAllowed, setEntryAllowed] = useState(false);
+  const [emergency, setEmergency] = useState(false);
+  const [photos, setPhotos] = useState<Photo[]>([]);
   const [sent, setSent] = useState("");
   const [error, setError] = useState("");
 
@@ -119,16 +126,27 @@ export function TenantHome({ me }: { me: Me }) {
     event.preventDefault();
     setError("");
     setSent("");
+    const problem = photosProblem(photos, MAX_BYTES);
+    if (problem) {
+      setError(problem);
+      return;
+    }
     try {
       const filed = await api.post<MaintenanceRequest>("/api/tenant/requests", {
         lease_id: chosen,
         summary,
         entry_allowed: entryAllowed,
+        emergency,
+        photos: photos.map((p) => ({ title: p.title, content_type: p.type, content_base64: p.base64 })),
       });
       setRequests([filed, ...requests]);
       setSummary("");
       setEntryAllowed(false);
-      setSent(`Sent to ${me.pmc_name}.`);
+      setEmergency(false);
+      setPhotos([]);
+      setSent(
+        emergency ? `Sent to ${me.pmc_name} as an emergency. If anyone is in danger, call 911.` : `Sent to ${me.pmc_name}.`,
+      );
     } catch (failed) {
       show(failed);
     }
@@ -336,6 +354,38 @@ export function TenantHome({ me }: { me: Me }) {
                   />
                   Someone may come in while I'm out
                 </label>
+                <label className="flex items-center gap-2 text-sm text-ink-muted">
+                  <input type="checkbox" checked={emergency} onChange={(e) => setEmergency(e.target.checked)} />
+                  This is an emergency (no heat, no water, a leak, a gas smell)
+                </label>
+                <label htmlFor="request-photos" className="flex flex-col gap-1.5 text-sm text-ink-muted">
+                  Photos (up to {PHOTOS_PER_REQUEST}, JPEG, PNG or PDF)
+                  <input
+                    id="request-photos"
+                    type="file"
+                    multiple
+                    accept=".jpg,.jpeg,.png,.pdf"
+                    className="text-sm text-ink"
+                    onChange={async (e) => {
+                      const picked = Array.from(e.target.files ?? []);
+                      setPhotos(
+                        await Promise.all(
+                          picked.map(async (file) => ({
+                            title: titleOf(file.name),
+                            type: typeOf(file),
+                            size: file.size,
+                            base64: toBase64(new Uint8Array(await file.arrayBuffer())),
+                          })),
+                        ),
+                      );
+                    }}
+                  />
+                </label>
+                {photos.length > 0 && (
+                  <p className="text-sm text-ink-subtle" data-testid="photos-chosen">
+                    Photos: {photos.map((p) => p.title).join(", ")}
+                  </p>
+                )}
                 <div className="flex items-center gap-4">
                   <Button type="submit">Send request</Button>
                   <Said>{sent}</Said>
@@ -350,12 +400,19 @@ export function TenantHome({ me }: { me: Me }) {
               <ul className="flex flex-col divide-y divide-line">
                 {requests.map((request) => (
                   <li key={request.id} className="py-3">
-                    <p>{request.summary}</p>
+                    <p className="flex flex-wrap items-center gap-2">
+                      {request.summary}
+                      {request.emergency && <Badge tone="danger">Emergency</Badge>}
+                    </p>
                     <p className="text-sm text-ink-subtle">
                       {request.unit}, sent by {request.filed_by} {when(request.submitted_at)}.{" "}
+                      {photosLabel(request.photos) && `${photosLabel(request.photos)}. `}
                       <span className="text-ink-muted">{statusLabel(request.status)}</span>
                       {request.status !== "received" && ` (${when(request.status_at)})`}
                     </p>
+                    {visitLabel(request) && (
+                      <p className="text-sm text-ink" data-testid="visit">{visitLabel(request)}</p>
+                    )}
                   </li>
                 ))}
               </ul>

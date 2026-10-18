@@ -44,6 +44,7 @@ Kind = Literal[
     "tenant_document",
     "lease_document",
     "vendor_document",
+    "request_photo",
 ]
 ContentType = Literal["application/pdf", "image/jpeg", "image/png"]
 Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
@@ -66,6 +67,7 @@ COLUMN: dict[Kind, str] = {
     "tenant_document": "tenant_id",
     "lease_document": "lease_id",
     "vendor_document": "vendor_id",
+    "request_photo": "request_id",
 }
 
 VENDORS = (
@@ -107,6 +109,11 @@ SUBJECTS: dict[Kind, str] = {
     ' WHERE t.pmc_id = %(pmc)s ORDER BY t.display_name COLLATE "C", t.id',
     "lease_document": LEASES,
     "vendor_document": VENDORS,
+    # A tenant's maintenance request (migration 0084): the photos they filed with it.
+    "request_photo": "SELECT r.id, p.display_name || ' / ' || u.display_name || ': ' || r.summary"
+    " FROM trust_maintenance_requests AS r JOIN trust_leases AS l ON l.id = r.lease_id"
+    " JOIN trust_units AS u ON u.id = l.unit_id JOIN trust_properties AS p ON p.id = u.property_id"
+    " WHERE r.pmc_id = %(pmc)s ORDER BY r.submitted_at DESC, r.id",
 }
 
 # Where each kind's record has its page.
@@ -121,6 +128,8 @@ PAGE: dict[Kind, str] = {
     "property_document": "/properties/",
     "unit_document": "/units/",
     "tenant_document": "/tenants/",
+    # A request is listed on Work orders, under its own anchor.
+    "request_photo": "/work-orders#request-",
 }
 
 
@@ -150,7 +159,7 @@ class Library(BaseModel):
 DOCUMENTS = """
 SELECT d.id, d.kind,
        coalesce(d.vendor_id, d.bill_id, d.lease_id, d.owner_id, d.work_order_id, d.property_id,
-                d.unit_id, d.tenant_id),
+                d.unit_id, d.tenant_id, d.request_id),
        d.title,
        d.content_type, d.size, s.display_name, d.created_at
 FROM trust_documents AS d
@@ -197,7 +206,7 @@ FILES = """
 WITH placed AS (
     SELECT d.id AS document_id,
            coalesce(d.property_id, u.property_id, lu.property_id, t.property_id, w.property_id,
-                    a.property_id) AS property_id
+                    a.property_id, ru.property_id) AS property_id
     FROM trust_documents AS d
     LEFT JOIN trust_units AS u ON u.id = d.unit_id
     LEFT JOIN trust_leases AS l ON l.id = d.lease_id
@@ -206,6 +215,10 @@ WITH placed AS (
     LEFT JOIN trust_work_orders AS w ON w.id = d.work_order_id
     LEFT JOIN trust_bills AS b ON b.id = d.bill_id
     LEFT JOIN trust_ledger_accounts AS a ON a.ledger_account_id = b.ledger_account_id
+    -- A request's photo is at its lease's unit's property.
+    LEFT JOIN trust_maintenance_requests AS rq ON rq.id = d.request_id
+    LEFT JOIN trust_leases AS rl ON rl.id = rq.lease_id
+    LEFT JOIN trust_units AS ru ON ru.id = rl.unit_id
     WHERE d.pmc_id = %(pmc)s
     UNION ALL
     SELECT d.id, a.property_id FROM trust_documents AS d
@@ -214,7 +227,7 @@ WITH placed AS (
 )
 SELECT d.id, d.kind,
        coalesce(d.vendor_id, d.bill_id, d.lease_id, d.owner_id, d.work_order_id, d.property_id,
-                d.unit_id, d.tenant_id),
+                d.unit_id, d.tenant_id, d.request_id),
        d.title, d.content_type, d.size, s.display_name, d.created_at, count(*) OVER ()
 FROM trust_documents AS d
 LEFT JOIN trust_staff AS s ON s.id = d.uploaded_by

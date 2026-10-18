@@ -19,6 +19,7 @@ import { COVERAGES, PAYMENT, standingTone, standingWord } from "../vendors";
 import type { VendorPageData } from "../workOrders";
 import { STATUS } from "../workOrders";
 import { EmailsCard } from "../components/EmailsCard";
+import { VendorLinkCard } from "./VendorLinkCard";
 import { FilesCard } from "./FilesCard";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
@@ -171,6 +172,7 @@ export function VendorPage({ me, id }: { me: Me; id: string }) {
           )}
         </Card>
       )}
+      {tab === "work-orders" && <VendorLinkCard vendorId={id} name={vendor.name} />}
       {tab === "work-orders" && (
         <Card title="Work orders">
           {vendor.work_orders.length === 0 ? (

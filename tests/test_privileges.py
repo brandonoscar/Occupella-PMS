@@ -194,6 +194,11 @@ TABLES = {
     "trust_shared_bill_parts": {"SELECT", "INSERT"},
     "trust_bill_markups": {"SELECT", "INSERT"},
     "trust_bill_markup_fees": {"SELECT"},
+    "trust_on_call_staff": {"SELECT", "INSERT"},
+    "trust_recurring_work_orders": {"SELECT", "INSERT"},
+    "trust_recurring_work_order_ends": {"SELECT", "INSERT"},
+    "trust_vendor_links": {"SELECT", "INSERT"},
+    "trust_vendor_link_revocations": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -215,6 +220,8 @@ COLUMN_UPDATES = {
 # their credentials, and rental applicants with their consumer report results, are no business
 # of the role behind Occupella's key.
 AI_NEVER_READS = {
+    "trust_vendor_links",
+    "trust_vendor_link_revocations",
     "trust_logins",
     "trust_invites",
     "trust_sessions",
@@ -299,6 +306,7 @@ FUNCTIONS = {
     "trust_record_owner_contribution(uuid,text,text,numeric,timestamptz,text)": {"trust_app"},
     "trust_complete_lease_offer(uuid,uuid,uuid)": {"trust_app"},
     "trust_enter_recurring_bills(uuid,date)": {"trust_app"},
+    "trust_open_recurring_work_orders(uuid,date)": {"trust_app"},
     "trust_match_bank_lines(uuid,uuid,uuid[],text[],uuid[],uuid)": {"trust_app"},
     "trust_match_cutover_opening(uuid,uuid,uuid,uuid)": {"trust_app"},
     "trust_unmatch_bank_lines(uuid,uuid,uuid)": {"trust_app"},
@@ -346,6 +354,8 @@ FUNCTIONS = {
     "trust_check_rent_due_day()": set(),
     "trust_check_bill_reference()": set(),  # a trigger's: no one calls it
     "trust_check_shared_bill()": set(),
+    "trust_check_work_order_charge()": set(),
+    "trust_check_vendor_link_step()": set(),
     "trust_fill_bill_markup()": set(),
     # Reports read trust records, so only the app and the AI; they run with the caller's own
     # read grants.

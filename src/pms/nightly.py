@@ -2,8 +2,9 @@
 month's rent and recurring charges (due on its first day, each lease in effect for its days and
 each starting later in the month its first part month; a lease due on another day on that day),
 the late fees of rents still open after their grace days, the recurring bills due by today, each
-with its email to an owner whose approval it waits for, and, for a company that turned it on,
-last month's management fees from its day of the month. Rent and late fees go through
+with its email to an owner whose approval it waits for, for a company that turned it on, last
+month's management fees from its day of the month, and the recurring work orders due by today
+(trust_open_recurring_work_orders, migration 0085). Rent and late fees go through
 trust_run_rent, which records the run; bills through trust_enter_recurring_bills; fees through
 trust_take_monthly_management_fees.
 
@@ -56,6 +57,8 @@ class Ran:
     emails: int = 0
     # Last month's management fees taken (migration 0082).
     management_fees: int = 0
+    # Work orders opened from recurring ones (migration 0085).
+    work_orders: int = 0
 
 
 def run_pmc(
@@ -81,7 +84,10 @@ def run_pmc(
         fees = conn.execute(
             "SELECT trust_take_monthly_management_fees(%s, %s)", (pmc_id, day)
         ).fetchone()
-        assert run is not None and entered is not None and fees is not None
+        opened = conn.execute(
+            "SELECT trust_open_recurring_work_orders(%s, %s)", (pmc_id, day)
+        ).fetchone()
+        assert run is not None and entered is not None and fees is not None and opened is not None
         # The bills this transaction entered (their created_at is its start, now()), each with
         # the email to an owner whose approval it waits for.
         for (bill,) in conn.execute(
@@ -91,7 +97,7 @@ def run_pmc(
             email.write_bill_approval(conn, pmc_id, bill, public_url)
         written = notices.write_scheduled(conn, pmc_id, day, public_url) if sending else None
     emails = 0 if written is None else sum(vars(written).values())
-    return Ran(pmc_id, run[0], run[1], run[2], entered[0], emails, fees[0])
+    return Ran(pmc_id, run[0], run[1], run[2], entered[0], emails, fees[0], opened[0])
 
 
 def run_all(
@@ -200,9 +206,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     bills = sum(r.bills for r in done)
     emails = sum(r.emails for r in done)
     fees = sum(r.management_fees for r in done)
+    orders = sum(r.work_orders for r in done)
     print(
         f"{len(done)} companies: {rents} rents, {late_fees} late fees, {bills} bills,"
-        f" {emails} emails, {fees} management fees"
+        f" {emails} emails, {fees} management fees, {orders} work orders"
     )
     return 0
 
