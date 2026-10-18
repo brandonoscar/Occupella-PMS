@@ -2781,3 +2781,55 @@ test("staff go on call; a tenant files an emergency with a photo and staff see i
   const row = page.getByRole("row", { name: "No heat in the bedroom" });
   await expect(row.getByRole("cell").nth(7)).toHaveText("0");
 });
+
+test("staff add a filter change every 3 months, the ones due open at once, stop it, and charge the tenant for a work order", async ({
+  page,
+}) => {
+  const people = seed.features["recurring-work-orders"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Work orders");
+  await page.getByRole("button", { name: "Recurring" }).click();
+  const panel = page.getByRole("dialog", { name: "Recurring work orders" });
+  await expect(panel).toContainText("No work order comes back by itself yet.");
+  await panel.getByRole("combobox", { name: "Property", exact: true }).selectOption({ label: "Cedar House" });
+  await panel.getByRole("combobox", { name: "Unit", exact: true }).selectOption({ label: "House" });
+  await panel.getByLabel("What it is").fill("Change the furnace filter");
+  await panel.getByRole("combobox", { name: "Every", exact: true }).selectOption({ label: "3 months" });
+  await panel.getByLabel("On day (1 to 28)").fill("1");
+  // From five months ago: the 1st five months ago and two months ago are due already.
+  await panel.getByLabel("From").fill(firstOfMonthsAgo(5));
+  await panel.getByRole("combobox", { name: "Priority", exact: true }).selectOption({ label: "High" });
+  await panel.getByRole("button", { name: "Add recurring work order" }).click();
+  await expect(panel).toContainText('"Change the furnace filter" comes back by itself. 2 already due opened now.');
+  const item = panel.getByRole("listitem", { name: "Change the furnace filter" });
+  await expect(item).toContainText(`Change the furnace filter, House, Cedar House: every 3 months on the 1st from ${us(firstOfMonthsAgo(5))}`);
+  await expect(item).toContainText(`High priority, no vendor. Last opened ${us(firstOfMonthsAgo(2))}.`);
+  await item.getByLabel('Stop "Change the furnace filter" from').fill(today());
+  await item.getByRole("button", { name: "Stop it" }).click();
+  await expect(panel).toContainText(`"Change the furnace filter" stops from ${us(today())}.`);
+  await expect(item).toContainText(`Ends ${us(today())}.`);
+  await panel.getByRole("button", { name: "Close" }).click();
+
+  // Both opened, high priority; the newer one first.
+  await page.reload();
+  const opened = page.getByRole("row", { name: "Change the furnace filter" });
+  await expect(opened).toHaveCount(2);
+  await opened.first().click();
+  await expect(page.getByTestId("priority")).toHaveText("High");
+  await expect(page.getByLabel("Summary")).toContainText("RecurringOpened by itself, every 3 months");
+  await expect(page.getByLabel("Summary")).toContainText(`Opened${us(firstOfMonthsAgo(2))}`);
+
+  // The tenant left the filter housing broken: they are charged for it.
+  await page.getByRole("button", { name: "Charge the tenant" }).click();
+  const charge = page.getByRole("dialog", { name: "Charge the tenant" });
+  await expect(charge.getByRole("combobox", { name: "Lease", exact: true })).toContainText("House: Quinn Demo, Taylor Demo");
+  await charge.getByLabel("Amount").fill("85.00");
+  await charge.getByLabel("Memo").fill("Broken filter housing");
+  await charge.getByRole("button", { name: "Charge" }).click();
+  await expect(charge).toHaveCount(0);
+  await expect(page.getByText("$85.00 charged to Quinn Demo, Taylor Demo.")).toBeVisible();
+  const charged = page.getByRole("table", { name: "Charged to tenants" });
+  await expect(charged.getByRole("cell")).toHaveText([
+    "House", "Quinn Demo, Taylor Demo", us(today()), "Broken filter housing", "$85.00", "$85.00",
+  ]);
+});

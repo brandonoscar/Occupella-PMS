@@ -293,3 +293,24 @@ reasonable is the state's, not the PMS's:
 **Left to the company.** Whether a request is an emergency in its state's terms and how fast it
 must act; the written entry notice its state asks (the portal's visit day and window may not be
 one); and anything a tenant may do when a repair waits too long (repair and deduct, withholding).
+
+### Charging a tenant for a repair, and recurring work (migration 0085)
+
+**The rule.** A tenant answers for damage beyond normal wear and tear that they, their household
+or their guests cause; a landlord may charge them for its repair, and may take it from the
+security deposit at move-out under the deposit rules above. What counts as normal wear and tear,
+and what a lease may shift to a tenant, is each state's (NOT VERIFIED state by state; West
+Virginia's W. Va. Code 37-6A-1 counts "damages" beyond ordinary wear and tear against a deposit,
+read in search excerpts, NOT VERIFIED). No state was found that limits recurring upkeep a landlord
+schedules itself.
+
+**What the PMS does.**
+- A charge for a work order is an ordinary one-off fee of a lease at the work order's unit (or at
+  a unit of its property when it is the whole property's), naming the work order; never a credit.
+  The owner still pays the vendor's bill; what the tenant pays of the charge goes to the owner's
+  account as any charge does. The work order lists what tenants were charged and what is open.
+- A recurring work order opens on its day every so many months, once per day, with its priority
+  and vendor (none when the vendor's insurance ran out); it moves no money.
+
+**Left to the company.** Whether the damage is the tenant's and not wear and tear, and any notice
+or itemization its state asks before charging it.

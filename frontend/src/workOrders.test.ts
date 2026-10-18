@@ -1,5 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { daysLeftLabel, ENTRY, PRIORITY, RENEWAL, STATUS, whereLabel } from "./workOrders";
+import type { RecurringWorkOrder } from "./workOrders";
+import { daysLabel, daysLeftLabel, ENTRY, PRIORITY, RENEWAL, STATUS, recurringLine, whereLabel } from "./workOrders";
+
+describe("days open and recurring work orders", () => {
+  it("counts days, and reads a recurring work order in a line", () => {
+    expect([0, 1, 12].map(daysLabel)).toEqual(["0 days", "1 day", "12 days"]);
+    const filter: RecurringWorkOrder = {
+      id: "r1", property_id: "p1", property: "Property 1", unit_id: "u1", unit: "Unit 1", summary: "Filters",
+      every_months: 3, schedule: "every 3 months on the 15th", day_of_month: 15, starts_on: "2026-01-20",
+      priority: "normal", vendor: null, ends_on: null, last_opened_on: null,
+    };
+    expect(recurringLine(filter)).toBe("Filters, Unit 1, Property 1: every 3 months on the 15th from 01/20/2026");
+    expect(recurringLine({ ...filter, unit: null, unit_id: null })).toBe(
+      "Filters, Property 1: every 3 months on the 15th from 01/20/2026",
+    );
+  });
+});
 
 describe("work orders and renewals", () => {
   it("say where a work order is", () => {

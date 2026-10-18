@@ -465,7 +465,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the server sends email (`emergency_request`, once per request and staff member; no texts), the
   work order naming whom. A schedule step may name a visit window ("8-10 am",
   `trust_work_order_steps.visit_window`), which the tenant sees with the day and the vendor's email
-  gives; work orders count their days open.
+  gives; work orders count their days open. Since migration 0085 a tenant is charged for a work
+  order (a repair they caused) by a fee naming it (`trust_charges.work_order_id`, only a fee, only
+  a lease at its unit or property; the work order's Charge the tenant, through
+  `POST /api/rent/leases/<id>/charges`), and a job comes back by itself
+  (`trust_recurring_work_orders`: every 1 to 12 months on a day 1 to 28 from a day, maybe with a
+  vendor and a priority; an end row stops it; append-only, naming who), opened once per day by
+  `trust_open_recurring_work_orders`, which the nightly run and adding one call (Work orders,
+  Recurring; `src/pms/api/recurring_work_orders.py`, area maintenance).
 - Rental applications: an application comes through an open application link of a unit
   (closing a link and an application wait for each other); its applicants are names and
   emails. Screenings record a partner's recommendation and reasons. Each application has one
@@ -581,7 +588,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - Rent posts by itself (migration 0067, ADR 0006, `src/pms/nightly.py`): every night each PMC's
   rent and recurring charges for the month (due on its first day, or on a lease's own due day
   once it comes; migration 0081), the late fees of rents past
-  their grace as of the day, and the recurring bills due, with their owners' emails. Rent and late
+  their grace as of the day, the recurring bills due, with their owners' emails, and the recurring
+  work orders due (migration 0085). Rent and late
   fees go through `trust_run_rent`, which records the run (`trust_rent_runs`, append-only, naming
   nobody); an admin runs it by hand from the rent roll (Run rent now), and a named staff member
   without admin is refused. Each part charges once per date, so a run again charges nothing new.

@@ -242,6 +242,18 @@ browser = [
 ]
 
 [[feature]]
+id = "recurring-work-orders"
+statement = "Staff add a job that comes back every few months at a property or unit; the ones already due open at once and the nightly run opens the rest on their days; staff stop one from a day, and charge a tenant a fee for a work order (a repair they caused) on a lease at its unit."
+operations = [
+  "GET /api/work-orders/recurring",
+  "POST /api/work-orders/recurring",
+  "POST /api/work-orders/recurring/{recurring_id}/end",
+]
+browser = [
+  "features.spec.ts › staff add a filter change every 3 months, the ones due open at once, stop it, and charge the tenant for a work order",
+]
+
+[[feature]]
 id = "renters-insurance"
 statement = "Staff set whether a lease requires renters insurance and the least liability it asks, and record a policy; the tenant records their own from the portal, with any insurer; the rent page, the portal and Today show how each lease stands."
 operations = [

@@ -70,6 +70,7 @@ from pms.api import (
     people,
     receipts,
     reconcile,
+    recurring_work_orders,
     renewals,
     rent,
     rentals,
@@ -476,6 +477,8 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(groups.router)
     app.include_router(directory.router)
     app.include_router(general_ledger.router)
+    # Before work_orders: its /{work_order_id} would take "recurring" for an id.
+    app.include_router(recurring_work_orders.router)
     app.include_router(work_orders.router)
     app.include_router(renewals.router)
     app.include_router(payables.router)

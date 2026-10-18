@@ -3,6 +3,7 @@
 import type { BadgeTone } from "./components/Badge";
 import type { Ref } from "./rentals";
 import type { Vendor } from "./vendors";
+import { usDate } from "./money";
 
 export type WorkOrderStatus = "open" | "assigned" | "scheduled" | "completed" | "cancelled";
 export type Priority = "low" | "normal" | "high" | "urgent";
@@ -51,6 +52,19 @@ export type WorkOrderRequest = {
   // The staff members on call who were emailed of it, an emergency.
   emailed: string[];
 };
+// What a tenant was charged for a work order (a repair they caused), and what is open of it.
+export type TenantCharge = {
+  id: string;
+  lease_id: string;
+  unit: string;
+  tenants: string;
+  due_on: string;
+  amount: string;
+  memo: string | null;
+  open: string;
+};
+// A lease in effect today that a work order may be charged to.
+export type LeaseChoice = { id: string; unit: string; tenants: string };
 export type WorkOrder = WorkOrderRow & {
   description: string | null;
   entry: Entry | null;
@@ -58,7 +72,36 @@ export type WorkOrder = WorkOrderRow & {
   bills: { id: string; vendor: string; reference: string; amount: string; paid: boolean }[];
   request: WorkOrderRequest | null;
   tenants: { name: string; contact: { email: string | null; phone: string | null } }[];
+  charges: TenantCharge[];
+  leases: LeaseChoice[];
+  // The recurring work order that opened it, in words ("every 3 months"), if one did.
+  recurring: string | null;
 };
+
+// A job that comes back every few months (src/pms/api/recurring_work_orders.py).
+export type RecurringWorkOrder = {
+  id: string;
+  property_id: string;
+  property: string;
+  unit_id: string | null;
+  unit: string | null;
+  summary: string;
+  every_months: number;
+  // "every 3 months on the 15th"
+  schedule: string;
+  day_of_month: number;
+  starts_on: string;
+  priority: Priority;
+  vendor: string | null;
+  ends_on: string | null;
+  last_opened_on: string | null;
+};
+
+// "Change the furnace filter, Unit 1, Property 1: every 3 months on the 15th from 01/20/2026"
+export function recurringLine(r: RecurringWorkOrder): string {
+  const where = r.unit ? `${r.unit}, ${r.property}` : r.property;
+  return `${r.summary}, ${where}: ${r.schedule} from ${usDate(r.starts_on)}`;
+}
 
 export type VendorPageData = Vendor & {
   insurance_standing: string;

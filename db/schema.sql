@@ -2856,6 +2856,32 @@ $$;
 
 
 --
+-- Name: trust_check_work_order_charge(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_work_order_charge() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM trust_work_orders AS w
+        JOIN trust_leases AS l ON l.id = NEW.lease_id
+        JOIN trust_units AS u ON u.id = l.unit_id
+        WHERE w.id = NEW.work_order_id
+          AND u.property_id = w.property_id
+          AND (w.unit_id IS NULL OR w.unit_id = u.id)
+    ) THEN
+        RAISE EXCEPTION 'trust: a work order is charged only to a lease at its unit or property'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_work_order_step(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4005,6 +4031,76 @@ BEGIN
     );
 
     RETURN v_ledger_account_id;
+END;
+$$;
+
+
+--
+-- Name: trust_open_recurring_work_orders(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_open_recurring_work_orders(p_pmc_id uuid, p_through date) RETURNS integer
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_due record;
+    v_order uuid;
+    v_opened integer := 0;
+BEGIN
+    IF p_through IS NULL THEN
+        RAISE EXCEPTION 'trust: open recurring work orders through a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    FOR v_due IN
+        SELECT r.id, r.pmc_id, r.property_id, r.unit_id, r.summary, r.priority, r.vendor_id,
+               d.due_on
+        FROM trust_recurring_work_orders AS r
+        LEFT JOIN trust_recurring_work_order_ends AS e ON e.recurring_work_order_id = r.id
+        CROSS JOIN LATERAL (
+            -- The first day of the month on or after it starts.
+            SELECT date_trunc('month', r.starts_on)
+                + CASE WHEN extract(DAY FROM r.starts_on) > r.day_of_month
+                    THEN interval '1 month' ELSE interval '0' END AS first_month
+        ) AS f
+        CROSS JOIN LATERAL generate_series(
+            f.first_month, p_through::timestamp, make_interval(months => r.every_months)
+        ) AS m (month)
+        CROSS JOIN LATERAL (SELECT (m.month::date + r.day_of_month - 1) AS due_on) AS d
+        WHERE r.pmc_id = p_pmc_id
+          AND d.due_on <= p_through
+          AND (e.ends_on IS NULL OR d.due_on < e.ends_on)
+        ORDER BY d.due_on, r.id
+    LOOP
+        INSERT INTO trust_work_orders (
+            pmc_id, property_id, unit_id, summary, opened_at, recurring_work_order_id,
+            recurring_on
+        )
+        VALUES (
+            v_due.pmc_id, v_due.property_id, v_due.unit_id, v_due.summary,
+            v_due.due_on::timestamp AT TIME ZONE 'UTC', v_due.id, v_due.due_on
+        )
+        ON CONFLICT (recurring_work_order_id, recurring_on) DO NOTHING
+        RETURNING id INTO v_order;
+        CONTINUE WHEN v_order IS NULL;
+        v_opened := v_opened + 1;
+        INSERT INTO trust_work_order_details (pmc_id, work_order_id, priority)
+        VALUES (v_due.pmc_id, v_order, v_due.priority);
+        IF v_due.vendor_id IS NOT NULL THEN
+            BEGIN
+                INSERT INTO trust_work_order_steps (
+                    pmc_id, work_order_id, step, vendor_id, taken_at
+                )
+                VALUES (v_due.pmc_id, v_order, 'assigned', v_due.vendor_id, now());
+            EXCEPTION
+                WHEN check_violation THEN
+                    -- The vendor's insurance ran out: it waits for staff to assign one.
+                    v_order := NULL;
+            END;
+        END IF;
+    END LOOP;
+    RETURN v_opened;
 END;
 $$;
 
@@ -9875,6 +9971,7 @@ CREATE TABLE public.trust_charges (
     memo text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     recurring_charge_id uuid,
+    work_order_id uuid,
     CONSTRAINT trust_charges_amount_check CHECK ((amount > (0)::numeric)),
     CONSTRAINT trust_charges_kind_check CHECK ((kind = ANY (ARRAY['rent'::text, 'fee'::text, 'credit'::text])))
 );
@@ -11181,6 +11278,43 @@ CREATE TABLE public.trust_recurring_charges (
 
 
 --
+-- Name: trust_recurring_work_order_ends; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_recurring_work_order_ends (
+    recurring_work_order_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    ends_on date NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_recurring_work_orders; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_recurring_work_orders (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    property_id uuid NOT NULL,
+    unit_id uuid,
+    summary text NOT NULL,
+    every_months integer NOT NULL,
+    day_of_month integer NOT NULL,
+    starts_on date NOT NULL,
+    priority text DEFAULT 'normal'::text NOT NULL,
+    vendor_id uuid,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_recurring_work_orders_day_of_month_check CHECK (((day_of_month >= 1) AND (day_of_month <= 28))),
+    CONSTRAINT trust_recurring_work_orders_every_months_check CHECK (((every_months >= 1) AND (every_months <= 12))),
+    CONSTRAINT trust_recurring_work_orders_priority_check CHECK ((priority = ANY (ARRAY['low'::text, 'normal'::text, 'high'::text, 'urgent'::text]))),
+    CONSTRAINT trust_recurring_work_orders_summary_check CHECK (((summary ~ '\S'::text) AND (length(summary) <= 500)))
+);
+
+
+--
 -- Name: trust_rent_changes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11592,6 +11726,8 @@ CREATE TABLE public.trust_work_orders (
     summary text NOT NULL,
     opened_at timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    recurring_work_order_id uuid,
+    recurring_on date,
     CONSTRAINT trust_work_orders_summary_check CHECK ((summary <> ''::text))
 );
 
@@ -12050,6 +12186,14 @@ ALTER TABLE ONLY public.trust_charges
 
 ALTER TABLE ONLY public.trust_charges
     ADD CONSTRAINT trust_charges_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_charges trust_charges_work_order_fee; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_charges
+    ADD CONSTRAINT trust_charges_work_order_fee CHECK (((work_order_id IS NULL) OR (kind = 'fee'::text))) NOT VALID;
 
 
 --
@@ -13177,6 +13321,30 @@ ALTER TABLE ONLY public.trust_recurring_charges
 
 
 --
+-- Name: trust_recurring_work_order_ends trust_recurring_work_order_ends_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_work_order_ends
+    ADD CONSTRAINT trust_recurring_work_order_ends_pkey PRIMARY KEY (recurring_work_order_id);
+
+
+--
+-- Name: trust_recurring_work_orders trust_recurring_work_orders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_work_orders
+    ADD CONSTRAINT trust_recurring_work_orders_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_recurring_work_orders trust_recurring_work_orders_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_work_orders
+    ADD CONSTRAINT trust_recurring_work_orders_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_rent_changes trust_rent_changes_lease_id_effective_on_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13489,6 +13657,14 @@ ALTER TABLE ONLY public.trust_work_orders
 
 
 --
+-- Name: trust_work_orders trust_work_orders_recurring_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_work_orders
+    ADD CONSTRAINT trust_work_orders_recurring_check CHECK (((recurring_work_order_id IS NULL) = (recurring_on IS NULL))) NOT VALID;
+
+
+--
 -- Name: pgledger_entries_account_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -13759,6 +13935,13 @@ CREATE UNIQUE INDEX trust_charges_one_per_recurring_due_date ON public.trust_cha
 --
 
 CREATE UNIQUE INDEX trust_charges_one_rent_per_due_date ON public.trust_charges USING btree (lease_id, due_on) WHERE (kind = 'rent'::text);
+
+
+--
+-- Name: trust_charges_work_order_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_charges_work_order_id ON public.trust_charges USING btree (work_order_id);
 
 
 --
@@ -14434,6 +14617,48 @@ CREATE UNIQUE INDEX trust_recurring_charges_lease_kind ON public.trust_recurring
 
 
 --
+-- Name: trust_recurring_work_order_ends_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_recurring_work_order_ends_recorded_by ON public.trust_recurring_work_order_ends USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_recurring_work_orders_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_recurring_work_orders_pmc ON public.trust_recurring_work_orders USING btree (pmc_id);
+
+
+--
+-- Name: trust_recurring_work_orders_property; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_recurring_work_orders_property ON public.trust_recurring_work_orders USING btree (pmc_id, property_id);
+
+
+--
+-- Name: trust_recurring_work_orders_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_recurring_work_orders_recorded_by ON public.trust_recurring_work_orders USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_recurring_work_orders_unit; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_recurring_work_orders_unit ON public.trust_recurring_work_orders USING btree (pmc_id, unit_id);
+
+
+--
+-- Name: trust_recurring_work_orders_vendor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_recurring_work_orders_vendor ON public.trust_recurring_work_orders USING btree (pmc_id, vendor_id);
+
+
+--
 -- Name: trust_rent_changes_pmc_lease; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -14606,6 +14831,13 @@ CREATE INDEX trust_work_order_details_work_order ON public.trust_work_order_deta
 --
 
 CREATE UNIQUE INDEX trust_work_order_steps_one_close ON public.trust_work_order_steps USING btree (work_order_id) WHERE (step = ANY (ARRAY['completed'::text, 'cancelled'::text]));
+
+
+--
+-- Name: trust_work_orders_one_per_recurring_day; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_work_orders_one_per_recurring_day ON public.trust_work_orders USING btree (recurring_work_order_id, recurring_on);
 
 
 --
@@ -15383,6 +15615,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_recurring_charges FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_recurring_work_order_ends trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_recurring_work_order_ends FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_recurring_work_orders trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_recurring_work_orders FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -16317,6 +16563,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_recu
 
 
 --
+-- Name: trust_recurring_work_order_ends trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_recurring_work_order_ends FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_recurring_work_orders trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_recurring_work_orders FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_rent_changes trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -16975,6 +17235,20 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_property_group_me
 
 
 --
+-- Name: trust_recurring_work_order_ends trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_recurring_work_order_ends FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_recurring_work_orders trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_recurring_work_orders FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_rent_changes trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -17143,6 +17417,13 @@ CREATE TRIGGER trust_transfer_scope BEFORE INSERT ON public.pgledger_transfers F
 
 
 --
+-- Name: trust_charges trust_work_order_charge; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_work_order_charge BEFORE INSERT ON public.trust_charges FOR EACH ROW WHEN ((new.work_order_id IS NOT NULL)) EXECUTE FUNCTION public.trust_check_work_order_charge();
+
+
+--
 -- Name: trust_work_order_steps trust_work_order_step_order; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -17154,6 +17435,13 @@ CREATE TRIGGER trust_work_order_step_order BEFORE INSERT ON public.trust_work_or
 --
 
 CREATE TRIGGER trust_work_order_step_vendor BEFORE INSERT ON public.trust_work_order_steps FOR EACH ROW EXECUTE FUNCTION public.trust_check_work_order_step_vendor();
+
+
+--
+-- Name: trust_recurring_work_orders trust_work_order_unit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_work_order_unit BEFORE INSERT ON public.trust_recurring_work_orders FOR EACH ROW EXECUTE FUNCTION public.trust_check_work_order();
 
 
 --
@@ -17969,6 +18257,14 @@ ALTER TABLE ONLY public.trust_charges
 
 ALTER TABLE ONLY public.trust_charges
     ADD CONSTRAINT trust_charges_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_charges trust_charges_pmc_id_work_order_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_charges
+    ADD CONSTRAINT trust_charges_pmc_id_work_order_id_fkey FOREIGN KEY (pmc_id, work_order_id) REFERENCES public.trust_work_orders(pmc_id, id) NOT VALID;
 
 
 --
@@ -19924,6 +20220,62 @@ ALTER TABLE ONLY public.trust_recurring_charges
 
 
 --
+-- Name: trust_recurring_work_order_ends trust_recurring_work_order_en_pmc_id_recurring_work_order__fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_work_order_ends
+    ADD CONSTRAINT trust_recurring_work_order_en_pmc_id_recurring_work_order__fkey FOREIGN KEY (pmc_id, recurring_work_order_id) REFERENCES public.trust_recurring_work_orders(pmc_id, id);
+
+
+--
+-- Name: trust_recurring_work_order_ends trust_recurring_work_order_ends_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_work_order_ends
+    ADD CONSTRAINT trust_recurring_work_order_ends_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_recurring_work_orders trust_recurring_work_orders_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_work_orders
+    ADD CONSTRAINT trust_recurring_work_orders_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_recurring_work_orders trust_recurring_work_orders_pmc_id_property_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_work_orders
+    ADD CONSTRAINT trust_recurring_work_orders_pmc_id_property_id_fkey FOREIGN KEY (pmc_id, property_id) REFERENCES public.trust_properties(pmc_id, id);
+
+
+--
+-- Name: trust_recurring_work_orders trust_recurring_work_orders_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_work_orders
+    ADD CONSTRAINT trust_recurring_work_orders_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_recurring_work_orders trust_recurring_work_orders_pmc_id_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_work_orders
+    ADD CONSTRAINT trust_recurring_work_orders_pmc_id_unit_id_fkey FOREIGN KEY (pmc_id, unit_id) REFERENCES public.trust_units(pmc_id, id);
+
+
+--
+-- Name: trust_recurring_work_orders trust_recurring_work_orders_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_work_orders
+    ADD CONSTRAINT trust_recurring_work_orders_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
 -- Name: trust_rent_changes trust_rent_changes_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20412,6 +20764,14 @@ ALTER TABLE ONLY public.trust_work_orders
 
 
 --
+-- Name: trust_work_orders trust_work_orders_pmc_id_recurring_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_work_orders
+    ADD CONSTRAINT trust_work_orders_pmc_id_recurring_fkey FOREIGN KEY (pmc_id, recurring_work_order_id) REFERENCES public.trust_recurring_work_orders(pmc_id, id) NOT VALID;
+
+
+--
 -- Name: trust_work_orders trust_work_orders_pmc_id_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20534,4 +20894,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261018000081'),
     ('20261018000082'),
     ('20261018000083'),
-    ('20261018000084');
+    ('20261018000084'),
+    ('20261018000085');

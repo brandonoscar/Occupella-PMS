@@ -105,7 +105,8 @@ def test_an_emergency_is_emailed_to_each_staff_member_on_call_with_a_login(conn,
     )
     (sent,) = conn.execute(
         "SELECT staff_id, request_id, to_address, subject, body FROM trust_emails"
-        " WHERE kind = 'emergency_request'"
+        " WHERE pmc_id = %s AND kind = 'emergency_request'",
+        (pmc_id,),
     ).fetchall()
     assert sent[:4] == (
         first,
@@ -132,37 +133,43 @@ def test_a_request_that_is_no_emergency_is_emailed_to_nobody(conn, app_conn, hom
 def test_an_emergency_email_names_one_staff_member_and_its_request(conn, home):
     pmc_id = home.pmc.pmc_id
     staff = add_staff(conn, pmc_id, "Manager A")
-    columns = "(pmc_id, kind, to_address, subject, body, staff_id, request_id, tenant_id)"
     insert = (
-        f"INSERT INTO trust_emails {columns} VALUES (%s, %s, 'a@example.com', 'S', 'B', %s, %s, %s)"
+        "INSERT INTO trust_emails (pmc_id, kind, to_address, subject, body, staff_id, request_id,"
+        " tenant_id, needs_link) VALUES (%s, %s, 'a@example.com', 'S', 'B', %s, %s, %s, %s)"
     )
-    for kind, who, request, tenant in (
-        ("emergency_request", staff, None, None),
-        ("emergency_request", None, home.request, None),
-        ("emergency_request", staff, home.request, home.tenant),
-        ("invite", staff, home.request, None),
+    for kind, who, request, tenant, link in (
+        ("emergency_request", staff, None, None, False),
+        ("emergency_request", None, home.request, None, False),
+        ("emergency_request", staff, home.request, home.tenant, False),
+        # A staff member's invite, as one is written, but naming a request: only an emergency does.
+        ("invite", staff, home.request, None, True),
     ):
         with pytest.raises(psycopg.errors.CheckViolation), conn.transaction():
-            conn.execute(insert, (pmc_id, kind, who, request, tenant))
-    conn.execute(insert, (pmc_id, "emergency_request", staff, home.request, None))
+            conn.execute(insert, (pmc_id, kind, who, request, tenant, link))
+    conn.execute(insert, (pmc_id, "invite", staff, None, None, True))
+    conn.execute(insert, (pmc_id, "emergency_request", staff, home.request, None, False))
     with pytest.raises(psycopg.errors.UniqueViolation):
-        conn.execute(insert, (pmc_id, "emergency_request", staff, home.request, None))
+        conn.execute(insert, (pmc_id, "emergency_request", staff, home.request, None, False))
 
 
 def test_a_request_photo_is_about_a_request_of_its_company(conn, home):
     pmc_id = home.pmc.pmc_id
     add_document(conn, pmc_id, "request_photo", home.request, PNG, "image/png", "Ceiling")
     insert = (
-        "INSERT INTO trust_documents (pmc_id, kind, {}, title, content_type, size, sha256)"
-        " VALUES (%s, %s, %s, 'Photo', 'image/png', 1, sha256('x'))"
+        "INSERT INTO trust_documents (pmc_id, kind, lease_id, request_id, title, content_type,"
+        " size, sha256) VALUES (%s, %s, %s, %s, 'Photo', 'image/png', 1, sha256('x'))"
     )
-    with pytest.raises(psycopg.errors.CheckViolation), conn.transaction():
-        conn.execute(insert.format("lease_id"), (pmc_id, "request_photo", home.lease))
-    with pytest.raises(psycopg.errors.CheckViolation), conn.transaction():
-        conn.execute(insert.format("request_id"), (pmc_id, "move_out_photo", home.request))
+    # A request's photo about no request; a lease's photo that names a request too.
+    for kind, lease, request in (
+        ("request_photo", None, None),
+        ("move_out_photo", home.lease, home.request),
+    ):
+        refused = pytest.raises(psycopg.errors.CheckViolation, match="request_check")
+        with refused, conn.transaction():
+            conn.execute(insert, (pmc_id, kind, lease, request))
     other = make_pmc(conn).pmc_id
     with pytest.raises(psycopg.errors.ForeignKeyViolation), conn.transaction():
-        conn.execute(insert.format("request_id"), (other, "request_photo", home.request))
+        conn.execute(insert, (other, "request_photo", None, home.request))
 
 
 def test_who_is_on_call_is_append_only_audited_and_names_who(conn, home):

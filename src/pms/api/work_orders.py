@@ -270,6 +270,28 @@ class TenantContact(BaseModel):
     contact: Contact
 
 
+class TenantCharge(BaseModel):
+    """What a tenant was charged for the work order (migration 0085), and what is open of it."""
+
+    id: UUID
+    lease_id: UUID
+    unit: str
+    tenants: str
+    due_on: date
+    amount: str
+    memo: str | None
+    open: str
+
+
+class LeaseChoice(BaseModel):
+    """A lease in effect today that the work order may be charged to: at its unit, or at a unit
+    of its property when it is the whole property's."""
+
+    id: UUID
+    unit: str
+    tenants: str
+
+
 class WorkOrder(WorkOrderRow):
     description: str | None
     entry: Entry | None
@@ -278,6 +300,37 @@ class WorkOrder(WorkOrderRow):
     request: RequestOut | None
     # The tenants of its unit's lease in effect today, with their contact details.
     tenants: list[TenantContact]
+    charges: list[TenantCharge]
+    leases: list[LeaseChoice]
+    # The recurring work order that opened it, if one did, in words ("every 3 months").
+    recurring: str | None
+
+
+# The leases' tenants in a line, staying tenants first ("Tenant 1, Tenant 2").
+TENANT_NAMES = """
+(SELECT string_agg(t.display_name, ', ' ORDER BY t.display_name COLLATE "C")
+ FROM trust_lease_tenants AS lt JOIN trust_tenants AS t ON t.id = lt.tenant_id
+ WHERE lt.lease_id = l.id)
+"""
+CHARGES = f"""
+SELECT c.id, l.id, u.display_name, {TENANT_NAMES}, c.due_on, c.amount, c.memo,
+       coalesce((SELECT o.open FROM trust_open_charges(c.pmc_id, c.lease_id, 'infinity') AS o
+                 WHERE o.charge_id = c.id), 0)
+FROM trust_charges AS c
+JOIN trust_leases AS l ON l.id = c.lease_id
+JOIN trust_units AS u ON u.id = l.unit_id
+WHERE c.pmc_id = %(pmc)s AND c.work_order_id = %(order)s
+ORDER BY c.due_on, c.created_at, c.id
+"""
+LEASES = f"""
+SELECT l.id, u.display_name, {TENANT_NAMES}
+FROM trust_work_orders AS w
+JOIN trust_units AS u ON u.property_id = w.property_id AND (w.unit_id IS NULL OR u.id = w.unit_id)
+JOIN trust_leases AS l ON l.unit_id = u.id
+WHERE w.pmc_id = %(pmc)s AND w.id = %(order)s
+  AND l.starts_on <= %(day)s AND (l.ends_on IS NULL OR %(day)s <= l.ends_on)
+ORDER BY u.display_name COLLATE "C", l.id
+"""
 
 
 @router.get("/{work_order_id}")
@@ -340,6 +393,32 @@ def work_order(session: Staff, conn: Conn, work_order_id: UUID) -> WorkOrder:
             (today(), today(), work_order_id),
         ).fetchall()
     ]
+    asked = {"pmc": session.pmc_id, "order": work_order_id, "day": today()}
+    charges = [
+        TenantCharge(
+            id=i,
+            lease_id=lease,
+            unit=unit,
+            tenants=names or "",
+            due_on=due,
+            amount=cents(amount),
+            memo=memo,
+            open=cents(Decimal(owed)),
+        )
+        for i, lease, unit, names, due, amount, memo, owed in conn.execute(
+            CHARGES, asked
+        ).fetchall()
+    ]
+    leases = [
+        LeaseChoice(id=i, unit=unit, tenants=names or "")
+        for i, unit, names in conn.execute(LEASES, asked).fetchall()
+    ]
+    recurring = conn.execute(
+        "SELECT r.every_months FROM trust_work_orders AS w"
+        " JOIN trust_recurring_work_orders AS r ON r.id = w.recurring_work_order_id"
+        " WHERE w.id = %s",
+        (work_order_id,),
+    ).fetchone()
     return WorkOrder(
         **row.model_dump(),
         description=description,
@@ -348,7 +427,15 @@ def work_order(session: Staff, conn: Conn, work_order_id: UUID) -> WorkOrder:
         bills=bills,
         request=None if request is None else request_out(conn, request),
         tenants=tenants,
+        charges=charges,
+        leases=leases,
+        recurring=None if recurring is None else every(recurring[0]),
     )
+
+
+def every(months: int) -> str:
+    """How often a recurring work order comes: "every month", "every 3 months"."""
+    return "every month" if months == 1 else f"every {months} months"
 
 
 def request_out(conn: psycopg.Connection[Any], request: tuple) -> RequestOut:  # type: ignore[type-arg]

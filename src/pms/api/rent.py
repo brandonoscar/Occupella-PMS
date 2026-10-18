@@ -941,6 +941,9 @@ class NewCharge(BaseModel):
     amount: Amount
     due_on: date
     memo: Memo
+    # The work order it charges the tenant for (a repair they caused): a fee, of a lease at the
+    # work order's unit or property (migration 0085).
+    work_order_id: UUID | None = None
 
 
 class Created(BaseModel):
@@ -949,13 +952,38 @@ class Created(BaseModel):
 
 @router.post("/leases/{lease_id}/charges", status_code=201)
 def add_charge(session: Staff, conn: Conn, lease_id: UUID, new: NewCharge) -> Created:
-    """A one-off fee the lease owes, or a credit that takes its amount off what it owes."""
+    """A one-off fee the lease owes, or a credit that takes its amount off what it owes; maybe a
+    fee for a work order, charging the tenant for a repair."""
     lease_of(conn, session.pmc_id, lease_id)
-    row = conn.execute(
-        "INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)"
-        " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
-        (session.pmc_id, lease_id, new.due_on, new.kind, new.amount, new.memo),
-    ).fetchone()
+    if new.work_order_id is not None:
+        if new.kind != "fee":
+            raise HTTPException(422, "a work order is charged to a tenant as a fee")
+        if (
+            conn.execute(
+                "SELECT 1 FROM trust_work_orders WHERE pmc_id = %s AND id = %s",
+                (session.pmc_id, new.work_order_id),
+            ).fetchone()
+            is None
+        ):
+            raise HTTPException(404, "no such work order")
+    try:
+        row = conn.execute(
+            "INSERT INTO trust_charges"
+            " (pmc_id, lease_id, due_on, kind, amount, memo, work_order_id)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            (
+                session.pmc_id,
+                lease_id,
+                new.due_on,
+                new.kind,
+                new.amount,
+                new.memo,
+                new.work_order_id,
+            ),
+        ).fetchone()
+    except psycopg.errors.CheckViolation as refused:
+        # A lease at another unit or property than the work order's.
+        raise HTTPException(409, refusal(refused)) from None
     assert row is not None
     return Created(id=row[0])
 

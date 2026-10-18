@@ -332,8 +332,9 @@ def test_a_visit_window_reaches_the_tenant_the_vendor_and_the_work_order(
     ]
     assert (listed["scheduled_for"], listed["visit_window"]) == ("2026-11-03", "8-10 am")
     (body,) = conn.execute(
-        "SELECT body FROM trust_emails WHERE kind = 'work_order'"
-        " AND subject LIKE 'Work order #1 scheduled for 11/03/2026%%'"
+        "SELECT body FROM trust_emails WHERE pmc_id = %s AND kind = 'work_order'"
+        " AND subject LIKE 'Work order #1 scheduled for 11/03/2026%%'",
+        (home.pmc.pmc_id,),
     ).fetchone()
     # The tenant's word on entry, copied to the work order, reaches the vendor too.
     assert "Visit window: 8-10 am" in body and "You may let yourself in." in body
