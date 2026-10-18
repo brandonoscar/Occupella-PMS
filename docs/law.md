@@ -350,3 +350,22 @@ is the company's own figure; no state rule on it was found.
 **Left to the company.** What its photos and words show and say (no people in a way that signals
 who may live there, nothing that discourages anyone of a protected class), and its state's and
 city's protected classes.
+
+## Leads and showings (migration 0088)
+
+**The rule.** The federal Fair Housing Act, which applies in every state, forbids refusing to rent
+or negotiate, or making a dwelling unavailable, and setting different terms, conditions or
+services, because of race, color, religion, sex, handicap, familial status or national origin,
+and forbids saying a dwelling is not available for inspection or rental when it is (42 U.S.C.
+3604(a), (b) and (d)). HUD's rule lists steering and discouraging prospects among the prohibited
+practices (24 CFR 100.50 to 100.70; its sections read from memory, NOT VERIFIED against the CFR's
+text). Many states and cities add protected classes (NOT VERIFIED state by state).
+
+**What the PMS does.**
+- Every lead is recorded the same way: a name, a way to reach them, what they asked about, where
+  they came from, when they would move in. Nothing a fair housing law protects is asked or kept.
+- Each showing and how it went, and why a lead was lost, are kept with who recorded them, so the
+  company can show it treated prospects alike.
+
+**Left to the company.** Treating every prospect alike (the same units offered, the same terms,
+the same follow-up), and what its staff write in a lead's note or a closing's reason.

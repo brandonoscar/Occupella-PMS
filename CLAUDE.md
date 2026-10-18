@@ -175,7 +175,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   Listings at `/rental-listings` (`GET /api/leasing/vacancies`: each unit coming free within 90
   days or with an open link, its rent and available day, days listed and photos; List opens its
   link if it has none and puts it on the public page, Unlist takes it off, Photos keeps the unit's
-  listing photos), Applicants at `/applicants` (Open, Rejected,
+  listing photos), Leads at `/leads` (migration 0088, `src/pms/api/leads.py`: Open, Closed, All;
+  Add lead; each at `/leads/<id>` with its showings, Schedule showing and Close lead), Applicants at
+  `/applicants` (Open, Rejected,
   Withdrawn, All) with each application's page at `/applicants/<id>` (screen, approve or reject,
   record a withdrawal, Create draft lease), Draft leases at `/draft-leases` (Waiting for
   signatures, Leases made, Void, All; New draft lease in a side panel) with each at
@@ -287,7 +289,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   it a new table's SELECT only if `trust_app` has it, and never a write path. It never reads
   logins, invites, sessions or credentials, nor rental applications, applicants and their
   screenings, nor lease offers and signatures, nor documents' files, nor contact details, nor notes,
-  nor vendors' links (`AI_NEVER_READS` in
+  nor vendors' links, nor leads and showings (`AI_NEVER_READS` in
   `tests/test_privileges.py`), nor their rows in the audit log: row-level security shows it only
   the audit rows of tables it may read (migration 0043).
 - A new table starts with `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it
@@ -488,6 +490,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   says the work is done with a note: a step naming the link (`vendor_link_id`), which a trigger
   allows only for those two steps, by the vendor last assigned, while the link stands. The
   timeline marks it "(by the vendor)". The AI role reads neither table.
+- Leads and showings (migration 0088, the founder's review q083): a prospect who asked about
+  renting before applying (`trust_leads`: a name, an email or a phone, maybe a property and one of
+  its units, a source, a move-in day, what they asked), showings of a unit at a time, maybe by a
+  staff member (`trust_showings`), how each went once (`trust_showing_outcomes`: shown, no-show,
+  cancelled) and the lead closed once (`trust_lead_closings`: applied or lost, why). A closed lead
+  takes no showing (a trigger, the closing and showings waiting for each other). All append-only,
+  audited, naming who; area leasing. Nothing records what a fair housing law protects, and the AI
+  role reads none of it.
 - Rental applications: an application comes through an open application link of a unit
   (closing a link and an application wait for each other); its applicants are names and
   emails. Screenings record a partner's recommendation and reasons. Each application has one

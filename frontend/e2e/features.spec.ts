@@ -2948,3 +2948,51 @@ test("staff add photos to a listed unit, which its public listing shows; a remov
   await expect(shown).toHaveCount(1);
   await visitor.close();
 });
+
+test("staff add a lead who asked about a unit, show it to them, record how it went and close the lead when they apply", async ({
+  page,
+}) => {
+  const people = seed.features.leads!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Leads");
+  await expect(page.getByText("No lead is open.")).toBeVisible();
+  await page.getByRole("button", { name: "Add lead" }).click();
+  const adding = page.getByRole("dialog", { name: "Add lead" });
+  await adding.getByLabel("Name").fill("Prospect Lane");
+  await adding.getByLabel("Email").fill("prospect.lane@example.com");
+  await adding.getByRole("combobox", { name: "Property asked about", exact: true }).selectOption({ label: "Aspen Row" });
+  await adding.getByRole("combobox", { name: "Unit asked about", exact: true }).selectOption({ label: "Unit 2" });
+  await adding.getByLabel("Source (optional)").fill("Website");
+  await adding.getByRole("button", { name: "Add lead" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Prospect Lane" })).toBeVisible();
+  await expect(page.getByLabel("Lead details")).toContainText("Unit 2, Aspen Row");
+
+  // A showing of the unit they asked about, tomorrow morning; it went ahead.
+  await page.getByRole("button", { name: "Schedule showing" }).click();
+  const showing = page.getByRole("dialog", { name: "Schedule showing" });
+  await expect(showing.getByRole("combobox", { name: "Unit", exact: true })).toHaveValue(/.+/);
+  await showing.getByLabel("Day").fill(daysFromToday(1));
+  await showing.getByLabel("Time").fill("10:00");
+  await showing.getByRole("button", { name: "Schedule" }).click();
+  await expect(page.getByText(/^Showing on /)).toBeVisible();
+  const row = page.getByRole("table", { name: "Showings" }).getByRole("row", { name: /^Showing / });
+  await expect(row).toContainText("Unit 2, Aspen Row");
+  await row.getByRole("button", { name: /^Actions for Showing / }).click();
+  await page.getByRole("menuitem", { name: "Shown" }).click();
+  await expect(row).toContainText("Shown");
+
+  // They applied: the lead closes and takes no more showings.
+  await page.getByRole("button", { name: "Close lead" }).click();
+  const closing = page.getByRole("dialog", { name: "Close lead" });
+  await closing.getByRole("combobox", { name: "Outcome", exact: true }).selectOption({ label: "They applied" });
+  await closing.getByRole("button", { name: "Close lead" }).click();
+  await expect(page.getByTestId("status")).toHaveText("Applied");
+  await expect(page.getByRole("button", { name: "Schedule showing" })).toHaveCount(0);
+
+  await section(page, "Leads");
+  await expect(page.getByText("No lead is open.")).toBeVisible();
+  await page.getByRole("tab", { name: "Closed", exact: true }).click();
+  const closed = page.getByRole("row", { name: "Lead Prospect Lane" });
+  await expect(closed.getByTestId("status")).toHaveText("Applied");
+  await expect(closed.getByRole("cell").nth(5)).toHaveText("1");
+});

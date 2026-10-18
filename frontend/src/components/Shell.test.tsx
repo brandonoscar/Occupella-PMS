@@ -39,7 +39,7 @@ describe("Shell", () => {
 
     const links = within(sections()).getAllByRole("link");
     expect(links.map((link) => link.textContent)).toEqual([
-      "Dashboard", "Properties", "Rent roll", "Tenants", "Owners", "Move-outs", "Listings", "Applicants", "Draft leases", "Renewals", "Banking", "Bills",
+      "Dashboard", "Properties", "Rent roll", "Tenants", "Owners", "Move-outs", "Listings", "Leads", "Applicants", "Draft leases", "Renewals", "Banking", "Bills",
       "General ledger", "Pay owners", "Management fees", "Budgets", "Work orders", "Vendors", "Files", "Reports", "Settings",
     ]);
     const groups = within(sections()).getAllByRole("group");

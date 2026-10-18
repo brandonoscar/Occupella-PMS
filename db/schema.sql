@@ -2277,6 +2277,26 @@ $$;
 
 
 --
+-- Name: trust_check_lead_open(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_lead_open() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('trust lead ' || NEW.lead_id::text, 0));
+    IF TG_TABLE_NAME = 'trust_showings' AND EXISTS (
+        SELECT 1 FROM trust_lead_closings AS c WHERE c.lead_id = NEW.lead_id
+    ) THEN
+        RAISE EXCEPTION 'trust: this lead is closed' USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_lease_offer(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10479,6 +10499,48 @@ CREATE TABLE public.trust_late_fees (
 
 
 --
+-- Name: trust_lead_closings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lead_closings (
+    lead_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    outcome text NOT NULL,
+    reason text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_lead_closings_outcome_check CHECK ((outcome = ANY (ARRAY['applied'::text, 'lost'::text]))),
+    CONSTRAINT trust_lead_closings_reason_check CHECK (((reason IS NULL) OR ((reason ~ '\S'::text) AND (length(reason) <= 500))))
+);
+
+
+--
+-- Name: trust_leads; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_leads (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    display_name text NOT NULL,
+    email text,
+    phone text,
+    property_id uuid,
+    unit_id uuid,
+    source text,
+    move_in_on date,
+    note text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_leads_check CHECK (((email IS NOT NULL) OR (phone IS NOT NULL))),
+    CONSTRAINT trust_leads_display_name_check CHECK (((display_name ~ '\S'::text) AND (length(display_name) <= 200))),
+    CONSTRAINT trust_leads_email_check CHECK (((email IS NULL) OR ((email ~ '^[^@\s]+@[^@\s]+$'::text) AND (length(email) <= 320)))),
+    CONSTRAINT trust_leads_note_check CHECK (((note IS NULL) OR ((note ~ '\S'::text) AND (length(note) <= 2000)))),
+    CONSTRAINT trust_leads_phone_check CHECK (((phone IS NULL) OR ((phone ~ '\S'::text) AND (length(phone) <= 40)))),
+    CONSTRAINT trust_leads_source_check CHECK (((source IS NULL) OR ((source ~ '\S'::text) AND (length(source) <= 60))))
+);
+
+
+--
 -- Name: trust_lease_break_fees; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11524,6 +11586,38 @@ CREATE TABLE public.trust_shared_bills (
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT trust_shared_bills_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
     CONSTRAINT trust_shared_bills_reference_check CHECK (((reference ~ '\S'::text) AND (length(reference) <= 100)))
+);
+
+
+--
+-- Name: trust_showing_outcomes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_showing_outcomes (
+    showing_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    outcome text NOT NULL,
+    note text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_showing_outcomes_note_check CHECK (((note IS NULL) OR ((note ~ '\S'::text) AND (length(note) <= 2000)))),
+    CONSTRAINT trust_showing_outcomes_outcome_check CHECK ((outcome = ANY (ARRAY['shown'::text, 'no_show'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: trust_showings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_showings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lead_id uuid NOT NULL,
+    unit_id uuid NOT NULL,
+    starts_at timestamp with time zone NOT NULL,
+    shown_by uuid,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
 );
 
 
@@ -12684,6 +12778,30 @@ ALTER TABLE ONLY public.trust_late_fees
 
 
 --
+-- Name: trust_lead_closings trust_lead_closings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lead_closings
+    ADD CONSTRAINT trust_lead_closings_pkey PRIMARY KEY (lead_id);
+
+
+--
+-- Name: trust_leads trust_leads_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_leads
+    ADD CONSTRAINT trust_leads_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_leads trust_leads_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_leads
+    ADD CONSTRAINT trust_leads_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_lease_break_fees trust_lease_break_fees_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13548,6 +13666,30 @@ ALTER TABLE ONLY public.trust_shared_bills
 
 
 --
+-- Name: trust_showing_outcomes trust_showing_outcomes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_showing_outcomes
+    ADD CONSTRAINT trust_showing_outcomes_pkey PRIMARY KEY (showing_id);
+
+
+--
+-- Name: trust_showings trust_showings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_showings
+    ADD CONSTRAINT trust_showings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_showings trust_showings_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_showings
+    ADD CONSTRAINT trust_showings_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_signature_requests trust_signature_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14255,6 +14397,41 @@ CREATE INDEX trust_late_fees_policy_id ON public.trust_late_fees USING btree (po
 
 
 --
+-- Name: trust_lead_closings_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lead_closings_recorded_by ON public.trust_lead_closings USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_leads_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_leads_pmc ON public.trust_leads USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_leads_property; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_leads_property ON public.trust_leads USING btree (pmc_id, property_id);
+
+
+--
+-- Name: trust_leads_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_leads_recorded_by ON public.trust_leads USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_leads_unit; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_leads_unit ON public.trust_leads USING btree (pmc_id, unit_id);
+
+
+--
 -- Name: trust_lease_break_fees_pmc; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -14885,6 +15062,41 @@ CREATE INDEX trust_shared_bills_vendor ON public.trust_shared_bills USING btree 
 
 
 --
+-- Name: trust_showing_outcomes_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_showing_outcomes_recorded_by ON public.trust_showing_outcomes USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_showings_lead; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_showings_lead ON public.trust_showings USING btree (lead_id, starts_at);
+
+
+--
+-- Name: trust_showings_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_showings_recorded_by ON public.trust_showings USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_showings_shown_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_showings_shown_by ON public.trust_showings USING btree (pmc_id, shown_by);
+
+
+--
+-- Name: trust_showings_unit; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_showings_unit ON public.trust_showings USING btree (pmc_id, unit_id);
+
+
+--
 -- Name: trust_staff_custom_roles_staff; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -15438,6 +15650,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_lead_closings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lead_closings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_leads trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_leads FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_lease_break_fees trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -15820,6 +16046,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_shared_bills FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_showing_outcomes trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_showing_outcomes FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_showings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_showings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -16355,6 +16595,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_late
 
 
 --
+-- Name: trust_lead_closings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lead_closings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_leads trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_leads FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_lease_break_fees trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -16789,6 +17043,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_shar
 
 
 --
+-- Name: trust_showing_outcomes trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_showing_outcomes FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_showings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_showings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_signature_requests trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -17153,6 +17421,27 @@ CREATE TRIGGER trust_group_member BEFORE INSERT ON public.trust_property_group_m
 
 
 --
+-- Name: trust_lead_closings trust_lead_open; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_lead_open BEFORE INSERT ON public.trust_lead_closings FOR EACH ROW EXECUTE FUNCTION public.trust_check_lead_open();
+
+
+--
+-- Name: trust_showings trust_lead_open; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_lead_open BEFORE INSERT ON public.trust_showings FOR EACH ROW EXECUTE FUNCTION public.trust_check_lead_open();
+
+
+--
+-- Name: trust_leads trust_lead_unit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_lead_unit BEFORE INSERT ON public.trust_leads FOR EACH ROW EXECUTE FUNCTION public.trust_check_work_order();
+
+
+--
 -- Name: trust_lease_offer_charges trust_lease_offer_charge_terms; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -17297,6 +17586,20 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_email_settings FO
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_inspections FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_lead_closings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lead_closings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_leads trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_leads FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -17451,6 +17754,20 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_renters_insurance
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_shared_bills FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_showing_outcomes trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_showing_outcomes FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_showings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_showings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -19124,6 +19441,54 @@ ALTER TABLE ONLY public.trust_late_fees
 
 
 --
+-- Name: trust_lead_closings trust_lead_closings_pmc_id_lead_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lead_closings
+    ADD CONSTRAINT trust_lead_closings_pmc_id_lead_id_fkey FOREIGN KEY (pmc_id, lead_id) REFERENCES public.trust_leads(pmc_id, id);
+
+
+--
+-- Name: trust_lead_closings trust_lead_closings_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lead_closings
+    ADD CONSTRAINT trust_lead_closings_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_leads trust_leads_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_leads
+    ADD CONSTRAINT trust_leads_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_leads trust_leads_pmc_id_property_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_leads
+    ADD CONSTRAINT trust_leads_pmc_id_property_id_fkey FOREIGN KEY (pmc_id, property_id) REFERENCES public.trust_properties(pmc_id, id);
+
+
+--
+-- Name: trust_leads trust_leads_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_leads
+    ADD CONSTRAINT trust_leads_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_leads trust_leads_pmc_id_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_leads
+    ADD CONSTRAINT trust_leads_pmc_id_unit_id_fkey FOREIGN KEY (pmc_id, unit_id) REFERENCES public.trust_units(pmc_id, id);
+
+
+--
 -- Name: trust_lease_break_fees trust_lease_break_fees_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20668,6 +21033,54 @@ ALTER TABLE ONLY public.trust_shared_bills
 
 
 --
+-- Name: trust_showing_outcomes trust_showing_outcomes_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_showing_outcomes
+    ADD CONSTRAINT trust_showing_outcomes_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_showing_outcomes trust_showing_outcomes_pmc_id_showing_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_showing_outcomes
+    ADD CONSTRAINT trust_showing_outcomes_pmc_id_showing_id_fkey FOREIGN KEY (pmc_id, showing_id) REFERENCES public.trust_showings(pmc_id, id);
+
+
+--
+-- Name: trust_showings trust_showings_pmc_id_lead_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_showings
+    ADD CONSTRAINT trust_showings_pmc_id_lead_id_fkey FOREIGN KEY (pmc_id, lead_id) REFERENCES public.trust_leads(pmc_id, id);
+
+
+--
+-- Name: trust_showings trust_showings_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_showings
+    ADD CONSTRAINT trust_showings_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_showings trust_showings_pmc_id_shown_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_showings
+    ADD CONSTRAINT trust_showings_pmc_id_shown_by_fkey FOREIGN KEY (pmc_id, shown_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_showings trust_showings_pmc_id_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_showings
+    ADD CONSTRAINT trust_showings_pmc_id_unit_id_fkey FOREIGN KEY (pmc_id, unit_id) REFERENCES public.trust_units(pmc_id, id);
+
+
+--
 -- Name: trust_signature_requests trust_signature_requests_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21129,4 +21542,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261018000084'),
     ('20261018000085'),
     ('20261018000086'),
-    ('20261018000087');
+    ('20261018000087'),
+    ('20261018000088');

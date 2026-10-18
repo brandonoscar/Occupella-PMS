@@ -522,6 +522,21 @@ browser = [
 ]
 
 [[feature]]
+id = "leads"
+statement = "On Leasing, Leads (Open, Closed, All, by property group) staff add a prospect who asked about renting (a name, an email or a phone, what they asked about, the source); on the lead's page they schedule showings of a unit, record how each went, and close the lead once, applied or lost."
+operations = [
+  "GET /api/leasing/leads",
+  "POST /api/leasing/leads",
+  "GET /api/leasing/leads/{lead_id}",
+  "POST /api/leasing/leads/{lead_id}/showings",
+  "POST /api/leasing/showings/{showing_id}/outcome",
+  "POST /api/leasing/leads/{lead_id}/close",
+]
+browser = [
+  "features.spec.ts › staff add a lead who asked about a unit, show it to them, record how it went and close the lead when they apply",
+]
+
+[[feature]]
 id = "lease-offers"
 statement = "On Draft leases (Waiting for signatures, Leases made, Void, All, by property group) staff draft a lease for an approved applicant or a renewal of a lease, with the company's own PDF, the security deposit it asks and its monthly fees and credits, kept as a draft or sent at once; on its page they send it, show its links again, check signatures, void it, or activate it once everyone has signed on the partner's page (a tenant signs a renewal from the portal), its monthly charges becoming the lease's."
 operations = [
