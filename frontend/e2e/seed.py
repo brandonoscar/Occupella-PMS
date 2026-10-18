@@ -476,6 +476,7 @@ FEATURES = (
     "waive",
     "lease-people",
     "rent-due-day",
+    "owner-fees",
 )
 
 

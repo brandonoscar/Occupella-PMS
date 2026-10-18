@@ -35,7 +35,7 @@ export function emailSettingsLines(settings: EmailSettings): [string, string][] 
   const days = settings.rent_reminder_days;
   const day = settings.owner_statement_day;
   return [
-    ["Rent reminders to tenants", days === null ? "Off" : `${days} day${days === 1 ? "" : "s"} before the first of the month`],
+    ["Rent reminders to tenants", days === null ? "Off" : `${days} day${days === 1 ? "" : "s"} before rent is due`],
     ["Late fee notices to tenants", ON_OFF(settings.late_notices)],
     ["Monthly statements to owners", day === null ? "Off" : `Last month's, from the ${ordinal(day)} of each month`],
     ["Work orders to vendors", ON_OFF(settings.work_order_notices)],
@@ -118,7 +118,7 @@ function EmailSettingsForm({ settings, save }: { settings: EmailSettings; save: 
     }}>
       <Check label="Rent reminders to tenants" checked={reminders} onChange={setReminders} />
       {reminders && (
-        <Select label="Days before the first of the month" id="reminder-days" value={days} onChange={(e) => setDays(Number(e.target.value))}>
+        <Select label="Days before rent is due" id="reminder-days" value={days} onChange={(e) => setDays(Number(e.target.value))}>
           {range(1, 15).map((n) => <option key={n} value={n}>{n}</option>)}
         </Select>
       )}

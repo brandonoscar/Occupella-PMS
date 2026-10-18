@@ -19,8 +19,11 @@ const DUE: FeeDue[] = [
     refused: "not enough money: the owner's account would be $25.00 short" },
 ];
 
-function server(due: FeeDue[] | null = DUE, refuse = "") {
+function server(due: FeeDue[] | null = DUE, refuse = "", automatic = false) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === "/api/payables/management-fees/automatic") {
+      return new Response(JSON.stringify({ automatic, day_of_month: 5, changed_at: null, changed_by: null }), { status: 200 });
+    }
     if (init?.method === "POST") {
       if (refuse) return new Response(JSON.stringify({ detail: refuse }), { status: 409 });
       return new Response(JSON.stringify([
@@ -36,6 +39,20 @@ function server(due: FeeDue[] | null = DUE, refuse = "") {
 }
 
 describe("ManagementFeesPage", () => {
+  it("says whether the fees are taken each month by themselves", async () => {
+    server(DUE, "", true);
+    render(<ManagementFeesPage me={ME} />);
+    expect((await screen.findByTestId("automatic-fees")).textContent).toBe(
+      "Taken by themselves: last month's, from the 5th of each month.",
+    );
+    cleanup();
+    server(DUE, "", false);
+    render(<ManagementFeesPage me={ME} />);
+    expect((await screen.findByTestId("automatic-fees")).textContent).toBe(
+      "Collected by hand on Management fees, or by themselves each month once turned on in Settings, Company setup.",
+    );
+  });
+
   it("shows each agreement's fee for the period, taken or to collect or why not, and collects them after asking", async () => {
     const fetch = server();
     render(<ManagementFeesPage me={ME} />);

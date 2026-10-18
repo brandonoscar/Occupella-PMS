@@ -176,7 +176,11 @@ def test_the_command_runs_every_company_once(monkeypatch, capsys, database_url):
 
     def run_all(conn, day, url, sending):
         seen.append((day, url, sending))
-        return [nightly.Ran(pmc_id=None, rents=2, recurring=1, late_fees=1, bills=3, emails=4)]
+        return [
+            nightly.Ran(
+                pmc_id=None, rents=2, recurring=1, late_fees=1, bills=3, emails=4, management_fees=5
+            )
+        ]
 
     monkeypatch.setattr(nightly, "run_all", run_all)
     monkeypatch.setenv("DATABASE_URL", database_url)
@@ -185,7 +189,9 @@ def test_the_command_runs_every_company_once(monkeypatch, capsys, database_url):
 
     assert nightly.main([]) == 0
     assert seen == [(datetime.now(UTC).date(), "https://pms.example.com", False)]
-    assert capsys.readouterr().out == "1 companies: 2 rents, 1 late fees, 3 bills, 4 emails\n"
+    assert capsys.readouterr().out == (
+        "1 companies: 2 rents, 1 late fees, 3 bills, 4 emails, 5 management fees\n"
+    )
     assert nightly.main(["now"]) == 2
     # A server that sends email writes the automatic emails too; `pms.email deliver` sends them.
     monkeypatch.setenv("PMS_EMAIL_SENDER", "fake")

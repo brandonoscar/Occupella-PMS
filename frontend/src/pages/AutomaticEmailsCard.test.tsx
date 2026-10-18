@@ -32,7 +32,7 @@ describe("emailSettingsLines", () => {
     expect(emailSettingsLines({
       ...OFF, rent_reminder_days: 1, late_notices: true, owner_statement_day: 22, work_order_notices: true,
     })).toEqual([
-      ["Rent reminders to tenants", "1 day before the first of the month"],
+      ["Rent reminders to tenants", "1 day before rent is due"],
       ["Late fee notices to tenants", "On"],
       ["Monthly statements to owners", "Last month's, from the 22nd of each month"],
       ["Work orders to vendors", "On"],
@@ -55,7 +55,7 @@ describe("AutomaticEmailsCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Edit automatic emails" }));
     const panel = screen.getByRole("dialog", { name: "Automatic emails" });
     fireEvent.click(within(panel).getByLabelText("Rent reminders to tenants"));
-    fireEvent.change(within(panel).getByLabelText("Days before the first of the month"), { target: { value: "3" } });
+    fireEvent.change(within(panel).getByLabelText("Days before rent is due"), { target: { value: "3" } });
     fireEvent.click(within(panel).getByLabelText("Monthly statements to owners"));
     fireEvent.change(within(panel).getByLabelText("Day of the month they go"), { target: { value: "10" } });
     fireEvent.click(within(panel).getByLabelText("Adverse action notices to applicants"));
@@ -68,7 +68,7 @@ describe("AutomaticEmailsCard", () => {
       rent_reminder_days: 3, late_notices: false, owner_statement_day: 10,
       work_order_notices: false, adverse_action_notices: true,
     });
-    expect((await screen.findByText("3 days before the first of the month"))).toBeTruthy();
+    expect((await screen.findByText("3 days before rent is due"))).toBeTruthy();
     expect(screen.getByText("Last month's, from the 10th of each month")).toBeTruthy();
   });
 

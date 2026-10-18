@@ -6232,6 +6232,13 @@ BEGIN
         FROM trust_leasing_fees AS f
         JOIN pgledger_transfers AS tr ON tr.id = f.transfer_id
         WHERE f.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
+        UNION ALL
+        -- A fee staff took from the owner (migration 0082): a lease-up fee with the leasing
+        -- fees, an inspection or other fee with the management fees.
+        SELECT f.ledger_account_id, CASE f.kind WHEN 'lease_up' THEN 1 ELSE 0 END, tr.amount
+        FROM trust_owner_fees AS f
+        JOIN pgledger_transfers AS tr ON tr.id = f.transfer_id
+        WHERE f.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
     ),
     -- Each bill's expense account: its latest row.
     categorized AS (
@@ -6946,6 +6953,13 @@ BEGIN
         UNION ALL
         SELECT f.ledger_account_id, 3, -tr.amount
         FROM trust_leasing_fees AS f
+        JOIN pgledger_transfers AS tr ON tr.id = f.transfer_id
+        WHERE f.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
+        UNION ALL
+        -- A fee staff took from the owner (migration 0082): a lease-up fee with the leasing
+        -- fees, an inspection or other fee with the management fees.
+        SELECT f.ledger_account_id, CASE f.kind WHEN 'lease_up' THEN 3 ELSE 2 END, -tr.amount
+        FROM trust_owner_fees AS f
         JOIN pgledger_transfers AS tr ON tr.id = f.transfer_id
         WHERE f.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
         UNION ALL
@@ -8847,6 +8861,126 @@ $$;
 
 
 --
+-- Name: trust_take_monthly_management_fees(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_take_monthly_management_fees(p_pmc_id uuid, p_day date) RETURNS integer
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_settings trust_management_fee_settings;
+    v_start date := (date_trunc('month', p_day::timestamp) - interval '1 month')::date;
+    v_end date := date_trunc('month', p_day::timestamp)::date;
+    v_account text;
+    v_taken integer := 0;
+BEGIN
+    IF p_day IS NULL THEN
+        RAISE EXCEPTION 'trust: management fees are taken on a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT s.* INTO v_settings
+    FROM trust_management_fee_settings AS s
+    WHERE s.pmc_id = p_pmc_id
+    ORDER BY s.created_at DESC, s.id DESC
+    LIMIT 1;
+    IF NOT FOUND OR NOT v_settings.automatic
+       OR extract(day FROM p_day) < v_settings.day_of_month THEN
+        RETURN 0;
+    END IF;
+
+    FOR v_account IN
+        SELECT a.ledger_account_id
+        FROM trust_ledger_accounts AS a
+        WHERE a.pmc_id = p_pmc_id AND a.kind = 'owner_property'
+          AND EXISTS (SELECT 1 FROM trust_management_agreements AS g
+                      WHERE g.ledger_account_id = a.ledger_account_id AND g.starts_on < v_end)
+          AND NOT EXISTS (SELECT 1 FROM trust_management_fees AS f
+                          WHERE f.ledger_account_id = a.ledger_account_id
+                            AND f.period_start < v_end AND v_start < f.period_end)
+        ORDER BY a.ledger_account_id
+    LOOP
+        BEGIN
+            PERFORM trust_post_management_fee(
+                p_pmc_id, v_account, v_start, v_end, p_day::timestamp AT TIME ZONE 'UTC'
+            );
+            v_taken := v_taken + 1;
+        EXCEPTION
+            WHEN check_violation OR exclusion_violation OR invalid_parameter_value THEN
+                -- Left as it is (Management fees says why); on to the next account. A handler
+                -- with a statement, so coverage sees it taken.
+                CONTINUE;
+        END;
+    END LOOP;
+    RETURN v_taken;
+END;
+$$;
+
+
+--
+-- Name: trust_take_owner_fee(uuid, text, text, numeric, text, text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_take_owner_fee(p_pmc_id uuid, p_account text, p_kind text, p_amount numeric, p_memo text, p_request_key text, p_event_at timestamp with time zone) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_account trust_ledger_accounts := trust_lock_owner_account(p_pmc_id, p_account);
+    v_taken trust_owner_fees;
+    v_label text;
+    v_transfer_id text;
+BEGIN
+    IF coalesce(p_request_key, '') = '' THEN
+        RAISE EXCEPTION 'trust: a fee from an owner needs a request key, so a retry can''t '
+            'take it twice'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT f.* INTO v_taken
+    FROM trust_owner_fees AS f
+    WHERE f.pmc_id = p_pmc_id AND f.request_key = p_request_key;
+    IF FOUND THEN
+        IF (v_taken.ledger_account_id, v_taken.kind, v_taken.amount, v_taken.memo)
+           IS DISTINCT FROM (p_account, p_kind, p_amount, btrim(p_memo)) THEN
+            RAISE EXCEPTION 'trust: request key % already took a fee of % from %',
+                p_request_key, round(v_taken.amount, 2), v_taken.ledger_account_id
+                USING ERRCODE = 'unique_violation',
+                      HINT = 'Use a new key for a new fee; resend a key only to retry.';
+        END IF;
+        RETURN v_taken.transfer_id;  -- a retry: the fee already taken
+    END IF;
+
+    v_label := CASE p_kind
+        WHEN 'inspection' THEN 'Inspection fee'
+        WHEN 'lease_up' THEN 'Lease-up fee'
+        WHEN 'other' THEN 'Fee'
+    END;
+    IF v_label IS NULL THEN
+        RAISE EXCEPTION 'trust: a fee from an owner is an inspection, lease-up or other fee, '
+            'not %', p_kind
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF p_amount IS NULL OR p_amount <= 0 THEN
+        RAISE EXCEPTION 'trust: a fee from an owner is a positive amount, not %', p_amount
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF coalesce(btrim(p_memo), '') = '' THEN
+        RAISE EXCEPTION 'trust: a fee from an owner says what it is for'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    v_transfer_id := trust_post_fee(
+        v_account, p_amount, p_event_at, v_label || ': ' || btrim(p_memo)
+    );
+    INSERT INTO trust_owner_fees (pmc_id, request_key, ledger_account_id, kind, amount, memo,
+                                  transfer_id)
+    VALUES (p_pmc_id, p_request_key, p_account, p_kind, p_amount, btrim(p_memo), v_transfer_id);
+    RETURN v_transfer_id;
+END;
+$$;
+
+
+--
 -- Name: trust_unmatch_bank_lines(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10400,6 +10534,21 @@ CREATE TABLE public.trust_maintenance_requests (
 
 
 --
+-- Name: trust_management_fee_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_management_fee_settings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    automatic boolean NOT NULL,
+    day_of_month integer NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_management_fee_settings_day_of_month_check CHECK (((day_of_month >= 1) AND (day_of_month <= 28)))
+);
+
+
+--
 -- Name: trust_management_fees; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10518,6 +10667,28 @@ CREATE TABLE public.trust_owner_draws (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_owner_draws_amount_check CHECK ((amount > (0)::numeric)),
     CONSTRAINT trust_owner_draws_request_key_check CHECK ((request_key <> ''::text))
+);
+
+
+--
+-- Name: trust_owner_fees; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_owner_fees (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    request_key text NOT NULL,
+    ledger_account_id text NOT NULL,
+    kind text NOT NULL,
+    amount numeric NOT NULL,
+    memo text NOT NULL,
+    transfer_id text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_owner_fees_amount_check CHECK (((amount > (0)::numeric) AND (amount <= (1000000)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_owner_fees_kind_check CHECK ((kind = ANY (ARRAY['inspection'::text, 'lease_up'::text, 'other'::text]))),
+    CONSTRAINT trust_owner_fees_memo_check CHECK (((btrim(memo) <> ''::text) AND (length(memo) <= 200))),
+    CONSTRAINT trust_owner_fees_request_key_check CHECK (((length(request_key) >= 1) AND (length(request_key) <= 100)))
 );
 
 
@@ -12393,6 +12564,14 @@ ALTER TABLE ONLY public.trust_management_agreements
 
 
 --
+-- Name: trust_management_fee_settings trust_management_fee_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_management_fee_settings
+    ADD CONSTRAINT trust_management_fee_settings_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_management_fees trust_management_fees_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -12470,6 +12649,30 @@ ALTER TABLE ONLY public.trust_owner_contributions
 
 ALTER TABLE ONLY public.trust_owner_draws
     ADD CONSTRAINT trust_owner_draws_pkey PRIMARY KEY (pmc_id, request_key);
+
+
+--
+-- Name: trust_owner_fees trust_owner_fees_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_fees
+    ADD CONSTRAINT trust_owner_fees_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_owner_fees trust_owner_fees_pmc_id_request_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_fees
+    ADD CONSTRAINT trust_owner_fees_pmc_id_request_key_key UNIQUE (pmc_id, request_key);
+
+
+--
+-- Name: trust_owner_fees trust_owner_fees_transfer_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_fees
+    ADD CONSTRAINT trust_owner_fees_transfer_id_key UNIQUE (transfer_id);
 
 
 --
@@ -13653,6 +13856,20 @@ CREATE INDEX trust_maintenance_requests_tenant_id ON public.trust_maintenance_re
 
 
 --
+-- Name: trust_management_fee_settings_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_management_fee_settings_pmc ON public.trust_management_fee_settings USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_management_fee_settings_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_management_fee_settings_recorded_by ON public.trust_management_fee_settings USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_management_fees_agreement_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -13734,6 +13951,20 @@ CREATE INDEX trust_owner_draws_ledger_account_id ON public.trust_owner_draws USI
 --
 
 CREATE INDEX trust_owner_draws_transfer_id ON public.trust_owner_draws USING btree (transfer_id);
+
+
+--
+-- Name: trust_owner_fees_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_owner_fees_account ON public.trust_owner_fees USING btree (ledger_account_id);
+
+
+--
+-- Name: trust_owner_fees_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_owner_fees_recorded_by ON public.trust_owner_fees USING btree (pmc_id, recorded_by);
 
 
 --
@@ -14577,6 +14808,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_management_fee_settings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_management_fee_settings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_management_fees trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -14623,6 +14861,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_owner_draws FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_owner_fees trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_owner_fees FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -15431,6 +15676,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_mana
 
 
 --
+-- Name: trust_management_fee_settings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_management_fee_settings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_management_fees trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -15477,6 +15729,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owne
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owner_draws FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_owner_fees trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owner_fees FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -15935,6 +16194,13 @@ CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_owner_draws FOR EACH
 
 
 --
+-- Name: trust_owner_fees trust_disburse; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_owner_fees FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('disburse', 'take a fee from an owner');
+
+
+--
 -- Name: trust_pmc_fee_withdrawals trust_disburse; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -16173,10 +16439,24 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_vehicles FO
 
 
 --
+-- Name: trust_management_fee_settings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_management_fee_settings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_notes trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_notes FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_owner_fees trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_owner_fees FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -18450,6 +18730,22 @@ ALTER TABLE ONLY public.trust_management_agreements
 
 
 --
+-- Name: trust_management_fee_settings trust_management_fee_settings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_management_fee_settings
+    ADD CONSTRAINT trust_management_fee_settings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_management_fee_settings trust_management_fee_settings_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_management_fee_settings
+    ADD CONSTRAINT trust_management_fee_settings_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_management_fees trust_management_fees_agreement_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18655,6 +18951,38 @@ ALTER TABLE ONLY public.trust_owner_draws
 
 ALTER TABLE ONLY public.trust_owner_draws
     ADD CONSTRAINT trust_owner_draws_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
+-- Name: trust_owner_fees trust_owner_fees_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_fees
+    ADD CONSTRAINT trust_owner_fees_ledger_account_id_fkey FOREIGN KEY (ledger_account_id) REFERENCES public.trust_ledger_accounts(ledger_account_id);
+
+
+--
+-- Name: trust_owner_fees trust_owner_fees_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_fees
+    ADD CONSTRAINT trust_owner_fees_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_owner_fees trust_owner_fees_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_fees
+    ADD CONSTRAINT trust_owner_fees_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_owner_fees trust_owner_fees_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_owner_fees
+    ADD CONSTRAINT trust_owner_fees_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
 
 
 --
@@ -19545,4 +19873,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261018000078'),
     ('20261018000079'),
     ('20261018000080'),
-    ('20261018000081');
+    ('20261018000081'),
+    ('20261018000082');

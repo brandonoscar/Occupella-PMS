@@ -2574,3 +2574,72 @@ test("staff pick the day of the month a lease's rent is due, the rent run charge
     `rent due ${dueOn} is charged already; a new due day starts after its month`,
   );
 });
+
+test("a company has its management fees taken each month, staff set a flat fee and take an inspection fee from an owner", async ({
+  page,
+}) => {
+  const people = seed.features["owner-fees"]!;
+  await joinAsStaff(page, people.manager);
+
+  // Company setup: the nightly run takes last month's management fees by itself, from the 1st.
+  await settings(page, "Company setup");
+  await expect(page.getByTestId("automatic-fees")).toHaveText("Collected by hand on Management fees");
+  await page.getByRole("button", { name: "Edit monthly fees" }).click();
+  const monthly = page.getByRole("dialog", { name: "Monthly management fees" });
+  await monthly.getByLabel("Take last month's management fees by themselves").check();
+  await monthly.getByLabel("From this day of the month").selectOption("1");
+  await monthly.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved the monthly management fees.")).toBeVisible();
+  await expect(page.getByTestId("automatic-fees")).toHaveText(
+    "Taken by themselves: last month's, from the 1st of each month",
+  );
+  await section(page, "Management fees");
+  await expect(page.getByTestId("automatic-fees")).toHaveText(
+    "Taken by themselves: last month's, from the 1st of each month.",
+  );
+
+  // Birch Flats' terms from this month: a $50.00 minimum and a $25.00 flat fee on top.
+  await openOwner(page, "Demo Owner A");
+  const terms = await setupPanel(page, "Set terms", "Set management terms");
+  await terms.getByRole("combobox", { name: "For" }).selectOption({ label: "Demo Owner A, Birch Flats" });
+  await terms.getByLabel("In force from").fill(firstOfThisMonth());
+  await terms.getByLabel("Fee, percent of rent and recurring fees collected").fill("0");
+  await terms.getByLabel("Minimum fee").fill("50.00");
+  await terms.getByLabel("Flat fee").fill("25.00");
+  // The saved toast sits over the panel's corner until it goes.
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await terms.getByRole("button", { name: "Set terms" }).click();
+  await expect(page.getByRole("main")).toContainText(
+    `Birch Flats: 0% of rent collected, at least $50.00, plus $25.00; leasing fee 0%; reserve $0.00; the owner approves bills over $0.00; from ${us(firstOfThisMonth())}`,
+  );
+  await section(page, "Management fees");
+  const nextMonth = new Date(Date.UTC(Number(today().slice(0, 4)), Number(today().slice(5, 7)), 1))
+    .toISOString()
+    .slice(0, 10);
+  await page.getByLabel("Period from").fill(firstOfThisMonth());
+  await page.getByLabel("Up to (not including)").fill(nextMonth);
+  await expect(page.getByRole("row", { name: "Demo Owner A, Birch Flats", exact: true })).toContainText("$75.00");
+
+  // An inspection fee from Birch Flats, which holds $250.00: on the owner's statement with what
+  // it was for. More than the owner holds is refused, in words.
+  await openOwner(page, "Demo Owner A");
+  await page.getByRole("tab", { name: "Financials", exact: true }).click();
+  const take = async (amount: string) => {
+    await page.getByRole("button", { name: "Take a fee" }).click();
+    const panel = page.getByRole("dialog", { name: "Take a fee" });
+    await panel.getByLabel("From").selectOption({ label: "Birch Flats" });
+    await panel.getByRole("combobox", { name: "Fee", exact: true }).selectOption({ label: "Inspection fee" });
+    await panel.getByLabel("Amount").fill(amount);
+    await panel.getByLabel("What it is for").fill("Move-in inspection");
+    await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+    await panel.getByRole("button", { name: "Take fee" }).click();
+    return panel;
+  };
+  await take("40.00");
+  await expect(page.getByText("A $40.00 inspection fee is taken from Birch Flats.")).toBeVisible();
+  await expect(page.getByRole("main")).toContainText("Inspection fee: Move-in inspection");
+  const refused = await take("500.00");
+  await expect(refused.getByRole("alert")).toHaveText("not enough money: the owner's account would be $290.00 short");
+  await refused.getByRole("button", { name: "Close" }).click();
+  await expect((await ownerProperty(page, "Demo Owner A", "Birch Flats")).getByRole("cell").nth(2)).toHaveText("$210.00");
+});

@@ -31,6 +31,10 @@ founder chose the recommended answer to each, below.
    1099 vendor and how they are paid; the number stays on the W-9 itself.
 4. **Fees move money only when staff ask.** Management fees are collected with one click on a
    page of their own, and a leasing fee is offered when a lease is made; neither posts by itself.
+   *Amended by the founder on 2026-10-18 (review q049, "It should automatically deduct"):* a
+   company may turn on taking last month's management fees each month by the nightly run, from a
+   day of the month it picks (off by default; migration 0082). Fees still never leave trust by
+   themselves: taking them out stays a staff step.
 
 ## What the founder accepted without changing
 
@@ -78,7 +82,7 @@ that off (`PMS_NIGHTLY=off`) runs `python -m pms.nightly` on its own schedule. R
 go through `trust_run_rent`, which records each run; an admin runs it by hand from the rent roll's
 ⋯ menu for a catch-up, and the runs are listed there. The run moves no trust money: charges are
 what tenants owe, and bills wait to be set aside and paid. Fees still post only when staff ask
-(decision 4).
+(decision 4), unless a company turned on its monthly management fees (decision 4 as amended).
 
 The rent roll lists every lease (current, to come, ended, owing or all) with its start and end,
 days left, rent, the deposits held and its balance, the row opening the lease; Receive payment

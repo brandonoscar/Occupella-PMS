@@ -14,13 +14,16 @@ import { Wide } from "../components/Wide";
 import { day, money, sumMoney, usDate } from "../money";
 import type { Fee, FeeDue } from "../payables";
 import { lastMonthPeriod } from "../payables";
+import type { AutomaticFees } from "./AutomaticFeesCard";
+import { AUTOMATIC_FEES, automaticFeesLine } from "./AutomaticFeesCard";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 
-// Accounting → Management fees (ADR 0006, decision 4): each owner's account with a management
-// agreement, and the period's fee: taken already, what Collect fees would take (worked out by the
-// database and rolled back, so looking moves nothing), or why it can't be taken. Fees move only
-// when staff collect them.
+// Accounting → Management fees (ADR 0006, decision 4, as the founder amended it on 2026-10-18):
+// each owner's account with a management agreement, and the period's fee: taken already, what
+// Collect fees would take (worked out by the database and rolled back, so looking moves nothing),
+// or why it can't be taken. A company may have the nightly run take last month's by itself
+// (Settings, Company setup); the page says which.
 export function ManagementFeesPage({ me }: { me: Me }) {
   const month = lastMonthPeriod(new Date());
   const [start, setStart] = useState(month.start);
@@ -40,6 +43,11 @@ export function ManagementFeesPage({ me }: { me: Me }) {
       .then(setFees)
       .catch((why) => { setFees(null); setError(why instanceof ApiError ? why.detail : String(why)); });
   }, [start, end, runs]);
+  // How the company takes its fees: by hand here, or each month by themselves.
+  const [automatic, setAutomatic] = useState<AutomaticFees | null>(null);
+  useEffect(() => {
+    api.get<AutomaticFees>(AUTOMATIC_FEES).then(setAutomatic).catch(() => setAutomatic(null));
+  }, []);
 
   const due = (fees ?? []).filter((f) => !f.taken && f.fee !== null);
   const total = sumMoney(due.map((f) => f.fee ?? "0"));
@@ -60,6 +68,12 @@ export function ManagementFeesPage({ me }: { me: Me }) {
           Collect fees
         </Button>
       } />
+      {automatic !== null && (
+        <p className="text-sm text-ink-muted" data-testid="automatic-fees">
+          {automaticFeesLine(automatic)}
+          {automatic.automatic ? "" : ", or by themselves each month once turned on in Settings, Company setup"}.
+        </p>
+      )}
       <div className="flex flex-wrap items-end gap-3">
         <Field label="Period from" id="fee-start" type="date" required value={start}
           onChange={(event) => setStart(event.target.value)} />

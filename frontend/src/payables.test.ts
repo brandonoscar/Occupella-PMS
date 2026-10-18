@@ -14,6 +14,7 @@ import {
   billBadge,
   billsPaidSummary,
   linesNote,
+  ownerFeeSummary,
 } from "./payables";
 
 describe("payables", () => {
@@ -135,5 +136,13 @@ describe("paidSummary", () => {
     const paid = (amount: string) => ({ account: "a", owner: "O", property: "P", amount, transfer_id: "t" });
     expect(paidSummary([paid("0.10"), paid("0.20")], "EFT")).toBe("2 payouts of $0.30 recorded, by EFT.");
     expect(paidSummary([paid("900.00")], "check")).toBe("1 payout of $900.00 recorded, by check.");
+  });
+});
+
+describe("owner fees", () => {
+  it("says what fee was taken from which property", () => {
+    expect(ownerFeeSummary("inspection", "75.00", "Property 1")).toBe("A $75.00 inspection fee is taken from Property 1.");
+    expect(ownerFeeSummary("lease_up", "1200", "Property 2")).toBe("A $1,200.00 lease-up fee is taken from Property 2.");
+    expect(ownerFeeSummary("other", "5.5", "Property 3")).toBe("A $5.50 other fee is taken from Property 3.");
   });
 });

@@ -33,8 +33,11 @@ license law forbids a broker to keep their own money mixed with what they hold f
   account.
 
 **What the PMS does.**
-- A fee is taken only from an owner's account, from rent collected (the management fee) or once
-  per lease (the leasing fee), and never takes the owner's account below zero.
+- A fee is taken only from an owner's account, and never takes it below zero: the management fee
+  from rent collected (by staff on Management fees, or, once the company turns it on, by the
+  nightly run each month from a day it picks; migration 0082), the leasing fee once per lease, or
+  another fee staff take (an inspection, a lease-up, another), saying what it is for, by a staff
+  member who holds disburse, once per request, logged with who did it.
 - `trust_withdraw_pmc_fees` takes the company's fees out of a trust bank account to the
   company's own account: never more than the fee account holds, once per request, by a staff
   member who holds the disburse role, logged with who did it.
@@ -48,7 +51,12 @@ license law forbids a broker to keep their own money mixed with what they hold f
 - A state deadline shorter than 25 days, should one exist (none was found).
 - Taking each period's management fee soon after the period ends: the 25 days count from the day
   the fee was taken from the owner's account, while California counts them from the deposit the
-  fee was earned on.
+  fee was earned on. Turning on the monthly fees in Company setup takes last month's from an early
+  day of the month by itself.
+- Taking only the fees the owner's management agreement allows. A broker pays trust money out
+  only as the client authorized it; the PMS keeps no agreement text, so it doesn't check an
+  inspection, lease-up or other fee against it (NOT VERIFIED: no state's rule on fees outside the
+  agreement was read for this).
 - Holding back a fee an owner disputes (California 10 CCR 2835(b)): the PMS records no dispute
   yet, so don't take that fee out until it is settled.
 

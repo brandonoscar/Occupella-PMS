@@ -37,7 +37,8 @@ around properties, units, leases, tenants, owners and vendors, with paged lists,
 deletes: archive) and contact details the AI never reads. Since 2026-10-16
 (`docs/adr/0006-buildium-punch-list.md`): the founder's punch list, built in its order (property
 groups first; rent, recurring charges, late fees and recurring bills to post by themselves each
-night; fees still move only when staff ask). Still out of scope: Stripe and online payments, text messages, bank files (ACH, check
+night; fees still move only when staff ask, unless a company turns on taking its monthly
+management fees by itself, the founder's amendment of 2026-10-18). Still out of scope: Stripe and online payments, text messages, bank files (ACH, check
 printing), 1099 filing, and state rules beyond the no-negative rule. If one of these looks needed, stop
 and ask the founder.
 
@@ -264,7 +265,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   reversing transfer.
 - The app role `trust_app` only reads ledger tables. It writes through `trust_post_transfers`,
   `trust_open_ledger_account`, `trust_open_vendor_account`, `trust_open_lease`, `trust_end_lease`, `trust_apply_payment`, `trust_reverse_payment`,
-  `trust_post_management_fee`, `trust_post_leasing_fee`, `trust_draw_owner`, `trust_withdraw_pmc_fees`,
+  `trust_post_management_fee`, `trust_post_leasing_fee`, `trust_take_owner_fee`, `trust_draw_owner`, `trust_withdraw_pmc_fees`,
   `trust_set_aside_bill`, `trust_pay_bill`, `trust_assess_late_fees`, `trust_charge_nsf_fee`,
   `trust_post_opening_balances`, `trust_record_owner_contribution`,
   `trust_complete_lease_offer`, `trust_match_bank_lines`, `trust_unmatch_bank_lines`,
@@ -312,6 +313,18 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   or the minimum, plus a flat fee, into the PMC's fee account, once per period;
   `trust_post_leasing_fee` once per lease; `trust_draw_owner` pays out the balance above the
   reserve and unpaid bills, once per request key. All at READ COMMITTED.
+- Owners' fees (migration 0082, the founder's review q049 to q051): a company may have the
+  nightly run take last month's management fees by itself from a day of the month
+  (`trust_management_fee_settings`: append-only, the latest row holding, naming who changed it;
+  Settings, Company setup, `/api/payables/management-fees/automatic`, area owners; off by
+  default). `trust_take_monthly_management_fees` takes each owner's property account's fee
+  through `trust_post_management_fee`, once per account and month, leaving one it can't take
+  (the owner short, terms from mid-month, a period taken by hand) for staff and the next night.
+  Staff who hold disburse take other fees from an owner (`trust_take_owner_fee`,
+  `trust_owner_fees`: an inspection, lease-up or other fee, with what it is for, once per request
+  key, from the owner's account to the company's fee account in its trust bank account; the
+  owner's Financials tab, Take a fee). The income statement and the year-end package count a
+  lease-up fee with the leasing fees and the others with the management fees.
 - The company's fees out of trust (migration 0059, `docs/law.md`): earned fees left in trust are
   commingling, which every state forbids. `trust_withdraw_pmc_fees` pays a trust bank account's
   fee account out through its cash to the company, never more than it holds, once per request
@@ -551,7 +564,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   nobody); an admin runs it by hand from the rent roll (Run rent now), and a named staff member
   without admin is refused. Each part charges once per date, so a run again charges nothing new.
   The API runs it at start and every day at 06:00 UTC unless `PMS_NIGHTLY` is "off" (e2e turns it
-  off); `python -m pms.nightly` runs it once. It moves no trust money.
+  off); `python -m pms.nightly` runs it once. It moves no trust money but a company's monthly
+  management fees, once it turns them on (migration 0082), inside trust.
 - Notes (migration 0066, ADR 0006): what staff write about a property, unit, lease, tenant, owner
   or vendor of the PMC (`trust_notes`, exactly one of them, append-only, naming who wrote it; a
   correction is a new note), on its Notes tab (`src/pms/api/notes.py`). They move no money, and

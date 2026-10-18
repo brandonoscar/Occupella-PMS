@@ -20,8 +20,8 @@ import { Tabs } from "../components/Tabs";
 import { Wide } from "../components/Wide";
 import type { Agreement, Owner, OwnerRow } from "../directory";
 import { day, money, usDate } from "../money";
-import type { OwnerMoney } from "../payables";
-import { incomeStatementHref } from "../payables";
+import type { OwnerFeeKind, OwnerMoney } from "../payables";
+import { OWNER_FEE_KINDS, incomeStatementHref, ownerFeeSummary } from "../payables";
 import { requestId } from "../rent";
 import type { Paged } from "../rentals";
 import { navigate } from "../router";
@@ -277,15 +277,16 @@ function OwnerProperties({ accounts }: { accounts: OwnerMoney[] }) {
   );
 }
 
-// Financials: the owner's statement over days (this year to today, at first), and Record
-// contribution, money the owner put in, in a side panel.
+// Financials: the owner's statement over days (this year to today, at first), and in side panels
+// Record contribution, money the owner put in, and Take a fee (an inspection, a lease-up, another;
+// migration 0082), from the owner's account into the company's fee account.
 function OwnerFinancials({ owner, refresh }: { owner: Owner; refresh: () => void }) {
   const today = day(new Date());
   const [start, setStart] = useState(`${today.slice(0, 4)}-01-01`);
   const [end, setEnd] = useState(today);
   const [statement, setStatement] = useState<StatementData | null>(null);
   const [error, setError] = useState("");
-  const [adding, setAdding] = useState(false);
+  const [adding, setAdding] = useState<"contribution" | "fee" | null>(null);
   const [runs, setRuns] = useState(0);
   const { said, error: refused, record } = useRecord(() => { setRuns((n) => n + 1); refresh(); });
 
@@ -299,7 +300,7 @@ function OwnerFinancials({ owner, refresh }: { owner: Owner; refresh: () => void
 
   const recordThenClose: Recorder = async (path, body, done) => {
     const recorded = await record(path, body, done);
-    if (recorded) setAdding(false);
+    if (recorded) setAdding(null);
     return recorded;
   };
   const download = (format: string) =>
@@ -317,16 +318,25 @@ function OwnerFinancials({ owner, refresh }: { owner: Owner; refresh: () => void
           <LinkButton href={download("csv")}>CSV</LinkButton>
         </div>
         {owner.accounts.length > 0 && (
-          <Button variant="secondary" onClick={() => setAdding(true)}>Record contribution</Button>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => setAdding("contribution")}>Record contribution</Button>
+            <Button variant="secondary" onClick={() => setAdding("fee")}>Take a fee</Button>
+          </div>
         )}
       </div>
       <Said>{said}</Said>
       {!adding && <Notice tone="error">{refused}</Notice>}
       <Notice tone="error">{error}</Notice>
       {statement && <StatementView grouped={group(statement)} />}
-      {adding && (
-        <SidePanel title="Record contribution" onClose={() => setAdding(false)}>
+      {adding === "contribution" && (
+        <SidePanel title="Record contribution" onClose={() => setAdding(null)}>
           <ContributionForm owner={owner} record={recordThenClose} />
+          <Notice tone="error">{refused}</Notice>
+        </SidePanel>
+      )}
+      {adding === "fee" && (
+        <SidePanel title="Take a fee" onClose={() => setAdding(null)}>
+          <OwnerFeeForm owner={owner} record={recordThenClose} />
           <Notice tone="error">{refused}</Notice>
         </SidePanel>
       )}
@@ -363,6 +373,50 @@ function ContributionForm({ owner, record }: { owner: Owner; record: Recorder })
       <Field label="For" id="contribution-memo" maxLength={200} value={memo}
         onChange={(event) => setMemo(event.target.value)} />
       <div><Button type="submit">Record contribution</Button></div>
+    </Form>
+  );
+}
+
+// A fee from the owner besides the management and leasing fees (q051): it moves from their
+// account into the company's fee account, inside trust, once per request id; staff who hold
+// disburse take it, and the owner's statement shows it with what it was for.
+function OwnerFeeForm({ owner, record }: { owner: Owner; record: Recorder }) {
+  const [id, setId] = useState(requestId);
+  const [account, setAccount] = useState(owner.accounts[0]?.account ?? "");
+  const [kind, setKind] = useState<OwnerFeeKind>("inspection");
+  const [amount, setAmount] = useState("");
+  const [memo, setMemo] = useState("");
+  const [on, setOn] = useState(day(new Date()));
+  const property = owner.accounts.find((a) => a.account === account)?.property ?? "";
+  return (
+    <Form
+      className="flex flex-col gap-3"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        const body = { request_id: id, account, kind, amount, memo, on };
+        if (await record("/api/payables/owner-fees", body, () => ownerFeeSummary(kind, amount, property))) {
+          setId(requestId());
+          setAmount("");
+          setMemo("");
+        }
+      }}
+    >
+      <Select label="From" id="owner-fee-account" value={account} onChange={(event) => setAccount(event.target.value)}>
+        {owner.accounts.map((a) => <option key={a.account} value={a.account}>{a.property}</option>)}
+      </Select>
+      <Select label="Fee" id="owner-fee-kind" value={kind} onChange={(event) => setKind(event.target.value as OwnerFeeKind)}>
+        {OWNER_FEE_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </Select>
+      <Field label="Amount" id="owner-fee-amount" inputMode="decimal" required value={amount}
+        onChange={(event) => setAmount(event.target.value)} />
+      <Field label="What it is for" id="owner-fee-memo" required maxLength={200} value={memo}
+        onChange={(event) => setMemo(event.target.value)} />
+      <Field label="Taken on" id="owner-fee-on" type="date" required value={on}
+        onChange={(event) => setOn(event.target.value)} />
+      <p className="text-sm text-ink-muted">
+        It moves from the owner's account to the company's fee account, inside trust, and shows on their statement.
+      </p>
+      <div><Button type="submit">Take fee</Button></div>
     </Form>
   );
 }
