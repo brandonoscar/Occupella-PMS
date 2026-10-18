@@ -127,6 +127,13 @@ class NsfFee(BaseModel):
     fee: str
 
 
+class LeaseBreakFee(BaseModel):
+    starts_on: date
+    flat_fee: str
+    # Months of the rent in force on the lease's new last day, to the cent.
+    rent_months: str
+
+
 class Property(Named):
     units: list[Unit]
     # The late fee terms in force today, if any.
@@ -619,6 +626,31 @@ def add_nsf_fee(session: Staff, conn: Conn, new: NewNsfFee) -> Created:
                 "INSERT INTO trust_nsf_fee_policies (pmc_id, property_id, starts_on, fee)"
                 " VALUES (%s, %s, %s, %s) RETURNING id",
                 (session.pmc_id, new.property_id, new.starts_on, new.fee),
+            )
+        )
+
+
+class NewLeaseBreakFee(BaseModel):
+    property_id: UUID
+    starts_on: date
+    flat_fee: Money = Decimal(0)
+    rent_months: Annotated[Decimal, Field(ge=0, le=12, decimal_places=2)] = Decimal(0)
+
+
+@router.post("/lease-break-fees", status_code=201)
+def add_lease_break_fee(session: Staff, conn: Conn, new: NewLeaseBreakFee) -> Created:
+    """A property's lease-break fee terms from a day: a flat fee and months of rent. A lease
+    breaks under the terms in force on its first day, and only when staff charge it as it ends
+    early; both 0 charge none for leases starting from that day."""
+    found(conn, "property", session.pmc_id, new.property_id)
+    with refusals("this property has lease-break fee terms starting that day already"):
+        return Created(
+            id=insert(
+                conn,
+                "INSERT INTO trust_lease_break_fees"
+                " (pmc_id, property_id, starts_on, flat_fee, rent_months)"
+                " VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                (session.pmc_id, new.property_id, new.starts_on, new.flat_fee, new.rent_months),
             )
         )
 

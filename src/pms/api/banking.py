@@ -43,22 +43,10 @@ class RegisterLine(BaseModel):
     balance: str
 
 
-# Every move of the account's cash, its running balance taken in the order they happened (by
-# day, then as posted), so a day posted late still lands where it belongs.
-REGISTER = """
-WITH cash AS (
-    SELECT a.ledger_account_id FROM trust_ledger_accounts AS a
-    WHERE a.pmc_id = %(pmc)s AND a.bank_account_id = %(bank)s AND a.kind = 'bank_cash'
-), moves AS (
-    SELECT e.id AS entry_id, t.id AS transfer_id, t.event_at, t.created_at, t.metadata, e.amount,
-           CASE WHEN t.from_account_id = e.account_id THEN t.to_account_id
-                ELSE t.from_account_id END AS other,
-           -sum(e.amount) OVER (ORDER BY t.event_at, t.created_at, e.id) AS balance
-    FROM pgledger_entries AS e
-    JOIN cash ON cash.ledger_account_id = e.account_id
-    JOIN pgledger_transfers AS t ON t.id = e.transfer_id
-)
-SELECT m.transfer_id, (m.event_at AT TIME ZONE 'UTC')::date,
+# What a move of a trust bank account's cash was, and who paid or was paid, from the move `m`
+# (its transfer_id, metadata and amount on the cash account) and its other account `o` (with
+# `ow`, `tn` and `vn`, its owner, tenant and vendor); src/pms/api/bank_deposits.py reads them too.
+TYPE = """
        CASE
            WHEN m.metadata ->> 'kind' = 'tenant payment' THEN 'Rent payment'
            WHEN m.metadata ->> 'kind' = 'security deposit' THEN 'Security deposit'
@@ -74,7 +62,9 @@ SELECT m.transfer_id, (m.event_at AT TIME ZONE 'UTC')::date,
            WHEN m.metadata ->> 'memo' = 'Opening balance' THEN 'Opening balance'
            WHEN o.kind = 'tenant_deposit' AND m.amount > 0 THEN 'Deposit returned'
            ELSE 'Other'
-       END,
+       END
+"""
+PARTY = """
        CASE
            WHEN m.metadata ? 'lease_id' THEN (
                SELECT string_agg(t.display_name, ', ' ORDER BY t.display_name COLLATE "C", t.id)
@@ -84,7 +74,27 @@ SELECT m.transfer_id, (m.event_at AT TIME ZONE 'UTC')::date,
            WHEN o.kind IN ('tenant_deposit', 'prepaid_rent') THEN tn.display_name
            WHEN o.kind = 'vendor_payable' THEN vn.display_name
            WHEN o.kind = 'pmc_income' THEN 'The company'
-       END,
+       END
+"""
+
+# Every move of the account's cash, its running balance taken in the order they happened (by
+# day, then as posted), so a day posted late still lands where it belongs.
+REGISTER = f"""
+WITH cash AS (
+    SELECT a.ledger_account_id FROM trust_ledger_accounts AS a
+    WHERE a.pmc_id = %(pmc)s AND a.bank_account_id = %(bank)s AND a.kind = 'bank_cash'
+), moves AS (
+    SELECT e.id AS entry_id, t.id AS transfer_id, t.event_at, t.created_at, t.metadata, e.amount,
+           CASE WHEN t.from_account_id = e.account_id THEN t.to_account_id
+                ELSE t.from_account_id END AS other,
+           -sum(e.amount) OVER (ORDER BY t.event_at, t.created_at, e.id) AS balance
+    FROM pgledger_entries AS e
+    JOIN cash ON cash.ledger_account_id = e.account_id
+    JOIN pgledger_transfers AS t ON t.id = e.transfer_id
+)
+SELECT m.transfer_id, (m.event_at AT TIME ZONE 'UTC')::date,
+       {TYPE},
+       {PARTY},
        coalesce(m.metadata ->> 'memo', m.metadata ->> 'reference'),
        coalesce(op.display_name, tp.display_name, (
            SELECT bp.display_name FROM trust_bill_payments AS b

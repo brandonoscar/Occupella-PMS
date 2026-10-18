@@ -14,6 +14,7 @@ import {
   lineLabel,
   sum,
   toCents,
+  toggleTransfer,
   transferLabel,
 } from "./reconcile";
 
@@ -63,6 +64,8 @@ describe("reconcile", () => {
       .toBe("01/04/2026 Rent: $1,500.00");
     expect(transferLabel({ id: "t", on: "2026-01-04", amount: "1.00", memo: null }))
       .toBe("01/04/2026 No memo: $1.00");
+    expect(transferLabel({ id: "t", on: "2026-01-04", amount: "200.00", memo: "Rent", deposit_id: "d1", deposited_on: "2026-01-05" }))
+      .toBe("01/04/2026 Rent: $200.00 · deposit of 01/05/2026");
     expect(lastDayOf("2026-02-01T00:00:00Z")).toBe("2026-01-31");
     expect(itemLabel({ id: "i", issued_on: "2025-12-30", amount: "-200.00", description: "Check", reference: "1041" }))
       .toBe("12/30/2025 Check (1041), from before the cutover: ($200.00)");
@@ -94,5 +97,19 @@ describe("byDay", () => {
     ];
     expect(byDay(matches).map((m) => m.id)).toEqual(["b", "c", "a", "d"]);
     expect(matches.map((m) => m.id)).toEqual(["a", "b", "c", "d"]); // the API's order is left alone
+  });
+});
+
+describe("toggleTransfer", () => {
+  const all = [
+    { id: "a", on: "2026-01-04", amount: "100.00", memo: null, deposit_id: "d1", deposited_on: "2026-01-05" },
+    { id: "b", on: "2026-01-04", amount: "50.00", memo: null, deposit_id: "d1", deposited_on: "2026-01-05" },
+    { id: "c", on: "2026-01-04", amount: "20.00", memo: null, deposit_id: null, deposited_on: null },
+  ];
+  it("ticks and unticks a whole deposit, and a lone transfer by itself", () => {
+    expect(toggleTransfer(all, [], "a")).toEqual(["a", "b"]);
+    expect(toggleTransfer(all, ["a", "b", "c"], "b")).toEqual(["c"]);
+    expect(toggleTransfer(all, ["a", "b"], "c")).toEqual(["a", "b", "c"]);
+    expect(toggleTransfer(all, ["c"], "c")).toEqual([]);
   });
 });

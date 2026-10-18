@@ -180,7 +180,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `/draft-leases/<id>` (Send, Resend, Check signatures, Activate lease, Void), the leases ending in the next 90 days with
   their renewal status at `/renewals` (`src/pms/api/renewals.py`, the expirations report's rows). Accounting:
   the trust bank accounts at `/banking` (Add bank account), each at `/bank-accounts/<id>` in tabs:
-  its register and balance breakdown (`src/pms/api/banking.py`), its month-end
+  its register and balance breakdown (`src/pms/api/banking.py`), its deposits, its month-end
   (`src/pms/api/reconcile.py`) and its statements, bills at `/bills` (Unpaid, Paid,
   Recurring and Declined tabs, a page at a time by group, vendor and due day; Record bill, maybe
   split across expense accounts and with its invoice, opens a side panel), a bill at
@@ -352,7 +352,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   its rents in the order their grace ends so one run charges what a run every day would (a late
   fee is an open charge too; migration 0056). READ COMMITTED. What is open of a charge (`trust_open_charges`, migration 0049) is its amount less
   payments matched, plus what bounced, less its share of the lease's credits, which come off
-  the oldest open charges first (by due date, then id), as the delinquency report counts them. A property's NSF fee is in force from a date too (migration 0044, 0 charges
+  the oldest open charges first (by due date, then id), as the delinquency report counts them.
+  A waiver (migration 0079, `trust_charge_waivers`; staff waive from an open charge's ⋯ menu on
+  the lease page, `POST /api/rent/charges/<id>/waive`, area rent) is a credit linked to the charge
+  it waives, with why, naming who: it comes off that charge first, never past what is left of it
+  once payments and earlier waivers count (its trigger takes the charge's lock, as a match does);
+  `trust_apply_payment` never matches past what was paid and waived, and `trust_return_deposit`
+  keeps nothing for what was waived. A property's NSF fee is in force from a date too (migration 0044, 0 charges
   none); `trust_charge_nsf_fee` charges the lease of a returned payment (postings under one key
   moving money back to a trust bank account's cash) the fee in force the day it came back
   (UTC), due that day, once per returned payment. Neither fee counts toward the other.
@@ -397,7 +403,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   transfer's UTC date, `trust_apply_payment` refuses to match a payment to the lease's charges
   unless the PMC allowed that transfer on every hold in force. Holds, releases and allowances
   are append-only rows the app inserts; a hold's trigger takes the lease's lock so matches and holds
-  wait for each other. No state's rule is built in.
+  wait for each other. No state's rule is built in. Staff place one from the lease page's ⋯ menu
+  (one not released at a time), release it from a day (naming who did) and accept a payment past
+  it on Receive payment, which allows that payment on every hold in force, naming who accepted it,
+  in the same transaction (`src/pms/api/rent.py`).
 - Owner contributions: `trust_record_owner_contribution` moves cash into an owner's property
   account as its own kind (`trust_owner_contributions`), once per request key, and
   `trust_apply_payment` never matches one to a tenant's charge.
@@ -444,7 +453,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   included), and a bounce moves back what the payment moved, reverses its matches and charges
   the property's NSF fee, once. A
   lease's rent work takes an advisory lock on the lease. The PMS records what the bank did;
-  it sends no money.
+  it sends no money. A payment came by check, cashier's check, money order, EFT or cash. Each has
+  a receipt (`src/pms/api/receipts.py`): a PDF saying who paid, for which home, when, how much and
+  how, what it paid of each charge, what was held as prepaid rent and, once it bounced, that it
+  came back, with the company's name and address; staff print it from the lease's Ledger tab and
+  the tenant downloads their own in the portal (another's reads as not found).
 - Bills and owners' money (`src/pms/api/payables.py`): staff enter, approve, set aside and pay
   bills, run recurring bills, record owner draws and contributions, and take management and
   leasing fees, each through its `trust_*` write path. What the owners page shows as available
@@ -463,6 +476,12 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   missing from the books. All append-only. The three-way reconciliation report adds what had
   not cleared by a period's last day to its statement balance and lists it, from that day's
   bank reconciliation (migration 0050); without an imported statement of that day it says so.
+  Bank deposits (migration 0078, `src/pms/api/bank_deposits.py`, the account's Deposits tab):
+  what staff take to the bank together. Each item is a transfer that brought money into the
+  deposit's account by its day (a payment's whole, prepaid rent too), in at most one deposit,
+  checked by a trigger; append-only, naming who recorded it. A deposit moves no money; it has a
+  slip (PDF), and at month-end auto-match pairs its one bank line with all of it (and ticking one
+  of its transfers ticks the deposit).
 - Switching (migration 0033): after a trust bank account's opening balances, the checks and
   deposits the bank had not cleared at the cutover are carried over (`trust_cutover_items`, the
   cash each moved in the old books, issued by the cutover) until a staff member signs off the
@@ -617,6 +636,24 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and how they are paid (check or EFT), in `trust_vendor_profiles` (append-only, the latest row
   holding, naming who recorded it; the same again writes nothing). No tax ID is kept: it stays on
   the W-9. A profile decides nothing and moves no money; the AI role reads it.
+- A lease's people (migration 0080, `docs/law.md`): a tenant leaves a lease others stay on, once,
+  from a day within it (`trust_remove_lease_tenant`, writing `trust_lease_departures`, naming
+  who recorded it); the last tenant can't (the lease ends instead), nor anyone once its deposit
+  was returned. Their deposit moves, all of it, inside the security-deposit account to a tenant
+  who stays, or stays under their name until the lease's deposit is returned; one on another
+  lease still keeps it with that lease. A tenant who left gets no reminder or late notice, files
+  nothing more under the lease in the portal (they still read it), holds no prepaid rent a
+  payment brings, and a renewal leaves them out. Others living there (`trust_lease_occupants`),
+  pets and assistance animals (`trust_lease_pets`: no pet rent, fee or deposit for an assistance
+  animal), vehicles (`trust_lease_vehicles`) and guarantors (`trust_lease_guarantors`) are kept on
+  the lease's Tenants tab (`src/pms/api/household.py`, area setup) and taken off by a row of
+  `trust_lease_household_removals`, once; all append-only, and the AI role reads none of them. A
+  lease offer's signer is a tenant or a guarantor (`trust_lease_offer_signers.role`): guarantors
+  sign and become the lease's guarantors, never tenants, and an offer needs a tenant. A
+  property's lease-break fee terms (`trust_lease_break_fees`: a flat fee and months of rent, from
+  a day) are those in force on a lease's first day; `POST /api/move-out/{id}/end` charges the fee
+  (due on the new last day) only when staff ask and the lease ends before its end date. Any lease
+  is ended from its page's ⋯ menu, and Move-outs lists an ending lease with no deposit for 90 days.
 - Vendor insurance and inspections (migration 0058): a vendor's policies
   (`trust_vendor_insurance`: coverage, carrier, number, the days it runs, a limit; a renewal is
   a new policy), and a lease's move-in and move-out inspections (`trust_inspections`, their

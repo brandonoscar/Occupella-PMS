@@ -235,6 +235,37 @@ export function NsfFeePanel({ panel, propertyId }: { panel: Panel; propertyId: s
   );
 }
 
+// The lease-break fee leases starting from a day break under: a flat fee and months of rent,
+// charged only when staff end such a lease before its end date and tick it.
+export function LeaseBreakFeePanel({ panel, propertyId }: { panel: Panel; propertyId: string }) {
+  const { error, save } = useSave(panel);
+  const [from, setFrom] = useState(day(new Date()));
+  const [flat, setFlat] = useState("0.00");
+  const [months, setMonths] = useState("0");
+  return (
+    <SidePanel title="Set lease-break fee" onClose={panel.close}>
+      <Form className="flex flex-col gap-3" onSubmit={(event) => {
+        event.preventDefault();
+        return save("lease-break-fees",
+          { property_id: propertyId, starts_on: from, flat_fee: flat.trim(), rent_months: months.trim() },
+          () => `New lease-break fee for leases starting from ${from}.`);
+      }}>
+        <Field label="For leases starting from" id="break-from" type="date" required value={from}
+          onChange={(e) => setFrom(e.target.value)} />
+        <Field label="Flat fee" id="break-flat" inputMode="decimal" required value={flat}
+          onChange={(e) => setFlat(e.target.value)} />
+        <Field label="Months of rent" id="break-months" inputMode="decimal" required value={months}
+          onChange={(e) => setMonths(e.target.value)} />
+        <p className="text-sm text-ink-muted">
+          Charged only when you end a lease before its end date and choose to charge it.
+        </p>
+        <div><Button type="submit">Set lease-break fee</Button></div>
+        <Notice tone="error">{error}</Notice>
+      </Form>
+    </SidePanel>
+  );
+}
+
 // A lease already in place on the unit (a new tenant's lease comes through Leasing, Draft
 // leases): its days, rent and tenants, who may be added here first.
 export function AddLeasePanel({ panel, unitId, propertyId, propertyName }: {

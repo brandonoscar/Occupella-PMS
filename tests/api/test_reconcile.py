@@ -237,7 +237,15 @@ def test_the_worksheet_shows_the_report_and_what_no_match_holds(client, conn, st
         "difference: adjusted bank balance - trust journal": "1500.00",
     }
     assert shown["open_transfers"] == [
-        {"id": paid, "on": "2026-01-04", "amount": "1500.00", "memo": "Rent, Unit 1"}
+        {
+            "id": paid,
+            "on": "2026-01-04",
+            "amount": "1500.00",
+            "memo": "Rent, Unit 1",
+            # In no bank deposit.
+            "deposit_id": None,
+            "deposited_on": None,
+        }
     ]
     assert [ln["reference"] for ln in shown["open_lines"]] == ["D1"]
     assert shown["matches"] == []

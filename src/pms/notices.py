@@ -150,6 +150,9 @@ JOIN trust_tenants AS t ON t.id = lt.tenant_id
 WHERE l.pmc_id = %(pmc)s
   AND l.starts_on <= %(due)s AND (l.ends_on IS NULL OR %(due)s <= l.ends_on)
   AND {NO_HOLD}
+  -- Not a tenant who left the lease before the day (others staying on it).
+  AND NOT EXISTS (SELECT 1 FROM trust_lease_departures AS d
+                  WHERE d.lease_id = l.id AND d.tenant_id = lt.tenant_id AND d.left_on < %(due)s)
   AND NOT EXISTS (SELECT 1 FROM trust_emails AS e
                   WHERE e.kind = 'rent_reminder' AND e.tenant_id = lt.tenant_id
                     AND e.lease_id = l.id AND e.period = %(due)s)
@@ -225,6 +228,8 @@ JOIN trust_properties AS p ON p.id = u.property_id
 JOIN trust_lease_tenants AS lt ON lt.lease_id = l.id
 JOIN trust_tenants AS t ON t.id = lt.tenant_id
 WHERE f.pmc_id = %(pmc)s AND f.created_at = now() AND {NO_HOLD}
+  AND NOT EXISTS (SELECT 1 FROM trust_lease_departures AS d
+                  WHERE d.lease_id = l.id AND d.tenant_id = lt.tenant_id AND d.left_on <= %(day)s)
 ORDER BY r.due_on, l.id, t.display_name COLLATE "C", lt.tenant_id
 """
 

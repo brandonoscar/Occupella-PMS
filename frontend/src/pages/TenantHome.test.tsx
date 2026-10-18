@@ -33,6 +33,7 @@ const lease = (id: string, inEffect: boolean): Lease => ({
   each_month: [],
   coming_due: [],
   deposit_returned: false,
+  payments: [],
 });
 
 const LEDGER = {
@@ -115,6 +116,32 @@ describe("TenantHome", () => {
     expect(within(card).getByText("01/01/2099 Key replacement: $50.00")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Deposit statement (PDF)" }).getAttribute("href")).toBe(
       "/api/tenant/leases/1/deposit-return/download?format=pdf",
+    );
+  });
+
+  it("lists each payment with how it came and its receipt, and says one bounced", async () => {
+    server({
+      "GET /api/tenant/leases": [{
+        ...lease("1", true),
+        payments: [
+          { transfer_id: "tr2", received_on: "2026-10-03", amount: "1500.00", reference: "No. 8", method: "cashier's check", bounced: false },
+          { transfer_id: "tr1", received_on: "2026-09-02", amount: "1500.00", reference: null, method: "EFT", bounced: true },
+        ],
+      }],
+      "GET /api/tenant/requests": [],
+      "GET /api/tenant/renewals": [],
+      "GET /api/tenant/leases/1/ledger": LEDGER,
+    });
+    render(<TenantHome me={ME} />);
+
+    const list = await screen.findByRole("list", { name: "Payments" });
+    const items = within(list).getAllByRole("listitem");
+    expect(items.map((item) => item.textContent)).toEqual([
+      "10/03/2026 · $1,500.00 · Cashier's check No. 8Receipt (PDF)",
+      "09/02/2026 · $1,500.00 · EFTBouncedReceipt (PDF)",
+    ]);
+    expect(within(items[0] as HTMLElement).getByRole("link", { name: "Receipt (PDF)" }).getAttribute("href")).toBe(
+      "/api/tenant/payments/tr2/receipt",
     );
   });
 

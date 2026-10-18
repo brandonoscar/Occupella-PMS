@@ -7,7 +7,12 @@ import { Pager } from "../components/Pager";
 import { Card } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import { Landmark } from "lucide-react";
-import type { Breakdown, RegisterLine } from "../banking";
+import type { BankDeposit, Breakdown, RegisterLine, Undeposited } from "../banking";
+import { Badge } from "../components/Badge";
+import { Button } from "../components/Button";
+import { Form } from "../components/Form";
+import { Said } from "../components/Said";
+import { useRecord } from "./useRecord";
 import { day, money, usDate } from "../money";
 import type { Paged } from "../rentals";
 import { GoLink } from "./NeedsAttention";
@@ -141,6 +146,106 @@ export function BreakdownTab({ bankId }: { bankId: string }) {
           </table>
         </Wide>
       )}
+    </div>
+  );
+}
+
+// Deposits (the founder's review, q025): what came into the account and is in no deposit yet,
+// each payment once; staff tick what they take to the bank together and record the deposit with
+// its day, then print its slip. At month-end the deposit's one bank line matches all of it.
+export function DepositsTab({ bankId }: { bankId: string }) {
+  const [waiting, setWaiting] = useState<Undeposited[] | null>(null);
+  const [done, setDone] = useState<BankDeposit[] | null>(null);
+  const [chosen, setChosen] = useState<string[]>([]);
+  const [on, setOn] = useState(day(new Date()));
+  const [error, setError] = useState("");
+  const [runs, setRuns] = useState(0);
+  const { said, error: refused, record } = useRecord(() => setRuns((n) => n + 1));
+
+  useEffect(() => {
+    api.get<Undeposited[]>(`/api/bank-accounts/${bankId}/undeposited`).then(setWaiting).catch((why) => setError(detail(why)));
+    api.get<BankDeposit[]>(`/api/bank-accounts/${bankId}/deposits`).then(setDone).catch((why) => setError(detail(why)));
+  }, [bankId, runs]);
+
+  const picked = (waiting ?? []).filter((w) => chosen.includes(w.id));
+  const total = picked.reduce((cents, w) => cents + Math.round(Number(w.amount) * 100), 0);
+  const totalText = (total / 100).toFixed(2);
+  const toggle = (id: string) => setChosen(chosen.includes(id) ? chosen.filter((x) => x !== id) : [...chosen, id]);
+
+  return (
+    <div className="flex flex-col gap-6">
+      <Said>{said}</Said>
+      <Notice tone="error">{error || refused}</Notice>
+      <Card title="Not deposited yet">
+        {waiting === null ? (
+          <Notice tone="info">Loading</Notice>
+        ) : waiting.length === 0 ? (
+          <p className="text-sm text-ink-subtle">Everything that came in is in a deposit.</p>
+        ) : (
+          <Form className="flex flex-col gap-3" onSubmit={async (event) => {
+            event.preventDefault();
+            const body = { deposited_on: on, transfer_ids: picked.flatMap((w) => w.transfer_ids) };
+            if (await record<BankDeposit>(`/api/bank-accounts/${bankId}/deposits`, body,
+              (made) => `Deposit of ${money(made.total)} recorded for ${usDate(made.deposited_on)}.`)) {
+              setChosen([]);
+            }
+          }}>
+            <ul className="flex flex-col divide-y divide-line rounded-md border border-card-edge text-sm" aria-label="Not deposited yet">
+              {waiting.map((w) => (
+                <li key={w.id}>
+                  <label className="flex items-center gap-2.5 px-3 py-2 hover:bg-raised">
+                    <input type="checkbox" checked={chosen.includes(w.id)} onChange={() => toggle(w.id)} />
+                    {`${usDate(w.on)} ${w.type}${w.party ? `, ${w.party}` : ""}${w.memo ? ` (${w.memo})` : ""}: ${money(w.amount)}`}
+                  </label>
+                </li>
+              ))}
+            </ul>
+            <div className="flex flex-wrap items-end gap-3">
+              <Field label="Deposited on" id={`deposited-on-${bankId}`} type="date" required value={on}
+                onChange={(event) => setOn(event.target.value)} />
+              <Button type="submit" disabled={picked.length === 0}>
+                {picked.length === 0 ? "Record deposit" : `Record deposit of ${money(totalText)}`}
+              </Button>
+            </div>
+          </Form>
+        )}
+      </Card>
+      <Card title="Deposits">
+        {done === null ? (
+          <Notice tone="info">Loading</Notice>
+        ) : done.length === 0 ? (
+          <p className="text-sm text-ink-subtle">No deposit recorded yet.</p>
+        ) : (
+          <Wide>
+            <table className="w-full text-base" aria-label="Deposits">
+              <thead>
+                <tr>
+                  <th className="text-left">Deposited</th>
+                  <th className="text-right">Items</th>
+                  <th className="text-right">Total</th>
+                  <th className="text-left">Recorded by</th>
+                  <th className="text-left">Month-end</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {done.map((d) => (
+                  <tr key={d.id}>
+                    <td className="whitespace-nowrap">{usDate(d.deposited_on)}</td>
+                    <td className="text-right">{d.items}</td>
+                    <td className="text-right">{money(d.total)}</td>
+                    <td className="text-ink-muted">{d.recorded_by}</td>
+                    <td>{d.matched ? <Badge tone="positive">Matched</Badge> : <Badge tone="info">Not matched yet</Badge>}</td>
+                    <td className="text-right">
+                      <a href={`/api/bank-accounts/deposits/${d.id}/slip`} className={LINK}>Slip (PDF)</a>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Wide>
+        )}
+      </Card>
     </div>
   );
 }

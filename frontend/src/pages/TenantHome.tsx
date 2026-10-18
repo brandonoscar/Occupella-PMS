@@ -11,8 +11,9 @@ import type { MaintenanceRequest } from "../maintenance";
 import { statusLabel, when } from "../maintenance";
 import { day, money, usDate } from "../money";
 import type { StatementData } from "../statement";
-import type { RentersInsurance } from "../rent";
-import { insuranceLine } from "../rent";
+import type { Paid, RentersInsurance } from "../rent";
+import { insuranceLine, methodLabel } from "../rent";
+import { Badge } from "../components/Badge";
 import { PolicyForm } from "./InsuranceForms";
 import { RenewalsCard } from "./RenewalsCard";
 import { useRecord } from "./useRecord";
@@ -49,6 +50,8 @@ export type Lease = {
   each_month: Monthly[];
   coming_due: ComingDue[];
   deposit_returned: boolean;
+  // Each payment to it, newest first, each with its receipt to download.
+  payments: Paid[];
 };
 
 // "Pet rent: $35.00", "Parking: $25.00 off" for a credit, with when it starts or stops.
@@ -278,6 +281,32 @@ export function TenantHome({ me }: { me: Me }) {
                   </tbody>
                 </table>
               </Wide>
+            )}
+          </Card>
+
+          <Card title="Payments">
+            {lease.payments.length === 0 ? (
+              <p className="text-sm text-ink-subtle">No payment recorded yet.</p>
+            ) : (
+              <ul className="flex flex-col divide-y divide-line text-base" aria-label="Payments">
+                {lease.payments.map((payment) => (
+                  <li key={payment.transfer_id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                    <span>
+                      {usDate(payment.received_on)} · {money(payment.amount)}
+                      {(payment.method || payment.reference) && (
+                        <span className="text-ink-muted">
+                          {" · "}{[payment.method && methodLabel(payment.method), payment.reference].filter(Boolean).join(" ")}
+                        </span>
+                      )}
+                    </span>
+                    <span className="flex items-center gap-3">
+                      {payment.bounced && <Badge tone="danger">Bounced</Badge>}
+                      <a href={`/api/tenant/payments/${encodeURIComponent(payment.transfer_id)}/receipt`}
+                        className="text-sm text-iris hover:text-iris-hover hover:underline">Receipt (PDF)</a>
+                    </span>
+                  </li>
+                ))}
+              </ul>
             )}
           </Card>
 

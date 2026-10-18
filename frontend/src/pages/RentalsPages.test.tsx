@@ -64,6 +64,7 @@ const PROPERTY: Property = {
   ],
   late_fees: { starts_on: "2026-10-01", grace_days: 5, flat_fee: "50.00", percent: "0", maximum: null },
   nsf_fee: null,
+  lease_break_fee: null,
 };
 
 const UNIT: Unit = {
@@ -185,6 +186,7 @@ describe("PropertyPage", () => {
     expect(within(owners).getByRole("link", { name: "Owner 1" }).getAttribute("href")).toBe("/owners/o1");
     expect(screen.getByTestId("late-fees").textContent).toBe("After 5 days' grace: $50.00 (from 10/01/2026)");
     expect(screen.getByTestId("nsf-fee").textContent).toBe("No NSF fee");
+    expect(screen.getByTestId("lease-break-fee").textContent).toBe("No lease-break fee");
     const units = ["Unit 1", "Unit 2", "Unit 3", "Unit 4"].map((name) => screen.getByRole("row", { name }));
     expect(units.map((row) => within(row).getAllByRole("cell")[1]?.textContent)).toEqual([
       "Occupied", "Starts 11/01/2026", "Vacant", "Archived",

@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
-import type { OpenCharge, RecurringCharge } from "./rent";
+import type { Hold, OpenCharge, RecurringCharge } from "./rent";
 import {
   bounceSummary,
+  PAYMENT_METHODS,
   earliestRentChange,
+  holdLine,
   insuranceBadge,
   insuranceLine,
+  methodLabel,
   rentChangeLine,
   chargeLabel,
   paymentSummary,
@@ -111,6 +114,17 @@ describe("rent", () => {
     expect(rentRunSummary({ rents: 1, recurring: 0, late_fees: 0, emails: 0 })).toBe(
       "1 rent, 0 recurring charges and 0 late fees charged.",
     );
+  });
+  it("says a payment hold's days, why, who released it and what it let past", () => {
+    const hold: Hold = { id: "h1", starts_on: "2026-10-01", reason: "Eviction filed", ends_on: null, released_by: null, allowed: 0, in_force: true };
+    expect(holdLine(hold)).toBe("Since 10/01/2026: Eviction filed");
+    expect(holdLine({ ...hold, ends_on: "2026-11-01", released_by: "Staff 1", allowed: 2 })).toBe(
+      "Since 10/01/2026: Eviction filed, released from 11/01/2026 by Staff 1; 2 payments accepted past it",
+    );
+  });
+  it("names each way a payment can come, a cashier's check among them", () => {
+    expect(PAYMENT_METHODS.map((m) => m.label)).toEqual(["Check", "Cashier's check", "Money order", "EFT", "Cash"]);
+    expect(methodLabel("cashier's check")).toBe("Cashier's check");
   });
   it("makes a new request id each time", () => {
     const one = requestId();

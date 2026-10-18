@@ -2333,3 +2333,167 @@ test("staff turn on the emails the PMS writes by itself, and a run of rent sends
   await expect(owner).toContainText(`Your statement for ${month}`);
   await expect(owner).toContainText(`Monthly statement to ${people.emails.owner_a}`);
 });
+
+test("staff put a lease on a payment hold, accept a cashier's check past it and release it, print receipts, take payments to the bank together and print the slip; the tenant downloads their receipt", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["rent-in"]!;
+  const tenant = await (await browser.newContext()).newPage();
+  await joinPortal(tenant, people.drew);
+  await joinAsStaff(page, people.manager);
+  const yesterday = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+  const usYesterday = `${yesterday.slice(5, 7)}/${yesterday.slice(8, 10)}/${yesterday.slice(0, 4)}`;
+
+  // An eviction filed: payments are refused from yesterday.
+  await openLease(page, "Aspen Row, Unit 1");
+  const hold = await leasePanel(page, "Place payment hold");
+  await hold.getByLabel("Hold payments from").fill(yesterday);
+  await hold.getByRole("button", { name: "Place hold" }).click();
+  await expect(page.getByText(`On a payment hold since ${usYesterday}.`)).toBeVisible();
+  await expect(page.getByRole("main")).toContainText(`Since ${usYesterday}: Eviction filed.`);
+
+  // The PMC accepts one cashier's check past the hold.
+  const pay = await leasePanel(page, "Receive payment");
+  await pay.getByLabel("Payment received").fill("100.00");
+  await pay.getByLabel("Method").selectOption({ label: "Cashier's check" });
+  await pay.getByLabel("Check or reference").fill("CC 9");
+  await pay.getByLabel("Accept this payment past the payment hold").check();
+  await pay.getByRole("button", { name: "Record payment" }).click();
+  await expect(pay).toHaveCount(0);
+
+  // Released from today: the next payment needs no acceptance.
+  const release = await leasePanel(page, "Release payment hold");
+  await release.getByRole("button", { name: "Release hold" }).click();
+  await expect(page.getByText(/^The payment hold is released from /)).toBeVisible();
+  const next = await leasePanel(page, "Receive payment");
+  await next.getByLabel("Payment received").fill("50.00");
+  await next.getByLabel("Check or reference").fill("Check 12");
+  await expect(next.getByLabel("Accept this payment past the payment hold")).toHaveCount(0);
+  await next.getByRole("button", { name: "Record payment" }).click();
+  await expect(next).toHaveCount(0);
+
+  // Each payment's receipt, from the ledger.
+  await leaseTab(page, "Ledger");
+  const received = page.getByRole("table", { name: "Payments received" });
+  await expect(received).toContainText("Cashier's check · CC 9");
+  await downloads(page, "Receipt (PDF)", PDF);
+
+  // Both go to the bank together, with a slip.
+  await section(page, "Banking");
+  await page.getByRole("row", { name: "Demo operating trust account", exact: true }).getByRole("link").click();
+  await page.getByRole("tab", { name: "Deposits", exact: true }).click();
+  const waiting = page.getByRole("list", { name: "Not deposited yet" });
+  await waiting.getByLabel(/\(CC 9\): \$100\.00$/).check();
+  await waiting.getByLabel(/\(Check 12\): \$50\.00$/).check();
+  await page.getByRole("button", { name: "Record deposit of $150.00" }).click();
+  await expect(page.getByText(/^Deposit of \$150\.00 recorded for /)).toBeVisible();
+  await expect(waiting.getByText(/CC 9/)).toHaveCount(0);
+  await expect(page.getByRole("table", { name: "Deposits" })).toContainText("Not matched yet");
+  await downloads(page, "Slip (PDF)", PDF);
+
+  // The tenant downloads their own receipt.
+  await tenant.reload();
+  const theirs = tenant.getByRole("list", { name: "Payments" });
+  await expect(theirs).toContainText("Cashier's check CC 9");
+  const href = (await theirs.getByRole("link", { name: "Receipt (PDF)" }).first().getAttribute("href")) ?? "";
+  const answer = await tenant.request.get(href);
+  expect(answer.status()).toBe(200);
+  expect(answer.headers()["content-type"]).toContain(PDF);
+});
+
+test("staff waive a late fee from the lease page: it comes off that fee, and the ledger shows the waiver", async ({
+  page,
+}) => {
+  const people = seed.features.waive!;
+  await joinAsStaff(page, people.manager);
+  const lease = await openLease(page, "Elm Court, Unit 1");
+  const before = (await page.getByTestId("balance-due").textContent()) ?? "";
+
+  // A late fee, then waived: the whole of it, with why.
+  const charge = await leasePanel(page, "Enter charge");
+  await charge.getByLabel("Add a").selectOption("fee");
+  await charge.getByLabel("Amount").fill("50.00");
+  await charge.getByLabel("What for").fill("Late fee");
+  await charge.getByRole("button", { name: "Add" }).click();
+  await expect(charge).toHaveCount(0);
+  const open = lease.getByRole("list", { name: "Open charges" });
+  await expect(open).toContainText("Late fee: $50.00 open");
+  await open.getByRole("button", { name: /^Actions for Late fee due / }).click();
+  await page.getByRole("menuitem", { name: "Waive" }).click();
+  await open.getByLabel("Why").fill("First time late");
+  await open.getByRole("button", { name: "Waive $50.00" }).click();
+  await expect(page.getByText("Waived $50.00 of Late fee.")).toBeVisible();
+  await expect(page.getByText("Late fee: $50.00 open")).toHaveCount(0);
+  await expect(page.getByTestId("balance-due")).toHaveText(before);
+
+  await leaseTab(page, "Ledger");
+  await expect(page.getByRole("main")).toContainText("Waived: Late fee, due");
+});
+
+test("staff take one tenant off a lease, keep who else lives there and who guarantees it, and break the lease with its fee", async ({
+  page,
+}) => {
+  const people = seed.features["lease-people"]!;
+  await joinAsStaff(page, people.manager);
+
+  // Cedar House's leases break for $250.00 and a month's rent, for leases from 2020 on.
+  await openProperty(page, "Cedar House");
+  const terms = await setupPanel(page, "Set lease-break fee");
+  await terms.getByLabel("For leases starting from").fill("2020-01-01");
+  await terms.getByLabel("Flat fee").fill("250.00");
+  await terms.getByLabel("Months of rent").fill("1");
+  await terms.getByRole("button", { name: "Set lease-break fee" }).click();
+  await expect(page.getByTestId("lease-break-fee")).toHaveText(
+    "Lease-break fee $250.00 and 1 month's rent (leases from 01/01/2020)",
+  );
+
+  // Quinn leaves; their deposit stays in trust, moved to Taylor, who stays on.
+  await openLease(page, "Cedar House, House");
+  await leaseTab(page, "Tenants");
+  await page.getByRole("row", { name: "Quinn Demo" }).getByRole("button", { name: "Actions for Quinn Demo" }).click();
+  await page.getByRole("menuitem", { name: "Take off the lease" }).click();
+  const leaving = page.getByRole("dialog", { name: "Take a tenant off the lease" });
+  await leaving.getByLabel("Their $1,125.00 deposit").selectOption({ label: "Moves to Taylor Demo" });
+  await leaving.getByRole("button", { name: "Take Quinn Demo off the lease" }).click();
+  await expect(page.getByText("Quinn Demo left the lease; their $1,125.00 deposit moved to Taylor Demo.")).toBeVisible();
+  await expect(page.getByRole("row", { name: "Quinn Demo" })).toContainText(`Left ${us(today())}`);
+
+  // Who else is on the lease: a guarantor, an assistance animal and a car, which is taken off.
+  const add = async (button: string, fields: Record<string, string>, done: string) => {
+    const panel = await setupPanel(page, button);
+    for (const [label, value] of Object.entries(fields)) await panel.getByLabel(label, { exact: true }).fill(value);
+    if (button === "Add pet") await panel.getByRole("checkbox").check();
+    await panel.getByRole("button", { name: button }).click();
+    await expect(page.getByText(done)).toBeVisible();
+  };
+  await add("Add guarantor", { Name: "Guarantor Demo", Email: "guarantor.demo@example.com" }, "Guarantor Demo guarantees the lease.");
+  await add("Add occupant", { Name: "Occupant Demo", "Relationship to the tenants": "Child" }, "Occupant Demo lives there too.");
+  await add("Add pet", { Name: "Pet Demo", "Kind (dog, cat...)": "Dog" }, "Pet Demo is on the lease.");
+  await add("Add vehicle", { Make: "Make Demo", Plate: "SYN-001" }, "The Make Demo is on the lease.");
+  await expect(page.getByRole("table", { name: "Pets and animals" })).toContainText("Assistance animal");
+  await expect(page.getByText(/no pet rent, fee or deposit is charged for it \(Fair Housing Act\)/)).toBeVisible();
+  await page.getByRole("button", { name: "Actions for Make Demo, SYN-001" }).click();
+  await page.getByRole("menuitem", { name: "Take off the lease" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Take off the lease" }).click();
+  await expect(page.getByText("Make Demo, SYN-001 is off the lease.")).toBeVisible();
+  await expect(page.getByRole("table", { name: "Vehicles" })).toHaveCount(0);
+
+  // The month-to-month lease gets a last day, then ends earlier: that breaks it, and its fee is
+  // charged once ticked.
+  const later = new Date(Date.now() + 60 * 86_400_000).toISOString().slice(0, 10);
+  const sooner = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+  let ending = await leasePanel(page, "End lease");
+  await ending.getByLabel("Last day").fill(later);
+  await ending.getByRole("button", { name: "End lease" }).click();
+  await expect(page.getByText(`The lease ends on ${us(later)}.`)).toBeVisible();
+  ending = await leasePanel(page, "End lease");
+  await ending.getByLabel("Last day").fill(sooner);
+  await ending.getByLabel("Charge the lease-break fee: $2,500.00").check();
+  await ending.getByRole("button", { name: "End lease" }).click();
+  await expect(page.getByText(`The lease ends on ${us(sooner)}; a $2,500.00 lease-break fee was charged.`)).toBeVisible();
+  // Due on the new last day: owed now, and on the lease's open charges.
+  await expect(page.getByTestId("balance-due")).toHaveText("$2,500.00");
+  await leaseTab(page, "Summary");
+  await expect(page.getByRole("list", { name: "Open charges" })).toContainText("Lease-break fee: $2,500.00 open");
+});

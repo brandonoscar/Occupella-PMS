@@ -175,7 +175,7 @@ export function DraftLeasePage({ me, id }: { me: Me; id: string }) {
             <tbody>
               {found.signers.map((s) => (
                 <tr key={s.position}>
-                  <td>{s.name}</td>
+                  <td>{s.name}{s.role === "guarantor" && <> <Badge tone="neutral">Guarantor</Badge></>}</td>
                   <td>{s.email}</td>
                   <td>{s.signed_at ? when(s.signed_at) : <span className="text-ink-muted">{found.sent ? "Not yet" : "Not sent"}</span>}</td>
                 </tr>

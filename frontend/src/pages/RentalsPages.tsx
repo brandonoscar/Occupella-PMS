@@ -22,10 +22,19 @@ import { STAFF_NAV } from "./staffNav";
 import { Said } from "../components/Said";
 import { FilesCard } from "./FilesCard";
 import { navigate } from "../router";
-import { agreementSummary, lateFeeSummary, nsfFeeSummary } from "../setup";
+import { agreementSummary, lateFeeSummary, leaseBreakFeeSummary, nsfFeeSummary } from "../setup";
 import { usDate } from "../money";
 import type { Panel } from "./SetupPanels";
-import { AddLeasePanel, AddOwnerPanel, AddPropertyPanel, AddUnitPanel, LateFeesPanel, NsfFeePanel, TermsPanel } from "./SetupPanels";
+import {
+  AddLeasePanel,
+  AddOwnerPanel,
+  AddPropertyPanel,
+  AddUnitPanel,
+  LateFeesPanel,
+  LeaseBreakFeePanel,
+  NsfFeePanel,
+  TermsPanel,
+} from "./SetupPanels";
 
 function detail(failed: unknown): string {
   return failed instanceof ApiError ? failed.detail : String(failed);
@@ -120,7 +129,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
   const [property, setProperty] = useState<Property | null>(null);
   const [said, setSaid] = useState("");
   const [error, setError] = useState("");
-  const [open, setOpen] = useState<"" | "unit" | "owner" | "terms" | "late" | "nsf" | "email">("");
+  const [open, setOpen] = useState<"" | "unit" | "owner" | "terms" | "late" | "nsf" | "break" | "email">("");
   const [account, setAccount] = useState("");
 
   function refresh() {
@@ -198,6 +207,15 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
                 <dd data-testid="nsf-fee">{nsfFeeSummary(property.nsf_fee)}</dd>
                 <Button size="sm" variant="secondary" onClick={() => setOpen("nsf")}>Set NSF fee</Button>
               </div>
+              <div>
+                <dt className="text-sm text-ink-muted">Lease-break fee</dt>
+                <dd data-testid="lease-break-fee">
+                  {property.lease_break_fee
+                    ? `${leaseBreakFeeSummary(property.lease_break_fee)} (leases from ${usDate(property.lease_break_fee.starts_on)})`
+                    : "No lease-break fee"}
+                </dd>
+                <Button size="sm" variant="secondary" onClick={() => setOpen("break")}>Set lease-break fee</Button>
+              </div>
             </dl>
           </Card>
           <Card title="Units">
@@ -240,6 +258,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
           {open === "owner" && <AddOwnerPanel panel={panel} propertyId={id} />}
           {open === "late" && <LateFeesPanel panel={panel} propertyId={id} />}
           {open === "nsf" && <NsfFeePanel panel={panel} propertyId={id} />}
+          {open === "break" && <LeaseBreakFeePanel panel={panel} propertyId={id} />}
           {open === "email" && (
             <WriteEmail title={`Email tenants of ${property.name}`} onClose={panel.close}
               note="Everyone on a lease in effect today gets their own copy, kept on their Email tab."
