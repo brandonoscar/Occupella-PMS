@@ -194,7 +194,7 @@ DECLARE
     v_still record;
     v_deposit record;
     v_to text;
-    v_moved numeric := 0;
+    v_moved numeric := 0.00;
 BEGIN
     IF current_setting('transaction_isolation') <> 'read committed' THEN
         RAISE EXCEPTION 'trust: remove tenants at READ COMMITTED, not %',
