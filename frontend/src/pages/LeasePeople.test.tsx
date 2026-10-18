@@ -13,9 +13,9 @@ const LEASE: LeaseDetail = {
   id: "l1", property: "Property 1", unit: "Unit 1", property_id: "p1", unit_id: "u1", status: "current",
   starts_on: "2026-01-01", ends_on: "2026-12-31", monthly_rent: "1200.00", rent_changes: [], rent_due_day: 1, due_days: [], renters_insurance: null,
   tenants: [
-    { id: "t1", name: "Tenant 1", prepaid: "0.00", deposit: "1500.00" },
-    { id: "t2", name: "Tenant 2", prepaid: "0.00", deposit: "0.00" },
-    { id: "t3", name: "Tenant 3", prepaid: "0.00", deposit: "0.00" },
+    { id: "t1", name: "Tenant 1", prepaid: "0.00", deposit: "1500.00", deposits: [{ kind: "security", amount: "1500.00" }] },
+    { id: "t2", name: "Tenant 2", prepaid: "0.00", deposit: "0.00", deposits: [] },
+    { id: "t3", name: "Tenant 3", prepaid: "0.00", deposit: "0.00", deposits: [] },
   ],
   people: [
     { id: "t1", name: "Tenant 1", email: null, phone: null, portal: "no login", login_email: null, left_on: null, deposit_to: null },

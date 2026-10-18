@@ -73,7 +73,7 @@ operations = [
 browser = [
   "portal.spec.ts › staff set up a property from nothing where each thing lives, lease a unit and see it on the rent roll",
   "features.spec.ts › staff set management terms with a leasing fee, late fees, a bank account and a vendor, and a new lease takes its leasing fee",
-  "features.spec.ts › staff add a fee, a credit and a monthly charge to a lease, take a deposit and prepaid rent, and a bounce undoes a payment and charges the NSF fee",
+  "features.spec.ts › staff add a fee, a credit and a monthly charge to a lease, take a deposit and a pet deposit and prepaid rent, and a bounce undoes a payment and charges the NSF fee",
 ]
 
 [[feature]]
@@ -171,7 +171,7 @@ browser = [
 
 [[feature]]
 id = "rent-work"
-statement = "On a lease's own page (its balance due at the top, then Summary, Ledger, Tenants, Files and Notes), staff add a fee, a credit or a monthly charge to it and stop one; record a tenant's payment (what the lease owes to the owner, the rest prepaid rent), use prepaid rent, take a deposit, and record a bounce, which undoes the payment and charges the NSF fee; and read its ledger, each charge, payment and bounce with the balance after it."
+statement = "On a lease's own page (its balance due at the top, then Summary, Ledger, Tenants, Files and Notes), staff add a fee, a credit or a monthly charge to it and stop one; record a tenant's payment (what the lease owes to the owner, the rest prepaid rent), use prepaid rent, take a security, pet or key deposit (each held apart, the lease showing each kind; migration 0092), and record a bounce, which undoes the payment and charges the NSF fee; and read its ledger, each charge, payment and bounce with the balance after it."
 operations = [
   "GET /api/leases/{lease_id}",
   "GET /api/leases/{lease_id}/ledger",
@@ -184,7 +184,7 @@ operations = [
   "POST /api/rent/payments/{transfer_id}/bounce",
 ]
 browser = [
-  "features.spec.ts › staff add a fee, a credit and a monthly charge to a lease, take a deposit and prepaid rent, and a bounce undoes a payment and charges the NSF fee",
+  "features.spec.ts › staff add a fee, a credit and a monthly charge to a lease, take a deposit and a pet deposit and prepaid rent, and a bounce undoes a payment and charges the NSF fee",
   "portal.spec.ts › staff record a tenant's payment, the rest held as prepaid rent, and then its bounce",
 ]
 

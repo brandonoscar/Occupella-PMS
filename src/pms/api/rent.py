@@ -536,9 +536,11 @@ def record_deposit(
     received_on: date,
     bank_id: UUID | None = None,
     reference: str | None = None,
+    kind: DepositKind = "security",
 ) -> list[str]:
-    """A tenant's security deposit into a security-deposit trust bank account: the only one,
-    or the one staff chose."""
+    """A tenant's deposit (security, pet or key; migration 0092) into a security-deposit trust
+    bank account: the only one, or the one staff chose. Each kind is held in a deposit account of
+    its own."""
     banks = [
         row[0]
         for row in conn.execute(
@@ -559,14 +561,18 @@ def record_deposit(
     ).fetchone()
     metadata = {
         "key": key,
-        "kind": "security deposit",
+        "kind": f"{kind} deposit",
         "tenant_id": str(tenant_id),
         "amount": cents(amount),
         "received_on": received_on.isoformat(),
         "reference": reference,
-        "memo": None if who is None else f"Security deposit – {who[0]}, {who[1]}",
+        "memo": None if who is None else f"{kind.capitalize()} deposit – {who[0]}, {who[1]}",
     }
-    deposit = tenant_account(conn, pmc_id, banks[0], "tenant_deposit", tenant_id)
+    opened = conn.execute(
+        "SELECT trust_open_deposit_account(%s, %s, %s, %s)", (pmc_id, banks[0], tenant_id, kind)
+    ).fetchone()
+    assert opened is not None
+    deposit = str(opened[0])
     posted = post(
         conn, pmc_id, key, [(cash_of(conn, banks[0]), deposit, amount)], received_on, metadata
     )
@@ -599,11 +605,22 @@ class Paid(BaseModel):
     bounced: bool
 
 
+# A deposit's kind (migration 0092): each held in its own account.
+DepositKind = Literal["security", "pet", "key"]
+
+
+class Held(BaseModel):
+    kind: DepositKind
+    amount: str
+
+
 class LeaseTenant(BaseModel):
     id: UUID
     name: str
     prepaid: str
     deposit: str
+    # What the deposit is, by kind: the security deposit first; only kinds holding something.
+    deposits: list[Held]
 
 
 class RecurringCharge(BaseModel):
@@ -730,7 +747,14 @@ SELECT lt.lease_id, t.id, t.display_name,
                  WHERE a.tenant_id = t.id AND a.kind = 'prepaid_rent'), 0),
        coalesce((SELECT sum(b.balance) FROM trust_ledger_accounts AS a
                  JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
-                 WHERE a.tenant_id = t.id AND a.kind = 'tenant_deposit'), 0)
+                 WHERE a.tenant_id = t.id AND a.kind = 'tenant_deposit'), 0),
+       coalesce((SELECT json_agg(json_build_object('kind', d.kind, 'amount', d.held::text)
+                                 ORDER BY d.kind <> 'security', d.kind)
+                 FROM (SELECT coalesce(a.deposit_kind, 'security') AS kind, sum(b.balance) AS held
+                       FROM trust_ledger_accounts AS a
+                       JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
+                       WHERE a.tenant_id = t.id AND a.kind = 'tenant_deposit'
+                       GROUP BY 1 HAVING sum(b.balance) <> 0) AS d), '[]')
 FROM trust_lease_tenants AS lt JOIN trust_tenants AS t ON t.id = lt.tenant_id
 WHERE lt.pmc_id = %(pmc)s AND (%(lease)s::uuid IS NULL OR lt.lease_id = %(lease)s)
 ORDER BY t.display_name COLLATE "C", t.id
@@ -831,9 +855,15 @@ def built(
     its latest 12 payments; one lease named: whatever it is, with all of them."""
     names = {"pmc": pmc, "as_of": day, "lease": only}
     tenants: dict[UUID, list[LeaseTenant]] = {}
-    for lease, i, name, prepaid, deposit in conn.execute(TENANTS, names).fetchall():
+    for lease, i, name, prepaid, deposit, kinds in conn.execute(TENANTS, names).fetchall():
         tenants.setdefault(lease, []).append(
-            LeaseTenant(id=i, name=name, prepaid=cents(prepaid), deposit=cents(deposit))
+            LeaseTenant(
+                id=i,
+                name=name,
+                prepaid=cents(prepaid),
+                deposit=cents(deposit),
+                deposits=[Held(kind=k["kind"], amount=cents(Decimal(k["amount"]))) for k in kinds],
+            )
         )
     payments: dict[UUID, list[Paid]] = {}
     for lease, transfer, event_at, amount, reference, method, bounced in conn.execute(
@@ -1352,6 +1382,19 @@ class NewDeposit(BaseModel):
     received_on: date
     reference: Memo | None = None
     bank_account_id: UUID | None = None
+    # A security deposit unless staff say it is a pet or key deposit (migration 0092).
+    kind: DepositKind = "security"
+
+
+# The animals on a tenant's leases in effect or to come, and whether each is an assistance animal
+# (migration 0080), not taken off.
+ANIMALS = """
+SELECT p.assistance_animal FROM trust_lease_pets AS p
+JOIN trust_lease_tenants AS lt ON lt.lease_id = p.lease_id
+JOIN trust_leases AS l ON l.id = p.lease_id
+WHERE p.pmc_id = %s AND lt.tenant_id = %s AND (l.ends_on IS NULL OR l.ends_on >= %s)
+  AND NOT EXISTS (SELECT 1 FROM trust_lease_household_removals AS r WHERE r.pet_id = p.id)
+"""
 
 
 class Posted(BaseModel):
@@ -1369,6 +1412,15 @@ def deposit(session: Staff, conn: Conn, new: NewDeposit) -> Posted:
         is None
     ):
         raise HTTPException(404, "no such tenant")
+    if new.kind == "pet":
+        found = conn.execute(ANIMALS, (session.pmc_id, new.tenant_id, today())).fetchall()
+        animals = [row[0] for row in found]
+        if animals and all(animals):
+            raise HTTPException(
+                409,
+                "the tenant's only animal is an assistance animal, which takes no pet deposit"
+                " (Fair Housing Act)",
+            )
     try:
         return Posted(
             transfers=record_deposit(
@@ -1380,6 +1432,7 @@ def deposit(session: Staff, conn: Conn, new: NewDeposit) -> Posted:
                 new.received_on,
                 new.bank_account_id,
                 new.reference,
+                new.kind,
             )
         )
     except psycopg.errors.CheckViolation as refused:

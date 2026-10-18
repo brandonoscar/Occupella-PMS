@@ -6,8 +6,9 @@ import { RowMenu } from "../components/RowMenu";
 import { Select } from "../components/Select";
 import { Badge } from "../components/Badge";
 import { day, money, usDate } from "../money";
-import type { Bounce, Hold, OpenCharge, Payment, PaymentMethod, RecurringCharge, RentChange, RentLease } from "../rent";
+import type { Bounce, DepositKind, Hold, OpenCharge, Payment, PaymentMethod, RecurringCharge, RentChange, RentLease } from "../rent";
 import {
+  DEPOSIT_KINDS,
   PAYMENT_METHODS,
   bounceSummary,
   chargeLabel,
@@ -309,13 +310,15 @@ export function DepositForm({ lease, record }: { lease: RentLease; record: Recor
   const [tenant, setTenant] = useState(lease.tenants[0]?.id ?? "");
   const [amount, setAmount] = useState("");
   const [on, setOn] = useState(day(new Date()));
+  const [kind, setKind] = useState<DepositKind>("security");
+  const label = DEPOSIT_KINDS.find((k) => k.value === kind)?.label ?? "Deposit";
   return (
     <Form
       className="flex flex-wrap items-end gap-3"
       onSubmit={async (event) => {
         event.preventDefault();
-        const body = { request_id: id, tenant_id: tenant, amount, received_on: on };
-        if (await record("/api/rent/deposits", body, () => `Deposit of ${money(amount)} held.`)) {
+        const body = { request_id: id, tenant_id: tenant, amount, received_on: on, kind };
+        if (await record("/api/rent/deposits", body, () => `${label} of ${money(amount)} held.`)) {
           setId(requestId());
           setAmount("");
         }
@@ -328,6 +331,12 @@ export function DepositForm({ lease, record }: { lease: RentLease; record: Recor
             {t.name}
           </option>
         ))}
+      </Select>
+      {/* A pet or key deposit is held apart from the security deposit (migration 0092); an
+          assistance animal takes no pet deposit, which the API refuses. */}
+      <Select label="Kind of deposit" id={`deposit-kind-${lease.id}`} value={kind}
+        onChange={(e) => setKind(e.target.value as DepositKind)}>
+        {DEPOSIT_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
       </Select>
       <Field label="Deposit received" id={`deposit-${lease.id}`} inputMode="decimal" required
         value={amount} onChange={(e) => setAmount(e.target.value)} />

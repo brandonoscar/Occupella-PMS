@@ -17,6 +17,7 @@ import { Wide } from "../components/Wide";
 import { money, usDate } from "../money";
 import {
   balanceDue,
+  depositKindsLine,
   dueDayLabel,
   dueDayLine,
   holdLine,
@@ -237,13 +238,15 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
 function Summary({ lease, record }: { lease: LeaseDetail; record: Recorder }) {
   const deposit = lease.tenants.reduce((sum, t) => sum + Number(t.deposit), 0).toFixed(2);
   const prepaid = lease.tenants.reduce((sum, t) => sum + Number(t.prepaid), 0).toFixed(2);
+  const kinds = depositKindsLine(lease.tenants);
   return (
     <div className="flex flex-col gap-6">
       <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-base md:grid-cols-5">
         <div><dt className="text-sm text-ink-muted">Term</dt><dd>{termLabel(lease)}</dd></div>
         <div><dt className="text-sm text-ink-muted">Rent</dt><dd>{rentLabel(lease.monthly_rent)}</dd></div>
         <div><dt className="text-sm text-ink-muted">Rent due</dt><dd data-testid="rent-due-day">{dueDayLabel(lease.rent_due_day)}</dd></div>
-        <div><dt className="text-sm text-ink-muted">Deposit held</dt><dd data-testid="deposit-held">{money(deposit)}</dd></div>
+        <div><dt className="text-sm text-ink-muted">Deposit held</dt><dd data-testid="deposit-held">{money(deposit)}</dd>
+          {kinds && <dd className="text-sm text-ink-muted" data-testid="deposit-kinds">{kinds}</dd>}</div>
         <div><dt className="text-sm text-ink-muted">Prepaid rent</dt><dd data-testid="prepaid">{money(prepaid)}</dd></div>
       </dl>
       {lease.rent_changes.length > 0 && (

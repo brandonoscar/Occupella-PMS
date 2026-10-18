@@ -19,8 +19,9 @@ const LEASE: LeaseDetail = {
   id: "l1", property: "Property 1", unit: "Unit 1", property_id: "p1", unit_id: "u1", status: "current",
   starts_on: "2026-01-01", ends_on: null, monthly_rent: "1500.00", rent_changes: [], rent_due_day: 1, due_days: [], renters_insurance: null,
   tenants: [
-    { id: "t1", name: "Tenant 1", prepaid: "50.00", deposit: "1500.00" },
-    { id: "t2", name: "Tenant 2", prepaid: "0.00", deposit: "0.00" },
+    { id: "t1", name: "Tenant 1", prepaid: "50.00", deposit: "1500.00",
+      deposits: [{ kind: "security", amount: "1200.00" }, { kind: "pet", amount: "300.00" }] },
+    { id: "t2", name: "Tenant 2", prepaid: "0.00", deposit: "0.00", deposits: [] },
   ],
   people: [
     { id: "t1", name: "Tenant 1", email: "t1@example.com", phone: "555-555-0101", portal: "active", login_email: "t1@example.com", left_on: null, deposit_to: null },
@@ -120,6 +121,7 @@ describe("LeasePage", () => {
     // Summary: the rent, what is held, what is open, the monthly charges, renters insurance.
     expect(screen.getByText("$1,500.00 a month")).toBeTruthy();
     expect(screen.getByTestId("deposit-held").textContent).toBe("$1,500.00");
+    expect(screen.getByTestId("deposit-kinds").textContent).toBe("Security deposit $1,200.00 · Pet deposit $300.00");
     expect(screen.getByTestId("prepaid").textContent).toBe("$50.00");
     expect(document.body.textContent).toContain("10/06/2026 Late fee: $50.00 open");
     expect(document.body.textContent).toContain("Pet rent: $35.00 a month from 01/01/2026");
@@ -211,14 +213,23 @@ describe("LeasePage", () => {
     fireEvent.change(within(deposit).getByLabelText("Deposit from"), { target: { value: "t2" } });
     fireEvent.change(within(deposit).getByLabelText("Deposit received"), { target: { value: "500.00" } });
     fireEvent.click(within(deposit).getByRole("button", { name: "Record deposit" }));
-    expect(await screen.findByText("Deposit of $500.00 held.")).toBeTruthy();
+    expect(await screen.findByText("Security deposit of $500.00 held.")).toBeTruthy();
+    // A pet deposit, held apart from the security deposit.
+    const pet = panel("Record deposit", true);
+    expect([...(within(pet).getByLabelText("Kind of deposit") as HTMLSelectElement).options].map((o) => o.textContent))
+      .toEqual(["Security deposit", "Pet deposit", "Key deposit"]);
+    fireEvent.change(within(pet).getByLabelText("Kind of deposit"), { target: { value: "pet" } });
+    fireEvent.change(within(pet).getByLabelText("Deposit received"), { target: { value: "300.00" } });
+    fireEvent.click(within(pet).getByRole("button", { name: "Record deposit" }));
+    expect(await screen.findByText("Pet deposit of $300.00 held.")).toBeTruthy();
 
     const calls = posted(fetch);
     expect(calls.map(([path]) => path)).toEqual([
-      "/api/rent/leases/l1/use-prepaid", "/api/rent/leases/l1/charges", "/api/rent/deposits",
+      "/api/rent/leases/l1/use-prepaid", "/api/rent/leases/l1/charges", "/api/rent/deposits", "/api/rent/deposits",
     ]);
     expect(calls[1]?.[1]).toMatchObject({ kind: "credit", amount: "25.00", memo: "Leak repair" });
-    expect(calls[2]?.[1]).toMatchObject({ tenant_id: "t2", amount: "500.00" });
+    expect(calls[2]?.[1]).toMatchObject({ tenant_id: "t2", amount: "500.00", kind: "security" });
+    expect(calls[3]?.[1]).toMatchObject({ tenant_id: "t1", amount: "300.00", kind: "pet" });
   });
 
   it("shows the ledger with its running balance, and marks a payment bounced from its ⋯ menu", async () => {

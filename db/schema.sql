@@ -3685,6 +3685,7 @@ CREATE TABLE public.trust_ledger_accounts (
     tenant_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     vendor_id uuid,
+    deposit_kind text,
     CONSTRAINT trust_ledger_accounts_kind_shape_v2 CHECK ((((kind = 'owner_property'::text) AND (owner_id IS NOT NULL) AND (property_id IS NOT NULL) AND (tenant_id IS NULL) AND (vendor_id IS NULL)) OR ((kind = ANY (ARRAY['tenant_deposit'::text, 'prepaid_rent'::text])) AND (tenant_id IS NOT NULL) AND (owner_id IS NULL) AND (property_id IS NULL) AND (vendor_id IS NULL)) OR ((kind = 'vendor_payable'::text) AND (vendor_id IS NOT NULL) AND (owner_id IS NULL) AND (property_id IS NULL) AND (tenant_id IS NULL)) OR ((kind = ANY (ARRAY['pmc_income'::text, 'bank_cash'::text])) AND (owner_id IS NULL) AND (property_id IS NULL) AND (tenant_id IS NULL) AND (vendor_id IS NULL))))
 );
 
@@ -4047,6 +4048,44 @@ CREATE FUNCTION public.trust_open_charges(p_pmc_id uuid, p_lease_id uuid, p_at t
            - least(o.left_owing, greatest(coalesce(cr.amount, 0) - o.owing_before, 0))
     FROM owing AS o
     LEFT JOIN credits AS cr ON cr.lease_id = o.lease_id
+$$;
+
+
+--
+-- Name: trust_open_deposit_account(uuid, uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_open_deposit_account(p_pmc_id uuid, p_bank_account_id uuid, p_tenant_id uuid, p_deposit_kind text) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_kind text := nullif(p_deposit_kind, 'security');
+    v_ledger_account_id text;
+BEGIN
+    IF p_deposit_kind IS NULL OR p_deposit_kind NOT IN ('security', 'pet', 'key') THEN
+        RAISE EXCEPTION 'trust: a deposit is a security, pet or key deposit, not %',
+            coalesce(p_deposit_kind, 'none')
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT t.ledger_account_id INTO v_ledger_account_id FROM trust_ledger_accounts AS t
+    WHERE t.pmc_id = p_pmc_id AND t.bank_account_id = p_bank_account_id
+      AND t.kind = 'tenant_deposit' AND t.tenant_id = p_tenant_id
+      AND t.deposit_kind IS NOT DISTINCT FROM v_kind;
+    IF FOUND THEN
+        RETURN v_ledger_account_id;
+    END IF;
+
+    SELECT a.id INTO v_ledger_account_id
+    FROM pgledger_create_account('tenant_deposit', 'USD', allow_negative_balance => false) AS a;
+    -- The account's own checks (and its trust bank account's kind) hold as for any other.
+    INSERT INTO trust_ledger_accounts (
+        ledger_account_id, pmc_id, bank_account_id, kind, tenant_id, deposit_kind
+    ) VALUES (
+        v_ledger_account_id, p_pmc_id, p_bank_account_id, 'tenant_deposit', p_tenant_id, v_kind
+    );
+    RETURN v_ledger_account_id;
+END;
 $$;
 
 
@@ -5188,7 +5227,7 @@ BEGIN
                 USING ERRCODE = 'check_violation';
         END IF;
         FOR v_deposit IN
-            SELECT t.ledger_account_id AS account, t.bank_account_id, a.balance
+            SELECT t.ledger_account_id AS account, t.bank_account_id, t.deposit_kind, a.balance
             FROM trust_ledger_accounts AS t
             JOIN pgledger_accounts AS a ON a.id = t.ledger_account_id
             WHERE t.pmc_id = p_pmc_id AND t.tenant_id = p_tenant_id
@@ -5196,15 +5235,11 @@ BEGIN
             ORDER BY t.ledger_account_id
             FOR UPDATE OF a
         LOOP
-            SELECT t.ledger_account_id INTO v_to FROM trust_ledger_accounts AS t
-            WHERE t.bank_account_id = v_deposit.bank_account_id AND t.kind = 'tenant_deposit'
-              AND t.tenant_id = p_deposit_to;
-            IF NOT FOUND THEN
-                v_to := trust_open_ledger_account(
-                    p_pmc_id, v_deposit.bank_account_id, 'tenant_deposit',
-                    p_tenant_id => p_deposit_to
-                );
-            END IF;
+            -- Into the staying tenant's deposit of the same kind (migration 0092).
+            v_to := trust_open_deposit_account(
+                p_pmc_id, v_deposit.bank_account_id, p_deposit_to,
+                coalesce(v_deposit.deposit_kind, 'security')
+            );
             -- Within one trust bank account: its cash doesn't move.
             PERFORM pgledger_create_transfers(
                 ARRAY[(v_deposit.account, v_to, v_deposit.balance)::transfer_request],
@@ -6260,13 +6295,23 @@ BEGIN
     END IF;
 
     RETURN QUERY
-    WITH held AS (
-        -- Each tenant's deposit when it was returned: what was kept from it and returned.
-        SELECT tn.display_name AS tenant, sum(x.amount) AS amount
+    WITH kinds AS (
+        -- Each line with its tenant and the kind of deposit it came from (the transfer's).
+        SELECT x.*, tn.display_name || CASE a.deposit_kind
+                                          WHEN 'pet' THEN ' (pet deposit)'
+                                          WHEN 'key' THEN ' (key deposit)'
+                                          ELSE '' END AS whose
         FROM trust_deposit_return_lines AS x
         JOIN trust_tenants AS tn ON tn.id = x.tenant_id
+        JOIN pgledger_transfers AS tr ON tr.id = x.transfer_id
+        JOIN trust_ledger_accounts AS a ON a.ledger_account_id = tr.from_account_id
         WHERE x.lease_id = p_lease_id
-        GROUP BY tn.id, tn.display_name
+    ),
+    held AS (
+        -- Each tenant's deposit of each kind when it was returned: what was kept and returned.
+        SELECT k.whose AS tenant, sum(k.amount) AS amount
+        FROM kinds AS k
+        GROUP BY k.tenant_id, k.whose
     ),
     lines AS (
         SELECT 0 AS section, 1 AS n, 'PMC' AS item, p.display_name AS detail,
@@ -6322,10 +6367,9 @@ BEGIN
         UNION ALL
         SELECT 3, 1, 'kept, total', NULL, v_done.kept, NULL, NULL
         UNION ALL
-        SELECT 4, 0, 'returned to', tn.display_name, x.amount, NULL, x.line_no
-        FROM trust_deposit_return_lines AS x
-        JOIN trust_tenants AS tn ON tn.id = x.tenant_id
-        WHERE x.lease_id = p_lease_id AND x.charge_id IS NULL
+        SELECT 4, 0, 'returned to', k.whose, k.amount, NULL, k.line_no
+        FROM kinds AS k
+        WHERE k.charge_id IS NULL
         UNION ALL
         SELECT 5, 0, 'returned, total', NULL, v_done.returned, NULL, NULL
         UNION ALL
@@ -7653,7 +7697,7 @@ BEGIN
 
     RETURN QUERY
     WITH balances AS (
-        SELECT t.ledger_account_id AS id, t.kind, t.bank_account_id,
+        SELECT t.ledger_account_id AS id, t.kind, t.deposit_kind, t.bank_account_id,
                b.display_name || ' (' || b.kind || ')' AS bank_name,
                tn.display_name AS tenant_name, pr.display_name AS property_name,
                coalesce((
@@ -7678,7 +7722,11 @@ BEGIN
         SELECT 0, NULL, NULL, 1, NULL, NULL, 'as of',
                to_char(p_as_of, 'YYYY-MM-DD') || ', end of day UTC', NULL, NULL
         UNION ALL
-        SELECT 1, b.bank_name, b.bank_account_id, 0, b.tenant_name, b.id, 'deposit',
+        -- A tenant's security deposit first, then their key and pet deposits.
+        SELECT 1, b.bank_name, b.bank_account_id, 0, b.tenant_name,
+               CASE b.deposit_kind WHEN 'key' THEN '1' WHEN 'pet' THEN '2' ELSE '0' END || b.id,
+               CASE b.deposit_kind WHEN 'pet' THEN 'pet deposit' WHEN 'key' THEN 'key deposit'
+                                   ELSE 'deposit' END,
                b.tenant_name, b.property_name, b.balance
         FROM balances AS b
         WHERE b.kind = 'tenant_deposit' AND b.balance <> 0
@@ -8892,7 +8940,10 @@ BEGIN
         JOIN trust_lease_tenants AS lt ON lt.tenant_id = t.tenant_id
         JOIN trust_tenants AS tn ON tn.id = t.tenant_id
         WHERE lt.lease_id = p_lease_id AND t.kind = 'tenant_deposit'
-        ORDER BY tn.display_name COLLATE "C", t.tenant_id, t.ledger_account_id
+        -- Each tenant's security deposit first, then their key and pet deposits (0092).
+        ORDER BY tn.display_name COLLATE "C", t.tenant_id,
+                 CASE t.deposit_kind WHEN 'key' THEN 1 WHEN 'pet' THEN 2 ELSE 0 END,
+                 t.ledger_account_id
     LOOP
         v_take := least(v_keep, v_deposit.balance);
         v_rest := v_take;
@@ -13376,6 +13427,14 @@ ALTER TABLE ONLY public.trust_leasing_fees
 
 
 --
+-- Name: trust_ledger_accounts trust_ledger_accounts_deposit_kind; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_ledger_accounts
+    ADD CONSTRAINT trust_ledger_accounts_deposit_kind CHECK (((deposit_kind IS NULL) OR ((kind = 'tenant_deposit'::text) AND (deposit_kind = ANY (ARRAY['pet'::text, 'key'::text]))))) NOT VALID;
+
+
+--
 -- Name: trust_ledger_accounts trust_ledger_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15024,7 +15083,7 @@ CREATE UNIQUE INDEX trust_ledger_accounts_one_prepaid_rent ON public.trust_ledge
 -- Name: trust_ledger_accounts_one_tenant_deposit; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX trust_ledger_accounts_one_tenant_deposit ON public.trust_ledger_accounts USING btree (bank_account_id, tenant_id) WHERE (kind = 'tenant_deposit'::text);
+CREATE UNIQUE INDEX trust_ledger_accounts_one_tenant_deposit ON public.trust_ledger_accounts USING btree (bank_account_id, tenant_id, COALESCE(deposit_kind, 'security'::text)) WHERE (kind = 'tenant_deposit'::text);
 
 
 --
@@ -22067,4 +22126,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261018000088'),
     ('20261018000089'),
     ('20261018000090'),
-    ('20261018000091');
+    ('20261018000091'),
+    ('20261018000092');

@@ -252,6 +252,33 @@ state lets it charge a lease-break fee and how much.
 a statement and a deadline anyway), inspecting the old unit and charging what was damaged there on
 the old lease, and the written agreement itself.
 
+### A pet or key deposit (migration 0092)
+
+**The rule.**
+- A refundable deposit is held in trust and returned under the deposit rules above whatever the
+  lease calls it: a pet or key deposit is money the tenant can get back, so it is a security
+  deposit for the trust account, the itemized statement and the deadline. California's Civil Code
+  1950.5(b) defines "security" as any payment, fee, deposit or charge meant to cover what the
+  tenant may owe, and its cap (one month's rent for most landlords since AB 12, July 1, 2024)
+  counts every such deposit together, a pet deposit included. Sources read: secondary summaries
+  (turbotenant.com, landlordstudio.com, lucidrents.com, a LAFLA webinar deck); the statute's own
+  text on leginfo.legislature.ca.gov was not read: NOT VERIFIED. Other states' caps differ and
+  are not built (state rules beyond the no-negative rule are out of scope).
+- An assistance animal takes no pet deposit (the Fair Housing Act, above).
+
+**What the PMS does.**
+- Staff record a security, pet or key deposit; each kind is held in a deposit account of its own
+  in the security-deposit trust account, never the operating one. The lease, the register and the
+  deposit return statement name each kind, and the lease shows what all of them come to, so a
+  company can hold the total to its state's cap.
+- A pet deposit is refused for a tenant whose only animals on their leases are assistance animals.
+- A tenant leaving moves each kind to the staying tenant's of the same kind. At move-out the return
+  keeps what is owed from each tenant's security deposit first, then the key and pet deposits, and
+  returns the rest of each.
+
+**Left to the company.** Its state's cap and whether it allows a separate pet or key deposit at
+all, and any non-refundable fee (which the PMS records as a charge, not a deposit).
+
 ## A bill shared across properties, and the company's markup on a bill (migration 0083)
 
 **The rule.** A manager is the owner's agent: it pays out an owner's trust money only for that

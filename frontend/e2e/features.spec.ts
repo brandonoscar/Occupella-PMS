@@ -679,7 +679,7 @@ test("staff find a tenant and an owner, keep their contact details and a vendor'
   await expect(page.getByRole("heading", { level: 1, name: "Demo Owner B" })).toBeVisible();
 });
 
-test("staff add a fee, a credit and a monthly charge to a lease, take a deposit and prepaid rent, and a bounce undoes a payment and charges the NSF fee", async ({
+test("staff add a fee, a credit and a monthly charge to a lease, take a deposit and a pet deposit and prepaid rent, and a bounce undoes a payment and charges the NSF fee", async ({
   page,
 }) => {
   const people = seed.features.recurring!;
@@ -782,12 +782,20 @@ test("staff add a fee, a credit and a monthly charge to a lease, take a deposit 
   await expect(lease).toContainText(`Parking stops ${us(nextMonth)}.`);
   await expect(lease).toContainText(`Parking: $40.00 a month from ${us(nextMonth)}, stops ${us(nextMonth)}`);
 
-  // A deposit held for the tenant.
-  const deposit = await leasePanel(page, "Record deposit");
+  // A deposit held for the tenant, then a pet deposit held apart from it.
+  let deposit = await leasePanel(page, "Record deposit");
   await deposit.getByLabel("Deposit received", { exact: true }).fill("100.00");
   await deposit.getByRole("button", { name: "Record deposit" }).click();
-  await expect(lease).toContainText("Deposit of $100.00 held.");
+  await expect(lease).toContainText("Security deposit of $100.00 held.");
   await expect(lease.getByTestId("deposit-held")).toHaveText("$1,280.00");
+  await expect(lease.getByTestId("deposit-kinds")).toHaveCount(0);
+  deposit = await leasePanel(page, "Record deposit");
+  await deposit.getByLabel("Kind of deposit").selectOption("pet");
+  await deposit.getByLabel("Deposit received", { exact: true }).fill("250.00");
+  await deposit.getByRole("button", { name: "Record deposit" }).click();
+  await expect(lease).toContainText("Pet deposit of $250.00 held.");
+  await expect(lease.getByTestId("deposit-held")).toHaveText("$1,530.00");
+  await expect(lease.getByTestId("deposit-kinds")).toHaveText("Security deposit $1,280.00 · Pet deposit $250.00");
 
   // A payment that bounces is owed again, with the property's NSF fee.
   charge = await leasePanel(page, "Enter charge");

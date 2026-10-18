@@ -281,7 +281,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `trust_post_opening_balances`, `trust_record_owner_contribution`,
   `trust_complete_lease_offer`, `trust_match_bank_lines`, `trust_unmatch_bank_lines`,
   `trust_prepare_bank_reconciliation`, `trust_approve_bank_reconciliation`,
-  `trust_match_cutover_opening`, `trust_return_deposit`, `trust_transfer_lease`, `trust_propose_journal_entry`,
+  `trust_match_cutover_opening`, `trust_return_deposit`, `trust_transfer_lease`, `trust_open_deposit_account`, `trust_propose_journal_entry`,
   `trust_post_journal_entry` and `trust_decline_journal_entry`, which run as the table owner (`trust_charge_rent_due`, `trust_enter_recurring_bills` and
   `trust_run_rent` run with the app's own grants). It can't call pgledger's posting functions: every posting it makes goes through
   `trust_post_transfers`, which takes an idempotency key, unique per PMC, so it is safe to
@@ -764,6 +764,15 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   first, each lease's for its own owner; a lease moved from has no return of its own and leaves
   Move-outs. The lease page's ⋯ menu has Move to another unit (`POST /api/move-out/<id>/transfer`,
   area move-out); a lease shows what it carries and where its tenants went.
+- Deposit kinds (migration 0092, `docs/law.md`, the founder's review q043): a tenant's pet or key
+  deposit is held in a deposit account of its own beside their security deposit
+  (`trust_ledger_accounts.deposit_kind`, NULL for the security deposit; one of each kind per tenant
+  and trust bank account, always in the security-deposit one), opened by
+  `trust_open_deposit_account`. Staff pick the kind on Record deposit (`POST /api/rent/deposits`,
+  `kind`); a pet deposit is refused for a tenant whose only animals are assistance animals. The
+  lease shows each kind (`tenants[].deposits`), the register and the return's statement name it,
+  a leaving tenant's deposits move to the staying tenant's of the same kind, and
+  `trust_return_deposit` keeps from each tenant's security deposit first, then key, then pet.
 - Vendor insurance and inspections (migration 0058): a vendor's policies
   (`trust_vendor_insurance`: coverage, carrier, number, the days it runs, a limit; a renewal is
   a new policy), and a lease's move-in and move-out inspections (`trust_inspections`, their

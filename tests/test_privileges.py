@@ -289,6 +289,7 @@ RENAMEABLE = [
 FUNCTIONS = {
     # The write paths: the app role and nobody else.
     "trust_open_ledger_account(uuid,uuid,text,uuid,uuid,uuid)": {"trust_app"},
+    "trust_open_deposit_account(uuid,uuid,uuid,text)": {"trust_app"},
     "trust_post_transfers(uuid,text,transfer_request[],timestamptz,jsonb)": {"trust_app"},
     "trust_open_vendor_account(uuid,uuid,uuid)": {"trust_app"},
     "trust_open_lease(uuid,uuid,date,date,numeric,uuid[])": {"trust_app"},
@@ -493,6 +494,7 @@ MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUB
 # Run as the table owner, so trust_app needs no write grant of its own.
 SECURITY_DEFINER = {
     "trust_open_ledger_account(uuid,uuid,text,uuid,uuid,uuid)",
+    "trust_open_deposit_account(uuid,uuid,uuid,text)",
     "trust_post_transfers(uuid,text,transfer_request[],timestamptz,jsonb)",
     "trust_open_vendor_account(uuid,uuid,uuid)",
     "trust_approve_reconciliation(uuid,uuid,timestamptz,timestamptz,numeric,text,text)",

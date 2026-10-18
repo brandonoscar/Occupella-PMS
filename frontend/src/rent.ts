@@ -29,7 +29,27 @@ export const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
 export function methodLabel(method: PaymentMethod): string {
   return PAYMENT_METHODS.find((m) => m.value === method)?.label ?? method;
 }
-export type LeaseTenant = { id: string; name: string; prepaid: string; deposit: string };
+// A deposit's kind (migration 0092): each held apart, the security deposit first.
+export type DepositKind = "security" | "pet" | "key";
+export const DEPOSIT_KINDS: { value: DepositKind; label: string }[] = [
+  { value: "security", label: "Security deposit" },
+  { value: "pet", label: "Pet deposit" },
+  { value: "key", label: "Key deposit" },
+];
+export type Held = { kind: DepositKind; amount: string };
+// deposit is everything held for the tenant; deposits the same by kind, only kinds holding some.
+export type LeaseTenant = { id: string; name: string; prepaid: string; deposit: string; deposits: Held[] };
+
+// What the tenants' deposits are, by kind, when any is not a security deposit:
+// "Security deposit $1,000.00 · Pet deposit $300.00"; nothing when all are.
+export function depositKindsLine(tenants: LeaseTenant[]): string {
+  const held = DEPOSIT_KINDS.map((k) => ({
+    ...k,
+    amount: sumMoney(tenants.flatMap((t) => t.deposits.filter((d) => d.kind === k.value).map((d) => d.amount))),
+  })).filter((k) => Number(k.amount) !== 0);
+  if (held.every((k) => k.value === "security")) return "";
+  return held.map((k) => `${k.label} ${money(k.amount)}`).join(" · ");
+}
 // A fee the lease owes every month besides its rent, or a credit it gets every month. ends_on is
 // the first due date it is no longer charged for.
 export type RecurringCharge = {

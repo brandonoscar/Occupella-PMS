@@ -1160,3 +1160,15 @@ tests = [
   "tests/test_lease_transfers.py::test_the_tenants_agree_in_writing_to_their_deposit_staying_held",
   "tests/api/test_lease_transfers_api.py::test_staff_move_a_lease_and_its_payments_pay_the_old_owner_first",
 ]
+
+[[invariant]]
+id = "deposit-kinds-held-moved-and-returned-apart"
+statement = "A tenant's pet or key deposit is held in a deposit account of its own beside their security deposit, one of each kind per tenant and trust bank account, always in the security-deposit trust bank account (migration 0092). A tenant who leaves moves every kind to the staying tenant's of the same kind; the return keeps what the lease owes from the tenants in name order and from each one's security deposit first, returns the rest of each kind and names each kind on the statement and the register; an assistance animal takes no pet deposit."
+tests = [
+  "tests/properties/test_deposit_kind_properties.py::test_each_kind_of_deposit_is_held_moved_and_returned_as_the_model_says",
+  "tests/test_deposit_kinds.py::test_a_deposit_is_of_a_known_kind_and_only_a_tenant_deposit_has_one",
+  "tests/test_deposit_kinds.py::test_a_leaving_tenants_deposits_move_to_the_staying_tenants_of_the_same_kind",
+  "tests/test_deposit_kinds.py::test_the_statement_and_the_register_name_each_kind",
+  "tests/api/test_deposit_kinds_api.py::test_each_kind_of_deposit_is_held_apart_and_the_lease_shows_each",
+  "tests/api/test_deposit_kinds_api.py::test_an_assistance_animal_takes_no_pet_deposit",
+]
