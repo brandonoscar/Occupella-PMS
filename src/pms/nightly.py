@@ -31,7 +31,7 @@ from uuid import UUID
 import psycopg
 from psycopg import sql
 
-from pms import email
+from pms import email, notices
 
 log = logging.getLogger("pms.nightly")
 
@@ -48,10 +48,19 @@ class Ran:
     recurring: int
     late_fees: int
     bills: int
+    # Rent reminders, late notices and owner statements written (src/pms/notices.py).
+    emails: int = 0
 
 
-def run_pmc(conn: psycopg.Connection[Any], pmc_id: UUID, day: date, public_url: str) -> Ran:
-    """One PMC's run for a day, in one transaction."""
+def run_pmc(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    day: date,
+    public_url: str,
+    sending: bool = False,
+) -> Ran:
+    """One PMC's run for a day, in one transaction. While the server sends email, it also writes
+    the rent reminders, late notices and owner statements the company's settings ask for."""
     with conn.transaction():
         made = conn.execute(
             "SELECT trust_run_rent(%s, %s, %s)", (pmc_id, day.replace(day=1), day)
@@ -71,7 +80,9 @@ def run_pmc(conn: psycopg.Connection[Any], pmc_id: UUID, day: date, public_url: 
             (pmc_id,),
         ).fetchall():
             email.write_bill_approval(conn, pmc_id, bill, public_url)
-    return Ran(pmc_id, run[0], run[1], run[2], entered[0])
+        written = notices.write_scheduled(conn, pmc_id, day, public_url) if sending else None
+    emails = 0 if written is None else sum(vars(written).values())
+    return Ran(pmc_id, run[0], run[1], run[2], entered[0], emails)
 
 
 def run_all(
@@ -79,6 +90,7 @@ def run_all(
     day: date,
     public_url: str,
     pmcs: Iterable[UUID] | None = None,
+    sending: bool = False,
 ) -> list[Ran]:
     """Every PMC's run for a day (or only those named). One that fails is logged and left for
     the next run; the others still run."""
@@ -88,7 +100,7 @@ def run_all(
     done = []
     for pmc_id in pmcs:
         try:
-            done.append(run_pmc(conn, pmc_id, day, public_url))
+            done.append(run_pmc(conn, pmc_id, day, public_url, sending))
         except psycopg.Error:
             log.exception("the nightly run of PMC %s failed; the next run tries again", pmc_id)
     return done
@@ -141,7 +153,9 @@ class Scheduler:
         with psycopg.connect(self.database_url) as conn:
             conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(self.role)))
             conn.commit()
-            done = run_all(conn, self.clock().date(), self.public_url, self.pmcs)
+            done = run_all(
+                conn, self.clock().date(), self.public_url, self.pmcs, self.sender is not None
+            )
             if self.sender is not None:
                 conn.autocommit = True
                 email.deliver_pending(conn, self.sender)
@@ -169,11 +183,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
         conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier("trust_app")))
         conn.commit()
-        done = run_all(conn, datetime.now(UTC).date(), public_url)
+        # What it writes to the outbox goes out with `python -m pms.email deliver`.
+        sending = bool(os.environ.get("PMS_EMAIL_SENDER"))
+        done = run_all(conn, datetime.now(UTC).date(), public_url, sending=sending)
     rents = sum(r.rents for r in done)
     late_fees = sum(r.late_fees for r in done)
     bills = sum(r.bills for r in done)
-    print(f"{len(done)} companies: {rents} rents, {late_fees} late fees, {bills} bills")
+    emails = sum(r.emails for r in done)
+    print(
+        f"{len(done)} companies: {rents} rents, {late_fees} late fees, {bills} bills,"
+        f" {emails} emails"
+    )
     return 0
 
 

@@ -51,6 +51,7 @@ TABLES = {
     "trust_bill_declines": {"SELECT", "INSERT"},
     "trust_emails": {"SELECT", "INSERT"},
     "trust_email_deliveries": {"SELECT", "INSERT"},
+    "trust_email_settings": {"SELECT", "INSERT"},
     "trust_bill_payments": {"SELECT"},  # written only by trust_set_aside_bill, trust_pay_bill
     "trust_work_orders": {"SELECT", "INSERT"},
     "trust_work_order_steps": {"SELECT", "INSERT"},

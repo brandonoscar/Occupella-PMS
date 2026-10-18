@@ -30,8 +30,36 @@ of email, built in two steps. This first step (migration 0076):
 - **Who may.** Writing email is an area of its own for custom roles ("email to tenants, owners and
   vendors"); every staff member reads the tabs.
 
-The second step adds the emails the PMS writes by itself: rent reminders, late notices, monthly
-owner statements, vendor work-order notices and applicants' notices.
+The second step (migration 0077) adds the emails the PMS writes by itself. Each one is off until
+the company turns it on in Settings, Company setup (Automatic emails), and none is written while
+the server sends no email, so nothing piles up to go out late:
+
+- **Rent reminders**, some days before the first of the month (1 to 15): to each tenant of each
+  lease in effect on that first, with the monthly rent, what is owed already, and a lease ending
+  in that month said so. Once per tenant, lease and due day.
+- **Late fee notices**: to each tenant of a lease the run just charged a late fee, with what was
+  unpaid and what is owed now. Once per tenant and fee; a fee charged before notices were on gets
+  none.
+- **Monthly owner statements**, from a day of the month the company picks (1 to 28): last month's
+  statement in brief (opening balance, money in, money out, closing balance, all properties
+  together) to each owner with a property account, with a link to the portal for the whole
+  statement, or, with no portal login, a line to ask the company for it. Once per owner and month.
+- **Work orders to vendors**: when one is assigned to a vendor or their visit scheduled, what and
+  where it is, its priority, the day it is due, the day of the visit and whether they may let
+  themselves in. Once per step. No tenant's contact details go to the vendor.
+- **Adverse action notices to applicants**: when a decline or a conditional approval rests on a
+  screening, its notice (the same text as its PDF: the reasons, the agency, that the agency did
+  not decide and can't say why, the free copy within 60 days and the right to dispute) to each
+  applicant at the email they applied with. Once per applicant and application; the applicant's
+  page lists them with whether each went.
+
+The nightly run (and an admin's Run rent now) writes the first three, in the run's own
+transaction after it charges; the other two are written in the request that records the step or
+the decision. A lease under a payment hold (an eviction filed) gets no reminder or late notice:
+during an eviction, what goes to the tenant is for the company and its lawyer to decide. What each email is about is
+on its row and a unique index keeps each once, so a run again, or two at once, writes nothing
+new. Tenants and owners are written at their contact email, else their portal login's; vendors at
+their contact email; anyone with none gets none.
 
 ## How a sign-in link is kept
 

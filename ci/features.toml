@@ -570,3 +570,14 @@ operations = [
 browser = [
   "features.spec.ts › staff email a tenant from their page and every tenant of a property, an owner resets a forgotten password by email, and each email shows on the person's Email tab",
 ]
+
+[[feature]]
+id = "automatic-email"
+statement = "Staff turn on, in Company setup, the emails the PMS writes by itself while the server sends email: rent reminders some days before the first, a notice when a late fee is charged, each owner's statement for last month from a day of the month, a vendor's work order when assigned or scheduled, and each applicant's adverse action notice. Each is written once, in the run or the change that causes it, and kept on the person's Email tab with whether it went (docs/adr/0007-email.md)."
+operations = [
+  "GET /api/emails/settings",
+  "POST /api/emails/settings",
+]
+browser = [
+  "features.spec.ts › staff turn on the emails the PMS writes by itself, and a run of rent sends each owner last month's statement onto their Email tab",
+]

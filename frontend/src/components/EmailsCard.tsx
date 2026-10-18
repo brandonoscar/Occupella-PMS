@@ -14,7 +14,9 @@ import { SidePanel } from "./SidePanel";
 export type EmailAbout = "tenant" | "owner" | "vendor";
 export type EmailLine = {
   id: string;
-  kind: "message" | "invite" | "password_reset" | "bill_approval";
+  kind:
+    | "message" | "invite" | "password_reset" | "bill_approval"
+    | "rent_reminder" | "late_notice" | "owner_statement" | "work_order" | "adverse_action";
   to: string;
   subject: string;
   body: string;
@@ -29,6 +31,11 @@ const KIND: Record<EmailLine["kind"], string> = {
   invite: "Portal invite",
   password_reset: "Password reset",
   bill_approval: "Bill waiting for approval",
+  rent_reminder: "Rent reminder",
+  late_notice: "Late fee notice",
+  owner_statement: "Monthly statement",
+  work_order: "Work order",
+  adverse_action: "Adverse action notice",
 };
 const STATUS: Record<EmailLine["status"], { word: string; tone: BadgeTone }> = {
   sent: { word: "Sent", tone: "positive" },
@@ -72,10 +79,12 @@ export function WriteEmail({ title, onSend, onClose, note }: {
 }
 
 // A person's Email tab (ADR 0007): every email the PMS wrote them, newest first (what staff
-// wrote, portal invites, password resets, an owner's bills waiting for approval), each with
-// whether it went, and Write email. An invite's link is never kept, so it isn't shown.
+// wrote, portal invites, password resets, an owner's bills waiting for approval, and what the PMS
+// writes by itself), each with whether it went, and Write email. An invite's link is never kept,
+// so it isn't shown. An application's applicants are written to only by the PMS itself (their
+// adverse action notice), so theirs has no Write email.
 export function EmailsCard({ about, aboutId, name, emailOn }: {
-  about: EmailAbout;
+  about: EmailAbout | "application";
   aboutId: string;
   name: string;
   emailOn?: boolean;
@@ -106,8 +115,10 @@ export function EmailsCard({ about, aboutId, name, emailOn }: {
 
   return (
     <Card title="Email">
-      <div className="mb-3"><Button type="button" variant="secondary" onClick={() => setWriting(true)}>Write email</Button></div>
-      {emailOn === false && (
+      {about !== "application" && (
+        <div className="mb-3"><Button type="button" variant="secondary" onClick={() => setWriting(true)}>Write email</Button></div>
+      )}
+      {emailOn === false && about !== "application" && (
         <Notice tone="info">This server sends no email yet: what you write waits until it does.</Notice>
       )}
       <Said>{said}</Said>

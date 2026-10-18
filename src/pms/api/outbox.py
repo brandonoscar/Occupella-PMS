@@ -13,6 +13,9 @@ from pms import email
 # The portal's address for the request being served: the app's middleware sets it from the
 # server's PMS_PUBLIC_URL. Code that calls a route itself (pms.demo) gets the default.
 PUBLIC_URL: ContextVar[str] = ContextVar("pms_public_url", default="http://localhost:8000")
+# Whether the server sends email (PMS_EMAIL_SENDER is set): the emails the PMS writes by itself
+# (src/pms/notices.py) are written only while it does. Code that calls a route itself sends none.
+SENDING: ContextVar[bool] = ContextVar("pms_sending", default=False)
 
 
 def deliver(pool: ConnectionPool[Any], sender: email.Sender) -> None:

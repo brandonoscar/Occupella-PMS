@@ -442,8 +442,8 @@ def test_the_founders_seed_puts_something_on_every_list(conn, app_conn, built):
 
 def test_the_books_alone_leave_every_other_page_for_the_feature_tests(conn, app_conn):
     # Each browser test of a feature starts from the books (frontend/e2e/seed.py): no broker
-    # named, no policy, inspection, budget, rent change, insurance terms, role, entry or company
-    # profile yet.
+    # named, no policy, inspection, budget, rent change, insurance terms, role, entry, company
+    # profile or email settings yet.
     books = demo.books(app_conn)
 
     for table in (
@@ -456,6 +456,7 @@ def test_the_books_alone_leave_every_other_page_for_the_feature_tests(conn, app_
         "trust_renters_insurance_terms",
         "trust_journal_entries",
         "trust_company_profiles",
+        "trust_email_settings",
     ):
         assert conn.execute(
             f"SELECT count(*) FROM {table} WHERE pmc_id = %s", (books.pmc_id,)

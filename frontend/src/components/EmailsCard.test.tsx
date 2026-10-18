@@ -96,6 +96,36 @@ describe("EmailsCard", () => {
     expect(await screen.findByText("Email to t@example.com waits to send.")).toBeTruthy();
   });
 
+  it("names each email the PMS writes by itself", async () => {
+    const at = "2026-10-27T06:00:00Z";
+    const line = (id: string, kind: EmailLine["kind"], subject: string): EmailLine =>
+      ({ id, kind, to: "t@example.com", subject, body: "x", at, by: null, status: "sent", error: null });
+    server([
+      line("a", "rent_reminder", "Rent reminder: due 11/01/2026"),
+      line("b", "late_notice", "A late fee of $50.00 was charged"),
+      line("c", "owner_statement", "Your statement for September 2026"),
+      line("d", "work_order", "Work order #1 at Property 1: Gate stuck"),
+    ]);
+    render(<EmailsCard about="tenant" aboutId="t1" name="Tenant 1" />);
+    const items = within(await screen.findByRole("list", { name: "Email, Tenant 1" })).getAllByRole("listitem");
+    expect(items.map((item) => item.querySelectorAll("p")[1]?.textContent?.split(" to ")[0])).toEqual([
+      "Rent reminder", "Late fee notice", "Monthly statement", "Work order",
+    ]);
+  });
+
+  it("lists an application's notices with no Write email", async () => {
+    const fetch = server([{
+      id: "n1", kind: "adverse_action", to: "a@example.com", subject: "About your rental application: Cedar House, Unit 2",
+      body: "Your application was declined.", at: "2026-10-16T15:00:00Z", by: null, status: "waiting", error: null,
+    }]);
+    render(<EmailsCard about="application" aboutId="app1" name="Applicant 1" emailOn={false} />);
+    const list = await screen.findByRole("list", { name: "Email, Applicant 1" });
+    expect(list.textContent).toContain("Adverse action notice to a@example.com · Sent by the PMS");
+    expect(screen.queryByRole("button", { name: "Write email" })).toBeNull();
+    expect(screen.queryByText(/sends no email yet/)).toBeNull();
+    expect(fetch.mock.calls[0]?.[0]).toBe("/api/emails?about=application&about_id=app1");
+  });
+
   it("says when a person's email can't be read", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));
     render(<EmailsCard about="tenant" aboutId="t1" name="Tenant 1" />);

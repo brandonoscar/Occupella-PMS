@@ -37,6 +37,13 @@ function server(found: Application = APPLICATION, refuse: Record<string, string>
       return new Response(JSON.stringify({ items: path.includes("show=withdrawn") ? [] : [found], total: 1, page: 1, per_page: 50 }));
     }
     if (path === "/api/property-groups") return new Response("[]");
+    if (path === "/api/emails?about=application&about_id=a1") {
+      return new Response(JSON.stringify([{
+        id: "e1", kind: "adverse_action", to: "a@example.com", subject: "About your rental application: Cedar House, Unit 2",
+        body: "Your application was approved on conditions: A co-signer", at: "2026-10-13T10:00:00Z", by: null,
+        status: "sent", error: null,
+      }]));
+    }
     if (path.startsWith("/api/properties")) return new Response(JSON.stringify({ items: [], total: 0, page: 1, per_page: 200 }));
     return new Response(JSON.stringify({ detail: path }), { status: 404 });
   });
@@ -163,6 +170,9 @@ describe("ApplicantPage", () => {
     expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
     expect(screen.getByTestId("decision").textContent).toContain("Approved on conditions 10/13/2026 10:00 UTC: A co-signer");
     expect(screen.getByRole("link", { name: "Notice (PDF)" }).getAttribute("href")).toBe("/api/leasing/applications/a1/notice");
+    // The notice as it was emailed to each applicant, with whether it went.
+    const emailed = await screen.findByRole("list", { name: "Email, Applicant A, Applicant B" });
+    expect(emailed.textContent).toContain("Adverse action notice to a@example.com · Sent by the PMS");
   });
 
   it("shows a withdrawn application's withdrawal and no work left on it", async () => {

@@ -9290,6 +9290,25 @@ CREATE TABLE public.trust_email_deliveries (
 
 
 --
+-- Name: trust_email_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_email_settings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    rent_reminder_days integer,
+    late_notices boolean NOT NULL,
+    owner_statement_day integer,
+    work_order_notices boolean NOT NULL,
+    adverse_action_notices boolean NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_email_settings_owner_statement_day_check CHECK (((owner_statement_day >= 1) AND (owner_statement_day <= 28))),
+    CONSTRAINT trust_email_settings_rent_reminder_days_check CHECK (((rent_reminder_days >= 1) AND (rent_reminder_days <= 15)))
+);
+
+
+--
 -- Name: trust_emails; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9308,6 +9327,12 @@ CREATE TABLE public.trust_emails (
     staff_id uuid,
     sent_by uuid,
     needs_link boolean DEFAULT false NOT NULL,
+    lease_id uuid,
+    charge_id uuid,
+    period date,
+    work_order_step_id uuid,
+    application_id uuid,
+    applicant_id uuid,
     CONSTRAINT trust_emails_body_check CHECK (((body <> ''::text) AND (length(body) <= 10000))),
     CONSTRAINT trust_emails_check CHECK (((kind = 'bill_approval'::text) = (bill_id IS NOT NULL))),
     CONSTRAINT trust_emails_subject_check CHECK (((subject <> ''::text) AND (length(subject) <= 200))),
@@ -11098,11 +11123,19 @@ ALTER TABLE ONLY public.trust_email_deliveries
 
 
 --
+-- Name: trust_email_settings trust_email_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_email_settings
+    ADD CONSTRAINT trust_email_settings_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_emails trust_emails_kind_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE public.trust_emails
-    ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text]))) NOT VALID;
+    ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text, 'rent_reminder'::text, 'late_notice'::text, 'owner_statement'::text, 'work_order'::text, 'adverse_action'::text]))) NOT VALID;
 
 
 --
@@ -11131,8 +11164,13 @@ CASE kind
     WHEN 'invite'::text THEN ((num_nonnulls(tenant_id, owner_id, staff_id) = 1) AND (vendor_id IS NULL))
     WHEN 'password_reset'::text THEN ((num_nonnulls(tenant_id, owner_id) = 1) AND (vendor_id IS NULL) AND (staff_id IS NULL))
     WHEN 'message'::text THEN ((num_nonnulls(tenant_id, owner_id, vendor_id) = 1) AND (staff_id IS NULL))
+    WHEN 'rent_reminder'::text THEN ((tenant_id IS NOT NULL) AND (lease_id IS NOT NULL) AND (period IS NOT NULL) AND (num_nonnulls(owner_id, vendor_id, staff_id) = 0))
+    WHEN 'late_notice'::text THEN ((tenant_id IS NOT NULL) AND (lease_id IS NOT NULL) AND (charge_id IS NOT NULL) AND (num_nonnulls(owner_id, vendor_id, staff_id) = 0))
+    WHEN 'owner_statement'::text THEN ((owner_id IS NOT NULL) AND (period IS NOT NULL) AND (num_nonnulls(tenant_id, vendor_id, staff_id) = 0))
+    WHEN 'work_order'::text THEN ((vendor_id IS NOT NULL) AND (work_order_step_id IS NOT NULL) AND (num_nonnulls(tenant_id, owner_id, staff_id) = 0))
+    WHEN 'adverse_action'::text THEN ((applicant_id IS NOT NULL) AND (application_id IS NOT NULL) AND (num_nonnulls(tenant_id, owner_id, vendor_id, staff_id) = 0))
     ELSE ((tenant_id IS NULL) AND (vendor_id IS NULL) AND (staff_id IS NULL))
-END AND ((kind = 'message'::text) = (sent_by IS NOT NULL)) AND ((kind = ANY (ARRAY['invite'::text, 'password_reset'::text])) = needs_link))) NOT VALID;
+END AND ((kind = 'message'::text) = (sent_by IS NOT NULL)) AND ((kind = ANY (ARRAY['invite'::text, 'password_reset'::text])) = needs_link) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'late_notice'::text])) = (lease_id IS NOT NULL)) AND ((kind = 'late_notice'::text) = (charge_id IS NOT NULL)) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'owner_statement'::text])) = (period IS NOT NULL)) AND ((kind = 'owner_statement'::text) <= (period = (date_trunc('month'::text, (period)::timestamp with time zone))::date)) AND ((kind = 'work_order'::text) = (work_order_step_id IS NOT NULL)) AND ((kind = 'adverse_action'::text) = ((application_id IS NOT NULL) AND (applicant_id IS NOT NULL))))) NOT VALID;
 
 
 --
@@ -12393,10 +12431,59 @@ CREATE UNIQUE INDEX trust_email_deliveries_once ON public.trust_email_deliveries
 
 
 --
+-- Name: trust_email_settings_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_email_settings_pmc ON public.trust_email_settings USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_email_settings_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_email_settings_recorded_by ON public.trust_email_settings USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_emails_one_adverse_action; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_emails_one_adverse_action ON public.trust_emails USING btree (applicant_id, application_id) WHERE (kind = 'adverse_action'::text);
+
+
+--
+-- Name: trust_emails_one_late_notice; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_emails_one_late_notice ON public.trust_emails USING btree (tenant_id, charge_id) WHERE (kind = 'late_notice'::text);
+
+
+--
+-- Name: trust_emails_one_owner_statement; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_emails_one_owner_statement ON public.trust_emails USING btree (owner_id, period) WHERE (kind = 'owner_statement'::text);
+
+
+--
 -- Name: trust_emails_one_per_bill_approval; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE UNIQUE INDEX trust_emails_one_per_bill_approval ON public.trust_emails USING btree (bill_id) WHERE (kind = 'bill_approval'::text);
+
+
+--
+-- Name: trust_emails_one_rent_reminder; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_emails_one_rent_reminder ON public.trust_emails USING btree (tenant_id, lease_id, period) WHERE (kind = 'rent_reminder'::text);
+
+
+--
+-- Name: trust_emails_one_work_order; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_emails_one_work_order ON public.trust_emails USING btree (work_order_step_id) WHERE (kind = 'work_order'::text);
 
 
 --
@@ -13233,6 +13320,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_email_settings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_email_settings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_emails trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13993,6 +14087,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_docu
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_documents FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_email_settings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_email_settings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -14805,6 +14906,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_company_profiles 
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_contacts FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_email_settings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_email_settings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -16029,6 +16137,38 @@ ALTER TABLE ONLY public.trust_email_deliveries
 
 
 --
+-- Name: trust_email_settings trust_email_settings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_email_settings
+    ADD CONSTRAINT trust_email_settings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_email_settings trust_email_settings_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_email_settings
+    ADD CONSTRAINT trust_email_settings_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_emails trust_emails_applicant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.trust_applicants(id) NOT VALID;
+
+
+--
+-- Name: trust_emails trust_emails_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pmc_id_application_id_fkey FOREIGN KEY (pmc_id, application_id) REFERENCES public.trust_applications(pmc_id, id) NOT VALID;
+
+
+--
 -- Name: trust_emails trust_emails_pmc_id_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16037,11 +16177,27 @@ ALTER TABLE ONLY public.trust_emails
 
 
 --
+-- Name: trust_emails trust_emails_pmc_id_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pmc_id_charge_id_fkey FOREIGN KEY (pmc_id, charge_id) REFERENCES public.trust_charges(pmc_id, id) NOT VALID;
+
+
+--
 -- Name: trust_emails trust_emails_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.trust_emails
     ADD CONSTRAINT trust_emails_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_emails trust_emails_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id) NOT VALID;
 
 
 --
@@ -16082,6 +16238,14 @@ ALTER TABLE ONLY public.trust_emails
 
 ALTER TABLE ONLY public.trust_emails
     ADD CONSTRAINT trust_emails_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id) NOT VALID;
+
+
+--
+-- Name: trust_emails trust_emails_work_order_step_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_work_order_step_id_fkey FOREIGN KEY (work_order_step_id) REFERENCES public.trust_work_order_steps(id) NOT VALID;
 
 
 --
@@ -17807,4 +17971,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261016000073'),
     ('20261016000074'),
     ('20261017000075'),
-    ('20261017000076');
+    ('20261017000076'),
+    ('20261017000077');

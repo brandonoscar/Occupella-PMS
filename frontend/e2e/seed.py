@@ -471,6 +471,7 @@ FEATURES = (
     "groups",
     "company",
     "email",
+    "automatic-email",
 )
 
 

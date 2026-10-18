@@ -30,8 +30,9 @@ portal, the tenant portal and leasing basics, with the API and logins they need.
 2026-10-12 (`docs/adr/0003-staff-back-office.md`): the staff back office for the accounting,
 bank statement import, a switching tool, staff roles, move-out and documents. Since
 2026-10-13 (`docs/adr/0004-email.md`): one email, to a rental owner when a bill waits for
-their approval; since 2026-10-17 (`docs/adr/0007-email.md`) invites, password resets and what
-staff write to tenants, owners and vendors. Since 2026-10-15 (`docs/adr/0005-property-management-pages.md`): pages built
+their approval; since 2026-10-17 (`docs/adr/0007-email.md`) invites, password resets, what
+staff write to tenants, owners and vendors, and the emails the PMS writes by itself once a company
+turns them on. Since 2026-10-15 (`docs/adr/0005-property-management-pages.md`): pages built
 around properties, units, leases, tenants, owners and vendors, with paged lists, edits (never
 deletes: archive) and contact details the AI never reads. Since 2026-10-16
 (`docs/adr/0006-buildium-punch-list.md`): the founder's punch list, built in its order (property
@@ -115,6 +116,17 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   email goes to the person's contact email, else their login's. An invite's or a reset's link is
   never written to the outbox: it waits in the writing process's memory until sent, ten minutes at
   most, then the email is given up on once. Writing email is the custom roles' area 'email'.
+  Since migration 0077 the PMS also writes emails by itself (`src/pms/notices.py`), each one a
+  company turns on in Company setup (`trust_email_settings`: append-only, the latest row holding,
+  naming who changed it; `/api/emails/settings`, area 'email'), and only while the server sends
+  email (`outbox.SENDING`; the nightly run's `sending`): a rent reminder to each tenant of a lease
+  in effect on the next first, from 1 to 15 days before it; a late notice to each tenant when the
+  run charges a late fee; last month's statement in brief to each owner with a property account,
+  from a day of the month (1 to 28); a vendor's work order when assigned or scheduled; and the
+  adverse action notice to each applicant when a decision rests on a screening (the PDF's text,
+  shown on the applicant's page). Each names what it is about and is written once (a unique index
+  per kind); a lease under a payment hold gets no reminder or late notice. The nightly run and an
+  admin's Run rent now write the first three, after the run, in its transaction.
 - The portal (`frontend/`): React 19, Vite and Tailwind v4, following Occupella's `DESIGN.md`
   and looking like Occupella's app (founder, 2026-10-14): its light theme, a full-height
   light-blue left sidebar with the wordmark, the sections (lucide icons) and Sign out, a white

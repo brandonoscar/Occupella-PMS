@@ -262,6 +262,7 @@ def create_app(settings: Settings) -> FastAPI:
             ):
                 return JSONResponse({"detail": "send JSON"}, 415)
         outbox.PUBLIC_URL.set(settings.public_url)
+        outbox.SENDING.set(request.app.state.email is not None)
         response = await call_next(request)
         sender = request.app.state.email
         if request.method not in SAFE_METHODS and response.status_code < 400 and sender:

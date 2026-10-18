@@ -1,9 +1,10 @@
-"""Email from staff (docs/adr/0007-email.md; migration 0076): what staff write to a tenant, an
-owner or a vendor from that person's Email tab, or to every tenant living at a property, and the
-list of every email the PMS wrote to a person (invites, resets, messages, a bill's approval),
-each with whether it went. An email goes to the person's contact email, else to their portal
-login's. Staff need the 'email' area to write (custom roles). The AI role reads none of it.
-Nothing here moves money.
+"""Email from staff (docs/adr/0007-email.md; migrations 0076 and 0077): what staff write to a
+tenant, an owner or a vendor from that person's Email tab, or to every tenant living at a
+property; the list of every email the PMS wrote to a person (invites, resets, messages, a bill's
+approval, and what it writes by itself) or to an application's applicants, each with whether it
+went; and which emails the PMS writes by itself (src/pms/notices.py). An email goes to the
+person's contact email, else to their portal login's. Staff need the 'email' area to write or to
+change the settings (custom roles). The AI role reads no email. Nothing here moves money.
 """
 
 from __future__ import annotations
@@ -14,16 +15,19 @@ from uuid import UUID
 
 import psycopg
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints
 
-from pms import email
-from pms.api import directory
+from pms import email, notices
+from pms.api import outbox
 from pms.api.deps import Conn, Staff
 from pms.api.rent import today
 
 router = APIRouter(prefix="/api")
 
 About = Literal["tenant", "owner", "vendor"]
+# Whose emails a list shows: a person's, or an application's applicants' (no one writes to them
+# but the PMS itself, with an adverse action notice).
+Listed = Literal["tenant", "owner", "vendor", "application"]
 # One line, no NUL: an email header can't hold a line break.
 Subject = Annotated[
     str,
@@ -38,11 +42,6 @@ Text = Annotated[
 ]
 # What the list shows where an invite's or a reset's link went: the link itself is never kept.
 LINK_SHOWN = "(the sign-in link, sent only in the email)"
-COLUMN: dict[str, directory.Person] = {
-    "tenant": "tenant_id",
-    "owner": "owner_id",
-    "vendor": "vendor_id",
-}
 
 
 class NewEmail(BaseModel):
@@ -92,15 +91,7 @@ def address_of(
     named = conn.execute(email.PEOPLE[about][0], (pmc, person_id)).fetchone()
     if named is None:
         raise HTTPException(404, f"no such {about}")
-    contact = directory.contact_of(conn, COLUMN[about], person_id).email
-    if contact:
-        return named[0], contact
-    login = conn.execute(
-        "SELECT email FROM trust_logins WHERE pmc_id = %s AND disabled_at IS NULL"
-        " AND (owner_id = %s OR tenant_id = %s)",
-        (pmc, person_id, person_id),
-    ).fetchone()
-    return named[0], None if login is None else login[0]
+    return named[0], notices.address(conn, pmc, about, person_id)
 
 
 EMAILS = f"""
@@ -120,18 +111,23 @@ LEFT JOIN trust_bills AS b ON b.id = e.bill_id
 LEFT JOIN trust_ledger_accounts AS t ON t.ledger_account_id = b.ledger_account_id
 WHERE e.pmc_id = %(pmc)s
   AND (e.tenant_id = %(tenant)s OR e.vendor_id = %(vendor)s OR e.owner_id = %(owner)s
-       OR (e.kind = 'bill_approval' AND t.owner_id = %(owner)s))
+       OR (e.kind = 'bill_approval' AND t.owner_id = %(owner)s)
+       OR e.application_id = %(application)s)
 ORDER BY e.created_at DESC, e.id DESC
 """
 
 
 @router.get("/emails")
 def emails_of(
-    session: Staff, conn: Conn, about: Annotated[About, Query()], about_id: UUID
+    session: Staff, conn: Conn, about: Annotated[Listed, Query()], about_id: UUID
 ) -> list[EmailLine]:
-    """Every email the PMS wrote to a person, newest first, each with whether it went (a bill's
-    approval email to an owner included, whenever it was written)."""
-    keys = {kind: about_id if kind == about else None for kind in ("tenant", "owner", "vendor")}
+    """Every email the PMS wrote to a person (or an application's applicants), newest first,
+    each with whether it went (a bill's approval email to an owner included, whenever it was
+    written)."""
+    keys = {
+        kind: about_id if kind == about else None
+        for kind in ("tenant", "owner", "vendor", "application")
+    }
     rows = conn.execute(EMAILS, {"pmc": session.pmc_id, "lost": email.LINK_LOST, **keys}).fetchall()
     return [
         EmailLine(
@@ -206,3 +202,48 @@ def email_property(session: Staff, conn: Conn, new: NewPropertyEmail) -> Propert
         )
         emailed.append(Sent(id=made, name=name, to=to))
     return PropertySent(emailed=emailed, without_email=without)
+
+
+# --- the emails the PMS writes by itself ----------------------------------------------------------
+
+
+class EmailSettings(BaseModel):
+    # Days before the first of the month that each tenant gets a rent reminder; none sends none.
+    rent_reminder_days: int | None = Field(default=None, ge=1, le=15)
+    # A tenant is told when a late fee is charged to their lease.
+    late_notices: bool = False
+    # The day of the month each owner gets last month's statement; none sends none.
+    owner_statement_day: int | None = Field(default=None, ge=1, le=28)
+    # A vendor is told when a work order is assigned to them or their visit scheduled.
+    work_order_notices: bool = False
+    # Each applicant gets the adverse action notice of a decision that rests on a screening.
+    adverse_action_notices: bool = False
+
+
+class EmailSettingsOut(EmailSettings):
+    # Whether this server sends email: until it does, none of these is written.
+    sending: bool
+
+
+def settings_out(conn: psycopg.Connection[Any], pmc: UUID) -> EmailSettingsOut:
+    return EmailSettingsOut(**vars(notices.settings_of(conn, pmc)), sending=outbox.SENDING.get())
+
+
+@router.get("/emails/settings")
+def email_settings(session: Staff, conn: Conn) -> EmailSettingsOut:
+    """Which emails the PMS writes by itself for the company, and whether this server sends
+    email."""
+    return settings_out(conn, session.pmc_id)
+
+
+@router.post("/emails/settings")
+def save_email_settings(session: Staff, conn: Conn, wanted: EmailSettings) -> EmailSettingsOut:
+    """Keeps the company's choice as a new settings row if it changed; the same again writes
+    nothing."""
+    if notices.Settings(**wanted.model_dump()) != notices.settings_of(conn, session.pmc_id):
+        conn.execute(
+            f"INSERT INTO trust_email_settings (pmc_id, {', '.join(notices.FIELDS)})"
+            f" VALUES (%s, {', '.join(['%s'] * len(notices.FIELDS))})",
+            (session.pmc_id, *(getattr(wanted, field) for field in notices.FIELDS)),
+        )
+    return settings_out(conn, session.pmc_id)

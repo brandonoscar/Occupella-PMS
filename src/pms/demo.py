@@ -56,6 +56,7 @@ from pms.api import (
     company,
     custom_roles,
     documents,
+    emails,
     groups,
     inspections,
     journal,
@@ -728,7 +729,8 @@ def showcase(conn: psycopg.Connection[Any], demo: Demo, today: date, public_url:
 
 def company_profile(b: Builder, demo: Demo) -> None:
     """The company's mailing address and the fee terms a property added from now on starts with,
-    set last, so the demo's own properties keep the terms each was given."""
+    set last, so the demo's own properties keep the terms each was given; and every email the PMS
+    writes by itself turned on (none is written until a server that sends email runs)."""
     with b.as_staff(demo.manager) as s:
         company.save_company(
             s,
@@ -744,6 +746,17 @@ def company_profile(b: Builder, demo: Demo) -> None:
                 ),
                 late_fees=company.LateFeeTerms(grace_days=5, flat_fee=D("50.00")),
                 nsf_fee=D("35.00"),
+            ),
+        )
+        emails.save_email_settings(
+            s,
+            b.conn,
+            emails.EmailSettings(
+                rent_reminder_days=5,
+                late_notices=True,
+                owner_statement_day=5,
+                work_order_notices=True,
+                adverse_action_notices=True,
             ),
         )
 
