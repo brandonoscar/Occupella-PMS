@@ -32,6 +32,11 @@ export type Bill = {
   status: BillStatus;
   // Neither paid nor declined, and due before today.
   overdue: boolean;
+  // The company's markup on it, at the percent the owner's terms set; null: none.
+  markup: string | null;
+  markup_percent: string | null;
+  // The invoice shared across properties it is a share of, if it is one.
+  shared_bill_id: string | null;
 };
 export type EmailStatus = "sent" | "waiting" | "failed";
 // A bill's expense account lines: its lines when split, else the whole bill in its account.
@@ -44,8 +49,20 @@ export type BillEmail = {
   attempts: number;
   error: string | null;
 };
+// One vendor invoice shared across properties: a bill for each owner's property account.
+export type SharedPart = {
+  bill_id: string;
+  part: number;
+  reference: string;
+  owner: string;
+  property: string;
+  amount: string;
+  status: BillStatus;
+};
+export type SharedBill = { id: string; reference: string; amount: string; parts: SharedPart[] };
 export type BillPageData = {
   bill: Bill;
+  shared: SharedBill | null;
   lines: BillLine[];
   files: { id: string; title: string; content_type: string; size: number; uploaded_at: string }[];
   email: BillEmail | null;
@@ -69,6 +86,29 @@ export function billBadge(bill: Bill): { word: string; tone: "caution" | "info" 
 export function billsPaidSummary(paid: BillPaid[], method: PayoutMethod): string {
   const total = sumMoney(paid.map((p) => p.amount));
   return `${paid.length} bill${paid.length === 1 ? "" : "s"} of ${money(total)} paid, by ${method}.`;
+}
+
+// "$25.00 (10% in the owner's terms)", or null for a bill with no markup.
+export function markupLabel(bill: Pick<Bill, "markup" | "markup_percent">): string | null {
+  if (bill.markup === null) return null;
+  return `${money(bill.markup)} (${bill.markup_percent}% in the owner's terms)`;
+}
+
+// A total shared evenly among n, to the cent, in whole cents as sumMoney counts them (never as
+// floats): the cents left over go to the first shares. Blanks while the total isn't money yet.
+export function evenShares(total: string, n: number): string[] {
+  const plain = total.trim().replace(/[$,]/g, "");
+  if (n < 1) return [];
+  if (!/^\d+(\.\d{0,2})?$/.test(plain)) return Array.from({ length: n }, () => "");
+  const [whole = "0", part = ""] = plain.split(".");
+  const cents = BigInt(whole) * 100n + BigInt((part + "00").slice(0, 2));
+  const count = BigInt(n);
+  const each = cents / count;
+  const left = cents - each * count;
+  return Array.from({ length: n }, (_, i) => {
+    const share = each + (BigInt(i) < left ? 1n : 0n);
+    return `${share / 100n}.${String(share % 100n).padStart(2, "0")}`;
+  });
 }
 
 // What a bill's split lines come to, against the bill: "Lines come to $250.00 of $300.00".

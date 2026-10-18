@@ -41,6 +41,11 @@ def cents(value: Decimal) -> str:
     return exports.text(Decimal(value).quantize(CENT))
 
 
+def percent_text(value: Decimal) -> str:
+    """A percent as staff typed it: 10, 12.5."""
+    return f"{Decimal(value).normalize():f}"
+
+
 def today() -> date:
     return datetime.now(UTC).date()
 
@@ -118,6 +123,11 @@ class Bill(BaseModel):
     status: Status
     # Neither paid nor declined, and due before today (UTC).
     overdue: bool = False
+    # The company's markup on it (migration 0083): its amount and the agreement's percent.
+    markup: str | None = None
+    markup_percent: str | None = None
+    # The invoice shared across properties it is a part of, if it is one.
+    shared_bill_id: UUID | None = None
 
 
 # Every bill of the PMC with its status, then narrowed by what is shown, the vendor, the day it
@@ -141,7 +151,8 @@ WITH listed AS (
            EXISTS (SELECT 1 FROM trust_bill_payments AS s WHERE s.bill_id = b.id
                    AND s.step = 'set_aside') AS aside,
            EXISTS (SELECT 1 FROM trust_bill_payments AS s WHERE s.bill_id = b.id
-                   AND s.step = 'paid') AS paid
+                   AND s.step = 'paid') AS paid,
+           mk.amount AS markup, mk.percent AS markup_percent, sh.shared_bill_id
     FROM trust_bills AS b
     JOIN trust_vendors AS v ON v.id = b.vendor_id
     JOIN trust_ledger_accounts AS a ON a.ledger_account_id = b.ledger_account_id
@@ -150,6 +161,8 @@ WITH listed AS (
     LEFT JOIN trust_bill_approvals AS ap ON ap.bill_id = b.id
     LEFT JOIN trust_bill_declines AS dc ON dc.bill_id = b.id
     LEFT JOIN trust_emails AS em ON em.kind = 'bill_approval' AND em.bill_id = b.id
+    LEFT JOIN trust_bill_markups AS mk ON mk.bill_id = b.id
+    LEFT JOIN trust_shared_bill_parts AS sh ON sh.bill_id = b.id
     LEFT JOIN LATERAL (
         SELECT e.id AS expense_account_id, e.name,
                EXISTS (SELECT 1 FROM trust_bill_splits AS sp WHERE sp.categorized_id = x.id)
@@ -175,7 +188,7 @@ WITH listed AS (
 SELECT s.id, s.vendor_id, s.vendor, s.reference, s.ledger_account_id, s.owner, s.property_id,
        s.property, s.bill_date, s.due_on, s.amount, s.memo, s.work_order_id, s.expense_id,
        s.expense, s.split, s.approval_limit, s.approved_by, s.declined_by, s.reason,
-       s.owner_email, s.status, count(*) OVER ()
+       s.owner_email, s.status, s.markup, s.markup_percent, s.shared_bill_id, count(*) OVER ()
 FROM statused AS s
 WHERE CASE %(show)s WHEN 'open' THEN s.status NOT IN ('paid', 'declined')
                     WHEN 'all' THEN true
@@ -243,6 +256,9 @@ def find_bills(
             owner_email=owner_email,
             status=status,
             overdue=status not in ("paid", "declined") and due < day,
+            markup=None if markup is None else cents(markup),
+            markup_percent=None if markup_percent is None else percent_text(markup_percent),
+            shared_bill_id=shared,
         )
         for (
             i,
@@ -267,6 +283,9 @@ def find_bills(
             decline_reason,
             owner_email,
             status,
+            markup,
+            markup_percent,
+            shared,
             _,
         ) in rows
     ]
@@ -332,8 +351,29 @@ class BillFile(BaseModel):
     uploaded_at: datetime
 
 
+class SharedPart(BaseModel):
+    bill_id: UUID
+    part: int
+    reference: str
+    owner: str
+    property: str
+    amount: str
+    status: Status
+
+
+class SharedBill(BaseModel):
+    """The vendor's invoice a bill is a share of, and every share of it."""
+
+    id: UUID
+    reference: str
+    amount: str
+    parts: list[SharedPart]
+
+
 class BillPage(BaseModel):
     bill: Bill
+    # The invoice shared across properties it is a part of (migration 0083).
+    shared: SharedBill | None = None
     # Its expense accounts: its lines when it is split, else the whole bill in its account.
     lines: list[BillLine]
     files: list[BillFile]
@@ -409,8 +449,39 @@ def bill_page(session: Staff, conn: Conn, bill_id: UUID) -> BillPage:
         )
     )
     return BillPage(
-        bill=bill, lines=lines, files=files, email=sent, history=history_of(conn, bill, sent)
+        bill=bill,
+        shared=None if bill.shared_bill_id is None else shared_of(conn, session.pmc_id, bill),
+        lines=lines,
+        files=files,
+        email=sent,
+        history=history_of(conn, bill, sent),
     )
+
+
+def shared_of(conn: psycopg.Connection[Any], pmc_id: UUID, bill: Bill) -> SharedBill:
+    head = conn.execute(
+        "SELECT id, reference, amount FROM trust_shared_bills WHERE id = %s",
+        (bill.shared_bill_id,),
+    ).fetchone()
+    assert head is not None
+    parts = []
+    for part, bill_id in conn.execute(
+        "SELECT part, bill_id FROM trust_shared_bill_parts WHERE shared_bill_id = %s ORDER BY part",
+        (bill.shared_bill_id,),
+    ).fetchall():
+        (each,), _ = find_bills(conn, pmc_id, bill=bill_id)
+        parts.append(
+            SharedPart(
+                bill_id=bill_id,
+                part=part,
+                reference=each.reference,
+                owner=each.owner,
+                property=each.property,
+                amount=each.amount,
+                status=each.status,
+            )
+        )
+    return SharedBill(id=head[0], reference=head[1], amount=cents(head[2]), parts=parts)
 
 
 def history_of(
@@ -457,6 +528,14 @@ def history_of(
             events.append(
                 BillEvent(on=on, what=f"{dollars(bill.amount)} set aside from the owner's money")
             )
+            if bill.markup is not None:
+                events.append(
+                    BillEvent(
+                        on=on,
+                        what=f"Markup of {dollars(bill.markup)} ({bill.markup_percent}%) taken"
+                        " into the company's fees",
+                    )
+                )
         else:
             how = f" by {method}" if method else ""
             events.append(BillEvent(on=on, what=f"Paid{how}"))
@@ -496,6 +575,8 @@ class NewBill(BaseModel):
     lines: Lines | None = None
     # The vendor's invoice, kept with the bill as its receipt.
     invoice: Attachment | None = None
+    # Add the company's markup, at the percent the owner's agreement sets (migration 0083).
+    markup: bool = False
 
 
 class Created(BaseModel):
@@ -584,6 +665,8 @@ def enter_bill(session: Staff, conn: Conn, new: NewBill) -> Created:
         raise HTTPException(409, refusal(refused)) from None
     if lines is not None:
         put_in(conn, session.pmc_id, bill, lines)
+    if new.markup:
+        mark_up(conn, session.pmc_id, bill)
     if new.invoice is not None:
         documents.keep(
             conn,
@@ -594,6 +677,129 @@ def enter_bill(session: Staff, conn: Conn, new: NewBill) -> Created:
     # commits (ADR 0004).
     email.write_bill_approval(conn, session.pmc_id, bill, outbox.PUBLIC_URL.get())
     return Created(id=bill)
+
+
+def mark_up(conn: psycopg.Connection[Any], pmc_id: UUID, bill: UUID) -> None:
+    """The company's markup on a bill, at the percent the owner's agreement in force on its date
+    sets (the database works it out)."""
+    try:
+        with conn.transaction():
+            conn.execute(
+                "INSERT INTO trust_bill_markups (bill_id, pmc_id) VALUES (%s, %s)", (bill, pmc_id)
+            )
+    except psycopg.errors.CheckViolation:
+        raise HTTPException(
+            409, "the owner's agreement sets no markup on bills dated then"
+        ) from None
+
+
+def marks_up(conn: psycopg.Connection[Any], account: str, day: date) -> bool:
+    """Whether the owner's agreement in force on a bill's date lets the company add a markup."""
+    row = conn.execute(
+        "SELECT bill_markup_percent FROM trust_management_agreements"
+        " WHERE ledger_account_id = %s AND starts_on <= %s ORDER BY starts_on DESC LIMIT 1",
+        (account, day),
+    ).fetchone()
+    return row is not None and row[0] > 0
+
+
+class Share(BaseModel):
+    account: Account
+    amount: Amount
+
+
+class NewSharedBill(BaseModel):
+    vendor_id: UUID
+    reference: Text
+    bill_date: date
+    due_on: date
+    memo: Text
+    # Each owner's property account's share, which together are the invoice.
+    shares: Annotated[list[Share], Field(min_length=2, max_length=20)]
+    # One expense account for every share.
+    expense_account_id: UUID | None = None
+    # Add the company's markup to each share whose owner's agreement sets one.
+    markup: bool = False
+    # The vendor's invoice, kept with the first share.
+    invoice: Attachment | None = None
+
+
+class SharedCreated(BaseModel):
+    id: UUID
+    bills: list[UUID]
+
+
+@router.post("/shared-bills", status_code=201)
+def enter_shared_bill(session: Staff, conn: Conn, new: NewSharedBill) -> SharedCreated:
+    """One vendor invoice shared across properties (q062): a bill for each owner's property
+    account's share, under the invoice's reference with /1, /2..., each following every bill
+    rule on its own (its owner's approval and email, set aside from its owner's money)."""
+    vendor_of(conn, session.pmc_id, new.vendor_id)
+    accounts = [share.account for share in new.shares]
+    if len(set(accounts)) != len(accounts):
+        raise HTTPException(422, "each share is a different owner's property account")
+    for account in accounts:
+        owner_account(conn, session.pmc_id, account)
+    if new.expense_account_id is not None:
+        expense_account_of(conn, session.pmc_id, new.expense_account_id)
+    if new.due_on < new.bill_date:
+        raise HTTPException(422, "a bill is due on or after its date")
+    total = sum((share.amount for share in new.shares), Decimal(0))
+    try:
+        shared = one(
+            conn,
+            "INSERT INTO trust_shared_bills (pmc_id, vendor_id, reference, amount)"
+            " VALUES (%s, %s, %s, %s) RETURNING id",
+            (session.pmc_id, new.vendor_id, new.reference, total),
+        )
+        bills = []
+        for part, share in enumerate(new.shares, 1):
+            bill = one(
+                conn,
+                "INSERT INTO trust_bills (pmc_id, vendor_id, ledger_account_id, reference,"
+                " bill_date, due_on, amount, memo) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
+                " RETURNING id",
+                (
+                    session.pmc_id,
+                    new.vendor_id,
+                    share.account,
+                    f"{new.reference}/{part}",
+                    new.bill_date,
+                    new.due_on,
+                    share.amount,
+                    new.memo,
+                ),
+            )
+            conn.execute(
+                "INSERT INTO trust_shared_bill_parts (shared_bill_id, part, pmc_id, bill_id)"
+                " VALUES (%s, %s, %s, %s)",
+                (shared, part, session.pmc_id, bill),
+            )
+            bills.append(bill)
+    except psycopg.errors.UniqueViolation:
+        raise HTTPException(409, "this vendor has a bill with that reference already") from None
+    marked = 0
+    for share, bill in zip(new.shares, bills, strict=True):
+        if new.expense_account_id is not None:
+            put_in(
+                conn,
+                session.pmc_id,
+                bill,
+                [Line(expense_account_id=new.expense_account_id, amount=share.amount)],
+            )
+        if new.markup and marks_up(conn, share.account, new.bill_date):
+            mark_up(conn, session.pmc_id, bill)
+            marked += 1
+        email.write_bill_approval(conn, session.pmc_id, bill, outbox.PUBLIC_URL.get())
+    if new.markup and marked == 0:
+        raise HTTPException(409, "no owner's agreement here sets a markup on bills dated then")
+    if new.invoice is not None:
+        documents.keep(
+            conn,
+            session.pmc_id,
+            documents.NewDocument(kind="receipt", about_id=bills[0], **new.invoice.model_dump()),
+        )
+    return SharedCreated(id=shared, bills=bills)
 
 
 def put_in(conn: psycopg.Connection[Any], pmc_id: UUID, bill: UUID, lines: list[Line]) -> None:
@@ -1034,9 +1240,10 @@ class OwnerMoney(BaseModel):
 OWNERS = """
 SELECT a.ledger_account_id, o.id, o.display_name, p.id, p.display_name, b.display_name, l.balance,
        coalesce(g.reserve, 0),
-       -- Bills dated by today and not set aside by then (trust_unpaid_bills, which the app
-       -- may not call, written out).
-       coalesce((SELECT sum(x.amount) FROM trust_bills AS x
+       -- Bills dated by today and not set aside by then, each with its markup
+       -- (trust_unpaid_bills, which the app may not call, written out).
+       coalesce((SELECT sum(x.amount + coalesce(mk.amount, 0)) FROM trust_bills AS x
+                 LEFT JOIN trust_bill_markups AS mk ON mk.bill_id = x.id
                  WHERE x.ledger_account_id = a.ledger_account_id AND x.bill_date <= %(today)s
                    AND NOT EXISTS (
                        SELECT 1 FROM trust_bill_payments AS s

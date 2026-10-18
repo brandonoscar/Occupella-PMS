@@ -10,6 +10,7 @@ const NONE: Agreement = {
   leasing_fee_percent: "0",
   reserve: "0",
   approval_limit: "0",
+  bill_markup_percent: "0",
 };
 
 describe("agreementSummary", () => {
@@ -23,10 +24,11 @@ describe("agreementSummary", () => {
         leasing_fee_percent: "50",
         reserve: "250.00",
         approval_limit: "500.00",
+        bill_markup_percent: "10",
       }),
     ).toBe(
       "8.5% of rent and recurring fees collected (at least $50.00); a $10.00 flat fee;" +
-        " 50% of a new lease's monthly rent; keeps $250.00 in reserve;" +
+        " 50% of a new lease's monthly rent; keeps $250.00 in reserve; 10% markup on bills;" +
         " owner approves bills over $500.00",
     );
   });

@@ -154,6 +154,7 @@ const AMOUNTS = [
   ["leasing_fee_percent", "Leasing fee, percent of rent"],
   ["reserve", "Reserve"],
   ["approval_limit", "Owner approves bills over"],
+  ["bill_markup_percent", "Markup on bills, percent"],
 ] as const;
 type Amount = (typeof AMOUNTS)[number][0];
 

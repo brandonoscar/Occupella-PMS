@@ -209,6 +209,9 @@ class OwnerBill(BaseModel):
     amount: str
     memo: str
     approval_limit: str
+    # The company's markup on it, as the owner's agreement sets it (migration 0083).
+    markup: str | None = None
+    markup_percent: str | None = None
     # None while it waits for the owner's decision.
     decision: Literal["approved", "declined"] | None
     decided_on: date | None
@@ -222,7 +225,7 @@ SELECT b.id, v.display_name, b.reference, p.display_name, b.bill_date, b.due_on,
        CASE WHEN ap.bill_id IS NOT NULL THEN 'approved'
             WHEN dc.bill_id IS NOT NULL THEN 'declined' END,
        coalesce(ap.approved_on, dc.declined_on), coalesce(ap.approved_by, dc.declined_by),
-       dc.reason
+       dc.reason, mk.amount, mk.percent
 FROM trust_bills AS b
 JOIN trust_ledger_accounts AS t ON t.ledger_account_id = b.ledger_account_id
 JOIN trust_vendors AS v ON v.id = b.vendor_id
@@ -237,6 +240,7 @@ CROSS JOIN LATERAL (
 ) AS g
 LEFT JOIN trust_bill_approvals AS ap ON ap.bill_id = b.id
 LEFT JOIN trust_bill_declines AS dc ON dc.bill_id = b.id
+LEFT JOIN trust_bill_markups AS mk ON mk.bill_id = b.id
 WHERE b.pmc_id = %s AND t.owner_id = %s AND t.kind = 'owner_property'
   AND (ap.bill_id IS NOT NULL OR dc.bill_id IS NOT NULL OR b.amount > g.approval_limit)
 ORDER BY b.due_on, b.bill_date, v.display_name COLLATE "C", b.reference COLLATE "C", b.id
@@ -263,6 +267,8 @@ def owner_bills(session: Owner, conn: Conn) -> list[OwnerBill]:
             decided_on=row[10],
             decided_by=row[11],
             reason=row[12],
+            markup=None if row[13] is None else cents(row[13]),
+            markup_percent=None if row[14] is None else f"{row[14].normalize():f}",
         )
         for row in rows
     ]

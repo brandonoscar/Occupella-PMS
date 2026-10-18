@@ -251,12 +251,27 @@ def property_page(session: Staff, conn: Conn, property_id: UUID) -> Property:
                 leasing_fee_percent=exports.text(leasing),
                 reserve=exports.text(reserve),
                 approval_limit=exports.text(limit),
+                bill_markup_percent=exports.text(markup),
             ),
         )
-        for o, n, a, b, bal, starts, fee, minimum, flat, leasing, reserve, limit in conn.execute(
+        for (
+            o,
+            n,
+            a,
+            b,
+            bal,
+            starts,
+            fee,
+            minimum,
+            flat,
+            leasing,
+            reserve,
+            limit,
+            markup,
+        ) in conn.execute(
             "SELECT o.id, o.display_name, a.ledger_account_id, k.display_name, b.balance,"
             " m.starts_on, m.fee_percent, m.minimum_fee, m.flat_fee, m.leasing_fee_percent,"
-            " m.reserve, m.approval_limit"
+            " m.reserve, m.approval_limit, m.bill_markup_percent"
             " FROM trust_ledger_accounts AS a JOIN trust_owners AS o ON o.id = a.owner_id"
             " JOIN trust_bank_accounts AS k ON k.id = a.bank_account_id"
             " JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id"

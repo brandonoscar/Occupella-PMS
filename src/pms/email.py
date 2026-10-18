@@ -288,13 +288,15 @@ SELECT b.amount, g.approval_limit, v.display_name, p.display_name, b.memo, b.ref
        (SELECT l.email FROM trust_logins AS l
         JOIN trust_login_secrets AS s ON s.login_id = l.id
         WHERE l.pmc_id = b.pmc_id AND l.kind = 'owner' AND l.owner_id = o.id
-          AND l.disabled_at IS NULL)
+          AND l.disabled_at IS NULL),
+       mk.amount, mk.percent
 FROM trust_bills AS b
 JOIN trust_ledger_accounts AS t ON t.ledger_account_id = b.ledger_account_id
 JOIN trust_owners AS o ON o.id = t.owner_id
 JOIN trust_vendors AS v ON v.id = b.vendor_id
 JOIN trust_properties AS p ON p.id = t.property_id
 JOIN trust_pmcs AS m ON m.pmc_id = b.pmc_id
+LEFT JOIN trust_bill_markups AS mk ON mk.bill_id = b.id
 -- The limit of the agreement in force on the bill's date, 0 without one, as
 -- trust_set_aside_bill reads it.
 CROSS JOIN LATERAL (
@@ -315,15 +317,23 @@ def write_bill_approval(
     row = conn.execute(BILL, (pmc_id, bill_id)).fetchone()
     if row is None:
         raise LookupError(f"no bill {bill_id} in PMC {pmc_id}")
-    amount, limit, vendor, prop, memo, reference, billed, due, owner, pmc, to = row
+    amount, limit, vendor, prop, memo, reference, billed, due, owner, pmc, to, markup, pct = row
     if amount <= limit:
         return "within the limit"
     if to is None:
         return "no active login"
+    # The company's markup on it, as the owner's agreement sets it (migration 0083).
+    marked = (
+        ""
+        if markup is None
+        else f"Our markup of {pct.normalize():f}% on it, {dollars(markup)}, as your management "
+        "agreement sets, is taken with it.\n\n"
+    )
     body = (
         f"Hello {owner},\n\n"
         f"{vendor} billed {dollars(amount)} for {prop}: {memo}. Reference {reference}, "
         f"dated {billed}, due {due}.\n\n"
+        f"{marked}"
         f"It is over your approval limit of {dollars(limit)}, so it waits for you. Sign in to "
         f"approve or decline it:\n{public_url.rstrip('/')}/\n\n"
         f"{pmc}\n"

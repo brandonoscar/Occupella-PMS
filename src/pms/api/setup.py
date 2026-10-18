@@ -86,6 +86,8 @@ class Agreement(BaseModel):
     leasing_fee_percent: str
     reserve: str
     approval_limit: str
+    # The percent of a bill the company may add as its markup (migration 0083); 0: none.
+    bill_markup_percent: str = "0"
 
 
 class OwnerAccount(BaseModel):
@@ -274,6 +276,7 @@ def portfolio(session: Staff, conn: Conn) -> Portfolio:
                 leasing_fee_percent=exports.text(leasing),
                 reserve=exports.text(reserve),
                 approval_limit=exports.text(limit),
+                bill_markup_percent=exports.text(markup),
             ),
         )
         for (
@@ -290,10 +293,11 @@ def portfolio(session: Staff, conn: Conn) -> Portfolio:
             leasing,
             reserve,
             limit,
+            markup,
         ) in conn.execute(
             "SELECT a.ledger_account_id, o.id, o.display_name, p.id, p.display_name,"
             " b.display_name, m.starts_on, m.fee_percent, m.minimum_fee, m.flat_fee,"
-            " m.leasing_fee_percent, m.reserve, m.approval_limit"
+            " m.leasing_fee_percent, m.reserve, m.approval_limit, m.bill_markup_percent"
             " FROM trust_ledger_accounts AS a"
             " JOIN trust_owners AS o ON o.id = a.owner_id"
             " JOIN trust_properties AS p ON p.id = a.property_id"
@@ -541,6 +545,7 @@ class NewAgreement(BaseModel):
     leasing_fee_percent: Percent = Decimal(0)
     reserve: Money = Decimal(0)
     approval_limit: Money = Decimal(0)
+    bill_markup_percent: Percent = Decimal(0)
 
 
 @router.post("/agreements", status_code=201)
@@ -560,7 +565,8 @@ def add_agreement(session: Staff, conn: Conn, new: NewAgreement) -> Created:
                 conn,
                 "INSERT INTO trust_management_agreements (pmc_id, ledger_account_id, starts_on,"
                 " fee_percent, minimum_fee, flat_fee, leasing_fee_percent, reserve,"
-                " approval_limit) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                " approval_limit, bill_markup_percent)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                 (
                     session.pmc_id,
                     new.account,
@@ -571,6 +577,7 @@ def add_agreement(session: Staff, conn: Conn, new: NewAgreement) -> Created:
                     new.leasing_fee_percent,
                     new.reserve,
                     new.approval_limit,
+                    new.bill_markup_percent,
                 ),
             )
         )

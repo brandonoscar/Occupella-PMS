@@ -63,6 +63,100 @@ describe("RecordBillForm", () => {
   });
 });
 
+const TERMS = {
+  starts_on: "2026-01-01", fee_percent: "8", minimum_fee: "0", flat_fee: "0", leasing_fee_percent: "0",
+  reserve: "0", approval_limit: "500.00",
+};
+const TWO = {
+  ...BOOKS,
+  accounts: [
+    { account: "a1", owner_id: "o1", owner: "Owner 1", property_id: "pr1", property: "Property 1", bank_account: "Operating",
+      agreement: { ...TERMS, bill_markup_percent: "10" } },
+    { account: "a2", owner_id: "o2", owner: "Owner 2", property_id: "pr2", property: "Property 2", bank_account: "Operating",
+      agreement: { ...TERMS, bill_markup_percent: "0" } },
+  ],
+} as unknown as Portfolio;
+
+function fillShared(total: string) {
+  fireEvent.click(screen.getByLabelText("Share across properties"));
+  fireEvent.change(screen.getByLabelText("Ref #"), { target: { value: "ROOF-1" } });
+  fireEvent.change(screen.getByLabelText("Bill date"), { target: { value: "2026-10-01" } });
+  fireEvent.change(screen.getByLabelText("Due"), { target: { value: "2026-10-10" } });
+  fireEvent.change(screen.getByLabelText("Invoice total"), { target: { value: total } });
+  fireEvent.change(screen.getByLabelText("Memo"), { target: { value: "Roof" } });
+}
+
+describe("RecordBillForm shared across properties, and the markup", () => {
+  it("shares one invoice across properties, split evenly, with each owner's markup", async () => {
+    const record = vi.fn(async () => true);
+    render(<RecordBillForm books={TWO} record={record} />);
+    fillShared("900.01");
+    // One owner per share: the single owner's choice is gone.
+    expect(screen.queryByLabelText("Owner and property")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Split evenly" }));
+    expect((screen.getByLabelText("Amount, share 1") as HTMLInputElement).value).toBe("450.01");
+    expect((screen.getByLabelText("Amount, share 2") as HTMLInputElement).value).toBe("450.00");
+    expect(screen.getByTestId("shares-total").textContent).toBe("Shares come to $900.01 of $900.01.");
+    fireEvent.click(screen.getByLabelText("Add each owner's markup, as their terms set"));
+    fireEvent.click(screen.getByRole("button", { name: "Record bill" }));
+
+    await vi.waitFor(() => expect(record).toHaveBeenCalled());
+    const [path, body, done] = record.mock.calls[0] as unknown as [string, Record<string, unknown>, () => string];
+    expect(path).toBe("/api/payables/shared-bills");
+    expect(body).toEqual({
+      vendor_id: "v1", reference: "ROOF-1", bill_date: "2026-10-01", due_on: "2026-10-10", memo: "Roof",
+      shares: [{ account: "a1", amount: "450.01" }, { account: "a2", amount: "450.00" }],
+      markup: true,
+    });
+    expect(done()).toBe("Bill ROOF-1 is shared across 2 properties.");
+  });
+
+  it("keeps Record bill off until the shares come to the invoice, and adds or takes away a property", () => {
+    const record = vi.fn(async () => true);
+    render(<RecordBillForm books={TWO} record={record} />);
+    fillShared("900.00");
+    fireEvent.change(screen.getByLabelText("Amount, share 1"), { target: { value: "500.00" } });
+    fireEvent.change(screen.getByLabelText("Amount, share 2"), { target: { value: "350.00" } });
+    expect(screen.getByTestId("shares-total").textContent).toBe("Shares come to $850.00 of $900.00.");
+    expect(screen.getByRole("button", { name: "Record bill" })).toHaveProperty("disabled", true);
+    fireEvent.click(screen.getByRole("button", { name: "Add property" }));
+    expect(screen.getByLabelText("Amount, share 3")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Remove share 3" }));
+    expect(screen.queryByLabelText("Amount, share 3")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Amount, share 2"), { target: { value: "400.00" } });
+    expect(screen.getByRole("button", { name: "Record bill" })).toHaveProperty("disabled", false);
+    expect(record).not.toHaveBeenCalled();
+  });
+
+  it("offers the owner's markup only where their terms set one", async () => {
+    const record = vi.fn(async () => true);
+    render(<RecordBillForm books={TWO} record={record} />);
+    fill();
+    fireEvent.click(screen.getByLabelText("Add the owner's markup (10%)"));
+    fireEvent.click(screen.getByRole("button", { name: "Record bill" }));
+    await vi.waitFor(() => expect(record).toHaveBeenCalled());
+    const [, body] = record.mock.calls[0] as unknown as [string, Record<string, unknown>];
+    expect(body).toMatchObject({ account: "a1", amount: "75.00", markup: true });
+
+    fireEvent.change(screen.getByLabelText("Owner and property"), { target: { value: "a2" } });
+    expect(screen.queryByText(/markup/)).toBeNull();
+  });
+
+  it("sends no markup unless asked, and offers no sharing for a work order's bill", async () => {
+    const record = vi.fn(async () => true);
+    render(<RecordBillForm books={TWO} record={record}
+      start={{ vendorId: "v1", propertyId: "pr1", workOrderId: "w1", memo: "Leak" }} />);
+    expect(screen.queryByLabelText("Share across properties")).toBeNull();
+    fill();
+    fireEvent.click(screen.getByRole("button", { name: "Record bill" }));
+    await vi.waitFor(() => expect(record).toHaveBeenCalled());
+    const [path, body] = record.mock.calls[0] as unknown as [string, Record<string, unknown>];
+    expect(path).toBe("/api/payables/bills");
+    expect(body).not.toHaveProperty("markup");
+    expect(body).toMatchObject({ work_order_id: "w1" });
+  });
+});
+
 describe("linesBody", () => {
   it("sends one account, the lines, or nothing", () => {
     expect(linesBody(false, "e1", [])).toEqual({ expense_account_id: "e1" });

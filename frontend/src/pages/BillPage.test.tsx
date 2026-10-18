@@ -23,10 +23,11 @@ const BILL: Bill = {
   property_id: "pr1", property: "Property 1", bill_date: "2026-10-01", due_on: "2026-10-15", amount: "300.00",
   memo: "Plumbing", work_order_id: "w1", expense_account_id: null, expense_account: null, split: true,
   approval_limit: "200.00", approved_by: null, declined_by: null, decline_reason: null, owner_email: "failed",
-  status: "needs approval", overdue: false,
+  status: "needs approval", overdue: false, markup: null, markup_percent: null, shared_bill_id: null,
 };
 const PAGE: BillPageData = {
   bill: BILL,
+  shared: null,
   lines: [
     { expense_account_id: "e1", expense_account: "Repairs", amount: "200.00" },
     { expense_account_id: "e2", expense_account: "Water", amount: "100.00" },
@@ -80,6 +81,33 @@ describe("BillPage", () => {
       "10/01/2026 Entered",
       "10/01/2026 Email to owner1@example.com asking the owner to decide it: not sent",
     ]);
+  });
+
+  it("shows the markup, and the other shares of an invoice shared across properties", async () => {
+    server({
+      ...PAGE,
+      bill: { ...BILL, reference: "ROOF-1/1", markup: "30.00", markup_percent: "10", shared_bill_id: "s1" },
+      shared: {
+        id: "s1", reference: "ROOF-1", amount: "900.00",
+        parts: [
+          { bill_id: "b1", part: 1, reference: "ROOF-1/1", owner: "Owner 1", property: "Property 1", amount: "300.00", status: "needs approval" },
+          { bill_id: "b9", part: 2, reference: "ROOF-1/2", owner: "Owner 2", property: "Property 2", amount: "600.00", status: "paid" },
+        ],
+      },
+    });
+    render(<BillPage me={ME} id="b1" />);
+
+    const summary = await screen.findByLabelText("Summary");
+    expect(summary.textContent).toContain("Markup$30.00 (10% in the owner's terms)");
+    const shares = within(screen.getByRole("table", { name: "Shares" })).getAllByRole("row").slice(1);
+    expect(shares.map((r) => r.textContent)).toEqual([
+      "ROOF-1/1Owner 1Property 1$300.00Awaiting owner approval",
+      "ROOF-1/2Owner 2Property 2$600.00Paid",
+    ]);
+    // This share is the page itself; the other links to its own.
+    expect(within(shares[0]!).queryByRole("link")).toBeNull();
+    expect(within(shares[1]!).getByRole("link", { name: "ROOF-1/2" }).getAttribute("href")).toBe("/bills/b9");
+    expect(screen.getByText("Shared across properties: ROOF-1, $900.00")).toBeTruthy();
   });
 
   it("records the owner's approval from beside its title", async () => {

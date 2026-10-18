@@ -18,6 +18,8 @@ const waiting: OwnerBill = {
   amount: "600.00",
   memo: "Roof repair",
   approval_limit: "500.00",
+  markup: null,
+  markup_percent: null,
   decision: null,
   decided_on: null,
   decided_by: null,
@@ -44,12 +46,22 @@ function server(...answers: [number, unknown][]) {
 }
 
 describe("OwnerBills", () => {
+  it("says the markup the owner's agreement adds to a bill", async () => {
+    server([200, [{ ...waiting, markup: "60.00", markup_percent: "10" }]]);
+    render(<OwnerBills />);
+    expect((await screen.findByTestId("markup")).textContent).toBe(
+      "Our markup of 10%, $60.00, as your management agreement sets, is taken with it.",
+    );
+  });
+
   it("lists the bills waiting for the owner and those decided", async () => {
     server([200, [waiting, declined]]);
     render(<OwnerBills />);
     const list = await screen.findByRole("list", { name: "Waiting for you" });
     expect(list.textContent).toContain("Vendor 1, ROOF-1: $600.00");
     expect(list.textContent).toContain("Over your approval limit of $500.00.");
+    // No markup on it: nothing said of one.
+    expect(screen.queryByTestId("markup")).toBeNull();
     // A decided bill: its decision as a badge, then what, when and by whom.
     const decided = screen.getByRole("list", { name: "Decided" });
     expect(decided.querySelector("[data-tone]")?.getAttribute("data-tone")).toBe("neutral");

@@ -72,6 +72,8 @@ export type Agreement = {
   leasing_fee_percent: string;
   reserve: string;
   approval_limit: string;
+  // The percent of a bill the company may add as its markup; "0": none.
+  bill_markup_percent: string;
 };
 export type Owner = {
   id: string;

@@ -26,7 +26,8 @@ import { useRecord } from "./useRecord";
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
 // What a property's owner account holds against the bills chosen from it: those not set aside yet
-// come out of it when paid, so what is left after is what it holds less them.
+// come out of it when paid, each with its markup, so what is left after is what it holds less
+// them.
 export type Cash = { account: string; owner: string; property: string; holds: string; chosen: string; after: string };
 
 export function cashOf(bills: Bill[], chosen: Set<string>, owners: OwnerMoney[]): Cash[] {
@@ -34,7 +35,7 @@ export function cashOf(bills: Bill[], chosen: Set<string>, owners: OwnerMoney[])
   for (const owner of owners) {
     const picked = bills.filter((b) => chosen.has(b.id) && b.account === owner.account && b.status === "to set aside");
     if (picked.length === 0) continue;
-    const taken = sumMoney(picked.map((b) => b.amount));
+    const taken = sumMoney(picked.flatMap((b) => [b.amount, b.markup ?? "0"]));
     cash.push({
       account: owner.account, owner: owner.owner, property: owner.property, holds: owner.balance,
       chosen: taken, after: sumMoney([owner.balance, `-${taken}`]),
@@ -137,7 +138,12 @@ export function PayBillsPage({ me }: { me: Me }) {
                       <td>{bill.vendor}</td>
                       <td>{bill.owner}, {bill.property}</td>
                       <td><GoLink href={`/bills/${bill.id}`} className={LINK}>{bill.reference}</GoLink></td>
-                      <td className="text-right">{money(bill.amount)}</td>
+                      <td className="text-right">
+                        {money(bill.amount)}
+                        {bill.markup !== null && (
+                          <span className="block text-sm text-ink-muted">+ {money(bill.markup)} markup</span>
+                        )}
+                      </td>
                       <td><Badge tone={badge.tone}>{badge.word}</Badge></td>
                     </tr>
                   );

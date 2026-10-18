@@ -10,7 +10,7 @@ import type { ContentType } from "../documents";
 import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
 import { day, money, sumMoney, usDate } from "../money";
 import type { Bill, PayoutMethod } from "../payables";
-import { linesNote } from "../payables";
+import { evenShares, linesNote } from "../payables";
 import type { Portfolio } from "../setup";
 import { expenseAccountLabel } from "../setup";
 import type { Recorder } from "./useRecord";
@@ -71,6 +71,62 @@ export function linesBody(split: boolean, account: string, lines: DraftLine[]) {
 
 const TWO_LINES: DraftLine[] = [{ account: "", amount: "" }, { account: "", amount: "" }];
 
+// One vendor invoice shared across properties: each owner's property account's share, an account
+// added or taken away, the total split evenly, and what the shares come to against the invoice.
+export function Shares({ books, amount, shares, onChange }: {
+  books: Portfolio;
+  amount: string;
+  shares: DraftLine[];
+  onChange: (shares: DraftLine[]) => void;
+}) {
+  const set = (n: number, share: DraftLine) => onChange(shares.map((was, i) => (i === n ? share : was)));
+  const even = () => {
+    const amounts = evenShares(amount, shares.length);
+    onChange(shares.map((share, i) => ({ ...share, amount: amounts[i] ?? "" })));
+  };
+  return (
+    <fieldset className="flex flex-col gap-2">
+      <legend className="mb-1 text-sm text-ink-muted">Shares across properties</legend>
+      {shares.map((share, n) => (
+        <div key={n} className="flex flex-wrap items-center gap-2">
+          <select aria-label={`Owner and property, share ${n + 1}`} required value={share.account}
+            onChange={(e) => set(n, { ...share, account: e.target.value })}
+            className="h-9 rounded-sm border border-line-strong bg-sunken px-2 text-sm text-ink">
+            <option value="">Choose a property</option>
+            {books.accounts.map((a) => <option key={a.account} value={a.account}>{a.owner}, {a.property}</option>)}
+          </select>
+          <input aria-label={`Amount, share ${n + 1}`} inputMode="decimal" required value={share.amount}
+            onChange={(e) => set(n, { ...share, amount: e.target.value })}
+            className="h-9 w-28 rounded-sm border border-line-strong bg-sunken px-2 text-right text-sm text-ink" />
+          {shares.length > 2 && (
+            <Button type="button" variant="ghost" size="sm" aria-label={`Remove share ${n + 1}`}
+              onClick={() => onChange(shares.filter((_, i) => i !== n))}>
+              <X size={14} />
+            </Button>
+          )}
+        </div>
+      ))}
+      <div className="flex flex-wrap items-center gap-3">
+        {shares.length < 20 && (
+          <Button type="button" variant="ghost" size="sm" onClick={() => onChange([...shares, { account: "", amount: "" }])}>
+            <Plus size={14} /> Add property
+          </Button>
+        )}
+        <Button type="button" variant="ghost" size="sm" onClick={even}>Split evenly</Button>
+        <span className="text-sm text-ink-muted" data-testid="shares-total">
+          {linesNote(shares.map((s) => s.amount), amount).replace("Lines", "Shares")}
+        </span>
+      </div>
+    </fieldset>
+  );
+}
+
+// The percent of a bill the owner's terms let the company add as its markup, if any.
+function markupOf(books: Portfolio, account: string): string | null {
+  const percent = books.accounts.find((a) => a.account === account)?.agreement?.bill_markup_percent;
+  return percent !== undefined && Number(percent) > 0 ? percent : null;
+}
+
 type Invoice = { title: string; type: ContentType | null; size: number; base64: string };
 
 // Where Record bill starts when a work order's Create bill opens it: its vendor, property, memo
@@ -78,7 +134,8 @@ type Invoice = { title: string; type: ContentType | null; size: number; base64: 
 export type BillStart = { vendorId: string | null; propertyId: string; workOrderId: string; memo: string };
 
 // Record bill: a vendor's bill against an owner's property account, in an expense account or
-// split across several, maybe with the vendor's invoice kept as its receipt.
+// split across several, maybe with the company's markup and the vendor's invoice kept as its
+// receipt; or one invoice shared across properties, a bill for each one's share.
 export function RecordBillForm({ books, record, start }: { books: Portfolio; record: Recorder; start?: BillStart }) {
   const [vendor, setVendor] = useState(start?.vendorId ?? books.vendors[0]?.id ?? "");
   const [account, setAccount] = useState(
@@ -92,23 +149,44 @@ export function RecordBillForm({ books, record, start }: { books: Portfolio; rec
   const [split, setSplit] = useState(false);
   const [lines, setLines] = useState<DraftLine[]>(TWO_LINES);
   const [invoice, setInvoice] = useState<Invoice | null>(null);
+  const [shared, setShared] = useState(false);
+  const [shares, setShares] = useState<DraftLine[]>(
+    books.accounts.slice(0, 2).map((a) => ({ account: a.account, amount: "" })));
+  const [markup, setMarkup] = useState(false);
   if (books.vendors.length === 0 || books.accounts.length === 0) {
     return <Notice tone="info">Add a vendor from Vendors and a property with an owner from Properties first.</Notice>;
   }
   const problem = invoice === null ? ""
     : invoice.type === null ? "An invoice is a PDF, a JPEG or a PNG."
       : invoice.size > MAX_BYTES ? "An invoice is at most 5 MB." : "";
+  const sharesOff = shared && sumMoney(shares.map((s) => s.amount || "0")) !== sumMoney([amount || "0"]);
+  // The markup the owner's terms set: one owner's, or any share's when shared.
+  const percent = shared ? null : markupOf(books, account);
+  const canMarkUp = shared ? shares.some((s) => markupOf(books, s.account) !== null) : percent !== null;
+  const attached = invoice ? { invoice: { title: invoice.title, content_type: invoice.type, content_base64: invoice.base64 } } : {};
   return (
     <Form
       className="flex flex-col gap-3"
       onSubmit={(event) => {
         event.preventDefault();
-        if (problem) return;
+        if (problem || sharesOff) return;
+        const marked = canMarkUp && markup ? { markup: true } : {};
+        if (shared) {
+          const body = {
+            vendor_id: vendor, reference, bill_date: dated, due_on: due, memo,
+            shares: shares.map((s) => ({ account: s.account, amount: s.amount })),
+            ...(expense ? { expense_account_id: expense } : {}),
+            ...marked, ...attached,
+          };
+          void record("/api/payables/shared-bills", body,
+            () => `Bill ${reference} is shared across ${shares.length} properties.`);
+          return;
+        }
         const body = {
           vendor_id: vendor, account, reference, bill_date: dated, due_on: due, amount, memo,
           ...(start ? { work_order_id: start.workOrderId } : {}),
           ...linesBody(split, expense, lines),
-          ...(invoice ? { invoice: { title: invoice.title, content_type: invoice.type, content_base64: invoice.base64 } } : {}),
+          ...marked, ...attached,
         };
         void record("/api/payables/bills", body, () => `Bill ${reference} recorded.`);
       }}
@@ -116,19 +194,42 @@ export function RecordBillForm({ books, record, start }: { books: Portfolio; rec
       <Select label="Vendor" id="bill-vendor" value={vendor} onChange={(e) => setVendor(e.target.value)}>
         {books.vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
       </Select>
-      <Select label="Owner and property" id="bill-account" value={account} onChange={(e) => setAccount(e.target.value)}>
-        {books.accounts.map((a) => <option key={a.account} value={a.account}>{a.owner}, {a.property}</option>)}
-      </Select>
+      {!start && books.accounts.length > 1 && (
+        <label className="flex items-center gap-2 text-sm text-ink">
+          <input type="checkbox" checked={shared} onChange={(e) => setShared(e.target.checked)} />
+          Share across properties
+        </label>
+      )}
+      {!shared && (
+        <Select label="Owner and property" id="bill-account" value={account} onChange={(e) => setAccount(e.target.value)}>
+          {books.accounts.map((a) => <option key={a.account} value={a.account}>{a.owner}, {a.property}</option>)}
+        </Select>
+      )}
       <Field label="Ref #" id="bill-reference" required maxLength={200} value={reference}
         onChange={(e) => setReference(e.target.value)} />
       <div className="flex flex-wrap gap-3">
         <Field label="Bill date" id="bill-date" type="date" required value={dated} onChange={(e) => setDated(e.target.value)} />
         <Field label="Due" id="bill-due" type="date" required value={due} onChange={(e) => setDue(e.target.value)} />
       </div>
-      <Field label="Amount" id="bill-amount" inputMode="decimal" required value={amount}
+      <Field label={shared ? "Invoice total" : "Amount"} id="bill-amount" inputMode="decimal" required value={amount}
         onChange={(e) => setAmount(e.target.value)} />
+      {shared && <Shares books={books} amount={amount} shares={shares} onChange={setShares} />}
       <Field label="Memo" id="bill-memo" required maxLength={200} value={memo} onChange={(e) => setMemo(e.target.value)} />
-      {books.expense_accounts.length > 0 && (
+      {canMarkUp && (
+        <label className="flex items-center gap-2 text-sm text-ink">
+          <input type="checkbox" checked={markup} onChange={(e) => setMarkup(e.target.checked)} />
+          {percent !== null ? `Add the owner's markup (${percent}%)` : "Add each owner's markup, as their terms set"}
+        </label>
+      )}
+      {books.expense_accounts.length > 0 && shared && (
+        <Select label="Expense account" id="bill-expense" value={expense} onChange={(e) => setExpense(e.target.value)}>
+          <option value="">None yet</option>
+          {books.expense_accounts.map((a) => (
+            <option key={a.id} value={a.id}>{expenseAccountLabel(a, books.schedule_e_lines)}</option>
+          ))}
+        </Select>
+      )}
+      {books.expense_accounts.length > 0 && !shared && (
         <>
           <label className="flex items-center gap-2 text-sm text-ink">
             <input type="checkbox" checked={split} onChange={(e) => setSplit(e.target.checked)} />
@@ -157,7 +258,7 @@ export function RecordBillForm({ books, record, start }: { books: Portfolio; rec
           }} />
       </label>
       <Notice tone="error">{problem}</Notice>
-      <div><Button type="submit" disabled={problem !== ""}>Record bill</Button></div>
+      <div><Button type="submit" disabled={problem !== "" || sharesOff}>Record bill</Button></div>
     </Form>
   );
 }

@@ -2643,3 +2643,68 @@ test("a company has its management fees taken each month, staff set a flat fee a
   await refused.getByRole("button", { name: "Close" }).click();
   await expect((await ownerProperty(page, "Demo Owner A", "Birch Flats")).getByRole("cell").nth(2)).toHaveText("$210.00");
 });
+
+test("staff share a roofer's invoice across two owners' properties with the markup Birch Flats' terms set, and pay both shares at once", async ({
+  page,
+}) => {
+  const people = seed.features["shared-bills"]!;
+  await joinAsStaff(page, people.manager);
+
+  // Demo Owner A's terms for Birch Flats from this month let the company add 10% to a bill.
+  await openOwner(page, "Demo Owner A");
+  const terms = await setupPanel(page, "Set terms", "Set management terms");
+  await terms.getByRole("combobox", { name: "For" }).selectOption({ label: "Demo Owner A, Birch Flats" });
+  await terms.getByLabel("In force from").fill(firstOfThisMonth());
+  await terms.getByLabel("Fee, percent of rent and recurring fees collected").fill("8");
+  await terms.getByLabel("Minimum fee").fill("50.00");
+  await terms.getByLabel("Reserve").fill("250.00");
+  await terms.getByLabel("Owner approves bills over").fill("500.00");
+  await terms.getByLabel("Markup on bills, percent").fill("10");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await terms.getByRole("button", { name: "Set terms" }).click();
+  await expect(page.getByRole("main")).toContainText(
+    `Birch Flats: 8% of rent collected, at least $50.00; leasing fee 0%; reserve $250.00; 10% markup on bills; the owner approves bills over $500.00; from ${us(firstOfThisMonth())}`,
+  );
+
+  // One roofer's invoice of $300.00 shared evenly by Birch Flats and Aspen Row (Demo Owner B,
+  // whose terms set no markup): the markup goes on Birch Flats' share alone.
+  await section(page, "Bills");
+  await page.getByRole("button", { name: "Record bill" }).click();
+  const panel = page.getByRole("dialog", { name: "Record bill" });
+  await panel.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Roofing Co" });
+  await panel.getByLabel("Share across properties").check();
+  await panel.getByRole("combobox", { name: "Owner and property, share 1" }).selectOption({ label: "Demo Owner A, Birch Flats" });
+  await panel.getByRole("combobox", { name: "Owner and property, share 2" }).selectOption({ label: "Demo Owner B, Aspen Row" });
+  await panel.getByLabel("Ref #").fill("ROOF-77");
+  await panel.getByLabel("Invoice total").fill("300.00");
+  await panel.getByRole("button", { name: "Split evenly" }).click();
+  await expect(panel.getByTestId("shares-total")).toHaveText("Shares come to $300.00 of $300.00.");
+  await panel.getByLabel("Memo").fill("Roof repair, both buildings");
+  await panel.getByLabel("Add each owner's markup, as their terms set").check();
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await panel.getByRole("button", { name: "Record bill" }).click();
+  await expect(page.getByText("Bill ROOF-77 is shared across 2 properties.")).toBeVisible();
+  await expect(panel).toHaveCount(0);
+
+  // Each share is its owner's own bill; Birch Flats' carries the $15.00 markup.
+  await billRow(page, "Demo Roofing Co", "ROOF-77/1").getByRole("cell").first().click();
+  await expect(page.getByLabel("Summary")).toContainText("Markup$15.00 (10% in the owner's terms)");
+  const shares = page.getByRole("table", { name: "Shares" });
+  await expect(shares).toContainText("ROOF-77/1Demo Owner ABirch Flats$150.00");
+  await expect(shares).toContainText("ROOF-77/2Demo Owner BAspen Row$150.00");
+
+  // Pay bills pays both shares at once: Birch Flats gives its share and the markup.
+  await section(page, "Bills");
+  await page.getByRole("link", { name: "Pay bills" }).click();
+  await page.getByLabel("Pay Demo Roofing Co ROOF-77/1").check();
+  await page.getByLabel("Pay Demo Roofing Co ROOF-77/2").check();
+  const cash = page.getByRole("table", { name: "Each property's cash" });
+  await expect(cash.getByRole("row", { name: "Demo Owner A, Birch Flats" }).getByRole("cell")).toHaveText([
+    "Demo Owner A, Birch Flats", "$250.00", "$165.00", "$85.00", "",
+  ]);
+  await page.getByRole("button", { name: "Pay $300.00" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByText("2 bills of $300.00 paid, by check.")).toBeVisible();
+  await expect((await ownerProperty(page, "Demo Owner A", "Birch Flats")).getByRole("cell").nth(2)).toHaveText("$85.00");
+  await expect((await ownerProperty(page, "Demo Owner B", "Aspen Row")).getByRole("cell").nth(2)).toHaveText("$50.00");
+});

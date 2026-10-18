@@ -222,3 +222,39 @@ much a lease-break fee may be, differ by state and stay the company's (NOT VERIF
 **Left to the company.** Whether a request for an assistance animal is granted (what it may ask
 for, and the Act's exemptions), whether a tenant may leave and on what terms, and whether its
 state lets it charge a lease-break fee and how much.
+
+## A bill shared across properties, and the company's markup on a bill (migration 0083)
+
+**The rule.** A manager is the owner's agent: it pays out an owner's trust money only for that
+owner, never more than that owner holds (the record-keeping rules under "Unpaid bills carried
+over at cutover"), and it takes from the owner only the compensation the owner agreed to,
+disclosed, with no secret profit from anyone else.
+
+- California: the Department of Real Estate has charged an undisclosed 5% markup on repairs and
+  maintenance, and vendor discounts kept while billing owners the full price, as a "secret or
+  undisclosed amount of compensation" under Business and Professions Code 10176(g) (accusations
+  read in search excerpts of dre.ca.gov hearing files; the statute's own text is NOT VERIFIED).
+- West Virginia: W. Va. Code 30-40-19(a)(14) disciplines a licensee who pays or receives any
+  rebate, profit, compensation or commission from anyone other than their principal (read in
+  search excerpts of code.wvlegislature.gov; the full section is NOT VERIFIED).
+- No state was found that sets a markup's size, or forbids one the owner agreed to in writing
+  (NOT VERIFIED that none does).
+
+**What the PMS does.**
+- One vendor invoice shared across properties is a bill for each owner's property account, each
+  its share, set aside from that owner's money and held back from that owner's draws alone. No
+  owner's money pays another owner's share, and each share waits for its own owner's approval
+  over their limit.
+- A markup is only the percent the owner's management agreement in force on the bill's date sets
+  (none unless it sets one), added only to the bills staff mark up. It is taken with the bill's
+  money into the company's fee account, on a line of its own on the owner's statement ("Markup of
+  10% on bill ROOF-77/1"), with the management fees in the income statement and the year-end
+  package. The owner sees it before: the approval email and the portal name it.
+- The PMS records no rebate or discount from a vendor.
+
+**Left to the company.**
+- Putting the markup in the written management agreement, in words the owner reads as one (the
+  PMS keeps only its percent, not the agreement's text).
+- The approval limit counts the vendor's amount, not the bill with its markup; a company whose
+  agreement counts both asks the owner on that basis.
+- Taking the markup out of trust with the company's other fees (migration 0059).

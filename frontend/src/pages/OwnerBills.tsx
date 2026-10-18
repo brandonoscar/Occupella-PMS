@@ -18,6 +18,9 @@ export type OwnerBill = {
   amount: string;
   memo: string;
   approval_limit: string;
+  // The company's markup on it, at the percent the owner's agreement sets; null: none.
+  markup: string | null;
+  markup_percent: string | null;
   decision: "approved" | "declined" | null;
   decided_on: string | null;
   decided_by: string | null;
@@ -82,6 +85,12 @@ export function OwnerBills() {
                 {bill.property}: {bill.memo}. Billed {usDate(bill.bill_date)}, due {usDate(bill.due_on)}. Over your
                 approval limit of {money(bill.approval_limit)}.
               </p>
+              {bill.markup !== null && (
+                <p className="text-sm text-ink-muted" data-testid="markup">
+                  Our markup of {bill.markup_percent}%, {money(bill.markup)}, as your management agreement
+                  sets, is taken with it.
+                </p>
+              )}
               <div className="mt-2 flex flex-wrap items-end gap-3">
                 <Button onClick={() => decide(bill, "approval")}>Approve</Button>
                 {declining === bill.id ? (
