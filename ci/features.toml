@@ -231,6 +231,17 @@ browser = [
 ]
 
 [[feature]]
+id = "emergencies"
+statement = "Staff say who is on call; a tenant files an emergency with a photo, whoever is on call is emailed, its work order opens urgent with the tenant's word on entry and the photo, and the tenant sees the visit's day and window once it is scheduled; each work order counts its days open."
+operations = [
+  "GET /api/maintenance/on-call",
+  "POST /api/maintenance/on-call",
+]
+browser = [
+  "features.spec.ts › staff go on call; a tenant files an emergency with a photo and staff see it through to a visit the tenant sees, day and window",
+]
+
+[[feature]]
 id = "renters-insurance"
 statement = "Staff set whether a lease requires renters insurance and the least liability it asks, and record a policy; the tenant records their own from the portal, with any insurer; the rent page, the portal and Today show how each lease stands."
 operations = [

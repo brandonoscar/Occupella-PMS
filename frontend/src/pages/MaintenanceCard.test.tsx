@@ -16,14 +16,22 @@ const BASE = {
   submitted_at: "2026-10-11T18:05:00Z",
   status_at: "2026-10-11T18:05:00Z",
   vendor: null,
+  emergency: false,
+  visit_on: null,
+  visit_window: null,
+  photos: 0,
 };
 const RECEIVED = { ...BASE, id: "r1", summary: "Tap drips", status: "received", work_order_id: null };
 const OPENED = { ...BASE, id: "r2", summary: "Door sticks", status: "opened", work_order_id: "w2" };
+const URGENT = {
+  ...BASE, id: "r3", summary: "No heat", status: "scheduled", work_order_id: "w3", vendor: "Vendor 1", emergency: true,
+  visit_on: "2026-11-03", visit_window: "8-10 am", photos: 2,
+};
 
-function server() {
+function server(requests: object[] = [RECEIVED, OPENED]) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (path.startsWith("/api/maintenance/requests?")) {
-      return new Response(JSON.stringify([RECEIVED, OPENED]));
+      return new Response(JSON.stringify(requests));
     }
     if (path === "/api/maintenance/vendors") {
       return new Response(JSON.stringify([{ id: "v1", name: "Vendor 1" }]));
@@ -41,6 +49,21 @@ const posts = (fetch: ReturnType<typeof server>) =>
     .map(([path, init]) => [path, JSON.parse(String(init?.body))]);
 
 describe("MaintenanceCard", () => {
+  it("marks an emergency, counts its photos, shows its visit and opens its work order", async () => {
+    server([RECEIVED, URGENT]);
+    render(<MaintenanceCard />);
+
+    const urgent = await screen.findByRole("listitem", { name: "No heat" });
+    expect(within(urgent).getByText("Emergency")).toBeTruthy();
+    expect(within(urgent).getByText(/2 photos, on its work order\./)).toBeTruthy();
+    expect(within(urgent).getByText("A visit is scheduled (Vendor 1). Visit on 11/03/2026, 8-10 am")).toBeTruthy();
+    expect(within(urgent).getByRole("link", { name: "Open its work order" }).getAttribute("href")).toBe("/work-orders/w3");
+    expect(urgent.id).toBe("request-r3");
+    const plain = screen.getByRole("listitem", { name: "Tap drips" });
+    expect(within(plain).queryByText("Emergency")).toBeNull();
+    expect(within(plain).queryByRole("link")).toBeNull();
+  });
+
   it("opens a work order for a new request", async () => {
     const fetch = server();
     render(<MaintenanceCard />);

@@ -10106,6 +10106,7 @@ CREATE TABLE public.trust_documents (
     property_id uuid,
     unit_id uuid,
     tenant_id uuid,
+    request_id uuid,
     CONSTRAINT trust_documents_check1 CHECK (((kind = 'receipt'::text) = (bill_id IS NOT NULL))),
     CONSTRAINT trust_documents_check3 CHECK (((kind = 'owner_document'::text) = (owner_id IS NOT NULL))),
     CONSTRAINT trust_documents_content_type_check CHECK ((content_type = ANY (ARRAY['application/pdf'::text, 'image/jpeg'::text, 'image/png'::text]))),
@@ -10174,6 +10175,7 @@ CREATE TABLE public.trust_emails (
     work_order_step_id uuid,
     application_id uuid,
     applicant_id uuid,
+    request_id uuid,
     CONSTRAINT trust_emails_body_check CHECK (((body <> ''::text) AND (length(body) <= 10000))),
     CONSTRAINT trust_emails_check CHECK (((kind = 'bill_approval'::text) = (bill_id IS NOT NULL))),
     CONSTRAINT trust_emails_subject_check CHECK (((subject <> ''::text) AND (length(subject) <= 200))),
@@ -10716,6 +10718,7 @@ CREATE TABLE public.trust_maintenance_requests (
     entry_allowed boolean NOT NULL,
     submitted_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    emergency boolean DEFAULT false NOT NULL,
     CONSTRAINT trust_maintenance_requests_summary_check CHECK (((summary ~ '\S'::text) AND (length(summary) <= 2000)))
 );
 
@@ -10803,6 +10806,20 @@ CREATE TABLE public.trust_nsf_fees (
     fee_charge_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_nsf_fees_fee_check CHECK ((fee > (0)::numeric))
+);
+
+
+--
+-- Name: trust_on_call_staff; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_on_call_staff (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    staff_id uuid NOT NULL,
+    on_call boolean NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
 );
 
 
@@ -11558,6 +11575,7 @@ CREATE TABLE public.trust_work_order_steps (
     note text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     scheduled_for date,
+    visit_window text,
     CONSTRAINT trust_work_order_steps_check CHECK (((step = 'assigned'::text) = (vendor_id IS NOT NULL)))
 );
 
@@ -12167,7 +12185,7 @@ ALTER TABLE ONLY public.trust_document_removals
 --
 
 ALTER TABLE public.trust_documents
-    ADD CONSTRAINT trust_documents_kind_check CHECK ((kind = ANY (ARRAY['w9'::text, 'receipt'::text, 'move_out_photo'::text, 'owner_document'::text, 'work_order_photo'::text, 'property_document'::text, 'unit_document'::text, 'tenant_document'::text, 'lease_document'::text, 'vendor_document'::text, 'company_logo'::text]))) NOT VALID;
+    ADD CONSTRAINT trust_documents_kind_check CHECK ((kind = ANY (ARRAY['w9'::text, 'receipt'::text, 'move_out_photo'::text, 'owner_document'::text, 'work_order_photo'::text, 'property_document'::text, 'unit_document'::text, 'tenant_document'::text, 'lease_document'::text, 'vendor_document'::text, 'company_logo'::text, 'request_photo'::text]))) NOT VALID;
 
 
 --
@@ -12208,6 +12226,14 @@ ALTER TABLE ONLY public.trust_documents
 
 ALTER TABLE public.trust_documents
     ADD CONSTRAINT trust_documents_property_check CHECK (((kind = 'property_document'::text) = (property_id IS NOT NULL))) NOT VALID;
+
+
+--
+-- Name: trust_documents trust_documents_request_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_documents
+    ADD CONSTRAINT trust_documents_request_check CHECK (((kind = 'request_photo'::text) = (request_id IS NOT NULL))) NOT VALID;
 
 
 --
@@ -12263,7 +12289,7 @@ ALTER TABLE ONLY public.trust_email_settings
 --
 
 ALTER TABLE public.trust_emails
-    ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text, 'rent_reminder'::text, 'late_notice'::text, 'owner_statement'::text, 'work_order'::text, 'adverse_action'::text]))) NOT VALID;
+    ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text, 'rent_reminder'::text, 'late_notice'::text, 'owner_statement'::text, 'work_order'::text, 'adverse_action'::text, 'emergency_request'::text]))) NOT VALID;
 
 
 --
@@ -12297,8 +12323,9 @@ CASE kind
     WHEN 'owner_statement'::text THEN ((owner_id IS NOT NULL) AND (period IS NOT NULL) AND (num_nonnulls(tenant_id, vendor_id, staff_id) = 0))
     WHEN 'work_order'::text THEN ((vendor_id IS NOT NULL) AND (work_order_step_id IS NOT NULL) AND (num_nonnulls(tenant_id, owner_id, staff_id) = 0))
     WHEN 'adverse_action'::text THEN ((applicant_id IS NOT NULL) AND (application_id IS NOT NULL) AND (num_nonnulls(tenant_id, owner_id, vendor_id, staff_id) = 0))
+    WHEN 'emergency_request'::text THEN ((staff_id IS NOT NULL) AND (request_id IS NOT NULL) AND (num_nonnulls(tenant_id, owner_id, vendor_id) = 0))
     ELSE ((tenant_id IS NULL) AND (vendor_id IS NULL) AND (staff_id IS NULL))
-END AND ((kind = 'message'::text) = (sent_by IS NOT NULL)) AND ((kind = ANY (ARRAY['invite'::text, 'password_reset'::text])) = needs_link) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'late_notice'::text])) = (lease_id IS NOT NULL)) AND ((kind = 'late_notice'::text) = (charge_id IS NOT NULL)) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'owner_statement'::text])) = (period IS NOT NULL)) AND ((kind = 'owner_statement'::text) <= (period = (date_trunc('month'::text, (period)::timestamp with time zone))::date)) AND ((kind = 'work_order'::text) = (work_order_step_id IS NOT NULL)) AND ((kind = 'adverse_action'::text) = ((application_id IS NOT NULL) AND (applicant_id IS NOT NULL))))) NOT VALID;
+END AND ((kind = 'message'::text) = (sent_by IS NOT NULL)) AND ((kind = ANY (ARRAY['invite'::text, 'password_reset'::text])) = needs_link) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'late_notice'::text])) = (lease_id IS NOT NULL)) AND ((kind = 'late_notice'::text) = (charge_id IS NOT NULL)) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'owner_statement'::text])) = (period IS NOT NULL)) AND ((kind = 'owner_statement'::text) <= (period = (date_trunc('month'::text, (period)::timestamp with time zone))::date)) AND ((kind = 'work_order'::text) = (work_order_step_id IS NOT NULL)) AND ((kind = 'adverse_action'::text) = ((application_id IS NOT NULL) AND (applicant_id IS NOT NULL))) AND ((kind = 'emergency_request'::text) = (request_id IS NOT NULL)))) NOT VALID;
 
 
 --
@@ -12870,6 +12897,14 @@ ALTER TABLE ONLY public.trust_nsf_fees
 
 
 --
+-- Name: trust_on_call_staff trust_on_call_staff_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_on_call_staff
+    ADD CONSTRAINT trust_on_call_staff_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_opening_balances trust_opening_balances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13430,6 +13465,14 @@ ALTER TABLE public.trust_work_order_steps
 
 
 --
+-- Name: trust_work_order_steps trust_work_order_steps_visit_window_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_work_order_steps
+    ADD CONSTRAINT trust_work_order_steps_visit_window_check CHECK (((visit_window IS NULL) OR ((step = 'scheduled'::text) AND (visit_window ~ '\S'::text) AND (length(visit_window) <= 60)))) NOT VALID;
+
+
+--
 -- Name: trust_work_orders trust_work_orders_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13789,6 +13832,13 @@ CREATE INDEX trust_documents_property_id ON public.trust_documents USING btree (
 
 
 --
+-- Name: trust_documents_request_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_documents_request_id ON public.trust_documents USING btree (request_id);
+
+
+--
 -- Name: trust_documents_tenant_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -13835,6 +13885,13 @@ CREATE INDEX trust_email_settings_recorded_by ON public.trust_email_settings USI
 --
 
 CREATE UNIQUE INDEX trust_emails_one_adverse_action ON public.trust_emails USING btree (applicant_id, application_id) WHERE (kind = 'adverse_action'::text);
+
+
+--
+-- Name: trust_emails_one_emergency; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_emails_one_emergency ON public.trust_emails USING btree (staff_id, request_id) WHERE (kind = 'emergency_request'::text);
 
 
 --
@@ -14234,6 +14291,20 @@ CREATE INDEX trust_notes_vendor ON public.trust_notes USING btree (pmc_id, vendo
 --
 
 CREATE INDEX trust_nsf_fees_policy_id ON public.trust_nsf_fees USING btree (policy_id);
+
+
+--
+-- Name: trust_on_call_staff_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_on_call_staff_recorded_by ON public.trust_on_call_staff USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_on_call_staff_staff; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_on_call_staff_staff ON public.trust_on_call_staff USING btree (pmc_id, staff_id, created_at);
 
 
 --
@@ -15182,6 +15253,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_on_call_staff trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_on_call_staff FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_opening_balances trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -16078,6 +16156,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_nsf_
 
 
 --
+-- Name: trust_on_call_staff trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_on_call_staff FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_opening_balances trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -16859,6 +16944,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_management_fee_se
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_notes FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_on_call_staff trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_on_call_staff FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -18168,6 +18260,14 @@ ALTER TABLE ONLY public.trust_documents
 
 
 --
+-- Name: trust_documents trust_documents_pmc_id_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_documents
+    ADD CONSTRAINT trust_documents_pmc_id_request_id_fkey FOREIGN KEY (pmc_id, request_id) REFERENCES public.trust_maintenance_requests(pmc_id, id) NOT VALID;
+
+
+--
 -- Name: trust_documents trust_documents_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18293,6 +18393,14 @@ ALTER TABLE ONLY public.trust_emails
 
 ALTER TABLE ONLY public.trust_emails
     ADD CONSTRAINT trust_emails_pmc_id_owner_id_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id) NOT VALID;
+
+
+--
+-- Name: trust_emails trust_emails_pmc_id_request_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pmc_id_request_id_fkey FOREIGN KEY (pmc_id, request_id) REFERENCES public.trust_maintenance_requests(pmc_id, id) NOT VALID;
 
 
 --
@@ -19368,6 +19476,30 @@ ALTER TABLE ONLY public.trust_nsf_fees
 
 
 --
+-- Name: trust_on_call_staff trust_on_call_staff_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_on_call_staff
+    ADD CONSTRAINT trust_on_call_staff_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_on_call_staff trust_on_call_staff_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_on_call_staff
+    ADD CONSTRAINT trust_on_call_staff_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_on_call_staff trust_on_call_staff_pmc_id_staff_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_on_call_staff
+    ADD CONSTRAINT trust_on_call_staff_pmc_id_staff_id_fkey FOREIGN KEY (pmc_id, staff_id) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_opening_balances trust_opening_balances_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20401,4 +20533,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261018000080'),
     ('20261018000081'),
     ('20261018000082'),
-    ('20261018000083');
+    ('20261018000083'),
+    ('20261018000084');

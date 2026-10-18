@@ -10,7 +10,8 @@ export type Kind =
   | "unit_document"
   | "tenant_document"
   | "lease_document"
-  | "vendor_document";
+  | "vendor_document"
+  | "request_photo";
 export type ContentType = "application/pdf" | "image/jpeg" | "image/png";
 export type Subject = { id: string; label: string };
 export type Document = {
@@ -41,6 +42,7 @@ export const KINDS: { kind: Kind; label: string; about: string }[] = [
   { kind: "tenant_document", label: "Tenant document", about: "Tenant" },
   { kind: "lease_document", label: "Lease document", about: "Lease" },
   { kind: "vendor_document", label: "Vendor document", about: "Vendor" },
+  { kind: "request_photo", label: "Request photo", about: "Maintenance request" },
 ];
 
 // What a file may be attached to, in the order Upload offers them, and the categories each takes
@@ -54,6 +56,7 @@ export const ATTACHED: { about: string; kinds: Kind[] }[] = [
   { about: "Vendor", kinds: ["vendor_document", "w9"] },
   { about: "Work order", kinds: ["work_order_photo"] },
   { about: "Bill", kinds: ["receipt"] },
+  { about: "Maintenance request", kinds: ["request_photo"] },
 ];
 
 export const MAX_BYTES = 5 * 1024 * 1024;

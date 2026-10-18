@@ -20,8 +20,9 @@ import type { Paged } from "../rentals";
 import { navigate } from "../router";
 import { scopeParams, useScope } from "../scope";
 import type { Named, Portfolio } from "../setup";
+import type { OnCall } from "../maintenance";
 import type { Entry, Priority, WorkOrder, WorkOrderRow, WorkOrderStatus } from "../workOrders";
-import { ENTRY, PRIORITY, STATUS, whereLabel } from "../workOrders";
+import { ENTRY, PRIORITY, STATUS, daysLabel, whereLabel } from "../workOrders";
 import { RecordBillForm } from "./BillForms";
 import { FilesCard } from "./FilesCard";
 import { MaintenanceCard } from "./MaintenanceCard";
@@ -49,8 +50,9 @@ export function shownQuery(shown: Shown): Record<string, string> {
 
 // Maintenance → Work orders (ADR 0005, ADR 0006, Buildium's): every work order a page at a time,
 // newest first, narrowed by status, property group and vendor: its number, where, what, vendor,
-// priority, status, due day and when it last changed; the row opens its page. New work order
-// opens one; tenants' requests are below.
+// priority, status, due day, days open and when it last changed; the row opens its page. New work
+// order opens one; On call says who is emailed when a tenant files an emergency; tenants'
+// requests are below.
 export function WorkOrdersPage({ me }: { me: Me }) {
   const [shown, setShown] = useState<Shown>("open");
   const [scope, setScope] = useScope();
@@ -60,6 +62,7 @@ export function WorkOrdersPage({ me }: { me: Me }) {
   const [page, setPage] = useState<Paged<WorkOrderRow> | null>(null);
   const [error, setError] = useState("");
   const [opening, setOpening] = useState(false);
+  const [onCall, setOnCall] = useState(false);
 
   useEffect(() => {
     api.get<Named[]>("/api/maintenance/vendors").then(setVendors).catch(() => setVendors([]));
@@ -73,7 +76,12 @@ export function WorkOrdersPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Work orders" actions={<Button onClick={() => setOpening(true)}>New work order</Button>} />
+      <PageHeader title="Work orders" actions={
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" onClick={() => setOnCall(true)}>On call</Button>
+          <Button onClick={() => setOpening(true)}>New work order</Button>
+        </div>
+      } />
       <ListBar scope={scope} onScope={restart(setScope)}>
         <select aria-label="Status" value={shown} onChange={(e) => restart(setShown)(e.target.value as Shown)} className={FILTER}>
           <option value="open">Open</option>
@@ -106,6 +114,7 @@ export function WorkOrdersPage({ me }: { me: Me }) {
                   <th className="text-left">Priority</th>
                   <th className="text-left">Status</th>
                   <th className="text-left">Due</th>
+                  <th className="text-right">Days open</th>
                   <th className="text-left">Updated</th>
                 </tr>
               </thead>
@@ -120,6 +129,7 @@ export function WorkOrdersPage({ me }: { me: Me }) {
                     <td><Badge tone={PRIORITY[row.priority].tone}>{PRIORITY[row.priority].word}</Badge></td>
                     <td><Badge tone={STATUS[row.status].tone} data-testid="status">{STATUS[row.status].word}</Badge></td>
                     <td className={`whitespace-nowrap ${row.overdue ? "text-danger" : ""}`}>{usDate(row.due_on)}</td>
+                    <td className="text-right">{row.days_open}</td>
                     <td className="whitespace-nowrap">{usDate(row.updated_at)}</td>
                   </tr>
                 ))}
@@ -134,8 +144,59 @@ export function WorkOrdersPage({ me }: { me: Me }) {
           <NewWorkOrderForm opened={(id) => navigate(`/work-orders/${id}`)} />
         </SidePanel>
       )}
+      {onCall && (
+        <SidePanel title="On call" onClose={() => setOnCall(false)}>
+          <OnCallForm />
+        </SidePanel>
+      )}
       <MaintenanceCard />
     </Shell>
+  );
+}
+
+// Who is on call for emergencies: each one ticked is emailed when a tenant files one, at their
+// login's email, while the server sends email. A change is saved at once.
+export function OnCallForm() {
+  const [staff, setStaff] = useState<OnCall[] | null>(null);
+  const [error, setError] = useState("");
+  const [said, setSaid] = useState("");
+  useEffect(() => {
+    api.get<OnCall[]>("/api/maintenance/on-call").then(setStaff).catch((failed) => setError(detail(failed)));
+  }, []);
+  // The box shows the change at once; a refusal puts it back.
+  async function change(member: OnCall, on: boolean) {
+    setError("");
+    setSaid("");
+    const before = staff;
+    setStaff((now) => now && now.map((m) => (m.staff_id === member.staff_id ? { ...m, on_call: on } : m)));
+    try {
+      setStaff(await api.post<OnCall[]>("/api/maintenance/on-call", { staff_id: member.staff_id, on_call: on }));
+      setSaid(on ? `${member.name} is on call.` : `${member.name} is off call.`);
+    } catch (failed) {
+      setStaff(before);
+      setError(detail(failed));
+    }
+  }
+  if (staff === null) return <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>;
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-sm text-ink-muted">
+        Whoever is on call is emailed when a tenant marks a request an emergency. Text messages are not sent.
+      </p>
+      <ul className="flex flex-col gap-2" aria-label="On call">
+        {staff.map((member) => (
+          <li key={member.staff_id}>
+            <label className="flex items-center gap-2 text-base text-ink">
+              <input type="checkbox" checked={member.on_call} onChange={(e) => change(member, e.target.checked)} />
+              {member.name}
+              {!member.emailed && <span className="text-sm text-ink-subtle">(no login to email)</span>}
+            </label>
+          </li>
+        ))}
+      </ul>
+      <Said>{said}</Said>
+      <Notice tone="error">{error}</Notice>
+    </div>
   );
 }
 
@@ -291,7 +352,12 @@ export function WorkOrderPage({ me, id }: { me: Me; id: string }) {
           </Item>
           <Item label="Opened">{usDate(order.opened_at)}</Item>
           <Item label="Due"><span className={order.overdue ? "text-danger" : ""}>{order.due_on ? usDate(order.due_on) : "No day set"}</span></Item>
-          <Item label="Scheduled for">{order.scheduled_for ? usDate(order.scheduled_for) : "Not scheduled"}</Item>
+          <Item label="Scheduled for">
+            {order.scheduled_for
+              ? `${usDate(order.scheduled_for)}${order.visit_window ? `, ${order.visit_window}` : ""}`
+              : "Not scheduled"}
+          </Item>
+          <Item label="Days open">{daysLabel(order.days_open)}</Item>
           <Item label="Billed">{money(order.billed)}</Item>
           <Item label="Entry">{order.entry ? ENTRY[order.entry] : "Not asked"}</Item>
         </dl>
@@ -300,9 +366,31 @@ export function WorkOrderPage({ me, id }: { me: Me; id: string }) {
       {(order.tenants.length > 0 || order.request) && (
         <Card title="Tenant">
           {order.request && (
-            <p className="text-base text-ink-muted" data-testid="request">
-              Requested by {order.request.tenant} on {usDate(order.request.submitted_at)}: {order.request.summary}
-            </p>
+            <div className="mb-2 flex flex-col gap-1">
+              <p className="flex flex-wrap items-center gap-2 text-base text-ink-muted" data-testid="request">
+                {order.request.emergency && <Badge tone="danger">Emergency</Badge>}
+                Requested by {order.request.tenant} on {usDate(order.request.submitted_at)}: {order.request.summary}
+              </p>
+              <p className="text-sm text-ink-subtle">
+                {order.request.entry_allowed ? "The tenant said someone may come in while they're out." : "The tenant asked to be called first."}
+              </p>
+              {order.request.emergency && (
+                <p className="text-sm text-ink-subtle" data-testid="emailed">
+                  {order.request.emailed.length > 0
+                    ? `Emailed to who was on call: ${order.request.emailed.join(", ")}.`
+                    : "No one on call was emailed."}
+                </p>
+              )}
+              {order.request.photos.length > 0 && (
+                <ul className="flex flex-wrap gap-3 text-base" aria-label="Request photos">
+                  {order.request.photos.map((p) => (
+                    <li key={p.id}>
+                      <a className={LINK} href={`/api/documents/${p.id}/file`} target="_blank" rel="noreferrer">{p.title}</a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           )}
           <ul className="flex flex-col gap-1 text-base" aria-label="Tenants">
             {order.tenants.map((t) => (
@@ -322,7 +410,7 @@ export function WorkOrderPage({ me, id }: { me: Me; id: string }) {
           {order.steps.map((s, n) => (
             <li key={n}>
               <span className="text-ink-muted">{usDate(s.taken_at)}</span>{" "}
-              {stepLine(s.step, s.vendor, s.scheduled_for)}
+              {stepLine(s.step, s.vendor, s.scheduled_for, s.visit_window)}
               {s.note ? <span className="text-ink-muted">: {s.note}</span> : null}
             </li>
           ))}
@@ -381,10 +469,12 @@ function Item({ label, children }: { label: string; children: React.ReactNode })
   );
 }
 
-// A step as the timeline reads it: "Assigned to Vendor 1", "Scheduled for 10/20/2026".
-export function stepLine(step: WorkOrder["steps"][number]["step"], vendor: string | null, scheduledFor: string | null): string {
+// A step as the timeline reads it: "Assigned to Vendor 1", "Scheduled for 10/20/2026, 8-10 am".
+export function stepLine(
+  step: WorkOrder["steps"][number]["step"], vendor: string | null, scheduledFor: string | null, slot: string | null = null,
+): string {
   if (step === "assigned") return `Assigned to ${vendor ?? "a vendor"}`;
-  if (step === "scheduled") return `Scheduled for ${usDate(scheduledFor)}`;
+  if (step === "scheduled") return `Scheduled for ${usDate(scheduledFor)}${slot ? `, ${slot}` : ""}`;
   return step === "completed" ? "Completed" : "Cancelled";
 }
 
@@ -410,6 +500,7 @@ function StepForm({ order, vendors, record }: { order: WorkOrder; vendors: Named
   const [step, setStep] = useState<NextStep>(order.vendor_id ? "scheduled" : "assigned");
   const [vendor, setVendor] = useState("");
   const [on, setOn] = useState("");
+  const [slot, setSlot] = useState("");
   const [note, setNote] = useState("");
   const chosen = vendor || vendors[0]?.id || "";
   return (
@@ -421,6 +512,7 @@ function StepForm({ order, vendors, record }: { order: WorkOrder; vendors: Named
           step,
           vendor_id: step === "assigned" ? chosen : null,
           scheduled_for: step === "scheduled" ? on : null,
+          visit_window: step === "scheduled" ? slot.trim() || null : null,
           note: note.trim() || null,
         };
         const name = vendors.find((v) => v.id === chosen)?.name ?? "the vendor";
@@ -442,7 +534,11 @@ function StepForm({ order, vendors, record }: { order: WorkOrder; vendors: Named
         </Select>
       )}
       {step === "scheduled" && (
-        <Field label="Visit on" id="step-on" type="date" required value={on} onChange={(event) => setOn(event.target.value)} />
+        <>
+          <Field label="Visit on" id="step-on" type="date" required value={on} onChange={(event) => setOn(event.target.value)} />
+          <Field label="Window (optional, like 8-10 am)" id="step-window" maxLength={60} value={slot}
+            onChange={(event) => setSlot(event.target.value)} />
+        </>
       )}
       <Field label="Note (optional)" id="step-note" maxLength={2000} value={note} onChange={(event) => setNote(event.target.value)} />
       <div><Button type="submit">Record</Button></div>

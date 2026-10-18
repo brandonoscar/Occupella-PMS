@@ -13,7 +13,7 @@ whether the vendor may let themselves in) are the latest row of trust_work_order
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -47,12 +47,13 @@ SELECT w.id, p.id, p.display_name, u.id, u.display_name, w.summary, w.opened_at,
        coalesce(s.step, 'open'), v.display_name,
        (SELECT coalesce(sum(b.amount), 0) FROM trust_bills AS b WHERE b.work_order_id = w.id),
        w.number, coalesce(d.priority, 'normal'), d.due_on, d.description, d.entry, a.vendor_id,
-       (SELECT s.scheduled_for FROM trust_work_order_steps AS s
-        WHERE s.work_order_id = w.id AND s.step = 'scheduled'
-        ORDER BY s.taken_at DESC, s.created_at DESC LIMIT 1),
+       vi.scheduled_for,
        greatest(w.opened_at, d.created_at,
                 (SELECT max(s.taken_at) FROM trust_work_order_steps AS s
                  WHERE s.work_order_id = w.id)),
+       vi.visit_window,
+       (SELECT max(s.taken_at) FROM trust_work_order_steps AS s
+        WHERE s.work_order_id = w.id AND s.step IN ('completed', 'cancelled')),
        count(*) OVER ()
 FROM numbered AS w
 JOIN trust_properties AS p ON p.id = w.property_id
@@ -68,6 +69,12 @@ LEFT JOIN LATERAL (
     ORDER BY s.taken_at DESC, s.created_at DESC LIMIT 1
 ) AS a ON true
 LEFT JOIN trust_vendors AS v ON v.id = a.vendor_id
+-- The visit: the day and window it was last scheduled for.
+LEFT JOIN LATERAL (
+    SELECT s.scheduled_for, s.visit_window FROM trust_work_order_steps AS s
+    WHERE s.work_order_id = w.id AND s.step = 'scheduled'
+    ORDER BY s.taken_at DESC, s.created_at DESC LIMIT 1
+) AS vi ON true
 LEFT JOIN LATERAL (
     SELECT d.priority, d.due_on, d.description, d.entry, d.created_at
     FROM trust_work_order_details AS d WHERE d.work_order_id = w.id
@@ -108,7 +115,11 @@ class WorkOrderRow(BaseModel):
     # Due before today and not closed.
     overdue: bool
     scheduled_for: date | None
+    # When in that day the vendor comes ("8-10 am"), if said.
+    visit_window: str | None
     updated_at: datetime
+    # Days from the day it was opened to the day it was closed, or today (UTC).
+    days_open: int
 
 
 def rows_of(found: list[tuple]) -> list[WorkOrderRow]:  # type: ignore[type-arg]
@@ -129,7 +140,11 @@ def rows_of(found: list[tuple]) -> list[WorkOrderRow]:  # type: ignore[type-arg]
             due_on=due,
             overdue=due is not None and due < day and status not in ("completed", "cancelled"),
             scheduled_for=scheduled,
+            visit_window=window,
             updated_at=updated,
+            days_open=(
+                (closed or datetime.now(UTC)).astimezone(UTC).date() - opened.astimezone(UTC).date()
+            ).days,
         )
         for (
             i,
@@ -150,6 +165,8 @@ def rows_of(found: list[tuple]) -> list[WorkOrderRow]:  # type: ignore[type-arg]
             vendor_id,
             scheduled,
             updated,
+            window,
+            closed,
             _,
         ) in found
     ]
@@ -215,6 +232,7 @@ class StepOut(BaseModel):
     vendor: str | None
     taken_at: datetime
     scheduled_for: date | None
+    visit_window: str | None
     note: str | None
 
 
@@ -226,14 +244,25 @@ class BillLine(BaseModel):
     paid: bool
 
 
+class Photo(BaseModel):
+    id: UUID
+    title: str
+
+
 class RequestOut(BaseModel):
     id: UUID
     tenant: str
     summary: str
     submitted_at: datetime
+    emergency: bool
+    entry_allowed: bool
+    # The photos the tenant filed with it (documents about it, not removed).
+    photos: list[Photo]
+    # The staff members on call who were emailed of it, an emergency, by name.
+    emailed: list[str]
 
 
-REQUEST = ("id", "tenant", "summary", "submitted_at")
+REQUEST = ("id", "tenant", "summary", "submitted_at", "emergency", "entry_allowed")
 
 
 class TenantContact(BaseModel):
@@ -264,9 +293,16 @@ def work_order(session: Staff, conn: Conn, work_order_id: UUID) -> WorkOrder:
     (row,) = rows_of(found)
     description, entry = found[0][13], found[0][14]
     steps = [
-        StepOut(step=step, vendor=vendor, taken_at=at, scheduled_for=scheduled, note=note)
-        for step, vendor, at, scheduled, note in conn.execute(
-            "SELECT s.step, v.display_name, s.taken_at, s.scheduled_for, s.note"
+        StepOut(
+            step=step,
+            vendor=vendor,
+            taken_at=at,
+            scheduled_for=scheduled,
+            visit_window=window,
+            note=note,
+        )
+        for step, vendor, at, scheduled, window, note in conn.execute(
+            "SELECT s.step, v.display_name, s.taken_at, s.scheduled_for, s.visit_window, s.note"
             " FROM trust_work_order_steps AS s"
             " LEFT JOIN trust_vendors AS v ON v.id = s.vendor_id WHERE s.work_order_id = %s"
             " ORDER BY s.taken_at, s.step IN ('completed', 'cancelled'), s.created_at",
@@ -285,7 +321,7 @@ def work_order(session: Staff, conn: Conn, work_order_id: UUID) -> WorkOrder:
         ).fetchall()
     ]
     request = conn.execute(
-        "SELECT r.id, t.display_name, r.summary, r.submitted_at"
+        "SELECT r.id, t.display_name, r.summary, r.submitted_at, r.emergency, r.entry_allowed"
         " FROM trust_maintenance_request_work_orders AS m"
         " JOIN trust_maintenance_requests AS r ON r.id = m.request_id"
         " JOIN trust_tenants AS t ON t.id = r.tenant_id WHERE m.work_order_id = %s",
@@ -310,9 +346,34 @@ def work_order(session: Staff, conn: Conn, work_order_id: UUID) -> WorkOrder:
         entry=entry,
         steps=steps,
         bills=bills,
-        request=None if request is None else RequestOut(**dict(zip(REQUEST, request, strict=True))),
+        request=None if request is None else request_out(conn, request),
         tenants=tenants,
     )
+
+
+def request_out(conn: psycopg.Connection[Any], request: tuple) -> RequestOut:  # type: ignore[type-arg]
+    """The tenant's request a work order answers, with the photos filed with it."""
+    photos = [
+        Photo(id=i, title=title)
+        for i, title in conn.execute(
+            "SELECT d.id, d.title FROM trust_documents AS d WHERE d.request_id = %s"
+            " AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS x"
+            "                 WHERE x.document_id = d.id)"
+            ' ORDER BY d.created_at, d.title COLLATE "C", d.id',
+            (request[0],),
+        ).fetchall()
+    ]
+    emailed = [
+        name
+        for (name,) in conn.execute(
+            "SELECT s.display_name FROM trust_emails AS e"
+            " JOIN trust_staff AS s ON s.id = e.staff_id"
+            " WHERE e.request_id = %s AND e.kind = 'emergency_request'"
+            ' ORDER BY s.display_name COLLATE "C", s.id',
+            (request[0],),
+        ).fetchall()
+    ]
+    return RequestOut(**dict(zip(REQUEST, request, strict=True)), photos=photos, emailed=emailed)
 
 
 Summary = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]

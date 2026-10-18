@@ -16,8 +16,8 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
-from pms import accounts, exports
-from pms.api import maintenance
+from pms import accounts, exports, notices
+from pms.api import documents, maintenance, outbox
 from pms.api import rent as rent_api
 from pms.api.deps import Conn, Rows, Tenant, download
 
@@ -25,6 +25,7 @@ router = APIRouter(prefix="/api/tenant")
 # A tenant files at most this many requests under one lease in a day: enough for a bad day,
 # and a ceiling on what a stolen session can pile on staff.
 REQUESTS_PER_DAY = 10
+PHOTOS_PER_REQUEST = 3
 
 
 def today() -> date:
@@ -83,10 +84,22 @@ class Lease(BaseModel):
     payments: list[rent_api.Paid]
 
 
+class Photo(BaseModel):
+    """A photo (or a PDF) filed with a request: a document about it (migration 0084)."""
+
+    title: documents.Title
+    content_type: documents.ContentType
+    content_base64: str = Field(min_length=4, max_length=7_000_000)
+
+
 class NewRequest(BaseModel):
     lease_id: UUID
     summary: str = Field(min_length=1, max_length=2000)
     entry_allowed: bool
+    # No heat, a leak, no water...: its work order opens urgent, and whoever is on call for
+    # emergencies is emailed while the server sends email (migration 0084).
+    emergency: bool = False
+    photos: list[Photo] = Field(default=[], max_length=PHOTOS_PER_REQUEST)
 
 
 def lease_of(conn: psycopg.Connection[Any], session: accounts.Session, lease_id: UUID) -> None:
@@ -320,9 +333,24 @@ def file_request(session: Tenant, conn: Conn, new: NewRequest) -> maintenance.Re
         )
     created = conn.execute(
         "INSERT INTO trust_maintenance_requests"
-        " (pmc_id, lease_id, tenant_id, summary, entry_allowed)"
-        " VALUES (%s, %s, %s, %s, %s) RETURNING id",
-        (session.pmc_id, new.lease_id, session.person_id, summary, new.entry_allowed),
+        " (pmc_id, lease_id, tenant_id, summary, entry_allowed, emergency)"
+        " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+        (
+            session.pmc_id,
+            new.lease_id,
+            session.person_id,
+            summary,
+            new.entry_allowed,
+            new.emergency,
+        ),
     ).fetchone()
     assert created is not None
+    for photo in new.photos:
+        documents.keep(
+            conn,
+            session.pmc_id,
+            documents.NewDocument(kind="request_photo", about_id=created[0], **photo.model_dump()),
+        )
+    if new.emergency and outbox.SENDING.get():
+        notices.write_emergency(conn, session.pmc_id, created[0], outbox.PUBLIC_URL.get())
     return maintenance.for_tenant(maintenance.one(conn, session.pmc_id, created[0]))

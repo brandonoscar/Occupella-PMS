@@ -194,6 +194,7 @@ TABLES = {
     "trust_shared_bill_parts": {"SELECT", "INSERT"},
     "trust_bill_markups": {"SELECT", "INSERT"},
     "trust_bill_markup_fees": {"SELECT"},
+    "trust_on_call_staff": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.

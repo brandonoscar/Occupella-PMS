@@ -44,6 +44,7 @@ Kind = Literal[
     "tenant_document",
     "lease_document",
     "vendor_document",
+    "request_photo",
 ]
 ContentType = Literal["application/pdf", "image/jpeg", "image/png"]
 Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
@@ -66,6 +67,7 @@ COLUMN: dict[Kind, str] = {
     "tenant_document": "tenant_id",
     "lease_document": "lease_id",
     "vendor_document": "vendor_id",
+    "request_photo": "request_id",
 }
 
 VENDORS = (
@@ -107,6 +109,11 @@ SUBJECTS: dict[Kind, str] = {
     ' WHERE t.pmc_id = %(pmc)s ORDER BY t.display_name COLLATE "C", t.id',
     "lease_document": LEASES,
     "vendor_document": VENDORS,
+    # A tenant's maintenance request (migration 0084): the photos they filed with it.
+    "request_photo": "SELECT r.id, p.display_name || ' / ' || u.display_name || ': ' || r.summary"
+    " FROM trust_maintenance_requests AS r JOIN trust_leases AS l ON l.id = r.lease_id"
+    " JOIN trust_units AS u ON u.id = l.unit_id JOIN trust_properties AS p ON p.id = u.property_id"
+    " WHERE r.pmc_id = %(pmc)s ORDER BY r.submitted_at DESC, r.id",
 }
 
 # Where each kind's record has its page.
@@ -121,6 +128,8 @@ PAGE: dict[Kind, str] = {
     "property_document": "/properties/",
     "unit_document": "/units/",
     "tenant_document": "/tenants/",
+    # A request is listed on Work orders, under its own anchor.
+    "request_photo": "/work-orders#request-",
 }
 
 

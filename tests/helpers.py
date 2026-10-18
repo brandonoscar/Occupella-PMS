@@ -278,6 +278,7 @@ def add_document(
         "tenant_document": "tenant_id",
         "lease_document": "lease_id",
         "vendor_document": "vendor_id",
+        "request_photo": "request_id",
     }[kind]
     with connection.transaction():
         document = _one(

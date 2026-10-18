@@ -258,3 +258,38 @@ disclosed, with no secret profit from anyone else.
 - The approval limit counts the vendor's amount, not the bill with its markup; a company whose
   agreement counts both asks the owner on that basis.
 - Taking the markup out of trust with the company's other fees (migration 0059).
+
+## Maintenance: emergencies, photos, entry and the visit (migration 0084)
+
+**The rule.** A landlord keeps a home fit to live in and fixes what makes it unfit within a
+reasonable time, sooner when it is an emergency (no heat, no water, a leak, a gas smell). What is
+reasonable is the state's, not the PMS's:
+
+- West Virginia: W. Va. Code 37-6-30 sets the landlord's duty to keep the home fit and in repair
+  (read in search excerpts; the section's text is NOT VERIFIED). Ch. 37, art. 6 has no
+  entry-notice section, per a survey of the chapter; the Attorney General's renters' guide, as
+  quoted, says a landlord enters only with the tenant's consent or reasonable notice, unless an
+  emergency repair requires it (both NOT VERIFIED against the code).
+- California: Civil Code 1954 lets a landlord enter only for the reasons it lists (an emergency,
+  repairs, showings...), with written, reasonable notice (24 hours presumed reasonable) except in
+  an emergency or when the tenant agrees at the time (read in secondary sources; the statute's
+  text is NOT VERIFIED). The strictest found.
+- That every state shares a duty of habitability and an emergency exception to entry notice is
+  NOT VERIFIED state by state; no state was found without them.
+
+**What the PMS does.**
+- A tenant marks a request an emergency and may file up to three photos with it (JPEG, PNG or
+  PDF, 5 MB each, kept as documents about the request; the AI never reads a file).
+- An emergency's work order opens urgent, and each staff member on call (Work orders, On call;
+  append-only, naming who changed it) is emailed at once while the server sends email. The work
+  order says whom it went to. No text message is sent (out of scope).
+- The tenant's word on entry ("someone may come in while I'm out", or not) is copied to the work
+  order's entry ("may let themselves in", or "call the tenant first"), and the vendor's email says
+  it.
+- A scheduled visit names its day and, if staff say, its window ("8-10 am"); the tenant sees both
+  in the portal, and the vendor's email gives the window.
+- Each work order counts its days open, to the day it closed.
+
+**Left to the company.** Whether a request is an emergency in its state's terms and how fast it
+must act; the written entry notice its state asks (the portal's visit day and window may not be
+one); and anything a tenant may do when a repair waits too long (repair and deduct, withholding).

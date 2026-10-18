@@ -457,7 +457,15 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   a key to `trust_lease_tenants` refuses anyone else). Staff open at most one work order for it,
   at the lease's unit (`trust_maintenance_request_work_orders`, one each way), and its status is
   that work order's latest step. The portal files them only under a lease in effect, at most
-  10 a day per lease.
+  10 a day per lease. Since migration 0084 (`docs/law.md`) a tenant marks one an emergency and
+  files up to three photos with it (`request_photo` documents about it); its work order opens
+  urgent with the tenant's word on entry copied, and each staff member on call
+  (`trust_on_call_staff`: append-only, the latest row holding, naming who changed it; Work orders,
+  On call, `/api/maintenance/on-call`, area maintenance) is emailed at their login's email while
+  the server sends email (`emergency_request`, once per request and staff member; no texts), the
+  work order naming whom. A schedule step may name a visit window ("8-10 am",
+  `trust_work_order_steps.visit_window`), which the tenant sees with the day and the vendor's email
+  gives; work orders count their days open.
 - Rental applications: an application comes through an open application link of a unit
   (closing a link and an application wait for each other); its applicants are names and
   emails. Screenings record a partner's recommendation and reasons. Each application has one
@@ -601,7 +609,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   no report prints them.
 - Documents (migration 0036): a vendor's W-9, a bill's receipt, a lease's move-out photo, an
   owner's document or a work order's photo (`trust_documents`, each kind about its one kind of
-  record of the PMC; work order photos since migration 0072), or since migration 0074 a
+  record of the PMC; work order photos since migration 0072; a maintenance request's photos since
+  migration 0084), or since migration 0074 a
   property's, unit's, tenant's, lease's or vendor's document, a
   PDF, JPEG or PNG of at most 5 MB. Its bytes sit apart (`trust_document_files`, checked at
   insert against the type's first bytes, the size and SHA-256 its row says, and there at

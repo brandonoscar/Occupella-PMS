@@ -478,6 +478,7 @@ FEATURES = (
     "rent-due-day",
     "owner-fees",
     "shared-bills",
+    "emergencies",
 )
 
 
