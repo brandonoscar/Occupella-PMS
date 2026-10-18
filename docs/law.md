@@ -314,3 +314,20 @@ schedules itself.
 
 **Left to the company.** Whether the damage is the tenant's and not wear and tear, and any notice
 or itemization its state asks before charging it.
+
+### A vendor's link (migration 0086)
+
+**The rule.** No state rule was found on how a landlord tells a vendor about a job or hears back
+from one. A tenant's privacy is: the vendor needs where to go, what is wrong and how to get in,
+and no more (NOT VERIFIED as a rule of any state; it is the PMS's own care).
+
+**What the PMS does.**
+- A vendor with a link sees only the open work orders last assigned to them: the property and
+  unit, what is wrong, priority, the day due, entry in the words their email uses, and the visit.
+  No tenant's name, phone or email reaches them through it.
+- They schedule a visit or say the work is done, and nothing else; the work order's timeline says
+  it came from the vendor. Reassigned, a work order leaves their link; taken back, the link opens
+  nothing. The token is kept only as its SHA-256.
+
+**Left to the company.** The entry notice its state asks before the visit (the link's schedule
+is not one), and checking the work before paying the vendor's bill.

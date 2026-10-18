@@ -39,6 +39,8 @@ export type WorkOrderStep = {
   scheduled_for: string | null;
   visit_window: string | null;
   note: string | null;
+  // Recorded by the vendor through their link, not by staff.
+  by_vendor: boolean;
 };
 // The tenant's request a work order answers, with the photos they filed with it.
 export type WorkOrderRequest = {
@@ -77,6 +79,24 @@ export type WorkOrder = WorkOrderRow & {
   // The recurring work order that opened it, in words ("every 3 months"), if one did.
   recurring: string | null;
 };
+
+// What a vendor sees through their private link (src/pms/api/vendor_links.py).
+export type VendorWorkOrder = {
+  id: string;
+  number: number;
+  property: string;
+  unit: string | null;
+  summary: string;
+  description: string | null;
+  priority: Priority;
+  due_on: string | null;
+  // In the words their email uses ("Call ... first to arrange entry.").
+  entry: string | null;
+  status: "assigned" | "scheduled";
+  visit_on: string | null;
+  visit_window: string | null;
+};
+export type VendorView = { vendor: string; company: string; work_orders: VendorWorkOrder[] };
 
 // A job that comes back every few months (src/pms/api/recurring_work_orders.py).
 export type RecurringWorkOrder = {

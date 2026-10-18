@@ -544,6 +544,7 @@ export function WorkOrderPage({ me, id }: { me: Me; id: string }) {
             <li key={n}>
               <span className="text-ink-muted">{usDate(s.taken_at)}</span>{" "}
               {stepLine(s.step, s.vendor, s.scheduled_for, s.visit_window)}
+              {s.by_vendor && <span className="text-ink-muted"> (by the vendor)</span>}
               {s.note ? <span className="text-ink-muted">: {s.note}</span> : null}
             </li>
           ))}

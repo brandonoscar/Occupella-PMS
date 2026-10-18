@@ -31,8 +31,8 @@ const ORDER: WorkOrder = {
   description: "Water under the cabinet.\nShut-off valve is stuck.",
   entry: "call first",
   steps: [
-    { step: "assigned", vendor: "Vendor 1", taken_at: "2026-10-02T09:00:00Z", scheduled_for: null, visit_window: null, note: "Tuesday" },
-    { step: "scheduled", vendor: null, taken_at: "2026-10-03T09:00:00Z", scheduled_for: "2026-10-04", visit_window: "8-10 am", note: null },
+    { step: "assigned", vendor: "Vendor 1", taken_at: "2026-10-02T09:00:00Z", scheduled_for: null, visit_window: null, note: "Tuesday", by_vendor: false },
+    { step: "scheduled", vendor: null, taken_at: "2026-10-03T09:00:00Z", scheduled_for: "2026-10-04", visit_window: "8-10 am", note: null, by_vendor: true },
   ],
   bills: [{ id: "b1", vendor: "Vendor 1", reference: "INV-1", amount: "80.00", paid: true }],
   request: {
@@ -333,7 +333,7 @@ describe("WorkOrderPage", () => {
     );
     expect(screen.getByRole("link", { name: "555-0100" }).getAttribute("href")).toBe("tel:555-0100");
     expect(screen.getByRole("list", { name: "Timeline" }).textContent).toBe(
-      "10/01/2026 Opened" + "10/02/2026 Assigned to Vendor 1: Tuesday" + "10/03/2026 Scheduled for 10/04/2026, 8-10 am",
+      "10/01/2026 Opened" + "10/02/2026 Assigned to Vendor 1: Tuesday" + "10/03/2026 Scheduled for 10/04/2026, 8-10 am (by the vendor)",
     );
     expect(within(screen.getByRole("row", { name: "INV-1" })).getAllByRole("cell").map((c) => c.textContent)).toEqual([
       "Vendor 1", "INV-1", "$80.00", "Paid",

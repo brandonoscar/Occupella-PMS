@@ -480,6 +480,7 @@ FEATURES = (
     "shared-bills",
     "emergencies",
     "recurring-work-orders",
+    "vendor-links",
 )
 
 

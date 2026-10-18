@@ -281,7 +281,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the reports. It holds no other grant: no write on any table, no function that writes. Grant
   it a new table's SELECT only if `trust_app` has it, and never a write path. It never reads
   logins, invites, sessions or credentials, nor rental applications, applicants and their
-  screenings, nor lease offers and signatures, nor documents' files, nor contact details, nor notes (`AI_NEVER_READS` in
+  screenings, nor lease offers and signatures, nor documents' files, nor contact details, nor notes,
+  nor vendors' links (`AI_NEVER_READS` in
   `tests/test_privileges.py`), nor their rows in the audit log: row-level security shows it only
   the audit rows of tables it may read (migration 0043).
 - A new table starts with `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it
@@ -473,6 +474,15 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   vendor and a priority; an end row stops it; append-only, naming who), opened once per day by
   `trust_open_recurring_work_orders`, which the nightly run and adding one call (Work orders,
   Recurring; `src/pms/api/recurring_work_orders.py`, area maintenance).
+  Since migration 0086 a vendor has no login but a link staff make from the vendor's Work orders
+  tab (`src/pms/api/vendor_links.py`; `trust_vendor_links`, the token kept only as its SHA-256 and
+  shown once, a new one taking back the old; `trust_vendor_link_revocations`, Take back; both
+  append-only, naming who, area setup). With it (`/vendor#<token>`, the token in JSON bodies) the
+  vendor sees the work orders last assigned to them and still open (where, what, priority, the day
+  due, entry, the visit; no tenant's contact details), schedules a visit (a day, maybe a window) or
+  says the work is done with a note: a step naming the link (`vendor_link_id`), which a trigger
+  allows only for those two steps, by the vendor last assigned, while the link stands. The
+  timeline marks it "(by the vendor)". The AI role reads neither table.
 - Rental applications: an application comes through an open application link of a unit
   (closing a link and an application wait for each other); its applicants are names and
   emails. Screenings record a partner's recommendation and reasons. Each application has one

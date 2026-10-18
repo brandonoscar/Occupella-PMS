@@ -254,6 +254,20 @@ browser = [
 ]
 
 [[feature]]
+id = "vendor-links"
+statement = "Staff make a vendor a private link (shown once, replacing any older) and take it back; with only the link, the vendor sees the work orders assigned to them, schedules a visit with its window and says the work is done, and staff see those steps as the vendor's."
+operations = [
+  "GET /api/vendors/{vendor_id}/link",
+  "POST /api/vendors/{vendor_id}/link",
+  "POST /api/vendors/{vendor_id}/link/revoke",
+  "POST /api/vendor-link/work-orders",
+  "POST /api/vendor-link/work-orders/{work_order_id}/steps",
+]
+browser = [
+  "features.spec.ts › staff send a plumber their link; the plumber schedules the visit and says it is done; staff take the link back",
+]
+
+[[feature]]
 id = "renters-insurance"
 statement = "Staff set whether a lease requires renters insurance and the least liability it asks, and record a policy; the tenant records their own from the portal, with any insurer; the rent page, the portal and Today show how each lease stands."
 operations = [

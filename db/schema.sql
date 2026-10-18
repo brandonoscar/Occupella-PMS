@@ -2835,6 +2835,45 @@ $$;
 
 
 --
+-- Name: trust_check_vendor_link_step(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_vendor_link_step() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_link record;
+    v_assigned uuid;
+BEGIN
+    IF NEW.step NOT IN ('scheduled', 'completed') THEN
+        RAISE EXCEPTION 'trust: a vendor schedules a visit or says the work is done, nothing else'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT l.vendor_id,
+           EXISTS (SELECT 1 FROM trust_vendor_link_revocations AS r WHERE r.link_id = l.id)
+               AS revoked
+    INTO v_link
+    FROM trust_vendor_links AS l
+    WHERE l.id = NEW.vendor_link_id;
+    IF v_link.revoked THEN
+        RAISE EXCEPTION 'trust: this link was taken back' USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT s.vendor_id INTO v_assigned
+    FROM trust_work_order_steps AS s
+    WHERE s.work_order_id = NEW.work_order_id AND s.step = 'assigned'
+    ORDER BY s.taken_at DESC, s.created_at DESC
+    LIMIT 1;
+    IF v_assigned IS DISTINCT FROM v_link.vendor_id THEN
+        RAISE EXCEPTION 'trust: this work order is not assigned to the link''s vendor'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_work_order(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11628,6 +11667,33 @@ CREATE TABLE public.trust_vendor_insurance (
 
 
 --
+-- Name: trust_vendor_link_revocations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_vendor_link_revocations (
+    link_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_vendor_links; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_vendor_links (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    vendor_id uuid NOT NULL,
+    token_sha256 bytea NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_vendor_links_token_sha256_check CHECK ((length(token_sha256) = 32))
+);
+
+
+--
 -- Name: trust_vendor_payments_carried_over; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11710,6 +11776,7 @@ CREATE TABLE public.trust_work_order_steps (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     scheduled_for date,
     visit_window text,
+    vendor_link_id uuid,
     CONSTRAINT trust_work_order_steps_check CHECK (((step = 'assigned'::text) = (vendor_id IS NOT NULL)))
 );
 
@@ -13569,6 +13636,38 @@ ALTER TABLE ONLY public.trust_vendor_insurance
 
 
 --
+-- Name: trust_vendor_link_revocations trust_vendor_link_revocations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_vendor_link_revocations
+    ADD CONSTRAINT trust_vendor_link_revocations_pkey PRIMARY KEY (link_id);
+
+
+--
+-- Name: trust_vendor_links trust_vendor_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_vendor_links
+    ADD CONSTRAINT trust_vendor_links_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_vendor_links trust_vendor_links_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_vendor_links
+    ADD CONSTRAINT trust_vendor_links_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_vendor_links trust_vendor_links_token_sha256_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_vendor_links
+    ADD CONSTRAINT trust_vendor_links_token_sha256_key UNIQUE (token_sha256);
+
+
+--
 -- Name: trust_vendor_payments_carried_over trust_vendor_payments_carried_over_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14799,6 +14898,27 @@ CREATE INDEX trust_units_property_id ON public.trust_units USING btree (property
 
 
 --
+-- Name: trust_vendor_link_revocations_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_vendor_link_revocations_recorded_by ON public.trust_vendor_link_revocations USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_vendor_links_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_vendor_links_recorded_by ON public.trust_vendor_links USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_vendor_links_vendor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_vendor_links_vendor ON public.trust_vendor_links USING btree (pmc_id, vendor_id);
+
+
+--
 -- Name: trust_vendor_profiles_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -14831,6 +14951,13 @@ CREATE INDEX trust_work_order_details_work_order ON public.trust_work_order_deta
 --
 
 CREATE UNIQUE INDEX trust_work_order_steps_one_close ON public.trust_work_order_steps USING btree (work_order_id) WHERE (step = ANY (ARRAY['completed'::text, 'cancelled'::text]));
+
+
+--
+-- Name: trust_work_order_steps_vendor_link; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_work_order_steps_vendor_link ON public.trust_work_order_steps USING btree (vendor_link_id);
 
 
 --
@@ -15720,6 +15847,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_vendor_insurance FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_vendor_link_revocations trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_vendor_link_revocations FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_vendor_links trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_vendor_links FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -16696,6 +16837,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_vend
 
 
 --
+-- Name: trust_vendor_link_revocations trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_vendor_link_revocations FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_vendor_links trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_vendor_links FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_vendor_payments_carried_over trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -17298,6 +17453,20 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_vendor_insurance 
 
 
 --
+-- Name: trust_vendor_link_revocations trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_vendor_link_revocations FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_vendor_links trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_vendor_links FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_vendor_profiles trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -17414,6 +17583,13 @@ CREATE TRIGGER trust_staff_role_change BEFORE INSERT ON public.trust_staff_roles
 --
 
 CREATE TRIGGER trust_transfer_scope BEFORE INSERT ON public.pgledger_transfers FOR EACH ROW EXECUTE FUNCTION public.trust_check_transfer_scope();
+
+
+--
+-- Name: trust_work_order_steps trust_vendor_link_step; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_vendor_link_step BEFORE INSERT ON public.trust_work_order_steps FOR EACH ROW WHEN ((new.vendor_link_id IS NOT NULL)) EXECUTE FUNCTION public.trust_check_vendor_link_step();
 
 
 --
@@ -20652,6 +20828,46 @@ ALTER TABLE ONLY public.trust_vendor_insurance
 
 
 --
+-- Name: trust_vendor_link_revocations trust_vendor_link_revocations_pmc_id_link_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_vendor_link_revocations
+    ADD CONSTRAINT trust_vendor_link_revocations_pmc_id_link_id_fkey FOREIGN KEY (pmc_id, link_id) REFERENCES public.trust_vendor_links(pmc_id, id);
+
+
+--
+-- Name: trust_vendor_link_revocations trust_vendor_link_revocations_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_vendor_link_revocations
+    ADD CONSTRAINT trust_vendor_link_revocations_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_vendor_links trust_vendor_links_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_vendor_links
+    ADD CONSTRAINT trust_vendor_links_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_vendor_links trust_vendor_links_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_vendor_links
+    ADD CONSTRAINT trust_vendor_links_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_vendor_links trust_vendor_links_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_vendor_links
+    ADD CONSTRAINT trust_vendor_links_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
 -- Name: trust_vendor_payments_carried_over trust_vendor_payments_carried_over_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20737,6 +20953,14 @@ ALTER TABLE ONLY public.trust_work_order_steps
 
 ALTER TABLE ONLY public.trust_work_order_steps
     ADD CONSTRAINT trust_work_order_steps_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
+-- Name: trust_work_order_steps trust_work_order_steps_pmc_id_vendor_link_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_work_order_steps
+    ADD CONSTRAINT trust_work_order_steps_pmc_id_vendor_link_fkey FOREIGN KEY (pmc_id, vendor_link_id) REFERENCES public.trust_vendor_links(pmc_id, id) NOT VALID;
 
 
 --
@@ -20895,4 +21119,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261018000082'),
     ('20261018000083'),
     ('20261018000084'),
-    ('20261018000085');
+    ('20261018000085'),
+    ('20261018000086');

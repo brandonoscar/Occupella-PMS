@@ -2833,3 +2833,68 @@ test("staff add a filter change every 3 months, the ones due open at once, stop 
     "House", "Quinn Demo, Taylor Demo", us(today()), "Broken filter housing", "$85.00", "$85.00",
   ]);
 });
+
+test("staff send a plumber their link; the plumber schedules the visit and says it is done; staff take the link back", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["vendor-links"]!;
+  await joinAsStaff(page, people.manager);
+  // A work order for the plumber.
+  await section(page, "Work orders");
+  await page.getByRole("button", { name: "New work order" }).click();
+  const opening = page.getByRole("dialog", { name: "New work order" });
+  await opening.getByRole("combobox", { name: "Property", exact: true }).selectOption({ label: "Cedar House" });
+  await opening.getByLabel("Title").fill("Kitchen sink drains slowly");
+  await opening.getByRole("button", { name: "Open work order" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: /Kitchen sink drains slowly$/ })).toBeVisible();
+  const orderUrl = page.url();
+  await page.getByRole("button", { name: "Next step" }).click();
+  const next = page.getByRole("dialog", { name: "Next step" });
+  await next.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Plumbing Co" });
+  await next.getByRole("button", { name: "Record" }).click();
+  await expect(next).toHaveCount(0);
+
+  // The plumber's link, from their page; shown once.
+  await section(page, "Vendors");
+  await page.getByRole("row", { name: "Demo Plumbing Co", exact: true }).click();
+  await page.getByRole("tab", { name: "Work orders" }).click();
+  await expect(page.getByTestId("vendor-link")).toContainText("Demo Plumbing Co has no link.");
+  await page.getByRole("button", { name: "Make a link" }).click();
+  const link = await page.getByLabel("Work order link, Demo Plumbing Co").inputValue();
+  expect(link).toMatch(/\/vendor#.{20,}$/);
+
+  // The plumber, with nothing but the link.
+  const plumber = await browser.newPage();
+  await plumber.goto(new URL(link).pathname + new URL(link).hash);
+  await expect(plumber.getByRole("heading", { name: /^Demo Plumbing Co: work orders from / })).toBeVisible();
+  const job = plumber.getByRole("region", { name: "Kitchen sink drains slowly" });
+  const visit = daysFromToday(1);
+  await job.getByLabel("Visit on").fill(visit);
+  await job.getByLabel("Window (optional)").fill("1-3 pm");
+  await job.getByRole("button", { name: "Schedule the visit" }).click();
+  await expect(job.getByTestId("visit")).toHaveText(`Visit on ${us(visit)}, 1-3 pm`);
+
+  // Staff see the visit as the plumber's own step.
+  await page.goto(orderUrl);
+  await expect(page.getByRole("list", { name: "Timeline" })).toContainText(`Scheduled for ${us(visit)}, 1-3 pm (by the vendor)`);
+
+  await job.getByLabel("What you did (optional)").fill("Cleared the trap");
+  await job.getByRole("button", { name: "The work is done" }).click();
+  await expect(plumber.getByText(/is done\. Thank you\./)).toBeVisible();
+  await expect(plumber.getByRole("region", { name: "Kitchen sink drains slowly" })).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByTestId("status")).toHaveText("Completed");
+  await expect(page.getByRole("list", { name: "Timeline" })).toContainText("Completed (by the vendor): Cleared the trap");
+
+  // Taken back, the link opens nothing.
+  await section(page, "Vendors");
+  await page.getByRole("row", { name: "Demo Plumbing Co", exact: true }).click();
+  await page.getByRole("tab", { name: "Work orders" }).click();
+  await page.getByRole("button", { name: "Take back" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Take back" }).click();
+  await expect(page.getByTestId("vendor-link")).toContainText("Demo Plumbing Co has no link.");
+  await plumber.reload();
+  await expect(plumber.getByRole("alert")).toHaveText("this link was taken back or doesn't exist");
+  await plumber.close();
+});

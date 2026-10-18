@@ -234,6 +234,8 @@ class StepOut(BaseModel):
     scheduled_for: date | None
     visit_window: str | None
     note: str | None
+    # Recorded by the vendor through their link (migration 0086), not by staff.
+    by_vendor: bool
 
 
 class BillLine(BaseModel):
@@ -353,9 +355,11 @@ def work_order(session: Staff, conn: Conn, work_order_id: UUID) -> WorkOrder:
             scheduled_for=scheduled,
             visit_window=window,
             note=note,
+            by_vendor=by_vendor,
         )
-        for step, vendor, at, scheduled, window, note in conn.execute(
-            "SELECT s.step, v.display_name, s.taken_at, s.scheduled_for, s.visit_window, s.note"
+        for step, vendor, at, scheduled, window, note, by_vendor in conn.execute(
+            "SELECT s.step, v.display_name, s.taken_at, s.scheduled_for, s.visit_window, s.note,"
+            " s.vendor_link_id IS NOT NULL"
             " FROM trust_work_order_steps AS s"
             " LEFT JOIN trust_vendors AS v ON v.id = s.vendor_id WHERE s.work_order_id = %s"
             " ORDER BY s.taken_at, s.step IN ('completed', 'cancelled'), s.created_at",
