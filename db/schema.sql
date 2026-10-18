@@ -3985,7 +3985,8 @@ CREATE FUNCTION public.trust_open_charges(p_pmc_id uuid, p_lease_id uuid, p_at t
     SET search_path TO 'public', 'pg_temp'
     AS $$
     WITH charged AS (
-        SELECT c.id, c.lease_id, c.kind, c.amount, c.due_on,
+        SELECT c.id, c.lease_id, c.kind, c.amount, c.due_on, c.created_at,
+               trust_pay_rank(c) AS pay_rank,
                c.amount
                - coalesce((
                    SELECT sum(cp.amount)
@@ -4014,7 +4015,7 @@ CREATE FUNCTION public.trust_open_charges(p_pmc_id uuid, p_lease_id uuid, p_at t
     ),
     -- Each charge after its own waivers, and what of them it could not take.
     settled AS (
-        SELECT k.lease_id, k.id, k.due_on,
+        SELECT k.lease_id, k.id, k.due_on, k.created_at, k.pay_rank,
                k.left_owing - least(greatest(k.left_owing, 0), coalesce(w.amount, 0)) AS left_owing,
                coalesce(w.amount, 0) - least(greatest(k.left_owing, 0), coalesce(w.amount, 0))
                    AS spare
@@ -4022,8 +4023,8 @@ CREATE FUNCTION public.trust_open_charges(p_pmc_id uuid, p_lease_id uuid, p_at t
         LEFT JOIN waived AS w ON w.id = k.id
         WHERE k.kind <> 'credit'
     ),
-    -- The rest come off the oldest open charges: credits that waive nothing, and what a waiver
-    -- could not take off its own charge.
+    -- The rest come off the open charges rent first (migration 0093): credits that waive nothing,
+    -- and what a waiver could not take off its own charge.
     credits AS (
         SELECT x.lease_id, sum(x.amount) AS amount
         FROM (
@@ -4038,7 +4039,8 @@ CREATE FUNCTION public.trust_open_charges(p_pmc_id uuid, p_lease_id uuid, p_at t
     owing AS (
         SELECT s.lease_id, s.id, s.left_owing,
                coalesce(sum(s.left_owing) OVER (
-                   PARTITION BY s.lease_id ORDER BY s.due_on, s.id
+                   PARTITION BY s.lease_id
+                   ORDER BY s.pay_rank = 2, s.due_on, s.pay_rank, s.created_at, s.id
                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
                ), 0) AS owing_before
         FROM settled AS s
@@ -4328,6 +4330,50 @@ BEGIN
     VALUES (p_bill_id, 'paid', p_pmc_id, v_transfer_id);
     RETURN v_transfer_id;
 END;
+$$;
+
+
+--
+-- Name: trust_charges; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_charges (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    due_on date NOT NULL,
+    kind text NOT NULL,
+    amount numeric NOT NULL,
+    memo text,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    recurring_charge_id uuid,
+    work_order_id uuid,
+    CONSTRAINT trust_charges_amount_check CHECK ((amount > (0)::numeric)),
+    CONSTRAINT trust_charges_kind_check CHECK ((kind = ANY (ARRAY['rent'::text, 'fee'::text, 'credit'::text])))
+);
+
+
+--
+-- Name: trust_pay_rank(public.trust_charges); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_pay_rank(p_charge public.trust_charges) RETURNS integer
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT CASE
+        WHEN p_charge.kind = 'rent' THEN 0
+        WHEN p_charge.kind = 'fee' AND (
+            p_charge.recurring_charge_id IS NOT NULL
+            OR EXISTS (
+                SELECT 1 FROM trust_lease_end_adjustments AS x
+                JOIN trust_charges AS o ON o.id = x.charge_id
+                WHERE x.adjustment_charge_id = p_charge.id
+                  AND (o.kind = 'rent' OR o.recurring_charge_id IS NOT NULL)
+            )
+        ) THEN 1
+        ELSE 2
+    END
 $$;
 
 
@@ -6169,7 +6215,22 @@ BEGIN
     settled AS (
         -- Each charge less what was paid of it and what its own waivers take (up to what was
         -- left), and what of its waivers it could not take.
-        SELECT c.id, c.lease_id, c.due_on, c.kind,
+        -- Each charge's place, as trust_pay_rank gives it (written out here: the AI role runs
+        -- this report and calls no function but the reports).
+        SELECT c.id, c.lease_id, c.due_on, c.kind, c.created_at,
+               CASE
+                   WHEN c.kind = 'rent' THEN 0
+                   WHEN c.kind = 'fee' AND (
+                       c.recurring_charge_id IS NOT NULL
+                       OR EXISTS (
+                           SELECT 1 FROM trust_lease_end_adjustments AS x
+                           JOIN trust_charges AS o ON o.id = x.charge_id
+                           WHERE x.adjustment_charge_id = c.id
+                             AND (o.kind = 'rent' OR o.recurring_charge_id IS NOT NULL)
+                       )
+                   ) THEN 1
+                   ELSE 2
+               END AS pay_rank,
                c.amount - p.amount
                - least(greatest(c.amount - p.amount, 0), coalesce(w.amount, 0)) AS left_owing,
                coalesce(w.amount, 0)
@@ -6180,10 +6241,11 @@ BEGIN
         WHERE c.pmc_id = p_pmc_id AND c.kind <> 'credit'
     ),
     open_charges AS (
-        -- Each charge due by the day with what is left of it, oldest first.
+        -- Each charge due by the day with what is left of it, rent first (migration 0093).
         SELECT s.lease_id, s.due_on, s.left_owing,
                sum(s.left_owing) OVER (
-                   PARTITION BY s.lease_id ORDER BY s.due_on, s.id
+                   PARTITION BY s.lease_id
+                   ORDER BY s.pay_rank = 2, s.due_on, s.pay_rank, s.created_at, s.id
                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
                ) AS owing_before
         FROM settled AS s
@@ -8818,10 +8880,15 @@ DECLARE
     v_left numeric;
     v_part numeric;
     v_transfer text;
-    -- The leases kept for, oldest first, the owner's account of each and what each still owes.
+    -- The leases kept for, oldest first, the owner's account of each and what each still owes
+    -- of its rent and of its other charges (migration 0093).
     v_leases uuid[] := ARRAY[]::uuid[];
     v_accounts text[] := ARRAY[]::text[];
-    v_owing numeric[] := ARRAY[]::numeric[];
+    v_rent numeric[] := ARRAY[]::numeric[];
+    v_fees numeric[] := ARRAY[]::numeric[];
+    v_rent_open numeric;
+    v_fees_open numeric;
+    v_fees_pass boolean;
     i integer;
 BEGIN
     -- What the lease owes must count every payment that committed while this waited.
@@ -8904,11 +8971,20 @@ BEGIN
         PERFORM pg_advisory_xact_lock(hashtextextended('rent of lease ' || v_link.lease_id, 0));
         v_leases := v_leases || v_link.lease_id;
         v_accounts := v_accounts || v_link.owner_account;
-        v_owing := v_owing || trust_lease_owed(v_link.lease_id);
     END LOOP;
     v_leases := v_leases || p_lease_id;
     v_accounts := v_accounts || v_owner.ledger_account_id;
-    v_owing := v_owing || trust_lease_owed(p_lease_id);
+    -- What is open of each lease's rent (its rent and monthly charges) and of its other charges,
+    -- its credits coming off its rent first (trust_open_charges).
+    FOR n IN 1 .. cardinality(v_leases) LOOP
+        SELECT coalesce(sum(o.open) FILTER (WHERE trust_pay_rank(c) < 2), 0),
+               coalesce(sum(o.open) FILTER (WHERE trust_pay_rank(c) = 2), 0)
+        INTO v_rent_open, v_fees_open
+        FROM trust_open_charges(p_pmc_id, v_leases[n], 'infinity') AS o
+        JOIN trust_charges AS c ON c.id = o.charge_id;
+        v_rent := v_rent || v_rent_open;
+        v_fees := v_fees || v_fees_open;
+    END LOOP;
 
     -- The deposits held for the lease's tenants. One paid in meanwhile stays held (the
     -- transfers below take each account's lock); one taken out meanwhile, by the return of
@@ -8921,7 +8997,9 @@ BEGIN
         RAISE EXCEPTION 'trust: no security deposit is held for lease %', p_lease_id
             USING ERRCODE = 'check_violation';
     END IF;
-    v_kept := least((SELECT sum(o) FROM unnest(v_owing) AS o), v_held);
+    v_kept := least(
+        (SELECT sum(o) FROM unnest(v_rent) AS o) + (SELECT sum(o) FROM unnest(v_fees) AS o), v_held
+    );
     v_keep := v_kept;  -- what is left to keep, deposit by deposit
 
     INSERT INTO trust_deposit_returns (
@@ -8947,56 +9025,61 @@ BEGIN
     LOOP
         v_take := least(v_keep, v_deposit.balance);
         v_rest := v_take;
-        -- Kept: lease by lease, oldest first, each part into that lease's owner's account, its
-        -- cash moving to the owner's trust bank account.
-        i := 1;
-        WHILE v_rest > 0 AND i <= cardinality(v_leases) LOOP
-            v_piece := least(v_rest, v_owing[i]);
-            IF v_piece > 0 THEN
-                SELECT t.* INTO v_owner FROM trust_ledger_accounts AS t
-                WHERE t.ledger_account_id = v_accounts[i];
-                SELECT t.ledger_account_id INTO v_owner_cash FROM trust_ledger_accounts AS t
-                WHERE t.bank_account_id = v_owner.bank_account_id AND t.kind = 'bank_cash';
-                SELECT t.id INTO v_transfer
-                FROM pgledger_create_transfers(
-                    ARRAY[(v_deposit.account, v_owner.ledger_account_id, v_piece)::transfer_request,
-                          (v_owner_cash, v_deposit.cash, v_piece)::transfer_request],
-                    p_event_at,
-                    jsonb_build_object('memo', 'Security deposit kept')
-                ) AS t
-                WHERE t.from_account_id = v_deposit.account;
-                v_left := v_piece;
-                FOR v_charge IN
-                    SELECT c.id, c.amount
-                           - coalesce((SELECT sum(p.amount) FROM trust_charge_payments AS p
-                                       WHERE p.charge_id = c.id), 0)
-                           + coalesce((SELECT sum(r.amount) FROM trust_payment_reversals AS r
-                                       WHERE r.charge_id = c.id), 0)
-                           -- What a waiver took off it is not kept from the deposit (0079).
-                           - coalesce((SELECT sum(k.amount) FROM trust_charge_waivers AS w
-                                       JOIN trust_charges AS k ON k.id = w.credit_charge_id
-                                       WHERE w.waived_charge_id = c.id), 0) AS open
-                    FROM trust_charges AS c
-                    WHERE c.lease_id = v_leases[i] AND c.kind <> 'credit'
-                    ORDER BY c.due_on, c.created_at, c.id
-                LOOP
-                    EXIT WHEN v_left <= 0;
-                    CONTINUE WHEN v_charge.open <= 0;
-                    v_part := least(v_left, v_charge.open);
-                    PERFORM trust_apply_payment(p_pmc_id, v_charge.id, v_transfer, v_part);
-                    v_line := v_line + 1;
-                    INSERT INTO trust_deposit_return_lines (
-                        lease_id, line_no, pmc_id, tenant_id, charge_id, amount, transfer_id
-                    ) VALUES (
-                        p_lease_id, v_line, p_pmc_id, v_deposit.tenant_id, v_charge.id, v_part,
-                        v_transfer
-                    );
-                    v_left := v_left - v_part;
-                END LOOP;
-                v_owing[i] := v_owing[i] - v_piece;
-                v_rest := v_rest - v_piece;
-            END IF;
-            i := i + 1;
+        -- Kept: the rent of every lease first, lease by lease, oldest first, then their other
+        -- charges the same way (rent first, migration 0093), each part into that lease's owner's
+        -- account, its cash moving to the owner's trust bank account.
+        FOREACH v_fees_pass IN ARRAY ARRAY[false, true] LOOP
+            i := 1;
+            WHILE v_rest > 0 AND i <= cardinality(v_leases) LOOP
+                v_piece := least(v_rest, CASE WHEN v_fees_pass THEN v_fees[i] ELSE v_rent[i] END);
+                IF v_piece > 0 THEN
+                    SELECT t.* INTO v_owner FROM trust_ledger_accounts AS t
+                    WHERE t.ledger_account_id = v_accounts[i];
+                    SELECT t.ledger_account_id INTO v_owner_cash FROM trust_ledger_accounts AS t
+                    WHERE t.bank_account_id = v_owner.bank_account_id AND t.kind = 'bank_cash';
+                    SELECT t.id INTO v_transfer
+                    FROM pgledger_create_transfers(
+                        ARRAY[
+                            (v_deposit.account, v_owner.ledger_account_id, v_piece)
+                                ::transfer_request,
+                            (v_owner_cash, v_deposit.cash, v_piece)::transfer_request
+                        ],
+                        p_event_at,
+                        jsonb_build_object('memo', 'Security deposit kept')
+                    ) AS t
+                    WHERE t.from_account_id = v_deposit.account;
+                    v_left := v_piece;
+                    -- What is open of each, rent first: what a waiver or a credit took off it is
+                    -- not kept from the deposit.
+                    FOR v_charge IN
+                        SELECT c.id, o.open
+                        FROM trust_open_charges(p_pmc_id, v_leases[i], 'infinity') AS o
+                        JOIN trust_charges AS c ON c.id = o.charge_id
+                        WHERE (trust_pay_rank(c) = 2) = v_fees_pass
+                        ORDER BY c.due_on, trust_pay_rank(c), c.created_at, c.id
+                    LOOP
+                        EXIT WHEN v_left <= 0;
+                        CONTINUE WHEN v_charge.open <= 0;
+                        v_part := least(v_left, v_charge.open);
+                        PERFORM trust_apply_payment(p_pmc_id, v_charge.id, v_transfer, v_part);
+                        v_line := v_line + 1;
+                        INSERT INTO trust_deposit_return_lines (
+                            lease_id, line_no, pmc_id, tenant_id, charge_id, amount, transfer_id
+                        ) VALUES (
+                            p_lease_id, v_line, p_pmc_id, v_deposit.tenant_id, v_charge.id, v_part,
+                            v_transfer
+                        );
+                        v_left := v_left - v_part;
+                    END LOOP;
+                    IF v_fees_pass THEN
+                        v_fees[i] := v_fees[i] - v_piece;
+                    ELSE
+                        v_rent[i] := v_rent[i] - v_piece;
+                    END IF;
+                    v_rest := v_rest - v_piece;
+                END IF;
+                i := i + 1;
+            END LOOP;
         END LOOP;
         v_keep := v_keep - v_take;
         IF v_deposit.balance > v_take THEN
@@ -10342,26 +10425,6 @@ CREATE TABLE public.trust_charge_waivers (
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT trust_charge_waivers_reason_check CHECK (((reason ~ '\S'::text) AND (char_length(reason) <= 500)))
-);
-
-
---
--- Name: trust_charges; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.trust_charges (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    pmc_id uuid NOT NULL,
-    lease_id uuid NOT NULL,
-    due_on date NOT NULL,
-    kind text NOT NULL,
-    amount numeric NOT NULL,
-    memo text,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    recurring_charge_id uuid,
-    work_order_id uuid,
-    CONSTRAINT trust_charges_amount_check CHECK ((amount > (0)::numeric)),
-    CONSTRAINT trust_charges_kind_check CHECK ((kind = ANY (ARRAY['rent'::text, 'fee'::text, 'credit'::text])))
 );
 
 
@@ -22127,4 +22190,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261018000089'),
     ('20261018000090'),
     ('20261018000091'),
-    ('20261018000092');
+    ('20261018000092'),
+    ('20261018000093');

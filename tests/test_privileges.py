@@ -308,6 +308,8 @@ FUNCTIONS = {
     "trust_rent_for_month(date,date,numeric,date)": {"trust_app"},
     "trust_rent_on(uuid,date)": {"trust_app"},
     "trust_open_charges(uuid,uuid,timestamptz)": {"trust_app"},
+    # Where a charge comes in the order money pays them: rent first (migration 0093).
+    "trust_pay_rank(trust_charges)": {"trust_app"},
     "trust_charge_recurring_due(uuid,date)": {"trust_app"},
     "trust_charge_rent_on_due_days(uuid,date,date)": {"trust_app"},
     "trust_charge_recurring_on_due_days(uuid,date,date)": {"trust_app"},

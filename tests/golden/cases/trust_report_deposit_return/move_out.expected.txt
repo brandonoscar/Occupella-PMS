@@ -5,9 +5,9 @@ line	item	detail	amount
 4	lease	2026-01-01 to 2026-06-30	NULL
 5	deposit held	Tenant A	600.00
 6	deposit held	Tenant B	900.00
-7	kept for	2026-06-01 rent: June rent	1000.00
+7	kept for	2026-06-01 rent: June rent	900.00
 8	kept for	2026-06-30 fee: Cleaning	150.00
-9	kept for	2026-06-30 fee: Broken window	220.00
+9	kept for	2026-06-30 fee: Broken window	320.00
 10	deposits held, total	NULL	1500.00
 11	kept, total	NULL	1370.00
 12	returned to	Tenant B	130.00

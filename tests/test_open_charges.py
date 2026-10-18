@@ -116,16 +116,18 @@ def test_a_credit_counts_if_due_by_the_last_day_of_grace(conn, pmc, late, credit
     assert late_fees(conn, rent) == fees
 
 
-def test_credits_come_off_the_oldest_open_charges_first(conn, pmc, late):
+def test_credits_come_off_the_rent_before_an_older_fee(conn, pmc, late):
     lease, rent = late
-    charge(conn, pmc.pmc_id, lease, date(2026, 1, 20), "50.00", "fee")  # older, unpaid
+    fee = charge(conn, pmc.pmc_id, lease, date(2026, 1, 20), "50.00", "fee")  # older, unpaid
     charge(conn, pmc.pmc_id, lease, FEB_1, "100.00", "credit")
     pay(conn, pmc, rent, "1400.00", at(date(2026, 2, 2)))
 
     assess_late_fees(conn, pmc.pmc_id, MAR_1)
 
-    # 50.00 of the credit closes the older fee, 50.00 comes off the rent: 50.00 unpaid.
-    assert late_fees(conn, rent) == [(Decimal("50.00"), Decimal("55.00"))]
+    # Rent first (migration 0093): the credit closes the rent's last 100.00, so it is not late,
+    # and the older fee stays open.
+    assert late_fees(conn, rent) == []
+    assert open_at(conn, pmc, FOREVER)[fee] == Decimal("50.00")
 
 
 # --- what is open ---------------------------------------------------------------------------

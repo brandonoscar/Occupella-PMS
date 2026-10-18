@@ -385,7 +385,7 @@ tests = [
   "tests/test_rent_automation.py::test_one_run_charges_what_a_run_every_day_would",
   "tests/test_open_charges.py::test_a_lease_whose_credit_and_payment_cover_its_rent_is_not_late",
   "tests/test_open_charges.py::test_a_credit_counts_if_due_by_the_last_day_of_grace",
-  "tests/test_open_charges.py::test_credits_come_off_the_oldest_open_charges_first",
+  "tests/test_open_charges.py::test_credits_come_off_the_rent_before_an_older_fee",
   "tests/test_open_charges.py::test_a_credit_runs_on_to_later_charges_and_never_past_what_is_open",
 ]
 
@@ -1171,4 +1171,18 @@ tests = [
   "tests/test_deposit_kinds.py::test_the_statement_and_the_register_name_each_kind",
   "tests/api/test_deposit_kinds_api.py::test_each_kind_of_deposit_is_held_apart_and_the_lease_shows_each",
   "tests/api/test_deposit_kinds_api.py::test_an_assistance_animal_takes_no_pet_deposit",
+]
+
+[[invariant]]
+id = "rent-first"
+statement = "A credit, a tenant's payment, prepaid rent used and a deposit kept pay a lease's rent and monthly charges before its other charges, each oldest first, a tie by when charged then id (migration 0093; Washington's RCW 59.18.283, the strictest state found), so a late fee no longer depends on random ids; a moved tenant pays the rent of every lease they moved through before any of their fees, each owner still paid what was owed to them."
+tests = [
+  "tests/test_rent_first.py::test_a_late_fee_no_longer_depends_on_chance",
+  "tests/test_rent_first.py::test_credits_come_off_the_rent_before_an_older_fee",
+  "tests/test_rent_first.py::test_a_deposit_kept_pays_the_rent_first_less_its_credits",
+  "tests/api/test_rent_first_api.py::test_a_payment_pays_the_rent_before_an_older_fee",
+  "tests/api/test_rent_first_api.py::test_a_moved_tenant_pays_the_rent_of_every_lease_before_any_fee",
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+  "tests/properties/test_deposit_return_properties.py::test_a_deposit_return_keeps_what_is_owed_and_gives_back_the_rest",
+  "tests/properties/test_lease_transfer_properties.py::test_a_moved_tenant_s_money_pays_each_owner_what_was_owed_to_them",
 ]

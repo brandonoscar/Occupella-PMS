@@ -127,6 +127,31 @@ written authorization.
 - Telling its regulator about a signer change (West Virginia: within 10 days).
 - The bank's own signature card, which the PMS can't see: keep it the same as this list.
 
+## Rent first (migration 0093)
+
+**The rule.** Washington requires a landlord to apply any payment a tenant makes to rent before
+late fees, damages, legal costs or other fees (RCW 59.18.283(1)), rent there being the recurring
+charges the rental agreement sets for living there (RCW 59.18.030). It is the strictest rule
+found; a Wisconsin legal aid FAQ says the same of Wisconsin without citing a statute. Paying rent
+first is allowed everywhere, as it is in the tenant's favor, and a late fee figured on unpaid rent
+should never grow because a payment went to a fee instead. Sources read: the RCW archive copy of
+59.18.283 on lawfilesext.leg.wa.gov and the search snippets of wislawhelp.org and a North Carolina
+Realtors note on G.S. 42-46 (a late fee may not be taken out of a later rent so as to make it
+late). The current text of each statute was not read: NOT VERIFIED.
+
+**What the PMS does.**
+- Every payment, prepaid rent used, credit and deposit kept pays the lease's rent and its monthly
+  charges first, oldest first, then its other charges (late, NSF, lease-break and other fees),
+  oldest first. Before this, charges due the same day were paid in the order of their random ids,
+  so the same lease could be charged a different late fee by chance.
+- A late fee is worked out from the rent left once credits came off the rent first.
+- A tenant who moved pays the rent of every lease they moved through before any of their fees,
+  each owner still paid what was owed to them.
+
+**Not built.** A payment a tenant earmarks for a particular month or charge (New York lets a
+tenant do so, by Cornell's tenant advocacy notes, NOT VERIFIED): the PMS still pays rent first,
+oldest first.
+
 ## A lease's rent changed from a month (migration 0061)
 
 **The rule.** A periodic tenancy (month to month) changes rent only after written notice of at

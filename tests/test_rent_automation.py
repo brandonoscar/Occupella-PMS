@@ -354,9 +354,10 @@ def test_the_terms_in_force_on_the_rents_due_date_apply(conn, pmc):
 
 
 def test_one_run_charges_what_a_run_every_day_would(conn, pmc):
-    """A late fee is open like any charge, so a credit comes off it before a later rent. One run
-    reaching two rents of a lease takes them in the order their grace ends, whatever their ids,
-    so it charges what two runs a month apart would."""
+    """A late fee is open like any charge, but a credit comes off the rent first (migration
+    0093), a later rent before an earlier late fee. One run reaching two rents of a lease takes
+    them in the order their grace ends, whatever their ids, so it charges what two runs a month
+    apart would."""
     property_id = pmc.owners[0].property_id
     add_late_fee_policy(conn, pmc.pmc_id, property_id, JAN_1, 5, "50", "10")
     fees = []
@@ -371,14 +372,14 @@ def test_one_run_charges_what_a_run_every_day_would(conn, pmc):
                 (f"{first * 8}-0000-4000-8000-{name[-1] * 12}", pmc.pmc_id, lease, due_on, RENT),
             ).fetchone()[0]
         # A concession due March 2: by March's late day it has paid February's rent and 100.00
-        # more, which goes to February's late fee (due Feb 7) before March's rent.
+        # more, which goes to March's rent before February's late fee (due Feb 7): rent first.
         charge(conn, pmc.pmc_id, lease, date(2026, 3, 2), "1600.00", "credit")
         for as_of in [*runs, date(2026, 3, 10)]:
             assess_late_fees(conn, pmc.pmc_id, as_of)
         fees.append([late_fees(conn, rents[due_on]) for due_on in (FEB_1, MAR_1)])
 
-    # 50.00 + 10% of 1500.00 each: the credit is gone before March's rent, in one run or two.
-    every_month = [[(RENT, Decimal("200.00"))], [(RENT, Decimal("200.00"))]]
+    # 50.00 + 10% of 1500.00 for February, of 1400.00 for March, in one run or two.
+    every_month = [[(RENT, Decimal("200.00"))], [(Decimal("1400.00"), Decimal("190.00"))]]
     assert fees == [every_month, every_month]
 
 

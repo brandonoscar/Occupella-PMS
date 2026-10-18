@@ -5,12 +5,13 @@ Hypothesis makes a tenant's lease at Property 1 and moves it one to three times,
 unit of another owner's property (the last maybe back at Property 1). It charges each lease rent,
 fees and credits, some while the tenant lives elsewhere, takes payments on the last lease, and at
 the end returns the deposit. A model works out what each lease owes; the database must agree:
-  - a payment pays what each lease the tenant moved from still owes first, oldest lease first,
-    then the last lease, each part into that lease's owner's account; the rest is prepaid rent;
+  - a payment pays the rent each lease the tenant moved from still owes first, oldest lease
+    first, then the last lease's rent, then their other charges in the same order (rent first,
+    migration 0093), each part into that lease's owner's account; the rest is prepaid rent;
   - every payment matched to a charge went into the owner's account of the charge's own
     property, so each owner is paid what was owed to them and no more;
-  - the deposit's return keeps what every lease still owes, oldest first, each for its own owner,
-    or the whole deposit if that is less, and returns the rest;
+  - the deposit's return keeps what every lease still owes, the same way, each for its own
+    owner, or the whole deposit if that is less, and returns the rest;
   - every trust bank account ties out after every step.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
@@ -75,8 +76,10 @@ def check(conn, app, moves, charges, payments, deposit):
         assert set(bank_sums(conn, pmc.pmc_id).values()) == {0}
     event(f"{moves} moves")
 
-    # What each lease is owed: its charges less its credits; rent once per due date.
-    net = [Decimal(0)] * len(leases)
+    # What each lease charged of rent and of other charges, and its credits; rent once per due
+    # date.
+    charged = [[Decimal(0), Decimal(0)] for _ in leases]
+    credits = [Decimal(0)] * len(leases)
     rent_days = set()
     for which, kind, amount, days in charges:
         n = min(which, len(leases) - 1)
@@ -86,26 +89,42 @@ def check(conn, app, moves, charges, payments, deposit):
         if kind == "rent":
             rent_days.add((n, due))
         charge(conn, pmc.pmc_id, leases[n], due, amount, kind)
-        net[n] += -amount if kind == "credit" else amount
-    paid = [Decimal(0)] * len(leases)
+        if kind == "credit":
+            credits[n] += amount
+        else:
+            charged[n][kind == "fee"] += amount
+    paid = [[Decimal(0), Decimal(0)] for _ in leases]  # of rent, of other charges
+
+    def still(n):
+        """What lease n still owes of its rent and of its other charges, its credits coming off
+        its rent first."""
+        rent, fees = (charged[n][k] - paid[n][k] for k in (0, 1))
+        return (max(rent - credits[n], Decimal(0)), max(fees - max(credits[n] - rent, 0), 0))
 
     def owing():
-        return [max(net[n] - paid[n], Decimal(0)) for n in range(len(leases))]
+        return [sum(still(n), Decimal(0)) for n in range(len(leases))]
+
+    def pay(amount):
+        """The rent of every lease first, oldest lease first, then their other charges; what
+        is left over."""
+        left = amount
+        for k in (0, 1):
+            for n in range(len(leases)):
+                part = min(left, still(n)[k])
+                paid[n][k] += part
+                left -= part
+        return left
 
     def to_owners():
         """What each owner's account should hold: what was paid of their leases."""
         held = {home.account: Decimal(0) for home in homes}
         for n, home in enumerate(homes):
-            held[home.account] += paid[n]
+            held[home.account] += sum(paid[n], Decimal(0))
         return held
 
     prepaid = Decimal(0)
     for amount in payments:
-        left = amount
-        for n, due in enumerate(owing()):
-            part = min(left, due)
-            paid[n] += part
-            left -= part
+        left = pay(amount)
         prepaid += left
         recorded = rent.record_payment(app, pmc.pmc_id, leases[-1], uuid.uuid4(), amount, PAID_ON)
         assert recorded.to_owner == amount - left and recorded.to_prepaid == left
@@ -120,11 +139,7 @@ def check(conn, app, moves, charges, payments, deposit):
     if deposit:
         app.execute("SELECT trust_end_lease(%s, %s, %s)", (pmc.pmc_id, leases[-1], LAST_DAY))
         keep = min(sum(owing(), Decimal(0)), deposit)
-        left = keep
-        for n, due in enumerate(owing()):
-            part = min(left, due)
-            paid[n] += part
-            left -= part
+        assert pay(keep) == 0
         event("kept all" if keep == deposit else "kept none" if keep == 0 else "kept some")
 
         back = app.execute(

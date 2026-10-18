@@ -390,7 +390,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   its rents in the order their grace ends so one run charges what a run every day would (a late
   fee is an open charge too; migration 0056). READ COMMITTED. What is open of a charge (`trust_open_charges`, migration 0049) is its amount less
   payments matched, plus what bounced, less its share of the lease's credits, which come off
-  the oldest open charges first (by due date, then id), as the delinquency report counts them.
+  its rent first, as the delinquency report counts them (Rent first, below).
   A waiver (migration 0079, `trust_charge_waivers`; staff waive from an open charge's ⋯ menu on
   the lease page, `POST /api/rent/charges/<id>/waive`, area rent) is a credit linked to the charge
   it waives, with why, naming who: it comes off that charge first, never past what is left of it
@@ -426,6 +426,15 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   PMS picks no insurer and charges nothing. `trust_report_renters_insurance` gives each lease in
   effect on a day: the policy that runs out last of those started, its standing and whether it is
   below the minimum; the rent page, the portal and the Dashboard read it.
+- Rent first (migration 0093, `docs/law.md`, the founder 2026-10-18): a credit, a tenant's
+  payment, prepaid rent used and a deposit kept pay a lease's rent before its other charges: by
+  `trust_pay_rank` (0 rent, 1 a monthly charge: a recurring fee, or a lease end's fee for days back
+  of either, 2 anything else), rent and monthly charges first, oldest first (rent before a monthly
+  charge due the same day), then the rest oldest first, a tie by when charged, then id.
+  `trust_open_charges`, the delinquency report, `trust_return_deposit` and the rent page
+  (`PAY_ORDER` in `src/pms/api/rent.py`) all follow it, so a late fee no longer turns on random
+  ids; a moved tenant's payment and deposit pay the rent of every lease they moved through before
+  any of their fees. Lists still show charges by due date.
 - Recurring charges (migration 0037): a fee a lease owes every month besides its rent (pet
   rent, parking) or a credit it gets every month (`trust_recurring_charges`, from a first due
   date; an end row stops it from a day). `trust_charge_recurring_due` charges each one in force
@@ -535,7 +544,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   completion wait for each other), the tenant no longer sees it, and the expirations report
   leaves it out. The AI role reads none of it.
 - Rent work (`src/pms/api/rent.py`): a tenant's payment recorded by staff pays the owner's
-  account no more than the lease owes, matched to what is open of its charges oldest first
+  account no more than the lease owes, matched to what is open of its charges rent first
   (`trust_open_charges`, so a credit counts), and the rest is
   the first tenant's prepaid rent; prepaid rent is used the same way. Each record carries a
   request id the page makes (its key in `trust_post_transfers`), so sending it again records
@@ -613,8 +622,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - Move-out (migration 0035): once a lease has ended, `trust_return_deposit` returns its
   tenants' deposits once per lease (same request key again returns the same): what the lease owes
   (`trust_lease_owed`), or all the deposits if less, is kept for the owner's account and matched
-  to its charges oldest first, the cash moving to the owner's trust bank account; the rest goes
-  back to each tenant from the security-deposit account. A tenant still on another lease keeps
+  to what is open of its charges rent first, the cash moving to the owner's trust bank account;
+  the rest goes back to each tenant from the security-deposit account. A tenant still on another lease keeps
   their deposit with it. It takes the disburse role. `trust_report_deposit_return` is the
   itemized statement for the tenants. READ COMMITTED; append-only.
 - Property groups (migration 0065, ADR 0006): a PMC's named sets of its properties, a name once
@@ -759,9 +768,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   Deposits stay held, as they are the tenants'; their prepaid rent first pays what the old lease
   owes, and the rest moves with its cash to the new property's owner's trust bank account when it
   keeps its owners' money in one. What the old lease still owes stays its owner's: the new lease's
-  payments (`src/pms/api/rent.py`) pay what each lease it came from owes first, oldest first, into
-  the account each move names (`trust_lease_moved_from`), and `trust_return_deposit` keeps it
-  first, each lease's for its own owner; a lease moved from has no return of its own and leaves
+  payments (`src/pms/api/rent.py`) pay what each lease it came from owes first, oldest first (the
+  rent of every one before any of their other charges), into the account each move names
+  (`trust_lease_moved_from`), and `trust_return_deposit` keeps it the same way, each lease's for
+  its own owner; a lease moved from has no return of its own and leaves
   Move-outs. The lease page's ⋯ menu has Move to another unit (`POST /api/move-out/<id>/transfer`,
   area move-out); a lease shows what it carries and where its tenants went.
 - Deposit kinds (migration 0092, `docs/law.md`, the founder's review q043): a tenant's pet or key
