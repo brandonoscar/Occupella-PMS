@@ -149,7 +149,7 @@ def test_a_deposit_day_is_not_before_the_money_came_or_after_today(client, staff
     twice = deposit(client, pmc, paid + paid)
     assert twice.status_code == 422 and "once" in twice.json()["detail"]
     unknown = deposit(client, pmc, ["pglt_not_a_transfer"])
-    assert unknown.status_code == 422
+    assert unknown.status_code == 422 and "brought no money" in unknown.json()["detail"]
 
 
 def test_month_end_matches_a_deposits_one_bank_line_to_all_of_it(client, conn, staff, pmc, lease):

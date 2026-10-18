@@ -146,6 +146,22 @@ def test_only_a_charge_is_waived_by_a_credit_of_its_own_lease(conn, pmc, lease, 
     theirs = make_pmc(conn)
     with pytest.raises(psycopg.errors.ForeignKeyViolation):
         waive(conn, theirs.pmc_id, lease, fee, "1.00")
+    # A waiver row naming another company's credit, or waiving another company's charge.
+    ours = charge(conn, pmc.pmc_id, lease, JAN_7, "1.00", kind="credit", memo="Ours")
+    their_unit = add_unit(conn, theirs.pmc_id, theirs.owners[0].property_id)
+    their_tenant = conn.execute(
+        "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
+        (theirs.tenant_deposit,),
+    ).fetchone()[0]
+    their_lease = open_lease(conn, theirs.pmc_id, their_unit, JAN_1, None, "900.00", [their_tenant])
+    their_fee = charge(conn, theirs.pmc_id, their_lease, JAN_7, "5.00", kind="fee")
+    for pmc_id, credit, waived in ((theirs.pmc_id, ours, fee), (pmc.pmc_id, ours, their_fee)):
+        with pytest.raises(psycopg.errors.ForeignKeyViolation), conn.transaction():
+            conn.execute(
+                "INSERT INTO trust_charge_waivers (credit_charge_id, pmc_id, waived_charge_id,"
+                " reason) VALUES (%s, %s, %s, 'x')",
+                (credit, pmc_id, waived),
+            )
     # One waiver per credit.
     credit = waive(conn, pmc.pmc_id, lease, fee, "1.00")
     with pytest.raises(psycopg.errors.UniqueViolation):

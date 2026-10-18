@@ -198,9 +198,8 @@ def record_deposit(session: Staff, conn: Conn, bank_account_id: UUID, new: NewDe
                 )
     except psycopg.errors.UniqueViolation:
         raise HTTPException(409, "a payment ticked is in another deposit already") from None
-    except psycopg.errors.ForeignKeyViolation:
-        raise HTTPException(422, "no such payment in the books") from None
     except psycopg.errors.CheckViolation as refused:
+        # An unknown payment too: the item's trigger finds no money it brought in.
         raise HTTPException(422, refusal(refused)) from None
     (deposit,) = deposits_of(conn, session.pmc_id, deposit=made[0])
     return deposit

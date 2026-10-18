@@ -290,6 +290,22 @@ def test_lease_break_fee_terms_refuse_bad_input_and_callers(
         json={"property_id": str(other.owners[0].property_id), "starts_on": str(START)},
     )
     assert elsewhere.status_code == 404
+    # Another company's lease reads as not found.
+    their_tenant = conn.execute(
+        "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
+        (other.prepaid_rent,),
+    ).fetchone()[0]
+    theirs = open_lease(
+        conn,
+        other.pmc_id,
+        add_unit(conn, other.pmc_id, other.owners[0].property_id),
+        START,
+        None,
+        "900.00",
+        [their_tenant],
+    )
+    gone = client.get(f"/api/move-out/{theirs}/break-fee", params={"ends_on": str(TODAY)})
+    assert (gone.status_code, gone.json()["detail"]) == (404, "no such lease")
     join_as_tenant(other_client, conn, app_conn, pmc)
     assert terms(other_client, pmc, START).status_code == 403
     assert (
