@@ -1482,22 +1482,24 @@ class RentRollMachine(RuleBasedStateMachine):
     def open_by(self, charge_id, cutoff):
         """What is open of a charge at cutoff: unpaid by then, less its share of its lease's
         credits due before cutoff's day, which come off the lease's open charges oldest first
-        (by due date, then id)."""
+        (by due date, then id): what the credits leave once everything before it is owed, a
+        running total, so a charge paid twice by then (paid again before a bounce dated later)
+        lowers what is owed before the charges after it."""
         lease_id = self.charges[charge_id].lease_id
         mine = {c: b for c, b in self.charges.items() if b.lease_id == lease_id}
         credits = sum(
             (b.amount for b in mine.values() if b.kind == "credit" and b.due_on < cutoff.date()),
             Decimal(0),
         )
+        before = Decimal(0)
         for c, _ in sorted(
             ((c, b) for c, b in mine.items() if b.kind != "credit"),
             key=lambda pair: (pair[1].due_on, pair[0]),
         ):
             left = self.unpaid_by(c, cutoff)
-            take = min(left, credits)
-            credits -= take
             if c == charge_id:
-                return left - take
+                return left - min(left, max(credits - before, Decimal(0)))
+            before += left
         raise AssertionError("a charge that is not a credit is open or not")
 
     @rule(role=ROLES, day=st.integers(min_value=0, max_value=640))
@@ -1845,7 +1847,7 @@ class RentRollMachine(RuleBasedStateMachine):
     def aging(self, lease_id, as_of):
         """(current, 1-30, 31-60, 61-90, over 90, total) a lease owes at the end of a day:
         credits due by then and payments toward charges not yet due come off the oldest
-        charges first."""
+        charges first, a running total as open_by keeps."""
         cutoff = datetime.combine(as_of + timedelta(days=1), time(0), tzinfo=UTC)
         mine = {c: bill for c, bill in self.charges.items() if bill.lease_id == lease_id}
         offsets = sum(
@@ -1860,13 +1862,14 @@ class RentRollMachine(RuleBasedStateMachine):
             Decimal(0),
         )
         out = [Decimal(0)] * 5
+        before = Decimal(0)
         for c, bill in sorted(
             ((c, b) for c, b in mine.items() if b.kind != "credit" and b.due_on <= as_of),
             key=lambda pair: (pair[1].due_on, pair[0]),
         ):
             left = bill.amount - self.paid_by(c, cutoff)
-            take = min(left, max(offsets, Decimal(0)))
-            offsets -= take
+            take = min(left, max(offsets - before, Decimal(0)))
+            before += left
             late = (as_of - bill.due_on).days
             out[next(i for i, top in enumerate((0, 30, 60, 90, late)) if late <= top)] += (
                 left - take
@@ -2277,3 +2280,78 @@ def test_rent_roll_invariants_hold_under_random_leases_charges_and_payments(data
         app_conn.execute("SET ROLE trust_app")
         ai_conn.execute("SET ROLE trust_ai_agent")
         run_state_machine_as_test(lambda: RentRollMachine(owner_conn, app_conn, ai_conn))
+
+
+def test_the_model_counts_a_charge_paid_twice_by_then_as_the_database_does(conn):
+    """A charge paid, its payment bouncing only later, and paid again in between (matched once
+    the bounce made room) was paid twice as of a day between. The database keeps a running
+    total of what each lease owes, oldest first, so the second payment comes off what is owed
+    before it and nothing more: here the older fee still owes far more, so the credit is its and
+    a newer rent keeps all it owes. The model above must count it the same way (it once gave the
+    second payment to the rent as a credit, so CI's seed saw a late fee worked from a cent less
+    than the database's)."""
+    pmc = make_pmc(conn)
+    tenant = conn.execute(
+        "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
+        (pmc.tenant_deposit,),
+    ).fetchone()[0]
+    place = pmc.owners[0]
+    lease = open_lease(
+        conn,
+        pmc.pmc_id,
+        add_unit(conn, pmc.pmc_id, place.property_id),
+        BASE,
+        None,
+        "1.00",
+        [tenant],
+    )
+    owed = charge(conn, pmc.pmc_id, lease, BASE, "5.00", "fee", "Lost key")
+    twice = charge(conn, pmc.pmc_id, lease, BASE + timedelta(days=1), "0.01", "fee", "Copy")
+    credit = charge(conn, pmc.pmc_id, lease, BASE, "0.01", "credit", "Courtesy")
+    rent = charge(conn, pmc.pmc_id, lease, BASE + timedelta(days=31), "0.02", "rent")
+    model = RentRollMachine.__new__(RentRollMachine)
+    model.charges = {
+        owed: Charge(lease, BASE, "fee", Decimal("5.00")),
+        twice: Charge(lease, BASE + timedelta(days=1), "fee", CENT),
+        credit: Charge(lease, BASE, "credit", CENT),
+        rent: Charge(lease, BASE + timedelta(days=31), "rent", Decimal("0.02")),
+    }
+    model.transfers, model.matches, model.reversals = {}, {}, {}
+
+    def post(source, target, day):
+        when = datetime.combine(BASE + timedelta(days=day), time(12), tzinfo=UTC)
+        (transfer,) = transfer_batch(conn, [(source, target, CENT)], when)
+        model.transfers[transfer] = Transfer(source, target, CENT, when)
+        return transfer
+
+    first = post(pmc.operating_cash, place.account, 1)
+    apply_payment(conn, pmc.pmc_id, twice, first, CENT)
+    back = post(place.account, pmc.operating_cash, 50)  # it bounces on day 50
+    reverse_payment(conn, pmc.pmc_id, twice, first, back, CENT)
+    second = post(pmc.operating_cash, place.account, 2)  # paid again, dated day 2
+    apply_payment(conn, pmc.pmc_id, twice, second, CENT)
+    model.matches = {(twice, first): CENT, (twice, second): CENT}
+    model.reversals = {(twice, first, back): CENT}
+    add_late_fee_policy(conn, pmc.pmc_id, place.property_id, BASE, 0, "25.00", "10")
+
+    assert assess_late_fees(conn, pmc.pmc_id, BASE + timedelta(days=40)) == 1
+    late_day = datetime.combine(BASE + timedelta(days=32), time(0), tzinfo=UTC)
+    assert (
+        conn.execute(
+            "SELECT unpaid FROM trust_late_fees WHERE rent_charge_id = %s", (rent,)
+        ).fetchone()[0]
+        == model.open_by(rent, late_day)
+        == Decimal("0.02")
+    )
+    fee, due_on, amount = conn.execute(
+        "SELECT c.id, c.due_on, c.amount FROM trust_late_fees AS f"
+        " JOIN trust_charges AS c ON c.id = f.fee_charge_id WHERE f.rent_charge_id = %s",
+        (rent,),
+    ).fetchone()
+    model.charges[fee] = Charge(lease, due_on, "fee", amount)
+    as_of = BASE + timedelta(days=35)
+    assert conn.execute(
+        "SELECT current_due, days_1_30, days_31_60, days_61_90, over_90, total"
+        " FROM trust_report_delinquency(%s, %s) WHERE item = 'lease'",
+        (pmc.pmc_id, as_of),
+    ).fetchone() == model.aging(lease, as_of)
