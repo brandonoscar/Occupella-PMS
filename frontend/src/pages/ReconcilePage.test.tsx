@@ -449,6 +449,47 @@ describe("BankingPage", () => {
     expect(posted(fetch)).toEqual([["/api/payables/company-fees", expect.objectContaining({ bank_account_id: "b1", amount: "100.00" })]]);
   });
 
+  it("shows a panel opened while the page reloads after a transfer what the reload brings", async () => {
+    const before = [{ bank_account_id: "b1", bank_account: "Operating trust account", held: "150.00",
+      since: "2000-01-01", days_held: 40, take_by: "2000-01-26" }];
+    const after = [{ ...before[0]!, held: "0.00", since: null, days_held: null, take_by: null }];
+    // The second read of the fees waits until the test lets it through.
+    const gate: { open?: () => void } = {};
+    let reads = 0;
+    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+    vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
+      if (init?.method === "POST") return json({ amount: "150.00" }, 201);
+      if (path === "/api/payables/company-fees") {
+        reads += 1;
+        if (reads > 1) await new Promise<void>((resolve) => { gate.open = resolve; });
+        return json(reads > 1 ? after : before);
+      }
+      return json(path === "/api/reconcile" ? BANKS : {});
+    }));
+    render(<BankingPage me={ME} />);
+    const operating = await screen.findByRole("row", { name: "Operating trust account" });
+    const openPanel = async () => {
+      fireEvent.click(await within(operating).findByRole("button", { name: "Actions for Operating trust account" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Transfer company fees" }));
+      return screen.getByRole("dialog", { name: "Transfer company fees" });
+    };
+    fireEvent.click(within(await openPanel()).getByRole("button", { name: "Take out company fees" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Confirm" }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // Opened again before the reload lands: what it knew, then what the reload says.
+    await vi.waitFor(() => expect(gate.open).toBeDefined());
+    const panel = await openPanel();
+    expect(within(panel).getByTestId("company-fees").textContent).toBe(
+      "$150.00 of the company's fees, the oldest since 01/01/2000 (40 days)",
+    );
+    gate.open!();
+    await vi.waitFor(() =>
+      expect(within(panel).getByTestId("company-fees").textContent).toBe("None of the company's fees is held here."),
+    );
+    expect(within(panel).queryByRole("button", { name: "Take out company fees" })).toBeNull();
+  });
+
   it("keeps a refused transfer's panel open with why", async () => {
     const fees = [{ bank_account_id: "b1", bank_account: "Operating trust account", held: "150.00",
       since: "2000-01-01", days_held: 40, take_by: "2000-01-26" }];
