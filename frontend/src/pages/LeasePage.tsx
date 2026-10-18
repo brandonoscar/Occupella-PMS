@@ -15,20 +15,24 @@ import { SidePanel } from "../components/SidePanel";
 import { Tabs } from "../components/Tabs";
 import { Wide } from "../components/Wide";
 import { money, usDate } from "../money";
-import { chargeLabel, insuranceBadge, insuranceLine, rentChangeLine } from "../rent";
+import { holdLine, insuranceBadge, insuranceLine, rentChangeLine } from "../rent";
 import type { LeaseDetail, LeasePerson, Ledger } from "../rentals";
 import { LEASE_STATUS, LEDGER_KIND, PORTAL, rentLabel, termLabel } from "../rentals";
 import { FilesCard } from "./FilesCard";
 import { InsuranceForms } from "./InsuranceForms";
 import { LeasingFeeForm } from "./LeasingFeeForm";
+import { EndLeaseForm, HouseholdCards, RemoveTenantForm } from "./LeasePeople";
 import type { Recorder } from "./LeaseForms";
 import {
   ChargeForm,
   DepositForm,
+  HoldForm,
+  OpenChargeRow,
   PaymentForm,
   PaymentRow,
   RecurringForm,
   RecurringLine,
+  ReleaseForm,
   RentChangeForm,
 } from "./LeaseForms";
 import { navigate } from "../router";
@@ -36,7 +40,9 @@ import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 
-type Panel = "payment" | "charge" | "rent" | "recurring" | "insurance" | "deposit" | "leasing";
+type Panel =
+  | "payment" | "charge" | "rent" | "recurring" | "insurance" | "deposit" | "leasing" | "hold" | "release"
+  | "end" | "remove";
 const PANELS: Record<Panel, string> = {
   payment: "Receive payment",
   charge: "Enter charge",
@@ -45,6 +51,10 @@ const PANELS: Record<Panel, string> = {
   insurance: "Renters insurance",
   deposit: "Record deposit",
   leasing: "Take leasing fee",
+  hold: "Place payment hold",
+  release: "Release payment hold",
+  end: "End lease",
+  remove: "Take a tenant off the lease",
 };
 type Tab = "summary" | "ledger" | "tenants" | "files" | "notes";
 const TABS: { value: Tab; label: string }[] = [
@@ -71,6 +81,8 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
   const [error, setError] = useState("");
   const [tab, setTab] = useState<Tab>("summary");
   const [panel, setPanel] = useState<Panel | null>(null);
+  // The tenant the remove panel takes off the lease.
+  const [leaving, setLeaving] = useState<LeasePerson | null>(null);
   const { said, error: refused, record } = useRecord(refresh);
 
   function refresh() {
@@ -95,14 +107,20 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
   }
   const names = lease.tenants.map((t) => t.name).join(", ");
   const owes = Number(lease.owed) > 0;
+  // The hold not yet released, if any: one at a time.
+  const open = lease.holds.find((h) => h.ends_on === null) ?? null;
   const actions: RowAction[] = [
     { label: "Change rent", onSelect: () => setPanel("rent") },
     { label: "Add recurring charge", onSelect: () => setPanel("recurring") },
     { label: "Renters insurance", onSelect: () => setPanel("insurance") },
     { label: "Record deposit", onSelect: () => setPanel("deposit") },
     { label: "Take leasing fee", onSelect: () => setPanel("leasing") },
+    open === null
+      ? { label: "Place payment hold", onSelect: () => setPanel("hold") }
+      : { label: "Release payment hold", onSelect: () => setPanel("release") },
     { label: "Record NSF", onSelect: () => setTab("ledger") },
     { label: "Renew lease", onSelect: () => navigate(`/draft-leases?lease=${id}`) },
+    { label: "End lease", onSelect: () => setPanel("end") },
     { label: "Move out", onSelect: () => navigate("/move-out") },
   ];
 
@@ -129,7 +147,11 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
           </span>
         </p>
       </div>
-      {lease.on_hold && <Notice tone="error">On a payment hold: payments are refused unless the hold allows them.</Notice>}
+      {lease.on_hold && (
+        <Notice tone="error">
+          {`On a payment hold. ${lease.holds.filter((h) => h.in_force).map(holdLine).join(". ")}. A payment is refused unless you accept it past the hold.`}
+        </Notice>
+      )}
       <Said>{said}</Said>
       {/* A side panel's refusal shows in the panel, once. */}
       {panel === null && <Notice tone="error">{refused}</Notice>}
@@ -137,7 +159,13 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
         <Tabs label="Lease" tabs={TABS} value={tab} onChange={setTab} />
         {tab === "summary" && <Summary lease={lease} record={record} />}
         {tab === "ledger" && <LedgerTab lease={lease} ledger={ledger} record={record} />}
-        {tab === "tenants" && <TenantsTab people={lease.people} refresh={refresh} />}
+        {tab === "tenants" && (
+          <div className="flex flex-col gap-6">
+            <TenantsTab people={lease.people} refresh={refresh}
+              onRemove={(person) => { setLeaving(person); setPanel("remove"); }} />
+            <HouseholdCards leaseId={id} />
+          </div>
+        )}
         {tab === "files" && <FilesCard kind="move_out_photo" also={["lease_document"]} aboutId={id} name={`${lease.unit}, ${lease.property}`} />}
         {tab === "notes" && <NotesCard about="lease" aboutId={id} name={`${lease.unit}, ${lease.property}`} />}
       </div>
@@ -150,6 +178,12 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
           {panel === "insurance" && <InsuranceForms lease={lease} record={recordThenClose} />}
           {panel === "deposit" && <DepositForm lease={lease} record={recordThenClose} />}
           {panel === "leasing" && <LeasingFeeForm lease={lease} record={recordThenClose} />}
+          {panel === "hold" && <HoldForm lease={lease} record={recordThenClose} />}
+          {panel === "release" && open !== null && <ReleaseForm hold={open} record={recordThenClose} />}
+          {panel === "end" && <EndLeaseForm lease={lease} record={recordThenClose} />}
+          {panel === "remove" && leaving !== null && (
+            <RemoveTenantForm lease={lease} person={leaving} record={recordThenClose} />
+          )}
           <Notice tone="error">{refused}</Notice>
         </SidePanel>
       )}
@@ -179,8 +213,8 @@ function Summary({ lease, record }: { lease: LeaseDetail; record: Recorder }) {
       )}
       {lease.open_charges.length > 0 && (
         <Card title="Open charges">
-          <ul className="text-base text-ink-muted">
-            {lease.open_charges.map((c) => <li key={c.id}>{chargeLabel(c)}</li>)}
+          <ul className="flex flex-col divide-y divide-line text-base text-ink-muted" aria-label="Open charges">
+            {lease.open_charges.map((c) => <OpenChargeRow key={c.id} charge={c} record={record} />)}
           </ul>
         </Card>
       )}
@@ -270,7 +304,13 @@ function LedgerTab({ lease, ledger, record }: { lease: LeaseDetail; ledger: Ledg
 
 // Tenants: each one's page, phone, email and whether they can sign in to the portal; an invite
 // (or a new one, which resets their password) gives a link to hand them. The PMS sends it nowhere.
-function TenantsTab({ people, refresh }: { people: LeasePerson[]; refresh: () => void }) {
+// A tenant leaving while others stay is taken off from their ⋯ menu, and marked once they left.
+function TenantsTab({ people, refresh, onRemove }: {
+  people: LeasePerson[];
+  refresh: () => void;
+  onRemove: (person: LeasePerson) => void;
+}) {
+  const staying = people.filter((p) => p.left_on === null).length;
   const [links, setLinks] = useState<Record<string, string>>({});
   const [emails, setEmails] = useState<Record<string, string>>({});
   const [said, setSaid] = useState("");
@@ -305,7 +345,10 @@ function TenantsTab({ people, refresh }: { people: LeasePerson[]; refresh: () =>
           <tbody>
             {people.map((person) => (
               <tr key={person.id} aria-label={person.name}>
-                <td><GoLink href={`/tenants/${person.id}`} className={LINK}>{person.name}</GoLink></td>
+                <td>
+                  <GoLink href={`/tenants/${person.id}`} className={LINK}>{person.name}</GoLink>
+                  {person.left_on && <> <Badge tone="neutral">{`Left ${usDate(person.left_on)}`}</Badge></>}
+                </td>
                 <td>{person.phone ?? ""}</td>
                 <td>{person.email ?? ""}</td>
                 <td><Badge tone={PORTAL[person.portal].tone}>{PORTAL[person.portal].word}</Badge></td>
@@ -322,6 +365,11 @@ function TenantsTab({ people, refresh }: { people: LeasePerson[]; refresh: () =>
                         {person.portal === "no login" ? "Invite" : "Resend invite"}
                       </Button>
                     </Form>
+                  )}
+                  {person.left_on === null && staying > 1 && (
+                    <RowMenu label={person.name} actions={[
+                      { label: "Take off the lease", onSelect: () => onRemove(person) },
+                    ]} />
                   )}
                   {links[person.id] && (
                     <input readOnly aria-label={`Invite link, ${person.name}`} value={links[person.id]}

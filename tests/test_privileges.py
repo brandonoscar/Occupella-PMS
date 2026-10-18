@@ -39,6 +39,7 @@ TABLES = {
     "trust_leases": {"SELECT"},  # written only by trust_open_lease and trust_end_lease
     "trust_lease_tenants": {"SELECT"},  # written only by trust_open_lease
     "trust_charges": {"SELECT", "INSERT"},
+    "trust_charge_waivers": {"SELECT", "INSERT"},
     "trust_charge_payments": {"SELECT"},  # written only by trust_apply_payment
     "trust_payment_reversals": {"SELECT"},  # written only by trust_reverse_payment
     "trust_management_agreements": {"SELECT", "INSERT"},
@@ -155,6 +156,8 @@ TABLES = {
     "trust_bank_matches": {"SELECT"},
     "trust_bank_match_lines": {"SELECT"},
     "trust_bank_match_transfers": {"SELECT"},
+    "trust_bank_deposits": {"SELECT", "INSERT"},
+    "trust_bank_deposit_items": {"SELECT", "INSERT"},
     "trust_bank_unmatches": {"SELECT"},
     # The switching tool: items carried over and the sign-off; their matches by function only.
     "trust_cutover_items": {"SELECT", "INSERT"},
@@ -171,6 +174,15 @@ TABLES = {
     "trust_documents": {"SELECT", "INSERT"},
     "trust_document_files": {"SELECT", "INSERT"},
     "trust_document_removals": {"SELECT", "INSERT"},
+    # A tenant leaving a lease: written only by trust_remove_lease_tenant. Who else lives there,
+    # guarantors and lease-break fee terms: staff add them with inserts; a removal is a row.
+    "trust_lease_departures": {"SELECT"},
+    "trust_lease_occupants": {"SELECT", "INSERT"},
+    "trust_lease_pets": {"SELECT", "INSERT"},
+    "trust_lease_vehicles": {"SELECT", "INSERT"},
+    "trust_lease_guarantors": {"SELECT", "INSERT"},
+    "trust_lease_household_removals": {"SELECT", "INSERT"},
+    "trust_lease_break_fees": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -222,6 +234,13 @@ AI_NEVER_READS = {
     "trust_notes",
     # The company's mailing address, with the fee terms new properties start with (ADR 0006).
     "trust_company_profiles",
+    # Who else lives in a home, their pets (an assistance animal speaks to a disability) and
+    # vehicles, and the lease's guarantors with their contact details (migration 0080).
+    "trust_lease_occupants",
+    "trust_lease_pets",
+    "trust_lease_vehicles",
+    "trust_lease_guarantors",
+    "trust_lease_household_removals",
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
 RENAMEABLE = [
@@ -269,6 +288,7 @@ FUNCTIONS = {
     "trust_prepare_bank_reconciliation(uuid,uuid,date)": {"trust_app"},
     "trust_approve_bank_reconciliation(uuid,uuid)": {"trust_app"},
     "trust_return_deposit(uuid,uuid,text,text,timestamptz)": {"trust_app"},
+    "trust_remove_lease_tenant(uuid,uuid,uuid,date,uuid)": {"trust_app"},
     "trust_propose_journal_entry(uuid,date,text,transfer_request[])": {"trust_app"},
     "trust_post_journal_entry(uuid,uuid)": {"trust_app"},
     "trust_decline_journal_entry(uuid,uuid,text)": {"trust_app"},
@@ -304,6 +324,8 @@ FUNCTIONS = {
     # Checks a payment hold as the owner, to take its lease's lock: no role calls it on its own.
     "trust_check_payment_hold()": set(),
     "trust_check_bill_decision()": set(),
+    "trust_check_bank_deposit_item()": set(),  # a trigger's: no one calls it
+    "trust_check_charge_waiver()": set(),
     # Reports read trust records, so only the app and the AI; they run with the caller's own
     # read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app", "trust_ai_agent"},
@@ -447,12 +469,14 @@ SECURITY_DEFINER = {
     "trust_prepare_bank_reconciliation(uuid,uuid,date)",
     "trust_approve_bank_reconciliation(uuid,uuid)",
     "trust_return_deposit(uuid,uuid,text,text,timestamptz)",
+    "trust_remove_lease_tenant(uuid,uuid,uuid,date,uuid)",
     "trust_propose_journal_entry(uuid,date,text,transfer_request[])",
     "trust_post_journal_entry(uuid,uuid)",
     "trust_decline_journal_entry(uuid,uuid,text)",
     "trust_audit()",  # writes the audit log, which no other role may write
     "trust_check_payment_hold()",  # locks the hold's lease, which the app can't
     "trust_check_bill_decision()",  # locks the bill's owner account, which the app can't
+    "trust_check_charge_waiver()",  # locks the waived charge, which the app can't
     # Reads lease offers for the AI role, which never reads them, and returns only each lease's
     # renewal status (founder decision, 2026-10-13).
     "trust_report_lease_expirations(uuid,date)",

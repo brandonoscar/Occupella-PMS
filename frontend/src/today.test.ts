@@ -71,8 +71,8 @@ describe("today", () => {
       monthly_rent: "1550.00", security_deposit: null, recurring_charges: [], status: "partially signed",
       void: null, document_title: "Renewal", offered_at: "2026-10-01T00:00:00Z", sent: true, lease_id: null,
       signers: [
-        { position: 1, name: "Tenant A", email: "a@example.com", signed_at: "2026-10-02T00:00:00Z" },
-        { position: 2, name: "Tenant B", email: "b@example.com", signed_at: null },
+        { position: 1, name: "Tenant A", email: "a@example.com", role: "tenant", signed_at: "2026-10-02T00:00:00Z" },
+        { position: 2, name: "Tenant B", email: "b@example.com", role: "tenant", signed_at: null },
       ],
     } satisfies Offer;
     expect(offerLine(offer)).toBe("Renewal of Unit 1, Property 1 from 11/01/2026: 1 of 2 signed");

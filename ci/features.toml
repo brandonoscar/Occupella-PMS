@@ -581,3 +581,48 @@ operations = [
 browser = [
   "features.spec.ts › staff turn on the emails the PMS writes by itself, and a run of rent sends each owner last month's statement onto their Email tab",
 ]
+
+[[feature]]
+id = "rent-in"
+statement = "Staff put a lease on a payment hold when an eviction is filed (a payment is then refused unless they accept it past the hold, naming who did) and release it from a day; take a cashier's check; print a receipt for each payment, which the tenant downloads in the portal too; and take payments to the bank together as a deposit with its slip, whose one bank line matches all of it at month-end (the founder's review, q019 to q032)."
+operations = [
+  "POST /api/rent/leases/{lease_id}/holds",
+  "POST /api/rent/holds/{hold_id}/release",
+  "GET /api/rent/payments/{transfer_id}/receipt",
+  "GET /api/tenant/payments/{transfer_id}/receipt",
+  "GET /api/bank-accounts/{bank_account_id}/undeposited",
+  "GET /api/bank-accounts/{bank_account_id}/deposits",
+  "POST /api/bank-accounts/{bank_account_id}/deposits",
+  "GET /api/bank-accounts/deposits/{deposit_id}/slip",
+]
+browser = [
+  "features.spec.ts › staff put a lease on a payment hold, accept a cashier's check past it and release it, print receipts, take payments to the bank together and print the slip; the tenant downloads their receipt",
+]
+
+[[feature]]
+id = "waive"
+statement = "Staff waive a charge (a late fee, an NSF fee, any fee or rent), all of it or part, with why, from the lease page: a credit linked to it that comes off that charge first, never past what is left of it, shown on the ledger (the founder's review, q019; migration 0079)."
+operations = [
+  "POST /api/rent/charges/{charge_id}/waive",
+]
+browser = [
+  "features.spec.ts › staff waive a late fee from the lease page: it comes off that fee, and the ledger shows the waiver",
+]
+
+[[feature]]
+id = "lease-people"
+statement = "Staff take one tenant off a lease others stay on (their deposit moving to a tenant who stays, or staying under their name until move-out), keep the lease's other occupants, pets and assistance animals, vehicles and guarantors, end any lease from its page, and charge a property's lease-break fee when a lease ends before its end date (the founder's review, q003, q007, q011, q012; migration 0080)."
+operations = [
+  "POST /api/move-out/{lease_id}/departures",
+  "GET /api/move-out/{lease_id}/break-fee",
+  "POST /api/setup/lease-break-fees",
+  "GET /api/leases/{lease_id}/household",
+  "POST /api/leases/{lease_id}/occupants",
+  "POST /api/leases/{lease_id}/pets",
+  "POST /api/leases/{lease_id}/vehicles",
+  "POST /api/leases/{lease_id}/guarantors",
+  "POST /api/leases/{lease_id}/{kind}/{item_id}/remove",
+]
+browser = [
+  "features.spec.ts › staff take one tenant off a lease, keep who else lives there and who guarantees it, and break the lease with its fee",
+]

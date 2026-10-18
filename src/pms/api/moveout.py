@@ -10,7 +10,7 @@ report. The PMS records what the bank did; it sends no money.
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -107,6 +107,9 @@ SELECT c.id, c.due_on, c.kind, c.memo,
                             WHERE p.charge_id = c.id), 0)
                 + coalesce((SELECT sum(r.amount) FROM trust_payment_reversals AS r
                             WHERE r.charge_id = c.id), 0)
+                - coalesce((SELECT sum(k.amount) FROM trust_charge_waivers AS w
+                            JOIN trust_charges AS k ON k.id = w.credit_charge_id
+                            WHERE w.waived_charge_id = c.id), 0)
 FROM trust_charges AS c
 WHERE c.lease_id = %s AND c.kind <> 'credit'
 ORDER BY c.due_on, c.created_at, c.id
@@ -120,13 +123,19 @@ ORDER BY o.display_name COLLATE "C", a.ledger_account_id
 """
 
 
+# A lease with no deposit stays on the list this long after its last day.
+RECENT = timedelta(days=90)
+
+
 @router.get("")
 def move_outs(session: Staff, conn: Conn) -> list[MoveOut]:
-    """Every lease that holds a deposit for its tenants, or whose deposit was returned."""
+    """Every lease that holds a deposit for its tenants or whose deposit was returned, and every
+    lease ending (its last day set) that holds none, until 90 days after its last day."""
     found = []
+    since = datetime.now(UTC).date() - RECENT
     for row in conn.execute(LEASES, (session.pmc_id,)).fetchall():
         lease, prop, unit, starts, ends, owed, tenants, held, prop_id, *done = row
-        if held <= 0 and done[0] is None:
+        if held <= 0 and done[0] is None and (ends is None or ends < since):
             continue
         found.append(
             MoveOut(
@@ -165,17 +174,124 @@ def move_outs(session: Staff, conn: Conn) -> list[MoveOut]:
 
 class End(BaseModel):
     ends_on: date
+    # Charge the lease-break fee (due on the new last day) as a lease with an end date ends
+    # before it.
+    break_fee: bool = False
+
+
+class BreakFee(BaseModel):
+    # Whether ending on the day ends the lease before its end date (a month-to-month lease
+    # never breaks).
+    early: bool
+    # The fee under the property's terms in force on the lease's first day, at the rent in force
+    # on the new last day; None when the terms charge none.
+    fee: str | None
+    flat_fee: str | None
+    rent_months: str | None
+
+
+BREAK_FEE = """
+SELECT l.ends_on, b.flat_fee, b.rent_months, trust_rent_on(l.id, %(day)s)
+FROM trust_leases AS l
+JOIN trust_units AS u ON u.id = l.unit_id
+LEFT JOIN LATERAL (
+    SELECT f.flat_fee, f.rent_months FROM trust_lease_break_fees AS f
+    WHERE f.property_id = u.property_id AND f.starts_on <= l.starts_on
+    ORDER BY f.starts_on DESC LIMIT 1
+) AS b ON true
+WHERE l.pmc_id = %(pmc)s AND l.id = %(lease)s
+"""
+
+
+def break_fee_of(
+    conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID, ends_on: date
+) -> BreakFee:
+    row = conn.execute(BREAK_FEE, {"pmc": pmc_id, "lease": lease_id, "day": ends_on}).fetchone()
+    if row is None:
+        raise HTTPException(404, "no such lease")
+    last, flat, months, rent = row
+    fee = None
+    if flat is not None:
+        amount = flat + (months * rent).quantize(Decimal("0.01"))
+        fee = cents(amount) if amount > 0 else None
+    return BreakFee(
+        early=last is not None and ends_on < last,
+        fee=fee,
+        flat_fee=None if flat is None else cents(flat),
+        rent_months=None if months is None else exports.text(months),
+    )
+
+
+@router.get("/{lease_id}/break-fee")
+def break_fee(session: Staff, conn: Conn, lease_id: UUID, ends_on: date) -> BreakFee:
+    """The lease-break fee ending the lease on a day would charge, if staff charge it."""
+    return break_fee_of(conn, session.pmc_id, lease_id, ends_on)
 
 
 @router.post("/{lease_id}/end", status_code=204)
 def end(session: Staff, conn: Conn, lease_id: UUID, body: End) -> None:
-    """Sets the lease's last day (before its deposit is returned)."""
+    """Sets the lease's last day (before its deposit is returned), and charges the lease-break
+    fee when staff ask and the lease ends before its end date."""
     if returned(conn, session.pmc_id, lease_id):
         raise HTTPException(409, "the deposit was returned; the lease's days stay as they were")
+    fee = None
+    if body.break_fee:
+        found = break_fee_of(conn, session.pmc_id, lease_id, body.ends_on)
+        if not found.early:
+            raise HTTPException(
+                422, "a lease-break fee is charged only as a lease ends before its end date"
+            )
+        if found.fee is None:
+            raise HTTPException(422, "this lease's property charges no lease-break fee")
+        fee = found.fee
     try:
         conn.execute("SELECT trust_end_lease(%s, %s, %s)", (session.pmc_id, lease_id, body.ends_on))
     except psycopg.errors.CheckViolation as refused:  # before it starts
         raise HTTPException(422, refusal(refused)) from None
+    if fee is not None:
+        conn.execute(
+            "INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)"
+            " VALUES (%s, %s, %s, 'fee', %s, 'Lease-break fee')",
+            (session.pmc_id, lease_id, body.ends_on, Decimal(fee)),
+        )
+
+
+# --- a tenant leaving a lease others stay on ------------------------------------------------
+
+
+class Departure(BaseModel):
+    tenant_id: UUID
+    left_on: date
+    # A tenant staying on the lease who takes over the leaving tenant's deposit; None keeps it
+    # under the leaving tenant's name until the lease's deposit is returned at move-out.
+    deposit_to: UUID | None = None
+
+
+class Departed(BaseModel):
+    # What of the leaving tenant's deposit moved to deposit_to.
+    moved: str
+
+
+@router.post("/{lease_id}/departures", status_code=201)
+def depart(session: Staff, conn: Conn, lease_id: UUID, body: Departure) -> Departed:
+    """Takes one tenant off a lease others stay on, from a day (trust_remove_lease_tenant). Their
+    deposit moves to a tenant who stays, or stays under their name until move-out; it stays in
+    trust either way. Sending the same again moves nothing more."""
+    if returned(conn, session.pmc_id, lease_id):
+        raise HTTPException(409, "the deposit was returned; the lease's tenants stay as they were")
+    try:
+        row = conn.execute(
+            "SELECT trust_remove_lease_tenant(%s, %s, %s, %s, %s)",
+            (session.pmc_id, lease_id, body.tenant_id, body.left_on, body.deposit_to),
+        ).fetchone()
+    except psycopg.errors.InvalidParameterValue:
+        raise HTTPException(
+            422, "name a tenant on this lease, and for their deposit one who is staying"
+        ) from None
+    except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
+        raise HTTPException(409, refusal(refused)) from None
+    assert row is not None
+    return Departed(moved=cents(row[0]))
 
 
 class Deduction(BaseModel):

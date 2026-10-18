@@ -26,7 +26,9 @@ jobs:
   ci:
     name: ci
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # The example tests alone took 8m55s on PR #120 and outgrew 10 minutes with migrations 0078
+    # to 0080; a cap to stop a hung run, not a budget.
+    timeout-minutes: 20
     permissions:
       contents: read
       issues: read # check_registry reads whether each pending issue is still open

@@ -44,9 +44,14 @@ OffersShown = Literal["open", "leased", "void", "all"]
 VOIDED = "this lease offer was voided; it takes nothing more"
 
 
+Role = Literal["tenant", "guarantor"]
+
+
 class SignerIn(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     email: str = Field(min_length=3, max_length=254)
+    # A guarantor signs and becomes the lease's guarantor, not a tenant (migration 0080).
+    role: Role = "tenant"
 
 
 class ChargeIn(BaseModel):
@@ -81,6 +86,7 @@ class SignerOut(BaseModel):
     position: int
     name: str
     email: str
+    role: Role
     signed_at: datetime | None
 
 
@@ -168,7 +174,7 @@ def document_of(offer: OfferIn) -> bytes:
     return document
 
 
-def signers_of(people: list[SignerIn]) -> list[tuple[str, str]]:
+def signers_of(people: list[SignerIn]) -> list[tuple[str, str, Role]]:
     found = []
     for person in people:
         name, email = person.name.strip(), accounts.normalize_email(person.email)
@@ -176,9 +182,11 @@ def signers_of(people: list[SignerIn]) -> list[tuple[str, str]]:
             raise HTTPException(422, "every signer has a name")
         if not accounts.EMAIL.fullmatch(email):
             raise HTTPException(422, f"{email!r} isn't an email address")
-        found.append((name, email))
-    if len({email for _, email in found}) < len(found):
+        found.append((name, email, person.role))
+    if len({email for _, email, _ in found}) < len(found):
         raise HTTPException(422, "each signer has their own email")
+    if found and not any(role == "tenant" for _, _, role in found):
+        raise HTTPException(422, "at least one signer is a tenant")
     return found
 
 
@@ -254,15 +262,15 @@ def offers_of(
     ).fetchall()
     ids = [row[0] for row in rows]
     signers: dict[UUID, list[SignerOut]] = {i: [] for i in ids}
-    for offer_id, position, name, email, signed_at in conn.execute(
-        "SELECT s.offer_id, s.position, s.display_name, s.email, g.signed_at"
+    for offer_id, position, name, email, role, signed_at in conn.execute(
+        "SELECT s.offer_id, s.position, s.display_name, s.email, s.role, g.signed_at"
         " FROM trust_lease_offer_signers AS s"
         " LEFT JOIN trust_signatures AS g ON g.offer_id = s.offer_id AND g.position = s.position"
         " WHERE s.offer_id = ANY(%s) ORDER BY s.offer_id, s.position",
         (ids,),
     ).fetchall():
         signers[offer_id].append(
-            SignerOut(position=position, name=name, email=email, signed_at=signed_at)
+            SignerOut(position=position, name=name, email=email, role=role, signed_at=signed_at)
         )
     charges: dict[UUID, list[ChargeOut]] = {i: [] for i in ids}
     for offer_id, kind, memo, amount in conn.execute(
@@ -446,10 +454,10 @@ def make_offer(
     with conn.cursor() as cur:
         cur.executemany(
             "INSERT INTO trust_lease_offer_signers (pmc_id, offer_id, position, display_name,"
-            " email) VALUES (%s, %s, %s, %s, %s)",
+            " email, role) VALUES (%s, %s, %s, %s, %s, %s)",
             [
-                (session.pmc_id, offer_id, n, name, email)
-                for n, (name, email) in enumerate(people, 1)
+                (session.pmc_id, offer_id, n, name, email, role)
+                for n, (name, email, role) in enumerate(people, 1)
             ],
         )
         cur.executemany(

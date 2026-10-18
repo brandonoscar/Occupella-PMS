@@ -77,6 +77,8 @@ class Lease(BaseModel):
     deposit_returned: bool
     # A lease in effect: whether it requires renters insurance, and the policy on file.
     renters_insurance: rent_api.RentersInsurance | None
+    # Each payment to it, newest first, each with its receipt to download.
+    payments: list[rent_api.Paid]
 
 
 class NewRequest(BaseModel):
@@ -96,6 +98,18 @@ def lease_of(conn: psycopg.Connection[Any], session: accounts.Session, lease_id:
         is None
     ):
         raise HTTPException(404, "no such lease of yours")
+
+
+def still_on(conn: psycopg.Connection[Any], session: accounts.Session, lease_id: UUID) -> None:
+    """Refuses a lease the tenant left by today while others stayed on it (migration 0080): they
+    still read it, but file nothing under it."""
+    row = conn.execute(
+        "SELECT left_on FROM trust_lease_departures"
+        " WHERE pmc_id = %s AND lease_id = %s AND tenant_id = %s AND left_on <= %s",
+        (session.pmc_id, lease_id, session.person_id, today()),
+    ).fetchone()
+    if row is not None:
+        raise HTTPException(409, f"you left this lease on {row[0]:%m/%d/%Y}")
 
 
 @router.get("/leases")
@@ -120,6 +134,24 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
         (on, on, session.pmc_id, session.person_id),
     ).fetchall()
     insured = rent_api.renters_insurance(conn, session.pmc_id, on)
+    paid: dict[UUID, list[rent_api.Paid]] = {}
+    for lease, transfer, event_at, amount, reference, method, bounced in (
+        found
+        for row in rows
+        for found in conn.execute(
+            rent_api.PAYMENTS, {"pmc": session.pmc_id, "lease": row[0]}
+        ).fetchall()
+    ):
+        paid.setdefault(lease, []).append(
+            rent_api.Paid(
+                transfer_id=transfer,
+                received_on=event_at.astimezone(UTC).date(),
+                amount=rent_api.cents(amount),
+                reference=reference,
+                method=method,
+                bounced=bounced,
+            )
+        )
     coming: dict[UUID, list[RentChangeNotice]] = {}
     for lease, effective, monthly_rent, notice in conn.execute(
         "SELECT c.lease_id, c.effective_on, c.monthly_rent, c.notice_given_on"
@@ -158,6 +190,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
             ],
             deposit_returned=returned,
             renters_insurance=insured.get(lease),
+            payments=paid.get(lease, []),
         )
         for lease, prop, unit, starts, ends, rent, names, balance, returned in rows
     ]
@@ -253,6 +286,7 @@ def record_my_policy(
     """The tenant's own renters insurance policy for a lease they are on, with whatever insurer
     they chose; it is recorded as theirs."""
     lease_of(conn, session, lease_id)
+    still_on(conn, session, lease_id)
     return rent_api.add_policy(conn, session.pmc_id, lease_id, policy, session.person_id)
 
 
@@ -263,6 +297,7 @@ def file_request(session: Tenant, conn: Conn, new: NewRequest) -> maintenance.Re
     if not summary:
         raise HTTPException(422, "say what needs fixing")
     lease_of(conn, session, new.lease_id)
+    still_on(conn, session, new.lease_id)
     on = today()
     row = conn.execute(
         "SELECT starts_on <= %s AND (ends_on IS NULL OR %s <= ends_on) FROM trust_leases"

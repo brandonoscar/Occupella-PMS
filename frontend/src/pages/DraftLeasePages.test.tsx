@@ -22,8 +22,8 @@ const OFFER: Offer = {
   recurring_charges: [{ kind: "fee", memo: "Pet rent", amount: "35.00" }, { kind: "credit", memo: "Autopay", amount: "10.00" }],
   document_title: "Lease", offered_at: "2026-10-12T14:00:00Z", sent: false, lease_id: null, status: "draft", void: null,
   signers: [
-    { position: 1, name: "Applicant A", email: "a@example.com", signed_at: null },
-    { position: 2, name: "Applicant B", email: "b@example.com", signed_at: null },
+    { position: 1, name: "Applicant A", email: "a@example.com", role: "tenant", signed_at: null },
+    { position: 2, name: "Applicant B", email: "b@example.com", role: "guarantor", signed_at: null },
   ],
 };
 const APPROVED = {
@@ -144,6 +144,8 @@ describe("DraftLeasesPage", () => {
     fireEvent.click(within(panel).getByRole("button", { name: "Add a monthly charge" }));
     fireEvent.click(within(panel).getByRole("button", { name: "Remove" }));
     fireEvent.change(within(panel).getByLabelText("Lease document (PDF, your own)"), { target: { files: [PDF()] } });
+    // A guarantor signs too, without becoming a tenant.
+    fireEvent.change(within(panel).getByLabelText(/Guarantors who sign too/), { target: { value: "Guarantor 1, g1@example.com" } });
     await vi.waitFor(() => expect((within(panel).getByRole("button", { name: "Send for signing" }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(within(panel).getByRole("button", { name: "Send for signing" }));
 
@@ -151,6 +153,10 @@ describe("DraftLeasesPage", () => {
     const sent = posted(fetch);
     expect(sent.map(([path]) => path)).toEqual(["/api/leasing/leases/l1/renewal"]);
     expect(sent[0]?.[1]).toMatchObject({ send: true, recurring_charges: [], security_deposit: null, document_title: "Lease renewal" });
+    expect((sent[0]?.[1] as { signers: unknown }).signers).toEqual([
+      { name: "Tenant 1", email: "t1@example.com" },
+      { name: "Guarantor 1", email: "g1@example.com", role: "guarantor" },
+    ]);
   });
 
   it("refuses a document that isn't a PDF and signers it can't read", async () => {
@@ -171,6 +177,10 @@ describe("DraftLeasesPage", () => {
     fireEvent.click(within(panel).getByRole("button", { name: "Send for signing" }));
 
     await within(panel).findByText('line 1: write each signer as "Name, email"');
+    fireEvent.change(within(panel).getByLabelText(/Who signs/), { target: { value: "Applicant A, a@example.com" } });
+    fireEvent.change(within(panel).getByLabelText(/Guarantors who sign too/), { target: { value: "Guarantor without email" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Send for signing" }));
+    await within(panel).findByText('Guarantors: line 1: write each signer as "Name, email"');
     expect(posted(fetch)).toEqual([]);
   });
 });
@@ -189,6 +199,12 @@ describe("DraftLeasePage", () => {
     expect(within(screen.getByRole("table", { name: "Monthly charges" })).getAllByRole("row").slice(1).map((r) => r.textContent))
       .toEqual(["Pet rentFee$35.00", "AutopayCredit($10.00)"]);
     expect(screen.getByRole("table", { name: "Signers" }).textContent).toContain("Not sent");
+    // A guarantor signs without becoming a tenant.
+    const guarantor = within(screen.getByRole("table", { name: "Signers" })).getAllByRole("row")
+      .find((r) => r.textContent?.startsWith("Applicant B"));
+    expect(within(guarantor!).getAllByRole("cell").map((c) => c.textContent)).toEqual([
+      "Applicant B Guarantor", "b@example.com", "Not sent",
+    ]);
     expect(screen.queryByRole("button", { name: "Activate lease" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
@@ -202,8 +218,8 @@ describe("DraftLeasePage", () => {
     const fetch = server({
       ...OFFER, status: "partially signed", sent: true,
       signers: [
-        { position: 1, name: "Applicant A", email: "a@example.com", signed_at: null },
-        { position: 2, name: "Applicant B", email: "b@example.com", signed_at: "2026-10-13T10:00:00Z" },
+        { position: 1, name: "Applicant A", email: "a@example.com", role: "tenant", signed_at: null },
+        { position: 2, name: "Applicant B", email: "b@example.com", role: "tenant", signed_at: "2026-10-13T10:00:00Z" },
       ],
     });
     render(<DraftLeasePage me={ME} id="o1" />);

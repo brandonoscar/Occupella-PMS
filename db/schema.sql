@@ -603,8 +603,13 @@ BEGIN
     FROM trust_charge_payments AS p WHERE p.charge_id = p_charge_id;
     SELECT v_paid - coalesce(sum(r.amount), 0) INTO v_paid
     FROM trust_payment_reversals AS r WHERE r.charge_id = p_charge_id;
+    -- What waivers took off it (credits linked to it, migration 0079) is settled too.
+    SELECT v_paid + coalesce(sum(k.amount), 0) INTO v_paid
+    FROM trust_charge_waivers AS w
+    JOIN trust_charges AS k ON k.id = w.credit_charge_id
+    WHERE w.waived_charge_id = p_charge_id;
     IF v_paid + p_amount > v_charge.amount THEN
-        RAISE EXCEPTION 'trust: charge % is % and already paid %; % more is too much',
+        RAISE EXCEPTION 'trust: charge % is % and already paid or waived %; % more is too much',
             p_charge_id, v_charge.amount, v_paid, p_amount
             USING ERRCODE = 'check_violation';
     END IF;
@@ -1473,6 +1478,46 @@ $$;
 
 
 --
+-- Name: trust_check_bank_deposit_item(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_bank_deposit_item() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bank uuid;
+    v_on date;
+    v_in numeric;
+    v_at timestamptz;
+BEGIN
+    SELECT d.bank_account_id, d.deposited_on INTO v_bank, v_on
+    FROM trust_bank_deposits AS d
+    WHERE d.id = NEW.deposit_id AND d.pmc_id = NEW.pmc_id;
+    IF NOT FOUND THEN
+        RETURN NEW;  -- no such deposit of the PMC: the foreign key refuses it
+    END IF;
+    SELECT -sum(e.amount), min(tr.event_at) INTO v_in, v_at
+    FROM pgledger_entries AS e
+    JOIN trust_ledger_accounts AS t ON t.ledger_account_id = e.account_id
+    JOIN pgledger_transfers AS tr ON tr.id = e.transfer_id
+    WHERE e.transfer_id = NEW.transfer_id AND t.pmc_id = NEW.pmc_id
+      AND t.bank_account_id = v_bank AND t.kind = 'bank_cash';
+    IF v_in IS NULL OR v_in <= 0 THEN
+        RAISE EXCEPTION 'trust: transfer % brought no money into the deposit''s bank account',
+            NEW.transfer_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF (v_at AT TIME ZONE 'UTC')::date > v_on THEN
+        RAISE EXCEPTION 'trust: transfer % came in after the deposit of %', NEW.transfer_id, v_on
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_bank_statement(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1769,6 +1814,65 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'trust: % is not an owner''s property account in PMC %',
             NEW.ledger_account_id, NEW.pmc_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_charge_waiver(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_charge_waiver() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_credit trust_charges;
+    v_charge trust_charges;
+    v_paid numeric;
+    v_waived numeric;
+BEGIN
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'trust: waive a charge at READ COMMITTED, not %',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
+    SELECT c.* INTO v_credit FROM trust_charges AS c
+    WHERE c.id = NEW.credit_charge_id AND c.pmc_id = NEW.pmc_id;
+    IF NOT FOUND THEN
+        RETURN NEW;  -- no such charge of the PMC: the foreign key refuses it
+    END IF;
+    IF v_credit.kind <> 'credit' THEN
+        RAISE EXCEPTION 'trust: a waiver is a credit, not a %', v_credit.kind
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT c.* INTO v_charge FROM trust_charges AS c
+    WHERE c.id = NEW.waived_charge_id AND c.pmc_id = NEW.pmc_id
+    FOR NO KEY UPDATE;
+    IF NOT FOUND THEN
+        RETURN NEW;
+    END IF;
+    IF v_charge.kind = 'credit' THEN
+        RAISE EXCEPTION 'trust: a credit is not waived; it is owed to no one'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF v_charge.lease_id <> v_credit.lease_id THEN
+        RAISE EXCEPTION 'trust: a waiver is a credit of the waived charge''s own lease'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT coalesce(sum(p.amount), 0) INTO v_paid
+    FROM trust_charge_payments AS p WHERE p.charge_id = v_charge.id;
+    SELECT v_paid - coalesce(sum(r.amount), 0) INTO v_paid
+    FROM trust_payment_reversals AS r WHERE r.charge_id = v_charge.id;
+    SELECT coalesce(sum(k.amount), 0) INTO v_waived
+    FROM trust_charge_waivers AS w JOIN trust_charges AS k ON k.id = w.credit_charge_id
+    WHERE w.waived_charge_id = v_charge.id;
+    IF v_paid + v_waived + v_credit.amount > v_charge.amount THEN
+        RAISE EXCEPTION 'trust: % is left of charge % (% paid, % waived); % can''t be waived',
+            v_charge.amount - v_paid - v_waived, v_charge.id, v_paid, v_waived, v_credit.amount
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
@@ -2680,7 +2784,7 @@ BEGIN
             SELECT p_pmc_id, u.property_id, s.display_name
             FROM trust_lease_offer_signers AS s
             JOIN trust_units AS u ON u.id = v_offer.unit_id
-            WHERE s.offer_id = p_offer_id
+            WHERE s.offer_id = p_offer_id AND s.role = 'tenant'
             ORDER BY s.position
             RETURNING id
         )
@@ -2688,16 +2792,29 @@ BEGIN
     ELSE
         SELECT l.* INTO v_old FROM trust_leases AS l WHERE l.id = v_offer.renews_lease_id;
         SELECT array_agg(t.tenant_id) INTO v_tenants
-        FROM trust_lease_tenants AS t WHERE t.lease_id = v_old.id;
+        FROM trust_lease_tenants AS t
+        WHERE t.lease_id = v_old.id AND NOT EXISTS (
+            SELECT d.tenant_id FROM trust_lease_departures AS d
+            WHERE d.lease_id = t.lease_id AND d.tenant_id = t.tenant_id
+        );
         IF v_old.ends_on IS NULL OR v_old.ends_on >= v_offer.starts_on THEN
             PERFORM trust_end_lease(p_pmc_id, v_old.id, v_offer.starts_on - 1);
         END IF;
+    END IF;
+    IF coalesce(cardinality(v_tenants), 0) = 0 THEN
+        RAISE EXCEPTION 'trust: lease offer % has no tenant to make its lease with', p_offer_id
+            USING ERRCODE = 'check_violation';
     END IF;
 
     v_lease := trust_open_lease(
         p_pmc_id, v_offer.unit_id, v_offer.starts_on, v_offer.ends_on, v_offer.monthly_rent,
         v_tenants
     );
+    INSERT INTO trust_lease_guarantors (pmc_id, lease_id, display_name, email, offer_id)
+    SELECT p_pmc_id, v_lease, s.display_name, s.email, p_offer_id
+    FROM trust_lease_offer_signers AS s
+    WHERE s.offer_id = p_offer_id AND s.role = 'guarantor'
+    ORDER BY s.position;
     -- A renewal starting in a month whose rent the old lease was charged: the old lease's days
     -- after its end come off (trust_end_lease above), and the new lease is charged its days of
     -- that month, due on its first day, as the rent run would.
@@ -3489,24 +3606,50 @@ CREATE FUNCTION public.trust_open_charges(p_pmc_id uuid, p_lease_id uuid, p_at t
                    FROM trust_payment_reversals AS r
                    JOIN pgledger_transfers AS t ON t.id = r.reversal_id
                    WHERE r.charge_id = c.id AND t.event_at < p_at
-               ), 0) AS left_owing
+               ), 0) AS left_owing,
+               EXISTS (SELECT 1 FROM trust_charge_waivers AS w
+                       WHERE w.credit_charge_id = c.id) AS waiver
         FROM trust_charges AS c
         WHERE c.pmc_id = p_pmc_id AND (p_lease_id IS NULL OR c.lease_id = p_lease_id)
     ),
-    credits AS (
-        SELECT k.lease_id, sum(k.amount) AS amount
+    -- What waivers due before the moment's day take off the charge each one names.
+    waived AS (
+        SELECT w.waived_charge_id AS id, sum(k.amount) AS amount
         FROM charged AS k
-        WHERE k.kind = 'credit' AND k.due_on < (p_at AT TIME ZONE 'UTC')::date
-        GROUP BY k.lease_id
+        JOIN trust_charge_waivers AS w ON w.credit_charge_id = k.id
+        WHERE k.due_on < (p_at AT TIME ZONE 'UTC')::date
+        GROUP BY w.waived_charge_id
+    ),
+    -- Each charge after its own waivers, and what of them it could not take.
+    settled AS (
+        SELECT k.lease_id, k.id, k.due_on,
+               k.left_owing - least(greatest(k.left_owing, 0), coalesce(w.amount, 0)) AS left_owing,
+               coalesce(w.amount, 0) - least(greatest(k.left_owing, 0), coalesce(w.amount, 0))
+                   AS spare
+        FROM charged AS k
+        LEFT JOIN waived AS w ON w.id = k.id
+        WHERE k.kind <> 'credit'
+    ),
+    -- The rest come off the oldest open charges: credits that waive nothing, and what a waiver
+    -- could not take off its own charge.
+    credits AS (
+        SELECT x.lease_id, sum(x.amount) AS amount
+        FROM (
+            SELECT k.lease_id, k.amount FROM charged AS k
+            WHERE k.kind = 'credit' AND NOT k.waiver
+              AND k.due_on < (p_at AT TIME ZONE 'UTC')::date
+            UNION ALL
+            SELECT s.lease_id, s.spare FROM settled AS s WHERE s.spare > 0
+        ) AS x
+        GROUP BY x.lease_id
     ),
     owing AS (
-        SELECT k.lease_id, k.id, k.left_owing,
-               coalesce(sum(k.left_owing) OVER (
-                   PARTITION BY k.lease_id ORDER BY k.due_on, k.id
+        SELECT s.lease_id, s.id, s.left_owing,
+               coalesce(sum(s.left_owing) OVER (
+                   PARTITION BY s.lease_id ORDER BY s.due_on, s.id
                    ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
                ), 0) AS owing_before
-        FROM charged AS k
-        WHERE k.kind <> 'credit'
+        FROM settled AS s
     )
     SELECT o.lease_id, o.id,
            o.left_owing
@@ -4487,6 +4630,141 @@ $$;
 
 
 --
+-- Name: trust_remove_lease_tenant(uuid, uuid, uuid, date, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_remove_lease_tenant(p_pmc_id uuid, p_lease_id uuid, p_tenant_id uuid, p_left_on date, p_deposit_to uuid) RETURNS numeric
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_lease trust_leases;
+    v_done trust_lease_departures;
+    v_name text;
+    v_still record;
+    v_deposit record;
+    v_to text;
+    v_moved numeric := 0.00;
+BEGIN
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'trust: remove tenants at READ COMMITTED, not %',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
+    SELECT l.* INTO v_lease FROM trust_leases AS l
+    WHERE l.id = p_lease_id AND l.pmc_id = p_pmc_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no lease % in PMC %', p_lease_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- A lease's rent work, deposit return and departures wait for each other.
+    PERFORM pg_advisory_xact_lock(hashtextextended('rent of lease ' || p_lease_id, 0));
+
+    SELECT t.display_name INTO v_name FROM trust_lease_tenants AS lt
+    JOIN trust_tenants AS t ON t.id = lt.tenant_id
+    WHERE lt.lease_id = p_lease_id AND lt.tenant_id = p_tenant_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: tenant % is not on lease %', p_tenant_id, p_lease_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT d.* INTO v_done FROM trust_lease_departures AS d
+    WHERE d.lease_id = p_lease_id AND d.tenant_id = p_tenant_id;
+    IF FOUND THEN
+        IF v_done.left_on = p_left_on AND v_done.deposit_to IS NOT DISTINCT FROM p_deposit_to THEN
+            RETURN v_done.moved;
+        END IF;
+        RAISE EXCEPTION 'trust: % left this lease on % already', v_name, v_done.left_on
+            USING ERRCODE = 'unique_violation';
+    END IF;
+    IF EXISTS (SELECT r.lease_id FROM trust_deposit_returns AS r WHERE r.lease_id = p_lease_id) THEN
+        RAISE EXCEPTION 'trust: the deposit of lease % was returned already', p_lease_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF p_left_on IS NULL OR p_left_on < v_lease.starts_on OR p_left_on > v_lease.ends_on THEN
+        RAISE EXCEPTION 'trust: a tenant leaves a lease within its days: from % to %',
+            v_lease.starts_on, coalesce(v_lease.ends_on::text, 'month to month')
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NOT EXISTS (
+        SELECT lt.tenant_id FROM trust_lease_tenants AS lt
+        WHERE lt.lease_id = p_lease_id AND lt.tenant_id <> p_tenant_id AND NOT EXISTS (
+            SELECT d.tenant_id FROM trust_lease_departures AS d
+            WHERE d.lease_id = lt.lease_id AND d.tenant_id = lt.tenant_id
+        )
+    ) THEN
+        RAISE EXCEPTION 'trust: % is the last tenant on this lease: end the lease instead',
+            v_name
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    IF p_deposit_to IS NOT NULL THEN
+        IF p_deposit_to = p_tenant_id OR NOT EXISTS (
+            SELECT lt.tenant_id FROM trust_lease_tenants AS lt
+            WHERE lt.lease_id = p_lease_id AND lt.tenant_id = p_deposit_to
+        ) OR EXISTS (
+            SELECT d.tenant_id FROM trust_lease_departures AS d
+            WHERE d.lease_id = p_lease_id AND d.tenant_id = p_deposit_to
+        ) THEN
+            RAISE EXCEPTION 'trust: tenant % is not staying on lease %', p_deposit_to, p_lease_id
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        -- A deposit is held per tenant: on another lease still, theirs may be that lease's.
+        SELECT u.display_name AS unit INTO v_still
+        FROM trust_lease_tenants AS other
+        JOIN trust_leases AS l ON l.id = other.lease_id
+        JOIN trust_units AS u ON u.id = l.unit_id
+        WHERE other.tenant_id = p_tenant_id AND l.id <> p_lease_id
+          AND (l.ends_on IS NULL OR l.ends_on >= p_left_on)
+          AND NOT EXISTS (
+              SELECT d.tenant_id FROM trust_lease_departures AS d
+              WHERE d.lease_id = l.id AND d.tenant_id = p_tenant_id
+          )
+        ORDER BY l.starts_on, l.id
+        LIMIT 1;
+        IF FOUND THEN
+            RAISE EXCEPTION 'trust: % is on the lease of % still, and their deposit stays with it',
+                v_name, v_still.unit
+                USING ERRCODE = 'check_violation';
+        END IF;
+        FOR v_deposit IN
+            SELECT t.ledger_account_id AS account, t.bank_account_id, a.balance
+            FROM trust_ledger_accounts AS t
+            JOIN pgledger_accounts AS a ON a.id = t.ledger_account_id
+            WHERE t.pmc_id = p_pmc_id AND t.tenant_id = p_tenant_id
+              AND t.kind = 'tenant_deposit' AND a.balance > 0
+            ORDER BY t.ledger_account_id
+            FOR UPDATE OF a
+        LOOP
+            SELECT t.ledger_account_id INTO v_to FROM trust_ledger_accounts AS t
+            WHERE t.bank_account_id = v_deposit.bank_account_id AND t.kind = 'tenant_deposit'
+              AND t.tenant_id = p_deposit_to;
+            IF NOT FOUND THEN
+                v_to := trust_open_ledger_account(
+                    p_pmc_id, v_deposit.bank_account_id, 'tenant_deposit',
+                    p_tenant_id => p_deposit_to
+                );
+            END IF;
+            -- Within one trust bank account: its cash doesn't move.
+            PERFORM pgledger_create_transfers(
+                ARRAY[(v_deposit.account, v_to, v_deposit.balance)::transfer_request],
+                now(),
+                jsonb_build_object(
+                    'memo', 'Security deposit moved as ' || v_name || ' left the lease',
+                    'kind', 'deposit moved', 'lease_id', p_lease_id
+                )
+            );
+            v_moved := v_moved + v_deposit.balance;
+        END LOOP;
+    END IF;
+
+    INSERT INTO trust_lease_departures (pmc_id, lease_id, tenant_id, left_on, deposit_to, moved)
+    VALUES (p_pmc_id, p_lease_id, p_tenant_id, p_left_on, p_deposit_to, v_moved);
+    RETURN v_moved;
+END;
+$$;
+
+
+--
 -- Name: trust_rent_for_month(date, date, numeric, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5342,26 +5620,52 @@ BEGIN
         FROM trust_charges AS c
         WHERE c.pmc_id = p_pmc_id
     ),
-    open_charges AS (
-        -- Each charge due by the day with what is left of it, oldest first.
-        SELECT c.lease_id, c.due_on, c.amount - p.amount AS left_owing,
-               sum(c.amount - p.amount) OVER (
-                   PARTITION BY c.lease_id ORDER BY c.due_on, c.id
-                   ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-               ) AS owing_before
+    waived AS (
+        -- What waivers due by the day take off the charge each one names (migration 0079).
+        SELECT w.waived_charge_id AS id, sum(k.amount) AS amount
+        FROM trust_charge_waivers AS w
+        JOIN trust_charges AS k ON k.id = w.credit_charge_id
+        WHERE w.pmc_id = p_pmc_id AND k.due_on <= p_as_of
+        GROUP BY w.waived_charge_id
+    ),
+    settled AS (
+        -- Each charge less what was paid of it and what its own waivers take (up to what was
+        -- left), and what of its waivers it could not take.
+        SELECT c.id, c.lease_id, c.due_on, c.kind,
+               c.amount - p.amount
+               - least(greatest(c.amount - p.amount, 0), coalesce(w.amount, 0)) AS left_owing,
+               coalesce(w.amount, 0)
+               - least(greatest(c.amount - p.amount, 0), coalesce(w.amount, 0)) AS spare
         FROM trust_charges AS c
         JOIN paid AS p ON p.id = c.id
-        WHERE c.pmc_id = p_pmc_id AND c.kind <> 'credit' AND c.due_on <= p_as_of
+        LEFT JOIN waived AS w ON w.id = c.id
+        WHERE c.pmc_id = p_pmc_id AND c.kind <> 'credit'
+    ),
+    open_charges AS (
+        -- Each charge due by the day with what is left of it, oldest first.
+        SELECT s.lease_id, s.due_on, s.left_owing,
+               sum(s.left_owing) OVER (
+                   PARTITION BY s.lease_id ORDER BY s.due_on, s.id
+                   ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+               ) AS owing_before
+        FROM settled AS s
+        WHERE s.due_on <= p_as_of
     ),
     offsets AS (
-        -- Per lease, what comes off the oldest charges: credits due by the day, and payments
-        -- by then toward charges not yet due.
+        -- Per lease, what comes off the oldest charges: credits due by the day that waive
+        -- nothing, what a waiver could not take off its own charge, and payments by then toward
+        -- charges not yet due.
         SELECT c.lease_id,
-               sum(CASE WHEN c.kind = 'credit' AND c.due_on <= p_as_of THEN c.amount ELSE 0 END)
+               sum(CASE WHEN c.kind = 'credit' AND c.due_on <= p_as_of
+                         AND NOT EXISTS (SELECT 1 FROM trust_charge_waivers AS w
+                                         WHERE w.credit_charge_id = c.id)
+                        THEN c.amount ELSE 0 END)
                + sum(CASE WHEN c.kind <> 'credit' AND c.due_on > p_as_of THEN p.amount ELSE 0 END)
+               + coalesce(sum(s.spare), 0)
                    AS amount
         FROM trust_charges AS c
         JOIN paid AS p ON p.id = c.id
+        LEFT JOIN settled AS s ON s.id = c.id
         WHERE c.pmc_id = p_pmc_id
         GROUP BY c.lease_id
     ),
@@ -8032,7 +8336,11 @@ BEGIN
                        - coalesce((SELECT sum(p.amount) FROM trust_charge_payments AS p
                                    WHERE p.charge_id = c.id), 0)
                        + coalesce((SELECT sum(r.amount) FROM trust_payment_reversals AS r
-                                   WHERE r.charge_id = c.id), 0) AS open
+                                   WHERE r.charge_id = c.id), 0)
+                       -- What a waiver took off it is not kept from the deposit (0079).
+                       - coalesce((SELECT sum(k.amount) FROM trust_charge_waivers AS w
+                                   JOIN trust_charges AS k ON k.id = w.credit_charge_id
+                                   WHERE w.waived_charge_id = c.id), 0) AS open
                 FROM trust_charges AS c
                 WHERE c.lease_id = p_lease_id AND c.kind <> 'credit'
                 ORDER BY c.due_on, c.created_at, c.id
@@ -8763,6 +9071,31 @@ ALTER TABLE public.trust_audit_log ALTER COLUMN id ADD GENERATED BY DEFAULT AS I
 
 
 --
+-- Name: trust_bank_deposit_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_bank_deposit_items (
+    deposit_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    transfer_id text NOT NULL
+);
+
+
+--
+-- Name: trust_bank_deposits; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_bank_deposits (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    bank_account_id uuid NOT NULL,
+    deposited_on date NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
 -- Name: trust_bank_match_cutover_items; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9017,6 +9350,21 @@ CREATE TABLE public.trust_charge_payments (
     amount numeric NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_charge_payments_amount_check CHECK ((amount > (0)::numeric))
+);
+
+
+--
+-- Name: trust_charge_waivers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_charge_waivers (
+    credit_charge_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    waived_charge_id uuid NOT NULL,
+    reason text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_charge_waivers_reason_check CHECK (((reason ~ '\S'::text) AND (char_length(reason) <= 500)))
 );
 
 
@@ -9500,6 +9848,43 @@ CREATE TABLE public.trust_late_fees (
 
 
 --
+-- Name: trust_lease_break_fees; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_break_fees (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    property_id uuid NOT NULL,
+    starts_on date NOT NULL,
+    flat_fee numeric DEFAULT 0 NOT NULL,
+    rent_months numeric DEFAULT 0 NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_lease_break_fees_flat_fee_check CHECK (((flat_fee >= (0)::numeric) AND (flat_fee = round(flat_fee, 2)))),
+    CONSTRAINT trust_lease_break_fees_rent_months_check CHECK (((rent_months >= (0)::numeric) AND (rent_months <= (12)::numeric) AND (rent_months = round(rent_months, 2))))
+);
+
+
+--
+-- Name: trust_lease_departures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_departures (
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    left_on date NOT NULL,
+    deposit_to uuid,
+    moved numeric DEFAULT 0 NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_lease_departures_check CHECK ((deposit_to <> tenant_id)),
+    CONSTRAINT trust_lease_departures_check1 CHECK (((deposit_to IS NOT NULL) OR (moved = (0)::numeric))),
+    CONSTRAINT trust_lease_departures_moved_check CHECK ((moved >= (0)::numeric))
+);
+
+
+--
 -- Name: trust_lease_end_adjustments; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9509,6 +9894,60 @@ CREATE TABLE public.trust_lease_end_adjustments (
     charge_id uuid NOT NULL,
     ends_on date,
     created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: trust_lease_guarantors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_guarantors (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    display_name text NOT NULL,
+    email text,
+    phone text,
+    offer_id uuid,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_lease_guarantors_display_name_check CHECK (((display_name ~ '\S'::text) AND (length(display_name) <= 200))),
+    CONSTRAINT trust_lease_guarantors_email_check CHECK (((email = lower(email)) AND (email ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'::text) AND (length(email) <= 254))),
+    CONSTRAINT trust_lease_guarantors_phone_check CHECK (((phone ~ '\S'::text) AND (length(phone) <= 30)))
+);
+
+
+--
+-- Name: trust_lease_household_removals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_household_removals (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    occupant_id uuid,
+    pet_id uuid,
+    vehicle_id uuid,
+    guarantor_id uuid,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_lease_household_removals_check CHECK ((num_nonnulls(occupant_id, pet_id, vehicle_id, guarantor_id) = 1))
+);
+
+
+--
+-- Name: trust_lease_occupants; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_occupants (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    display_name text NOT NULL,
+    relationship text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_lease_occupants_display_name_check CHECK (((display_name ~ '\S'::text) AND (length(display_name) <= 200))),
+    CONSTRAINT trust_lease_occupants_relationship_check CHECK (((relationship ~ '\S'::text) AND (length(relationship) <= 100)))
 );
 
 
@@ -9553,9 +9992,11 @@ CREATE TABLE public.trust_lease_offer_signers (
     pmc_id uuid NOT NULL,
     display_name text NOT NULL,
     email text NOT NULL,
+    role text DEFAULT 'tenant'::text NOT NULL,
     CONSTRAINT trust_lease_offer_signers_display_name_check CHECK (((display_name ~ '\S'::text) AND (length(display_name) <= 200))),
     CONSTRAINT trust_lease_offer_signers_email_check CHECK (((email = lower(email)) AND (email ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'::text) AND (length(email) <= 254))),
-    CONSTRAINT trust_lease_offer_signers_position_check CHECK ((("position" >= 1) AND ("position" <= 6)))
+    CONSTRAINT trust_lease_offer_signers_position_check CHECK ((("position" >= 1) AND ("position" <= 6))),
+    CONSTRAINT trust_lease_offer_signers_role CHECK ((role = ANY (ARRAY['tenant'::text, 'guarantor'::text])))
 );
 
 
@@ -9601,6 +10042,28 @@ CREATE TABLE public.trust_lease_offers (
 
 
 --
+-- Name: trust_lease_pets; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_pets (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    display_name text NOT NULL,
+    kind text NOT NULL,
+    breed text,
+    weight_lbs numeric,
+    assistance_animal boolean DEFAULT false NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_lease_pets_breed_check CHECK (((breed ~ '\S'::text) AND (length(breed) <= 100))),
+    CONSTRAINT trust_lease_pets_display_name_check CHECK (((display_name ~ '\S'::text) AND (length(display_name) <= 100))),
+    CONSTRAINT trust_lease_pets_kind_check CHECK (((kind ~ '\S'::text) AND (length(kind) <= 50))),
+    CONSTRAINT trust_lease_pets_weight_lbs_check CHECK (((weight_lbs > (0)::numeric) AND (weight_lbs <= (500)::numeric) AND (weight_lbs = round(weight_lbs, 1))))
+);
+
+
+--
 -- Name: trust_lease_tenants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -9608,6 +10071,29 @@ CREATE TABLE public.trust_lease_tenants (
     pmc_id uuid NOT NULL,
     lease_id uuid NOT NULL,
     tenant_id uuid NOT NULL
+);
+
+
+--
+-- Name: trust_lease_vehicles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_vehicles (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    make text NOT NULL,
+    model text,
+    color text,
+    plate text NOT NULL,
+    plate_state text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_lease_vehicles_color_check CHECK (((color ~ '\S'::text) AND (length(color) <= 30))),
+    CONSTRAINT trust_lease_vehicles_make_check CHECK (((make ~ '\S'::text) AND (length(make) <= 50))),
+    CONSTRAINT trust_lease_vehicles_model_check CHECK (((model ~ '\S'::text) AND (length(model) <= 50))),
+    CONSTRAINT trust_lease_vehicles_plate_check CHECK (((plate ~ '\S'::text) AND (length(plate) <= 15))),
+    CONSTRAINT trust_lease_vehicles_plate_state_check CHECK (((plate_state ~ '\S'::text) AND (length(plate_state) <= 30)))
 );
 
 
@@ -10699,6 +11185,30 @@ ALTER TABLE ONLY public.trust_bank_accounts
 
 
 --
+-- Name: trust_bank_deposit_items trust_bank_deposit_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_deposit_items
+    ADD CONSTRAINT trust_bank_deposit_items_pkey PRIMARY KEY (transfer_id);
+
+
+--
+-- Name: trust_bank_deposits trust_bank_deposits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_deposits
+    ADD CONSTRAINT trust_bank_deposits_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_bank_deposits trust_bank_deposits_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_deposits
+    ADD CONSTRAINT trust_bank_deposits_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_bank_match_cutover_items trust_bank_match_cutover_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -10888,6 +11398,14 @@ ALTER TABLE ONLY public.trust_budgets
 
 ALTER TABLE ONLY public.trust_charge_payments
     ADD CONSTRAINT trust_charge_payments_pkey PRIMARY KEY (charge_id, transfer_id);
+
+
+--
+-- Name: trust_charge_waivers trust_charge_waivers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_charge_waivers
+    ADD CONSTRAINT trust_charge_waivers_pkey PRIMARY KEY (credit_charge_id);
 
 
 --
@@ -11310,11 +11828,107 @@ ALTER TABLE ONLY public.trust_late_fees
 
 
 --
+-- Name: trust_lease_break_fees trust_lease_break_fees_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_break_fees
+    ADD CONSTRAINT trust_lease_break_fees_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_lease_break_fees trust_lease_break_fees_property_id_starts_on_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_break_fees
+    ADD CONSTRAINT trust_lease_break_fees_property_id_starts_on_key UNIQUE (property_id, starts_on);
+
+
+--
+-- Name: trust_lease_departures trust_lease_departures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_departures
+    ADD CONSTRAINT trust_lease_departures_pkey PRIMARY KEY (lease_id, tenant_id);
+
+
+--
 -- Name: trust_lease_end_adjustments trust_lease_end_adjustments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.trust_lease_end_adjustments
     ADD CONSTRAINT trust_lease_end_adjustments_pkey PRIMARY KEY (adjustment_charge_id);
+
+
+--
+-- Name: trust_lease_guarantors trust_lease_guarantors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_guarantors
+    ADD CONSTRAINT trust_lease_guarantors_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_lease_guarantors trust_lease_guarantors_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_guarantors
+    ADD CONSTRAINT trust_lease_guarantors_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_lease_household_removals trust_lease_household_removals_guarantor_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_household_removals
+    ADD CONSTRAINT trust_lease_household_removals_guarantor_id_key UNIQUE (guarantor_id);
+
+
+--
+-- Name: trust_lease_household_removals trust_lease_household_removals_occupant_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_household_removals
+    ADD CONSTRAINT trust_lease_household_removals_occupant_id_key UNIQUE (occupant_id);
+
+
+--
+-- Name: trust_lease_household_removals trust_lease_household_removals_pet_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_household_removals
+    ADD CONSTRAINT trust_lease_household_removals_pet_id_key UNIQUE (pet_id);
+
+
+--
+-- Name: trust_lease_household_removals trust_lease_household_removals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_household_removals
+    ADD CONSTRAINT trust_lease_household_removals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_lease_household_removals trust_lease_household_removals_vehicle_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_household_removals
+    ADD CONSTRAINT trust_lease_household_removals_vehicle_id_key UNIQUE (vehicle_id);
+
+
+--
+-- Name: trust_lease_occupants trust_lease_occupants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_occupants
+    ADD CONSTRAINT trust_lease_occupants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_lease_occupants trust_lease_occupants_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_occupants
+    ADD CONSTRAINT trust_lease_occupants_pmc_id_id_key UNIQUE (pmc_id, id);
 
 
 --
@@ -11382,11 +11996,43 @@ ALTER TABLE ONLY public.trust_lease_offers
 
 
 --
+-- Name: trust_lease_pets trust_lease_pets_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_pets
+    ADD CONSTRAINT trust_lease_pets_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_lease_pets trust_lease_pets_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_pets
+    ADD CONSTRAINT trust_lease_pets_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_lease_tenants trust_lease_tenants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.trust_lease_tenants
     ADD CONSTRAINT trust_lease_tenants_pkey PRIMARY KEY (lease_id, tenant_id);
+
+
+--
+-- Name: trust_lease_vehicles trust_lease_vehicles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_vehicles
+    ADD CONSTRAINT trust_lease_vehicles_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_lease_vehicles trust_lease_vehicles_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_vehicles
+    ADD CONSTRAINT trust_lease_vehicles_pmc_id_id_key UNIQUE (pmc_id, id);
 
 
 --
@@ -12221,6 +12867,27 @@ CREATE INDEX trust_audit_log_pmc_id_at ON public.trust_audit_log USING btree (pm
 
 
 --
+-- Name: trust_bank_deposit_items_deposit; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bank_deposit_items_deposit ON public.trust_bank_deposit_items USING btree (pmc_id, deposit_id);
+
+
+--
+-- Name: trust_bank_deposits_bank; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bank_deposits_bank ON public.trust_bank_deposits USING btree (bank_account_id, deposited_on);
+
+
+--
+-- Name: trust_bank_deposits_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bank_deposits_recorded_by ON public.trust_bank_deposits USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_bank_match_cutover_items_item_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -12309,6 +12976,20 @@ CREATE INDEX trust_budgets_account_month ON public.trust_budgets USING btree (le
 --
 
 CREATE INDEX trust_charge_payments_transfer_id ON public.trust_charge_payments USING btree (transfer_id);
+
+
+--
+-- Name: trust_charge_waivers_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_charge_waivers_recorded_by ON public.trust_charge_waivers USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_charge_waivers_waived; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_charge_waivers_waived ON public.trust_charge_waivers USING btree (pmc_id, waived_charge_id);
 
 
 --
@@ -12522,10 +13203,94 @@ CREATE INDEX trust_late_fees_policy_id ON public.trust_late_fees USING btree (po
 
 
 --
+-- Name: trust_lease_break_fees_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_break_fees_pmc ON public.trust_lease_break_fees USING btree (pmc_id, property_id);
+
+
+--
+-- Name: trust_lease_break_fees_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_break_fees_recorded_by ON public.trust_lease_break_fees USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_lease_departures_deposit_to; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_departures_deposit_to ON public.trust_lease_departures USING btree (lease_id, deposit_to);
+
+
+--
+-- Name: trust_lease_departures_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_departures_recorded_by ON public.trust_lease_departures USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_lease_departures_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_departures_tenant ON public.trust_lease_departures USING btree (tenant_id);
+
+
+--
 -- Name: trust_lease_end_adjustments_charge_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX trust_lease_end_adjustments_charge_id ON public.trust_lease_end_adjustments USING btree (charge_id);
+
+
+--
+-- Name: trust_lease_guarantors_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_guarantors_lease ON public.trust_lease_guarantors USING btree (pmc_id, lease_id);
+
+
+--
+-- Name: trust_lease_guarantors_offer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_guarantors_offer ON public.trust_lease_guarantors USING btree (pmc_id, offer_id);
+
+
+--
+-- Name: trust_lease_guarantors_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_guarantors_recorded_by ON public.trust_lease_guarantors USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_lease_household_removals_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_household_removals_pmc ON public.trust_lease_household_removals USING btree (pmc_id);
+
+
+--
+-- Name: trust_lease_household_removals_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_household_removals_recorded_by ON public.trust_lease_household_removals USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_lease_occupants_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_occupants_lease ON public.trust_lease_occupants USING btree (pmc_id, lease_id);
+
+
+--
+-- Name: trust_lease_occupants_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_occupants_recorded_by ON public.trust_lease_occupants USING btree (pmc_id, recorded_by);
 
 
 --
@@ -12550,10 +13315,38 @@ CREATE INDEX trust_lease_offers_renews_lease_id ON public.trust_lease_offers USI
 
 
 --
+-- Name: trust_lease_pets_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_pets_lease ON public.trust_lease_pets USING btree (pmc_id, lease_id);
+
+
+--
+-- Name: trust_lease_pets_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_pets_recorded_by ON public.trust_lease_pets USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_lease_tenants_tenant_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX trust_lease_tenants_tenant_id ON public.trust_lease_tenants USING btree (tenant_id);
+
+
+--
+-- Name: trust_lease_vehicles_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_vehicles_lease ON public.trust_lease_vehicles USING btree (pmc_id, lease_id);
+
+
+--
+-- Name: trust_lease_vehicles_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_vehicles_recorded_by ON public.trust_lease_vehicles USING btree (pmc_id, recorded_by);
 
 
 --
@@ -13124,6 +13917,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_bank_deposit_items trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bank_deposit_items FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_bank_deposits trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bank_deposits FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_bank_match_cutover_items trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -13226,6 +14033,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_charge_payments FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_charge_waivers trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_charge_waivers FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -13397,10 +14211,45 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_lease_break_fees trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_break_fees FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_lease_departures trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_departures FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_lease_end_adjustments trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_end_adjustments FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_lease_guarantors trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_guarantors FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_lease_household_removals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_household_removals FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_lease_occupants trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_occupants FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -13439,10 +14288,24 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_lease_pets trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_pets FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_lease_tenants trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_tenants FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_lease_vehicles trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_vehicles FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -13908,6 +14771,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bank
 
 
 --
+-- Name: trust_bank_deposit_items trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bank_deposit_items FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_bank_deposits trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bank_deposits FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_bank_match_cutover_items trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -14010,6 +14887,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_budg
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_charge_payments FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_charge_waivers trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_charge_waivers FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -14160,10 +15044,45 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_late
 
 
 --
+-- Name: trust_lease_break_fees trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_break_fees FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_lease_departures trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_departures FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_lease_end_adjustments trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_end_adjustments FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_lease_guarantors trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_guarantors FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_lease_household_removals trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_household_removals FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_lease_occupants trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_occupants FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -14202,10 +15121,24 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_leas
 
 
 --
+-- Name: trust_lease_pets trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_pets FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_lease_tenants trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_tenants FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_lease_vehicles trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_vehicles FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -14587,6 +15520,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_work
 
 
 --
+-- Name: trust_bank_deposit_items trust_bank_deposit_item_brought_money; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_bank_deposit_item_brought_money BEFORE INSERT ON public.trust_bank_deposit_items FOR EACH ROW EXECUTE FUNCTION public.trust_check_bank_deposit_item();
+
+
+--
 -- Name: trust_bank_accounts trust_bank_kind_fixed; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -14675,6 +15615,13 @@ CREATE TRIGGER trust_changed_by BEFORE INSERT ON public.trust_custom_roles FOR E
 --
 
 CREATE TRIGGER trust_changed_by BEFORE INSERT ON public.trust_staff_custom_roles FOR EACH ROW EXECUTE FUNCTION public.trust_name_custom_role_changer();
+
+
+--
+-- Name: trust_charge_waivers trust_charge_waiver_fits; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_charge_waiver_fits BEFORE INSERT ON public.trust_charge_waivers FOR EACH ROW EXECUTE FUNCTION public.trust_check_charge_waiver();
 
 
 --
@@ -14888,10 +15835,24 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_archivals FOR EAC
 
 
 --
+-- Name: trust_bank_deposits trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_bank_deposits FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_bill_splits trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_bill_splits FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_charge_waivers trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_charge_waivers FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -14923,10 +15884,59 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_inspections FOR E
 
 
 --
+-- Name: trust_lease_break_fees trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_break_fees FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_lease_departures trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_departures FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_lease_guarantors trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_guarantors FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_lease_household_removals trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_household_removals FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_lease_occupants trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_occupants FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_lease_offer_voids trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_offer_voids FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_lease_pets trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_pets FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_lease_vehicles trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_vehicles FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -15401,6 +16411,46 @@ ALTER TABLE ONLY public.trust_bank_accounts
 
 
 --
+-- Name: trust_bank_deposit_items trust_bank_deposit_items_pmc_id_deposit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_deposit_items
+    ADD CONSTRAINT trust_bank_deposit_items_pmc_id_deposit_id_fkey FOREIGN KEY (pmc_id, deposit_id) REFERENCES public.trust_bank_deposits(pmc_id, id);
+
+
+--
+-- Name: trust_bank_deposit_items trust_bank_deposit_items_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_deposit_items
+    ADD CONSTRAINT trust_bank_deposit_items_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
+-- Name: trust_bank_deposits trust_bank_deposits_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_deposits
+    ADD CONSTRAINT trust_bank_deposits_pmc_id_bank_account_id_fkey FOREIGN KEY (pmc_id, bank_account_id) REFERENCES public.trust_bank_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_bank_deposits trust_bank_deposits_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_deposits
+    ADD CONSTRAINT trust_bank_deposits_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bank_deposits trust_bank_deposits_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bank_deposits
+    ADD CONSTRAINT trust_bank_deposits_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_bank_match_cutover_items trust_bank_match_cutover_items_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15774,6 +16824,38 @@ ALTER TABLE ONLY public.trust_charge_payments
 
 ALTER TABLE ONLY public.trust_charge_payments
     ADD CONSTRAINT trust_charge_payments_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
+-- Name: trust_charge_waivers trust_charge_waivers_pmc_id_credit_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_charge_waivers
+    ADD CONSTRAINT trust_charge_waivers_pmc_id_credit_charge_id_fkey FOREIGN KEY (pmc_id, credit_charge_id) REFERENCES public.trust_charges(pmc_id, id);
+
+
+--
+-- Name: trust_charge_waivers trust_charge_waivers_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_charge_waivers
+    ADD CONSTRAINT trust_charge_waivers_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_charge_waivers trust_charge_waivers_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_charge_waivers
+    ADD CONSTRAINT trust_charge_waivers_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_charge_waivers trust_charge_waivers_pmc_id_waived_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_charge_waivers
+    ADD CONSTRAINT trust_charge_waivers_pmc_id_waived_charge_id_fkey FOREIGN KEY (pmc_id, waived_charge_id) REFERENCES public.trust_charges(pmc_id, id);
 
 
 --
@@ -16449,6 +17531,70 @@ ALTER TABLE ONLY public.trust_late_fees
 
 
 --
+-- Name: trust_lease_break_fees trust_lease_break_fees_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_break_fees
+    ADD CONSTRAINT trust_lease_break_fees_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_break_fees trust_lease_break_fees_pmc_id_property_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_break_fees
+    ADD CONSTRAINT trust_lease_break_fees_pmc_id_property_id_fkey FOREIGN KEY (pmc_id, property_id) REFERENCES public.trust_properties(pmc_id, id);
+
+
+--
+-- Name: trust_lease_break_fees trust_lease_break_fees_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_break_fees
+    ADD CONSTRAINT trust_lease_break_fees_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_lease_departures trust_lease_departures_lease_id_deposit_to_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_departures
+    ADD CONSTRAINT trust_lease_departures_lease_id_deposit_to_fkey FOREIGN KEY (lease_id, deposit_to) REFERENCES public.trust_lease_tenants(lease_id, tenant_id);
+
+
+--
+-- Name: trust_lease_departures trust_lease_departures_lease_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_departures
+    ADD CONSTRAINT trust_lease_departures_lease_id_tenant_id_fkey FOREIGN KEY (lease_id, tenant_id) REFERENCES public.trust_lease_tenants(lease_id, tenant_id);
+
+
+--
+-- Name: trust_lease_departures trust_lease_departures_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_departures
+    ADD CONSTRAINT trust_lease_departures_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_departures trust_lease_departures_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_departures
+    ADD CONSTRAINT trust_lease_departures_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_lease_departures trust_lease_departures_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_departures
+    ADD CONSTRAINT trust_lease_departures_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_lease_end_adjustments trust_lease_end_adjustments_pmc_id_adjustment_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16470,6 +17616,110 @@ ALTER TABLE ONLY public.trust_lease_end_adjustments
 
 ALTER TABLE ONLY public.trust_lease_end_adjustments
     ADD CONSTRAINT trust_lease_end_adjustments_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_guarantors trust_lease_guarantors_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_guarantors
+    ADD CONSTRAINT trust_lease_guarantors_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_guarantors trust_lease_guarantors_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_guarantors
+    ADD CONSTRAINT trust_lease_guarantors_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_lease_guarantors trust_lease_guarantors_pmc_id_offer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_guarantors
+    ADD CONSTRAINT trust_lease_guarantors_pmc_id_offer_id_fkey FOREIGN KEY (pmc_id, offer_id) REFERENCES public.trust_lease_offers(pmc_id, id);
+
+
+--
+-- Name: trust_lease_guarantors trust_lease_guarantors_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_guarantors
+    ADD CONSTRAINT trust_lease_guarantors_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_lease_household_removals trust_lease_household_removals_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_household_removals
+    ADD CONSTRAINT trust_lease_household_removals_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_household_removals trust_lease_household_removals_pmc_id_guarantor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_household_removals
+    ADD CONSTRAINT trust_lease_household_removals_pmc_id_guarantor_id_fkey FOREIGN KEY (pmc_id, guarantor_id) REFERENCES public.trust_lease_guarantors(pmc_id, id);
+
+
+--
+-- Name: trust_lease_household_removals trust_lease_household_removals_pmc_id_occupant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_household_removals
+    ADD CONSTRAINT trust_lease_household_removals_pmc_id_occupant_id_fkey FOREIGN KEY (pmc_id, occupant_id) REFERENCES public.trust_lease_occupants(pmc_id, id);
+
+
+--
+-- Name: trust_lease_household_removals trust_lease_household_removals_pmc_id_pet_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_household_removals
+    ADD CONSTRAINT trust_lease_household_removals_pmc_id_pet_id_fkey FOREIGN KEY (pmc_id, pet_id) REFERENCES public.trust_lease_pets(pmc_id, id);
+
+
+--
+-- Name: trust_lease_household_removals trust_lease_household_removals_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_household_removals
+    ADD CONSTRAINT trust_lease_household_removals_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_lease_household_removals trust_lease_household_removals_pmc_id_vehicle_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_household_removals
+    ADD CONSTRAINT trust_lease_household_removals_pmc_id_vehicle_id_fkey FOREIGN KEY (pmc_id, vehicle_id) REFERENCES public.trust_lease_vehicles(pmc_id, id);
+
+
+--
+-- Name: trust_lease_occupants trust_lease_occupants_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_occupants
+    ADD CONSTRAINT trust_lease_occupants_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_occupants trust_lease_occupants_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_occupants
+    ADD CONSTRAINT trust_lease_occupants_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_lease_occupants trust_lease_occupants_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_occupants
+    ADD CONSTRAINT trust_lease_occupants_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -16601,6 +17851,30 @@ ALTER TABLE ONLY public.trust_lease_offers
 
 
 --
+-- Name: trust_lease_pets trust_lease_pets_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_pets
+    ADD CONSTRAINT trust_lease_pets_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_pets trust_lease_pets_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_pets
+    ADD CONSTRAINT trust_lease_pets_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_lease_pets trust_lease_pets_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_pets
+    ADD CONSTRAINT trust_lease_pets_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_lease_tenants trust_lease_tenants_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16622,6 +17896,30 @@ ALTER TABLE ONLY public.trust_lease_tenants
 
 ALTER TABLE ONLY public.trust_lease_tenants
     ADD CONSTRAINT trust_lease_tenants_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
+
+
+--
+-- Name: trust_lease_vehicles trust_lease_vehicles_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_vehicles
+    ADD CONSTRAINT trust_lease_vehicles_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_vehicles trust_lease_vehicles_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_vehicles
+    ADD CONSTRAINT trust_lease_vehicles_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_lease_vehicles trust_lease_vehicles_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_vehicles
+    ADD CONSTRAINT trust_lease_vehicles_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -17972,4 +19270,7 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261016000074'),
     ('20261017000075'),
     ('20261017000076'),
-    ('20261017000077');
+    ('20261017000077'),
+    ('20261018000078'),
+    ('20261018000079'),
+    ('20261018000080');

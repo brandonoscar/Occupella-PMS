@@ -23,8 +23,8 @@ const LEASE: LeaseDetail = {
     { id: "t2", name: "Tenant 2", prepaid: "0.00", deposit: "0.00" },
   ],
   people: [
-    { id: "t1", name: "Tenant 1", email: "t1@example.com", phone: "555-555-0101", portal: "active", login_email: "t1@example.com" },
-    { id: "t2", name: "Tenant 2", email: null, phone: null, portal: "no login", login_email: null },
+    { id: "t1", name: "Tenant 1", email: "t1@example.com", phone: "555-555-0101", portal: "active", login_email: "t1@example.com", left_on: null, deposit_to: null },
+    { id: "t2", name: "Tenant 2", email: null, phone: null, portal: "no login", login_email: null, left_on: null, deposit_to: null },
   ],
   owed: "1550.00",
   on_hold: false,
@@ -40,6 +40,12 @@ const LEASE: LeaseDetail = {
     { id: "r1", kind: "fee", memo: "Pet rent", amount: "35.00", starts_on: "2026-01-01", ends_on: null },
     { id: "r2", kind: "credit", memo: "Concession", amount: "100.00", starts_on: "2026-02-01", ends_on: "2026-12-01" },
   ],
+  holds: [],
+};
+const HELD: LeaseDetail = {
+  ...LEASE,
+  on_hold: true,
+  holds: [{ id: "h1", starts_on: "2026-10-01", reason: "Eviction filed", ends_on: null, released_by: null, allowed: 0, in_force: true }],
 };
 
 const LEDGER: Ledger = {
@@ -62,6 +68,12 @@ function server(lease: LeaseDetail = LEASE, answers: Record<string, unknown> = {
         "/api/documents": { documents: [], subjects: { w9: [], receipt: [], move_out_photo: [], owner_document: [] } },
       };
       if (path.startsWith("/api/notes")) return new Response("[]", { status: 200 });
+      if (path === "/api/leases/l1/household") {
+        return new Response(JSON.stringify({ occupants: [], pets: [], vehicles: [], guarantors: [] }), { status: 200 });
+      }
+      if (path.startsWith("/api/move-out/l1/break-fee")) {
+        return new Response(JSON.stringify({ early: false, fee: null, flat_fee: null, rent_months: null }), { status: 200 });
+      }
       if (!(path in reads)) return new Response(JSON.stringify({ detail: "no such page" }), { status: 404 });
       return new Response(JSON.stringify(reads[path]), { status: 200 });
     }
@@ -187,8 +199,8 @@ describe("LeasePage", () => {
     // Each payment as it came in, whole; It bounced is in the ⋯ menu of the one that hasn't.
     const received = screen.getByRole("table", { name: "Payments received" });
     expect(within(received).getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").map((c) => c.textContent))).toEqual([
-      ["09/01/2026Check 101", "$1,500.00", ""],
-      ["08/01/2026EFT", "$1,500.00", "Bounced"],  // how it came, when no reference says
+      ["09/01/2026Check 101Receipt (PDF)", "$1,500.00", ""],
+      ["08/01/2026EFTReceipt (PDF)", "$1,500.00", "Bounced"],  // how it came, when no reference says
     ]);
     const bounced = () => {
       fireEvent.click(within(received).getByRole("button", { name: "Actions for 09/01/2026 payment of $1,500.00" }));
@@ -315,7 +327,7 @@ describe("LeasePage", () => {
   });
 
   it("keeps a refused payment's panel open with the reason, and says when the lease is on a hold", async () => {
-    server({ ...LEASE, on_hold: true }, {}, { "/api/rent/leases/l1/payments": "lease is on a payment hold" });
+    server(HELD, {}, { "/api/rent/leases/l1/payments": "lease is on a payment hold" });
     await open();
     expect(screen.getByText(/On a payment hold/)).toBeTruthy();
     const form = panel("Receive payment");
@@ -328,6 +340,71 @@ describe("LeasePage", () => {
     fireEvent.click(within(form).getByRole("button", { name: "Close" }));
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(screen.getAllByText("lease is on a payment hold")).toHaveLength(1);
+  });
+
+  it("waives an open charge, all of it or part, with why, from its ⋯ menu", async () => {
+    const fetch = server(LEASE, { "/api/rent/charges/c2/waive": { amount: "20.00", open: "30.00" } });
+    await open();
+    const charges = screen.getByRole("list", { name: "Open charges" });
+    expect(within(charges).getAllByRole("listitem").map((li) => li.querySelector("span")?.textContent)).toEqual([
+      "10/01/2026 Rent due 2026-10-01: $1,500.00 open",
+      "10/06/2026 Late fee: $50.00 open",
+    ]);
+    fireEvent.click(within(charges).getByRole("button", { name: "Actions for Late fee due 10/06/2026" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Waive" }));
+    expect((within(charges).getByLabelText("Amount to waive") as HTMLInputElement).value).toBe("50.00");
+    fireEvent.change(within(charges).getByLabelText("Amount to waive"), { target: { value: "20.00" } });
+    fireEvent.change(within(charges).getByLabelText("Why"), { target: { value: "First time late" } });
+    fireEvent.click(within(charges).getByRole("button", { name: "Waive $20.00" }));
+    expect(await screen.findByText("Waived $20.00 of Late fee.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/rent/charges/c2/waive", { amount: "20.00", reason: "First time late" }]]);
+  });
+
+  it("links each payment to its receipt", async () => {
+    server();
+    await open();
+    fireEvent.click(screen.getByRole("tab", { name: "Ledger" }));
+    const table = screen.getByRole("table", { name: "Payments received" });
+    expect(within(table).getAllByRole("link", { name: "Receipt (PDF)" }).map((a) => a.getAttribute("href"))).toEqual([
+      "/api/rent/payments/tr1/receipt",
+      "/api/rent/payments/tr0/receipt",
+    ]);
+  });
+
+  it("places a payment hold from its ⋯ menu", async () => {
+    const fetch = server(LEASE, {
+      "/api/rent/leases/l1/holds": { id: "h1", starts_on: "2026-10-01", reason: "Eviction filed", ends_on: null, released_by: null, allowed: 0, in_force: true },
+    });
+    await open();
+    const form = panel("Place payment hold", true);
+    fireEvent.change(within(form).getByLabelText("Hold payments from"), { target: { value: "2026-10-01" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Place hold" }));
+    expect(await screen.findByText("On a payment hold since 10/01/2026.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/rent/leases/l1/holds", { starts_on: "2026-10-01", reason: "Eviction filed" }]]);
+    // A lease with no hold has nothing to accept a payment past.
+    expect(within(panel("Receive payment")).queryByLabelText("Accept this payment past the payment hold")).toBeNull();
+  });
+
+  it("says since when and why a lease is on hold, accepts one payment past it and releases it", async () => {
+    const fetch = server(HELD, {
+      "/api/rent/holds/h1/release": { ...HELD.holds[0], ends_on: "2026-10-20", released_by: "Staff 1", in_force: false },
+    });
+    await open();
+    expect(screen.getByText(/Since 10\/01\/2026: Eviction filed\. A payment is refused unless you accept it past the hold\./)).toBeTruthy();
+    const pay = panel("Receive payment");
+    fireEvent.change(within(pay).getByLabelText("Payment received"), { target: { value: "700.00" } });
+    fireEvent.click(within(pay).getByLabelText("Accept this payment past the payment hold"));
+    fireEvent.click(within(pay).getByRole("button", { name: "Record payment" }));
+    await vi.waitFor(() => expect(posted(fetch).map(([path]) => path)).toContain("/api/rent/leases/l1/payments"));
+    const [, body] = posted(fetch).find(([path]) => path === "/api/rent/leases/l1/payments") ?? [];
+    expect(body).toMatchObject({ amount: "700.00", past_hold: true });
+
+    const release = panel("Release payment hold", true);
+    expect(within(release).getByText("On hold since 10/01/2026: Eviction filed")).toBeTruthy();
+    fireEvent.change(within(release).getByLabelText("Accept payments again from"), { target: { value: "2026-10-20" } });
+    fireEvent.click(within(release).getByRole("button", { name: "Release hold" }));
+    expect(await screen.findByText("The payment hold is released from 10/20/2026.")).toBeTruthy();
+    expect(posted(fetch).at(-1)).toEqual(["/api/rent/holds/h1/release", { ends_on: "2026-10-20" }]);
   });
 
   it("lists its tenants with their contact and portal, and makes an invite link", async () => {
@@ -347,6 +424,44 @@ describe("LeasePage", () => {
     expect(await screen.findByText("Invite link made for t2@example.com; give it to Tenant 2.")).toBeTruthy();
     expect((within(two).getByLabelText("Invite link, Tenant 2") as HTMLInputElement).value).toBe("http://localhost/invite#abc");
     expect(posted(fetch)).toEqual([["/api/invites", { kind: "tenant", person_id: "t2", email: "t2@example.com" }]]);
+  });
+
+  it("takes one tenant off from their ⋯ menu, their deposit moving to who stays, and marks who left", async () => {
+    const fetch = server(LEASE, { "/api/move-out/l1/departures": { moved: "1500.00" } });
+    await open();
+    fireEvent.click(screen.getByRole("tab", { name: "Tenants" }));
+    fireEvent.click(within(screen.getByRole("row", { name: "Tenant 1" })).getByRole("button", { name: "Actions for Tenant 1" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Take off the lease" }));
+    const dialog = screen.getByRole("dialog", { name: "Take a tenant off the lease" });
+    fireEvent.change(within(dialog).getByLabelText("Their $1,500.00 deposit"), { target: { value: "t2" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "Take Tenant 1 off the lease" }));
+    expect(await screen.findByText("Tenant 1 left the lease; their $1,500.00 deposit moved to Tenant 2.")).toBeTruthy();
+    expect(posted(fetch)[0]).toEqual(["/api/move-out/l1/departures", {
+      tenant_id: "t1", left_on: expect.any(String), deposit_to: "t2",
+    }]);
+    cleanup();
+
+    // Once one left, the one who stays can't be taken off: the lease ends instead.
+    server({
+      ...LEASE,
+      people: LEASE.people.map((p) => (p.id === "t1" ? { ...p, left_on: "2026-03-31", deposit_to: "t2" } : p)),
+    });
+    await open();
+    fireEvent.click(screen.getByRole("tab", { name: "Tenants" }));
+    expect(within(screen.getByRole("row", { name: "Tenant 1" })).getByText("Left 03/31/2026")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Actions for Tenant 2" })).toBeNull();
+    // Below them, who else is on the lease: none yet of guarantors, occupants, pets or vehicles.
+    expect(await screen.findAllByText("None on file.")).toHaveLength(4);
+  });
+
+  it("ends the lease from its ⋯ menu", async () => {
+    const fetch = server();
+    await open();
+    const dialog = panel("End lease", true);
+    fireEvent.change(within(dialog).getByLabelText("Last day"), { target: { value: "2026-11-30" } });
+    fireEvent.click(within(dialog).getByRole("button", { name: "End lease" }));
+    expect(await screen.findByText("The lease ends on 11/30/2026.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/move-out/l1/end", { ends_on: "2026-11-30", break_fee: false }]]);
   });
 
   it("opens its files and notes", async () => {
