@@ -661,6 +661,8 @@ class NewLease(BaseModel):
     ends_on: date | None = None
     monthly_rent: Rent
     tenant_ids: list[UUID] = Field(min_length=1, max_length=6)
+    # The day of the month its rent is due, from its first month (migration 0081).
+    rent_due_day: Annotated[int, Field(ge=1, le=28)] = 1
 
 
 @router.post("/leases", status_code=201)
@@ -686,4 +688,10 @@ def add_lease(session: Staff, conn: Conn, new: NewLease) -> Created:
         raise HTTPException(409, refusal(refused)) from None
     except psycopg.errors.InvalidParameterValue as refused:  # a tenant of another property
         raise HTTPException(422, refusal(refused)) from None
+    if new.rent_due_day != 1:
+        conn.execute(
+            "INSERT INTO trust_rent_due_days (pmc_id, lease_id, starts_on, due_day)"
+            " VALUES (%s, %s, %s, %s)",
+            (session.pmc_id, lease, new.starts_on.replace(day=1), new.rent_due_day),
+        )
     return Created(id=lease)

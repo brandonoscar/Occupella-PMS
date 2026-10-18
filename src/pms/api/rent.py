@@ -595,6 +595,13 @@ class RentChange(BaseModel):
     lease_terms: str | None
 
 
+class DueDay(BaseModel):
+    id: UUID
+    # The first of the month the due day holds from.
+    starts_on: date
+    due_day: int
+
+
 class RentersInsurance(BaseModel):
     required: bool
     minimum_liability: str | None
@@ -645,6 +652,10 @@ class RentLease(BaseModel):
     # The rent in force on the day; changes recorded, past and to come, in rent_changes.
     monthly_rent: str
     rent_changes: list[RentChange]
+    # The day of the month rent is due, in the month of the day (1 unless the lease picked
+    # another); its changes, past and to come, in due_days (migration 0081).
+    rent_due_day: int
+    due_days: list[DueDay]
     tenants: list[LeaseTenant]
     owed: str
     on_hold: bool
@@ -657,7 +668,7 @@ class RentLease(BaseModel):
 
 LEASES = f"""
 SELECT l.id, p.display_name, u.display_name, l.starts_on, l.ends_on,
-       trust_rent_on(l.id, %(as_of)s), {OWED},
+       trust_rent_on(l.id, %(as_of)s), trust_rent_due_day(l.id, %(as_of)s), {OWED},
        EXISTS (SELECT 1 FROM trust_payment_holds AS h
                LEFT JOIN trust_payment_hold_releases AS r ON r.hold_id = h.id
                WHERE h.lease_id = l.id AND h.starts_on <= %(as_of)s
@@ -688,6 +699,13 @@ SELECT c.lease_id, c.id, c.effective_on, c.monthly_rent, c.notice_given_on, c.se
 FROM trust_rent_changes AS c
 WHERE c.pmc_id = %(pmc)s AND (%(lease)s::uuid IS NULL OR c.lease_id = %(lease)s)
 ORDER BY c.effective_on, c.id
+"""
+
+DUE_DAYS = """
+SELECT d.lease_id, d.id, d.starts_on, d.due_day
+FROM trust_rent_due_days AS d
+WHERE d.pmc_id = %(pmc)s AND (%(lease)s::uuid IS NULL OR d.lease_id = %(lease)s)
+ORDER BY d.starts_on, d.id
 """
 
 # Recurring charges not stopped by the day: still charged, or to be.
@@ -803,9 +821,14 @@ def built(
                 lease_terms=terms,
             )
         )
+    due_days: dict[UUID, list[DueDay]] = {}
+    for lease, d, starts, due_day in conn.execute(DUE_DAYS, names).fetchall():
+        due_days.setdefault(lease, []).append(DueDay(id=d, starts_on=starts, due_day=due_day))
     insured = renters_insurance(conn, pmc, day)
     found = []
-    for i, prop, unit, starts, ends, rent, due, on_hold in conn.execute(LEASES, names).fetchall():
+    for i, prop, unit, starts, ends, rent, due_day, due, on_hold in conn.execute(
+        LEASES, names
+    ).fetchall():
         in_effect = starts <= day and (ends is None or day <= ends)
         if only is None and not in_effect and due == 0:
             continue
@@ -818,6 +841,8 @@ def built(
                 ends_on=ends,
                 monthly_rent=cents(rent),
                 rent_changes=changes.get(i, []),
+                rent_due_day=due_day,
+                due_days=due_days.get(i, []),
                 tenants=tenants.get(i, []),
                 owed=cents(due),
                 on_hold=on_hold,
@@ -1013,6 +1038,34 @@ def change_rent(session: Staff, conn: Conn, lease_id: UUID, new: NewRentChange) 
         raise HTTPException(409, refusal(refused)) from None
     assert row is not None
     return Created(id=row[0])
+
+
+class NewDueDay(BaseModel):
+    starts_on: date  # the first of a month
+    due_day: Annotated[int, Field(ge=1, le=28)]
+
+
+@router.post("/leases/{lease_id}/due-day", status_code=201)
+def change_due_day(session: Staff, conn: Conn, lease_id: UUID, new: NewDueDay) -> DueDay:
+    """The day of the month the lease's rent is due, from the first of a month on (the founder's
+    review, q013): the rent run charges it on that day, kept within the lease's days. A month
+    whose rent is charged already keeps its due date."""
+    lease_of(conn, session.pmc_id, lease_id)
+    if new.starts_on.day != 1:
+        raise HTTPException(422, "a due day starts on the first of a month")
+    try:
+        with conn.transaction():
+            row = conn.execute(
+                "INSERT INTO trust_rent_due_days (pmc_id, lease_id, starts_on, due_day)"
+                " VALUES (%s, %s, %s, %s) RETURNING id",
+                (session.pmc_id, lease_id, new.starts_on, new.due_day),
+            ).fetchone()
+    except psycopg.errors.UniqueViolation:
+        raise HTTPException(409, "this lease's due day changes from that month already") from None
+    except psycopg.errors.CheckViolation as refused:
+        raise HTTPException(409, refusal(refused)) from None
+    assert row is not None
+    return DueDay(id=row[0], starts_on=new.starts_on, due_day=new.due_day)
 
 
 Coverage = Annotated[Decimal, Field(gt=0, le=Decimal("100000000"), decimal_places=2)]

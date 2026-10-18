@@ -2,11 +2,12 @@
 and with the vendor's invoice, approved by the owner when over the agreement's limit, set aside
 from the owner's account, paid, several at once by Pay bills), a bill's own page, monthly
 recurring bills (each month's entered by the nightly run, src/pms/nightly.py), the PMC's
-management and leasing fees, owner draws and owner contributions, and the company's earned fees
-taken out of trust.
+management and leasing fees (the management fees maybe taken each month by the nightly run, as the
+company chooses), other fees taken from an owner, owner draws and owner contributions, and the
+company's earned fees taken out of trust.
 
 Every step goes through the database's write paths (trust_set_aside_bill, trust_pay_bill,
-trust_post_management_fee, trust_post_leasing_fee, trust_draw_owner,
+trust_post_management_fee, trust_post_leasing_fee, trust_take_owner_fee, trust_draw_owner,
 trust_record_owner_contribution, trust_withdraw_pmc_fees), each once per
 bill, period, lease or request key, so a retry does nothing twice. A draw, a bill payment or
 the company's fees taken out record what the bank paid out; the PMS sends no money itself.
@@ -1248,6 +1249,94 @@ def management_fees(session: Staff, conn: Conn, run: FeeRun) -> list[Fee]:
                 Fee(account=account, owner=owner, property=prop, fee=None, refused=refusal(refused))
             )
     return taken
+
+
+class AutomaticFees(BaseModel):
+    # Whether the nightly run takes last month's management fees by itself, from the day of the
+    # month (migration 0082; the founder's answer of 2026-10-18 to q049).
+    automatic: bool
+    day_of_month: Annotated[int, Field(ge=1, le=28)]
+
+
+class AutomaticFeesSet(AutomaticFees):
+    # When it was last changed, and by whom (None: never, or by the command line).
+    changed_at: datetime | None
+    changed_by: str | None
+
+
+FEE_SETTINGS = (
+    "SELECT s.automatic, s.day_of_month, s.created_at, st.display_name"
+    " FROM trust_management_fee_settings AS s"
+    " LEFT JOIN trust_staff AS st ON st.id = s.recorded_by"
+    " WHERE s.pmc_id = %s ORDER BY s.created_at DESC, s.id DESC LIMIT 1"
+)
+
+
+def fee_settings(conn: psycopg.Connection[Any], pmc_id: UUID) -> AutomaticFeesSet:
+    row = conn.execute(FEE_SETTINGS, (pmc_id,)).fetchone()
+    if row is None:
+        return AutomaticFeesSet(automatic=False, day_of_month=1, changed_at=None, changed_by=None)
+    return AutomaticFeesSet(
+        automatic=row[0], day_of_month=row[1], changed_at=row[2], changed_by=row[3]
+    )
+
+
+@router.get("/management-fees/automatic")
+def automatic_fees(session: Staff, conn: Conn) -> AutomaticFeesSet:
+    """Whether the company's management fees are taken each month by themselves, and from which
+    day; off until a company turns it on."""
+    return fee_settings(conn, session.pmc_id)
+
+
+@router.post("/management-fees/automatic")
+def set_automatic_fees(session: Staff, conn: Conn, wanted: AutomaticFees) -> AutomaticFeesSet:
+    """Turns taking the management fees each month by itself on or off, from a day of the month
+    (1 to 28). Saving what holds already writes nothing."""
+    now = fee_settings(conn, session.pmc_id)
+    if (now.automatic, now.day_of_month) != (wanted.automatic, wanted.day_of_month):
+        conn.execute(
+            "INSERT INTO trust_management_fee_settings (pmc_id, automatic, day_of_month)"
+            " VALUES (%s, %s, %s)",
+            (session.pmc_id, wanted.automatic, wanted.day_of_month),
+        )
+    return fee_settings(conn, session.pmc_id)
+
+
+class OwnerFee(BaseModel):
+    request_id: UUID
+    account: Account
+    # An inspection fee, a lease-up fee, or another fee the owner's agreement allows (q051).
+    kind: Literal["inspection", "lease_up", "other"]
+    amount: Amount
+    memo: Text
+    on: date
+
+
+@router.post("/owner-fees", status_code=201)
+def take_owner_fee(session: Staff, conn: Conn, new: OwnerFee) -> Moved:
+    """Takes a fee from an owner's property account into the company's fee account in the same
+    trust bank account (trust_take_owner_fee, staff who hold disburse), once per request id. The
+    owner's balance must hold it; the money stays in trust until the company takes its fees out.
+    """
+    not_after_today(new.on)
+    owner_account(conn, session.pmc_id, new.account)
+    try:
+        moved = one(
+            conn,
+            "SELECT trust_take_owner_fee(%s, %s, %s, %s, %s, %s, %s)",
+            (
+                session.pmc_id,
+                new.account,
+                new.kind,
+                new.amount,
+                new.memo,
+                f"owner-fee/{new.request_id}",
+                at(new.on),
+            ),
+        )
+    except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
+        raise HTTPException(409, refusal(refused)) from None
+    return Moved(transfer_id=moved)
 
 
 class LeasingFee(BaseModel):

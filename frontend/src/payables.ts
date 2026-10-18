@@ -170,6 +170,20 @@ export function lastMonthPeriod(today: Date): { start: string; end: string } {
   return { start: lastMonth(today).start, end: day(thisMonth) };
 }
 
+// A fee taken from an owner besides the management and leasing fees (migration 0082, q051).
+export type OwnerFeeKind = "inspection" | "lease_up" | "other";
+export const OWNER_FEE_KINDS: [OwnerFeeKind, string][] = [
+  ["inspection", "Inspection fee"],
+  ["lease_up", "Lease-up fee"],
+  ["other", "Other fee"],
+];
+
+// "A $75.00 inspection fee is taken from Property 1."
+export function ownerFeeSummary(kind: OwnerFeeKind, amount: string, property: string): string {
+  const label = (OWNER_FEE_KINDS.find(([value]) => value === kind)?.[1] ?? "Fee").toLowerCase();
+  return `A ${money(amount)} ${label} is taken from ${property}.`;
+}
+
 // An owner's income statement from the first of the year through today (UTC), as a PDF: every
 // property of theirs, with the Schedule E lines.
 export function incomeStatementHref(ownerId: string, today: string): string {

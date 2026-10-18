@@ -48,6 +48,8 @@ export type RentChange = {
   served_by: "in person" | "mail" | "posted" | "email" | "other";
   lease_terms: string | null;
 };
+// The day of the month a lease's rent is due, from the first of a month on (migration 0081).
+export type DueDay = { id: string; starts_on: string; due_day: number };
 // A lease's renters insurance on the day: what the lease asks, and the policy that counts.
 export type RentersInsurance = {
   required: boolean;
@@ -69,6 +71,10 @@ export type RentLease = {
   // The rent in force on the day; every change recorded, past and to come, in rent_changes.
   monthly_rent: string;
   rent_changes: RentChange[];
+  // The day of the month rent is due this month (1 unless the lease picked another); every
+  // change, past and to come, in due_days.
+  rent_due_day: number;
+  due_days: DueDay[];
   tenants: LeaseTenant[];
   owed: string;
   on_hold: boolean;
@@ -141,6 +147,29 @@ export function rentChangeLine(change: RentChange): string {
     `From ${usDate(change.effective_on)}: ${money(change.monthly_rent)} a month ` +
     `(notice ${SERVED[change.served_by]} on ${usDate(change.notice_given_on)}${terms})`
   );
+}
+
+// "1st", "2nd", "3rd", "4th", "11th", "21st": a day of the month as people say it.
+export function ordinal(n: number): string {
+  const teen = n % 100 >= 11 && n % 100 <= 13;
+  const suffix = teen ? "th" : ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[n % 10] ?? "th";
+  return `${n}${suffix}`;
+}
+
+// "Due on the 10th" (or "the 1st"): when the lease's rent is due each month.
+export function dueDayLabel(day: number): string {
+  return `Due on the ${ordinal(day)}`;
+}
+
+// "From 11/01/2026: due on the 10th of each month".
+export function dueDayLine(change: DueDay): string {
+  return `From ${usDate(change.starts_on)}: due on the ${ordinal(change.due_day)} of each month`;
+}
+
+// The first of next month: the earliest a new due day usually starts (this month's rent is
+// charged already, or will be by its day).
+export function nextMonthFirst(today: Date): string {
+  return day(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 1)));
 }
 
 // The first month a rent change may start with written notice given today: notice of a full

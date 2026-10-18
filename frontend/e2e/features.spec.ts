@@ -2497,3 +2497,149 @@ test("staff take one tenant off a lease, keep who else lives there and who guara
   await leaseTab(page, "Summary");
   await expect(page.getByRole("list", { name: "Open charges" })).toContainText("Lease-break fee: $2,500.00 open");
 });
+
+test("staff pick the day of the month a lease's rent is due, the rent run charges it then, and the tenant sees it", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["rent-due-day"]!;
+  const nth = (n: number) =>
+    `${n}${n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th"}`;
+  await joinAsStaff(page, people.manager);
+
+  // Cedar House's rent moves to the 15th from this month, not charged yet.
+  const house = await openLease(page, "Cedar House, House");
+  await expect(page.getByTestId("rent-due-day")).toHaveText("Due on the 1st");
+  let change = await leasePanel(page, "Change rent due day");
+  await change.getByLabel("Rent due on day").fill("15");
+  await change.getByLabel("From (the first of a month)").fill(firstOfThisMonth());
+  await change.getByRole("button", { name: "Change due day" }).click();
+  await expect(change).toHaveCount(0);
+  await expect(house).toContainText(`Rent due on the 15th from ${us(firstOfThisMonth())}.`);
+  await expect(page.getByTestId("rent-due-day")).toHaveText("Due on the 15th");
+  await expect(house.getByRole("list", { name: "Rent due day, House" })).toHaveText(
+    `From ${us(firstOfThisMonth())}: due on the 15th of each month`,
+  );
+  // Once a month: the same month again is refused, in words.
+  change = await leasePanel(page, "Change rent due day");
+  await change.getByLabel("Rent due on day").fill("20");
+  await change.getByLabel("From (the first of a month)").fill(firstOfThisMonth());
+  await change.getByRole("button", { name: "Change due day" }).click();
+  await expect(change.getByRole("alert")).toHaveText("this lease's due day changes from that month already");
+  await change.getByRole("button", { name: "Close" }).click();
+
+  const tenant = await browser.newPage();
+  await joinPortal(tenant, people.taylor);
+  await expect(tenant.getByText("Due on the 15th")).toBeVisible();
+  await tenant.close();
+
+  // A lease in place on Aspen Row's vacant unit from the first of this month, due on today's day
+  // (the 28th at most).
+  const due = Math.min(dayOfMonth(), 28);
+  const dueOn = `${today().slice(0, 8)}${String(due).padStart(2, "0")}`;
+  await openProperty(page, "Aspen Row");
+  await page.getByRole("row", { name: "Unit 2" }).getByRole("link", { name: "Unit 2" }).click();
+  const lease = await setupPanel(page, "Add lease in place", "Add lease");
+  await lease.getByLabel("Tenant's name").fill("Avery Sample");
+  await lease.getByRole("button", { name: "Add tenant" }).click();
+  await expect(lease.getByLabel("Avery Sample")).toBeChecked();
+  await lease.getByLabel("Starts").fill(firstOfThisMonth());
+  await lease.getByLabel("Rent a month").fill("1240.00");
+  await lease.getByLabel("Rent due on day (1 to 28)").fill(String(due));
+  await lease.getByRole("button", { name: "Add lease" }).click();
+  await expect(page.getByRole("row", { name: "Avery Sample" })).toContainText("$1,240.00");
+
+  // Run by hand today, the rent run charges it: due on its day.
+  await section(page, "Rent roll");
+  await page.getByRole("button", { name: "Actions for the rent roll" }).click();
+  await page.getByRole("menuitem", { name: "Run rent now" }).click();
+  const run = page.getByRole("dialog", { name: "Run rent now" });
+  await run.getByLabel("Late fees as of").fill(today());
+  await run.getByRole("button", { name: "Run rent now" }).click();
+  await expect(run).toHaveCount(0);
+  await expect(page.getByRole("row", { name: "Aspen Row, Unit 2", exact: true }).getByTestId("balance")).toHaveText(
+    "$1,240.00",
+  );
+  const aspen = await openLease(page, "Aspen Row, Unit 2");
+  await expect(page.getByTestId("rent-due-day")).toHaveText(`Due on the ${nth(due)}`);
+  await expect(aspen.getByRole("list", { name: "Open charges" })).toContainText(
+    `${us(dueOn)} Rent due ${dueOn}: $1,240.00 open`,
+  );
+  // This month is charged: a new due day starts after it.
+  change = await leasePanel(page, "Change rent due day");
+  await change.getByLabel("Rent due on day").fill("5");
+  await change.getByLabel("From (the first of a month)").fill(firstOfThisMonth());
+  await change.getByRole("button", { name: "Change due day" }).click();
+  await expect(change.getByRole("alert")).toHaveText(
+    `rent due ${dueOn} is charged already; a new due day starts after its month`,
+  );
+});
+
+test("a company has its management fees taken each month, staff set a flat fee and take an inspection fee from an owner", async ({
+  page,
+}) => {
+  const people = seed.features["owner-fees"]!;
+  await joinAsStaff(page, people.manager);
+
+  // Company setup: the nightly run takes last month's management fees by itself, from the 1st.
+  await settings(page, "Company setup");
+  await expect(page.getByTestId("automatic-fees")).toHaveText("Collected by hand on Management fees");
+  await page.getByRole("button", { name: "Edit monthly fees" }).click();
+  const monthly = page.getByRole("dialog", { name: "Monthly management fees" });
+  await monthly.getByLabel("Take last month's management fees by themselves").check();
+  await monthly.getByLabel("From this day of the month").selectOption("1");
+  await monthly.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved the monthly management fees.")).toBeVisible();
+  await expect(page.getByTestId("automatic-fees")).toHaveText(
+    "Taken by themselves: last month's, from the 1st of each month",
+  );
+  await section(page, "Management fees");
+  await expect(page.getByTestId("automatic-fees")).toHaveText(
+    "Taken by themselves: last month's, from the 1st of each month.",
+  );
+
+  // Birch Flats' terms from this month: a $50.00 minimum and a $25.00 flat fee on top.
+  await openOwner(page, "Demo Owner A");
+  const terms = await setupPanel(page, "Set terms", "Set management terms");
+  await terms.getByRole("combobox", { name: "For" }).selectOption({ label: "Demo Owner A, Birch Flats" });
+  await terms.getByLabel("In force from").fill(firstOfThisMonth());
+  await terms.getByLabel("Fee, percent of rent and recurring fees collected").fill("0");
+  await terms.getByLabel("Minimum fee").fill("50.00");
+  await terms.getByLabel("Flat fee").fill("25.00");
+  // The saved toast sits over the panel's corner until it goes.
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await terms.getByRole("button", { name: "Set terms" }).click();
+  await expect(page.getByRole("main")).toContainText(
+    `Birch Flats: 0% of rent collected, at least $50.00, plus $25.00; leasing fee 0%; reserve $0.00; the owner approves bills over $0.00; from ${us(firstOfThisMonth())}`,
+  );
+  await section(page, "Management fees");
+  const nextMonth = new Date(Date.UTC(Number(today().slice(0, 4)), Number(today().slice(5, 7)), 1))
+    .toISOString()
+    .slice(0, 10);
+  await page.getByLabel("Period from").fill(firstOfThisMonth());
+  await page.getByLabel("Up to (not including)").fill(nextMonth);
+  await expect(page.getByRole("row", { name: "Demo Owner A, Birch Flats", exact: true })).toContainText("$75.00");
+
+  // An inspection fee from Birch Flats, which holds $250.00: on the owner's statement with what
+  // it was for. More than the owner holds is refused, in words.
+  await openOwner(page, "Demo Owner A");
+  await page.getByRole("tab", { name: "Financials", exact: true }).click();
+  const take = async (amount: string) => {
+    await page.getByRole("button", { name: "Take a fee" }).click();
+    const panel = page.getByRole("dialog", { name: "Take a fee" });
+    await panel.getByLabel("From").selectOption({ label: "Birch Flats" });
+    await panel.getByRole("combobox", { name: "Fee", exact: true }).selectOption({ label: "Inspection fee" });
+    await panel.getByLabel("Amount").fill(amount);
+    await panel.getByLabel("What it is for").fill("Move-in inspection");
+    await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+    await panel.getByRole("button", { name: "Take fee" }).click();
+    return panel;
+  };
+  await take("40.00");
+  await expect(page.getByText("A $40.00 inspection fee is taken from Birch Flats.")).toBeVisible();
+  await expect(page.getByRole("main")).toContainText("Inspection fee: Move-in inspection");
+  const refused = await take("500.00");
+  await expect(refused.getByRole("alert")).toHaveText("not enough money: the owner's account would be $290.00 short");
+  await refused.getByRole("button", { name: "Close" }).click();
+  await expect((await ownerProperty(page, "Demo Owner A", "Birch Flats")).getByRole("cell").nth(2)).toHaveText("$210.00");
+});

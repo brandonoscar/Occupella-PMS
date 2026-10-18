@@ -15,7 +15,7 @@ import { SidePanel } from "../components/SidePanel";
 import { Tabs } from "../components/Tabs";
 import { Wide } from "../components/Wide";
 import { money, usDate } from "../money";
-import { holdLine, insuranceBadge, insuranceLine, rentChangeLine } from "../rent";
+import { dueDayLabel, dueDayLine, holdLine, insuranceBadge, insuranceLine, rentChangeLine } from "../rent";
 import type { LeaseDetail, LeasePerson, Ledger } from "../rentals";
 import { LEASE_STATUS, LEDGER_KIND, PORTAL, rentLabel, termLabel } from "../rentals";
 import { FilesCard } from "./FilesCard";
@@ -26,6 +26,7 @@ import type { Recorder } from "./LeaseForms";
 import {
   ChargeForm,
   DepositForm,
+  DueDayForm,
   HoldForm,
   OpenChargeRow,
   PaymentForm,
@@ -41,12 +42,13 @@ import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 
 type Panel =
-  | "payment" | "charge" | "rent" | "recurring" | "insurance" | "deposit" | "leasing" | "hold" | "release"
-  | "end" | "remove";
+  | "payment" | "charge" | "rent" | "due" | "recurring" | "insurance" | "deposit" | "leasing" | "hold"
+  | "release" | "end" | "remove";
 const PANELS: Record<Panel, string> = {
   payment: "Receive payment",
   charge: "Enter charge",
   rent: "Change rent",
+  due: "Change rent due day",
   recurring: "Add recurring charge",
   insurance: "Renters insurance",
   deposit: "Record deposit",
@@ -111,6 +113,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
   const open = lease.holds.find((h) => h.ends_on === null) ?? null;
   const actions: RowAction[] = [
     { label: "Change rent", onSelect: () => setPanel("rent") },
+    { label: "Change rent due day", onSelect: () => setPanel("due") },
     { label: "Add recurring charge", onSelect: () => setPanel("recurring") },
     { label: "Renters insurance", onSelect: () => setPanel("insurance") },
     { label: "Record deposit", onSelect: () => setPanel("deposit") },
@@ -174,6 +177,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
           {panel === "payment" && <PaymentForm lease={lease} record={recordThenClose} />}
           {panel === "charge" && <ChargeForm lease={lease} record={recordThenClose} />}
           {panel === "rent" && <RentChangeForm lease={lease} record={recordThenClose} />}
+          {panel === "due" && <DueDayForm lease={lease} record={recordThenClose} />}
           {panel === "recurring" && <RecurringForm lease={lease} record={recordThenClose} />}
           {panel === "insurance" && <InsuranceForms lease={lease} record={recordThenClose} />}
           {panel === "deposit" && <DepositForm lease={lease} record={recordThenClose} />}
@@ -198,9 +202,10 @@ function Summary({ lease, record }: { lease: LeaseDetail; record: Recorder }) {
   const prepaid = lease.tenants.reduce((sum, t) => sum + Number(t.prepaid), 0).toFixed(2);
   return (
     <div className="flex flex-col gap-6">
-      <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-base md:grid-cols-4">
+      <dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-base md:grid-cols-5">
         <div><dt className="text-sm text-ink-muted">Term</dt><dd>{termLabel(lease)}</dd></div>
         <div><dt className="text-sm text-ink-muted">Rent</dt><dd>{rentLabel(lease.monthly_rent)}</dd></div>
+        <div><dt className="text-sm text-ink-muted">Rent due</dt><dd data-testid="rent-due-day">{dueDayLabel(lease.rent_due_day)}</dd></div>
         <div><dt className="text-sm text-ink-muted">Deposit held</dt><dd data-testid="deposit-held">{money(deposit)}</dd></div>
         <div><dt className="text-sm text-ink-muted">Prepaid rent</dt><dd data-testid="prepaid">{money(prepaid)}</dd></div>
       </dl>
@@ -208,6 +213,13 @@ function Summary({ lease, record }: { lease: LeaseDetail; record: Recorder }) {
         <Card title="Rent changes">
           <ul className="text-base" aria-label={`Rent changes, ${lease.unit}`}>
             {lease.rent_changes.map((c) => <li key={c.id}>{rentChangeLine(c)}</li>)}
+          </ul>
+        </Card>
+      )}
+      {lease.due_days.length > 0 && (
+        <Card title="Rent due day">
+          <ul className="text-base" aria-label={`Rent due day, ${lease.unit}`}>
+            {lease.due_days.map((d) => <li key={d.id}>{dueDayLine(d)}</li>)}
           </ul>
         </Card>
       )}

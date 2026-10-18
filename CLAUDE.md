@@ -37,7 +37,8 @@ around properties, units, leases, tenants, owners and vendors, with paged lists,
 deletes: archive) and contact details the AI never reads. Since 2026-10-16
 (`docs/adr/0006-buildium-punch-list.md`): the founder's punch list, built in its order (property
 groups first; rent, recurring charges, late fees and recurring bills to post by themselves each
-night; fees still move only when staff ask). Still out of scope: Stripe and online payments, text messages, bank files (ACH, check
+night; fees still move only when staff ask, unless a company turns on taking its monthly
+management fees by itself, the founder's amendment of 2026-10-18). Still out of scope: Stripe and online payments, text messages, bank files (ACH, check
 printing), 1099 filing, and state rules beyond the no-negative rule. If one of these looks needed, stop
 and ask the founder.
 
@@ -120,7 +121,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   company turns on in Company setup (`trust_email_settings`: append-only, the latest row holding,
   naming who changed it; `/api/emails/settings`, area 'email'), and only while the server sends
   email (`outbox.SENDING`; the nightly run's `sending`): a rent reminder to each tenant of a lease
-  in effect on the next first, from 1 to 15 days before it; a late notice to each tenant when the
+  in effect on its next due day (the first unless it picked another), from 1 to 15 days before it; a late notice to each tenant when the
   run charges a late fee; last month's statement in brief to each owner with a property account,
   from a day of the month (1 to 28); a vendor's work order when assigned or scheduled; and the
   adverse action notice to each applicant when a decision rests on a screening (the PDF's text,
@@ -264,7 +265,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   reversing transfer.
 - The app role `trust_app` only reads ledger tables. It writes through `trust_post_transfers`,
   `trust_open_ledger_account`, `trust_open_vendor_account`, `trust_open_lease`, `trust_end_lease`, `trust_apply_payment`, `trust_reverse_payment`,
-  `trust_post_management_fee`, `trust_post_leasing_fee`, `trust_draw_owner`, `trust_withdraw_pmc_fees`,
+  `trust_post_management_fee`, `trust_post_leasing_fee`, `trust_take_owner_fee`, `trust_draw_owner`, `trust_withdraw_pmc_fees`,
   `trust_set_aside_bill`, `trust_pay_bill`, `trust_assess_late_fees`, `trust_charge_nsf_fee`,
   `trust_post_opening_balances`, `trust_record_owner_contribution`,
   `trust_complete_lease_offer`, `trust_match_bank_lines`, `trust_unmatch_bank_lines`,
@@ -312,6 +313,18 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   or the minimum, plus a flat fee, into the PMC's fee account, once per period;
   `trust_post_leasing_fee` once per lease; `trust_draw_owner` pays out the balance above the
   reserve and unpaid bills, once per request key. All at READ COMMITTED.
+- Owners' fees (migration 0082, the founder's review q049 to q051): a company may have the
+  nightly run take last month's management fees by itself from a day of the month
+  (`trust_management_fee_settings`: append-only, the latest row holding, naming who changed it;
+  Settings, Company setup, `/api/payables/management-fees/automatic`, area owners; off by
+  default). `trust_take_monthly_management_fees` takes each owner's property account's fee
+  through `trust_post_management_fee`, once per account and month, leaving one it can't take
+  (the owner short, terms from mid-month, a period taken by hand) for staff and the next night.
+  Staff who hold disburse take other fees from an owner (`trust_take_owner_fee`,
+  `trust_owner_fees`: an inspection, lease-up or other fee, with what it is for, once per request
+  key, from the owner's account to the company's fee account in its trust bank account; the
+  owner's Financials tab, Take a fee). The income statement and the year-end package count a
+  lease-up fee with the leasing fees and the others with the management fees.
 - The company's fees out of trust (migration 0059, `docs/law.md`): earned fees left in trust are
   commingling, which every state forbids. `trust_withdraw_pmc_fees` pays a trust bank account's
   fee account out through its cash to the company, never more than it holds, once per request
@@ -370,6 +383,17 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   run charges it, `trust_end_lease` adjusts at it, the rent roll, lease expirations, tenant
   directory and vacancy reports show it. Staff record one on the rent page; the tenant sees it
   coming in the portal.
+- Rent due day (migration 0081, the founder's review q013): a lease's rent is due on the first
+  unless it picks another day, 1 to 28, from the first of a month (`trust_rent_due_days`,
+  append-only, one per lease and month, naming who recorded it), within the lease's months and
+  after the last month whose rent is charged. `trust_rent_due_on` is its due date in a month,
+  kept within the days the lease is in effect then. Leases due on the first are charged as
+  before; `trust_charge_rent_on_due_days` and `trust_charge_recurring_on_due_days` charge the
+  rest on their due date, the month's rent and recurring charges for the days in effect, once a
+  month, and `trust_run_rent` calls all four. Late fees count their grace from the due date.
+  Staff pick it in Add lease and from the lease's ⋯ menu (`POST /api/rent/leases/<id>/due-day`);
+  a renewal keeps the due day of the lease it renews from its first month not charged; the
+  tenant sees it in the portal.
 - Renters insurance (migration 0062, `docs/law.md`): a lease's terms say whether it requires
   renters insurance and the least liability it asks, from a day (`trust_renters_insurance_terms`);
   a policy (`trust_renters_insurance`) names any insurer the tenant chose, its number, its days,
@@ -533,13 +557,15 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   holding, naming who did it, `trust_group_properties` reading it), and each row changes
   something. They move no money; the AI role reads them.
 - Rent posts by itself (migration 0067, ADR 0006, `src/pms/nightly.py`): every night each PMC's
-  rent and recurring charges for the month (due on its first day), the late fees of rents past
+  rent and recurring charges for the month (due on its first day, or on a lease's own due day
+  once it comes; migration 0081), the late fees of rents past
   their grace as of the day, and the recurring bills due, with their owners' emails. Rent and late
   fees go through `trust_run_rent`, which records the run (`trust_rent_runs`, append-only, naming
   nobody); an admin runs it by hand from the rent roll (Run rent now), and a named staff member
   without admin is refused. Each part charges once per date, so a run again charges nothing new.
   The API runs it at start and every day at 06:00 UTC unless `PMS_NIGHTLY` is "off" (e2e turns it
-  off); `python -m pms.nightly` runs it once. It moves no trust money.
+  off); `python -m pms.nightly` runs it once. It moves no trust money but a company's monthly
+  management fees, once it turns them on (migration 0082), inside trust.
 - Notes (migration 0066, ADR 0006): what staff write about a property, unit, lease, tenant, owner
   or vendor of the PMC (`trust_notes`, exactly one of them, append-only, naming who wrote it; a
   correction is a new note), on its Notes tab (`src/pms/api/notes.py`). They move no money, and

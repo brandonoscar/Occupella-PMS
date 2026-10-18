@@ -45,6 +45,8 @@ FEES_TOO_MUCH = re.compile(rf"^{NUMBER} of the company's fees is in \S+; {NUMBER
 FEES_KEY_USED = re.compile(
     rf"^request key \S+ already took {NUMBER} of the company's fees from \S+$"
 )
+# trust_take_owner_fee's (migration 0082) names the owner's account by its id.
+OWNER_FEE_KEY_USED = re.compile(rf"^request key \S+ already took a fee of {NUMBER} from \S+$")
 
 # trust_staff_roles' check (migration 0034) names the staff member by their id.
 LAST_ADMIN = re.compile(r"^staff member \S+ is the PMC's last admin$")
@@ -103,6 +105,9 @@ def refusal(error: psycopg.Error) -> str:
         return (
             f"this request already took {dollars(used[1])} of the company's fees: start a new one"
         )
+    taken = OWNER_FEE_KEY_USED.match(text)
+    if taken is not None:
+        return f"this request already took a fee of {dollars(taken[1])}: start a new one"
     return text
 
 
@@ -159,6 +164,7 @@ AREA_PATHS = (
     ("/api/payables/recurring", "bills"),
     ("/api/payables/management-fees", "owners"),
     ("/api/payables/leasing-fees", "owners"),
+    ("/api/payables/owner-fees", "owners"),
     ("/api/payables/draws", "owners"),
     ("/api/payables/contributions", "owners"),
     ("/api/payables/company-fees", "owners"),

@@ -199,6 +199,28 @@ browser = [
 ]
 
 [[feature]]
+id = "rent-due-day"
+statement = "Staff pick the day of the month a lease's rent is due (1 to 28), when they add a lease in place or from a month on from its page; the rent run charges it on that day, a charged month keeps its due date, and the tenant sees it in the portal."
+operations = [
+  "POST /api/rent/leases/{lease_id}/due-day",
+]
+browser = [
+  "features.spec.ts › staff pick the day of the month a lease's rent is due, the rent run charges it then, and the tenant sees it",
+]
+
+[[feature]]
+id = "owner-fees"
+statement = "A company turns on taking last month's management fees by itself from a day of the month (the nightly run takes each owner's once, leaving one who holds too little), staff set a flat management fee, and take an inspection, lease-up or other fee from an owner's account into the company's fee account, once per request."
+operations = [
+  "GET /api/payables/management-fees/automatic",
+  "POST /api/payables/management-fees/automatic",
+  "POST /api/payables/owner-fees",
+]
+browser = [
+  "features.spec.ts › a company has its management fees taken each month, staff set a flat fee and take an inspection fee from an owner",
+]
+
+[[feature]]
 id = "renters-insurance"
 statement = "Staff set whether a lease requires renters insurance and the least liability it asks, and record a policy; the tenant records their own from the portal, with any insurer; the rent page, the portal and Today show how each lease stands."
 operations = [

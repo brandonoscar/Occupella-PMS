@@ -1,14 +1,18 @@
 """What posts by itself every night (docs/adr/0006-buildium-punch-list.md): for each PMC, this
 month's rent and recurring charges (due on its first day, each lease in effect for its days and
-each starting later in the month its first part month), the late fees of rents still open after
-their grace days, and the recurring bills due by today, each with its email to an owner whose
-approval it waits for. Rent and late fees go through trust_run_rent, which records the run; bills
-through trust_enter_recurring_bills.
+each starting later in the month its first part month; a lease due on another day on that day),
+the late fees of rents still open after their grace days, the recurring bills due by today, each
+with its email to an owner whose approval it waits for, and, for a company that turned it on,
+last month's management fees from its day of the month. Rent and late fees go through
+trust_run_rent, which records the run; bills through trust_enter_recurring_bills; fees through
+trust_take_monthly_management_fees.
 
 Each PMC in its own transaction, as trust_app, naming nobody (a run by hand is an admin's, at
 Rent roll, Run rent now). Each part charges or enters once per date, so a run again (a restart,
-this command, an admin's catch-up) charges nothing new. Nothing here moves trust money: charges
-are what tenants owe, and bills wait to be set aside and paid.
+this command, an admin's catch-up) charges nothing new. Only the management fees move trust
+money, inside trust, from each owner's account to the company's fee account, once per account and
+month (the founder's answer of 2026-10-18 to q049); charges are what tenants owe, and bills wait
+to be set aside and paid.
 
 The API runs it when it starts and then every day at 06:00 UTC, unless PMS_NIGHTLY is "off".
 `python -m pms.nightly` runs it once, for a server that schedules it itself.
@@ -50,6 +54,8 @@ class Ran:
     bills: int
     # Rent reminders, late notices and owner statements written (src/pms/notices.py).
     emails: int = 0
+    # Last month's management fees taken (migration 0082).
+    management_fees: int = 0
 
 
 def run_pmc(
@@ -72,7 +78,10 @@ def run_pmc(
         entered = conn.execute(
             "SELECT trust_enter_recurring_bills(%s, %s)", (pmc_id, day)
         ).fetchone()
-        assert run is not None and entered is not None
+        fees = conn.execute(
+            "SELECT trust_take_monthly_management_fees(%s, %s)", (pmc_id, day)
+        ).fetchone()
+        assert run is not None and entered is not None and fees is not None
         # The bills this transaction entered (their created_at is its start, now()), each with
         # the email to an owner whose approval it waits for.
         for (bill,) in conn.execute(
@@ -82,7 +91,7 @@ def run_pmc(
             email.write_bill_approval(conn, pmc_id, bill, public_url)
         written = notices.write_scheduled(conn, pmc_id, day, public_url) if sending else None
     emails = 0 if written is None else sum(vars(written).values())
-    return Ran(pmc_id, run[0], run[1], run[2], entered[0], emails)
+    return Ran(pmc_id, run[0], run[1], run[2], entered[0], emails, fees[0])
 
 
 def run_all(
@@ -190,9 +199,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     late_fees = sum(r.late_fees for r in done)
     bills = sum(r.bills for r in done)
     emails = sum(r.emails for r in done)
+    fees = sum(r.management_fees for r in done)
     print(
         f"{len(done)} companies: {rents} rents, {late_fees} late fees, {bills} bills,"
-        f" {emails} emails"
+        f" {emails} emails, {fees} management fees"
     )
     return 0
 

@@ -248,6 +248,39 @@ describe("OwnerPage", () => {
     expect(body).toMatchObject({ account: "a2", amount: "75.00", memo: "Roof" });
   });
 
+  it("takes an inspection fee from one of the owner's properties", async () => {
+    const fetch = server();
+    render(<OwnerPage me={ME} id="o1" />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Financials" }));
+    fireEvent.click(screen.getByRole("button", { name: "Take a fee" }));
+    const panel = screen.getByRole("dialog", { name: "Take a fee" });
+    fireEvent.change(within(panel).getByLabelText("From"), { target: { value: "a2" } });
+    fireEvent.change(within(panel).getByLabelText("Fee"), { target: { value: "lease_up" } });
+    fireEvent.change(within(panel).getByLabelText("Amount"), { target: { value: "150.00" } });
+    fireEvent.change(within(panel).getByLabelText("What it is for"), { target: { value: "Unit 1 leased" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Take fee" }));
+
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const [[path, body]] = posted(fetch) as [[string, Record<string, unknown>]];
+    expect(path).toBe("/api/payables/owner-fees");
+    expect(body).toMatchObject({ account: "a2", kind: "lease_up", amount: "150.00", memo: "Unit 1 leased" });
+    expect(String(body.request_id)).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("keeps a refused fee's panel open with why", async () => {
+    server({}, { "/api/payables/owner-fees": "not enough money: the owner's account would be $25.00 short" });
+    render(<OwnerPage me={ME} id="o1" />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Financials" }));
+    fireEvent.click(screen.getByRole("button", { name: "Take a fee" }));
+    const panel = screen.getByRole("dialog", { name: "Take a fee" });
+    fireEvent.change(within(panel).getByLabelText("Amount"), { target: { value: "75.00" } });
+    fireEvent.change(within(panel).getByLabelText("What it is for"), { target: { value: "Inspection" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Take fee" }));
+    expect((await within(panel).findByRole("alert")).textContent).toBe(
+      "not enough money: the owner's account would be $25.00 short",
+    );
+  });
+
   it("keeps a refused contribution's panel open with why, and says when a statement can't be read", async () => {
     server({}, { "/api/payables/contributions": "that day is in a period already reconciled and closed" });
     render(<OwnerPage me={ME} id="o1" />);

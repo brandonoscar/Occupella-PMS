@@ -14,6 +14,7 @@ import { MAX_BYTES, toBase64, typeOf } from "../documents";
 import { money } from "../money";
 import { lateFeeSummary, nsfFeeSummary } from "../setup";
 import { AutomaticEmailsCard } from "./AutomaticEmailsCard";
+import { AutomaticFeesCard } from "./AutomaticFeesCard";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 
@@ -71,6 +72,7 @@ export function SetupPage({ me }: { me: Me }) {
             </dl>
             <div className="mt-3"><Button variant="secondary" onClick={() => setOpen("fees")}>Set default fees</Button></div>
           </Card>
+          <AutomaticFeesCard />
           <AutomaticEmailsCard />
           {open === "company" && (
             <SidePanel title="Edit company" onClose={close}>

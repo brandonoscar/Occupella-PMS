@@ -17,7 +17,7 @@ const ME: Me = {
 
 const LEASE: LeaseDetail = {
   id: "l1", property: "Property 1", unit: "Unit 1", property_id: "p1", unit_id: "u1", status: "current",
-  starts_on: "2026-01-01", ends_on: null, monthly_rent: "1500.00", rent_changes: [], renters_insurance: null,
+  starts_on: "2026-01-01", ends_on: null, monthly_rent: "1500.00", rent_changes: [], rent_due_day: 1, due_days: [], renters_insurance: null,
   tenants: [
     { id: "t1", name: "Tenant 1", prepaid: "50.00", deposit: "1500.00" },
     { id: "t2", name: "Tenant 2", prepaid: "0.00", deposit: "0.00" },
@@ -284,6 +284,39 @@ describe("LeasePage", () => {
         lease_terms: null,
       }],
     ]);
+  });
+
+  it("says when rent is due, lists its due days and moves it from a month", async () => {
+    const fetch = server({
+      ...LEASE,
+      rent_due_day: 5,
+      due_days: [{ id: "d1", starts_on: "2026-09-01", due_day: 5 }],
+    }, { "/api/rent/leases/l1/due-day": { id: "d2", starts_on: "2027-01-01", due_day: 12 } });
+    await open();
+    expect(screen.getByTestId("rent-due-day").textContent).toBe("Due on the 5th");
+    expect(screen.getByRole("list", { name: "Rent due day, Unit 1" }).textContent).toBe(
+      "From 09/01/2026: due on the 5th of each month",
+    );
+    const form = panel("Change rent due day", true);
+    expect((within(form).getByLabelText("Rent due on day") as HTMLInputElement).value).toBe("5");
+    fireEvent.change(within(form).getByLabelText("Rent due on day"), { target: { value: "12" } });
+    fireEvent.change(within(form).getByLabelText("From (the first of a month)"), { target: { value: "2027-01-01" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Change due day" }));
+    expect(await screen.findByText("Rent due on the 12th from 01/01/2027.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/rent/leases/l1/due-day", { starts_on: "2027-01-01", due_day: 12 }]]);
+  });
+
+  it("keeps the due day panel open with the reason a charged month is refused", async () => {
+    server(LEASE, {}, {
+      "/api/rent/leases/l1/due-day": "rent due 2026-11-01 is charged already; a new due day starts after its month",
+    });
+    await open();
+    const form = panel("Change rent due day", true);
+    fireEvent.click(within(form).getByRole("button", { name: "Change due day" }));
+    expect(await within(form).findByText(
+      "rent due 2026-11-01 is charged already; a new due day starts after its month",
+    )).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "Change rent due day" })).toBeTruthy();
   });
 
   it("asks a lease with an end date for the term that allows a rent change", async () => {
