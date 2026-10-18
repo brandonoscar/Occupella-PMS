@@ -112,6 +112,36 @@ def test_a_plain_request_opens_a_normal_work_order_the_vendor_may_enter(
     assert ok(client.get(f"/api/work-orders/{order}"))["request"]["photos"] == []
 
 
+def test_a_requests_photos_are_listed_with_the_companys_files(
+    client, other_client, conn, app_conn, home
+):
+    join_as_tenant(other_client, conn, app_conn, home.pmc)
+    filed = ok(
+        other_client.post("/api/tenant/requests", json=new_request(home, photos=[photo("Tap")])),
+        201,
+    )
+    join_as_staff(client, conn, app_conn, home.pmc)
+    prop = home.pmc.owners[0].property_id
+
+    library = ok(client.get("/api/documents"))
+    files = ok(client.get("/api/documents/files", params={"property": str(prop)}))
+    elsewhere = ok(
+        client.get("/api/documents/files", params={"property": str(home.pmc.owners[1].property_id)})
+    )
+
+    (kept,) = [d for d in library["documents"] if d["kind"] == "request_photo"]
+    assert (kept["about_id"], kept["about"], kept["title"]) == (
+        filed["id"],
+        "Property 1 / Unit 1: Kitchen tap drips",
+        "Tap",
+    )
+    assert [(f["title"], f["about_path"]) for f in files["items"]] == [
+        ("Tap", f"/work-orders#request-{filed['id']}")
+    ]
+    # At its lease's property, and so at no other.
+    assert elsewhere["items"] == []
+
+
 def test_a_removed_photo_is_no_longer_counted(client, other_client, conn, app_conn, home):
     join_as_tenant(other_client, conn, app_conn, home.pmc)
     filed = ok(
