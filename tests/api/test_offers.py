@@ -186,6 +186,50 @@ def test_a_tenant_signs_their_renewal_and_staff_complete_it(
     assert other_client.get("/api/tenant/renewals").json() == []
 
 
+@pytest.mark.parametrize(
+    ("due_day", "july_charged", "kept"),
+    [
+        (5, False, [(date(2027, 7, 1), 5)]),
+        # July was charged on the lease it renews: the renewal is charged its July days at once,
+        # and keeps the due day from August.
+        (5, True, [(date(2027, 8, 1), 5)]),
+        (None, False, []),
+    ],
+)
+def test_a_renewal_keeps_the_rent_due_day_of_the_lease_it_renews(
+    client, other_client, conn, staff, place, due_day, july_charged, kept
+):
+    if due_day is not None:
+        conn.execute(
+            "INSERT INTO trust_rent_due_days (pmc_id, lease_id, starts_on, due_day)"
+            " VALUES (%s, %s, '2026-03-01', %s)",
+            (place.pmc.pmc_id, place.lease, due_day),
+        )
+    if july_charged:
+        conn.execute("SELECT trust_run_rent(%s, '2027-07-01', '2027-07-05')", (place.pmc.pmc_id,))
+    made = client.post(
+        f"/api/leasing/leases/{place.lease}/renewal",
+        json=terms(
+            starts_on="2027-07-15",
+            ends_on=None,
+            signers=[{"name": "Tenant 1", "email": "tenant1@example.com"}],
+        ),
+    ).json()
+    for link in made["links"]:
+        assert sign(other_client, link, "Tenant 1").status_code == 204
+    done = client.post(f"/api/leasing/offers/{made['offer']['id']}/complete", json={})
+
+    assert done.status_code == 200, done.text
+    # From the renewal's first month, its rent is due on the day the lease it renews had.
+    assert (
+        conn.execute(
+            "SELECT starts_on, due_day FROM trust_rent_due_days WHERE lease_id = %s",
+            (done.json()["lease_id"],),
+        ).fetchall()
+        == kept
+    )
+
+
 def test_a_tenant_sees_their_signature_at_once_and_only_staff_record_it(
     client, other_client, conn, app_conn, staff, place
 ):

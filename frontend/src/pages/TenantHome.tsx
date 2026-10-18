@@ -12,7 +12,7 @@ import { statusLabel, when } from "../maintenance";
 import { day, money, usDate } from "../money";
 import type { StatementData } from "../statement";
 import type { Paid, RentersInsurance } from "../rent";
-import { insuranceLine, methodLabel } from "../rent";
+import { dueDayLabel, insuranceLine, methodLabel } from "../rent";
 import { Badge } from "../components/Badge";
 import { PolicyForm } from "./InsuranceForms";
 import { RenewalsCard } from "./RenewalsCard";
@@ -42,6 +42,8 @@ export type Lease = {
   monthly_rent: string;
   // Rent changes to come, each from the first of a month, with the day notice was given.
   rent_changes: { effective_on: string; monthly_rent: string; notice_given_on: string }[];
+  // The day of the month rent is due this month.
+  rent_due_day: number;
   // A lease in effect: whether it requires renters insurance, and the policy on file.
   renters_insurance: RentersInsurance | null;
   tenants: string[];
@@ -174,6 +176,7 @@ export function TenantHome({ me }: { me: Me }) {
                 ["Rent", `${money(lease.monthly_rent)} a month` + lease.rent_changes
                   .map((c) => `; ${money(c.monthly_rent)} from ${usDate(c.effective_on)} (notice given ${usDate(c.notice_given_on)})`)
                   .join("")],
+                ["Rent due", dueDayLabel(lease.rent_due_day)],
                 ["On the lease", lease.tenants.join(", ")],
               ].map(([label, value]) => (
                 <div key={label}>

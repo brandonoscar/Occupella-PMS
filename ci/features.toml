@@ -199,6 +199,16 @@ browser = [
 ]
 
 [[feature]]
+id = "rent-due-day"
+statement = "Staff pick the day of the month a lease's rent is due (1 to 28), when they add a lease in place or from a month on from its page; the rent run charges it on that day, a charged month keeps its due date, and the tenant sees it in the portal."
+operations = [
+  "POST /api/rent/leases/{lease_id}/due-day",
+]
+browser = [
+  "features.spec.ts › staff pick the day of the month a lease's rent is due, the rent run charges it then, and the tenant sees it",
+]
+
+[[feature]]
 id = "renters-insurance"
 statement = "Staff set whether a lease requires renters insurance and the least liability it asks, and record a policy; the tenant records their own from the portal, with any insurer; the rent page, the portal and Today show how each lease stands."
 operations = [

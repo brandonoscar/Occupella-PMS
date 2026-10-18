@@ -205,7 +205,7 @@ describe("setup panels", () => {
     }]]);
   });
 
-  it("adds a lease in place for the property's tenants, one of them added there first", async () => {
+  it("adds a lease in place for the property's tenants, one of them added there first, due on its day", async () => {
     const fetch = server();
     const p = panel();
     render(<AddLeasePanel panel={p} unitId="u2" propertyId="p1" propertyName="Property A" />);
@@ -218,11 +218,13 @@ describe("setup panels", () => {
     expect(await screen.findByText("Added Tenant C as a tenant of Property A.")).toBeTruthy();
     type("Starts", "2026-10-01");
     type("Rent a month", "1,240.00");
+    expect((screen.getByLabelText("Rent due on day (1 to 28)") as HTMLInputElement).value).toBe("1");
+    type("Rent due on day (1 to 28)", "15");
     press("Add lease");
     await vi.waitFor(() => expect(p.close).toHaveBeenCalled());
     expect(posted(fetch)).toEqual([
       ["/api/setup/tenants", { property_id: "p1", name: "Tenant C" }],
-      ["/api/setup/leases", { unit_id: "u2", starts_on: "2026-10-01", ends_on: null, monthly_rent: "1,240.00", tenant_ids: ["t1", "t9"] }],
+      ["/api/setup/leases", { unit_id: "u2", starts_on: "2026-10-01", ends_on: null, monthly_rent: "1,240.00", tenant_ids: ["t1", "t9"], rent_due_day: 15 }],
     ]);
   });
 

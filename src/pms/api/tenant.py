@@ -65,6 +65,8 @@ class Lease(BaseModel):
     ends_on: date | None
     # Money as text, so no float ever rounds a cent. The rent in force today.
     monthly_rent: str
+    # The day of the month rent is due this month (migration 0081).
+    rent_due_day: int
     # Rent changes to come, each from the first of a month, with the day notice was given.
     rent_changes: list[RentChangeNotice]
     tenants: list[str]
@@ -118,7 +120,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
     on = today()
     rows = conn.execute(
         "SELECT l.id, p.display_name, u.display_name, l.starts_on, l.ends_on,"
-        " trust_rent_on(l.id, %s),"
+        " trust_rent_on(l.id, %s), trust_rent_due_day(l.id, %s),"
         " array(SELECT t.display_name FROM trust_lease_tenants AS everyone"
         "       JOIN trust_tenants AS t ON t.id = everyone.tenant_id"
         '       WHERE everyone.lease_id = l.id ORDER BY t.display_name COLLATE "C", t.id),'
@@ -131,7 +133,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
         " JOIN trust_properties AS p ON p.id = u.property_id"
         " WHERE mine.pmc_id = %s AND mine.tenant_id = %s"
         " ORDER BY l.starts_on DESC, l.id",
-        (on, on, session.pmc_id, session.person_id),
+        (on, on, on, session.pmc_id, session.person_id),
     ).fetchall()
     insured = rent_api.renters_insurance(conn, session.pmc_id, on)
     paid: dict[UUID, list[rent_api.Paid]] = {}
@@ -176,6 +178,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
             starts_on=starts,
             ends_on=ends,
             monthly_rent=exports.text(rent),
+            rent_due_day=due_day,
             rent_changes=coming.get(lease, []),
             tenants=list(names),
             balance_due=exports.text(balance),
@@ -192,7 +195,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
             renters_insurance=insured.get(lease),
             payments=paid.get(lease, []),
         )
-        for lease, prop, unit, starts, ends, rent, names, balance, returned in rows
+        for lease, prop, unit, starts, ends, rent, due_day, names, balance, returned in rows
     ]
 
 

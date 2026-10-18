@@ -149,6 +149,9 @@ JOIN trust_lease_tenants AS lt ON lt.lease_id = l.id
 JOIN trust_tenants AS t ON t.id = lt.tenant_id
 WHERE l.pmc_id = %(pmc)s
   AND l.starts_on <= %(due)s AND (l.ends_on IS NULL OR %(due)s <= l.ends_on)
+  -- The lease's rent is due on that day of the month (migration 0081: the first unless it
+  -- picked another).
+  AND trust_rent_due_day(l.id, %(due)s) = extract(day FROM %(due)s::date)
   AND {NO_HOLD}
   -- Not a tenant who left the lease before the day (others staying on it).
   AND NOT EXISTS (SELECT 1 FROM trust_lease_departures AS d
@@ -162,19 +165,31 @@ ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", l.id, t.display
 
 
 def next_due(day: date) -> date:
-    """The first of the month after the day: when rent is next due."""
+    """The first of the month after the day."""
     return (day.replace(day=1) + timedelta(days=32)).replace(day=1)
 
 
 def write_rent_reminders(
     conn: psycopg.Connection[Any], pmc_id: UUID, day: date, days_before: int, public_url: str
 ) -> int:
-    """Reminds each tenant of each lease in effect on the next first of the month, once the day is
-    no more than `days_before` days before it."""
-    due = next_due(day)
-    if (due - day).days > days_before:
-        return 0
+    """Reminds each tenant of each lease in effect on its next rent due day (the first, unless
+    the lease picked another), once the day is no more than `days_before` days before it."""
     company = company_of(conn, pmc_id)
+    written = 0
+    for ahead in range(1, days_before + 1):
+        written += remind(conn, pmc_id, day + timedelta(days=ahead), day, public_url, company)
+    return written
+
+
+def remind(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    due: date,
+    day: date,
+    public_url: str,
+    company: str,
+) -> int:
+    """The reminders of rent due on a day, to each tenant of each lease due then."""
     written = 0
     for lease, tenant, name, prop, unit, ends_on, rent, owed in conn.execute(
         REMINDERS, {"pmc": pmc_id, "due": due, "day": day}

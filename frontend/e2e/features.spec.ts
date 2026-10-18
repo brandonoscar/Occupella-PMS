@@ -2497,3 +2497,80 @@ test("staff take one tenant off a lease, keep who else lives there and who guara
   await leaseTab(page, "Summary");
   await expect(page.getByRole("list", { name: "Open charges" })).toContainText("Lease-break fee: $2,500.00 open");
 });
+
+test("staff pick the day of the month a lease's rent is due, the rent run charges it then, and the tenant sees it", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["rent-due-day"]!;
+  const nth = (n: number) =>
+    `${n}${n % 10 === 1 && n !== 11 ? "st" : n % 10 === 2 && n !== 12 ? "nd" : n % 10 === 3 && n !== 13 ? "rd" : "th"}`;
+  await joinAsStaff(page, people.manager);
+
+  // Cedar House's rent moves to the 15th from this month, not charged yet.
+  const house = await openLease(page, "Cedar House, House");
+  await expect(page.getByTestId("rent-due-day")).toHaveText("Due on the 1st");
+  let change = await leasePanel(page, "Change rent due day");
+  await change.getByLabel("Rent due on day").fill("15");
+  await change.getByLabel("From (the first of a month)").fill(firstOfThisMonth());
+  await change.getByRole("button", { name: "Change due day" }).click();
+  await expect(change).toHaveCount(0);
+  await expect(house).toContainText(`Rent due on the 15th from ${us(firstOfThisMonth())}.`);
+  await expect(page.getByTestId("rent-due-day")).toHaveText("Due on the 15th");
+  await expect(house.getByRole("list", { name: "Rent due day, House" })).toHaveText(
+    `From ${us(firstOfThisMonth())}: due on the 15th of each month`,
+  );
+  // Once a month: the same month again is refused, in words.
+  change = await leasePanel(page, "Change rent due day");
+  await change.getByLabel("Rent due on day").fill("20");
+  await change.getByLabel("From (the first of a month)").fill(firstOfThisMonth());
+  await change.getByRole("button", { name: "Change due day" }).click();
+  await expect(change.getByRole("alert")).toHaveText("this lease's due day changes from that month already");
+  await change.getByRole("button", { name: "Close" }).click();
+
+  const tenant = await browser.newPage();
+  await joinPortal(tenant, people.taylor);
+  await expect(tenant.getByText("Due on the 15th")).toBeVisible();
+  await tenant.close();
+
+  // A lease in place on Aspen Row's vacant unit from the first of this month, due on today's day
+  // (the 28th at most).
+  const due = Math.min(dayOfMonth(), 28);
+  const dueOn = `${today().slice(0, 8)}${String(due).padStart(2, "0")}`;
+  await openProperty(page, "Aspen Row");
+  await page.getByRole("row", { name: "Unit 2" }).getByRole("link", { name: "Unit 2" }).click();
+  const lease = await setupPanel(page, "Add lease in place", "Add lease");
+  await lease.getByLabel("Tenant's name").fill("Avery Sample");
+  await lease.getByRole("button", { name: "Add tenant" }).click();
+  await expect(lease.getByLabel("Avery Sample")).toBeChecked();
+  await lease.getByLabel("Starts").fill(firstOfThisMonth());
+  await lease.getByLabel("Rent a month").fill("1240.00");
+  await lease.getByLabel("Rent due on day (1 to 28)").fill(String(due));
+  await lease.getByRole("button", { name: "Add lease" }).click();
+  await expect(page.getByRole("row", { name: "Avery Sample" })).toContainText("$1,240.00");
+
+  // Run by hand today, the rent run charges it: due on its day.
+  await section(page, "Rent roll");
+  await page.getByRole("button", { name: "Actions for the rent roll" }).click();
+  await page.getByRole("menuitem", { name: "Run rent now" }).click();
+  const run = page.getByRole("dialog", { name: "Run rent now" });
+  await run.getByLabel("Late fees as of").fill(today());
+  await run.getByRole("button", { name: "Run rent now" }).click();
+  await expect(run).toHaveCount(0);
+  await expect(page.getByRole("row", { name: "Aspen Row, Unit 2", exact: true }).getByTestId("balance")).toHaveText(
+    "$1,240.00",
+  );
+  const aspen = await openLease(page, "Aspen Row, Unit 2");
+  await expect(page.getByTestId("rent-due-day")).toHaveText(`Due on the ${nth(due)}`);
+  await expect(aspen.getByRole("list", { name: "Open charges" })).toContainText(
+    `${us(dueOn)} Rent due ${dueOn}: $1,240.00 open`,
+  );
+  // This month is charged: a new due day starts after it.
+  change = await leasePanel(page, "Change rent due day");
+  await change.getByLabel("Rent due on day").fill("5");
+  await change.getByLabel("From (the first of a month)").fill(firstOfThisMonth());
+  await change.getByRole("button", { name: "Change due day" }).click();
+  await expect(change.getByRole("alert")).toHaveText(
+    `rent due ${dueOn} is charged already; a new due day starts after its month`,
+  );
+});

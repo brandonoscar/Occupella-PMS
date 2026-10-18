@@ -13,6 +13,8 @@ import {
   chargeLabel,
   earliestRentChange,
   methodLabel,
+  nextMonthFirst,
+  ordinal,
   paymentSummary,
   recurringLabel,
   requestId,
@@ -275,6 +277,29 @@ export function RentChangeForm({ lease, record }: { lease: RentLease; record: Re
           maxLength={500} value={terms} onChange={(e) => setTerms(e.target.value)} />
       )}
       <Button type="submit" variant="secondary">Change rent</Button>
+    </Form>
+  );
+}
+
+// The day of the month the lease's rent is due, from the first of a month (the founder's review,
+// q013): the rent run charges it on that day. A month whose rent is charged keeps its due date.
+export function DueDayForm({ lease, record }: { lease: RentLease; record: Recorder }) {
+  const [from, setFrom] = useState(nextMonthFirst(new Date()));
+  const [due, setDue] = useState(String(lease.rent_due_day));
+  return (
+    <Form
+      className="flex flex-wrap items-end gap-3"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        const said = () => `Rent due on the ${ordinal(Number(due))} from ${usDate(from)}.`;
+        await record(`/api/rent/leases/${lease.id}/due-day`, { starts_on: from, due_day: Number(due) }, said);
+      }}
+    >
+      <Field label="Rent due on day" id={`due-day-${lease.id}`} type="number" min={1} max={28} required
+        value={due} onChange={(e) => setDue(e.target.value)} />
+      <Field label="From (the first of a month)" id={`due-day-from-${lease.id}`} type="date" required
+        value={from} onChange={(e) => setFrom(e.target.value)} />
+      <Button type="submit" variant="secondary">Change due day</Button>
     </Form>
   );
 }

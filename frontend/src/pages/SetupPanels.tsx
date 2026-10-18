@@ -277,7 +277,7 @@ export function AddLeasePanel({ panel, unitId, propertyId, propertyName }: {
   const [books, unread, reload] = usePortfolio();
   const { error, save } = useSave(panel);
   const adding = useRecord(reload);
-  const [lease, setLease] = useState({ starts_on: "", ends_on: "", rent: "" });
+  const [lease, setLease] = useState({ starts_on: "", ends_on: "", rent: "", due: "1" });
   const [chosen, setChosen] = useState<string[]>([]);
   const [tenant, setTenant] = useState("");
   const tenants = books?.tenants.filter((t) => t.property_id === propertyId) ?? [];
@@ -289,7 +289,7 @@ export function AddLeasePanel({ panel, unitId, propertyId, propertyName }: {
           event.preventDefault();
           return save("leases", {
             unit_id: unitId, starts_on: lease.starts_on, ends_on: lease.ends_on || null,
-            monthly_rent: lease.rent.trim(), tenant_ids: chosen,
+            monthly_rent: lease.rent.trim(), tenant_ids: chosen, rent_due_day: Number(lease.due),
           }, () => "Added the lease.");
         }}>
           <Field label="Starts" id="lease-starts" type="date" required value={lease.starts_on}
@@ -298,6 +298,8 @@ export function AddLeasePanel({ panel, unitId, propertyId, propertyName }: {
             onChange={(e) => setLease({ ...lease, ends_on: e.target.value })} />
           <Field label="Rent a month" id="lease-rent" inputMode="decimal" required value={lease.rent}
             onChange={(e) => setLease({ ...lease, rent: e.target.value })} />
+          <Field label="Rent due on day (1 to 28)" id="lease-due-day" type="number" min={1} max={28} required
+            value={lease.due} onChange={(e) => setLease({ ...lease, due: e.target.value })} />
           <fieldset className="flex flex-col gap-2 text-sm text-ink-muted">
             <legend className="mb-1">On the lease</legend>
             {tenants.length === 0 && <span>No tenant of {propertyName} yet.</span>}

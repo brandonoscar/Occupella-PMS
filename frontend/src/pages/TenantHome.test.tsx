@@ -26,6 +26,7 @@ const lease = (id: string, inEffect: boolean): Lease => ({
   ends_on: inEffect ? null : "2026-06-30",
   monthly_rent: "1500.00",
   rent_changes: [],
+  rent_due_day: 1,
   renters_insurance: null,
   tenants: ["Tenant 1", "Tenant 2"],
   balance_due: "1500.00",
@@ -199,6 +200,18 @@ describe("TenantHome", () => {
     });
     const list = screen.getByText("Tap drips").closest("li");
     expect(within(list as HTMLElement).getByText("Received")).toBeTruthy();
+  });
+
+  it("says the day of the month rent is due", async () => {
+    server({
+      "GET /api/tenant/leases": [{ ...lease("1", true), rent_due_day: 10 }],
+      "GET /api/tenant/requests": [],
+      "GET /api/tenant/renewals": [],
+      "GET /api/tenant/leases/1/ledger": LEDGER,
+    });
+    render(<TenantHome me={ME} />);
+
+    expect(await screen.findByText("Due on the 10th")).toBeTruthy();
   });
 
   it("shows a rent change to come, with the day notice was given", async () => {

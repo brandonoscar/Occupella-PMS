@@ -120,7 +120,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   company turns on in Company setup (`trust_email_settings`: append-only, the latest row holding,
   naming who changed it; `/api/emails/settings`, area 'email'), and only while the server sends
   email (`outbox.SENDING`; the nightly run's `sending`): a rent reminder to each tenant of a lease
-  in effect on the next first, from 1 to 15 days before it; a late notice to each tenant when the
+  in effect on its next due day (the first unless it picked another), from 1 to 15 days before it; a late notice to each tenant when the
   run charges a late fee; last month's statement in brief to each owner with a property account,
   from a day of the month (1 to 28); a vendor's work order when assigned or scheduled; and the
   adverse action notice to each applicant when a decision rests on a screening (the PDF's text,
@@ -370,6 +370,17 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   run charges it, `trust_end_lease` adjusts at it, the rent roll, lease expirations, tenant
   directory and vacancy reports show it. Staff record one on the rent page; the tenant sees it
   coming in the portal.
+- Rent due day (migration 0081, the founder's review q013): a lease's rent is due on the first
+  unless it picks another day, 1 to 28, from the first of a month (`trust_rent_due_days`,
+  append-only, one per lease and month, naming who recorded it), within the lease's months and
+  after the last month whose rent is charged. `trust_rent_due_on` is its due date in a month,
+  kept within the days the lease is in effect then. Leases due on the first are charged as
+  before; `trust_charge_rent_on_due_days` and `trust_charge_recurring_on_due_days` charge the
+  rest on their due date, the month's rent and recurring charges for the days in effect, once a
+  month, and `trust_run_rent` calls all four. Late fees count their grace from the due date.
+  Staff pick it in Add lease and from the lease's ⋯ menu (`POST /api/rent/leases/<id>/due-day`);
+  a renewal keeps the due day of the lease it renews from its first month not charged; the
+  tenant sees it in the portal.
 - Renters insurance (migration 0062, `docs/law.md`): a lease's terms say whether it requires
   renters insurance and the least liability it asks, from a day (`trust_renters_insurance_terms`);
   a policy (`trust_renters_insurance`) names any insurer the tenant chose, its number, its days,
@@ -533,7 +544,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   holding, naming who did it, `trust_group_properties` reading it), and each row changes
   something. They move no money; the AI role reads them.
 - Rent posts by itself (migration 0067, ADR 0006, `src/pms/nightly.py`): every night each PMC's
-  rent and recurring charges for the month (due on its first day), the late fees of rents past
+  rent and recurring charges for the month (due on its first day, or on a lease's own due day
+  once it comes; migration 0081), the late fees of rents past
   their grace as of the day, and the recurring bills due, with their owners' emails. Rent and late
   fees go through `trust_run_rent`, which records the run (`trust_rent_runs`, append-only, naming
   nobody); an admin runs it by hand from the rent roll (Run rent now), and a named staff member

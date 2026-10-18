@@ -10,6 +10,10 @@ import {
   methodLabel,
   rentChangeLine,
   chargeLabel,
+  dueDayLabel,
+  dueDayLine,
+  nextMonthFirst,
+  ordinal,
   paymentSummary,
   recurringLabel,
   rentRunSummary,
@@ -56,6 +60,23 @@ describe("rent changes", () => {
     expect(earliestRentChange(new Date("2026-10-01T12:00:00Z"))).toBe("2026-11-01");
     expect(earliestRentChange(new Date("2026-10-02T00:00:00Z"))).toBe("2026-12-01");
     expect(earliestRentChange(new Date("2026-12-15T00:00:00Z"))).toBe("2027-02-01");
+  });
+});
+
+describe("rent due day", () => {
+  it("says a day of the month as people say it", () => {
+    expect([1, 2, 3, 4, 10, 11, 12, 13, 21, 22, 23, 28].map(ordinal)).toEqual([
+      "1st", "2nd", "3rd", "4th", "10th", "11th", "12th", "13th", "21st", "22nd", "23rd", "28th",
+    ]);
+    expect(dueDayLabel(15)).toBe("Due on the 15th");
+    expect(dueDayLine({ id: "d1", starts_on: "2026-11-01", due_day: 1 })).toBe(
+      "From 11/01/2026: due on the 1st of each month",
+    );
+  });
+
+  it("starts a new due day on the first of next month", () => {
+    expect(nextMonthFirst(new Date("2026-10-01T00:00:00Z"))).toBe("2026-11-01");
+    expect(nextMonthFirst(new Date("2026-12-31T23:00:00Z"))).toBe("2027-01-01");
   });
 });
 

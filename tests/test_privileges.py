@@ -183,6 +183,8 @@ TABLES = {
     "trust_lease_guarantors": {"SELECT", "INSERT"},
     "trust_lease_household_removals": {"SELECT", "INSERT"},
     "trust_lease_break_fees": {"SELECT", "INSERT"},
+    # A lease's rent due day from a month: staff record it with an insert (migration 0081).
+    "trust_rent_due_days": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -276,6 +278,10 @@ FUNCTIONS = {
     "trust_rent_on(uuid,date)": {"trust_app"},
     "trust_open_charges(uuid,uuid,timestamptz)": {"trust_app"},
     "trust_charge_recurring_due(uuid,date)": {"trust_app"},
+    "trust_charge_rent_on_due_days(uuid,date,date)": {"trust_app"},
+    "trust_charge_recurring_on_due_days(uuid,date,date)": {"trust_app"},
+    "trust_rent_due_day(uuid,date)": {"trust_app"},
+    "trust_rent_due_on(uuid,date)": {"trust_app"},
     "trust_assess_late_fees(uuid,date)": {"trust_app"},
     "trust_charge_nsf_fee(uuid,text)": {"trust_app"},
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)": {"trust_app"},
@@ -326,6 +332,7 @@ FUNCTIONS = {
     "trust_check_bill_decision()": set(),
     "trust_check_bank_deposit_item()": set(),  # a trigger's: no one calls it
     "trust_check_charge_waiver()": set(),
+    "trust_check_rent_due_day()": set(),
     # Reports read trust records, so only the app and the AI; they run with the caller's own
     # read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app", "trust_ai_agent"},

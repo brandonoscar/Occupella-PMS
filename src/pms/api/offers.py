@@ -661,7 +661,45 @@ def complete(request: Request, session: Staff, conn: Conn, offer_id: UUID) -> Of
         )
     except (psycopg.errors.CheckViolation, psycopg.errors.ExclusionViolation) as refused:
         raise HTTPException(409, refusal(refused)) from None
+    keep_due_day(conn, session.pmc_id, offer_id)
     return offer_of(conn, session.pmc_id, offer_id)
+
+
+# A renewal's lease, the day of the month the lease it renews had its rent due as the renewal
+# starts, and the first month of the renewal with no rent charged yet.
+RENEWED_DUE_DAY = """
+SELECT c.lease_id, trust_rent_due_day(o.renews_lease_id, n.starts_on),
+       (SELECT min(m)::date FROM generate_series(
+            date_trunc('month', n.starts_on::timestamp),
+            date_trunc('month', n.starts_on::timestamp) + interval '1 month', interval '1 month'
+        ) AS m
+        WHERE NOT EXISTS (
+            SELECT 1 FROM trust_charges AS k
+            WHERE k.lease_id = c.lease_id AND k.kind = 'rent'
+              AND date_trunc('month', k.due_on::timestamp) >= m))
+FROM trust_lease_offers AS o
+JOIN trust_lease_offer_completions AS c ON c.offer_id = o.id
+JOIN trust_leases AS n ON n.id = c.lease_id
+WHERE o.pmc_id = %s AND o.id = %s AND o.renews_lease_id IS NOT NULL
+  AND NOT EXISTS (SELECT 1 FROM trust_rent_due_days AS d WHERE d.lease_id = c.lease_id)
+"""
+
+
+def keep_due_day(conn: psycopg.Connection[Any], pmc_id: UUID, offer_id: UUID) -> None:
+    """A renewal keeps the rent due day of the lease it renews (migration 0081), from its first
+    month with no rent charged yet."""
+    row = conn.execute(RENEWED_DUE_DAY, (pmc_id, offer_id)).fetchone()
+    if row is None or row[1] == 1 or row[2] is None:
+        return
+    try:
+        with conn.transaction():
+            conn.execute(
+                "INSERT INTO trust_rent_due_days (pmc_id, lease_id, starts_on, due_day)"
+                " VALUES (%s, %s, %s, %s)",
+                (pmc_id, row[0], row[2], row[1]),
+            )
+    except psycopg.errors.CheckViolation:
+        pass  # a renewal too short to reach that month: it keeps the first
 
 
 def document_response(conn: psycopg.Connection[Any], offer: UUID) -> Response:

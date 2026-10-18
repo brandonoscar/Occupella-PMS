@@ -278,6 +278,33 @@ def test_a_tenant_who_left_the_lease_hears_no_more_of_its_rent(conn, app_conn, p
         assert [row[3] for row in emails(conn, pmc.pmc_id, kind)] == [second]
 
 
+def test_a_lease_due_on_another_day_is_reminded_before_that_day(conn, app_conn, pmc):
+    first = tenant_of(conn, pmc)
+    lease_of(conn, pmc)  # due on the first
+    contact(conn, pmc.pmc_id, "tenant_id", first, "tenant.one@example.com")
+    second = add_tenant(conn, pmc.pmc_id, pmc.owners[0].property_id, "Tenant 2")
+    contact(conn, pmc.pmc_id, "tenant_id", second, "tenant.two@example.com")
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, name="Unit 5")
+    tenth = open_lease(conn, pmc.pmc_id, unit, date(2026, 9, 1), None, "900.00", [second])
+    conn.execute(
+        "INSERT INTO trust_rent_due_days (pmc_id, lease_id, starts_on, due_day)"
+        " VALUES (%s, %s, '2026-10-01', 10)",
+        (pmc.pmc_id, tenth),
+    )
+
+    # Five days before November 1, only the lease due on the first.
+    assert notices.write_rent_reminders(app_conn, pmc.pmc_id, date(2026, 10, 27), 5, URL) == 1
+    assert notices.write_rent_reminders(app_conn, pmc.pmc_id, date(2026, 11, 4), 5, URL) == 0
+    assert notices.write_rent_reminders(app_conn, pmc.pmc_id, date(2026, 11, 5), 5, URL) == 1
+    assert [
+        (to, subject, period)
+        for to, subject, *_, period, _, _, _ in emails(conn, pmc.pmc_id, "rent_reminder")
+    ] == [
+        ("tenant.one@example.com", "Rent reminder: due 11/01/2026", date(2026, 11, 1)),
+        ("tenant.two@example.com", "Rent reminder: due 11/10/2026", date(2026, 11, 10)),
+    ]
+
+
 # --- late notices ---------------------------------------------------------------------------------
 
 

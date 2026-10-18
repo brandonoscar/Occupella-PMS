@@ -1101,6 +1101,7 @@ BEGIN
     WHERE r.pmc_id = p_pmc_id AND r.starts_on <= p_due_on
       AND (e.ends_on IS NULL OR p_due_on < e.ends_on)
       AND l.starts_on <= p_due_on AND (l.ends_on IS NULL OR p_due_on <= l.ends_on)
+      AND trust_rent_due_day(l.id, p_due_on) = 1
       AND p.amount > 0  -- a day of a few cents rounds to nothing
     ORDER BY r.id
     ON CONFLICT (recurring_charge_id, due_on) WHERE recurring_charge_id IS NOT NULL DO NOTHING;
@@ -1118,6 +1119,7 @@ BEGIN
     WHERE r.pmc_id = p_pmc_id AND l.starts_on > p_due_on
       AND date_trunc('month', l.starts_on::timestamp) = date_trunc('month', p_due_on::timestamp)
       AND r.starts_on <= l.starts_on AND (e.ends_on IS NULL OR l.starts_on < e.ends_on)
+      AND trust_rent_due_day(l.id, l.starts_on) = 1
       AND p.amount > 0
       AND NOT EXISTS (
           SELECT c.id FROM trust_charges AS c
@@ -1129,6 +1131,51 @@ BEGIN
     ON CONFLICT (recurring_charge_id, due_on) WHERE recurring_charge_id IS NOT NULL DO NOTHING;
     GET DIAGNOSTICS v_first = ROW_COUNT;
     RETURN v_charged + v_first;
+END;
+$$;
+
+
+--
+-- Name: trust_charge_recurring_on_due_days(uuid, date, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_charge_recurring_on_due_days(p_pmc_id uuid, p_month date, p_as_of date) RETURNS integer
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_charged integer;
+BEGIN
+    IF p_month IS NULL OR p_as_of IS NULL THEN
+        RAISE EXCEPTION 'trust: recurring charges are charged for a month as of a day; one was '
+            'not given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    PERFORM pg_advisory_xact_lock_shared(hashtextextended('lease days of ' || p_pmc_id, 0));
+
+    INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo, recurring_charge_id)
+    SELECT r.pmc_id, r.lease_id, d.due_on, r.kind, p.amount,
+           r.memo || ' due ' || to_char(d.due_on, 'YYYY-MM-DD') || p.days, r.id
+    FROM trust_recurring_charges AS r
+    JOIN trust_leases AS l ON l.id = r.lease_id
+    LEFT JOIN trust_recurring_charge_ends AS e ON e.recurring_charge_id = r.id
+    CROSS JOIN LATERAL (SELECT trust_rent_due_on(l.id, p_month) AS due_on) AS d
+    CROSS JOIN LATERAL trust_rent_for_month(l.starts_on, l.ends_on, r.amount, d.due_on) AS p
+    WHERE r.pmc_id = p_pmc_id
+      AND trust_rent_due_day(l.id, p_month) <> 1
+      AND d.due_on IS NOT NULL AND d.due_on <= p_as_of
+      AND r.starts_on <= d.due_on AND (e.ends_on IS NULL OR d.due_on < e.ends_on)
+      AND p.amount > 0
+      AND NOT EXISTS (
+          SELECT c.id FROM trust_charges AS c
+          WHERE c.recurring_charge_id = r.id
+            AND date_trunc('month', c.due_on::timestamp)
+                = date_trunc('month', p_month::timestamp)
+      )
+    ORDER BY r.id
+    ON CONFLICT (recurring_charge_id, due_on) WHERE recurring_charge_id IS NOT NULL DO NOTHING;
+    GET DIAGNOSTICS v_charged = ROW_COUNT;
+    RETURN v_charged;
 END;
 $$;
 
@@ -1164,6 +1211,7 @@ BEGIN
     ) AS r
     WHERE l.pmc_id = p_pmc_id AND l.starts_on <= p_due_on
       AND (l.ends_on IS NULL OR p_due_on <= l.ends_on)
+      AND trust_rent_due_day(l.id, p_due_on) = 1
       AND r.amount > 0  -- a day of a few cents' rent rounds to nothing
     ORDER BY l.id
     ON CONFLICT (lease_id, due_on) WHERE kind = 'rent' DO NOTHING;
@@ -1180,6 +1228,7 @@ BEGIN
     ) AS r
     WHERE l.pmc_id = p_pmc_id AND l.starts_on > p_due_on AND r.amount > 0
       AND date_trunc('month', l.starts_on::timestamp) = date_trunc('month', p_due_on::timestamp)
+      AND trust_rent_due_day(l.id, l.starts_on) = 1
       AND NOT EXISTS (
           SELECT c.id FROM trust_charges AS c
           WHERE c.lease_id = l.id AND c.kind = 'rent'
@@ -1190,6 +1239,49 @@ BEGIN
     ON CONFLICT (lease_id, due_on) WHERE kind = 'rent' DO NOTHING;
     GET DIAGNOSTICS v_first = ROW_COUNT;
     RETURN v_charged + v_first;
+END;
+$$;
+
+
+--
+-- Name: trust_charge_rent_on_due_days(uuid, date, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_charge_rent_on_due_days(p_pmc_id uuid, p_month date, p_as_of date) RETURNS integer
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_charged integer;
+BEGIN
+    IF p_month IS NULL OR p_as_of IS NULL THEN
+        RAISE EXCEPTION 'trust: rent is charged for a month as of a day; one was not given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    PERFORM pg_advisory_xact_lock_shared(hashtextextended('lease days of ' || p_pmc_id, 0));
+
+    INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)
+    SELECT l.pmc_id, l.id, d.due_on, 'rent', r.amount,
+           'Rent due ' || to_char(d.due_on, 'YYYY-MM-DD') || r.days
+    FROM trust_leases AS l
+    CROSS JOIN LATERAL (SELECT trust_rent_due_on(l.id, p_month) AS due_on) AS d
+    CROSS JOIN LATERAL trust_rent_for_month(
+        l.starts_on, l.ends_on, trust_rent_on(l.id, d.due_on), d.due_on
+    ) AS r
+    WHERE l.pmc_id = p_pmc_id
+      AND trust_rent_due_day(l.id, p_month) <> 1
+      AND d.due_on IS NOT NULL AND d.due_on <= p_as_of
+      AND r.amount > 0
+      AND NOT EXISTS (
+          SELECT c.id FROM trust_charges AS c
+          WHERE c.lease_id = l.id AND c.kind = 'rent'
+            AND date_trunc('month', c.due_on::timestamp)
+                = date_trunc('month', p_month::timestamp)
+      )
+    ORDER BY l.id
+    ON CONFLICT (lease_id, due_on) WHERE kind = 'rent' DO NOTHING;
+    GET DIAGNOSTICS v_charged = ROW_COUNT;
+    RETURN v_charged;
 END;
 $$;
 
@@ -2386,6 +2478,42 @@ BEGIN
     ) THEN
         RAISE EXCEPTION 'trust: rent from % is charged already; change it from a later month',
             to_char(NEW.effective_on, 'YYYY-MM-DD')
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_rent_due_day(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_rent_due_day() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_lease trust_leases;
+    v_charged date;
+BEGIN
+    SELECT l.* INTO v_lease FROM trust_leases AS l
+    WHERE l.id = NEW.lease_id AND l.pmc_id = NEW.pmc_id;
+    IF NOT FOUND THEN
+        RETURN NEW;  -- no such lease of the PMC: the foreign key refuses it
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended('lease days of ' || NEW.pmc_id, 0));
+    IF NEW.starts_on < date_trunc('month', v_lease.starts_on::timestamp)::date
+       OR NEW.starts_on > v_lease.ends_on THEN
+        RAISE EXCEPTION 'trust: a rent due day starts in a month of the lease, from % to %',
+            v_lease.starts_on, coalesce(v_lease.ends_on::text, 'month to month')
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT max(c.due_on) INTO v_charged FROM trust_charges AS c
+    WHERE c.lease_id = NEW.lease_id AND c.kind = 'rent' AND c.due_on >= NEW.starts_on;
+    IF v_charged IS NOT NULL THEN
+        RAISE EXCEPTION 'trust: rent due % is charged already; a new due day starts after its month',
+            v_charged
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
@@ -4761,6 +4889,48 @@ BEGIN
     VALUES (p_pmc_id, p_lease_id, p_tenant_id, p_left_on, p_deposit_to, v_moved);
     RETURN v_moved;
 END;
+$$;
+
+
+--
+-- Name: trust_rent_due_day(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_rent_due_day(p_lease_id uuid, p_day date) RETURNS integer
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT coalesce((
+        SELECT d.due_day FROM trust_rent_due_days AS d
+        WHERE d.lease_id = p_lease_id AND d.starts_on <= p_day
+        ORDER BY d.starts_on DESC
+        LIMIT 1
+    ), 1)
+$$;
+
+
+--
+-- Name: trust_rent_due_on(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_rent_due_on(p_lease_id uuid, p_day date) RETURNS date
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT CASE
+        WHEN l.starts_on > m.month_end OR l.ends_on < m.month_start THEN NULL
+        ELSE least(
+            greatest(m.month_start + (trust_rent_due_day(l.id, m.month_start) - 1), l.starts_on),
+            coalesce(l.ends_on, m.month_end)
+        )
+    END
+    FROM trust_leases AS l
+    CROSS JOIN (
+        SELECT date_trunc('month', p_day::timestamp)::date AS month_start,
+               (date_trunc('month', p_day::timestamp) + interval '1 month - 1 day')::date
+                   AS month_end
+    ) AS m
+    WHERE l.id = p_lease_id
 $$;
 
 
@@ -8511,8 +8681,10 @@ BEGIN
         p_pmc_id, nullif(current_setting('trust.staff_id', true), '')::uuid, 'admin',
         'run rent by hand'
     );
-    v_rents := trust_charge_rent_due(p_pmc_id, p_due_on);
-    v_recurring := trust_charge_recurring_due(p_pmc_id, p_due_on);
+    v_rents := trust_charge_rent_due(p_pmc_id, p_due_on)
+        + trust_charge_rent_on_due_days(p_pmc_id, p_due_on, p_late_fees_as_of);
+    v_recurring := trust_charge_recurring_due(p_pmc_id, p_due_on)
+        + trust_charge_recurring_on_due_days(p_pmc_id, p_due_on, p_late_fees_as_of);
     v_late_fees := trust_assess_late_fees(p_pmc_id, p_late_fees_as_of);
     INSERT INTO trust_rent_runs (pmc_id, due_on, late_fees_as_of, rents, recurring, late_fees)
     VALUES (p_pmc_id, p_due_on, p_late_fees_as_of, v_rents, v_recurring, v_late_fees)
@@ -10657,6 +10829,23 @@ CREATE TABLE public.trust_rent_changes (
 
 
 --
+-- Name: trust_rent_due_days; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_rent_due_days (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    starts_on date NOT NULL,
+    due_day integer NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_rent_due_days_due_day_check CHECK (((due_day >= 1) AND (due_day <= 28))),
+    CONSTRAINT trust_rent_due_days_starts_on_check CHECK ((EXTRACT(day FROM starts_on) = (1)::numeric))
+);
+
+
+--
 -- Name: trust_rent_runs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -12516,6 +12705,22 @@ ALTER TABLE ONLY public.trust_rent_changes
 
 
 --
+-- Name: trust_rent_due_days trust_rent_due_days_lease_id_starts_on_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rent_due_days
+    ADD CONSTRAINT trust_rent_due_days_lease_id_starts_on_key UNIQUE (lease_id, starts_on);
+
+
+--
+-- Name: trust_rent_due_days trust_rent_due_days_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rent_due_days
+    ADD CONSTRAINT trust_rent_due_days_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_rent_runs trust_rent_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13644,6 +13849,20 @@ CREATE INDEX trust_rent_changes_recorded_by ON public.trust_rent_changes USING b
 
 
 --
+-- Name: trust_rent_due_days_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_rent_due_days_pmc ON public.trust_rent_due_days USING btree (pmc_id, lease_id);
+
+
+--
+-- Name: trust_rent_due_days_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_rent_due_days_recorded_by ON public.trust_rent_due_days USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_rent_runs_pmc; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -14509,6 +14728,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_rent_changes FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_rent_due_days trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_rent_due_days FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -15387,6 +15613,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_rent
 
 
 --
+-- Name: trust_rent_due_days trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_rent_due_days FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_rent_runs trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -15968,6 +16201,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_rent_changes FOR 
 
 
 --
+-- Name: trust_rent_due_days trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_rent_due_days FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_rent_runs trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -16021,6 +16261,13 @@ CREATE TRIGGER trust_recurring_charge_amount BEFORE INSERT ON public.trust_charg
 --
 
 CREATE TRIGGER trust_rent_change BEFORE INSERT ON public.trust_rent_changes FOR EACH ROW EXECUTE FUNCTION public.trust_check_rent_change();
+
+
+--
+-- Name: trust_rent_due_days trust_rent_due_day_in_time; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_rent_due_day_in_time BEFORE INSERT ON public.trust_rent_due_days FOR EACH ROW EXECUTE FUNCTION public.trust_check_rent_due_day();
 
 
 --
@@ -18763,6 +19010,30 @@ ALTER TABLE ONLY public.trust_rent_changes
 
 
 --
+-- Name: trust_rent_due_days trust_rent_due_days_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rent_due_days
+    ADD CONSTRAINT trust_rent_due_days_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_rent_due_days trust_rent_due_days_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rent_due_days
+    ADD CONSTRAINT trust_rent_due_days_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_rent_due_days trust_rent_due_days_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rent_due_days
+    ADD CONSTRAINT trust_rent_due_days_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_rent_runs trust_rent_runs_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19273,4 +19544,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261017000077'),
     ('20261018000078'),
     ('20261018000079'),
-    ('20261018000080');
+    ('20261018000080'),
+    ('20261018000081');
