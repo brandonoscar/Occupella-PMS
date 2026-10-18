@@ -27,7 +27,8 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
 from pms import accounts, exports
-from pms.api import scope
+from pms import email as outgoing
+from pms.api import outbox, scope
 from pms.api.deps import Conn, Staff, Tenant, refusal
 from pms.api.rentals import Page, Paged, PerPage
 from pms.leasing import esign
@@ -137,6 +138,8 @@ class Offered(BaseModel):
     offer: OfferOut
     # Shown to staff to send to each signer; GET .../links gives them again.
     links: list[SigningLink]
+    # Whom the PMS emailed their link, while the server sends email (migration 0090).
+    emailed: list[str] = []
 
 
 class LeaseTenant(BaseModel):
@@ -404,7 +407,16 @@ def send_offer(
         # Voided since it was read.
         raise HTTPException(409, refusal(refused)) from None
     found = offer_of(conn, session.pmc_id, offer)
-    return Offered(offer=found, links=links_of(partner, reference, found))
+    links = links_of(partner, reference, found)
+    emailed = []
+    if outbox.SENDING.get():
+        what = f"the lease for {found.property}, {found.unit}"
+        for link in links:
+            if outgoing.write_signing_request(
+                conn, session.pmc_id, offer, link.position, link.name, link.email, what, link.url
+            ):
+                emailed.append(link.email)
+    return Offered(offer=found, links=links, emailed=emailed)
 
 
 def make_offer(

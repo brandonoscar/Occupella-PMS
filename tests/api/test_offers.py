@@ -24,6 +24,7 @@ from helpers import (
 )
 from people import join_as, join_as_owner, join_as_staff, join_as_tenant
 
+from pms import email as outgoing
 from pms.api import Settings, create_app, offers
 
 JAN_1, JUN_30 = date(2027, 1, 1), date(2027, 6, 30)
@@ -827,3 +828,64 @@ def test_a_partly_signed_offer_says_so_and_today_lists_it(client, other_client, 
 
     assert found["status"] == "partially signed"
     assert [o["id"] for o in today["unsigned_offers"]] == [made["offer"]["id"]]
+
+
+# --- signing links by email (migration 0090; the founder's review, q081) ---------------------
+
+
+class Kept:
+    """The server's sender, keeping what it sends."""
+
+    name = "fake"
+
+    def __init__(self):
+        self.sent = []
+
+    def send(self, message):
+        self.sent.append(message)
+
+
+def test_sending_an_offer_emails_each_signer_their_own_link(client, conn, staff, place):
+    kept = Kept()
+    client.app.state.email = kept
+
+    made = offer(client, place)
+    again = client.post(f"/api/leasing/offers/{made['offer']['id']}/send", json={})
+
+    assert made["emailed"] == ["a@example.com", "b@example.com"]
+    by_address = {m.to: m for m in kept.sent}
+    for link in made["links"]:
+        message = by_address[link["email"]]
+        assert message.subject.endswith(": the lease for Property 1, Unit 1 to sign")
+        assert f"Hello {link['name']}," in message.body
+        assert link["url"] in message.body
+    # The links themselves were never written to the outbox.
+    rows = conn.execute(
+        "SELECT signer_position, needs_link, body FROM trust_emails"
+        " WHERE offer_id = %s AND kind = 'signing_request' ORDER BY signer_position",
+        (made["offer"]["id"],),
+    ).fetchall()
+    assert [(position, needs) for position, needs, _ in rows] == [(1, True), (2, True)]
+    assert all("/esign#" not in body and "{{link}}" in body for _, _, body in rows)
+    assert again.status_code == 409
+
+
+def test_an_offer_sent_while_the_server_sends_no_email_emails_nobody(client, conn, staff, place):
+    made = offer(client, place)
+
+    assert made["emailed"] == []
+    assert conn.execute(
+        "SELECT count(*) FROM trust_emails WHERE offer_id = %s", (made["offer"]["id"],)
+    ).fetchone() == (0,)
+
+
+def test_a_signer_is_emailed_their_link_once(conn, place, staff, client):
+    made = offer(client, place)
+    offer_id = made["offer"]["id"]
+    args = (conn, place.pmc.pmc_id, offer_id, 1, "Applicant A", "a@example.com", "a lease", "u")
+
+    first = outgoing.write_signing_request(*args)
+    second = outgoing.write_signing_request(*args)
+
+    assert first is not None
+    assert second is None

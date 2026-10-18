@@ -77,6 +77,7 @@ from pms.api import (
     rentals,
     reports,
     scope,
+    screening_criteria,
     setup,
     signers,
     staff,
@@ -466,6 +467,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(owner.router)
     app.include_router(tenant.router)
     app.include_router(maintenance.router)
+    app.include_router(screening_criteria.router)
     app.include_router(leads.router)
     app.include_router(leasing.router)
     app.include_router(offers.router)

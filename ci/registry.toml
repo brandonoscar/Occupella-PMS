@@ -602,6 +602,18 @@ tests = [
 ]
 
 [[invariant]]
+id = "screening-criteria-and-overrides"
+statement = "A company's screening criteria ask at least the rent and no more on conditions than outright, are append-only and name who; each screening names the criteria it applied, of its own company; and a decision says why exactly when it goes against the recommendation of its application's latest screening (migration 0089)."
+tests = [
+  "tests/test_screening_criteria.py::test_criteria_ask_at_least_the_rent_and_conditions_no_more_than_approval",
+  "tests/test_screening_criteria.py::test_a_screening_names_criteria_of_its_own_company",
+  "tests/test_screening_criteria.py::test_a_decision_against_the_recommendation_says_why_and_no_other_does",
+  "tests/test_screening_criteria.py::test_only_the_latest_screening_counts_and_none_needs_no_reason",
+  "tests/properties/test_leasing_properties.py::test_leasing_invariants_hold_under_random_links_applications_and_decisions",
+  "tests/api/test_screening_criteria_api.py::test_a_decision_against_the_recommendation_says_why",
+]
+
+[[invariant]]
 id = "adverse-action-records"
 statement = "Each application has at most one decision, resting only on a screening of its own. A declined or conditional decision that rests on a screening has its adverse action notice recorded with it (the reasons, the reporting agency, the day it was given), checked at commit, and no other decision has one."
 tests = [

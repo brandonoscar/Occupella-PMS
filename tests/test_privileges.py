@@ -200,6 +200,7 @@ TABLES = {
     "trust_vendor_links": {"SELECT", "INSERT"},
     "trust_vendor_link_revocations": {"SELECT", "INSERT"},
     "trust_leads": {"SELECT", "INSERT"},
+    "trust_screening_criteria": {"SELECT", "INSERT"},
     "trust_lead_closings": {"SELECT", "INSERT"},
     "trust_showings": {"SELECT", "INSERT"},
     "trust_showing_outcomes": {"SELECT", "INSERT"},
@@ -224,6 +225,7 @@ COLUMN_UPDATES = {
 # their credentials, and rental applicants with their consumer report results, are no business
 # of the role behind Occupella's key.
 AI_NEVER_READS = {
+    "trust_screening_criteria",
     "trust_leads",
     "trust_lead_closings",
     "trust_showings",
@@ -365,6 +367,7 @@ FUNCTIONS = {
     "trust_check_work_order_charge()": set(),
     "trust_check_vendor_link_step()": set(),
     "trust_check_lead_open()": set(),
+    "trust_check_decision_override()": set(),
     "trust_fill_bill_markup()": set(),
     # Reports read trust records, so only the app and the AI; they run with the caller's own
     # read grants.

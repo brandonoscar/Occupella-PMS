@@ -537,6 +537,17 @@ browser = [
 ]
 
 [[feature]]
+id = "screening-criteria"
+statement = "In Company setup staff set the screening criteria every applicant is held to (the income, as times the rent, approved and approved on conditions) and the same criteria in words, which the apply page shows; the partner screens by them, a decision against the latest screening's recommendation says why, and a declined applicant reads the adverse action notice on their status page."
+operations = [
+  "GET /api/leasing/screening-criteria",
+  "POST /api/leasing/screening-criteria",
+]
+browser = [
+  "features.spec.ts › staff set the screening criteria; an applicant reads them, is screened by them and declined against the recommendation, and reads the notice",
+]
+
+[[feature]]
 id = "lease-offers"
 statement = "On Draft leases (Waiting for signatures, Leases made, Void, All, by property group) staff draft a lease for an approved applicant or a renewal of a lease, with the company's own PDF, the security deposit it asks and its monthly fees and credits, kept as a draft or sent at once; on its page they send it, show its links again, check signatures, void it, or activate it once everyone has signed on the partner's page (a tenant signs a renewal from the portal), its monthly charges becoming the lease's."
 operations = [

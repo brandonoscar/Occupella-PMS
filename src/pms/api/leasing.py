@@ -23,10 +23,10 @@ from uuid import UUID
 
 import psycopg
 from fastapi import APIRouter, HTTPException, Query, Request, Response
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from pms import accounts, exports, notices
-from pms.api import outbox, scope
+from pms.api import outbox, scope, screening_criteria
 from pms.api.deps import Conn, Staff, download, refusal
 from pms.api.listings import NewListing
 from pms.api.rentals import Page, Paged, PerPage
@@ -76,6 +76,8 @@ class Listing(BaseModel):
     property: str
     unit: str
     monthly_rent: str
+    # The company's screening criteria in words, the same for every applicant (migration 0089).
+    criteria: str | None = None
 
 
 class ApplicantIn(BaseModel):
@@ -107,6 +109,9 @@ class Status(BaseModel):
     # "received" until staff screen it, "in review" after, then the decision; or "withdrawn".
     status: StatusName
     conditions: str | None
+    # The adverse action notice of a decision that rests on a screening, as its PDF and email say
+    # it (the founder's review, q080).
+    notice: str | None = None
 
 
 def open_link(conn: psycopg.Connection[Any], via: LinkToken) -> tuple[Any, ...]:
@@ -147,8 +152,14 @@ def open_link(conn: psycopg.Connection[Any], via: LinkToken) -> tuple[Any, ...]:
 @router.post("/api/apply/view")
 def view_listing(conn: Conn, link: LinkToken) -> Listing:
     """What an open link is for, so the applicant knows what they apply for."""
-    _, _, pmc, prop, unit, rent = open_link(conn, link)
-    return Listing(pmc=pmc, property=prop, unit=unit, monthly_rent=exports.text(rent))
+    _, pmc_id, pmc, prop, unit, rent = open_link(conn, link)
+    return Listing(
+        pmc=pmc,
+        property=prop,
+        unit=unit,
+        monthly_rent=exports.text(rent),
+        criteria=screening_criteria.in_force(conn, pmc_id).written,
+    )
 
 
 @router.post("/api/apply", status_code=201)
@@ -201,23 +212,32 @@ def application_status(conn: Conn, asked: StatusToken) -> Status:
         "SELECT p.display_name, u.display_name, a.submitted_at, d.decision, d.conditions,"
         " EXISTS (SELECT 1 FROM trust_screenings AS s WHERE s.application_id = a.id),"
         " EXISTS (SELECT 1 FROM trust_application_withdrawals AS w"
-        "   WHERE w.application_id = a.id)"
+        "   WHERE w.application_id = a.id),"
+        " n.reasons, n.agency, n.notice_given_on"
         " FROM trust_applications AS a"
         " JOIN trust_application_links AS l ON l.id = a.link_id"
         " JOIN trust_units AS u ON u.id = l.unit_id"
         " JOIN trust_properties AS p ON p.id = u.property_id"
         " LEFT JOIN trust_application_decisions AS d ON d.application_id = a.id"
+        " LEFT JOIN trust_adverse_actions AS n ON n.application_id = a.id"
         " WHERE a.status_token_sha256 = %s",
         (accounts.digest(asked.status_token),),
     ).fetchone()
     if row is None:
         raise HTTPException(404, "no application has this link")
-    prop, unit, submitted, decision, conditions, screened, withdrawn = row
+    prop, unit, submitted, decision, conditions, screened, withdrawn, reasons, agency, given = row
     status: StatusName = (
         "withdrawn" if withdrawn else decision or ("in review" if screened else "received")
     )
     return Status(
-        property=prop, unit=unit, submitted_at=submitted, status=status, conditions=conditions
+        property=prop,
+        unit=unit,
+        submitted_at=submitted,
+        status=status,
+        conditions=conditions,
+        notice=None
+        if reasons is None
+        else notices.notice_text(decision, conditions, list(reasons), agency, given),
     )
 
 
@@ -259,6 +279,11 @@ class Decision(BaseModel):
     conditions: str | None = Field(default=None, max_length=2000)
     screening_id: UUID | None = None
     adverse_action: AdverseAction | None = None
+    # Why, when the decision goes against the latest screening's recommendation (migration 0089).
+    override_reason: (
+        Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
+        | None
+    ) = None
 
 
 class DecisionOut(BaseModel):
@@ -267,6 +292,7 @@ class DecisionOut(BaseModel):
     screening_id: UUID | None
     decided_at: datetime
     adverse_action: AdverseAction | None
+    override_reason: str | None = None
 
 
 # Where an application stands, for staff: new until screened, screening until decided, then the
@@ -365,6 +391,7 @@ APPLICATIONS = f"""
 SELECT a.id, p.id, p.display_name, u.id, u.display_name, l.monthly_rent, a.move_in_on,
        a.monthly_income, a.submitted_at,
        d.decision, d.conditions, d.screening_id, d.decided_at, av.reasons, av.notice_given_on,
+       d.override_reason,
        w.application_id IS NOT NULL, w.reason, w.recorded_at, ws.display_name,
        made.lease_id, st.status, count(*) OVER ()
 FROM trust_applications AS a
@@ -476,6 +503,7 @@ def applications_of(
                 adverse_action=None
                 if reasons is None
                 else AdverseAction(reasons=list(reasons), notice_given_on=given_on),
+                override_reason=override,
             ),
             status=status,
             withdrawal=Withdrawal(reason=why, recorded_at=withdrawn_at, recorded_by=withdrawn_by)
@@ -499,6 +527,7 @@ def applications_of(
             decided_at,
             reasons,
             given_on,
+            override,
             withdrawn,
             why,
             withdrawn_at,
@@ -585,18 +614,20 @@ def screen(request: Request, session: Staff, conn: Conn, application_id: UUID) -
         raise HTTPException(409, WITHDRAWN)
     if found.decision is not None:
         raise HTTPException(409, "this application is decided already")
+    criteria = screening_criteria.in_force(conn, session.pmc_id)
     result = partner.screen(
         screening.Application(
             applicants=tuple(screening.Applicant(a.name, a.email) for a in found.applicants),
             move_in_on=found.move_in_on,
             monthly_income=Decimal(found.monthly_income),
             monthly_rent=Decimal(found.monthly_rent),
-        )
+        ),
+        screening_criteria.for_partner(criteria),
     )
     conn.execute(
         "INSERT INTO trust_screenings (pmc_id, application_id, partner, partner_reference,"
-        " agency, recommendation, reasons, requested_by)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+        " agency, recommendation, reasons, requested_by, criteria_id)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
         (
             session.pmc_id,
             application_id,
@@ -606,9 +637,17 @@ def screen(request: Request, session: Staff, conn: Conn, application_id: UUID) -
             result.recommendation,
             list(result.reasons),
             session.person_id,
+            criteria.id,
         ),
     )
     return application_of(conn, session.pmc_id, application_id)
+
+
+# The decision that goes with each recommendation; any other goes against it and says why.
+AGREES = {"approve": "approved", "conditional": "conditional", "decline": "declined"}
+OVERRIDE = (
+    "a decision against the latest screening's recommendation says why, and no other decision does"
+)
 
 
 @router.post("/api/leasing/applications/{application_id}/decide", status_code=201)
@@ -635,6 +674,10 @@ def decide(session: Staff, conn: Conn, application_id: UUID, decision: Decision)
             "a decline or conditional approval that rests on a screening records its adverse"
             " action notice, and nothing else does",
         )
+    latest = found.screenings[-1].recommendation if found.screenings else None
+    against = latest is not None and decision.decision != AGREES[latest]
+    if against != (decision.override_reason is not None):
+        raise HTTPException(422, OVERRIDE)
     action = decision.adverse_action
     reasons = [reason.strip() for reason in action.reasons] if action else []
     if action is not None:
@@ -644,8 +687,8 @@ def decide(session: Staff, conn: Conn, application_id: UUID, decision: Decision)
             raise HTTPException(422, "a notice is given on a day from 30 days ago to today")
     conn.execute(
         "INSERT INTO trust_application_decisions"
-        " (pmc_id, application_id, decision, conditions, screening_id, decided_by)"
-        " VALUES (%s, %s, %s, %s, %s, %s)",
+        " (pmc_id, application_id, decision, conditions, screening_id, decided_by, override_reason)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s)",
         (
             session.pmc_id,
             application_id,
@@ -653,6 +696,7 @@ def decide(session: Staff, conn: Conn, application_id: UUID, decision: Decision)
             conditions,
             decision.screening_id,
             session.person_id,
+            decision.override_reason,
         ),
     )
     if action is not None:

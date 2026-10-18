@@ -19,7 +19,7 @@ from helpers import (
     submit_application,
 )
 
-from pms import accounts
+from pms import accounts, notices
 
 NOT_OPEN = "this application link is closed or doesn't exist"
 
@@ -80,6 +80,8 @@ def test_an_applicant_sees_what_the_link_is_for(client, listing):
         "property": "Property 1",
         "unit": "Unit 1",
         "monthly_rent": "1500.00",
+        # The company set no screening criteria in words (migration 0089).
+        "criteria": None,
     }
 
 
@@ -119,13 +121,57 @@ def test_an_applicant_applies_and_follows_the_application(client, conn, listing)
 
     assert stored[1:] == (4500, ["applicant.a@example.com", "applicant.b@example.com"])
     assert seen + [last["status"]] == ["received", "in review", "conditional"]
+    (reasons, agency, given_on) = conn.execute(
+        "SELECT reasons, agency, notice_given_on FROM trust_adverse_actions"
+        " WHERE application_id = %s",
+        (application_id,),
+    ).fetchone()
     assert last == {
         "property": "Property 1",
         "unit": "Unit 1",
         "submitted_at": last["submitted_at"],
         "status": "conditional",
         "conditions": "A deposit of one more month",
+        # The adverse action notice, as its PDF and email say it (q080).
+        "notice": notices.notice_text(
+            "conditional", "A deposit of one more month", reasons, agency, given_on
+        ),
     }
+    assert last["notice"].startswith(
+        "Your application was approved on conditions: A deposit of one more month"
+    )
+
+
+def test_a_declined_applicant_reads_the_notice_and_an_approved_one_none(client, conn, listing):
+    """The founder's review, q080: the status page gives the adverse action notice."""
+    pmc_id = listing.pmc.pmc_id
+
+    def applied_for():
+        token = status_token(client.post("/api/apply", json=application(listing)))
+        (found,) = conn.execute(
+            "SELECT id FROM trust_applications WHERE status_token_sha256 = %s",
+            (hashlib.sha256(token.encode()).digest(),),
+        ).fetchone()
+        return token, found
+
+    declined, approved = applied_for(), applied_for()
+    with conn.transaction():
+        screening = record_screening(
+            conn, pmc_id, declined[1], listing.staff, "decline", ["Income below twice the rent"]
+        )
+        record_decision(conn, pmc_id, declined[1], listing.staff, "declined", screening)
+        record_adverse_action(conn, pmc_id, declined[1], listing.staff, ("Income too low",))
+        record_decision(conn, pmc_id, approved[1], listing.staff, "approved")
+
+    seen = [
+        client.post("/api/application/status", json={"status_token": token}).json()
+        for token, _ in (declined, approved)
+    ]
+
+    assert seen[0]["status"] == "declined"
+    assert seen[0]["notice"].startswith("Your application was declined.\n\nWhy:\n- Income too low")
+    assert "Test agency (synthetic)" in seen[0]["notice"]
+    assert (seen[1]["status"], seen[1]["notice"]) == ("approved", None)
 
 
 @pytest.mark.parametrize("which", ["closed", "made up"])

@@ -369,3 +369,33 @@ text). Many states and cities add protected classes (NOT VERIFIED state by state
 
 **Left to the company.** Treating every prospect alike (the same units offered, the same terms,
 the same follow-up), and what its staff write in a lead's note or a closing's reason.
+
+## Screening criteria, decisions against a screening and the notice (migrations 0089 and 0090)
+
+**The rule.**
+- The federal Fair Housing Act, which applies in every state, forbids refusing to rent, or setting
+  different terms, because of race, color, religion, sex, handicap, familial status or national
+  origin (42 U.S.C. 3604(a) and (b)). Applying the same written criteria to every applicant, and
+  writing down why a decision departs from them, is how a landlord shows it did not; HUD's
+  guidance says so for criminal-history screening in particular (HUD Office of General Counsel,
+  April 4, 2016; read from memory, NOT VERIFIED against its text).
+- The federal Fair Credit Reporting Act, in every state, asks a landlord who takes adverse action
+  based in whole or in part on a consumer report to give the applicant notice: the reporting
+  agency's name and contact, that the agency did not decide, and the right to a free copy within
+  60 days and to dispute it (15 U.S.C. 1681m(a)). The PMS already records it (migration 0030) and
+  emails it (migration 0077); the status page now shows it too.
+- Some states and cities limit what screening may weigh (source of income, criminal history,
+  credit for voucher holders) (NOT VERIFIED state by state; none is built in).
+
+**What the PMS does.**
+- A company sets its criteria once, and the screening partner applies them to every applicant;
+  each screening names the criteria it applied. The apply page shows every applicant the same
+  words before they apply.
+- A decision that goes against the latest screening's recommendation is refused unless it says
+  why, and the applicant's page marks it, so each departure is on the record.
+- A declined or conditionally approved applicant reads the adverse action notice on their status
+  page. Sending a lease for signing emails each signer their own link (the e-sign partner may
+  also email them).
+
+**Left to the company.** Its criteria themselves (legal in its state and city), applying them the
+same way to every applicant, and its reasons when it departs from them.

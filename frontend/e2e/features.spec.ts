@@ -2996,3 +2996,64 @@ test("staff add a lead who asked about a unit, show it to them, record how it we
   await expect(closed.getByTestId("status")).toHaveText("Applied");
   await expect(closed.getByRole("cell").nth(5)).toHaveText("1");
 });
+
+test("staff set the screening criteria; an applicant reads them, is screened by them and declined against the recommendation, and reads the notice", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["screening-criteria"]!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "Company setup");
+  await expect(page.getByTestId("screening-criteria")).toHaveText(
+    "Approved at 3 times the rent or more; on conditions at 2 times the rent; declined below",
+  );
+  await page.getByRole("button", { name: "Edit screening criteria" }).click();
+  const editing = page.getByRole("dialog", { name: "Screening criteria" });
+  await editing.getByLabel("Approve from (times the rent)").fill("2.5");
+  await editing.getByLabel("Approve on conditions from (times the rent)").fill("1.5");
+  await editing.getByLabel("In words, for applicants (optional)").fill("Household income of 2.5 times the rent.");
+  await editing.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("screening-criteria")).toHaveText(
+    "Approved at 2.5 times the rent or more; on conditions at 1.5 times the rent; declined below",
+  );
+
+  // A listed unit at $1,000.00: the applicant reads the criteria before applying, with 2.6 times the rent.
+  await section(page, "Listings");
+  const unit = page.getByRole("row", { name: "Aspen Row, Unit 2" });
+  await unit.getByRole("button", { name: "List", exact: true }).click();
+  const listing = page.getByRole("dialog", { name: "List on the public page" });
+  await listing.getByLabel("Rent a month").fill("1000.00");
+  await listing.getByRole("button", { name: "List it" }).click();
+  await expect(page.getByText("Listed Aspen Row, Unit 2 at $1,000.00.")).toBeVisible();
+  const visitor = await (await browser.newContext()).newPage();
+  await visitor.goto(`/listings?pmc=${people.pmc_id}`);
+  await visitor.getByRole("listitem", { name: "Aspen Row, Unit 2" }).getByRole("link", { name: "Apply" }).click();
+  await expect(visitor.getByTestId("screening-criteria")).toContainText("Household income of 2.5 times the rent.");
+  await visitor.getByLabel("Move-in day").fill(daysFromToday(20));
+  await visitor.getByLabel("Monthly income of everyone applying, together").fill("2600");
+  await visitor.getByLabel("Full name").fill("Applicant Criteria");
+  await visitor.getByLabel("Email").fill("applicant.criteria@example.com");
+  await visitor.getByRole("button", { name: "Send application" }).click();
+  const statusUrl = new URL((await visitor.getByTestId("status-url").textContent()) ?? "");
+
+  // Screened by the company's criteria, it is approved (2.6 times is under the partner's own 3).
+  await section(page, "Applicants");
+  await page.getByRole("row", { name: "Application from Applicant Criteria" }).click();
+  await page.getByRole("button", { name: "Screen" }).click();
+  await expect(page.getByRole("list", { name: "Screenings" })).toContainText("Recommends approval");
+
+  // Staff decline it anyway: that says why, with the adverse action notice.
+  await page.getByRole("button", { name: "Reject" }).click();
+  const rejecting = page.getByRole("dialog", { name: "Reject" });
+  await rejecting.getByLabel("Adverse action reasons, one a line").fill("A co-signer was asked for and not given");
+  await rejecting.getByLabel("Why decide against the screening's recommendation").fill("The owner asked for a co-signer");
+  await rejecting.getByRole("button", { name: "Reject" }).click();
+  await expect(page.getByTestId("status")).toHaveText("Rejected");
+  await expect(page.getByTestId("override")).toContainText("The owner asked for a co-signer");
+
+  // The applicant reads the notice on their status page.
+  await visitor.goto(statusUrl.pathname + statusUrl.hash);
+  await expect(visitor.getByTestId("adverse-action-notice")).toContainText("Your application was declined.");
+  await expect(visitor.getByTestId("adverse-action-notice")).toContainText("A co-signer was asked for and not given");
+  await visitor.close();
+});

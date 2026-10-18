@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Application } from "./leasing";
 import {
+  againstScreening,
   applicantNames,
   applicantStatus,
   applicationBadge,
@@ -12,6 +13,18 @@ import {
 } from "./leasing";
 
 describe("leasing helpers", () => {
+  it("says when a decision goes against the latest screening", () => {
+    const screened = (...recommendations: string[]) => ({ screenings: recommendations.map((recommendation) => ({ recommendation })) });
+    expect(againstScreening(screened(), "declined")).toBe(false);
+    expect(againstScreening(screened("approve"), "approved")).toBe(false);
+    expect(againstScreening(screened("approve"), "declined")).toBe(true);
+    expect(againstScreening(screened("conditional"), "conditional")).toBe(false);
+    expect(againstScreening(screened("conditional"), "approved")).toBe(true);
+    expect(againstScreening(screened("decline"), "declined")).toBe(false);
+    // Only the latest counts.
+    expect(againstScreening(screened("decline", "approve"), "approved")).toBe(false);
+  });
+
   it("tells an applicant where their application stands", () => {
     expect(applicantStatus("received")).toContain("hasn't looked at it yet");
     expect(applicantStatus("in review")).toBe("In review.");

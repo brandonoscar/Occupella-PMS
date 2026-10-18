@@ -243,6 +243,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the PMC's own lease PDF (the PMS writes no lease text) and are signed through
   `pms.leasing.esign.Partner`, picked by `PMS_ESIGN_PARTNER` ("fake" for development and CI,
   none by default; the fake's signing page, `/esign#<token>`, is served only while it is on).
+  Since migration 0090 (q081), sending an offer while the server sends email emails each signer
+  their own signing link (`signing_request`, once per signer; the link held in memory like an
+  invite's, never in the outbox), and Send says whom.
   A tenant signs a renewal of their own lease from the portal, as the signer with their
   login's email. Staff may list an open link on the PMC's public vacancy page
   (`/listings?pmc=<id>`, `src/pms/api/listings.py`, migration 0047): no login, it shows each
@@ -289,7 +292,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   it a new table's SELECT only if `trust_app` has it, and never a write path. It never reads
   logins, invites, sessions or credentials, nor rental applications, applicants and their
   screenings, nor lease offers and signatures, nor documents' files, nor contact details, nor notes,
-  nor vendors' links, nor leads and showings (`AI_NEVER_READS` in
+  nor vendors' links, nor leads and showings, nor screening criteria (`AI_NEVER_READS` in
   `tests/test_privileges.py`), nor their rows in the audit log: row-level security shows it only
   the audit rows of tables it may read (migration 0043).
 - A new table starts with `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it
@@ -507,6 +510,15 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (migration 0070, `trust_application_withdrawals`, once, naming who recorded it) comes before
   a decline or a lease made of it; after it the application takes no screening, decision or
   offer, and none of its offers becomes a lease (each waits for a withdrawal under way).
+  Screening criteria (migration 0089, the founder's review q085, `src/pms/api/screening_criteria.py`):
+  a company's criteria (`trust_screening_criteria`: the income, as times the rent, approved and
+  approved on conditions, and the criteria in words; append-only, the latest row holding, naming
+  who; Company setup, area leasing), which the partner applies (`screening.Criteria`; without
+  any, `screening.DEFAULT`, 3 and 2 times), each screening naming them (`criteria_id`), and the
+  apply page shows every applicant in words. A decision against the recommendation of its
+  application's latest screening says why (`override_reason`, a trigger; no other decision
+  does), and the applicant's page marks it. The applicant's status page shows the adverse action
+  notice (q080).
 - Lease offers: a new lease for an approved (or conditionally approved) application at the unit
   it applied for, or the renewal of a lease at its unit, starting after it; the terms, the
   PMC's PDF (at most 5 MB) and its signers (names and emails). It is sent to the e-sign

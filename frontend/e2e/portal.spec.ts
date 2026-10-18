@@ -242,6 +242,8 @@ test("staff draft a lease with a deposit and a monthly charge and send it, void 
   expect(await pdf.body()).toEqual(document.buffer);
   await page.getByRole("button", { name: "Send", exact: true }).click();
   await expect(page.getByText("Sent to 1 signer.")).toBeVisible();
+  // The server sends email here: the signer was emailed their own link (migration 0090).
+  await expect(page.getByText(/Each was emailed their link: /)).toBeVisible();
   await expect(page.getByTestId("status")).toHaveText("Sent");
   const link = new URL((await page.getByTestId("signing-link").textContent()) ?? "");
 

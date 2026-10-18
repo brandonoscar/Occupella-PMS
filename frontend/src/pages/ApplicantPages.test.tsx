@@ -109,6 +109,10 @@ describe("ApplicantPage", () => {
     const panel = screen.getByRole("dialog", { name: "Reject" });
     expect((within(panel).getByLabelText("Adverse action reasons, one a line") as HTMLTextAreaElement).value)
       .toBe("Income below 3x rent");
+    // The screening recommends conditions: a rejection goes against it and says why (migration 0089).
+    fireEvent.change(within(panel).getByLabelText("Why decide against the screening's recommendation"), {
+      target: { value: " No co-signer came forward " },
+    });
     fireEvent.click(within(panel).getByRole("button", { name: "Reject" }));
 
     await screen.findByText("Rejected: Applicant A, Applicant B.");
@@ -116,7 +120,7 @@ describe("ApplicantPage", () => {
     expect(sent.map(([path]) => path)).toEqual(["/api/leasing/applications/a1/decide"]);
     expect(sent[0]?.[1]).toMatchObject({
       decision: "declined", conditions: null, screening_id: "sc1",
-      adverse_action: { reasons: ["Income below 3x rent"] },
+      adverse_action: { reasons: ["Income below 3x rent"] }, override_reason: "No co-signer came forward",
     });
   });
 
@@ -127,18 +131,28 @@ describe("ApplicantPage", () => {
     const panel = screen.getByRole("dialog", { name: "Approve" });
     fireEvent.change(within(panel).getByLabelText("Resting on"), { target: { value: "" } });
     expect(within(panel).queryByLabelText("Adverse action reasons, one a line")).toBeNull();
+    // Approved outright against a screening that asks conditions: it says why.
+    fireEvent.change(within(panel).getByLabelText("Why decide against the screening's recommendation"), {
+      target: { value: "Pays a year ahead" },
+    });
     fireEvent.click(within(panel).getByRole("button", { name: "Approve" }));
     await screen.findByText("Approved: Applicant A, Applicant B.");
 
     fireEvent.click(screen.getByRole("button", { name: "Approve" }));
     const again = screen.getByRole("dialog", { name: "Approve" });
+    // A reason typed while approving outright is not sent once the decision follows the screening.
+    fireEvent.change(within(again).getByLabelText("Why decide against the screening's recommendation"), {
+      target: { value: "Typed, then changed" },
+    });
     fireEvent.change(within(again).getByLabelText("Decision"), { target: { value: "conditional" } });
     fireEvent.change(within(again).getByLabelText("Conditions"), { target: { value: "A co-signer" } });
+    // On conditions, as the screening recommends: no reason asked.
+    expect(within(again).queryByLabelText("Why decide against the screening's recommendation")).toBeNull();
     fireEvent.click(within(again).getByRole("button", { name: "Approve" }));
     await screen.findByText("Approved on conditions: Applicant A, Applicant B.");
 
-    expect(posted(fetch).map(([, body]) => [body.decision, body.screening_id, body.conditions, body.adverse_action !== null]))
-      .toEqual([["approved", null, null, false], ["conditional", "sc1", "A co-signer", true]]);
+    expect(posted(fetch).map(([, body]) => [body.decision, body.screening_id, body.conditions, body.adverse_action !== null, body.override_reason]))
+      .toEqual([["approved", null, null, false, "Pays a year ahead"], ["conditional", "sc1", "A co-signer", true, null]]);
   });
 
   it("records a withdrawal from its ⋯ menu, and shows why the server refused one", async () => {
@@ -173,6 +187,20 @@ describe("ApplicantPage", () => {
     // The notice as it was emailed to each applicant, with whether it went.
     const emailed = await screen.findByRole("list", { name: "Email, Applicant A, Applicant B" });
     expect(emailed.textContent).toContain("Adverse action notice to a@example.com · Sent by the PMS");
+  });
+
+  it("marks a decision that went against the screening, with why", async () => {
+    server({
+      ...APPLICATION, status: "approved",
+      decision: {
+        decision: "approved", conditions: null, screening_id: null, decided_at: "2026-10-13T10:00:00Z",
+        adverse_action: null, override_reason: "Pays a year ahead",
+      },
+    });
+    render(<ApplicantPage me={ME} id="a1" />);
+
+    const marked = await screen.findByTestId("override");
+    expect(marked.textContent).toBe("Against the screening's recommendationPays a year ahead");
   });
 
   it("shows a withdrawn application's withdrawal and no work left on it", async () => {

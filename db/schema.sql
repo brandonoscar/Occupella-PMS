@@ -2077,6 +2077,35 @@ $$;
 
 
 --
+-- Name: trust_check_decision_override(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_decision_override() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_recommendation text;
+BEGIN
+    SELECT s.recommendation INTO v_recommendation
+    FROM trust_screenings AS s
+    WHERE s.application_id = NEW.application_id
+    ORDER BY s.reported_at DESC, s.id DESC
+    LIMIT 1;
+    IF (v_recommendation IS NOT NULL AND NEW.decision <> CASE v_recommendation
+            WHEN 'approve' THEN 'approved'
+            WHEN 'conditional' THEN 'conditional'
+            ELSE 'declined'
+        END) <> (NEW.override_reason IS NOT NULL) THEN
+        RAISE EXCEPTION 'trust: a decision against its screening''s recommendation says why, and no other decision does'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_deposit_return_signer(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -9573,6 +9602,7 @@ CREATE TABLE public.trust_application_decisions (
     screening_id uuid,
     decided_by uuid NOT NULL,
     decided_at timestamp with time zone DEFAULT now() NOT NULL,
+    override_reason text,
     CONSTRAINT trust_application_decisions_check CHECK (((decision = 'conditional'::text) = (conditions IS NOT NULL))),
     CONSTRAINT trust_application_decisions_conditions_check CHECK (((conditions ~ '\S'::text) AND (length(conditions) <= 2000))),
     CONSTRAINT trust_application_decisions_decision_check CHECK ((decision = ANY (ARRAY['approved'::text, 'conditional'::text, 'declined'::text])))
@@ -10332,6 +10362,8 @@ CREATE TABLE public.trust_emails (
     application_id uuid,
     applicant_id uuid,
     request_id uuid,
+    offer_id uuid,
+    signer_position bigint,
     CONSTRAINT trust_emails_body_check CHECK (((body <> ''::text) AND (length(body) <= 10000))),
     CONSTRAINT trust_emails_check CHECK (((kind = 'bill_approval'::text) = (bill_id IS NOT NULL))),
     CONSTRAINT trust_emails_subject_check CHECK (((subject <> ''::text) AND (length(subject) <= 200))),
@@ -11519,6 +11551,25 @@ CREATE TABLE public.trust_renters_insurance_terms (
 
 
 --
+-- Name: trust_screening_criteria; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_screening_criteria (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    approve_multiple numeric(4,2) NOT NULL,
+    conditional_multiple numeric(4,2) NOT NULL,
+    written text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_screening_criteria_approve_multiple_check CHECK (((approve_multiple >= (1)::numeric) AND (approve_multiple <= (10)::numeric))),
+    CONSTRAINT trust_screening_criteria_check CHECK ((conditional_multiple <= approve_multiple)),
+    CONSTRAINT trust_screening_criteria_conditional_multiple_check CHECK ((conditional_multiple >= (0)::numeric)),
+    CONSTRAINT trust_screening_criteria_written_check CHECK (((written IS NULL) OR ((written ~ '\S'::text) AND (length(written) <= 4000))))
+);
+
+
+--
 -- Name: trust_screenings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11533,6 +11584,7 @@ CREATE TABLE public.trust_screenings (
     reasons text[] NOT NULL,
     requested_by uuid NOT NULL,
     reported_at timestamp with time zone DEFAULT now() NOT NULL,
+    criteria_id uuid,
     CONSTRAINT trust_screenings_agency_check CHECK ((agency ~ '\S'::text)),
     CONSTRAINT trust_screenings_check CHECK (((recommendation = 'approve'::text) = (cardinality(reasons) = 0))),
     CONSTRAINT trust_screenings_partner_check CHECK ((partner ~ '\S'::text)),
@@ -11963,6 +12015,14 @@ ALTER TABLE ONLY public.trust_applicants
 
 ALTER TABLE ONLY public.trust_applicants
     ADD CONSTRAINT trust_applicants_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_application_decisions trust_application_decisions_override_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_application_decisions
+    ADD CONSTRAINT trust_application_decisions_override_check CHECK (((override_reason IS NULL) OR ((override_reason ~ '\S'::text) AND (length(override_reason) <= 500)))) NOT VALID;
 
 
 --
@@ -12602,7 +12662,7 @@ ALTER TABLE ONLY public.trust_email_settings
 --
 
 ALTER TABLE public.trust_emails
-    ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text, 'rent_reminder'::text, 'late_notice'::text, 'owner_statement'::text, 'work_order'::text, 'adverse_action'::text, 'emergency_request'::text]))) NOT VALID;
+    ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text, 'rent_reminder'::text, 'late_notice'::text, 'owner_statement'::text, 'work_order'::text, 'adverse_action'::text, 'emergency_request'::text, 'signing_request'::text]))) NOT VALID;
 
 
 --
@@ -12637,8 +12697,9 @@ CASE kind
     WHEN 'work_order'::text THEN ((vendor_id IS NOT NULL) AND (work_order_step_id IS NOT NULL) AND (num_nonnulls(tenant_id, owner_id, staff_id) = 0))
     WHEN 'adverse_action'::text THEN ((applicant_id IS NOT NULL) AND (application_id IS NOT NULL) AND (num_nonnulls(tenant_id, owner_id, vendor_id, staff_id) = 0))
     WHEN 'emergency_request'::text THEN ((staff_id IS NOT NULL) AND (request_id IS NOT NULL) AND (num_nonnulls(tenant_id, owner_id, vendor_id) = 0))
+    WHEN 'signing_request'::text THEN ((offer_id IS NOT NULL) AND (signer_position IS NOT NULL) AND (num_nonnulls(tenant_id, owner_id, vendor_id, staff_id) = 0))
     ELSE ((tenant_id IS NULL) AND (vendor_id IS NULL) AND (staff_id IS NULL))
-END AND ((kind = 'message'::text) = (sent_by IS NOT NULL)) AND ((kind = ANY (ARRAY['invite'::text, 'password_reset'::text])) = needs_link) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'late_notice'::text])) = (lease_id IS NOT NULL)) AND ((kind = 'late_notice'::text) = (charge_id IS NOT NULL)) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'owner_statement'::text])) = (period IS NOT NULL)) AND ((kind = 'owner_statement'::text) <= (period = (date_trunc('month'::text, (period)::timestamp with time zone))::date)) AND ((kind = 'work_order'::text) = (work_order_step_id IS NOT NULL)) AND ((kind = 'adverse_action'::text) = ((application_id IS NOT NULL) AND (applicant_id IS NOT NULL))) AND ((kind = 'emergency_request'::text) = (request_id IS NOT NULL)))) NOT VALID;
+END AND ((kind = 'message'::text) = (sent_by IS NOT NULL)) AND ((kind = ANY (ARRAY['invite'::text, 'password_reset'::text, 'signing_request'::text])) = needs_link) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'late_notice'::text])) = (lease_id IS NOT NULL)) AND ((kind = 'late_notice'::text) = (charge_id IS NOT NULL)) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'owner_statement'::text])) = (period IS NOT NULL)) AND ((kind = 'owner_statement'::text) <= (period = (date_trunc('month'::text, (period)::timestamp with time zone))::date)) AND ((kind = 'work_order'::text) = (work_order_step_id IS NOT NULL)) AND ((kind = 'adverse_action'::text) = ((application_id IS NOT NULL) AND (applicant_id IS NOT NULL))) AND ((kind = 'emergency_request'::text) = (request_id IS NOT NULL)) AND ((kind = 'signing_request'::text) = ((offer_id IS NOT NULL) OR (signer_position IS NOT NULL))))) NOT VALID;
 
 
 --
@@ -13594,6 +13655,22 @@ ALTER TABLE ONLY public.trust_renters_insurance_terms
 
 
 --
+-- Name: trust_screening_criteria trust_screening_criteria_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_screening_criteria
+    ADD CONSTRAINT trust_screening_criteria_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_screening_criteria trust_screening_criteria_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_screening_criteria
+    ADD CONSTRAINT trust_screening_criteria_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_screenings trust_screenings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14355,6 +14432,13 @@ CREATE UNIQUE INDEX trust_emails_one_rent_reminder ON public.trust_emails USING 
 
 
 --
+-- Name: trust_emails_one_signing_request; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_emails_one_signing_request ON public.trust_emails USING btree (offer_id, signer_position) WHERE (kind = 'signing_request'::text);
+
+
+--
 -- Name: trust_emails_one_work_order; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -15020,10 +15104,31 @@ CREATE INDEX trust_renters_insurance_terms_recorded_by ON public.trust_renters_i
 
 
 --
+-- Name: trust_screening_criteria_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_screening_criteria_pmc ON public.trust_screening_criteria USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_screening_criteria_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_screening_criteria_recorded_by ON public.trust_screening_criteria USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_screenings_application_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX trust_screenings_application_id ON public.trust_screenings USING btree (application_id);
+
+
+--
+-- Name: trust_screenings_criteria; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_screenings_criteria ON public.trust_screenings USING btree (criteria_id);
 
 
 --
@@ -16028,6 +16133,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_screening_criteria trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_screening_criteria FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_screenings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -17015,6 +17127,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_rent
 
 
 --
+-- Name: trust_screening_criteria trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_screening_criteria FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_screenings trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -17348,6 +17467,13 @@ CREATE TRIGGER trust_cutover_entry BEFORE INSERT ON public.trust_cutover_items F
 --
 
 CREATE TRIGGER trust_cutover_entry BEFORE INSERT ON public.trust_cutover_signoffs FOR EACH ROW EXECUTE FUNCTION public.trust_check_cutover_entry();
+
+
+--
+-- Name: trust_application_decisions trust_decision_override; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_decision_override BEFORE INSERT ON public.trust_application_decisions FOR EACH ROW EXECUTE FUNCTION public.trust_check_decision_override();
 
 
 --
@@ -17747,6 +17873,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_renters_insurance
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_renters_insurance_terms FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_screening_criteria trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_screening_criteria FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -19145,6 +19278,14 @@ ALTER TABLE ONLY public.trust_emails
 
 
 --
+-- Name: trust_emails trust_emails_offer_id_signer_position_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_offer_id_signer_position_fkey FOREIGN KEY (offer_id, signer_position) REFERENCES public.trust_lease_offer_signers(offer_id, "position") NOT VALID;
+
+
+--
 -- Name: trust_emails trust_emails_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19182,6 +19323,14 @@ ALTER TABLE ONLY public.trust_emails
 
 ALTER TABLE ONLY public.trust_emails
     ADD CONSTRAINT trust_emails_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id) NOT VALID;
+
+
+--
+-- Name: trust_emails trust_emails_pmc_id_offer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pmc_id_offer_id_fkey FOREIGN KEY (pmc_id, offer_id) REFERENCES public.trust_lease_offers(pmc_id, id) NOT VALID;
 
 
 --
@@ -20945,11 +21094,35 @@ ALTER TABLE ONLY public.trust_renters_insurance_terms
 
 
 --
+-- Name: trust_screening_criteria trust_screening_criteria_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_screening_criteria
+    ADD CONSTRAINT trust_screening_criteria_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_screening_criteria trust_screening_criteria_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_screening_criteria
+    ADD CONSTRAINT trust_screening_criteria_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_screenings trust_screenings_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.trust_screenings
     ADD CONSTRAINT trust_screenings_pmc_id_application_id_fkey FOREIGN KEY (pmc_id, application_id) REFERENCES public.trust_applications(pmc_id, id);
+
+
+--
+-- Name: trust_screenings trust_screenings_pmc_id_criteria_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_screenings
+    ADD CONSTRAINT trust_screenings_pmc_id_criteria_id_fkey FOREIGN KEY (pmc_id, criteria_id) REFERENCES public.trust_screening_criteria(pmc_id, id) NOT VALID;
 
 
 --
@@ -21543,4 +21716,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261018000085'),
     ('20261018000086'),
     ('20261018000087'),
-    ('20261018000088');
+    ('20261018000088'),
+    ('20261018000089'),
+    ('20261018000090');

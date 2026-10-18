@@ -483,6 +483,7 @@ FEATURES = (
     "vendor-links",
     "listing-photos",
     "leads",
+    "screening-criteria",
 )
 
 

@@ -31,6 +31,12 @@ export function ApplicationStatusPage() {
             {applicantStatus(status.status)}
           </p>
           {status.conditions && <p className="mt-2">{status.conditions}</p>}
+          {status.notice && (
+            <div className="mt-4 border-t border-line pt-4">
+              <h2 className="text-sm font-medium uppercase tracking-wide text-ink-muted">Adverse action notice</h2>
+              <p className="mt-2 whitespace-pre-line text-base text-ink" data-testid="adverse-action-notice">{status.notice}</p>
+            </div>
+          )}
         </Card>
       )}
     </div>
