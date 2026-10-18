@@ -2,7 +2,10 @@
 import { fromCents, toCents } from "./reconcile";
 import { usDate } from "./money";
 
-export type OpenCharge = { id: string; due_on: string; kind: "rent" | "fee"; memo: string | null; open: string };
+// home: the home of a lease the tenants moved from ("Birch Flats, Unit A"); null for the lease's own.
+export type OpenCharge = {
+  id: string; due_on: string; kind: "rent" | "fee"; memo: string | null; open: string; home?: string | null;
+};
 export type OwnerAccount = { id: string; owner: string };
 export type Settled = { held: string; kept: string; returned: string; returned_on: string };
 export type MoveOut = {
@@ -13,6 +16,8 @@ export type MoveOut = {
   starts_on: string;
   ends_on: string | null;
   owed: string;
+  // What the leases its tenants moved from still owe (migration 0091): the deposits pay it first.
+  carried: string;
   held: string;
   open_charges: OpenCharge[];
   owner_accounts: OwnerAccount[];
@@ -22,7 +27,7 @@ export type MoveOut = {
 // What returning the deposits now would keep for what the lease owes, and give back.
 export function preview(lease: MoveOut): { kept: string; returned: string } {
   const held = toCents(lease.held);
-  const kept = Math.min(toCents(lease.owed), held);
+  const kept = Math.min(toCents(lease.owed) + toCents(lease.carried), held);
   return { kept: fromCents(kept), returned: fromCents(held - kept) };
 }
 

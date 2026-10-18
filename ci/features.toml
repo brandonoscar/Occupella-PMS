@@ -732,3 +732,13 @@ operations = [
 browser = [
   "features.spec.ts › staff take one tenant off a lease, keep who else lives there and who guarantees it, and break the lease with its fee",
 ]
+
+[[feature]]
+id = "lease-transfers"
+statement = "Staff move a lease's tenants to another unit, maybe another owner's property (migration 0091): the lease ends the day before, a lease opens there for them, their deposits stay held for it as they agreed in writing, their prepaid rent first pays what the old lease owes, and what it still owes stays its owner's, paid first by the new lease's payments and kept first from the deposits at move-out (the founder's review, q010, q042)."
+operations = [
+  "POST /api/move-out/{lease_id}/transfer",
+]
+browser = [
+  "features.spec.ts › staff move a tenant to another owner's unit with their deposit; the new lease's payment pays the old owner first",
+]

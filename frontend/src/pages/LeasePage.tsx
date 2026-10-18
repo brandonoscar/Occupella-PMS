@@ -15,13 +15,23 @@ import { SidePanel } from "../components/SidePanel";
 import { Tabs } from "../components/Tabs";
 import { Wide } from "../components/Wide";
 import { money, usDate } from "../money";
-import { dueDayLabel, dueDayLine, holdLine, insuranceBadge, insuranceLine, rentChangeLine } from "../rent";
+import {
+  balanceDue,
+  dueDayLabel,
+  dueDayLine,
+  holdLine,
+  insuranceBadge,
+  insuranceLine,
+  moveHome,
+  rentChangeLine,
+} from "../rent";
 import type { LeaseDetail, LeasePerson, Ledger } from "../rentals";
 import { LEASE_STATUS, LEDGER_KIND, PORTAL, rentLabel, termLabel } from "../rentals";
 import { FilesCard } from "./FilesCard";
 import { InsuranceForms } from "./InsuranceForms";
 import { LeasingFeeForm } from "./LeasingFeeForm";
 import { EndLeaseForm, HouseholdCards, RemoveTenantForm } from "./LeasePeople";
+import { TransferForm } from "./LeaseTransfer";
 import type { Recorder } from "./LeaseForms";
 import {
   ChargeForm,
@@ -43,7 +53,7 @@ import { useRecord } from "./useRecord";
 
 type Panel =
   | "payment" | "charge" | "rent" | "due" | "recurring" | "insurance" | "deposit" | "leasing" | "hold"
-  | "release" | "end" | "remove";
+  | "release" | "end" | "remove" | "move";
 const PANELS: Record<Panel, string> = {
   payment: "Receive payment",
   charge: "Enter charge",
@@ -57,6 +67,7 @@ const PANELS: Record<Panel, string> = {
   release: "Release payment hold",
   end: "End lease",
   remove: "Take a tenant off the lease",
+  move: "Move to another unit",
 };
 type Tab = "summary" | "ledger" | "tenants" | "files" | "notes";
 const TABS: { value: Tab; label: string }[] = [
@@ -108,7 +119,9 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
     );
   }
   const names = lease.tenants.map((t) => t.name).join(", ");
-  const owes = Number(lease.owed) > 0;
+  // A payment pays what the leases its tenants moved from still owe too (migration 0091).
+  const due = balanceDue(lease);
+  const owes = Number(due) > 0;
   // The hold not yet released, if any: one at a time.
   const open = lease.holds.find((h) => h.ends_on === null) ?? null;
   const actions: RowAction[] = [
@@ -123,6 +136,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
       : { label: "Release payment hold", onSelect: () => setPanel("release") },
     { label: "Record NSF", onSelect: () => setTab("ledger") },
     { label: "Renew lease", onSelect: () => navigate(`/draft-leases?lease=${id}`) },
+    ...(lease.moved_to === null ? [{ label: "Move to another unit", onSelect: () => setPanel("move") }] : []),
     { label: "End lease", onSelect: () => setPanel("end") },
     { label: "Move out", onSelect: () => navigate("/move-out") },
   ];
@@ -146,10 +160,32 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
         <p className="flex flex-col items-end">
           <span className="text-sm text-ink-muted">Balance due</span>
           <span data-testid="balance-due" className={"font-display text-xl " + (owes ? "text-danger" : "text-ink")}>
-            {money(lease.owed)}
+            {money(due)}
           </span>
+          {Number(lease.carried) > 0 && lease.moved_from && (
+            <span className="text-sm text-ink-muted" data-testid="carried">
+              {`Includes ${money(lease.carried)} still owed at ${moveHome(lease.moved_from)}`}
+            </span>
+          )}
         </p>
       </div>
+      {lease.moved_from && (
+        <p className="text-sm text-ink-muted" data-testid="moved-from">
+          {`Moved here on ${usDate(lease.moved_from.moved_on)} from `}
+          <GoLink href={`/leases/${lease.moved_from.lease_id}`} className={LINK}>{moveHome(lease.moved_from)}</GoLink>
+          {". What that lease still owes is its owner's, and a payment here pays it first."}
+        </p>
+      )}
+      {lease.moved_to && (
+        <Notice tone="info">
+          {`The tenants moved to ${moveHome(lease.moved_to)} on ${usDate(lease.moved_to.moved_on)}; their deposits went with them.`}
+        </Notice>
+      )}
+      {lease.moved_to && (
+        <p className="text-sm" data-testid="moved-to">
+          <GoLink href={`/leases/${lease.moved_to.lease_id}`} className={LINK}>Open the new lease</GoLink>
+        </p>
+      )}
       {lease.on_hold && (
         <Notice tone="error">
           {`On a payment hold. ${lease.holds.filter((h) => h.in_force).map(holdLine).join(". ")}. A payment is refused unless you accept it past the hold.`}
@@ -185,6 +221,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
           {panel === "hold" && <HoldForm lease={lease} record={recordThenClose} />}
           {panel === "release" && open !== null && <ReleaseForm hold={open} record={recordThenClose} />}
           {panel === "end" && <EndLeaseForm lease={lease} record={recordThenClose} />}
+          {panel === "move" && <TransferForm lease={lease} record={recordThenClose} />}
           {panel === "remove" && leaving !== null && (
             <RemoveTenantForm lease={lease} person={leaving} record={recordThenClose} />
           )}

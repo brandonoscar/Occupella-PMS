@@ -223,6 +223,35 @@ much a lease-break fee may be, differ by state and stay the company's (NOT VERIF
 for, and the Act's exemptions), whether a tenant may leave and on what terms, and whether its
 state lets it charge a lease-break fee and how much.
 
+### Moving to another unit (migration 0091)
+
+**The rule.**
+- A security deposit is the tenant's money, held in trust for them, in every state; when a tenancy
+  ends it goes back less what the tenant owes under the lease, with an itemized statement, by a
+  deadline the state sets (California's 21 days, Civil Code 1950.5(g), the shortest found; West
+  Virginia's is in W. Va. Code 37-6A-2). A tenant moving to another unit ends the tenancy of the
+  old one. Keeping the deposit held for the new lease, instead of returning it, rests on the
+  tenant's agreement; writing down the day they agreed is how a company shows it. No state's
+  statute was found saying so in words: NOT VERIFIED.
+- Money held in trust is the owner's it belongs to, in every state (the commingling rules above):
+  rent the old lease owed its owner, paid after the move, is that owner's money, even when the
+  tenant now rents from another owner.
+
+**What the PMS does.**
+- The move needs the day the tenants agreed in writing that their deposits stay held, whenever
+  they hold one; the deposits then stay in the security-deposit trust account, theirs as before.
+- What the old lease still owes stays owed to its owner: a payment on the new lease pays it first,
+  into that owner's account, matched to the old lease's own charges (rent stays rent); the
+  tenants' prepaid rent pays it first at the move. At final move-out the deposits pay it first,
+  each lease's for its own owner, and the statement names each lease moved from and the home of
+  each charge kept for.
+- Prepaid rent moves with the tenants to the new owner's trust bank account, with its cash, and
+  the page tells staff to move that money at the bank.
+
+**Left to the company.** Whether its state treats the move as the end of the tenancy (and so asks
+a statement and a deadline anyway), inspecting the old unit and charging what was damaged there on
+the old lease, and the written agreement itself.
+
 ## A bill shared across properties, and the company's markup on a bill (migration 0083)
 
 **The rule.** A manager is the owner's agent: it pays out an owner's trust money only for that

@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { Hold, OpenCharge, RecurringCharge } from "./rent";
+import type { Hold, OpenCharge, RecurringCharge, RentLease } from "./rent";
 import {
+  balanceDue,
   bounceSummary,
+  moveHome,
   PAYMENT_METHODS,
   earliestRentChange,
   holdLine,
@@ -19,6 +21,16 @@ import {
   rentRunSummary,
   requestId,
 } from "./rent";
+
+describe("moves", () => {
+  it("adds what the leases a lease's tenants moved from still owe to its balance, and names a home", () => {
+    const lease = { owed: "100.10", carried: "1000.05" } as RentLease;
+    expect(balanceDue(lease)).toBe("1100.15");
+    expect(balanceDue({ ...lease, owed: "0.00", carried: "0.00" })).toBe("0.00");
+    expect(moveHome({ lease_id: "l0", property: "Property 0", unit: "Unit 0", moved_on: "2026-04-01" }))
+      .toBe("Property 0 · Unit 0");
+  });
+});
 
 describe("renters insurance", () => {
   const ON_FILE = {

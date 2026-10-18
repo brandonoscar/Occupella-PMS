@@ -1,5 +1,5 @@
 // Staff's rent work as the API sends it (src/pms/api/rent.py), and how it reads.
-import { day, money, usDate } from "./money";
+import { day, money, sumMoney, usDate } from "./money";
 
 export type OpenCharge = {
   id: string;
@@ -62,6 +62,9 @@ export type RentersInsurance = {
   standing: string;
   below_minimum: boolean;
 };
+// The other lease of a move (migration 0091): where a lease's tenants moved from, or to, and the
+// first day of the new lease.
+export type Move = { lease_id: string; property: string; unit: string; moved_on: string };
 export type RentLease = {
   id: string;
   property: string;
@@ -77,6 +80,10 @@ export type RentLease = {
   due_days: DueDay[];
   tenants: LeaseTenant[];
   owed: string;
+  // What the leases its tenants moved from still owe their owners: a payment here pays it first.
+  carried: string;
+  moved_from: Move | null;
+  moved_to: Move | null;
   on_hold: boolean;
   open_charges: OpenCharge[];
   payments: Paid[];
@@ -217,4 +224,15 @@ export function holdLine(hold: Hold): string {
   const ended = hold.ends_on === null ? "" : `, released from ${usDate(hold.ends_on)}${hold.released_by ? ` by ${hold.released_by}` : ""}`;
   const allowed = hold.allowed === 0 ? "" : `; ${hold.allowed} payment${hold.allowed === 1 ? "" : "s"} accepted past it`;
   return `${since}${ended}${allowed}`;
+}
+
+// What a payment on the lease pays: its own balance and what the leases its tenants moved from
+// still owe.
+export function balanceDue(lease: RentLease): string {
+  return sumMoney([lease.owed, lease.carried]);
+}
+
+// "Birch Flats · Unit A": the other home of a move.
+export function moveHome(move: Move): string {
+  return `${move.property} · ${move.unit}`;
 }

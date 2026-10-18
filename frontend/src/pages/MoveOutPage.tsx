@@ -111,7 +111,8 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
           <Badge tone={status.tone}>{status.label}</Badge>
         </div>
         <p className="text-sm text-ink-muted">
-          Lease {usDate(lease.starts_on)} to {lease.ends_on ? usDate(lease.ends_on) : "month to month"} · owes {money(lease.owed)} ·
+          Lease {usDate(lease.starts_on)} to {lease.ends_on ? usDate(lease.ends_on) : "month to month"} · owes {money(lease.owed)}
+          {Number(lease.carried) > 0 && ` and ${money(lease.carried)} at the home they moved from`} ·
           deposits held {money(lease.held)}
         </p>
         <InspectionsPanel leaseId={id} label={leaseLabel(lease)} />
@@ -131,7 +132,7 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
               <ul className="flex flex-col gap-1 text-sm" aria-label={`Owed, ${leaseLabel(lease)}`}>
                 {lease.open_charges.map((c) => (
                   <li key={c.id}>
-                    {chargeLabel(c)}: {money(c.open)}
+                    {chargeLabel(c)}{c.home ? ` (${c.home})` : ""}: {money(c.open)}
                   </li>
                 ))}
               </ul>

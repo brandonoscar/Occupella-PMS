@@ -3057,3 +3057,53 @@ test("staff set the screening criteria; an applicant reads them, is screened by 
   await expect(visitor.getByTestId("adverse-action-notice")).toContainText("A co-signer was asked for and not given");
   await visitor.close();
 });
+
+test("staff move a tenant to another owner's unit with their deposit; the new lease's payment pays the old owner first", async ({
+  page,
+}) => {
+  const moving = seed.features["lease-transfers"]!;
+  await joinAsStaff(page, moving.manager);
+
+  // Jamie Sample's lease at Birch Flats (Demo Owner A's) owes something more: a lost key.
+  await openLease(page, "Birch Flats, Unit B");
+  const charge = await leasePanel(page, "Enter charge");
+  await charge.getByLabel("Add a").selectOption("fee");
+  await charge.getByLabel("Amount", { exact: true }).fill("75.00");
+  await charge.getByLabel("What for").fill("Lost key");
+  await charge.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByText("Fee of $75.00 added.")).toBeVisible();
+
+  // They move to Aspen Row's vacant Unit 2 (Demo Owner B's) today, having agreed in writing that
+  // their deposit stays held.
+  const move = await leasePanel(page, "Move to another unit");
+  await move.getByLabel("Move to").selectOption({ label: "Aspen Row · Unit 2" });
+  await move.getByLabel("Monthly rent there").fill("1240.00");
+  await move.getByLabel(/agreed in writing that their .* deposit stays held, on/).fill(today());
+  await move.getByRole("button", { name: "Move the tenants" }).click();
+  await expect(page.getByText(/^Moved to Aspen Row · Unit 2\./)).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Aspen Row · Unit 2 · Jamie Sample" })).toBeVisible();
+  await expect(page.getByTestId("moved-from")).toContainText(`Moved here on ${us(today())} from Birch Flats · Unit B`);
+  const carried = page.getByTestId("carried");
+  await expect(carried).toContainText("still owed at Birch Flats · Unit B");
+  const owedThere = /Includes (\$[\d,]+\.\d\d)/.exec((await carried.textContent()) ?? "")![1]!;
+  await expect(page.getByTestId("balance-due")).toHaveText(owedThere);
+  await expect(page.getByTestId("deposit-held")).not.toHaveText("$0.00");
+
+  // A payment here pays what Birch Flats is owed first, into Demo Owner A's account.
+  const pay = await leasePanel(page, "Receive payment");
+  await pay.getByLabel("Payment received").fill(owedThere.replace(/[$,]/g, ""));
+  await pay.getByLabel("Check or reference").fill("Check 901");
+  await pay.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.getByText(`${owedThere} paid what is owed.`)).toBeVisible();
+  await expect(page.getByTestId("balance-due")).toHaveText("$0.00");
+  await expect(page.getByTestId("carried")).toHaveCount(0);
+
+  // The old lease ended yesterday, is paid up and says where they went; Move-outs lists only the
+  // new one, with the deposit.
+  await page.getByRole("link", { name: "Birch Flats · Unit B" }).click();
+  await expect(page.getByText(/The tenants moved to Aspen Row · Unit 2 on .*; their deposits went with them\./)).toBeVisible();
+  await expect(page.getByTestId("balance-due")).toHaveText("$0.00");
+  await section(page, "Move-outs");
+  await expect(page.getByText("Aspen Row, Unit 2")).toBeVisible();
+  await expect(page.getByText("Birch Flats, Unit B")).toHaveCount(0);
+});

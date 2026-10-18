@@ -27,6 +27,9 @@ const LEASE: LeaseDetail = {
     { id: "t2", name: "Tenant 2", email: null, phone: null, portal: "no login", login_email: null, left_on: null, deposit_to: null },
   ],
   owed: "1550.00",
+  carried: "0.00",
+  moved_from: null,
+  moved_to: null,
   on_hold: false,
   open_charges: [
     { id: "c1", due_on: "2026-10-01", kind: "rent", memo: "Rent due 2026-10-01", amount: "1500.00", open: "1500.00" },
@@ -122,6 +125,39 @@ describe("LeasePage", () => {
     expect(document.body.textContent).toContain("Pet rent: $35.00 a month from 01/01/2026");
     expect(screen.getByText("Not asked for.")).toBeTruthy();
     expect(screen.queryByText(/payment hold/)).toBeNull();
+  });
+
+  it("adds what the lease its tenants moved from still owes to the balance due, and links it", async () => {
+    server({
+      ...LEASE, owed: "100.00", carried: "1000.00",
+      moved_from: { lease_id: "l0", property: "Property 0", unit: "Unit 0", moved_on: "2026-04-01" },
+    });
+    await open();
+    expect(screen.getByTestId("balance-due").textContent).toBe("$1,100.00");
+    expect(screen.getByTestId("carried").textContent).toBe("Includes $1,000.00 still owed at Property 0 · Unit 0");
+    expect(screen.getByTestId("moved-from").textContent).toBe(
+      "Moved here on 04/01/2026 from Property 0 · Unit 0. What that lease still owes is its owner's, and a payment here pays it first.",
+    );
+    expect(screen.getByRole("link", { name: "Property 0 · Unit 0" }).getAttribute("href")).toBe("/leases/l0");
+  });
+
+  it("says where a lease's tenants moved, and offers no second move", async () => {
+    server({ ...LEASE, moved_to: { lease_id: "l9", property: "Property 9", unit: "Unit 9", moved_on: "2026-11-01" } });
+    await open();
+    expect(document.body.textContent).toContain(
+      "The tenants moved to Property 9 · Unit 9 on 11/01/2026; their deposits went with them.",
+    );
+    expect(screen.getByRole("link", { name: "Open the new lease" }).getAttribute("href")).toBe("/leases/l9");
+    expect(screen.queryByTestId("carried")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for this lease" }));
+    expect(screen.queryByRole("menuitem", { name: "Move to another unit" })).toBeNull();
+  });
+
+  it("opens Move to another unit from the ⋯ menu", async () => {
+    server();
+    await open();
+    const moving = panel("Move to another unit", true);
+    expect(await within(moving).findByText(/no such page|Loading/)).toBeTruthy();
   });
 
   it("says nothing is due in plain ink, and a lease to come", async () => {

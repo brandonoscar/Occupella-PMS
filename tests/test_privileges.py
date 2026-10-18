@@ -177,6 +177,8 @@ TABLES = {
     # A tenant leaving a lease: written only by trust_remove_lease_tenant. Who else lives there,
     # guarantors and lease-break fee terms: staff add them with inserts; a removal is a row.
     "trust_lease_departures": {"SELECT"},
+    # A lease's tenants moving to another unit: written only by trust_transfer_lease (0091).
+    "trust_lease_transfers": {"SELECT"},
     "trust_lease_occupants": {"SELECT", "INSERT"},
     "trust_lease_pets": {"SELECT", "INSERT"},
     "trust_lease_vehicles": {"SELECT", "INSERT"},
@@ -324,11 +326,14 @@ FUNCTIONS = {
     "trust_approve_bank_reconciliation(uuid,uuid)": {"trust_app"},
     "trust_return_deposit(uuid,uuid,text,text,timestamptz)": {"trust_app"},
     "trust_remove_lease_tenant(uuid,uuid,uuid,date,uuid)": {"trust_app"},
+    "trust_transfer_lease(uuid,uuid,uuid,date,date,numeric,text,date)": {"trust_app"},
     "trust_propose_journal_entry(uuid,date,text,transfer_request[])": {"trust_app"},
     "trust_post_journal_entry(uuid,uuid)": {"trust_app"},
     "trust_decline_journal_entry(uuid,uuid,text)": {"trust_app"},
     # What a lease owes, as the deposit's return counts it: the move-out page reads it.
     "trust_lease_owed(uuid)": {"trust_app"},
+    # The leases a lease's tenants moved from: the rent and move-out pages read them.
+    "trust_lease_moved_from(uuid)": {"trust_app"},
     # The app approves only month-end preparations, which another staff member made: this one
     # is the owner's, called by trust_approve_bank_reconciliation.
     "trust_approve_reconciliation(uuid,uuid,timestamptz,timestamptz,numeric,text,text)": set(),
@@ -514,6 +519,7 @@ SECURITY_DEFINER = {
     "trust_approve_bank_reconciliation(uuid,uuid)",
     "trust_return_deposit(uuid,uuid,text,text,timestamptz)",
     "trust_remove_lease_tenant(uuid,uuid,uuid,date,uuid)",
+    "trust_transfer_lease(uuid,uuid,uuid,date,date,numeric,text,date)",
     "trust_propose_journal_entry(uuid,date,text,transfer_request[])",
     "trust_post_journal_entry(uuid,uuid)",
     "trust_decline_journal_entry(uuid,uuid,text)",

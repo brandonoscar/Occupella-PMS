@@ -97,8 +97,10 @@ def test_a_move_out_ends_the_lease_charges_damage_and_returns_the_rest(
             "kind": "fee",
             "memo": "Damage: broken window",
             "open": "350.00",
+            "home": None,  # the lease's own
         }
     ]
+    assert shown["carried"] == "0.00"  # no lease moved into it
 
     request = uuid.uuid4()
     assert ok(give_back(client, lease, request_id=request), 201) == {"returned": "850.00"}

@@ -16,7 +16,7 @@ const ME: Me = {
 
 const ENDED: MoveOut = {
   lease_id: "l1", property: "Property 1", unit: "Unit 1", tenants: ["Tenant 1"],
-  starts_on: "2026-01-01", ends_on: "2026-06-30", owed: "350.00", held: "1200.00",
+  starts_on: "2026-01-01", ends_on: "2026-06-30", owed: "350.00", carried: "0.00", held: "1200.00",
   open_charges: [{ id: "c1", due_on: "2026-06-30", kind: "fee", memo: "Broken window", open: "350.00" }],
   owner_accounts: [{ id: "a1", owner: "Owner 1" }, { id: "a2", owner: "Owner 2" }],
   settled: null,
@@ -27,9 +27,9 @@ const DONE: MoveOut = {
   settled: { held: "1200.00", kept: "350.00", returned: "850.00", returned_on: "2026-07-05" },
 };
 
-function server(refuse: Record<string, string> = {}) {
+function server(refuse: Record<string, string> = {}, leases: MoveOut[] = [ENDED, OPEN, DONE]) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
-    if (init?.method !== "POST") return new Response(JSON.stringify([ENDED, OPEN, DONE]), { status: 200 });
+    if (init?.method !== "POST") return new Response(JSON.stringify(leases), { status: 200 });
     if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
     if (path.endsWith("/end")) return new Response(null, { status: 204 });
     if (path.endsWith("/return")) return new Response(JSON.stringify({ returned: "850.00" }), { status: 201 });
@@ -45,6 +45,22 @@ const posted = (fetch: ReturnType<typeof server>) =>
     .map(([path, init]) => [path, JSON.parse(String(init?.body))]);
 
 describe("MoveOutPage", () => {
+  it("counts what the lease its tenants moved from still owes, naming its home", async () => {
+    server({}, [{
+      ...ENDED, carried: "500.00",
+      open_charges: [
+        { id: "c0", due_on: "2026-03-01", kind: "rent", memo: "March rent", open: "500.00", home: "Property 0, Unit 0" },
+        ...ENDED.open_charges,
+      ],
+    }]);
+    render(<MoveOutPage me={ME} />);
+    expect((await screen.findByLabelText("Owed, Property 1 / Unit 1: Tenant 1")).textContent).toBe(
+      "03/01/2026 rent: March rent (Property 0, Unit 0): $500.00" + "06/30/2026 fee: Broken window: $350.00",
+    );
+    expect(document.body.textContent).toContain("owes $350.00 and $500.00 at the home they moved from");
+    expect(screen.getByText(/Keeps \$850.00 for what the lease owes; \$350.00 goes back/)).toBeTruthy();
+  });
+
   it("returns an ended lease's deposit, keeping what it owes for the chosen owner's account", async () => {
     const fetch = server();
     render(<MoveOutPage me={ME} />);
