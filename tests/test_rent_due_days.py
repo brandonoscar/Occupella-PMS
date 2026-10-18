@@ -224,6 +224,15 @@ def test_the_run_counts_what_it_charged_on_due_days(conn, pmc):
     ).fetchone() == (1, 1)
 
 
+@pytest.mark.parametrize(
+    "charge", ["trust_charge_rent_on_due_days", "trust_charge_recurring_on_due_days"]
+)
+@pytest.mark.parametrize(("month", "as_of"), [(None, OCT_1), (OCT_1, None)])
+def test_a_due_day_run_needs_its_month_and_its_day(conn, pmc, charge, month, as_of):
+    with pytest.raises(psycopg.errors.InvalidParameterValue, match="as of a day"):
+        conn.execute(f"SELECT {charge}(%s, %s, %s)", (pmc.pmc_id, month, as_of))
+
+
 def test_a_month_with_its_rent_charged_already_is_not_charged_again(conn, pmc):
     # October's rent and parking came over from the old system, due on the 3rd; the lease is due
     # on the 10th from October.

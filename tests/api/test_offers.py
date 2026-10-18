@@ -187,17 +187,19 @@ def test_a_tenant_signs_their_renewal_and_staff_complete_it(
 
 
 @pytest.mark.parametrize(
-    ("due_day", "july_charged", "kept"),
+    ("due_day", "july_charged", "ends_on", "kept"),
     [
-        (5, False, [(date(2027, 7, 1), 5)]),
+        (5, False, None, [(date(2027, 7, 1), 5)]),
         # July was charged on the lease it renews: the renewal is charged its July days at once,
         # and keeps the due day from August.
-        (5, True, [(date(2027, 8, 1), 5)]),
-        (None, False, []),
+        (5, True, None, [(date(2027, 8, 1), 5)]),
+        # ...unless it ends in July: no month of it is left to be due on the 5th.
+        (5, True, "2027-07-31", []),
+        (None, False, None, []),
     ],
 )
 def test_a_renewal_keeps_the_rent_due_day_of_the_lease_it_renews(
-    client, other_client, conn, staff, place, due_day, july_charged, kept
+    client, other_client, conn, staff, place, due_day, july_charged, ends_on, kept
 ):
     if due_day is not None:
         conn.execute(
@@ -211,7 +213,7 @@ def test_a_renewal_keeps_the_rent_due_day_of_the_lease_it_renews(
         f"/api/leasing/leases/{place.lease}/renewal",
         json=terms(
             starts_on="2027-07-15",
-            ends_on=None,
+            ends_on=ends_on,
             signers=[{"name": "Tenant 1", "email": "tenant1@example.com"}],
         ),
     ).json()
