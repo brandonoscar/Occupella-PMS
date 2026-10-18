@@ -173,8 +173,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and archive one. A search in the bar finds a property, unit, tenant or owner (`/api/search`).
   Lists come a page at a time (`Paged`: 50 by default, at most 200); move-outs at `/move-out` (`src/pms/api/moveout.py`). Leasing:
   Listings at `/rental-listings` (`GET /api/leasing/vacancies`: each unit coming free within 90
-  days or with an open link, its rent and available day; List opens its link if it has none and
-  puts it on the public page, Unlist takes it off), Applicants at `/applicants` (Open, Rejected,
+  days or with an open link, its rent and available day, days listed and photos; List opens its
+  link if it has none and puts it on the public page, Unlist takes it off, Photos keeps the unit's
+  listing photos), Applicants at `/applicants` (Open, Rejected,
   Withdrawn, All) with each application's page at `/applicants/<id>` (screen, approve or reject,
   record a withdrawal, Create draft lease), Draft leases at `/draft-leases` (Waiting for
   signatures, Leases made, Void, All; New draft lease in a side panel) with each at
@@ -245,6 +246,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`/listings?pmc=<id>`, `src/pms/api/listings.py`, migration 0047): no login, it shows each
   listed unit's property, unit, rent and description, and an applicant applies through the
   listing as through its link until it is removed or the link closed. Nothing is syndicated.
+  Since migration 0087 a listed unit shows its photos there (`listing_photo` documents about the
+  unit: JPEG or PNG, twelve at most, oldest first), each served to anyone by
+  `GET /api/listings/<pmc>/photos/<id>` only while the unit is listed and the photo not removed;
+  staff keep them from Listings (`GET /api/leasing/units/<id>/photos`) or the unit's Files.
 - Every table we add carries `pmc_id uuid`. It maps to Occupella's `companies.id` at merge time.
 - Table names: `pgledger_*` from upstream, `trust_*` for ours. Our functions and triggers are
   `trust_*` too. A report function is `trust_report_<name>`. `tests/test_schema_conventions.py`

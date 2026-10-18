@@ -2898,3 +2898,53 @@ test("staff send a plumber their link; the plumber schedules the visit and says 
   await expect(plumber.getByRole("alert")).toHaveText("this link was taken back or doesn't exist");
   await plumber.close();
 });
+
+test("staff add photos to a listed unit, which its public listing shows; a removed one leaves it", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["listing-photos"]!;
+  // A real 1x1 PNG, so the browser decodes what the public page serves.
+  const pixel = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+    "base64",
+  );
+  await joinAsStaff(page, people.manager);
+  await section(page, "Listings");
+  const unit = page.getByRole("row", { name: "Aspen Row, Unit 2" });
+  await unit.getByRole("button", { name: "List", exact: true }).click();
+  const listing = page.getByRole("dialog", { name: "List on the public page" });
+  await listing.getByLabel("Rent a month").fill("1240.00");
+  await listing.getByRole("button", { name: "List it" }).click();
+  await expect(page.getByText("Listed Aspen Row, Unit 2 at $1,240.00.")).toBeVisible();
+  await expect(unit.getByRole("cell").nth(5)).toHaveText("1 day");
+
+  // Two photos from the unit's row.
+  await unit.getByRole("button", { name: "Photos, Aspen Row, Unit 2" }).click();
+  const photos = page.getByRole("dialog", { name: "Listing photos" });
+  await expect(photos).toContainText("No photo yet.");
+  const picker = photos.getByLabel("Add a photo (JPEG or PNG)");
+  await picker.setInputFiles({ name: "Kitchen.png", mimeType: "image/png", buffer: pixel });
+  await expect(photos.getByText("Added Kitchen.")).toBeVisible();
+  await picker.setInputFiles({ name: "Porch.png", mimeType: "image/png", buffer: pixel });
+  await expect(photos.getByText("Added Porch.")).toBeVisible();
+  await expect(photos.getByRole("img")).toHaveCount(2);
+  await photos.getByRole("button", { name: "Close" }).click();
+  await expect(unit.getByRole("cell").nth(6)).toHaveText("2");
+
+  // Anyone sees them on the public page, in the order they were added.
+  const visitor = await (await browser.newContext()).newPage();
+  await visitor.goto(`/listings?pmc=${people.pmc_id}`);
+  const shown = visitor.getByRole("list", { name: "Photos, Aspen Row, Unit 2" }).getByRole("img");
+  await expect(shown).toHaveCount(2);
+  await expect(shown.nth(1)).toHaveAttribute("alt", "Aspen Row, Unit 2, photo 2");
+  await expect.poll(() => shown.first().evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBe(1);
+
+  // Removed, a photo leaves the public page.
+  await unit.getByRole("button", { name: "Photos, Aspen Row, Unit 2" }).click();
+  await photos.getByRole("button", { name: "Remove Porch" }).click();
+  await expect(photos.getByText("Removed Porch.")).toBeVisible();
+  await visitor.reload();
+  await expect(shown).toHaveCount(1);
+  await visitor.close();
+});

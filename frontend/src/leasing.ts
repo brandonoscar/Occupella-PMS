@@ -11,6 +11,8 @@ export type Vacancy = {
   monthly_rent: string;
   description: string | null;
   listed_at: string;
+  // The unit's listing photos, oldest first (migration 0087).
+  photos: string[];
 };
 export type Vacancies = { pmc: string; listings: Vacancy[] };
 
@@ -113,10 +115,17 @@ export type OpenUnit = {
   link_id: string | null;
   link_rent: string | null;
   applications: number;
-  // The link's listing on the public page, while it is there.
+  // The link's listing on the public page, while it is there, since when and for how many days.
   listing_id: string | null;
   description: string | null;
+  listed_at: string | null;
+  days_listed: number | null;
+  // How many listing photos the unit has (migration 0087).
+  photos: number;
 };
+
+// A unit's listing photo, as staff keep them.
+export type ListingPhoto = { id: string; title: string; uploaded_at: string };
 
 // What an applicant reads about their application.
 export function applicantStatus(status: ApplicantStatus["status"]): string {

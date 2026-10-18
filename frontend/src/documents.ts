@@ -11,7 +11,8 @@ export type Kind =
   | "tenant_document"
   | "lease_document"
   | "vendor_document"
-  | "request_photo";
+  | "request_photo"
+  | "listing_photo";
 export type ContentType = "application/pdf" | "image/jpeg" | "image/png";
 export type Subject = { id: string; label: string };
 export type Document = {
@@ -43,13 +44,14 @@ export const KINDS: { kind: Kind; label: string; about: string }[] = [
   { kind: "lease_document", label: "Lease document", about: "Lease" },
   { kind: "vendor_document", label: "Vendor document", about: "Vendor" },
   { kind: "request_photo", label: "Request photo", about: "Maintenance request" },
+  { kind: "listing_photo", label: "Listing photo", about: "Unit" },
 ];
 
 // What a file may be attached to, in the order Upload offers them, and the categories each takes
 // (the first one chosen at first).
 export const ATTACHED: { about: string; kinds: Kind[] }[] = [
   { about: "Property", kinds: ["property_document"] },
-  { about: "Unit", kinds: ["unit_document"] },
+  { about: "Unit", kinds: ["unit_document", "listing_photo"] },
   { about: "Lease", kinds: ["lease_document", "move_out_photo"] },
   { about: "Tenant", kinds: ["tenant_document"] },
   { about: "Owner", kinds: ["owner_document"] },

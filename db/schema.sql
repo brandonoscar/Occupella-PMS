@@ -12396,7 +12396,7 @@ ALTER TABLE ONLY public.trust_document_removals
 --
 
 ALTER TABLE public.trust_documents
-    ADD CONSTRAINT trust_documents_kind_check CHECK ((kind = ANY (ARRAY['w9'::text, 'receipt'::text, 'move_out_photo'::text, 'owner_document'::text, 'work_order_photo'::text, 'property_document'::text, 'unit_document'::text, 'tenant_document'::text, 'lease_document'::text, 'vendor_document'::text, 'company_logo'::text, 'request_photo'::text]))) NOT VALID;
+    ADD CONSTRAINT trust_documents_kind_check CHECK ((kind = ANY (ARRAY['w9'::text, 'receipt'::text, 'move_out_photo'::text, 'owner_document'::text, 'work_order_photo'::text, 'property_document'::text, 'unit_document'::text, 'tenant_document'::text, 'lease_document'::text, 'vendor_document'::text, 'company_logo'::text, 'request_photo'::text, 'listing_photo'::text]))) NOT VALID;
 
 
 --
@@ -12405,6 +12405,14 @@ ALTER TABLE public.trust_documents
 
 ALTER TABLE public.trust_documents
     ADD CONSTRAINT trust_documents_lease_check CHECK (((kind = ANY (ARRAY['move_out_photo'::text, 'lease_document'::text])) = (lease_id IS NOT NULL))) NOT VALID;
+
+
+--
+-- Name: trust_documents trust_documents_listing_photo_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_documents
+    ADD CONSTRAINT trust_documents_listing_photo_check CHECK (((kind <> 'listing_photo'::text) OR (content_type = ANY (ARRAY['image/png'::text, 'image/jpeg'::text])))) NOT VALID;
 
 
 --
@@ -12460,7 +12468,7 @@ ALTER TABLE public.trust_documents
 --
 
 ALTER TABLE public.trust_documents
-    ADD CONSTRAINT trust_documents_unit_check CHECK (((kind = 'unit_document'::text) = (unit_id IS NOT NULL))) NOT VALID;
+    ADD CONSTRAINT trust_documents_unit_check CHECK (((kind = ANY (ARRAY['unit_document'::text, 'listing_photo'::text])) = (unit_id IS NOT NULL))) NOT VALID;
 
 
 --
@@ -21120,4 +21128,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261018000083'),
     ('20261018000084'),
     ('20261018000085'),
-    ('20261018000086');
+    ('20261018000086'),
+    ('20261018000087');

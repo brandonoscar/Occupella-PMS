@@ -16,7 +16,8 @@ import { Said } from "../components/Said";
 import { PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
-import type { OpenUnit } from "../leasing";
+import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
+import type { ListingPhoto, OpenUnit } from "../leasing";
 import { money, usDate } from "../money";
 import type { Paged } from "../rentals";
 import { scopeParams, useScope } from "../scope";
@@ -27,7 +28,18 @@ import { useRecord } from "./useRecord";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
-type Panel = { kind: "list" | "link"; unit: OpenUnit };
+type Panel = { kind: "list" | "link" | "photos"; unit: OpenUnit };
+
+const TITLES: Record<Panel["kind"], string> = {
+  list: "List on the public page",
+  link: "Open an application link",
+  photos: "Listing photos",
+};
+
+// How long a listing has been up, counting the day it went up.
+export function daysListed(days: number | null): string {
+  return days === null ? "" : days === 1 ? "1 day" : `${days} days`;
+}
 
 // The public vacancy page's address, to give out.
 export function publicPage(pmcId: string, origin = window.location.origin): string {
@@ -35,9 +47,10 @@ export function publicPage(pmcId: string, origin = window.location.origin): stri
 }
 
 // Leasing → Listings (ADR 0006, Buildium's): each unit coming free within 90 days (or with an open
-// application link), when, at what rent, and whether it is on the public vacancy page; List puts
-// it there (opening its link if it has none) and Unlist takes it off. Its ⋯ menu opens a link to
-// post elsewhere, or closes the open one. Nothing is sent to listing sites.
+// application link), when, at what rent, and whether it is on the public vacancy page and for how
+// many days; List puts it there (opening its link if it has none) and Unlist takes it off. Photos
+// keeps the unit's photos the public page shows (migration 0087). Its ⋯ menu opens a link to post
+// elsewhere, or closes the open one. Nothing is sent to listing sites.
 export function RentalListingsPage({ me }: { me: Me }) {
   const [scope, setScope] = useScope();
   const [number, setNumber] = useState(1);
@@ -97,6 +110,8 @@ export function RentalListingsPage({ me }: { me: Me }) {
                   <th className="text-right">Rent</th>
                   <th className="text-right">Applications</th>
                   <th className="text-left">Public page</th>
+                  <th className="text-right">Days listed</th>
+                  <th className="text-right">Photos</th>
                   <th><span className="sr-only">List</span></th>
                   <th><span className="sr-only">Actions</span></th>
                 </tr>
@@ -130,6 +145,13 @@ export function RentalListingsPage({ me }: { me: Me }) {
                           ? <Badge tone="positive" data-testid="listed">Listed</Badge>
                           : <Badge data-testid="listed">Not listed</Badge>}
                       </td>
+                      <td className="text-right whitespace-nowrap">{daysListed(unit.days_listed)}</td>
+                      <td className="text-right">
+                        <Button variant="secondary" size="sm" aria-label={`Photos, ${name}`}
+                          onClick={() => setPanel({ kind: "photos", unit })}>
+                          {unit.photos}
+                        </Button>
+                      </td>
                       <td className="text-right">
                         {unit.listing_id ? (
                           <Button variant="secondary" size="sm"
@@ -152,12 +174,11 @@ export function RentalListingsPage({ me }: { me: Me }) {
         </>
       )}
       {panel !== null && (
-        <SidePanel title={panel.kind === "list" ? "List on the public page" : "Open an application link"}
-          onClose={() => setPanel(null)}>
+        <SidePanel title={TITLES[panel.kind]} onClose={() => setPanel(null)}>
           <p className="text-base text-ink">{panel.unit.property}, {panel.unit.unit}</p>
-          {panel.kind === "list"
-            ? <ListForm unit={panel.unit} record={recordThenClose} />
-            : <LinkForm unit={panel.unit} record={record} />}
+          {panel.kind === "list" ? <ListForm unit={panel.unit} record={recordThenClose} />
+            : panel.kind === "link" ? <LinkForm unit={panel.unit} record={record} />
+            : <PhotosForm unit={panel.unit} onChange={() => setRuns((n) => n + 1)} />}
           <Notice tone="error">{refused}</Notice>
         </SidePanel>
       )}
@@ -221,5 +242,69 @@ function LinkForm({ unit, record }: { unit: OpenUnit; record: Recorder }) {
         </p>
       )}
     </Form>
+  );
+}
+
+// A unit's listing photos (migration 0087): the public page shows them, oldest first, while the
+// unit is listed. Each is a JPEG or PNG of at most 5 MB, twelve at most; Remove takes one off.
+function PhotosForm({ unit, onChange }: { unit: OpenUnit; onChange: () => void }) {
+  const [photos, setPhotos] = useState<ListingPhoto[] | null>(null);
+  const [unread, setUnread] = useState("");
+  const [picker, setPicker] = useState(0);
+  const [problem, setProblem] = useState("");
+  const [runs, setRuns] = useState(0);
+  const { said, error, record } = useRecord(() => {
+    setRuns((n) => n + 1);
+    onChange();
+  });
+  useEffect(() => {
+    api.get<ListingPhoto[]>(`/api/leasing/units/${unit.unit_id}/photos`).then(setPhotos)
+      .catch((why) => setUnread(why instanceof ApiError ? why.detail : String(why)));
+  }, [unit.unit_id, runs]);
+
+  async function add(picked: File | undefined) {
+    setProblem("");
+    if (!picked) return;
+    const type = typeOf(picked);
+    if (type === null || type === "application/pdf") return setProblem("A photo is a JPEG or a PNG.");
+    if (picked.size > MAX_BYTES) return setProblem("A photo is at most 5 MB.");
+    const title = titleOf(picked.name);
+    const body = {
+      kind: "listing_photo", about_id: unit.unit_id, title, content_type: type,
+      content_base64: toBase64(new Uint8Array(await picked.arrayBuffer())),
+    };
+    if (await record("/api/documents", body, () => `Added ${title}.`)) setPicker((n) => n + 1);
+  }
+
+  if (photos === null) return <Notice tone={unread ? "error" : "info"}>{unread || "Loading"}</Notice>;
+  return (
+    <div className="flex flex-col gap-3">
+      {photos.length === 0 ? (
+        <p className="text-sm text-ink-subtle">No photo yet. The public page shows the ones added here.</p>
+      ) : (
+        <ul className="grid grid-cols-2 gap-3" aria-label={`Listing photos, ${unit.property}, ${unit.unit}`}>
+          {photos.map((photo) => (
+            <li key={photo.id} className="flex flex-col gap-1">
+              <img src={`/api/documents/${photo.id}/file`} alt={photo.title} className="h-32 w-full rounded-sm object-cover" />
+              <div className="flex items-center justify-between gap-2 text-sm">
+                <span className="truncate text-ink-muted">{photo.title}</span>
+                <Button variant="ghost" size="sm" aria-label={`Remove ${photo.title}`}
+                  onClick={() => record(`/api/documents/${photo.id}/remove`, {}, () => `Removed ${photo.title}.`)}>
+                  Remove
+                </Button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      <label htmlFor={`photo-${unit.unit_id}`} className="flex flex-col gap-1.5 text-sm text-ink-muted">
+        Add a photo (JPEG or PNG)
+        <input key={picker} id={`photo-${unit.unit_id}`} type="file" accept=".jpg,.jpeg,.png" className="text-sm text-ink"
+          onChange={(e) => void add(e.target.files?.[0])} />
+      </label>
+      <Notice tone="error">{problem}</Notice>
+      <Said>{said}</Said>
+      <Notice tone="error">{error}</Notice>
+    </div>
   );
 }

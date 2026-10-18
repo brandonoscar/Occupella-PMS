@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { OpenUnit } from "../leasing";
-import { RentalListingsPage, publicPage } from "./RentalListingsPage";
+import { RentalListingsPage, daysListed, publicPage } from "./RentalListingsPage";
 
 afterEach(() => {
   cleanup();
@@ -16,10 +16,12 @@ const ME: Me = {
 const VACANT: OpenUnit = {
   unit_id: "u1", property_id: "pr1", property: "Property 1", unit: "Unit 1", available_on: "2026-11-01",
   last_rent: "1400.00", link_id: null, link_rent: null, applications: 0, listing_id: null, description: null,
+  listed_at: null, days_listed: null, photos: 0,
 };
 const LISTED: OpenUnit = {
   ...VACANT, unit_id: "u2", unit: "Unit 2", available_on: null, link_id: "k2", link_rent: "1550.00",
-  applications: 3, listing_id: "s2", description: "Corner unit.",
+  applications: 3, listing_id: "s2", description: "Corner unit.", listed_at: "2026-10-09T15:00:00Z",
+  days_listed: 10, photos: 2,
 };
 const LINKED: OpenUnit = { ...VACANT, unit_id: "u3", unit: "Unit 3", link_id: "k3", link_rent: "1600.00" };
 
@@ -51,6 +53,10 @@ describe("RentalListingsPage", () => {
       ["Property 1, Unit 1", "11/01/2026", "$1,400.00", "0", "Not listed"],
       ["Property 1, Unit 2", "Leased", "$1,550.00", "3", "Listed"],
       ["Property 1, Unit 3", "11/01/2026", "$1,600.00", "0", "Not listed"],
+    ]);
+    // How long each listing has been up, and how many photos its unit has.
+    expect(rows.map((row) => within(row).getAllByRole("cell").slice(5, 7).map((c) => c.textContent))).toEqual([
+      ["", "0"], ["10 days", "2"], ["", "0"],
     ]);
     expect(screen.getByRole("link", { name: "Property 1, Unit 1" }).getAttribute("href")).toBe("/units/u1");
   });
@@ -135,6 +141,50 @@ describe("RentalListingsPage", () => {
     render(<RentalListingsPage me={ME} />);
 
     await screen.findByText("No unit comes free in the next 90 days.");
+  });
+
+  it("keeps a unit's listing photos: shows them, adds a JPEG or PNG and removes one", async () => {
+    const photos = [
+      { id: "d1", title: "Kitchen", uploaded_at: "2026-10-09T15:00:00Z" },
+      { id: "d2", title: "Porch", uploaded_at: "2026-10-09T15:01:00Z" },
+    ];
+    const fetch = vi.fn(async (path: string, init?: RequestInit) => {
+      if (init?.method === "POST") return new Response(JSON.stringify({ id: "d3" }), { status: 201 });
+      if (path === "/api/leasing/units/u2/photos") return new Response(JSON.stringify(photos));
+      return new Response(JSON.stringify({ items: [VACANT, LISTED], total: 2, page: 1, per_page: 50 }));
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<RentalListingsPage me={ME} />);
+    const row = await screen.findByRole("row", { name: "Property 1, Unit 2" });
+
+    fireEvent.click(within(row).getByRole("button", { name: "Photos, Property 1, Unit 2" }));
+    const panel = screen.getByRole("dialog", { name: "Listing photos" });
+    const shown = await within(panel).findByRole("list", { name: "Listing photos, Property 1, Unit 2" });
+    expect(within(shown).getAllByRole("img").map((img) => [img.getAttribute("alt"), img.getAttribute("src")])).toEqual([
+      ["Kitchen", "/api/documents/d1/file"], ["Porch", "/api/documents/d2/file"],
+    ]);
+
+    const picker = within(panel).getByLabelText("Add a photo (JPEG or PNG)");
+    fireEvent.change(picker, { target: { files: [new File(["%PDF-"], "lease.pdf", { type: "application/pdf" })] } });
+    expect(await within(panel).findByText("A photo is a JPEG or a PNG.")).toBeTruthy();
+    const png = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], "Living room.png", { type: "image/png" });
+    fireEvent.change(picker, { target: { files: [png] } });
+    await within(panel).findByText("Added Living room.");
+    fireEvent.click(within(panel).getByRole("button", { name: "Remove Porch" }));
+    await within(panel).findByText("Removed Porch.");
+
+    const sent = fetch.mock.calls.filter(([, init]) => init?.method === "POST").map(([path, init]) => [path, JSON.parse(String(init?.body))]);
+    expect(sent).toEqual([
+      ["/api/documents", { kind: "listing_photo", about_id: "u2", title: "Living room", content_type: "image/png", content_base64: "iVBORw==" }],
+      ["/api/documents/d2/remove", {}],
+    ]);
+    // Each change reads the photos and the list again.
+    expect(fetch.mock.calls.filter(([path]) => path === "/api/leasing/units/u2/photos").length).toBe(3);
+    expect(fetch.mock.calls.filter(([path]) => path.startsWith("/api/leasing/vacancies?")).length).toBe(3);
+  });
+
+  it("says how many days a listing has been up", () => {
+    expect([daysListed(null), daysListed(1), daysListed(2)]).toEqual(["", "1 day", "2 days"]);
   });
 
   it("builds the public page's address from where the portal is served", () => {

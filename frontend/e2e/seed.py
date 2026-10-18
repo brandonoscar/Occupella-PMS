@@ -481,6 +481,7 @@ FEATURES = (
     "emergencies",
     "recurring-work-orders",
     "vendor-links",
+    "listing-photos",
 )
 
 

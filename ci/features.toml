@@ -511,6 +511,17 @@ browser = [
 ]
 
 [[feature]]
+id = "listing-photos"
+statement = "On Listings staff see how many days each listing has been up and keep each unit's photos (JPEG or PNG, twelve at most), which the public vacancy page shows, oldest first, while the unit is listed; a removed photo leaves it."
+operations = [
+  "GET /api/leasing/units/{unit_id}/photos",
+  "GET /api/listings/{pmc_id}/photos/{photo_id}",
+]
+browser = [
+  "features.spec.ts › staff add photos to a listed unit, which its public listing shows; a removed one leaves it",
+]
+
+[[feature]]
 id = "lease-offers"
 statement = "On Draft leases (Waiting for signatures, Leases made, Void, All, by property group) staff draft a lease for an approved applicant or a renewal of a lease, with the company's own PDF, the security deposit it asks and its monthly fees and credits, kept as a draft or sent at once; on its page they send it, show its links again, check signatures, void it, or activate it once everyone has signed on the partner's page (a tenant signs a renewal from the portal), its monthly charges becoming the lease's."
 operations = [

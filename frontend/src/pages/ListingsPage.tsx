@@ -53,6 +53,17 @@ export function ListingsPage() {
                     </p>
                     <p className="text-ink-muted">{money(listing.monthly_rent)} a month</p>
                   </div>
+                  {listing.photos.length > 0 && (
+                    <ul className="flex gap-2 overflow-x-auto" aria-label={`Photos, ${listing.property}, ${listing.unit}`}>
+                      {listing.photos.map((photo, n) => (
+                        <li key={photo} className="shrink-0">
+                          <img src={`/api/listings/${encodeURIComponent(pmc)}/photos/${photo}`}
+                            alt={`${listing.property}, ${listing.unit}, photo ${n + 1}`} loading="lazy"
+                            className="h-32 w-48 rounded-sm object-cover" />
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   {listing.description && (
                     <p className="whitespace-pre-line text-ink-secondary">{listing.description}</p>
                   )}

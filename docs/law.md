@@ -331,3 +331,22 @@ and no more (NOT VERIFIED as a rule of any state; it is the PMS's own care).
 
 **Left to the company.** The entry notice its state asks before the visit (the link's schedule
 is not one), and checking the work before paying the vendor's bill.
+
+## A listing's photos and days listed (migration 0087)
+
+**The rule.** The federal Fair Housing Act, which applies in every state, forbids making, printing
+or publishing any notice, statement or advertisement for renting a dwelling that indicates a
+preference, limitation or discrimination based on race, color, religion, sex, handicap, familial
+status or national origin (42 U.S.C. 3604(c); HUD's rule on advertisements, 24 CFR 100.75). A
+listing's photos and description are an advertisement. Many states and cities add protected
+classes (source of income, for one) (NOT VERIFIED state by state). How long a unit has been listed
+is the company's own figure; no state rule on it was found.
+
+**What the PMS does.**
+- The public page shows the photos staff add to a listed unit (JPEG or PNG, twelve at most), and
+  only while it is listed; a removed photo leaves it. The PMS reads nothing out of a photo.
+- Listings shows how many days each listing has been up, counting the day it went up.
+
+**Left to the company.** What its photos and words show and say (no people in a way that signals
+who may live there, nothing that discourages anyone of a protected class), and its state's and
+city's protected classes.
