@@ -48,7 +48,9 @@ export function BankingPage({ me }: { me: Me }) {
   const [banks, setBanks] = useState<BankBooks[] | null>(null);
   const [fees, setFees] = useState<CompanyFees[]>([]);
   const [error, setError] = useState("");
-  const [transfer, setTransfer] = useState<CompanyFees | null>(null);
+  // The trust bank account whose fees the Transfer company fees panel is open on. The panel reads
+  // them from the page's latest load, so one opened while a reload is under way shows its result.
+  const [transfer, setTransfer] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [runs, setRuns] = useState(0);
   const { said, error: refused, record } = useRecord(() => setRuns((n) => n + 1));
@@ -60,6 +62,7 @@ export function BankingPage({ me }: { me: Me }) {
     api.get<CompanyFees[]>("/api/payables/company-fees").then(setFees).catch(() => setFees([]));
   }, [runs]);
   const today = day(new Date());
+  const transferring = fees.find((f) => f.bank_account_id === transfer);
   // A form in the side panel closes once what it recorded is recorded.
   const recordThenClose: typeof record = async (path, body, done) => {
     const recorded = await record(path, body, done);
@@ -119,7 +122,7 @@ export function BankingPage({ me }: { me: Me }) {
                   <td className="text-right">
                     {held && (
                       <RowMenu label={bank.name}
-                        actions={[{ label: "Transfer company fees", onSelect: () => setTransfer(held) }]} />
+                        actions={[{ label: "Transfer company fees", onSelect: () => setTransfer(held.bank_account_id) }]} />
                     )}
                   </td>
                 </tr>
@@ -129,10 +132,10 @@ export function BankingPage({ me }: { me: Me }) {
           </table>
         </Wide>
       )}
-      {transfer !== null && (
+      {transferring && (
         <SidePanel title="Transfer company fees" onClose={() => setTransfer(null)}>
-          <p className="text-base text-ink">{transfer.bank_account}</p>
-          <CompanyFeesForm fees={transfer} record={recordThenClose} />
+          <p className="text-base text-ink">{transferring.bank_account}</p>
+          <CompanyFeesForm fees={transferring} record={recordThenClose} />
           <Notice tone="error">{refused}</Notice>
         </SidePanel>
       )}

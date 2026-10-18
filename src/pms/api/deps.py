@@ -162,6 +162,7 @@ AREA_PATHS = (
     ("/api/bank-accounts/", "rent"),  # bank deposits of what came in
     ("/api/payables/bills", "bills"),
     ("/api/payables/recurring", "bills"),
+    ("/api/payables/shared-bills", "bills"),
     ("/api/payables/management-fees", "owners"),
     ("/api/payables/leasing-fees", "owners"),
     ("/api/payables/owner-fees", "owners"),

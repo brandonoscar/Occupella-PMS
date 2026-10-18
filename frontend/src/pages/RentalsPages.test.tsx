@@ -53,7 +53,7 @@ const PROPERTY: Property = {
     owner_id: "o1", owner: "Owner 1", account: "a1", bank_account: "Operating 1", balance: "2400.00",
     agreement: {
       starts_on: "2026-10-01", fee_percent: "8", minimum_fee: "0", flat_fee: "0", leasing_fee_percent: "0",
-      reserve: "250.00", approval_limit: "500.00",
+      reserve: "250.00", approval_limit: "500.00", bill_markup_percent: "0",
     },
   }],
   units: [

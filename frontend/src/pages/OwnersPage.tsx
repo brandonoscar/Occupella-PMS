@@ -238,6 +238,7 @@ export function agreementLine(terms: Agreement): string {
     fee.join(", "),
     `leasing fee ${terms.leasing_fee_percent}%`,
     `reserve ${money(terms.reserve)}`,
+    ...(Number(terms.bill_markup_percent) > 0 ? [`${terms.bill_markup_percent}% markup on bills`] : []),
     `the owner approves bills over ${money(terms.approval_limit)}`,
     `from ${usDate(terms.starts_on)}`,
   ].join("; ");

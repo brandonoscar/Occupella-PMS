@@ -143,6 +143,7 @@ def test_staff_set_up_a_pmc_from_nothing(client, conn, staff, blank):
         "leasing_fee_percent": "0",
         "reserve": "250.00",
         "approval_limit": "500.00",
+        "bill_markup_percent": "0",
     }
     # Each bank account has its cash, the operating one the PMC's fees, and the owner account
     # sits in the operating one.

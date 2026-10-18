@@ -19,7 +19,7 @@ const bill = (n: number, amount: string, status: Bill["status"], account = "a1")
   property_id: "pr1", property: account === "a1" ? "Property 1" : "Property 2", bill_date: "2026-10-01",
   due_on: `2026-10-1${n}`, amount, memo: "Repair", work_order_id: null, expense_account_id: null,
   expense_account: null, split: false, approval_limit: "1000.00", approved_by: null, declined_by: null,
-  decline_reason: null, owner_email: null, status, overdue: false,
+  decline_reason: null, owner_email: null, status, overdue: false, markup: null, markup_percent: null, shared_bill_id: null,
 });
 const BILLS = [bill(1, "200.00", "to set aside"), bill(2, "150.00", "set aside"), bill(3, "900.00", "needs approval"), bill(4, "50.00", "to set aside", "a2")];
 const owner = (account: string, property: string, balance: string): OwnerMoney => ({
@@ -52,6 +52,12 @@ describe("cashOf", () => {
       { account: "a2", owner: "Owner 1", property: "Property 2", holds: "500.00", chosen: "50.00", after: "450.00" },
     ]);
     expect(cashOf(BILLS, new Set(["b2"]), OWNERS)).toEqual([]);
+  });
+  it("takes a bill's markup from the owner with it", () => {
+    const marked = BILLS.map((b) => (b.id === "b4" ? { ...b, markup: "5.00", markup_percent: "10" } : b));
+    expect(cashOf(marked, new Set(["b4"]), OWNERS)).toEqual([
+      { account: "a2", owner: "Owner 1", property: "Property 2", holds: "500.00", chosen: "55.00", after: "445.00" },
+    ]);
   });
 });
 

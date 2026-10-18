@@ -477,6 +477,7 @@ FEATURES = (
     "lease-people",
     "rent-due-day",
     "owner-fees",
+    "shared-bills",
 )
 
 

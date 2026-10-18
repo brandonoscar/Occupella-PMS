@@ -456,7 +456,9 @@ CREATE TABLE public.trust_management_agreements (
     reserve numeric DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     approval_limit numeric DEFAULT 0 NOT NULL,
+    bill_markup_percent numeric DEFAULT 0 NOT NULL,
     CONSTRAINT trust_management_agreements_approval_limit_check CHECK ((approval_limit >= (0)::numeric)),
+    CONSTRAINT trust_management_agreements_bill_markup_percent_check CHECK (((bill_markup_percent >= (0)::numeric) AND (bill_markup_percent <= (100)::numeric))),
     CONSTRAINT trust_management_agreements_fee_percent_check CHECK (((fee_percent >= (0)::numeric) AND (fee_percent <= (100)::numeric))),
     CONSTRAINT trust_management_agreements_flat_fee_check CHECK ((flat_fee >= (0)::numeric)),
     CONSTRAINT trust_management_agreements_leasing_fee_percent_check CHECK (((leasing_fee_percent >= (0)::numeric) AND (leasing_fee_percent <= (100)::numeric))),
@@ -1859,6 +1861,35 @@ $$;
 
 
 --
+-- Name: trust_check_bill_reference(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_bill_reference() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended('trust bill reference ' || NEW.vendor_id || ' ' || NEW.reference, 0)
+    );
+    IF TG_TABLE_NAME = 'trust_shared_bills' THEN
+        IF EXISTS (SELECT 1 FROM trust_bills AS b
+                   WHERE b.vendor_id = NEW.vendor_id AND b.reference = NEW.reference) THEN
+            RAISE EXCEPTION 'trust: the vendor has a bill % already', NEW.reference
+                USING ERRCODE = 'unique_violation';
+        END IF;
+    ELSIF EXISTS (SELECT 1 FROM trust_shared_bills AS s
+                  WHERE s.vendor_id = NEW.vendor_id AND s.reference = NEW.reference) THEN
+        RAISE EXCEPTION 'trust: the vendor has a bill % already, shared across properties',
+            NEW.reference
+            USING ERRCODE = 'unique_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_bill_split(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2548,6 +2579,62 @@ $$;
 
 
 --
+-- Name: trust_check_shared_bill(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_shared_bill() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_shared trust_shared_bills;
+    v_parts bigint;
+    v_top integer;
+    v_accounts bigint;
+    v_kinds bigint;
+    v_total numeric;
+BEGIN
+    -- An invoice's row (its id) or a part's (its shared_bill_id).
+    SELECT s.* INTO v_shared FROM trust_shared_bills AS s
+    WHERE s.id = coalesce(to_jsonb(NEW) ->> 'shared_bill_id', to_jsonb(NEW) ->> 'id')::uuid;
+    SELECT count(*), max(p.part), count(DISTINCT b.ledger_account_id),
+           count(DISTINCT (b.bill_date, b.due_on, b.memo)), coalesce(sum(b.amount), 0)
+    INTO v_parts, v_top, v_accounts, v_kinds, v_total
+    FROM trust_shared_bill_parts AS p
+    JOIN trust_bills AS b ON b.id = p.bill_id
+    WHERE p.shared_bill_id = v_shared.id;
+    IF v_parts < 2 OR v_top <> v_parts THEN
+        RAISE EXCEPTION 'trust: bill % is shared in parts 1 to n, two at least; it has %',
+            v_shared.reference, v_parts
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF v_accounts <> v_parts THEN
+        RAISE EXCEPTION 'trust: bill %''s parts are each an owner''s property account of their own',
+            v_shared.reference
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF v_kinds <> 1 OR EXISTS (
+        SELECT 1 FROM trust_shared_bill_parts AS p
+        JOIN trust_bills AS b ON b.id = p.bill_id
+        WHERE p.shared_bill_id = v_shared.id
+          AND (b.vendor_id <> v_shared.vendor_id
+               OR b.reference <> v_shared.reference || '/' || p.part)
+    ) THEN
+        RAISE EXCEPTION 'trust: bill %''s parts are the vendor''s, under its reference and '
+            'part number, with one date, due day and memo', v_shared.reference
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF v_total <> v_shared.amount THEN
+        RAISE EXCEPTION 'trust: bill %''s parts come to %, not its %',
+            v_shared.reference, v_total, v_shared.amount
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: trust_check_signer_change(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3205,6 +3292,48 @@ BEGIN
     )
     SELECT count(*)::integer INTO v_entered FROM entered;
     RETURN v_entered;
+END;
+$$;
+
+
+--
+-- Name: trust_fill_bill_markup(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_fill_bill_markup() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bill trust_bills := trust_lock_bill(NEW.pmc_id, NEW.bill_id);
+    v_percent numeric;
+BEGIN
+    IF EXISTS (SELECT 1 FROM trust_bill_payments AS p
+               WHERE p.bill_id = NEW.bill_id AND p.step = 'set_aside') THEN
+        RAISE EXCEPTION 'trust: bill % is set aside already; a markup is added before',
+            v_bill.reference
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (SELECT 1 FROM trust_bill_declines AS d WHERE d.bill_id = NEW.bill_id) THEN
+        RAISE EXCEPTION 'trust: bill % was declined; it takes no markup', v_bill.reference
+            USING ERRCODE = 'check_violation';
+    END IF;
+    v_percent := coalesce(
+        (trust_agreement_on(v_bill.ledger_account_id, v_bill.bill_date)).bill_markup_percent, 0
+    );
+    IF v_percent = 0 THEN
+        RAISE EXCEPTION 'trust: the owner''s agreement in force on % sets no markup on bills',
+            v_bill.bill_date
+            USING ERRCODE = 'check_violation';
+    END IF;
+    NEW.percent := v_percent;
+    NEW.amount := round(v_bill.amount * v_percent / 100, 2);
+    IF NEW.amount = 0 THEN
+        RAISE EXCEPTION 'trust: a markup of % percent on bill % comes to nothing',
+            trim_scale(v_percent), v_bill.reference
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
 END;
 $$;
 
@@ -6239,6 +6368,12 @@ BEGIN
         FROM trust_owner_fees AS f
         JOIN pgledger_transfers AS tr ON tr.id = f.transfer_id
         WHERE f.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
+        UNION ALL
+        -- A bill's markup (migration 0083), with the management fees.
+        SELECT tr.from_account_id, 0, tr.amount
+        FROM trust_bill_markup_fees AS f
+        JOIN pgledger_transfers AS tr ON tr.id = f.transfer_id
+        WHERE f.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
     ),
     -- Each bill's expense account: its latest row.
     categorized AS (
@@ -6605,11 +6740,12 @@ BEGIN
                    WHERE e.account_id = t.ledger_account_id AND tr.event_at < v_cutoff
                ), 0.00) AS held,
                coalesce(ag.reserve, 0.00) AS kept,
-               -- trust_unpaid_bills, written out: a report runs with the caller's grants, and
+               -- trust_unpaid_bills (a bill with its markup), written out: a report runs with the caller's grants, and
                -- the app and the AI may call reports, not helpers.
                coalesce((
-                   SELECT sum(b.amount)
+                   SELECT sum(b.amount + coalesce(m.amount, 0))
                    FROM trust_bills AS b
+                   LEFT JOIN trust_bill_markups AS m ON m.bill_id = b.id
                    WHERE b.ledger_account_id = t.ledger_account_id AND b.bill_date <= p_as_of
                      AND NOT EXISTS (
                          SELECT p.bill_id
@@ -6960,6 +7096,12 @@ BEGIN
         -- fees, an inspection or other fee with the management fees.
         SELECT f.ledger_account_id, CASE f.kind WHEN 'lease_up' THEN 3 ELSE 2 END, -tr.amount
         FROM trust_owner_fees AS f
+        JOIN pgledger_transfers AS tr ON tr.id = f.transfer_id
+        WHERE f.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
+        UNION ALL
+        -- A bill's markup (migration 0083), with the management fees.
+        SELECT tr.from_account_id, 2, -tr.amount
+        FROM trust_bill_markup_fees AS f
         JOIN pgledger_transfers AS tr ON tr.id = f.transfer_id
         WHERE f.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
         UNION ALL
@@ -8723,6 +8865,8 @@ DECLARE
     v_payable text;
     v_transfer_id text;
     v_declined trust_bill_declines;
+    v_markup trust_bill_markups;
+    v_owner trust_ledger_accounts;
 BEGIN
     SELECT p.transfer_id INTO v_transfer_id
     FROM trust_bill_payments AS p
@@ -8749,8 +8893,9 @@ BEGIN
             USING ERRCODE = 'check_violation';
     END IF;
 
-    SELECT t.bank_account_id INTO v_bank
+    SELECT t.* INTO v_owner
     FROM trust_ledger_accounts AS t WHERE t.ledger_account_id = v_bill.ledger_account_id;
+    v_bank := v_owner.bank_account_id;
     SELECT t.ledger_account_id INTO v_payable
     FROM trust_ledger_accounts AS t
     WHERE t.bank_account_id = v_bank AND t.kind = 'vendor_payable'
@@ -8769,6 +8914,19 @@ BEGIN
     ) AS t;
     INSERT INTO trust_bill_payments (bill_id, step, pmc_id, transfer_id)
     VALUES (p_bill_id, 'set_aside', p_pmc_id, v_transfer_id);
+
+    SELECT m.* INTO v_markup FROM trust_bill_markups AS m WHERE m.bill_id = p_bill_id;
+    IF FOUND THEN
+        INSERT INTO trust_bill_markup_fees (bill_id, pmc_id, transfer_id)
+        VALUES (
+            p_bill_id, p_pmc_id,
+            trust_post_fee(
+                v_owner, v_markup.amount, p_event_at,
+                format('Markup of %s%% on bill %s', trim_scale(v_markup.percent),
+                       v_bill.reference)
+            )
+        );
+    END IF;
     RETURN v_transfer_id;
 END;
 $$;
@@ -9042,8 +9200,9 @@ CREATE FUNCTION public.trust_unpaid_bills(p_account text, p_day date) RETURNS nu
     LANGUAGE sql STABLE
     SET search_path TO 'public', 'pg_temp'
     AS $$
-    SELECT coalesce(sum(b.amount), 0)
+    SELECT coalesce(sum(b.amount + coalesce(m.amount, 0)), 0)
     FROM trust_bills AS b
+    LEFT JOIN trust_bill_markups AS m ON m.bill_id = b.id
     WHERE b.ledger_account_id = p_account AND b.bill_date <= p_day
       AND NOT EXISTS (
           SELECT p.bill_id
@@ -9563,6 +9722,34 @@ ALTER TABLE public.trust_bill_expense_accounts ALTER COLUMN id ADD GENERATED ALW
     NO MINVALUE
     NO MAXVALUE
     CACHE 1
+);
+
+
+--
+-- Name: trust_bill_markup_fees; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_bill_markup_fees (
+    bill_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    transfer_id text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_bill_markups; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_bill_markups (
+    bill_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    percent numeric NOT NULL,
+    amount numeric NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_bill_markups_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_bill_markups_percent_check CHECK (((percent > (0)::numeric) AND (percent <= (100)::numeric)))
 );
 
 
@@ -11120,6 +11307,37 @@ CREATE TABLE public.trust_sessions (
 
 
 --
+-- Name: trust_shared_bill_parts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_shared_bill_parts (
+    shared_bill_id uuid NOT NULL,
+    part integer NOT NULL,
+    pmc_id uuid NOT NULL,
+    bill_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_shared_bill_parts_part_check CHECK (((part >= 1) AND (part <= 20)))
+);
+
+
+--
+-- Name: trust_shared_bills; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_shared_bills (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    vendor_id uuid NOT NULL,
+    reference text NOT NULL,
+    amount numeric NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_shared_bills_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_shared_bills_reference_check CHECK (((reference ~ '\S'::text) AND (length(reference) <= 100)))
+);
+
+
+--
 -- Name: trust_signature_requests; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -11694,6 +11912,38 @@ ALTER TABLE ONLY public.trust_bill_declines
 
 ALTER TABLE ONLY public.trust_bill_expense_accounts
     ADD CONSTRAINT trust_bill_expense_accounts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_bill_markup_fees trust_bill_markup_fees_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_markup_fees
+    ADD CONSTRAINT trust_bill_markup_fees_pkey PRIMARY KEY (bill_id);
+
+
+--
+-- Name: trust_bill_markup_fees trust_bill_markup_fees_transfer_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_markup_fees
+    ADD CONSTRAINT trust_bill_markup_fees_transfer_id_key UNIQUE (transfer_id);
+
+
+--
+-- Name: trust_bill_markups trust_bill_markups_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_markups
+    ADD CONSTRAINT trust_bill_markups_pkey PRIMARY KEY (bill_id);
+
+
+--
+-- Name: trust_bill_markups trust_bill_markups_pmc_id_bill_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_markups
+    ADD CONSTRAINT trust_bill_markups_pmc_id_bill_id_key UNIQUE (pmc_id, bill_id);
 
 
 --
@@ -12980,6 +13230,46 @@ ALTER TABLE ONLY public.trust_sessions
 
 
 --
+-- Name: trust_shared_bill_parts trust_shared_bill_parts_bill_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_shared_bill_parts
+    ADD CONSTRAINT trust_shared_bill_parts_bill_id_key UNIQUE (bill_id);
+
+
+--
+-- Name: trust_shared_bill_parts trust_shared_bill_parts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_shared_bill_parts
+    ADD CONSTRAINT trust_shared_bill_parts_pkey PRIMARY KEY (shared_bill_id, part);
+
+
+--
+-- Name: trust_shared_bills trust_shared_bills_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_shared_bills
+    ADD CONSTRAINT trust_shared_bills_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_shared_bills trust_shared_bills_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_shared_bills
+    ADD CONSTRAINT trust_shared_bills_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_shared_bills trust_shared_bills_vendor_id_reference_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_shared_bills
+    ADD CONSTRAINT trust_shared_bills_vendor_id_reference_key UNIQUE (vendor_id, reference);
+
+
+--
 -- Name: trust_signature_requests trust_signature_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13328,6 +13618,13 @@ CREATE INDEX trust_bank_matches_bank_account_id ON public.trust_bank_matches USI
 --
 
 CREATE INDEX trust_bill_expense_accounts_bill ON public.trust_bill_expense_accounts USING btree (bill_id, id);
+
+
+--
+-- Name: trust_bill_markups_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bill_markups_recorded_by ON public.trust_bill_markups USING btree (pmc_id, recorded_by);
 
 
 --
@@ -14157,6 +14454,34 @@ CREATE INDEX trust_sessions_login ON public.trust_sessions USING btree (login_id
 
 
 --
+-- Name: trust_shared_bill_parts_bill; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_shared_bill_parts_bill ON public.trust_shared_bill_parts USING btree (pmc_id, bill_id);
+
+
+--
+-- Name: trust_shared_bill_parts_shared; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_shared_bill_parts_shared ON public.trust_shared_bill_parts USING btree (pmc_id, shared_bill_id);
+
+
+--
+-- Name: trust_shared_bills_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_shared_bills_recorded_by ON public.trust_shared_bills USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_shared_bills_vendor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_shared_bills_vendor ON public.trust_shared_bills USING btree (pmc_id, vendor_id);
+
+
+--
 -- Name: trust_staff_custom_roles_staff; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -14448,6 +14773,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bill_expense_accounts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_bill_markup_fees trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bill_markup_fees FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_bill_markups trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_bill_markups FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -15011,6 +15350,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_shared_bill_parts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_shared_bill_parts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_shared_bills trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_shared_bills FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_signature_requests trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -15323,6 +15676,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bill
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bill_expense_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_bill_markup_fees trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bill_markup_fees FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_bill_markups trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bill_markups FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -15914,6 +16281,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_sess
 
 
 --
+-- Name: trust_shared_bill_parts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_shared_bill_parts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_shared_bills trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_shared_bills FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_signature_requests trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -16072,6 +16453,27 @@ CREATE TRIGGER trust_bill_decision BEFORE INSERT ON public.trust_bill_approvals 
 --
 
 CREATE TRIGGER trust_bill_decision BEFORE INSERT ON public.trust_bill_declines FOR EACH ROW EXECUTE FUNCTION public.trust_check_bill_decision();
+
+
+--
+-- Name: trust_bill_markups trust_bill_markup; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_bill_markup BEFORE INSERT ON public.trust_bill_markups FOR EACH ROW EXECUTE FUNCTION public.trust_fill_bill_markup();
+
+
+--
+-- Name: trust_bills trust_bill_reference; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_bill_reference BEFORE INSERT ON public.trust_bills FOR EACH ROW EXECUTE FUNCTION public.trust_check_bill_reference();
+
+
+--
+-- Name: trust_shared_bills trust_bill_reference; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_bill_reference BEFORE INSERT ON public.trust_shared_bills FOR EACH ROW EXECUTE FUNCTION public.trust_check_bill_reference();
 
 
 --
@@ -16341,6 +16743,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_bank_deposits FOR
 
 
 --
+-- Name: trust_bill_markups trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_bill_markups FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_bill_splits trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -16509,6 +16918,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_renters_insurance
 
 
 --
+-- Name: trust_shared_bills trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_shared_bills FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_vendor_insurance trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -16555,6 +16971,20 @@ CREATE TRIGGER trust_rent_due_day_in_time BEFORE INSERT ON public.trust_rent_due
 --
 
 CREATE TRIGGER trust_request_work_order_unit BEFORE INSERT ON public.trust_maintenance_request_work_orders FOR EACH ROW EXECUTE FUNCTION public.trust_check_request_work_order();
+
+
+--
+-- Name: trust_shared_bill_parts trust_shared_bill_whole; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_shared_bill_whole AFTER INSERT ON public.trust_shared_bill_parts DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_shared_bill();
+
+
+--
+-- Name: trust_shared_bills trust_shared_bill_whole; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_shared_bill_whole AFTER INSERT ON public.trust_shared_bills DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_shared_bill();
 
 
 --
@@ -17207,6 +17637,54 @@ ALTER TABLE ONLY public.trust_bill_expense_accounts
 
 ALTER TABLE ONLY public.trust_bill_expense_accounts
     ADD CONSTRAINT trust_bill_expense_accounts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bill_markup_fees trust_bill_markup_fees_pmc_id_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_markup_fees
+    ADD CONSTRAINT trust_bill_markup_fees_pmc_id_bill_id_fkey FOREIGN KEY (pmc_id, bill_id) REFERENCES public.trust_bill_markups(pmc_id, bill_id);
+
+
+--
+-- Name: trust_bill_markup_fees trust_bill_markup_fees_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_markup_fees
+    ADD CONSTRAINT trust_bill_markup_fees_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bill_markup_fees trust_bill_markup_fees_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_markup_fees
+    ADD CONSTRAINT trust_bill_markup_fees_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
+-- Name: trust_bill_markups trust_bill_markups_pmc_id_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_markups
+    ADD CONSTRAINT trust_bill_markups_pmc_id_bill_id_fkey FOREIGN KEY (pmc_id, bill_id) REFERENCES public.trust_bills(pmc_id, id);
+
+
+--
+-- Name: trust_bill_markups trust_bill_markups_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_markups
+    ADD CONSTRAINT trust_bill_markups_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_bill_markups trust_bill_markups_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_markups
+    ADD CONSTRAINT trust_bill_markups_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -19474,6 +19952,54 @@ ALTER TABLE ONLY public.trust_sessions
 
 
 --
+-- Name: trust_shared_bill_parts trust_shared_bill_parts_pmc_id_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_shared_bill_parts
+    ADD CONSTRAINT trust_shared_bill_parts_pmc_id_bill_id_fkey FOREIGN KEY (pmc_id, bill_id) REFERENCES public.trust_bills(pmc_id, id);
+
+
+--
+-- Name: trust_shared_bill_parts trust_shared_bill_parts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_shared_bill_parts
+    ADD CONSTRAINT trust_shared_bill_parts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_shared_bill_parts trust_shared_bill_parts_pmc_id_shared_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_shared_bill_parts
+    ADD CONSTRAINT trust_shared_bill_parts_pmc_id_shared_bill_id_fkey FOREIGN KEY (pmc_id, shared_bill_id) REFERENCES public.trust_shared_bills(pmc_id, id);
+
+
+--
+-- Name: trust_shared_bills trust_shared_bills_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_shared_bills
+    ADD CONSTRAINT trust_shared_bills_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_shared_bills trust_shared_bills_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_shared_bills
+    ADD CONSTRAINT trust_shared_bills_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_shared_bills trust_shared_bills_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_shared_bills
+    ADD CONSTRAINT trust_shared_bills_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
 -- Name: trust_signature_requests trust_signature_requests_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19874,4 +20400,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261018000079'),
     ('20261018000080'),
     ('20261018000081'),
-    ('20261018000082');
+    ('20261018000082'),
+    ('20261018000083');

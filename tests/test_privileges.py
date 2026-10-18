@@ -187,6 +187,13 @@ TABLES = {
     "trust_rent_due_days": {"SELECT", "INSERT"},
     "trust_management_fee_settings": {"SELECT", "INSERT"},
     "trust_owner_fees": {"SELECT"},  # written only by trust_take_owner_fee
+    # One invoice shared across properties: staff enter it and its parts with inserts, and a
+    # markup on a bill too; the markup taken is written only by trust_set_aside_bill
+    # (migration 0083).
+    "trust_shared_bills": {"SELECT", "INSERT"},
+    "trust_shared_bill_parts": {"SELECT", "INSERT"},
+    "trust_bill_markups": {"SELECT", "INSERT"},
+    "trust_bill_markup_fees": {"SELECT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -337,6 +344,9 @@ FUNCTIONS = {
     "trust_check_bank_deposit_item()": set(),  # a trigger's: no one calls it
     "trust_check_charge_waiver()": set(),
     "trust_check_rent_due_day()": set(),
+    "trust_check_bill_reference()": set(),  # a trigger's: no one calls it
+    "trust_check_shared_bill()": set(),
+    "trust_fill_bill_markup()": set(),
     # Reports read trust records, so only the app and the AI; they run with the caller's own
     # read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app", "trust_ai_agent"},
@@ -489,6 +499,11 @@ SECURITY_DEFINER = {
     "trust_check_payment_hold()",  # locks the hold's lease, which the app can't
     "trust_check_bill_decision()",  # locks the bill's owner account, which the app can't
     "trust_check_charge_waiver()",  # locks the waived charge, which the app can't
+    # Takes a lock on the vendor's reference, and sees a vendor's bills and shared invoices
+    # whatever the caller reads.
+    "trust_check_bill_reference()",
+    "trust_check_shared_bill()",  # checks a shared invoice's parts at commit, as the owner
+    "trust_fill_bill_markup()",  # locks the bill's owner account, which the app can't
     # Reads lease offers for the AI role, which never reads them, and returns only each lease's
     # renewal status (founder decision, 2026-10-13).
     "trust_report_lease_expirations(uuid,date)",

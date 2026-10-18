@@ -221,6 +221,16 @@ browser = [
 ]
 
 [[feature]]
+id = "shared-bills"
+statement = "Staff share one vendor invoice across properties, a bill for each owner's share following every bill rule on its own, add the markup each owner's management terms set (taken with the bill's money into the company's fee account), and pay several bills at once."
+operations = [
+  "POST /api/payables/shared-bills",
+]
+browser = [
+  "features.spec.ts › staff share a roofer's invoice across two owners' properties with the markup Birch Flats' terms set, and pay both shares at once",
+]
+
+[[feature]]
 id = "renters-insurance"
 statement = "Staff set whether a lease requires renters insurance and the least liability it asks, and record a policy; the tenant records their own from the portal, with any insurer; the rent page, the portal and Today show how each lease stands."
 operations = [

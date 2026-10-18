@@ -41,7 +41,7 @@ const NO_CONTACT = {
 };
 const TERMS = {
   account: "a1", starts_on: "2026-01-01", fee_percent: "8", minimum_fee: "25.00", flat_fee: "10.00",
-  leasing_fee_percent: "50", reserve: "100.00", approval_limit: "500.00",
+  leasing_fee_percent: "50", reserve: "100.00", approval_limit: "500.00", bill_markup_percent: "0",
 };
 const OWNER: Owner = {
   id: "o1", name: "Owner 1", archived: false, contact: { ...NO_CONTACT, email: "owner1@example.com" },
@@ -191,7 +191,7 @@ describe("OwnerPage", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(posted(fetch)).toEqual([["/api/setup/agreements", {
       account: ACCOUNTS[0]!.account, starts_on: "2026-10-17", fee_percent: "9", minimum_fee: "0", flat_fee: "0",
-      leasing_fee_percent: "0", reserve: "0", approval_limit: "0",
+      leasing_fee_percent: "0", reserve: "0", approval_limit: "0", bill_markup_percent: "0",
     }]]);
   });
 
@@ -329,6 +329,10 @@ describe("agreementLine and lastTwelveMonths", () => {
   it("leaves out a minimum or flat fee of nothing", () => {
     expect(agreementLine({ ...TERMS, minimum_fee: "0.00", flat_fee: "0.00" })).toBe(
       "8% of rent collected; leasing fee 50%; reserve $100.00; the owner approves bills over $500.00; from 01/01/2026",
+    );
+    expect(agreementLine({ ...TERMS, minimum_fee: "0.00", flat_fee: "0.00", bill_markup_percent: "12.5" })).toBe(
+      "8% of rent collected; leasing fee 50%; reserve $100.00; 12.5% markup on bills;" +
+        " the owner approves bills over $500.00; from 01/01/2026",
     );
   });
   it("counts back twelve whole months from the one before today", () => {

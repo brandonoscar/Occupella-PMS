@@ -71,6 +71,7 @@ const BOOKS: Portfolio = {
         leasing_fee_percent: "0",
         reserve: "250.00",
         approval_limit: "500.00",
+        bill_markup_percent: "0",
       },
     },
   ],
@@ -161,11 +162,12 @@ describe("setup panels", () => {
     type("For", "acct-2");
     type("Fee, percent of rent and recurring fees collected", "8.5");
     type("Reserve", "250.00");
+    type("Markup on bills, percent", "10");
     press("Set terms");
     await vi.waitFor(() => expect(p.said).toEqual(["New terms for Owner A, Property B from 2026-10-17."]));
     expect(posted(fetch)).toEqual([["/api/setup/agreements", {
       account: "acct-2", starts_on: "2026-10-17", fee_percent: "8.5", minimum_fee: "0", flat_fee: "0",
-      leasing_fee_percent: "0", reserve: "250.00", approval_limit: "0",
+      leasing_fee_percent: "0", reserve: "250.00", approval_limit: "0", bill_markup_percent: "10",
     }]]);
   });
 

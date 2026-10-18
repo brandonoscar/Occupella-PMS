@@ -34,7 +34,7 @@ const BILL: Bill = {
   property_id: "pr1", property: "Property 1", bill_date: "2026-10-01", due_on: "2026-10-15", amount: "750.00",
   memo: "Roof repair", work_order_id: null, expense_account_id: null, expense_account: null, split: false,
   approval_limit: "500.00", approved_by: null, declined_by: null, decline_reason: null, owner_email: "sent",
-  status: "needs approval", overdue: false,
+  status: "needs approval", overdue: false, markup: null, markup_percent: null, shared_bill_id: null,
 };
 const BILLS: Bill[] = [
   BILL,

@@ -16,6 +16,8 @@ export type Agreement = {
   leasing_fee_percent: string;
   reserve: string;
   approval_limit: string;
+  // The percent of a bill the company may add as its markup; "0": none.
+  bill_markup_percent: string;
 };
 export type OwnerAccount = {
   account: string;
@@ -92,6 +94,7 @@ export function agreementSummary(terms: Agreement): string {
     parts.push(`${terms.leasing_fee_percent}% of a new lease's monthly rent`);
   }
   if (positive(terms.reserve)) parts.push(`keeps ${money(terms.reserve)} in reserve`);
+  if (positive(terms.bill_markup_percent)) parts.push(`${terms.bill_markup_percent}% markup on bills`);
   parts.push(
     positive(terms.approval_limit)
       ? `owner approves bills over ${money(terms.approval_limit)}`

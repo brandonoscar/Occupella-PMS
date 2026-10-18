@@ -15,6 +15,8 @@ import {
   billsPaidSummary,
   linesNote,
   ownerFeeSummary,
+  evenShares,
+  markupLabel,
 } from "./payables";
 
 describe("payables", () => {
@@ -144,5 +146,22 @@ describe("owner fees", () => {
     expect(ownerFeeSummary("inspection", "75.00", "Property 1")).toBe("A $75.00 inspection fee is taken from Property 1.");
     expect(ownerFeeSummary("lease_up", "1200", "Property 2")).toBe("A $1,200.00 lease-up fee is taken from Property 2.");
     expect(ownerFeeSummary("other", "5.5", "Property 3")).toBe("A $5.50 other fee is taken from Property 3.");
+  });
+});
+
+describe("shared bills and markups", () => {
+  it("shares a total evenly to the cent, the cents left over to the first shares", () => {
+    expect(evenShares("900.00", 2)).toEqual(["450.00", "450.00"]);
+    expect(evenShares("100", 3)).toEqual(["33.34", "33.33", "33.33"]);
+    expect(evenShares("$1,000.01", 4)).toEqual(["250.01", "250.00", "250.00", "250.00"]);
+    expect(evenShares("0.02", 3)).toEqual(["0.01", "0.01", "0.00"]);
+    // Not money yet: blanks; nobody to share among: nothing.
+    expect(evenShares("ten", 2)).toEqual(["", ""]);
+    expect(evenShares("1.234", 2)).toEqual(["", ""]);
+    expect(evenShares("10.00", 0)).toEqual([]);
+  });
+  it("says a bill's markup and the owner's percent, or nothing", () => {
+    expect(markupLabel({ markup: "25.00", markup_percent: "10" })).toBe("$25.00 (10% in the owner's terms)");
+    expect(markupLabel({ markup: null, markup_percent: null })).toBeNull();
   });
 });

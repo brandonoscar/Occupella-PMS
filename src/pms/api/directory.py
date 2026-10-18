@@ -467,6 +467,8 @@ class Agreement(BaseModel):
     leasing_fee_percent: str
     reserve: str
     approval_limit: str
+    # The percent of a bill the company may add as its markup (migration 0083); 0: none.
+    bill_markup_percent: str
 
 
 class Owner(BaseModel):
@@ -484,7 +486,8 @@ class Owner(BaseModel):
 
 AGREEMENTS = """
 SELECT DISTINCT ON (g.ledger_account_id) g.ledger_account_id, g.starts_on, g.fee_percent,
-       g.minimum_fee, g.flat_fee, g.leasing_fee_percent, g.reserve, g.approval_limit
+       g.minimum_fee, g.flat_fee, g.leasing_fee_percent, g.reserve, g.approval_limit,
+       g.bill_markup_percent
 FROM trust_management_agreements AS g
 JOIN trust_ledger_accounts AS a ON a.ledger_account_id = g.ledger_account_id
 WHERE a.pmc_id = %s AND a.owner_id = %s AND g.starts_on <= %s
@@ -529,10 +532,19 @@ def owner_page(session: Staff, conn: Conn, owner_id: UUID) -> Owner:
                 leasing_fee_percent=f"{leasing.normalize():f}",
                 reserve=rent.cents(reserve),
                 approval_limit=rent.cents(limit),
+                bill_markup_percent=f"{markup.normalize():f}",
             )
-            for account, starts, percent, minimum, flat, leasing, reserve, limit in conn.execute(
-                AGREEMENTS, (session.pmc_id, owner_id, rent.today())
-            ).fetchall()
+            for (
+                account,
+                starts,
+                percent,
+                minimum,
+                flat,
+                leasing,
+                reserve,
+                limit,
+                markup,
+            ) in conn.execute(AGREEMENTS, (session.pmc_id, owner_id, rent.today())).fetchall()
         ],
         portal=portal,
         login_email=login[1],

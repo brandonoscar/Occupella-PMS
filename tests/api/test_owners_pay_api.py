@@ -77,6 +77,7 @@ def test_an_owners_page_shows_their_terms_portal_and_statement(
         "leasing_fee_percent": "0",
         "reserve": "100.00",
         "approval_limit": "0.00",
+        "bill_markup_percent": "0",
     }
 
     token = invite_token(app_conn, pmc.pmc_id, "owner", owner, "owner.a@example.com")

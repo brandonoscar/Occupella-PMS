@@ -184,7 +184,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   its register and balance breakdown (`src/pms/api/banking.py`), its deposits, its month-end
   (`src/pms/api/reconcile.py`) and its statements, bills at `/bills` (Unpaid, Paid,
   Recurring and Declined tabs, a page at a time by group, vendor and due day; Record bill, maybe
-  split across expense accounts and with its invoice, opens a side panel), a bill at
+  split across expense accounts or shared across properties, with the owner's markup and its
+  invoice, opens a side panel), a bill at
   `/bills/<id>` (its lines, files, email and history; set aside and pay), Pay bills at
   `/pay-bills` (several at once, all or none, each property's cash shown), the general ledger on
   screen at `/general-ledger` (`src/pms/api/general_ledger.py`: trust_report_general_ledger's
@@ -342,6 +343,19 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   in the owner portal only by the owner of its property account. A declined bill is never set
   aside or paid, and from the day it was declined it holds nothing back from draws and is not
   unpaid in the reports.
+- Shared bills and markups (migration 0083, `docs/law.md`): one vendor invoice shared across
+  properties (`trust_shared_bills`, `trust_shared_bill_parts`; `POST /api/payables/shared-bills`)
+  is a bill for each owner's property account's share, under the invoice's reference with /1,
+  /2..., each following every bill rule on its own; at commit the shares (2 to 20, each a
+  different account, of the invoice's vendor, with one date, due day and memo) come to the
+  invoice, and a vendor's reference is one bill or one shared invoice, never both. An agreement's
+  `bill_markup_percent` (0: none) is the markup the company may add to a bill; staff add it to a
+  bill before it is set aside (`trust_bill_markups`: the agreement's percent on the bill's date,
+  to the cent, worked out by the database, once, never on a declined bill), and
+  `trust_set_aside_bill` takes it with the bill's money into the company's fee account
+  (`trust_bill_markup_fees`), both or neither. Draws hold a bill back with its markup until it is
+  set aside; the income statement and year-end count it with the management fees; the owner sees
+  it in the approval email, the portal and their statement.
 - Work orders: a job at a property (maybe one of its units). Its steps (assigned to a vendor,
   scheduled for a day, completed, cancelled) are append-only and in order, and nothing follows a
   close. A bill may name a work order of its property, never a cancelled one. Migration 0072: a

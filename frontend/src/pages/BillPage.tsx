@@ -10,7 +10,7 @@ import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
 import { money, usDate } from "../money";
 import type { BillPageData } from "../payables";
-import { billBadge, emailNote } from "../payables";
+import { billBadge, emailNote, markupLabel } from "../payables";
 import type { Portfolio } from "../setup";
 import { ApprovalForm, DeclineForm, ExpenseAccountForm, PayForm, SetAsideForm } from "./BillForms";
 import { FilesCard } from "./FilesCard";
@@ -31,8 +31,9 @@ const TITLES: Record<Step, string> = {
 };
 
 // A bill's own page (ADR 0006): what it is and its status, its next step beside its title, its
-// expense account lines (split or one), its invoice and receipts, the email asking its owner to
-// decide it and what happened to it, oldest first.
+// markup, the invoice shared across properties it is a share of, its expense account lines (split
+// or one), its invoice and receipts, the email asking its owner to decide it and what happened to
+// it, oldest first.
 export function BillPage({ me, id }: { me: Me; id: string }) {
   const [found, setFound] = useState<BillPageData | null>(null);
   const [books, setBooks] = useState<Portfolio | null>(null);
@@ -66,6 +67,7 @@ export function BillPage({ me, id }: { me: Me; id: string }) {
   const { bill } = found;
   const badge = billBadge(bill);
   const note = emailNote(bill);
+  const markup = markupLabel(bill);
   const steps: { step: Step; label: string; primary?: boolean }[] =
     bill.status === "needs approval" ? [{ step: "approve", label: "Record approval", primary: true }, { step: "decline", label: "Record decline" }]
       : bill.status === "to set aside" ? [{ step: "set-aside", label: "Set aside", primary: true }]
@@ -96,6 +98,7 @@ export function BillPage({ me, id }: { me: Me; id: string }) {
           <Item label="Due">{usDate(bill.due_on)}</Item>
           <Item label="Memo">{bill.memo}</Item>
           <Item label="Owner approves over">{money(bill.approval_limit)}</Item>
+          {markup && <Item label="Markup">{markup}</Item>}
           {bill.work_order_id && (
             <Item label="Work order"><GoLink href={`/work-orders/${bill.work_order_id}`} className={LINK}>Open it</GoLink></Item>
           )}
@@ -107,6 +110,37 @@ export function BillPage({ me, id }: { me: Me; id: string }) {
           </p>
         )}
       </Card>
+      {found.shared && (
+        <Card title={`Shared across properties: ${found.shared.reference}, ${money(found.shared.amount)}`}>
+          <Wide>
+            <table className="w-full text-base" aria-label="Shares">
+              <thead>
+                <tr>
+                  <th className="text-left">Ref #</th>
+                  <th className="text-left">Owner</th>
+                  <th className="text-left">Property</th>
+                  <th className="text-right">Amount</th>
+                  <th className="text-left">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {found.shared.parts.map((part) => (
+                  <tr key={part.bill_id}>
+                    <td>
+                      {part.bill_id === bill.id ? part.reference
+                        : <GoLink href={`/bills/${part.bill_id}`} className={LINK}>{part.reference}</GoLink>}
+                    </td>
+                    <td>{part.owner}</td>
+                    <td>{part.property}</td>
+                    <td className="text-right">{money(part.amount)}</td>
+                    <td><PartBadge bill={bill} status={part.status} /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Wide>
+        </Card>
+      )}
       <Card title="Expense accounts">
         <Wide>
           <table className="w-full text-base" aria-label="Lines">
@@ -163,6 +197,12 @@ export function BillPage({ me, id }: { me: Me; id: string }) {
       )}
     </Shell>
   );
+}
+
+// A share's status as the list reads a bill's: approved, set aside, paid...
+function PartBadge({ bill, status }: { bill: BillPageData["bill"]; status: BillPageData["bill"]["status"] }) {
+  const badge = billBadge({ ...bill, status, overdue: false });
+  return <Badge tone={badge.tone}>{badge.word}</Badge>;
 }
 
 function Item({ label, children }: { label: string; children: React.ReactNode }) {

@@ -348,13 +348,14 @@ def add_agreement(
     leasing_fee_percent="0",
     reserve="0",
     approval_limit="0",
+    bill_markup_percent="0",
 ) -> UUID:
     """A management agreement for one owner's property account, in force from starts_on."""
     return _one(
         connection,
         "INSERT INTO trust_management_agreements (pmc_id, ledger_account_id, starts_on,"
-        " fee_percent, minimum_fee, flat_fee, leasing_fee_percent, reserve, approval_limit)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        " fee_percent, minimum_fee, flat_fee, leasing_fee_percent, reserve, approval_limit,"
+        " bill_markup_percent) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
         (
             pmc_id,
             account,
@@ -365,6 +366,7 @@ def add_agreement(
             Decimal(leasing_fee_percent),
             Decimal(reserve),
             Decimal(approval_limit),
+            Decimal(bill_markup_percent),
         ),
     )
 
