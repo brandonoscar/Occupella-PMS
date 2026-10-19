@@ -329,6 +329,20 @@ def test_a_bill_split_by_ownership_needs_shares_between_owners(client, staff, pm
     assert both.json()["detail"] == "give a shared bill its shares, or split it by ownership"
     neither = post(client, "/api/payables/shared-bills", **body)
     assert neither.status_code == 422
+    # One owner holding all of it: nothing to split between.
+    ok(
+        post(
+            client,
+            f"/api/setup/properties/{pmc.owners[0].property_id}/ownership",
+            starts_on=TODAY,
+            shares=[{"account": owners[0], "percent": "100"}],
+        )
+    )
+    alone = post(client, "/api/payables/shared-bills", **body, by_ownership=split)
+    assert alone.status_code == 422
+    assert alone.json()["detail"] == (
+        "the property has no shares between two owners or more on the bill's date"
+    )
     unknown = post(
         client,
         "/api/payables/shared-bills",
