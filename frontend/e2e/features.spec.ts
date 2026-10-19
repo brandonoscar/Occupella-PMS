@@ -2945,7 +2945,7 @@ test("staff add photos to a listed unit, which its public listing shows; a remov
   await visitor.goto(`/listings?pmc=${people.pmc_id}`);
   const shown = visitor.getByRole("list", { name: "Photos, Aspen Row, Unit 2" }).getByRole("img");
   await expect(shown).toHaveCount(2);
-  await expect(shown.nth(1)).toHaveAttribute("alt", "Aspen Row, Unit 2, photo 2");
+  await expect(shown.nth(1)).toHaveAttribute("alt", "Aspen Row, Unit 2, 2 of 2");
   await expect.poll(() => shown.first().evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth)).toBe(1);
 
   // Removed, a photo leaves the public page.
