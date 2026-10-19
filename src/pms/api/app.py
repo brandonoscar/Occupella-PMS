@@ -7,10 +7,13 @@ role in PMS_DB_ROLE). A staff member's request names them to the audit log
 What a browser may do:
   - the session is a cookie: HttpOnly, SameSite=Strict, and Secure unless PMS_COOKIE_SECURE
     is "false" (plain http on a laptop);
-  - a request that changes something must send JSON, and if it carries an Origin header that
-    origin must be PMS_PUBLIC_URL's. With SameSite=Strict that keeps other sites from acting
-    for a signed-in person (CSRF);
-  - API answers are never cached.
+  - a request that changes something must send JSON, a browser must not say it came from
+    another site (Sec-Fetch-Site), and if it carries an Origin header that origin must be
+    PMS_PUBLIC_URL's. With SameSite=Strict that keeps other sites from acting for a signed-in
+    person (CSRF);
+  - API answers are never cached;
+  - served over https, the browser is told to use nothing else (HSTS); no page opens a window
+    that keeps a handle on it, and none may use the camera, microphone, location or payments.
 
 Staff see their whole PMC. Owners and tenants get their own endpoints in the portal PRs; here
 they can sign in and read who they are, and nothing else. What a staff member may do beyond that
@@ -256,13 +259,19 @@ def create_app(settings: Settings) -> FastAPI:
     # Settings (which a log or an error could print).
     app.state.email = email.sender_named(settings.email_sender, os.environ)
 
+    https = urlsplit(settings.public_url).scheme == "https"
+
     @app.middleware("http")
     async def guard(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         if request.method not in SAFE_METHODS:
+            # A browser says where a request comes from (OWASP's CSRF cheat sheet): another
+            # site, or another origin of this one, is refused whatever its Origin says. Origin
+            # stays the check for a browser that doesn't say.
+            fetched_from = request.headers.get("sec-fetch-site")
             origin = request.headers.get("origin")
-            if origin is not None and origin != settings.origin:
+            if fetched_from in CROSS_SITE or (origin is not None and origin != settings.origin):
                 return JSONResponse({"detail": "this request came from another site"}, 403)
             if request.headers.get("content-type", "").split(";")[0].strip() != (
                 "application/json"
@@ -280,6 +289,10 @@ def create_app(settings: Settings) -> FastAPI:
             response.background = delivery
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+        response.headers["Permissions-Policy"] = PERMISSIONS_POLICY
+        if https:
+            response.headers["Strict-Transport-Security"] = STRICT_TRANSPORT
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
         return response
@@ -512,6 +525,15 @@ def create_app(settings: Settings) -> FastAPI:
         serve_portal(app, settings.static_dir)
     return app
 
+
+# What a browser's Sec-Fetch-Site says of a request from another site, or from another origin
+# of this site (a sibling subdomain).
+CROSS_SITE = frozenset({"cross-site", "same-site"})
+# Two years, this host and its subdomains (OWASP's HTTP headers cheat sheet), sent only when
+# the public URL is https; not preloaded, which is the operator's choice.
+STRICT_TRANSPORT = "max-age=63072000; includeSubDomains"
+# Nothing in the portal uses these.
+PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=()"
 
 # The portal's own pages: a built React app (frontend/dist). Its scripts and styles are files
 # of its own, so the policy allows nothing inline and nothing from another origin.

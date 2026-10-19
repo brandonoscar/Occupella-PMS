@@ -252,7 +252,7 @@ LIMIT %(per_page)s OFFSET %(offset)s
 """
 ANYWHERE = "true"
 IN_SCOPE = (
-    "EXISTS (SELECT 1 FROM placed AS p WHERE p.document_id = d.id"
+    "EXISTS (SELECT 1 FROM placed AS p WHERE p.document_id = d.id"  # noqa: S608
     f" AND {scope.within('p.property_id')})"
 )
 

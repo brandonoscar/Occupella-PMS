@@ -114,7 +114,7 @@ WHERE m.event_at >= %(start)s::timestamp AT TIME ZONE 'UTC'
   AND m.event_at < (%(end)s::date + 1)::timestamp AT TIME ZONE 'UTC'
 ORDER BY m.event_at DESC, m.created_at DESC, m.entry_id DESC
 LIMIT %(per_page)s OFFSET %(offset)s
-"""
+"""  # noqa: S608
 
 
 def bank_of(conn: psycopg.Connection[Any], pmc_id: UUID, bank_id: UUID) -> None:

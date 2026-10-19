@@ -114,7 +114,7 @@ WHERE e.pmc_id = %(pmc)s
        OR (e.kind = 'bill_approval' AND t.owner_id = %(owner)s)
        OR e.application_id = %(application)s)
 ORDER BY e.created_at DESC, e.id DESC
-"""
+"""  # noqa: S608
 
 
 @router.get("/emails")
@@ -242,7 +242,7 @@ def save_email_settings(session: Staff, conn: Conn, wanted: EmailSettings) -> Em
     nothing."""
     if notices.Settings(**wanted.model_dump()) != notices.settings_of(conn, session.pmc_id):
         conn.execute(
-            f"INSERT INTO trust_email_settings (pmc_id, {', '.join(notices.FIELDS)})"
+            f"INSERT INTO trust_email_settings (pmc_id, {', '.join(notices.FIELDS)})"  # noqa: S608
             f" VALUES (%s, {', '.join(['%s'] * len(notices.FIELDS))})",
             (session.pmc_id, *(getattr(wanted, field) for field in notices.FIELDS)),
         )

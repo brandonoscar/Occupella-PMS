@@ -86,7 +86,7 @@ SELECT array_agg(d.transfer_id ORDER BY d.created_at, d.transfer_id),
 FROM described AS d
 GROUP BY d.grp
 ORDER BY min(d.event_at), min(d.created_at), d.grp
-"""
+"""  # noqa: S608
 
 
 def undeposited_of(conn: psycopg.Connection[Any], pmc: UUID, bank: UUID) -> list[Undeposited]:
@@ -133,7 +133,7 @@ WHERE d.pmc_id = %(pmc)s AND (%(bank)s::uuid IS NULL OR d.bank_account_id = %(ba
   AND (%(deposit)s::uuid IS NULL OR d.id = %(deposit)s)
 ORDER BY d.deposited_on DESC, d.created_at DESC, d.id
 LIMIT 50
-"""
+"""  # noqa: S608
 
 
 def deposits_of(
@@ -239,7 +239,7 @@ SELECT (min(d.event_at) AT TIME ZONE 'UTC')::date,
 FROM described AS d
 GROUP BY d.grp
 ORDER BY min(d.event_at), min(d.created_at), d.grp
-"""
+"""  # noqa: S608
 
 
 def us(day: date) -> str:

@@ -81,6 +81,15 @@ GUARD_STATEMENTS = re.compile(
     r"^(CREATE (?:CONSTRAINT )?TRIGGER|ALTER FUNCTION|GRANT|REVOKE)\b.*?;\n",
     re.MULTILINE | re.DOTALL,
 )
+# Deleting a table's REVOKE ALL ... FROM PUBLIC changes nothing: Postgres grants PUBLIC no
+# privilege on a new table (a function is another matter: PUBLIC may execute a new one, so a
+# function's REVOKE stays a mutant). Each such deletion ran the whole suite and was scored by
+# its timeout, so it is not made at all (tests/tools/test_sql_mutation.py checks the claim).
+TABLE_REVOKE_FROM_PUBLIC = re.compile(
+    r"REVOKE ALL ON\s+(?!(?:FUNCTION|ROUTINE|PROCEDURE|SCHEMA|SEQUENCE|DATABASE|TYPE|DOMAIN"
+    r"|LANGUAGE|ALL)\b)(?:TABLE\s+)?[\w\s,.]+?\s+FROM\s+PUBLIC\s*;\s*",
+    re.IGNORECASE,
+)
 UPSTREAM_FILES = re.compile(r"_ledger_core\.sql$")
 FUNCTION = re.compile(r"CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+(\w+)\s*\(", re.IGNORECASE)
 NOT_CODE = re.compile(r"--[^\n]*|'(?:[^']|'')*'")
@@ -171,6 +180,8 @@ def generate(files: dict[str, str], money: set[str]) -> list[Mutant]:
         ]
         if not UPSTREAM_FILES.search(path):
             for match in GUARD_STATEMENTS.finditer(text, 0, up_end):
+                if TABLE_REVOKE_FROM_PUBLIC.fullmatch(match.group(0)):
+                    continue
                 first = match.group(0).splitlines()[0]
                 add(path, match.start(), match.end(), "", f"delete `{first[:60]}`")
                 if match.group(1).startswith("CREATE"):
@@ -224,6 +235,12 @@ def url_for(server: str, name: str) -> str:
 
 Runner = Callable[[list[str], dict[str, str], int], int]
 
+# A mutant's tests run until one fails; one no test kills runs them all, some 13 minutes on
+# GitHub's runners (the ci job, 2026-10-19). The limit is for a hang, which counts as killed,
+# so it must stay well past a whole run: at 600 s, once the suite outgrew it, every survivor
+# was scored killed by its timeout.
+TIMEOUT = 2700
+
 
 def run_command(command: list[str], env: dict[str, str], timeout: int) -> int:
     try:
@@ -241,7 +258,7 @@ def execute(
     dbmate: str,
     test_command: list[str],
     runner: Runner = run_command,
-    timeout: int = 600,
+    timeout: int = TIMEOUT,
 ) -> str:
     """'invalid' (doesn't apply), 'killed' (a test failed or hung) or 'survived'."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -263,6 +280,27 @@ def execute(
             "DBMATE_NO_DUMP_SCHEMA": "true",
         }
         return "survived" if runner(test_command, test_env, timeout) == 0 else "killed"
+
+
+# The catalog's tests (every grant pinned; 18 s), which kill a deleted GRANT, REVOKE or ALTER
+# FUNCTION first: in their alphabetical place such a mutant took some 270 s.
+CATALOG = ("test_privileges.py", "test_schema_conventions.py")
+GRANTS = ("delete `GRANT", "delete `REVOKE", "delete `ALTER FUNCTION")
+
+
+def ordered_tests(tests: Path, catalog_first: bool = False) -> list[Path]:
+    """The ledger's tests, those that call its functions directly first: they kill most
+    mutants, and -x stops at the first failure, so a mutant ends in seconds instead of after
+    the API's, the reports' and the property tests (some 200 s a mutant in that order); for a
+    deleted grant, the catalog's tests before them. Then the rest, the property tests last.
+    The CI-tool tests (tests/tools) don't touch the mutated SQL."""
+    first = CATALOG if catalog_first else ()
+    direct = sorted(tests.glob("test_*.py"), key=lambda p: (p.name not in first, p.name))
+    folders = sorted(
+        p for p in tests.iterdir() if p.is_dir() and p.name not in ("tools", "__pycache__")
+    )
+    folders.sort(key=lambda p: p.name == "properties")
+    return direct + folders
 
 
 def key(mutant: Mutant) -> str:
@@ -345,17 +383,12 @@ def main(argv: list[str] | None = None) -> int:
     if not server_url or not dbmate or not args.out:
         print("FAIL: needs DATABASE_URL, dbmate on PATH and --out.")
         return 1
-    # The ledger's tests; the CI-tool tests (tests/tools) don't touch the mutated SQL.
-    test_command = [
-        sys.executable,
-        "-m",
-        "pytest",
-        "-x",
-        "-q",
-        "-p",
-        "no:cacheprovider",
-        "--ignore=tests/tools",
-    ]
+    pytest = [sys.executable, "-m", "pytest", "-x", "-q", "-p", "no:cacheprovider"]
+
+    def test_command(mutant: Mutant) -> list[str]:
+        ordered = ordered_tests(ROOT / "tests", mutant.description.startswith(GRANTS))
+        return pytest + [str(path.relative_to(ROOT)) for path in ordered]
+
     equivalent = set(thresholds["mutation"].get("equivalent", []))
     chosen = shard(mutants, args.shard)
     if args.only:
@@ -367,7 +400,7 @@ def main(argv: list[str] | None = None) -> int:
         if key(mutant) in equivalent:
             outcome = "equivalent"
         else:
-            outcome = execute(mutant, files, server_url, dbmate, test_command)
+            outcome = execute(mutant, files, server_url, dbmate, test_command(mutant))
         results.append({**asdict(mutant), "outcome": outcome})
         print(f"{mutant.id} {outcome:8} {time.monotonic() - began:5.1f}s {mutant.description}")
         args.out.parent.mkdir(parents=True, exist_ok=True)

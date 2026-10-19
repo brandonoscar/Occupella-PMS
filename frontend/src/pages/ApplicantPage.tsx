@@ -191,7 +191,7 @@ function Item({ label, children }: { label: string; children: React.ReactNode })
 // Approves (outright or on conditions) or rejects the application, resting on one of its
 // screenings or none; a rejection or a conditional approval that rests on a screening records the
 // adverse action notice given the applicants.
-export function DecideForm({ application, rejecting, record }: {
+function DecideForm({ application, rejecting, record }: {
   application: Application;
   rejecting: boolean;
   record: Recorder;

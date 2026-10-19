@@ -7,6 +7,7 @@ import logging
 import uuid
 from datetime import UTC, date, datetime, time, timedelta
 
+import psycopg
 import pytest
 from helpers import (
     add_agreement,
@@ -111,6 +112,34 @@ def test_one_company_that_fails_leaves_the_others_to_run(conn, app_conn, pmc, ca
     assert [r.pmc_id for r in done] == [pmc.pmc_id, other]
     assert f"the nightly run of PMC {nobody} failed" in caplog.text
     assert charges(conn, lease) == [(date(2026, 10, 1), "rent", "1000.00")]
+
+
+def test_one_run_at_a_time_another_leaves_the_work_to_it(conn, app_conn, database_url, pmc):
+    """Two API servers, or the command while the API runs: a run that finds the lock held runs
+    nothing, and once the first run is done the lock is free again."""
+    lease = lease_since(conn, pmc, date(2026, 9, 1))
+    with psycopg.connect(database_url, autocommit=True) as first:
+        first.execute("SELECT pg_advisory_lock(hashtextextended(%s, 0))", (nightly.LOCK,))
+        assert nightly.run_all(app_conn, OCT_16, URL, [pmc.pmc_id]) == []
+        assert charges(conn, lease) == []
+        first.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (nightly.LOCK,))
+
+    assert [r.pmc_id for r in nightly.run_all(app_conn, OCT_16, URL, [pmc.pmc_id])] == [pmc.pmc_id]
+    assert charges(conn, lease) == [(date(2026, 10, 1), "rent", "1000.00")]
+    # The run let go of it: another session takes it at once.
+    with psycopg.connect(database_url, autocommit=True) as later:
+        assert later.execute(
+            "SELECT pg_try_advisory_lock(hashtextextended(%s, 0))", (nightly.LOCK,)
+        ).fetchone() == (True,)
+
+
+def test_a_run_lets_go_of_the_lock_when_a_company_fails(conn, app_conn, database_url, pmc):
+    nightly.run_all(app_conn, OCT_16, URL, [uuid.uuid4()])  # no such PMC: its run fails
+
+    with psycopg.connect(database_url, autocommit=True) as later:
+        assert later.execute(
+            "SELECT pg_try_advisory_lock(hashtextextended(%s, 0))", (nightly.LOCK,)
+        ).fetchone() == (True,)
 
 
 def test_every_company_runs_when_none_is_named(conn, app_conn, pmc, monkeypatch):

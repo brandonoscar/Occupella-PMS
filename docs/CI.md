@@ -15,9 +15,10 @@ fails on an image pulled from anywhere else.
 
 ## The workflows
 
-**ci.yml** (PRs and main): lint (ruff), format check (ruff), typecheck (mypy, strict on `tools/`,
-`selfhost/`, `scripts/` and the app in `src/`), shellcheck on `scripts/*.sh`, the synthetic-data scan, the
-standing-rule checks, and every example test against a fresh database. That includes the API
+**ci.yml** (PRs and main): lint (ruff, its security rules included: each query built with an
+f-string is marked where it was read), format check (ruff), typecheck (mypy, strict on `tools/`,
+`selfhost/`, `scripts/` and the app in `src/`), shellcheck on `scripts/*.sh`, zizmor on the
+workflows (offline, medium severity and up), the synthetic-data scan, the standing-rule checks, and every example test against a fresh database. That includes the API
 tests in `tests/api/`, which drive the app through FastAPI's test client: every endpoint for
 success, for a caller who isn't allowed (no session, the wrong kind of login, another PMC) and
 for bad input.
@@ -145,14 +146,39 @@ starts and control characters, money, days, times in random zones, NULLs), and c
 - the PDF always builds.
 
 `ci/registry.toml` maps every required invariant to its test or to the open issue for what isn't
-built yet. PRs run 200 examples per property. Nightly runs 16 jobs, each with its own seed and
-3,000 examples. A failing case is uploaded as an artifact with the seed and the shortest failing
-sequence. Nightly also runs every `@pytest.mark.timing` test (threads, lock waits, timeouts) 50
+built yet. PRs run 200 examples per property. Nightly runs 3,000 examples per property, each
+property twice with a seed of its own: 16 jobs, the tests shared out over 8 shards
+(`PMS_TEST_SHARD`), 2 seeds each. Until 10/19 every job ran every property; at 3,000 examples
+that is some 290 minutes a job, and every nightly job from 10/11 to 10/18 was cancelled at its
+90-minute limit with nothing checked (runs 68 to 246, measured on GitHub). A failing case is
+uploaded as an artifact with the seed and the shortest failing sequence. Nightly also runs every `@pytest.mark.timing` test (threads, lock waits, timeouts) 50
 times on GitHub's runners. One failure fails the job, because a flaky test teaches everyone to
 ignore red. Measured before adding it: 100 of 100 local runs passed, 50 of them with every CPU
 core busy, and the slowest took 2.2 s against limits of 20 s and more. Random sequences find the
 overdraft or double-post that nobody thought to write an example for. Run it with
 `HYPOTHESIS_PROFILE=pr pytest tests/properties` (or `nightly`).
+
+The whole API is fuzzed too (`tests/api/test_api_fuzz.py`, Schemathesis, MIT): it reads the
+app's own OpenAPI schema and sends every operation its boundary cases and requests Hypothesis
+makes up, valid and broken, as a signed-in staff member. None may get a server error (5xx): what
+the API can't take is refused in words. Every PR sends `[fuzz] pr_examples` per operation with
+the other tests (measured: about 10,400 requests in 2 min 40 s locally, none a 5xx); nightly
+sends `nightly_examples` with a new seed. A route made to raise on a long name failed it within
+seconds. Those counts are floors in `ci/thresholds.toml`.
+
+The portal has its own property tests (`frontend/src/properties.test.ts`, fast-check, MIT): for
+any amount up to 10^18 dollars money reads back as the cents it came as, sums are exact in any
+order, days keep their parts and a list's scope survives its URL.
+
+Nightly, sixteen workers act as staff on one company's books at once for five minutes
+(`tools/contention.py`, the demo's books, synthetic): payments, bounces, bills set aside and
+paid, owner draws, contributions, the company's fees taken out and rent runs, each through the
+API's own route functions, on the same few leases and owners. A refusal in words is part of the
+load; a deadlock, a serialization failure or any error the API would answer with a 500 fails
+the job, and so do books left wrong (an account's balance not what its transfers add up to, a
+trust bank account that doesn't tie out, an account other than a bank's cash below zero). The
+timing tests pair two transactions; this is the many-way mix. Measured locally: 8,681
+operations in 60 s, none failed, books right. Run it with `python -m tools.contention`.
 
 **golden.yml** (PRs and main): every report function (`trust_report_*`) must have a golden case
 under `tests/golden/cases/`. Each case builds a fixed synthetic fixture and must produce exactly
@@ -225,18 +251,45 @@ workflow, the two shards one after the other.
 Python and JavaScript, and the ledger is PL/pgSQL, so `tools/sql_mutation.py` does the same job
 for SQL. It flips comparisons, drops guards, deletes triggers and grants, one change at a time,
 and checks that some test fails.
-- 4 shards run in parallel; the score goes in the job summary.
-- The run fails if the score drops below the baseline in `ci/thresholds.toml`.
-- Survivors are listed: each one is a missing test.
+- Each mutant meets the tests that call the ledger directly first (`tests/test_*.py`), then the
+  API's, the reports' and the property tests; `-x` stops at the first failure. In the old order
+  (alphabetical: the API's first, the property tests before the direct ones) two mutants took
+  211 s and 196 s; first they take 17 s and 26 s.
+- All 2,058 mutants take some 40 to 50 runner-hours: a sample of 10 took 0.5 s (doesn't apply) to
+  342 s (caught only by an API test), 84 s on average. So each night runs a fifth of them, over
+  8 shards (every 40th from the kth, k = 8 x (days since 1970 mod 5) + the shard), and every
+  mutant runs every 5 nights. Until 10/18 every shard ran a quarter of them all, and every
+  nightly run from 10/15 to 10/18 was cancelled at its 60-minute limit with nothing scored.
+- A mutant's tests may run 45 minutes; one that hangs past that counts as killed. The limit
+  was 600 s until 10/19, when the suite (some 13 minutes on GitHub) had long outgrown it: every
+  mutant no test kills ran to the limit and was scored killed. Deleting a table's
+  `REVOKE ALL ... FROM PUBLIC` is no mutant at all (Postgres grants PUBLIC nothing on a table, a
+  test checks it); a function's still is, and the catalog's tests (`test_privileges.py`) meet a
+  deleted grant first.
+- The score goes in the job summary; the run fails if it drops below the baseline in
+  `ci/thresholds.toml`. Survivors are listed: each one is a missing test.
+
+Python is mutated too (`python mutants`, mutmut, BSD-3-Clause): the modules
+`pyproject.toml [tool.mutmut]` names (bank statement files, exports, logins), each mutant run
+against the tests that call the function it changed. `tools/python_mutation.py` scores the run
+against `[mutation] python_baseline_score`: a mutant no test reaches counts as not caught. Many
+survivors are equivalent (the case of a SQL keyword, which Postgres ignores); the rest are
+missing tests, listed in the summary.
 
 Coverage shows that code ran; mutation testing shows the tests would notice if it were wrong.
 Run it with `python -m tools.sql_mutation --list`, then
 `python -m tools.sql_mutation --out mutation/all.json` and
-`python -m tools.sql_mutation --score mutation/all.json`.
+`python -m tools.sql_mutation --score mutation/all.json`; the Python side with
+`mutmut run`, `mutmut export-cicd-stats` and
+`python -m tools.python_mutation mutants/mutmut-cicd-stats.json`.
 
 **selfhost.yml** (nightly, by hand, and on PRs touching the Dockerfile, compose file,
-requirements, migrations or `src/`): builds the image and runs `compose.yaml` with plain Postgres 16 and nothing from
-Supabase. It applies every migration, then runs the smoke check:
+requirements, migrations or `src/`): builds the image, lists what it holds (Syft, an SBOM kept as
+the `sbom` artifact) and fails on a known high or critical vulnerability in it that has a fix
+(Grype; both built from pinned source versions), then runs `compose.yaml` with plain Postgres 16
+and nothing from Supabase. Its first run found the dbmate binary's Go and x/net and x/crypto
+(critical and high) and the base image's setuptools and wheel (high): the image now builds dbmate
+2.37.0 from source with Go 1.27.2 and drops setuptools and wheel, which only install packages. It applies every migration, then runs the smoke check:
 - seeds a synthetic 50-door PMC;
 - posts one month of rent;
 - runs one owner statement for that month and checks it against the owner's ledgers;
@@ -250,8 +303,10 @@ a PMC could run its books on its own Postgres. Run it with `docker compose build
 compose up -d --wait db && docker compose run --rm migrate && docker compose run --rm smoke`.
 
 **e2e.yml** (every PR and push to main, called by licenses.yml): the portal (`frontend/`), end
-to end. Inside the pinned Node image it typechecks, unit-tests (vitest) and builds the React app.
-Then the API serves that build on a fresh Postgres (emails go to the fake sender's outbox,
+to end. Inside the pinned Node image it typechecks, lints, unit-tests (vitest) and builds the
+React app. The lint is oxlint (MIT; `frontend/.oxlintrc.json`: every rule it counts as
+correctness, React, accessibility and vitest among them, the few off saying why) and knip (ISC;
+`frontend/knip.json`: no unused file, export or dependency). Then the API serves that build on a fresh Postgres (emails go to the fake sender's outbox,
 `PMS_EMAIL_SENDER=fake`, and the nightly rent run is off, `PMS_NIGHTLY=off`, so rent is charged
 only when a test runs it), `frontend/e2e/seed.py` makes a synthetic PMC
 with an owner who has statements and a tenant with rent due and a maintenance request, and
@@ -301,6 +356,8 @@ the first half with `python -m tools.check_features --base origin/main`.
 - gitleaks: the PR's commits on PRs, full history on main and weekly. Besides the default rules,
   `.gitleaks.toml` adds SSN- and EIN-shaped patterns. They let through only the never-issued
   forms the synthetic-data scan accepts, and a test keeps the two in step.
+- pip-audit: the pinned Python dependencies against known vulnerabilities, weekly and on main,
+  so an advisory published after a dependency merged turns up.
 - OpenSSF Scorecard: weekly and on main.
 
 A leaked credential or a poisoned dependency in a trust-accounting system is a breach of client
@@ -321,11 +378,12 @@ as soon as one merged.
 
 One command for every PR check that can run locally, in CI's order:
 - the ci, licenses and db checks, with the database ones on a throwaway database;
-- the portal's typecheck, unit tests and build, if `npm` is installed;
+- the portal's typecheck, lint, unit tests and build, if `npm` is installed;
 - the upgrade check;
 - the PL/pgSQL lint, if the server has plpgsql_check;
 - every test, with the coverage gates and diff-cover if plpgsql_check is preloaded (then in
   coverage.yml's two shards, one after the other);
+- a short soak of the nightly many-staff run (8 workers for 15 seconds, about 20 s);
 - gitleaks, if installed.
 
 It ends with a summary. A check it couldn't run is listed as NOT RUN, never as passed: CodeQL and
@@ -359,10 +417,10 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
   job of about a minute, by when `deps-and-secrets`, a job of seconds, has finished), so a PR
   never has more than 8 jobs running at once.
 - Nightly runs are staggered so they don't overlap:
-  - 03:17 UTC ledger-invariants (16 property jobs and 1 timing job);
-  - 04:17 mutation (4 shards, then 1 scoring job);
+  - 03:17 UTC ledger-invariants (16 property jobs, then timing, API fuzz and many-staff jobs);
+  - 04:17 mutation (8 SQL shards and 1 Python job, then 1 scoring job);
   - 05:17 selfhost (1);
-  - Mondays 06:17 security (codeql, gitleaks history, scorecard: 3).
+  - Mondays 06:17 security (codeql, gitleaks history, pip-audit, scorecard: 4).
 - A push to main runs the same checks (minus `deps-and-secrets`), plus gitleaks over full
-  history and Scorecard: 9 jobs.
+  history, pip-audit and Scorecard: 10 jobs.
 - A new PR job is chained after another one, as `e2e` is, to stay within 8.

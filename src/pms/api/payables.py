@@ -91,7 +91,7 @@ CASE WHEN EXISTS (SELECT 1 FROM trust_email_deliveries AS d
      WHEN (SELECT count(*) FROM trust_email_deliveries AS d
            WHERE d.email_id = {{e}}.id) >= {email.MAX_ATTEMPTS} THEN 'failed'
      ELSE 'waiting' END
-"""
+"""  # noqa: S608
 
 
 class Bill(BaseModel):
@@ -145,7 +145,7 @@ WITH listed AS (
                      WHERE g.ledger_account_id = b.ledger_account_id AND g.starts_on <= b.bill_date
                      ORDER BY g.starts_on DESC LIMIT 1), 0) AS approval_limit,
            ap.approved_by, dc.declined_by, dc.reason,
-           CASE WHEN em.id IS NOT NULL THEN """
+           CASE WHEN em.id IS NOT NULL THEN """  # noqa: S608
     + EMAIL_STATUS.format(e="em")
     + """ END AS owner_email,
            EXISTS (SELECT 1 FROM trust_bill_payments AS s WHERE s.bill_id = b.id
@@ -428,7 +428,7 @@ def bill_page(session: Staff, conn: Conn, bill_id: UUID) -> BillPage:
         ).fetchall()
     ]
     row = conn.execute(
-        "SELECT e.to_address, e.subject, e.created_at, "
+        "SELECT e.to_address, e.subject, e.created_at, "  # noqa: S608
         + EMAIL_STATUS.format(e="e")
         + ", (SELECT count(*) FROM trust_email_deliveries AS d WHERE d.email_id = e.id),"
         " (SELECT d.error FROM trust_email_deliveries AS d WHERE d.email_id = e.id"
@@ -1270,7 +1270,7 @@ WHERE a.pmc_id = %(pmc)s AND a.kind = 'owner_property'
   AND (%(bank)s::uuid IS NULL OR a.bank_account_id = %(bank)s::uuid)
   AND {within}
 ORDER BY o.display_name COLLATE "C", p.display_name COLLATE "C", a.ledger_account_id
-""".format(within=scope.within("a.property_id"))
+""".format(within=scope.within("a.property_id"))  # noqa: S608
 
 
 @router.get("/owners")

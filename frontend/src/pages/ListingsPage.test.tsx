@@ -36,8 +36,8 @@ describe("ListingsPage", () => {
     // A unit's photos, in order, from the public page's own address for them; none, no list.
     const photos = within(second).getByRole("list", { name: "Photos, Property 1, Unit 2" });
     expect(within(photos).getAllByRole("img").map((img) => [img.getAttribute("alt"), img.getAttribute("src")])).toEqual([
-      ["Property 1, Unit 2, photo 1", "/api/listings/p1/photos/d1"],
-      ["Property 1, Unit 2, photo 2", "/api/listings/p1/photos/d2"],
+      ["Property 1, Unit 2, 1 of 2", "/api/listings/p1/photos/d1"],
+      ["Property 1, Unit 2, 2 of 2", "/api/listings/p1/photos/d2"],
     ]);
     expect(within(first).queryByRole("list")).toBeNull();
     expect(fetch.mock.calls[0]?.[0]).toBe("/api/listings/p1");

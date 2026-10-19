@@ -29,7 +29,7 @@ function draftOf(contact: Contact) {
 
 // A tenant's, owner's or vendor's email, phones and mailing address, and Edit to change them.
 // Saving sends them all, so a field left empty is cleared; the ones before stay in the history.
-export function ContactDetails({
+function ContactDetails({
   path,
   contact,
   refresh,

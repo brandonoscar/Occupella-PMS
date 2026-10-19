@@ -57,10 +57,12 @@ jobs:
           chmod +x "$RUNNER_TEMP/bin/dbmate"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: pip install -r requirements.txt
-      - name: Typecheck, unit-test and build the portal (Node 22)
+      # oxlint (MIT) for correctness and accessibility, knip (ISC) for unused files, exports and
+      # dependencies.
+      - name: Typecheck, lint, unit-test and build the portal (Node 22)
         run: |
           docker run --rm -v "$PWD/frontend:/w" -w /w "$NODE_IMAGE" \
-            sh -c "npm ci --no-audit --no-fund && npm run typecheck && npm test && npm run build"
+            sh -c "npm ci --no-audit --no-fund && npm run typecheck && npm run lint && npm run knip && npm test && npm run build"
       - name: Apply every migration
         run: dbmate --no-dump-schema up
       - name: Serve the portal and seed a synthetic PMC

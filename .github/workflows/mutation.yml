@@ -1,9 +1,11 @@
 name: mutation
 
-# Nightly mutation testing of the money logic (PL/pgSQL): tools/sql_mutation.py makes one small
-# change at a time to the ledger functions, triggers and grants, and checks a test fails. The
-# score goes in the job summary; the run fails if it drops below the baseline in
-# ci/thresholds.toml. 4 shards in parallel, then one scoring job.
+# Nightly mutation testing. The money logic (PL/pgSQL): tools/sql_mutation.py makes one small
+# change at a time to the ledger functions, triggers and grants, and checks a test fails. All
+# 2,058 mutants take some 40 to 50 runner-hours (70 to 84 s each on average), so each night
+# takes a fifth of them over 8 shards and every mutant runs every 5 nights. Python (mutmut): the
+# modules pyproject.toml [tool.mutmut] names, every night. Each score goes in the job summary;
+# a run fails if one drops below its baseline in ci/thresholds.toml.
 on:
   schedule:
     - cron: "17 4 * * *" # nightly 04:17 UTC, after ledger-invariants
@@ -23,14 +25,17 @@ env:
 
 jobs:
   mutants:
-    name: mutants (shard ${{ matrix.shard }}/4)
+    name: mutants (shard ${{ matrix.shard }}/8)
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # A night's share per shard is about 54 mutants, some 75 minutes after the 12 the unmutated
+    # suite takes; until 10/18 every shard ran a quarter of them all and was cancelled here at
+    # 60 minutes, scoring nothing.
+    timeout-minutes: 180
     strategy:
       fail-fast: false
-      max-parallel: 4
+      max-parallel: 8
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -71,11 +76,71 @@ jobs:
         env:
           HYPOTHESIS_PROFILE: mutation
         run: pytest -x -q -p no:cacheprovider --ignore=tests/tools
-      - name: Run this shard's mutants
-        run: python -m tools.sql_mutation --shard ${{ matrix.shard }}/4 --out mutation/shard-${{ matrix.shard }}.json
+      - name: Run this shard's mutants of tonight's fifth
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          # Every 40th mutant from the kth: night n (days since 1970, mod 5) takes k = 8n + shard.
+          night=$(( $(date -u +%s) / 86400 % 5 ))
+          python -m tools.sql_mutation --shard "$(( night * 8 + SHARD ))/40" \
+            --out "mutation/shard-$SHARD.json"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mutation-shard-${{ matrix.shard }}
+          path: mutation/
+          retention-days: 30
+
+  python:
+    name: python mutants
+    runs-on: ubuntu-24.04
+    # Measured locally on 4 cores: 22 minutes with the first test selection; the wider one
+    # (sign-in, invites, resets, reconcile, reports) was 1,057 of 1,587 mutants in 50.
+    timeout-minutes: 150
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dbmate
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+            "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
+          echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/bin/dbmate"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: pip install -r requirements-dev.txt
+      - name: Mutate the modules pyproject.toml [tool.mutmut] names (mutmut)
+        env:
+          HYPOTHESIS_PROFILE: mutation
+        run: mutmut run --max-children 4
+      - name: Score against the baseline
+        run: |
+          mkdir -p mutation
+          mutmut export-cicd-stats
+          mutmut results > mutation/python-not-caught.txt
+          python -m tools.python_mutation mutants/mutmut-cicd-stats.json \
+            --survivors mutation/python-not-caught.txt --summary "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: mutation-python
           path: mutation/
           retention-days: 30
 
@@ -98,5 +163,5 @@ jobs:
           merge-multiple: true
       - name: Score against the baseline
         run: |
-          test "$(find mutation -name '*.json' | wc -l)" -eq 4 || { echo "::error::expected 4 shard results"; exit 1; }
+          test "$(find mutation -name '*.json' | wc -l)" -eq 8 || { echo "::error::expected 8 shard results"; exit 1; }
           python -m tools.sql_mutation --score mutation/*.json --summary "$GITHUB_STEP_SUMMARY"

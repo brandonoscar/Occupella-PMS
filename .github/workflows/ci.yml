@@ -79,6 +79,8 @@ jobs:
         run: python -m tools.check_synthetic_data
       - name: Shell scripts (shellcheck, preinstalled on the runner)
         run: shellcheck scripts/*.sh
+      - name: GitHub workflows (zizmor, offline; medium severity and up)
+        run: zizmor --offline --min-severity medium .github/workflows
       - name: Standing rule (tests come with the code)
         if: github.event_name == 'pull_request'
         env:

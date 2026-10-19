@@ -96,6 +96,7 @@ step "lint" ruff check .
 step "format" ruff format --check .
 step "typecheck" mypy
 step "synthetic data" python -m tools.check_synthetic_data
+step "workflows (zizmor)" zizmor --offline --min-severity medium .github/workflows
 if command -v shellcheck >/dev/null; then
   step "shell scripts" shellcheck scripts/*.sh
 else
@@ -137,14 +138,18 @@ else
   step "every test" pytest -q -p no:cacheprovider
   skip "coverage gates" "needs plpgsql_check in shared_preload_libraries; CI's coverage job runs them"
 fi
-# e2e.yml: the portal's typecheck, unit tests and build (the browser tests need a running
-# API and a seeded database; frontend/playwright.config.ts says how to run them by hand)
+# ledger-invariants.yml, nightly: 16 staff on one company's books at once for five minutes; here
+# 8 for 15 seconds, on a database of its own
+step "many staff at once (a short soak)" env PYTHONPATH=src python -m tools.contention --workers 8 --seconds 15
+# e2e.yml: the portal's typecheck, lint (oxlint, knip), unit tests and build (the browser tests
+# need a running API and a seeded database; frontend/playwright.config.ts says how to run them
+# by hand)
 portal() {
   (cd frontend && npm ci --no-audit --no-fund --silent && npm run --silent typecheck \
-    && npm test --silent && npm run --silent build)
+    && npm run --silent lint && npm run --silent knip && npm test --silent && npm run --silent build)
 }
 if command -v npm >/dev/null; then
-  step "portal: typecheck, unit tests, build" portal
+  step "portal: typecheck, lint, unit tests, build" portal
 else
   skip "portal" "npm is not installed; CI's e2e job runs it"
 fi

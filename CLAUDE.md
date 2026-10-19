@@ -80,10 +80,12 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   as `trust_app`, committed before the answer is sent; a staff member's request names them to
   the audit log. Every endpoint gets tests in `tests/api/` for success, a caller who isn't
   allowed and bad input. A report's PMC always comes from the session (every report takes
-  `p_pmc_id` first; a test pins it). Changes must be JSON from the app's own origin, and the
-  session cookie is HttpOnly and SameSite=Strict. A refusal from the database reaches people in
-  words, without internal ids (`deps.refusal`: an account short of money, a draw over what is
-  available, the last admin).
+  `p_pmc_id` first; a test pins it). Changes must be JSON from the app's own origin (a browser's
+  Sec-Fetch-Site of another site refuses one whatever its Origin), the session cookie is HttpOnly
+  and SameSite=Strict, and every answer forbids being framed or opened by another site (COOP),
+  the camera and the like, and over https anything but https (HSTS). A refusal from the database
+  reaches people in words, without internal ids (`deps.refusal`: an account short of money, a
+  draw over what is available, the last admin).
 - Logins (`src/pms/accounts.py`, migration 0028): staff invite a staff member, owner or tenant
   by email; the link carries a token kept only as its SHA-256, in the URL fragment. Accepting
   sets an argon2id password (and for staff an authenticator, TOTP); a new invite resets a
@@ -640,7 +642,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   nobody); an admin runs it by hand from the rent roll (Run rent now), and a named staff member
   without admin is refused. Each part charges once per date, so a run again charges nothing new.
   The API runs it at start and every day at 06:00 UTC unless `PMS_NIGHTLY` is "off" (e2e turns it
-  off); `python -m pms.nightly` runs it once. It moves no trust money but a company's monthly
+  off); `python -m pms.nightly` runs it once, one run at a time across servers (an advisory lock:
+  another leaves the work to it). It moves no trust money but a company's monthly
   management fees, once it turns them on (migration 0082), inside trust.
 - Notes (migration 0066, ADR 0006): what staff write about a property, unit, lease, tenant, owner
   or vendor of the PMC (`trust_notes`, exactly one of them, append-only, naming who wrote it; a
@@ -816,7 +819,7 @@ pytest                                          # every test; fresh database, no
 HYPOTHESIS_PROFILE=nightly pytest tests/properties   # property tests, nightly depth
 python -m tools.check_upgrade --base origin/main     # migrations upgrade a database with money
 python -m tools.check_synthetic_data                 # no real-looking personal or bank data
-(cd frontend && npm ci && npm run typecheck && npm test && npm run build)   # the portal
+(cd frontend && npm ci && npm run typecheck && npm run lint && npm run knip && npm test && npm run build)   # the portal
 ```
 
 Mutation testing and the rest: `docs/CI.md`.

@@ -59,7 +59,7 @@ def narrowed(
     names = {
         name
         for (name,) in conn.execute(
-            "SELECT p.display_name FROM trust_properties AS p WHERE p.pmc_id = %(pmc)s"
+            "SELECT p.display_name FROM trust_properties AS p WHERE p.pmc_id = %(pmc)s"  # noqa: S608
             f" AND {scope.within('p.id')}",
             params,
         ).fetchall()

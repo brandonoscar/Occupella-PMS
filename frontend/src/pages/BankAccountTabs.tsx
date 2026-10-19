@@ -225,7 +225,7 @@ export function DepositsTab({ bankId }: { bankId: string }) {
                   <th className="text-right">Total</th>
                   <th className="text-left">Recorded by</th>
                   <th className="text-left">Month-end</th>
-                  <th />
+                  <th><span className="sr-only">Actions</span></th>
                 </tr>
               </thead>
               <tbody>

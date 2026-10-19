@@ -427,7 +427,7 @@ WHERE a.pmc_id = %(pmc)s AND (%(only)s::uuid IS NULL OR a.id = %(only)s::uuid)
   END
 ORDER BY a.submitted_at DESC, a.id
 LIMIT %(limit)s OFFSET %(offset)s
-"""
+"""  # noqa: S608
 
 
 def applications_of(

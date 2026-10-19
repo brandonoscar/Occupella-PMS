@@ -352,7 +352,7 @@ function LedgerTab({ lease, ledger, record }: { lease: LeaseDetail; ledger: Ledg
               <tr>
                 <th className="text-left">Received</th>
                 <th className="text-right">Amount</th>
-                <th />
+                <th><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
@@ -402,7 +402,7 @@ function TenantsTab({ people, refresh, onRemove }: {
               <th className="text-left">Phone</th>
               <th className="text-left">Email</th>
               <th className="text-left">Portal</th>
-              <th />
+              <th><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>

@@ -58,7 +58,7 @@ export function ListingsPage() {
                       {listing.photos.map((photo, n) => (
                         <li key={photo} className="shrink-0">
                           <img src={`/api/listings/${encodeURIComponent(pmc)}/photos/${photo}`}
-                            alt={`${listing.property}, ${listing.unit}, photo ${n + 1}`} loading="lazy"
+                            alt={`${listing.property}, ${listing.unit}, ${n + 1} of ${listing.photos.length}`} loading="lazy"
                             className="h-32 w-48 rounded-sm object-cover" />
                         </li>
                       ))}
