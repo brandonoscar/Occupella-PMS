@@ -20,6 +20,7 @@ import {
   recurringLabel,
   requestId,
 } from "../rent";
+import { sharesLine } from "../rentals";
 
 // The forms of a lease's rent work (pages/LeasePage.tsx), each one thing recorded: a payment, a
 // fee or credit, one every month, a new rent, a deposit; and a payment's row, which can bounce,
@@ -83,6 +84,12 @@ export function PaymentForm({ lease, record }: { lease: RentLease; record: Recor
   const [method, setMethod] = useState<PaymentMethod>("check");
   const [pastHold, setPastHold] = useState(false);
   const hasPrepaid = lease.tenants.some((t) => Number(t.prepaid) > 0);
+  // Its property's owners split each payment by their shares (migration 0094); without shares,
+  // staff choose the account when there are several.
+  const shares = lease.owners.filter((o) => o.percent !== null);
+  const choose = shares.length === 0 && lease.owners.length > 1;
+  const [account, setAccount] = useState(lease.owners[0]?.account ?? "");
+  const chosen = choose ? { account } : {};
   return (
     <div className="flex flex-wrap items-end gap-3">
       <Form
@@ -90,7 +97,7 @@ export function PaymentForm({ lease, record }: { lease: RentLease; record: Recor
         onSubmit={async (event) => {
           event.preventDefault();
           const body = {
-            request_id: id, amount, received_on: on, method, reference: reference || null,
+            request_id: id, amount, received_on: on, method, reference: reference || null, ...chosen,
             ...(lease.on_hold && pastHold ? { past_hold: true } : {}),
           };
           if (await record<Payment>(`/api/rent/leases/${lease.id}/payments`, body, paymentSummary)) {
@@ -110,6 +117,17 @@ export function PaymentForm({ lease, record }: { lease: RentLease; record: Recor
         </Select>
         <Field label="Check or reference" id={`pay-ref-${lease.id}`} maxLength={200}
           value={reference} onChange={(e) => setReference(e.target.value)} />
+        {choose && (
+          <Select label="Owner's account" id={`pay-account-${lease.id}`} value={account}
+            onChange={(e) => setAccount(e.target.value)}>
+            {lease.owners.map((o) => <option key={o.account} value={o.account}>{o.owner}</option>)}
+          </Select>
+        )}
+        {shares.length > 0 && (
+          <p className="basis-full text-sm text-ink-muted" data-testid="split-by-ownership">
+            Split by ownership: {sharesLine(shares)}
+          </p>
+        )}
         {lease.on_hold && (
           <label className="flex basis-full items-center gap-2 text-sm text-ink">
             <input type="checkbox" checked={pastHold} onChange={(e) => setPastHold(e.target.checked)} />
@@ -123,7 +141,7 @@ export function PaymentForm({ lease, record }: { lease: RentLease; record: Recor
           variant="secondary"
           onClick={() =>
             record<Payment>(`/api/rent/leases/${lease.id}/use-prepaid`,
-              { request_id: requestId(), on: day(new Date()) }, paymentSummary)
+              { request_id: requestId(), on: day(new Date()), ...chosen }, paymentSummary)
           }
         >
           Use prepaid rent

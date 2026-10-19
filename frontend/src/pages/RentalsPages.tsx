@@ -1,4 +1,4 @@
-import { Building2 } from "lucide-react";
+import { Building2, ChartPie } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
@@ -16,14 +16,14 @@ import { Wide } from "../components/Wide";
 import { money } from "../money";
 import { scopeParams, useScope } from "../scope";
 import type { Paged, Property, PropertyRow, Unit } from "../rentals";
-import { LEASE_STATUS, occupancy, termLabel, unitState } from "../rentals";
+import { LEASE_STATUS, OWNERSHIP_STATE, occupancy, ownershipStates, sharesLine, termLabel, unitState } from "../rentals";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { Said } from "../components/Said";
 import { FilesCard } from "./FilesCard";
 import { navigate } from "../router";
 import { agreementSummary, lateFeeSummary, leaseBreakFeeSummary, nsfFeeSummary } from "../setup";
-import { usDate } from "../money";
+import { day, usDate } from "../money";
 import type { Panel } from "./SetupPanels";
 import {
   AddLeasePanel,
@@ -33,6 +33,7 @@ import {
   LateFeesPanel,
   LeaseBreakFeePanel,
   NsfFeePanel,
+  OwnershipPanel,
   TermsPanel,
 } from "./SetupPanels";
 
@@ -129,7 +130,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
   const [property, setProperty] = useState<Property | null>(null);
   const [said, setSaid] = useState("");
   const [error, setError] = useState("");
-  const [open, setOpen] = useState<"" | "unit" | "owner" | "terms" | "late" | "nsf" | "break" | "email">("");
+  const [open, setOpen] = useState<"" | "unit" | "owner" | "terms" | "ownership" | "late" | "nsf" | "break" | "email">("");
   const [account, setAccount] = useState("");
 
   function refresh() {
@@ -191,6 +192,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
             )}
             <div className="mt-3"><Button variant="secondary" onClick={() => setOpen("owner")}>Add owner</Button></div>
           </Card>
+          {property.owners.length > 0 && <OwnershipCard property={property} onSet={() => setOpen("ownership")} />}
           <Card title="Fees">
             <dl className="grid grid-cols-1 gap-3 text-base sm:grid-cols-2">
               <div>
@@ -256,6 +258,9 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
           <FilesCard kind="property_document" aboutId={id} name={property.name} />
           {open === "unit" && <AddUnitPanel panel={panel} propertyId={id} />}
           {open === "owner" && <AddOwnerPanel panel={panel} propertyId={id} />}
+          {open === "ownership" && (
+            <OwnershipPanel panel={panel} propertyId={id} name={property.name} owners={property.owners} />
+          )}
           {open === "late" && <LateFeesPanel panel={panel} propertyId={id} />}
           {open === "nsf" && <NsfFeePanel panel={panel} propertyId={id} />}
           {open === "break" && <LeaseBreakFeePanel panel={panel} propertyId={id} />}
@@ -280,6 +285,47 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
         </>
       )}
     </Shell>
+  );
+}
+
+// Who owns what part of a property (migration 0094, q044): each ownership from its day, the one
+// in force today marked. With one in force its payments, prepaid rent used, deposits kept and
+// bills split by ownership go to the owners by their shares; without, staff choose an account.
+function OwnershipCard({ property, onSet }: { property: Property; onSet: () => void }) {
+  const states = ownershipStates(property.ownership, day(new Date()));
+  return (
+    <Card title="Ownership">
+      {property.ownership.length === 0 ? (
+        <EmptyState icon={ChartPie} title="No ownership shares."
+          body={property.owners.length > 1
+            ? "Staff choose which owner's account each payment goes to. Set each owner's percent to split them."
+            : "Set each owner's percent when another owner shares the property."} />
+      ) : (
+        <Wide>
+          <table className="w-full text-base" aria-label="Ownership">
+            <thead>
+              <tr>
+                <th className="text-left">From</th>
+                <th className="text-left">Shares</th>
+                <th className="text-left">Recorded by</th>
+                <th className="text-left">State</th>
+              </tr>
+            </thead>
+            <tbody>
+              {property.ownership.map((o, n) => (
+                <tr key={o.id}>
+                  <td className="whitespace-nowrap">{usDate(o.starts_on)}</td>
+                  <td>{sharesLine(o.shares)}</td>
+                  <td className="text-ink-muted">{o.recorded_by ?? "—"}</td>
+                  <td><Badge tone={OWNERSHIP_STATE[states[n]!].tone}>{OWNERSHIP_STATE[states[n]!].word}</Badge></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Wide>
+      )}
+      <div className="mt-3"><Button variant="secondary" onClick={onSet}>Set ownership</Button></div>
+    </Card>
   );
 }
 

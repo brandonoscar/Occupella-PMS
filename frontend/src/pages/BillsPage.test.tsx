@@ -21,7 +21,7 @@ const BOOKS: Portfolio = {
   owners: [],
   properties: [],
   accounts: [
-    { account: "a1", owner_id: "o1", owner: "Owner 1", property_id: "pr1", property: "Property 1", bank_account: "Operating", agreement: null },
+    { account: "a1", owner_id: "o1", owner: "Owner 1", property_id: "pr1", property: "Property 1", bank_account: "Operating", agreement: null, ownership_percent: null },
   ],
   tenants: [],
   vendors: [{ id: "v1", name: "Vendor 1" }, { id: "v2", name: "Vendor 2" }],

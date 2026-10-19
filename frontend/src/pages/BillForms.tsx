@@ -13,6 +13,7 @@ import type { Bill, PayoutMethod } from "../payables";
 import { evenShares, linesNote } from "../payables";
 import type { Portfolio } from "../setup";
 import { expenseAccountLabel } from "../setup";
+import { sharesLine } from "../rentals";
 import type { Recorder } from "./useRecord";
 
 // A bill's expense account lines as staff type them: an account and an amount each.
@@ -127,6 +128,13 @@ function markupOf(books: Portfolio, account: string): string | null {
   return percent !== undefined && Number(percent) > 0 ? percent : null;
 }
 
+// The owners' accounts of the account's property by their ownership shares in force today
+// (migration 0094), a bill split by ownership going to each; none without shares.
+function ownersOf(books: Portfolio, account: string): Portfolio["accounts"] {
+  const property = books.accounts.find((a) => a.account === account)?.property_id;
+  return books.accounts.filter((a) => a.property_id === property && a.ownership_percent !== null);
+}
+
 type Invoice = { title: string; type: ContentType | null; size: number; base64: string };
 
 // Where Record bill starts when a work order's Create bill opens it: its vendor, property, memo
@@ -153,6 +161,7 @@ export function RecordBillForm({ books, record, start }: { books: Portfolio; rec
   const [shares, setShares] = useState<DraftLine[]>(
     books.accounts.slice(0, 2).map((a) => ({ account: a.account, amount: "" })));
   const [markup, setMarkup] = useState(false);
+  const [owned, setOwned] = useState(true);
   if (books.vendors.length === 0 || books.accounts.length === 0) {
     return <Notice tone="info">Add a vendor from Vendors and a property with an owner from Properties first.</Notice>;
   }
@@ -160,9 +169,13 @@ export function RecordBillForm({ books, record, start }: { books: Portfolio; rec
     : invoice.type === null ? "An invoice is a PDF, a JPEG or a PNG."
       : invoice.size > MAX_BYTES ? "An invoice is at most 5 MB." : "";
   const sharesOff = shared && sumMoney(shares.map((s) => s.amount || "0")) !== sumMoney([amount || "0"]);
-  // The markup the owner's terms set: one owner's, or any share's when shared.
-  const percent = shared ? null : markupOf(books, account);
-  const canMarkUp = shared ? shares.some((s) => markupOf(books, s.account) !== null) : percent !== null;
+  // A property its owners own in shares: its bill split between them, unless staff untick it.
+  const owners = shared || start ? [] : ownersOf(books, account);
+  const byOwnership = owned && owners.length > 1;
+  // The markup the owner's terms set: one owner's, or any share's when shared or split.
+  const percent = shared || byOwnership ? null : markupOf(books, account);
+  const canMarkUp = shared ? shares.some((s) => markupOf(books, s.account) !== null)
+    : byOwnership ? owners.some((o) => markupOf(books, o.account) !== null) : percent !== null;
   const attached = invoice ? { invoice: { title: invoice.title, content_type: invoice.type, content_base64: invoice.base64 } } : {};
   return (
     <Form
@@ -180,6 +193,17 @@ export function RecordBillForm({ books, record, start }: { books: Portfolio; rec
           };
           void record("/api/payables/shared-bills", body,
             () => `Bill ${reference} is shared across ${shares.length} properties.`);
+          return;
+        }
+        if (byOwnership) {
+          const body = {
+            vendor_id: vendor, reference, bill_date: dated, due_on: due, memo,
+            by_ownership: { account, amount },
+            ...(expense ? { expense_account_id: expense } : {}),
+            ...marked, ...attached,
+          };
+          void record<{ bills: string[] }>("/api/payables/shared-bills", body,
+            (done) => `Bill ${reference} is split between ${done.bills.length} owners by their shares.`);
           return;
         }
         const body = {
@@ -205,6 +229,12 @@ export function RecordBillForm({ books, record, start }: { books: Portfolio; rec
           {books.accounts.map((a) => <option key={a.account} value={a.account}>{a.owner}, {a.property}</option>)}
         </Select>
       )}
+      {owners.length > 1 && (
+        <label className="flex items-center gap-2 text-sm text-ink">
+          <input type="checkbox" checked={owned} onChange={(e) => setOwned(e.target.checked)} />
+          Split by ownership: {sharesLine(owners.map((o) => ({ owner: o.owner, percent: o.ownership_percent })))}
+        </label>
+      )}
       <Field label="Ref #" id="bill-reference" required maxLength={200} value={reference}
         onChange={(e) => setReference(e.target.value)} />
       <div className="flex flex-wrap gap-3">
@@ -221,7 +251,7 @@ export function RecordBillForm({ books, record, start }: { books: Portfolio; rec
           {percent !== null ? `Add the owner's markup (${percent}%)` : "Add each owner's markup, as their terms set"}
         </label>
       )}
-      {books.expense_accounts.length > 0 && shared && (
+      {books.expense_accounts.length > 0 && (shared || byOwnership) && (
         <Select label="Expense account" id="bill-expense" value={expense} onChange={(e) => setExpense(e.target.value)}>
           <option value="">None yet</option>
           {books.expense_accounts.map((a) => (
@@ -229,7 +259,7 @@ export function RecordBillForm({ books, record, start }: { books: Portfolio; rec
           ))}
         </Select>
       )}
-      {books.expense_accounts.length > 0 && !shared && (
+      {books.expense_accounts.length > 0 && !shared && !byOwnership && (
         <>
           <label className="flex items-center gap-2 text-sm text-ink">
             <input type="checkbox" checked={split} onChange={(e) => setSplit(e.target.checked)} />

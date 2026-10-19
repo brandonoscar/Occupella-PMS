@@ -43,6 +43,7 @@ const LEASE = {
   property: "Property 1",
   unit: "Unit 1",
   tenants: [{ id: "t1", name: "Tenant 1", prepaid: "0.00", deposit: "1500.00", deposits: [{ kind: "security", amount: "1500.00" }] }],
+  owners: [{ account: "a1", owner: "Owner 1", percent: null }],
   owed: "1550.00",
 } as LeaseDetail;
 const RUNS: RentRunLine[] = [

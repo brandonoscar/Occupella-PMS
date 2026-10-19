@@ -22,6 +22,7 @@ const LEASE: LeaseDetail = {
     { id: "t2", name: "Tenant 2", email: null, phone: null, portal: "no login", login_email: null, left_on: null, deposit_to: null },
     { id: "t3", name: "Tenant 3", email: null, phone: null, portal: "no login", login_email: null, left_on: "2026-03-31", deposit_to: null },
   ],
+  owners: [{ account: "a1", owner: "Owner 1", percent: null }],
   owed: "0.00",
   carried: "0.00",
   moved_from: null,

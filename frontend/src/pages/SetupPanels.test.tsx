@@ -73,6 +73,7 @@ const BOOKS: Portfolio = {
         approval_limit: "500.00",
         bill_markup_percent: "0",
       },
+      ownership_percent: null,
     },
   ],
   tenants: [

@@ -708,6 +708,12 @@ class Share(BaseModel):
     amount: Amount
 
 
+class ByOwnership(BaseModel):
+    # Any owner's account at the property, which names the property.
+    account: Account
+    amount: Amount
+
+
 class NewSharedBill(BaseModel):
     vendor_id: UUID
     reference: Text
@@ -715,7 +721,10 @@ class NewSharedBill(BaseModel):
     due_on: date
     memo: Text
     # Each owner's property account's share, which together are the invoice.
-    shares: Annotated[list[Share], Field(min_length=2, max_length=20)]
+    shares: Annotated[list[Share], Field(min_length=2, max_length=20)] | None = None
+    # Or the invoice split between a property's owners by their ownership shares in force on its
+    # date (migration 0094), worked out by the database to the cent.
+    by_ownership: ByOwnership | None = None
     # One expense account for every share.
     expense_account_id: UUID | None = None
     # Add the company's markup to each share whose owner's agreement sets one.
@@ -729,13 +738,35 @@ class SharedCreated(BaseModel):
     bills: list[UUID]
 
 
+def by_ownership(
+    conn: psycopg.Connection[Any], pmc_id: UUID, split: ByOwnership | None, day: date
+) -> list[Share]:
+    """A property's bill as each owner's share, by the ownership shares in force on its date."""
+    assert split is not None
+    owner_account(conn, pmc_id, split.account)
+    parts = conn.execute(
+        "SELECT s.ledger_account_id, s.amount FROM trust_ledger_accounts AS a,"
+        " trust_split_by_ownership(a.property_id, %s, %s) AS s WHERE a.ledger_account_id = %s",
+        (day, split.amount, split.account),
+    ).fetchall()
+    if len(parts) < 2:
+        raise HTTPException(
+            422, "the property has no shares between two owners or more on the bill's date"
+        )
+    return [Share(account=account, amount=amount) for account, amount in parts]
+
+
 @router.post("/shared-bills", status_code=201)
 def enter_shared_bill(session: Staff, conn: Conn, new: NewSharedBill) -> SharedCreated:
     """One vendor invoice shared across properties (q062): a bill for each owner's property
     account's share, under the invoice's reference with /1, /2..., each following every bill
-    rule on its own (its owner's approval and email, set aside from its owner's money)."""
+    rule on its own (its owner's approval and email, set aside from its owner's money). Or a
+    property's bill split between its owners by their ownership shares (q044)."""
     vendor_of(conn, session.pmc_id, new.vendor_id)
-    accounts = [share.account for share in new.shares]
+    if (new.shares is None) == (new.by_ownership is None):
+        raise HTTPException(422, "give a shared bill its shares, or split it by ownership")
+    shares = new.shares or by_ownership(conn, session.pmc_id, new.by_ownership, new.bill_date)
+    accounts = [share.account for share in shares]
     if len(set(accounts)) != len(accounts):
         raise HTTPException(422, "each share is a different owner's property account")
     for account in accounts:
@@ -744,7 +775,7 @@ def enter_shared_bill(session: Staff, conn: Conn, new: NewSharedBill) -> SharedC
         expense_account_of(conn, session.pmc_id, new.expense_account_id)
     if new.due_on < new.bill_date:
         raise HTTPException(422, "a bill is due on or after its date")
-    total = sum((share.amount for share in new.shares), Decimal(0))
+    total = sum((share.amount for share in shares), Decimal(0))
     try:
         shared = one(
             conn,
@@ -753,7 +784,7 @@ def enter_shared_bill(session: Staff, conn: Conn, new: NewSharedBill) -> SharedC
             (session.pmc_id, new.vendor_id, new.reference, total),
         )
         bills = []
-        for part, share in enumerate(new.shares, 1):
+        for part, share in enumerate(shares, 1):
             bill = one(
                 conn,
                 "INSERT INTO trust_bills (pmc_id, vendor_id, ledger_account_id, reference,"
@@ -779,7 +810,7 @@ def enter_shared_bill(session: Staff, conn: Conn, new: NewSharedBill) -> SharedC
     except psycopg.errors.UniqueViolation:
         raise HTTPException(409, "this vendor has a bill with that reference already") from None
     marked = 0
-    for share, bill in zip(new.shares, bills, strict=True):
+    for share, bill in zip(shares, bills, strict=True):
         if new.expense_account_id is not None:
             put_in(
                 conn,

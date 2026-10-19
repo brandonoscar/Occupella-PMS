@@ -55,7 +55,9 @@ const PROPERTY: Property = {
       starts_on: "2026-10-01", fee_percent: "8", minimum_fee: "0", flat_fee: "0", leasing_fee_percent: "0",
       reserve: "250.00", approval_limit: "500.00", bill_markup_percent: "0",
     },
+    percent: null,
   }],
+  ownership: [],
   units: [
     { id: "u1", name: "Unit 1", archived: false, lease: LINE },
     { id: "u2", name: "Unit 2", archived: false, lease: { ...LINE, id: "l2", status: "future", starts_on: "2026-11-01", owed: "0.00" } },
@@ -270,6 +272,78 @@ describe("PropertyPage", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(asked(fetch)).toContainEqual(["/api/setup/units", { property_id: "p1", name: "Unit 5" }]);
     expect(asked(fetch).filter((path) => path === "/api/properties/p1")).toHaveLength(2);
+  });
+
+  it("shows who owns what part of it from each day, and sets new shares in a side panel", async () => {
+    const owner = PROPERTY.owners[0]!;
+    const shares = (one: string, two: string) => [
+      { account: "a1", owner: "Owner 1", percent: one }, { account: "a2", owner: "Owner 2", percent: two },
+    ];
+    const coOwned: Property = {
+      ...PROPERTY,
+      owners: [{ ...owner, percent: "60" }, { ...owner, owner_id: "o2", owner: "Owner 2", account: "a2", percent: "40" }],
+      ownership: [
+        { id: "s3", starts_on: "2999-01-01", recorded_by: "Staff 1", shares: shares("50", "50") },
+        { id: "s2", starts_on: "2026-01-01", recorded_by: null, shares: shares("60", "40") },
+        { id: "s1", starts_on: "2025-01-01", recorded_by: "Staff 1", shares: shares("100", "0").slice(0, 1) },
+      ],
+    };
+    const fetch = server({ "/api/properties/p1": coOwned },
+      { "/api/setup/properties/p1/ownership": "Owner 2 is not an owner's account at the property" });
+    render(<PropertyPage me={ME} id="p1" />);
+    await screen.findByRole("heading", { name: "Property 1" });
+
+    const table = screen.getByRole("table", { name: "Ownership" });
+    expect(within(table).getAllByRole("row").slice(1).map((r) => r.textContent)).toEqual([
+      "01/01/2999Owner 1 50% · Owner 2 50%Staff 1To come",
+      "01/01/2026Owner 1 60% · Owner 2 40%—In force",
+      "01/01/2025Owner 1 100%Staff 1Replaced",
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Set ownership" }));
+    const panel = screen.getByRole("dialog", { name: "Set ownership" });
+    // It starts from the shares in force today.
+    expect([within(panel).getByLabelText("Owner 1, percent"), within(panel).getByLabelText("Owner 2, percent")]
+      .map((f) => (f as HTMLInputElement).value)).toEqual(["60", "40"]);
+    expect(within(panel).getByTestId("ownership-total").textContent).toBe("Together 100%.");
+    fireEvent.change(within(panel).getByLabelText("Owner 1, percent"), { target: { value: "70.5" } });
+    expect(within(panel).getByTestId("ownership-total").textContent).toBe("Together 110.5%; the shares come to 100%.");
+    expect((within(panel).getByRole("button", { name: "Set ownership" }) as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(within(panel).getByLabelText("Owner 2, percent"), { target: { value: "29,5" } });
+    expect(within(panel).getByTestId("ownership-total").textContent)
+      .toBe("A percent is above 0, at most 100, to four decimals.");
+    fireEvent.change(within(panel).getByLabelText("Owner 2, percent"), { target: { value: "29.5" } });
+    fireEvent.change(within(panel).getByLabelText("In force from"), { target: { value: "2027-01-01" } });
+
+    // A refusal stays in the panel, in words.
+    fireEvent.click(within(panel).getByRole("button", { name: "Set ownership" }));
+    expect((await within(panel).findByRole("alert")).textContent).toBe("Owner 2 is not an owner's account at the property");
+    expect(asked(fetch)).toContainEqual(["/api/setup/properties/p1/ownership", {
+      starts_on: "2027-01-01", shares: [{ account: "a1", percent: "70.5" }, { account: "a2", percent: "29.5" }],
+    }]);
+
+    // A blank leaves an owner out.
+    server({ "/api/properties/p1": coOwned });
+    fireEvent.change(within(panel).getByLabelText("Owner 1, percent"), { target: { value: "100" } });
+    fireEvent.change(within(panel).getByLabelText("Owner 2, percent"), { target: { value: "" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Set ownership" }));
+    expect(await screen.findByText("Ownership of Property 1 from 01/01/2027: Owner 1 100%.")).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("says a property owned by one owner, or by several without shares, has none", async () => {
+    server({ "/api/properties/p1": PROPERTY });
+    render(<PropertyPage me={ME} id="p1" />);
+    await screen.findByRole("heading", { name: "Property 1" });
+    expect(screen.getByText("No ownership shares.")).toBeTruthy();
+    expect(screen.getByText("Set each owner's percent when another owner shares the property.")).toBeTruthy();
+    cleanup();
+
+    const owner = PROPERTY.owners[0]!;
+    server({ "/api/properties/p1": { ...PROPERTY, owners: [owner, { ...owner, owner_id: "o2", owner: "Owner 2", account: "a2" }] } });
+    render(<PropertyPage me={ME} id="p1" />);
+    await screen.findByRole("heading", { name: "Property 1" });
+    expect(screen.getByText(/Staff choose which owner's account each payment goes to/)).toBeTruthy();
   });
 
   it("emails every tenant living there in a side panel and says who has no email", async () => {

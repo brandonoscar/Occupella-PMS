@@ -157,6 +157,63 @@ describe("RecordBillForm shared across properties, and the markup", () => {
   });
 });
 
+// Property 1 owned 60/40 by Owner 1 and Owner 3 (migration 0094); Property 2 by Owner 2 alone.
+const CO_OWNED = {
+  ...TWO,
+  accounts: [
+    { ...TWO.accounts[0]!, ownership_percent: "60" },
+    { ...TWO.accounts[1]!, ownership_percent: null },
+    { account: "a3", owner_id: "o3", owner: "Owner 3", property_id: "pr1", property: "Property 1", bank_account: "Operating",
+      agreement: { ...TERMS, bill_markup_percent: "0" }, ownership_percent: "40" },
+  ],
+} as unknown as Portfolio;
+
+describe("RecordBillForm split by ownership", () => {
+  it("splits a co-owned property's bill between its owners by their shares unless unticked", async () => {
+    const record = vi.fn(async () => true);
+    render(<RecordBillForm books={CO_OWNED} record={record} />);
+    fill();
+    const split = screen.getByLabelText("Split by ownership: Owner 1 60% · Owner 3 40%") as HTMLInputElement;
+    expect(split.checked).toBe(true);
+    // One expense account for the whole bill; any owner's markup, as their terms set.
+    expect(screen.queryByLabelText("Split across expense accounts")).toBeNull();
+    fireEvent.change(screen.getByLabelText("Expense account"), { target: { value: "e1" } });
+    fireEvent.click(screen.getByLabelText("Add each owner's markup, as their terms set"));
+    fireEvent.click(screen.getByRole("button", { name: "Record bill" }));
+
+    await vi.waitFor(() => expect(record).toHaveBeenCalled());
+    const [path, body, done] = record.mock.calls[0] as unknown as [string, Record<string, unknown>, (a: { bills: string[] }) => string];
+    expect(path).toBe("/api/payables/shared-bills");
+    expect(body).toEqual({
+      vendor_id: "v1", reference: "INV-9", bill_date: "2026-10-01", due_on: "2026-10-10", memo: "Hose",
+      by_ownership: { account: "a1", amount: "75.00" }, expense_account_id: "e1", markup: true,
+    });
+    expect(done({ bills: ["b1", "b2"] })).toBe("Bill INV-9 is split between 2 owners by their shares.");
+
+    // Unticked, it is one owner's bill as before.
+    fireEvent.click(split);
+    expect(screen.getByLabelText("Split across expense accounts")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Record bill" }));
+    await vi.waitFor(() => expect(record).toHaveBeenCalledTimes(2));
+    const [second, again] = record.mock.calls[1] as unknown as [string, Record<string, unknown>];
+    expect(second).toBe("/api/payables/bills");
+    expect(again).toMatchObject({ account: "a1", amount: "75.00" });
+  });
+
+  it("offers no split for a property without shares, a shared invoice or a work order's bill", () => {
+    const record = vi.fn(async () => true);
+    render(<RecordBillForm books={CO_OWNED} record={record} />);
+    fireEvent.change(screen.getByLabelText("Owner and property"), { target: { value: "a2" } });
+    expect(screen.queryByLabelText(/Split by ownership/)).toBeNull();
+    fireEvent.click(screen.getByLabelText("Share across properties"));
+    expect(screen.queryByLabelText(/Split by ownership/)).toBeNull();
+    cleanup();
+    render(<RecordBillForm books={CO_OWNED} record={record}
+      start={{ vendorId: "v1", propertyId: "pr1", workOrderId: "w1", memo: "Leak" }} />);
+    expect(screen.queryByLabelText(/Split by ownership/)).toBeNull();
+  });
+});
+
 describe("linesBody", () => {
   it("sends one account, the lines, or nothing", () => {
     expect(linesBody(false, "e1", [])).toEqual({ expense_account_id: "e1" });
