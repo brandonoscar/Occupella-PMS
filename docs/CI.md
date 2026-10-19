@@ -251,14 +251,37 @@ workflow, the two shards one after the other.
 Python and JavaScript, and the ledger is PL/pgSQL, so `tools/sql_mutation.py` does the same job
 for SQL. It flips comparisons, drops guards, deletes triggers and grants, one change at a time,
 and checks that some test fails.
-- 4 shards run in parallel; the score goes in the job summary.
-- The run fails if the score drops below the baseline in `ci/thresholds.toml`.
-- Survivors are listed: each one is a missing test.
+- Each mutant meets the tests that call the ledger directly first (`tests/test_*.py`), then the
+  API's, the reports' and the property tests; `-x` stops at the first failure. In the old order
+  (alphabetical: the API's first, the property tests before the direct ones) two mutants took
+  211 s and 196 s; first they take 17 s and 26 s.
+- All 2,058 mutants take some 40 to 50 runner-hours: a sample of 10 took 0.5 s (doesn't apply) to
+  342 s (caught only by an API test), 84 s on average. So each night runs a fifth of them, over
+  8 shards (every 40th from the kth, k = 8 x (days since 1970 mod 5) + the shard), and every
+  mutant runs every 5 nights. Until 10/18 every shard ran a quarter of them all, and every
+  nightly run from 10/15 to 10/18 was cancelled at its 60-minute limit with nothing scored.
+- A mutant's tests may run 45 minutes; one that hangs past that counts as killed. The limit
+  was 600 s until 10/19, when the suite (some 13 minutes on GitHub) had long outgrown it: every
+  mutant no test kills ran to the limit and was scored killed. Deleting a table's
+  `REVOKE ALL ... FROM PUBLIC` is no mutant at all (Postgres grants PUBLIC nothing on a table, a
+  test checks it); a function's still is, and the catalog's tests (`test_privileges.py`) meet a
+  deleted grant first.
+- The score goes in the job summary; the run fails if it drops below the baseline in
+  `ci/thresholds.toml`. Survivors are listed: each one is a missing test.
+
+Python is mutated too (`python mutants`, mutmut, BSD-3-Clause): the modules
+`pyproject.toml [tool.mutmut]` names (bank statement files, exports, logins), each mutant run
+against the tests that call the function it changed. `tools/python_mutation.py` scores the run
+against `[mutation] python_baseline_score`: a mutant no test reaches counts as not caught. Many
+survivors are equivalent (the case of a SQL keyword, which Postgres ignores); the rest are
+missing tests, listed in the summary.
 
 Coverage shows that code ran; mutation testing shows the tests would notice if it were wrong.
 Run it with `python -m tools.sql_mutation --list`, then
 `python -m tools.sql_mutation --out mutation/all.json` and
-`python -m tools.sql_mutation --score mutation/all.json`.
+`python -m tools.sql_mutation --score mutation/all.json`; the Python side with
+`mutmut run`, `mutmut export-cicd-stats` and
+`python -m tools.python_mutation mutants/mutmut-cicd-stats.json`.
 
 **selfhost.yml** (nightly, by hand, and on PRs touching the Dockerfile, compose file,
 requirements, migrations or `src/`): builds the image, lists what it holds (Syft, an SBOM kept as
@@ -392,7 +415,7 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
   never has more than 8 jobs running at once.
 - Nightly runs are staggered so they don't overlap:
   - 03:17 UTC ledger-invariants (16 property jobs, then timing, API fuzz and many-staff jobs);
-  - 04:17 mutation (4 shards, then 1 scoring job);
+  - 04:17 mutation (8 SQL shards and 1 Python job, then 1 scoring job);
   - 05:17 selfhost (1);
   - Mondays 06:17 security (codeql, gitleaks history, pip-audit, scorecard: 4).
 - A push to main runs the same checks (minus `deps-and-secrets`), plus gitleaks over full

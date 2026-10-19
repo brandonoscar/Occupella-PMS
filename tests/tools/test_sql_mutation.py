@@ -253,3 +253,65 @@ def test_main_runs_chosen_mutants(tmp_path, monkeypatch, capsys):
 
     assert sql_mutation.main(args) == 0
     assert len(json.loads(out.read_text())) == len(mutants)
+
+
+def test_a_mutant_meets_the_tests_that_call_the_ledger_directly_first(tmp_path):
+    for name in ("test_b.py", "test_a.py", "helpers.py", "conftest.py"):
+        (tmp_path / name).write_text("")
+    for folder in ("properties", "api", "tools", "golden", "__pycache__"):
+        (tmp_path / folder).mkdir()
+
+    ordered = [p.name for p in sql_mutation.ordered_tests(tmp_path)]
+
+    assert ordered == ["test_a.py", "test_b.py", "api", "golden", "properties"]
+    (tmp_path / "test_privileges.py").write_text("")
+    assert sql_mutation.ordered_tests(tmp_path)[0].name == "test_a.py"
+    assert sql_mutation.ordered_tests(tmp_path, catalog_first=True)[0].name == "test_privileges.py"
+
+
+def test_the_ordered_tests_are_the_whole_suite_but_the_tools_tests():
+    tests = sql_mutation.ROOT / "tests"
+    ordered = sql_mutation.ordered_tests(tests)
+
+    assert set(ordered) == {
+        *tests.glob("test_*.py"),
+        *(p for p in tests.iterdir() if p.is_dir() and p.name not in ("tools", "__pycache__")),
+    }
+    assert ordered[-1].name == "properties"
+
+
+REVOKES = """-- migrate:up
+REVOKE ALL ON t1 FROM PUBLIC;
+REVOKE ALL ON
+  t2,
+  t3
+FROM PUBLIC;
+REVOKE ALL ON TABLE t4 FROM PUBLIC;
+REVOKE ALL ON FUNCTION f(uuid) FROM PUBLIC;
+REVOKE ALL ON SCHEMA s FROM PUBLIC;
+REVOKE ALL ON t5 FROM PUBLIC, app;
+REVOKE INSERT ON t6 FROM PUBLIC;
+"""
+
+
+def test_a_tables_revoke_from_public_is_no_mutant_but_a_functions_is():
+    mutants = sql_mutation.generate({"db/migrations/009_grants.sql": REVOKES}, set())
+
+    assert [m.description for m in mutants] == [
+        "delete `REVOKE ALL ON FUNCTION f(uuid) FROM PUBLIC;`",
+        "delete `REVOKE ALL ON SCHEMA s FROM PUBLIC;`",
+        "delete `REVOKE ALL ON t5 FROM PUBLIC, app;`",
+        "delete `REVOKE INSERT ON t6 FROM PUBLIC;`",
+    ]
+
+
+def test_postgres_grants_public_nothing_on_a_table_and_execute_on_a_function(conn):
+    def public_privileges(kind):
+        return conn.execute(
+            "SELECT array_agg(privilege_type ORDER BY privilege_type)"
+            " FROM aclexplode(acldefault(%s, 10::oid)) WHERE grantee = 0",
+            (kind,),
+        ).fetchone()[0]
+
+    assert public_privileges("r") is None
+    assert public_privileges("f") == ["EXECUTE"]

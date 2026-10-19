@@ -9,3 +9,4 @@ coverage/
 mutation/
 failing-case/
 .hypothesis/
+mutants/

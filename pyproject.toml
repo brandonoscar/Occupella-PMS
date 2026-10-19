@@ -42,3 +42,24 @@ source = ["tools", "selfhost", "scripts", "src"]
 
 [tool.coverage.report]
 exclude_also = ['if __name__ == "__main__":']
+
+[tool.mutmut]
+# Python mutation testing (mutmut, BSD-3-Clause; mutation.yml, nightly): one small change at a
+# time to the modules people's money and logins pass through, each run against the tests that
+# call the changed function.
+source_paths = ["src"]
+only_mutate = ["src/pms/statements.py", "src/pms/exports.py", "src/pms/accounts.py"]
+pytest_add_cli_args = ["-p", "no:cacheprovider"]
+pytest_add_cli_args_test_selection = [
+  "tests/test_statement_files.py",
+  "tests/test_exports.py",
+  "tests/properties/test_export_properties.py",
+  "tests/test_logins.py",
+  "tests/api/test_sign_in.py",
+  "tests/api/test_invites.py",
+  "tests/api/test_password_reset.py",
+  "tests/api/test_reconcile.py",
+  "tests/api/test_report_preview.py",
+  "tests/api/test_downloads.py",
+]
+also_copy = ["ci", "db", "tools"]

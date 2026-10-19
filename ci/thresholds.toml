@@ -67,6 +67,10 @@ sql_branches = 99.8
 [mutation]
 # Share of valid SQL mutants of the money functions that the tests kill (mutation.yml, nightly).
 baseline_score = 100.0
+# Share of Python mutants (pyproject.toml [tool.mutmut]) a test catches, one no test reaches
+# counting as not caught (tools/python_mutation.py). Measured 2026-10-19: 972 of 1,587 (61.2%)
+# with the first, narrower test selection; the nightly run says when to raise it.
+python_baseline_score = 61.0
 # Mutants that can't change behavior, so no test can kill them. Each needs a reason.
 equivalent = [
   # Postgres grants PUBLIC no table privileges by default: revoking them again is a no-op.

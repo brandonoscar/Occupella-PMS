@@ -6,6 +6,8 @@ diff-cover==10.6.0
 httpx2==2.13.1
 hypothesis==6.168.5
 mypy==2.4.0
+# Python mutation testing, nightly (BSD-3-Clause; mutation.yml, pyproject.toml [tool.mutmut]).
+mutmut==3.8.0
 pip-licenses==5.5.5
 pypdf==6.20.0
 pytest==9.1.1
