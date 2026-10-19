@@ -71,6 +71,32 @@ such an email to the one holding its link. One not sent in time is given up on, 
 so on the person's Email tab ("send a new one"). A server that sends no email writes no invite or
 reset email at all: staff copy the invite link as before, and sign-in offers no reset.
 
+## Each email as text and HTML (2026-10-19)
+
+The founder chose, from the open-source research, Jinja2 (BSD-3-Clause) for HTML email and
+Mailpit (MIT) to test it. Each email now goes as two alternatives: its text, exactly as the
+outbox keeps it and staff read it, and HTML made from that text when it is sent
+(`src/pms/email_html.py`, one template, `src/pms/templates/email.html`):
+
+- **Nothing new in it.** The HTML says what the text says: its paragraphs, its lines of figures
+  as a table, its web addresses as links. Jinja2 escapes all of it, so a name or a staff
+  member's message can't add markup, and only `http` and `https` addresses become links.
+- **One button.** For a kind that asks the reader to do one thing (set a password, sign, approve
+  or decline a bill, sign in to a portal, open Work orders), the first address alone on its line
+  is a button saying so, with the address under it to copy. Staff messages, vendors' work orders
+  and adverse action notices have none.
+- **The company's.** Its name above, and its name and mailing address (Company setup) below. The
+  colours, sizes and fonts are the portal's tokens, so the email looks like the portal.
+- **The link stays out of the outbox.** An invite's, a reset's or a signer's link goes into both
+  parts as it is sent, as before, and the HTML is never stored.
+
+Not built: the company's logo in the email (a picture attached to every email, which many mail
+programs hide until asked), and HTML for anything the text doesn't say.
+
+`tests/test_email_mailpit.py` sends each kind of email to Mailpit over STARTTLS and checks what
+arrived, and Mailpit's check of the HTML against what mail programs support may not fall below a
+floor (`ci/thresholds.toml [email]`; docs/CI.md).
+
 ## What stays the same
 
 - The From address is the server's `PMS_EMAIL_FROM` (the company's own mail server, ADR 0004),

@@ -120,3 +120,8 @@ steps_per_example = 40
 # the schema's own boundary cases: every PR, and nightly (HYPOTHESIS_PROFILE=nightly).
 pr_examples = 3
 nightly_examples = 100
+
+[email]
+# Mailpit's HTML check of the HTML part of an email (tests/test_email_mailpit.py): the share,
+# in percent, of what it uses that mail programs support (caniemail.com's data, in Mailpit).
+html_check_supported_min = 90.0

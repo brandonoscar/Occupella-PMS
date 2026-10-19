@@ -23,10 +23,13 @@ ignore = ["S101"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = [".", "src"]
-addopts = "-ra --strict-markers --strict-config"
+# The tests that need the mailpit program run on their own: `pytest -m mailpit` (ci.yml's email
+# job, scripts/check.sh).
+addopts = "-ra --strict-markers --strict-config -m 'not mailpit'"
 xfail_strict = true
 markers = [
     "timing: depends on threads, lock waits or timeouts; ledger-invariants.yml repeats it nightly",
+    "mailpit: sends email to a Mailpit server it starts; ci.yml's email job runs these",
 ]
 
 [tool.mypy]

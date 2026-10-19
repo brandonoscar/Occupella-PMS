@@ -15,7 +15,9 @@ send a new one.
 Each email is written to trust_emails in the transaction that causes it, so it exists only if
 its cause does. After that commits, deliver_pending() hands each email not yet delivered to the
 server's sender and records every attempt (trust_email_deliveries): delivered, or why not. One
-that failed is tried again on a later delivery, at most MAX_ATTEMPTS times in all.
+that failed is tried again on a later delivery, at most MAX_ATTEMPTS times in all. The outbox
+keeps an email's text; it goes as that text and as HTML made from it (src/pms/email_html.py),
+under the company's name and mailing address.
 
 The server's PMS_EMAIL_SENDER picks the sender: "fake" keeps each email in the outbox and sends
 it nowhere (development and CI); "smtp" sends through the PMC's own mail server, always with
@@ -45,6 +47,8 @@ from uuid import UUID
 import psycopg
 from psycopg import sql
 
+from pms import email_html
+
 MAX_ATTEMPTS = 5
 # Where an invite's or a reset's link goes in its body, and how long the link is held for it.
 LINK = "{{link}}"
@@ -59,6 +63,8 @@ class Message:
     body: str
     # The company's name, shown beside the server's From address.
     from_name: str = ""
+    # The same email as HTML, sent beside the text when there is one.
+    html: str = ""
 
 
 class Sender(Protocol):
@@ -94,6 +100,8 @@ class SmtpSender:
         email["To"] = message.to
         email["Subject"] = message.subject
         email.set_content(message.body)
+        if message.html:
+            email.add_alternative(message.html, subtype="html")
         with smtplib.SMTP(self.host, self.port, timeout=20) as smtp:
             smtp.starttls(context=ssl.create_default_context())
             if self.username:
@@ -394,10 +402,16 @@ def write_signing_request(
 # --- delivery ----------------------------------------------------------------------------------
 
 PENDING = """
-SELECT e.id, e.pmc_id, e.to_address, e.subject, e.body, e.needs_link,
-       e.created_at < now() - make_interval(mins => %(minutes)s), p.display_name
+SELECT e.id, e.pmc_id, e.kind, e.to_address, e.subject, e.body, e.needs_link,
+       e.created_at < now() - make_interval(mins => %(minutes)s), p.display_name,
+       a.address_line_1, a.address_line_2,
+       a.city || ', ' || a.state || ' ' || a.postal_code
 FROM trust_emails AS e
 JOIN trust_pmcs AS p ON p.pmc_id = e.pmc_id
+-- The company's mailing address, as its latest profile says (none: no address).
+LEFT JOIN LATERAL (SELECT c.address_line_1, c.address_line_2, c.city, c.state, c.postal_code
+                   FROM trust_company_profiles AS c WHERE c.pmc_id = e.pmc_id
+                   ORDER BY c.created_at DESC, c.id DESC LIMIT 1) AS a ON true
 WHERE NOT EXISTS (SELECT 1 FROM trust_email_deliveries AS d
                   WHERE d.email_id = e.id AND (d.error IS NULL OR d.error = %(lost)s))
   AND (SELECT count(*) FROM trust_email_deliveries AS d WHERE d.email_id = e.id) < %(attempts)s
@@ -417,10 +431,11 @@ def deliver_pending(conn: psycopg.Connection[Any], sender: Sender, limit: int = 
     its own, and records the attempt. Two deliveries at once never send the same email: each
     takes the email's advisory lock and skips one another holds."""
     sent = failed = 0
-    for email_id, pmc_id, to, subject, body, needs_link, stale, company in conn.execute(
+    for row in conn.execute(
         PENDING,
         {"minutes": LINK_MINUTES, "lost": LINK_LOST, "attempts": MAX_ATTEMPTS, "limit": limit},
     ).fetchall():
+        email_id, pmc_id, kind, to, subject, body, needs_link, stale, company, *address = row
         link = _held_link(email_id) if needs_link else None
         if needs_link and link is None and not stale:
             continue  # its link is held by the process that wrote it, which sends it
@@ -439,7 +454,9 @@ def deliver_pending(conn: psycopg.Connection[Any], sender: Sender, limit: int = 
             else:
                 try:
                     text = body.replace(LINK, link) if link is not None else body
-                    sender.send(Message(to, subject, text, company))
+                    lines = tuple(line for line in address if line)
+                    html = email_html.render(text, kind, subject, company, lines)
+                    sender.send(Message(to, subject, text, company, html))
                     error = None
                 except (OSError, smtplib.SMTPException) as refused:
                     error = f"{type(refused).__name__}: {refused}"[:1000]

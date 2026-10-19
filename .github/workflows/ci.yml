@@ -1,8 +1,8 @@
 name: ci
 
 # Lint, format, typecheck, the synthetic-data scan, the standing-rule checks, and the example
-# tests. Property tests run in ledger-invariants.yml; coverage in coverage.yml. No secrets, no
-# LLM calls.
+# tests; and the email the PMS sends, through Mailpit. Property tests run in
+# ledger-invariants.yml; coverage in coverage.yml. No secrets, no LLM calls.
 on:
   pull_request:
   push:
@@ -21,6 +21,10 @@ env:
   DBMATE_SHA256: 47e284b3d8cbad1ba5f090495aa05afd1bbd5f35e2ed5577aad06da74ce780ce
   # Throwaway Postgres service with trust auth: there is no password anywhere.
   DATABASE_URL: postgres://postgres@localhost:5432/pms?sslmode=disable
+  # Mailpit (MIT), the mail server the email job sends to, built from its source with the Go
+  # image the self-host Dockerfile pins (keep the two digests the same).
+  MAILPIT_VERSION: v1.31.6
+  GO_IMAGE: mirror.gcr.io/library/golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61
 
 jobs:
   ci:
@@ -103,3 +107,54 @@ jobs:
         run: python -m tools.check_features --base "$BASE_SHA"
       - name: Unit and example tests (fresh database, every migration; no skips)
         run: pytest -v --ignore=tests/properties -p no:cacheprovider
+
+  email:
+    # The email the PMS sends, for real (tests/test_email_mailpit.py, `pytest -m mailpit`): each
+    # kind handed to Mailpit over STARTTLS and read back, text and HTML, and Mailpit's HTML check
+    # of what mail programs support against ci/thresholds.toml [email]. After ci, so a PR runs
+    # at most 8 jobs at once (docs/CI.md, "Job budget").
+    name: email (Mailpit)
+    needs: ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dbmate
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+            "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
+          echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/bin/dbmate"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Build Mailpit (every module checked against Go's checksum database)
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" -v "$RUNNER_TEMP/bin:/out" \
+            -e GOBIN=/out -e GOCACHE=/tmp/go-cache -e GOPATH=/tmp/go -e CGO_ENABLED=0 \
+            -e GOFLAGS=-trimpath -e GOTOOLCHAIN=local \
+            "$GO_IMAGE" go install "github.com/axllent/mailpit@${MAILPIT_VERSION}"
+          "$RUNNER_TEMP/bin/mailpit" version
+      - run: pip install -r requirements-dev.txt
+      - name: Email through Mailpit (fresh database, every migration; no skips)
+        run: pytest -v -m mailpit -p no:cacheprovider
