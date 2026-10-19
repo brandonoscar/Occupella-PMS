@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
@@ -99,11 +99,22 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
   const [leaving, setLeaving] = useState<LeasePerson | null>(null);
   const { said, error: refused, record } = useRecord(refresh);
 
+  // The lease the page shows. An answer is kept only while it is still that lease's: a move to
+  // another unit refreshes the lease it left as it opens the new one, and that answer can come
+  // back last.
+  const shown = useRef(id);
   function refresh() {
-    api.get<LeaseDetail>(`/api/leases/${id}`).then(setLease).catch((failed) => setError(detail(failed)));
-    api.get<Ledger>(`/api/leases/${id}/ledger`).then(setLedger).catch((failed) => setError(detail(failed)));
+    const asked = id;
+    const keep = <T,>(set: (value: T) => void) => (value: T) => {
+      if (shown.current === asked) set(value);
+    };
+    api.get<LeaseDetail>(`/api/leases/${asked}`).then(keep(setLease)).catch((failed) => keep(setError)(detail(failed)));
+    api.get<Ledger>(`/api/leases/${asked}/ledger`).then(keep(setLedger)).catch((failed) => keep(setError)(detail(failed)));
   }
-  useEffect(refresh, [id]);
+  useEffect(() => {
+    shown.current = id;
+    refresh();
+  }, [id]);
 
   // A form in a side panel closes once what it recorded is recorded.
   const recordThenClose: Recorder = async (path, body, done) => {

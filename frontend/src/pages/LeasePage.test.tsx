@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { LeaseDetail, Ledger } from "../rentals";
@@ -108,6 +108,27 @@ function panel(name: string, fromMenu = false) {
 }
 
 describe("LeasePage", () => {
+  it("drops a late answer for a lease it has left, as when a move opens the new lease", async () => {
+    const MOVED: LeaseDetail = { ...LEASE, id: "l2", property: "Property 2", unit: "Unit 7" };
+    const reads = server();
+    let late: (answer: Response) => void = () => {};
+    vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === "/api/leases/l1") return new Promise<Response>((resolve) => { late = resolve; });
+      if (path === "/api/leases/l2") return new Response(JSON.stringify(MOVED), { status: 200 });
+      if (path === "/api/leases/l2/ledger") return new Response(JSON.stringify(LEDGER), { status: 200 });
+      return reads(path, init);
+    }));
+    const { rerender } = render(<LeasePage me={ME} id="l1" />);
+    rerender(<LeasePage me={ME} id="l2" />);
+    const heading = "Property 2 · Unit 7 · Tenant 1, Tenant 2";
+    await screen.findByRole("heading", { level: 1, name: heading });
+    await act(async () => {
+      late(new Response(JSON.stringify(LEASE), { status: 200 }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(heading);
+  });
+
   it("heads the lease with its property, unit, tenants, where it stands and the balance due", async () => {
     server();
     await open();
