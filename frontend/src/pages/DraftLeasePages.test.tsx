@@ -153,7 +153,7 @@ describe("DraftLeasesPage", () => {
     const sent = posted(fetch);
     expect(sent.map(([path]) => path)).toEqual(["/api/leasing/leases/l1/renewal"]);
     expect(sent[0]?.[1]).toMatchObject({ send: true, recurring_charges: [], security_deposit: null, document_title: "Lease renewal" });
-    expect((sent[0]?.[1] as { signers: unknown }).signers).toEqual([
+    expect((sent[0]![1] as { signers: unknown }).signers).toEqual([
       { name: "Tenant 1", email: "t1@example.com" },
       { name: "Guarantor 1", email: "g1@example.com", role: "guarantor" },
     ]);

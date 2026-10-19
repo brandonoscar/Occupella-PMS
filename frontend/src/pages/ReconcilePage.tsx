@@ -547,7 +547,7 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
             <tr>
               <th className="text-left">Bank</th>
               <th className="text-left">Books</th>
-              <th />
+              <th><span className="sr-only">Actions</span></th>
             </tr>
           </thead>
           <tbody>

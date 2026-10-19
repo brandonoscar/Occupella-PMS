@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "vite",
     "typecheck": "tsc --noEmit",
+    "lint": "oxlint --deny-warnings src e2e",
+    "knip": "knip",
     "test": "vitest run",
     "build": "vite build",
     "e2e": "playwright test"
@@ -32,6 +34,8 @@
     "@vitejs/plugin-react": "6.1.2",
     "fast-check": "4.10.2",
     "jsdom": "30.1.2",
+    "knip": "6.40.0",
+    "oxlint": "1.87.0",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
     "vite": "8.3.4",

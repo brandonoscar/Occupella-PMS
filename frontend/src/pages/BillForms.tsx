@@ -20,7 +20,7 @@ export type DraftLine = { account: string; amount: string };
 
 // The lines of a bill split across expense accounts: each an account and an amount, a line
 // added or taken away, and what they come to against the bill.
-export function ExpenseLines({ books, amount, lines, onChange }: {
+function ExpenseLines({ books, amount, lines, onChange }: {
   books: Portfolio;
   amount: string;
   lines: DraftLine[];
@@ -73,7 +73,7 @@ const TWO_LINES: DraftLine[] = [{ account: "", amount: "" }, { account: "", amou
 
 // One vendor invoice shared across properties: each owner's property account's share, an account
 // added or taken away, the total split evenly, and what the shares come to against the invoice.
-export function Shares({ books, amount, shares, onChange }: {
+function Shares({ books, amount, shares, onChange }: {
   books: Portfolio;
   amount: string;
   shares: DraftLine[];

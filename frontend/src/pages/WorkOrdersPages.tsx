@@ -165,7 +165,7 @@ export function WorkOrdersPage({ me }: { me: Me }) {
 
 // Who is on call for emergencies: each one ticked is emailed when a tenant files one, at their
 // login's email, while the server sends email. A change is saved at once.
-export function OnCallForm() {
+function OnCallForm() {
   const [staff, setStaff] = useState<OnCall[] | null>(null);
   const [error, setError] = useState("");
   const [said, setSaid] = useState("");
@@ -211,7 +211,7 @@ export function OnCallForm() {
 
 // Jobs that come back every few months: each listed with its schedule, ended from a day; Add opens
 // any already due at once, and the nightly run opens the rest on their days.
-export function RecurringPanel({ opened }: { opened: () => void }) {
+function RecurringPanel({ opened }: { opened: () => void }) {
   const [list, setList] = useState<RecurringWorkOrder[] | null>(null);
   const [books, setBooks] = useState<Portfolio | null>(null);
   const [runs, setRuns] = useState(0);

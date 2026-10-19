@@ -66,9 +66,11 @@ export function Shell({
 
   return (
     <div className="flex h-screen overflow-hidden bg-canvas">
+      {/* Clicking beside the open menu closes it, as Escape does. */}
       {open && (
         <div
           data-testid="scrim"
+          role="presentation"
           className="fixed inset-0 z-40 bg-scrim md:hidden"
           onClick={() => setOpen(false)}
         />

@@ -2,7 +2,8 @@
 // for any amount, day or scope fast-check makes up, money reads back as the cents it came as,
 // sums are exact, days keep their parts, and a list's scope survives the round trip through its
 // URL.
-import { fc, test } from "@fast-check/vitest";
+import { test } from "@fast-check/vitest";
+import fc from "fast-check";
 import { describe, expect } from "vitest";
 import { day, money, sumMoney, usDate } from "./money";
 import { scopeOf, scopeParams } from "./scope";

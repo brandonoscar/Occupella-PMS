@@ -20,7 +20,7 @@ type Group = { title: string; go: string; goLabel: string; lines: string[] };
 // What is late or waits on someone today, one group for each kind with its count and the way to
 // the page that does that work (the Dashboard's "Needs attention"; ADR 0005). A kind with
 // nothing in it is left out. It changes nothing.
-export function attentionGroups(today: Today): Group[] {
+function attentionGroups(today: Today): Group[] {
   return [
     { title: "Late rent", go: "/rent-roll", goLabel: "Rent roll",
       lines: today.late_rent.map((lease) => lateLine(lease, today.on)) },

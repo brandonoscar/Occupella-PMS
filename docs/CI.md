@@ -265,8 +265,10 @@ a PMC could run its books on its own Postgres. Run it with `docker compose build
 compose up -d --wait db && docker compose run --rm migrate && docker compose run --rm smoke`.
 
 **e2e.yml** (every PR and push to main, called by licenses.yml): the portal (`frontend/`), end
-to end. Inside the pinned Node image it typechecks, unit-tests (vitest) and builds the React app.
-Then the API serves that build on a fresh Postgres (emails go to the fake sender's outbox,
+to end. Inside the pinned Node image it typechecks, lints, unit-tests (vitest) and builds the
+React app. The lint is oxlint (MIT; `frontend/.oxlintrc.json`: every rule it counts as
+correctness, React, accessibility and vitest among them, the few off saying why) and knip (ISC;
+`frontend/knip.json`: no unused file, export or dependency). Then the API serves that build on a fresh Postgres (emails go to the fake sender's outbox,
 `PMS_EMAIL_SENDER=fake`, and the nightly rent run is off, `PMS_NIGHTLY=off`, so rent is charged
 only when a test runs it), `frontend/e2e/seed.py` makes a synthetic PMC
 with an owner who has statements and a tenant with rent due and a maintenance request, and
@@ -338,7 +340,7 @@ as soon as one merged.
 
 One command for every PR check that can run locally, in CI's order:
 - the ci, licenses and db checks, with the database ones on a throwaway database;
-- the portal's typecheck, unit tests and build, if `npm` is installed;
+- the portal's typecheck, lint, unit tests and build, if `npm` is installed;
 - the upgrade check;
 - the PL/pgSQL lint, if the server has plpgsql_check;
 - every test, with the coverage gates and diff-cover if plpgsql_check is preloaded (then in

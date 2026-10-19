@@ -138,14 +138,14 @@ else
   step "every test" pytest -q -p no:cacheprovider
   skip "coverage gates" "needs plpgsql_check in shared_preload_libraries; CI's coverage job runs them"
 fi
-# e2e.yml: the portal's typecheck, unit tests and build (the browser tests need a running
+# e2e.yml: the portal's typecheck, lint (oxlint, knip), unit tests and build (the browser tests need a running
 # API and a seeded database; frontend/playwright.config.ts says how to run them by hand)
 portal() {
   (cd frontend && npm ci --no-audit --no-fund --silent && npm run --silent typecheck \
-    && npm test --silent && npm run --silent build)
+    && npm run --silent lint && npm run --silent knip && npm test --silent && npm run --silent build)
 }
 if command -v npm >/dev/null; then
-  step "portal: typecheck, unit tests, build" portal
+  step "portal: typecheck, lint, unit tests, build" portal
 else
   skip "portal" "npm is not installed; CI's e2e job runs it"
 fi

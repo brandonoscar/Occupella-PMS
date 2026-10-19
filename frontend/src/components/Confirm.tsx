@@ -24,7 +24,8 @@ export function ConfirmDialog({
   }, [onCancel]);
   return (
     <>
-      <div className="fixed inset-0 z-40 bg-scrim" onClick={onCancel} />
+      {/* Clicking beside the question cancels it, as Escape and Cancel do. */}
+      <div role="presentation" className="fixed inset-0 z-40 bg-scrim" onClick={onCancel} />
       <div role="alertdialog" aria-modal="true" aria-label={question}
         className="fixed top-1/3 left-1/2 z-50 flex w-[440px] max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col gap-4 rounded-md border border-card-edge bg-canvas p-6 shadow-lg">
         <p className="text-base text-ink">{question}</p>

@@ -19,7 +19,8 @@ export function SidePanel({
   }, [onClose]);
   return (
     <>
-      <div data-testid="panel-scrim" className="fixed inset-0 z-40 bg-scrim" onClick={onClose} />
+      {/* Clicking beside the panel closes it, as Escape and its Close button do. */}
+      <div data-testid="panel-scrim" role="presentation" className="fixed inset-0 z-40 bg-scrim" onClick={onClose} />
       <div
         role="dialog"
         aria-modal="true"

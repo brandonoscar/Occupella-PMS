@@ -163,7 +163,7 @@ export function HouseholdCards({ leaseId }: { leaseId: string }) {
       {section("guarantors", "Guarantors", household.guarantors.map((g) => ({
         id: g.id,
         what: g.name,
-        cells: [g.name, g.email ?? "", g.phone ?? "", g.signed ? <Badge tone="positive">Signed the lease</Badge> : ""],
+        cells: [g.name, g.email ?? "", g.phone ?? "", g.signed ? <Badge key="signed" tone="positive">Signed the lease</Badge> : ""],
       })))}
       {section("occupants", "Other occupants", household.occupants.map((o) => ({
         id: o.id,
@@ -173,7 +173,7 @@ export function HouseholdCards({ leaseId }: { leaseId: string }) {
       {section("pets", "Pets and animals", household.pets.map((p) => ({
         id: p.id,
         what: p.name,
-        cells: [petLine(p), p.assistance_animal ? <Badge tone="info">Assistance animal</Badge> : ""],
+        cells: [petLine(p), p.assistance_animal ? <Badge key="assistance" tone="info">Assistance animal</Badge> : ""],
       })))}
       {household.pets.some((p) => p.assistance_animal) && (
         <p className="text-sm text-ink-muted">
