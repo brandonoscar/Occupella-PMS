@@ -287,7 +287,9 @@ Run it with `python -m tools.sql_mutation --list`, then
 requirements, migrations or `src/`): builds the image, lists what it holds (Syft, an SBOM kept as
 the `sbom` artifact) and fails on a known high or critical vulnerability in it that has a fix
 (Grype; both built from pinned source versions), then runs `compose.yaml` with plain Postgres 16
-and nothing from Supabase. It applies every migration, then runs the smoke check:
+and nothing from Supabase. Its first run found the dbmate binary's Go and x/net and x/crypto
+(critical and high) and the base image's setuptools and wheel (high): the image now builds dbmate
+2.37.0 from source with Go 1.27.2 and drops setuptools and wheel, which only install packages. It applies every migration, then runs the smoke check:
 - seeds a synthetic 50-door PMC;
 - posts one month of rent;
 - runs one owner statement for that month and checks it against the owner's ledgers;
