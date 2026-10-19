@@ -192,12 +192,12 @@ def test_the_rent_run_charges_a_recurring_charge_with_the_rent_until_it_stops(cl
         ("credit", "Concession", "100.00", None),
         ("fee", "Pet rent", "35.00", None),
     ]
-    # Charged in one run, so the same day and time: which comes first is the ids' order, and
-    # the concession comes off the first (migration 0049), closing the pet rent if it is first.
-    assert [(c["kind"], c["memo"], c["open"]) for c in row["open_charges"]] in (
-        [("rent", f"Rent due {TODAY}", "1400.00"), ("fee", f"Pet rent due {TODAY}", "35.00")],
-        [("rent", f"Rent due {TODAY}", "1435.00")],
-    )
+    # Charged in one run, so the same day and time: the concession comes off the rent first
+    # (migration 0093), never by the ids' order, and the rent is listed before the pet rent.
+    assert [(c["kind"], c["memo"], c["open"]) for c in row["open_charges"]] == [
+        ("rent", f"Rent due {TODAY}", "1400.00"),
+        ("fee", f"Pet rent due {TODAY}", "35.00"),
+    ]
 
     ok(call(client, f"recurring-charges/{pet_rent}/stop", ends_on=TODAY + DAY))
     assert [r["ends_on"] for r in lease_row(client, home)["recurring"]] == [

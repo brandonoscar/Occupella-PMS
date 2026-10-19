@@ -29,8 +29,9 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     days / days in the month, to the cent), and each lease starting later that month with no
     rent charged in the month yet its first part month, due on its first day; each rent still
     open when its grace ran out (unpaid, less its share of the lease's credits due by then,
-    which come off the oldest open charges first) is charged one late fee, worked from what was
-    open then under the terms in force on its due date;
+    which come off its rent first, then its other charges, each oldest first: migration 0093)
+    is charged one late fee, worked from what was open then under the terms in force on its due
+    date;
   - recurring charges are the model's: the rent run charges each recurring charge in force on
     the due date (from its first day, before the day it stops) whose lease is in effect then,
     once per recurring charge and due date, as a fee or credit of its lease, for the days of the
@@ -1479,12 +1480,39 @@ class RentRollMachine(RuleBasedStateMachine):
         )
         return self.charges[charge_id].amount - paid + back
 
+    def pay_rank(self, charge_id):
+        """Where a charge comes in the order money pays a lease's charges (migration 0093): 0
+        its rent, 1 a monthly charge (a recurring fee, or a lease end's fee for days back of
+        either), 2 the rest."""
+        bill = self.charges[charge_id]
+        if bill.kind == "rent":
+            return 0
+        monthly = set(self.recurring_charged.values())
+        if bill.kind == "fee" and (
+            charge_id in monthly
+            or any(
+                charge_id in adjustments
+                and (self.charges[original].kind == "rent" or original in monthly)
+                for original, adjustments in self.adjusted.items()
+            )
+        ):
+            return 1
+        return 2
+
+    def pay_order(self, charge_id):
+        """Rent and monthly charges first, then the rest, each by due date. The database breaks
+        a tie of the same place and day by when each was charged, then id; no figure checked
+        here turns on it: a rent is the only one of its place on its day, and the aging sums
+        what is due on a day together."""
+        rank = self.pay_rank(charge_id)
+        return (rank == 2, self.charges[charge_id].due_on, rank, charge_id)
+
     def open_by(self, charge_id, cutoff):
         """What is open of a charge at cutoff: unpaid by then, less its share of its lease's
-        credits due before cutoff's day, which come off the lease's open charges oldest first
-        (by due date, then id): what the credits leave once everything before it is owed, a
-        running total, so a charge paid twice by then (paid again before a bounce dated later)
-        lowers what is owed before the charges after it."""
+        credits due before cutoff's day, which come off the lease's open charges rent first
+        (pay_order): what the credits leave once everything before it is owed, a running
+        total, so a charge paid twice by then (paid again before a bounce dated later) lowers
+        what is owed before the charges after it."""
         lease_id = self.charges[charge_id].lease_id
         mine = {c: b for c, b in self.charges.items() if b.lease_id == lease_id}
         credits = sum(
@@ -1492,10 +1520,7 @@ class RentRollMachine(RuleBasedStateMachine):
             Decimal(0),
         )
         before = Decimal(0)
-        for c, _ in sorted(
-            ((c, b) for c, b in mine.items() if b.kind != "credit"),
-            key=lambda pair: (pair[1].due_on, pair[0]),
-        ):
+        for c in sorted((c for c, b in mine.items() if b.kind != "credit"), key=self.pay_order):
             left = self.unpaid_by(c, cutoff)
             if c == charge_id:
                 return left - min(left, max(credits - before, Decimal(0)))
@@ -1846,8 +1871,8 @@ class RentRollMachine(RuleBasedStateMachine):
 
     def aging(self, lease_id, as_of):
         """(current, 1-30, 31-60, 61-90, over 90, total) a lease owes at the end of a day:
-        credits due by then and payments toward charges not yet due come off the oldest
-        charges first, a running total as open_by keeps."""
+        credits due by then and payments toward charges not yet due come off its charges rent
+        first (pay_order), a running total as open_by keeps."""
         cutoff = datetime.combine(as_of + timedelta(days=1), time(0), tzinfo=UTC)
         mine = {c: bill for c, bill in self.charges.items() if bill.lease_id == lease_id}
         offsets = sum(
@@ -1863,10 +1888,11 @@ class RentRollMachine(RuleBasedStateMachine):
         )
         out = [Decimal(0)] * 5
         before = Decimal(0)
-        for c, bill in sorted(
-            ((c, b) for c, b in mine.items() if b.kind != "credit" and b.due_on <= as_of),
-            key=lambda pair: (pair[1].due_on, pair[0]),
+        for c in sorted(
+            (c for c, b in mine.items() if b.kind != "credit" and b.due_on <= as_of),
+            key=self.pay_order,
         ):
+            bill = mine[c]
             left = bill.amount - self.paid_by(c, cutoff)
             take = min(left, max(offsets - before, Decimal(0)))
             before += left
@@ -2286,7 +2312,7 @@ def test_the_model_counts_a_charge_paid_twice_by_then_as_the_database_does(conn)
     """A charge paid, its payment bouncing only later, and paid again in between (matched once
     the bounce made room) was paid twice as of a day between. The database keeps a running
     total of what each lease owes, oldest first, so the second payment comes off what is owed
-    before it and nothing more: here the older fee still owes far more, so the credit is its and
+    before it and nothing more: here an older rent still owes far more, so the credit is its and
     a newer rent keeps all it owes. The model above must count it the same way (it once gave the
     second payment to the rent as a credit, so CI's seed saw a late fee worked from a cent less
     than the database's)."""
@@ -2305,18 +2331,19 @@ def test_the_model_counts_a_charge_paid_twice_by_then_as_the_database_does(conn)
         "1.00",
         [tenant],
     )
-    owed = charge(conn, pmc.pmc_id, lease, BASE, "5.00", "fee", "Lost key")
-    twice = charge(conn, pmc.pmc_id, lease, BASE + timedelta(days=1), "0.01", "fee", "Copy")
+    owed = charge(conn, pmc.pmc_id, lease, BASE, "5.00", "rent")
+    twice = charge(conn, pmc.pmc_id, lease, BASE + timedelta(days=1), "0.01", "rent")
     credit = charge(conn, pmc.pmc_id, lease, BASE, "0.01", "credit", "Courtesy")
     rent = charge(conn, pmc.pmc_id, lease, BASE + timedelta(days=31), "0.02", "rent")
     model = RentRollMachine.__new__(RentRollMachine)
     model.charges = {
-        owed: Charge(lease, BASE, "fee", Decimal("5.00")),
-        twice: Charge(lease, BASE + timedelta(days=1), "fee", CENT),
+        owed: Charge(lease, BASE, "rent", Decimal("5.00")),
+        twice: Charge(lease, BASE + timedelta(days=1), "rent", CENT),
         credit: Charge(lease, BASE, "credit", CENT),
         rent: Charge(lease, BASE + timedelta(days=31), "rent", Decimal("0.02")),
     }
     model.transfers, model.matches, model.reversals = {}, {}, {}
+    model.recurring_charged, model.adjusted = {}, {}
 
     def post(source, target, day):
         when = datetime.combine(BASE + timedelta(days=day), time(12), tzinfo=UTC)
@@ -2332,7 +2359,10 @@ def test_the_model_counts_a_charge_paid_twice_by_then_as_the_database_does(conn)
     apply_payment(conn, pmc.pmc_id, twice, second, CENT)
     model.matches = {(twice, first): CENT, (twice, second): CENT}
     model.reversals = {(twice, first, back): CENT}
-    add_late_fee_policy(conn, pmc.pmc_id, place.property_id, BASE, 0, "25.00", "10")
+    # Late fee terms from the newer rent's day, so the older two take none.
+    add_late_fee_policy(
+        conn, pmc.pmc_id, place.property_id, BASE + timedelta(days=31), 0, "25.00", "10"
+    )
 
     assert assess_late_fees(conn, pmc.pmc_id, BASE + timedelta(days=40)) == 1
     late_day = datetime.combine(BASE + timedelta(days=32), time(0), tzinfo=UTC)

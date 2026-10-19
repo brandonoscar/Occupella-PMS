@@ -119,18 +119,12 @@ JOIN trust_properties AS p ON p.id = u.property_id
 ORDER BY m.n
 """
 
+# A lease's open charges in the order a deposit kept pays them (migration 0093): rent first.
 OPEN = """
-SELECT c.id, c.due_on, c.kind, c.memo,
-       c.amount - coalesce((SELECT sum(p.amount) FROM trust_charge_payments AS p
-                            WHERE p.charge_id = c.id), 0)
-                + coalesce((SELECT sum(r.amount) FROM trust_payment_reversals AS r
-                            WHERE r.charge_id = c.id), 0)
-                - coalesce((SELECT sum(k.amount) FROM trust_charge_waivers AS w
-                            JOIN trust_charges AS k ON k.id = w.credit_charge_id
-                            WHERE w.waived_charge_id = c.id), 0)
-FROM trust_charges AS c
-WHERE c.lease_id = %s AND c.kind <> 'credit'
-ORDER BY c.due_on, c.created_at, c.id
+SELECT c.id, c.due_on, c.kind, c.memo, o.open
+FROM trust_open_charges(%s, %s, 'infinity') AS o
+JOIN trust_charges AS c ON c.id = o.charge_id
+ORDER BY trust_pay_rank(c) = 2, c.due_on, trust_pay_rank(c), c.created_at, c.id
 """
 
 OWNERS = """
@@ -170,7 +164,7 @@ def move_outs(session: Staff, conn: Conn) -> list[MoveOut]:
                 open_charges=[
                     Charge(id=i, due_on=d, kind=k, memo=m, open=cents(o), home=home)
                     for each, home in [*((e, h) for e, h, _ in earlier), (lease, None)]
-                    for i, d, k, m, o in conn.execute(OPEN, (each,)).fetchall()
+                    for i, d, k, m, o in conn.execute(OPEN, (session.pmc_id, each)).fetchall()
                     if o > 0
                 ],
                 owner_accounts=[

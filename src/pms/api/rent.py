@@ -115,15 +115,15 @@ def owed(conn: psycopg.Connection[Any], lease_id: UUID) -> Decimal:
     return Decimal(found[0])
 
 
-# Rent and fees not fully paid, oldest first, with what is still open of each: less what
-# payments matched and plus what bounced, less the lease's credits, which come off its oldest
-# open charges first (trust_open_charges, migration 0049).
+# Rent and fees not fully paid, by due date (on one day rent, then monthly charges, then the
+# rest), with what is still open of each: less what payments matched and plus what bounced,
+# less the lease's credits, which come off its rent first (trust_open_charges, migration 0093).
 OPEN_CHARGES = """
 SELECT c.lease_id, c.id, c.due_on, c.kind, c.memo, c.amount, o.open
 FROM trust_open_charges(%s, %s, 'infinity') AS o
 JOIN trust_charges AS c ON c.id = o.charge_id
 WHERE o.open > 0
-ORDER BY c.due_on, c.created_at, c.id
+ORDER BY c.due_on, trust_pay_rank(c), c.created_at, c.id
 """
 
 
@@ -134,14 +134,39 @@ def charges_open(
     return conn.execute(OPEN_CHARGES, (pmc_id, lease_id)).fetchall()
 
 
+# The order money pays a lease's open charges (migration 0093): its rent and monthly charges
+# first, oldest first, then the rest, oldest first (trust_pay_rank), each with what is open of it
+# and whether it is one of the rest.
+PAY_ORDER = """
+SELECT o.charge_id, o.open, trust_pay_rank(c) = 2
+FROM trust_open_charges(%s, %s, 'infinity') AS o
+JOIN trust_charges AS c ON c.id = o.charge_id
+WHERE o.open > 0
+ORDER BY trust_pay_rank(c) = 2, c.due_on, trust_pay_rank(c), c.created_at, c.id
+"""
+
+
 def open_charges(
     conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID
 ) -> list[tuple[UUID, Decimal]]:
-    return [(row[1], Decimal(row[6])) for row in charges_open(conn, pmc_id, lease_id)]
+    """A lease's open charges in the order money pays them: rent first."""
+    rows = conn.execute(PAY_ORDER, (pmc_id, lease_id)).fetchall()
+    return [(charge, Decimal(left)) for charge, left, _ in rows]
+
+
+def open_rent_and_fees(
+    conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID
+) -> tuple[Decimal, Decimal]:
+    """What is open of a lease's rent (with its monthly charges), and of its other charges."""
+    rows = conn.execute(PAY_ORDER, (pmc_id, lease_id)).fetchall()
+    return (
+        sum((Decimal(left) for _, left, fee in rows if not fee), ZERO),
+        sum((Decimal(left) for _, left, fee in rows if fee), ZERO),
+    )
 
 
 def allocate(charges: list[tuple[UUID, Decimal]], amount: Decimal) -> list[tuple[UUID, Decimal]]:
-    """`amount` spread over open charges oldest first, each up to what is open of it."""
+    """`amount` spread over open charges in the order given, each up to what is open of it."""
     matches = []
     for charge, left in charges:
         if amount <= 0:
@@ -330,9 +355,11 @@ def record_payment(
     past_hold_by: str | None = None,
 ) -> Recorded:
     """A tenant's payment into the operating trust bank account: the owner's account takes
-    what the lease owes, matched to its charges oldest first; the rest is the first tenant's
-    prepaid rent. A lease its tenants moved into (migration 0091) pays what each lease they moved
-    from still owes first, oldest first, into the owner's account its move names. The same
+    what the lease owes, matched to its rent first, then its other charges, each oldest first
+    (migration 0093); the rest is the first tenant's prepaid rent. A lease its tenants moved into
+    (migration 0091) pays the rent each lease they moved from still owes first, oldest lease
+    first, then this lease's rent, then the other charges in the same order, each part into the
+    owner's account its lease or move names. The same
     request id again returns the payment as it was recorded. A lease on a payment hold refuses
     it, unless staff accept it past the hold (`past_hold_by` names them): then every hold in
     force that day allows it, in the same transaction."""
@@ -354,13 +381,18 @@ def record_payment(
         "memo": f"Rent – {lease_memo(conn, lease_id)}",
     }
     # Each lease's part, oldest first: (the lease, its owner's account, that account's bank, part).
-    parts = []
+    # Every lease's rent comes before any lease's other charges.
+    chain = [*earlier_leases, (lease_id, owner, bank)]
+    still = {each: open_rent_and_fees(conn, pmc_id, each) for each, _, _ in chain}
+    shares: dict[UUID, Decimal] = {}
     left = amount
-    for each, each_owner, each_bank in [*earlier_leases, (lease_id, owner, bank)]:
-        part = min(left, max(owed(conn, each), ZERO))
-        if part > 0:
-            parts.append((each, each_owner, each_bank, part))
-            left -= part
+    for kind in (0, 1):  # rent, then the rest
+        for each, _, _ in chain:
+            share = min(left, still[each][kind])
+            if share > 0:
+                shares[each] = shares.get(each, ZERO) + share
+                left -= share
+    parts = [(each, o, b, shares[each]) for each, o, b in chain if each in shares]
     to_owner = amount - left
     to_prepaid = left
     transfers = [(cash_of(conn, b), o, part) for _, o, b, part in parts]
@@ -432,7 +464,7 @@ def use_prepaid(
     account: str | None = None,
 ) -> Recorded:
     """The lease's tenants' prepaid rent paid to the owner's account for what the lease owes,
-    matched to its charges oldest first."""
+    matched to its rent first, then its other charges, each oldest first."""
     lease = lease_of(conn, pmc_id, lease_id)
     owner, bank = owner_account(conn, pmc_id, lease.property_id, account)
     lock_lease(conn, lease_id)
