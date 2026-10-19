@@ -484,6 +484,7 @@ FEATURES = (
     "listing-photos",
     "leads",
     "screening-criteria",
+    "lease-transfers",
 )
 
 

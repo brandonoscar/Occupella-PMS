@@ -4,7 +4,7 @@ import { chargeLabel, hasEnded, leaseLabel, moveOutStatus, preview } from "./mov
 
 const LEASE: MoveOut = {
   lease_id: "l1", property: "Property 1", unit: "Unit 1", tenants: ["Tenant A", "Tenant B"],
-  starts_on: "2026-01-01", ends_on: "2026-06-30", owed: "350.00", held: "1200.00",
+  starts_on: "2026-01-01", ends_on: "2026-06-30", owed: "350.00", carried: "0.00", held: "1200.00",
   open_charges: [], owner_accounts: [], settled: null,
 };
 
@@ -13,6 +13,8 @@ describe("moveout", () => {
     expect(preview(LEASE)).toEqual({ kept: "350.00", returned: "850.00" });
     expect(preview({ ...LEASE, owed: "1500.10" })).toEqual({ kept: "1200.00", returned: "0.00" });
     expect(preview({ ...LEASE, owed: "0.00" })).toEqual({ kept: "0.00", returned: "1200.00" });
+    // What the lease its tenants moved from still owes is kept too (migration 0091).
+    expect(preview({ ...LEASE, carried: "500.00" })).toEqual({ kept: "850.00", returned: "350.00" });
   });
 
   it("reads a lease and its charges", () => {

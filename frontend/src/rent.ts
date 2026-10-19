@@ -1,5 +1,5 @@
 // Staff's rent work as the API sends it (src/pms/api/rent.py), and how it reads.
-import { day, money, usDate } from "./money";
+import { day, money, sumMoney, usDate } from "./money";
 
 export type OpenCharge = {
   id: string;
@@ -29,7 +29,27 @@ export const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
 export function methodLabel(method: PaymentMethod): string {
   return PAYMENT_METHODS.find((m) => m.value === method)?.label ?? method;
 }
-export type LeaseTenant = { id: string; name: string; prepaid: string; deposit: string };
+// A deposit's kind (migration 0092): each held apart, the security deposit first.
+export type DepositKind = "security" | "pet" | "key";
+export const DEPOSIT_KINDS: { value: DepositKind; label: string }[] = [
+  { value: "security", label: "Security deposit" },
+  { value: "pet", label: "Pet deposit" },
+  { value: "key", label: "Key deposit" },
+];
+export type Held = { kind: DepositKind; amount: string };
+// deposit is everything held for the tenant; deposits the same by kind, only kinds holding some.
+export type LeaseTenant = { id: string; name: string; prepaid: string; deposit: string; deposits: Held[] };
+
+// What the tenants' deposits are, by kind, when any is not a security deposit:
+// "Security deposit $1,000.00 · Pet deposit $300.00"; nothing when all are.
+export function depositKindsLine(tenants: LeaseTenant[]): string {
+  const held = DEPOSIT_KINDS.map((k) => ({
+    ...k,
+    amount: sumMoney(tenants.flatMap((t) => t.deposits.filter((d) => d.kind === k.value).map((d) => d.amount))),
+  })).filter((k) => Number(k.amount) !== 0);
+  if (held.every((k) => k.value === "security")) return "";
+  return held.map((k) => `${k.label} ${money(k.amount)}`).join(" · ");
+}
 // A fee the lease owes every month besides its rent, or a credit it gets every month. ends_on is
 // the first due date it is no longer charged for.
 export type RecurringCharge = {
@@ -62,6 +82,9 @@ export type RentersInsurance = {
   standing: string;
   below_minimum: boolean;
 };
+// The other lease of a move (migration 0091): where a lease's tenants moved from, or to, and the
+// first day of the new lease.
+export type Move = { lease_id: string; property: string; unit: string; moved_on: string };
 export type RentLease = {
   id: string;
   property: string;
@@ -77,6 +100,10 @@ export type RentLease = {
   due_days: DueDay[];
   tenants: LeaseTenant[];
   owed: string;
+  // What the leases its tenants moved from still owe their owners: a payment here pays it first.
+  carried: string;
+  moved_from: Move | null;
+  moved_to: Move | null;
   on_hold: boolean;
   open_charges: OpenCharge[];
   payments: Paid[];
@@ -217,4 +244,15 @@ export function holdLine(hold: Hold): string {
   const ended = hold.ends_on === null ? "" : `, released from ${usDate(hold.ends_on)}${hold.released_by ? ` by ${hold.released_by}` : ""}`;
   const allowed = hold.allowed === 0 ? "" : `; ${hold.allowed} payment${hold.allowed === 1 ? "" : "s"} accepted past it`;
   return `${since}${ended}${allowed}`;
+}
+
+// What a payment on the lease pays: its own balance and what the leases its tenants moved from
+// still owe.
+export function balanceDue(lease: RentLease): string {
+  return sumMoney([lease.owed, lease.carried]);
+}
+
+// "Birch Flats · Unit A": the other home of a move.
+export function moveHome(move: Move): string {
+  return `${move.property} · ${move.unit}`;
 }

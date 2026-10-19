@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { Hold, OpenCharge, RecurringCharge } from "./rent";
+import type { Hold, OpenCharge, RecurringCharge, RentLease } from "./rent";
 import {
+  balanceDue,
   bounceSummary,
+  depositKindsLine,
+  moveHome,
   PAYMENT_METHODS,
   earliestRentChange,
   holdLine,
@@ -19,6 +22,16 @@ import {
   rentRunSummary,
   requestId,
 } from "./rent";
+
+describe("moves", () => {
+  it("adds what the leases a lease's tenants moved from still owe to its balance, and names a home", () => {
+    const lease = { owed: "100.10", carried: "1000.05" } as RentLease;
+    expect(balanceDue(lease)).toBe("1100.15");
+    expect(balanceDue({ ...lease, owed: "0.00", carried: "0.00" })).toBe("0.00");
+    expect(moveHome({ lease_id: "l0", property: "Property 0", unit: "Unit 0", moved_on: "2026-04-01" }))
+      .toBe("Property 0 · Unit 0");
+  });
+});
 
 describe("renters insurance", () => {
   const ON_FILE = {
@@ -151,5 +164,26 @@ describe("rent", () => {
     const one = requestId();
     expect(one).toMatch(/^[0-9a-f-]{36}$/);
     expect(requestId()).not.toBe(one);
+  });
+});
+
+describe("depositKindsLine", () => {
+  const tenant = (deposits: { kind: "security" | "pet" | "key"; amount: string }[]) =>
+    ({ id: "t", name: "T", prepaid: "0.00", deposit: "0.00", deposits });
+
+  it("says what the deposits are by kind, summed across the tenants, the security deposit first", () => {
+    expect(depositKindsLine([
+      tenant([{ kind: "key", amount: "50.00" }, { kind: "security", amount: "1000.00" }]),
+      tenant([{ kind: "pet", amount: "300.00" }, { kind: "security", amount: "200.50" }]),
+      tenant([{ kind: "pet", amount: "100.00" }]),
+    ])).toBe("Security deposit $1,200.50 · Pet deposit $400.00 · Key deposit $50.00");
+    expect(depositKindsLine([tenant([{ kind: "pet", amount: "300.00" }])])).toBe("Pet deposit $300.00");
+  });
+
+  it("says nothing when every deposit is a security deposit, or none is held", () => {
+    expect(depositKindsLine([tenant([{ kind: "security", amount: "1000.00" }]), tenant([])])).toBe("");
+    expect(depositKindsLine([])).toBe("");
+    // A kind that holds nothing is not named.
+    expect(depositKindsLine([tenant([{ kind: "security", amount: "10.00" }, { kind: "pet", amount: "0.00" }])])).toBe("");
   });
 });

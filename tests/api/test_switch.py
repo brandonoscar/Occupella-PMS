@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from helpers import add_agreement, make_pmc, post
+from helpers import add_agreement, add_tenant, balance, make_pmc, post
 from people import join_as_owner, join_as_staff, join_as_tenant
 
 from pms.api import switching
@@ -504,6 +504,31 @@ def test_deposits_open_in_the_security_deposit_account_only(client, staff, pmc):
         ),
         201,
     )
+
+
+def test_an_opening_deposit_is_the_tenants_security_deposit(client, conn, staff, pmc):
+    # Tenant 2 holds only a pet deposit account so far (migration 0092): the old system's
+    # deposit opens their security deposit beside it.
+    tenant = add_tenant(conn, pmc.pmc_id, pmc.owners[0].property_id, "Tenant 2")
+    pet = conn.execute(
+        "SELECT trust_open_deposit_account(%s, %s, %s, 'pet')",
+        (pmc.pmc_id, pmc.deposit_bank_id, tenant),
+    ).fetchone()[0]
+    deposit = csv("Kind,Property,Tenant,Amount", "deposit,Property 1,Tenant 2,1500.00")
+
+    ok(
+        open_balances(
+            client, pmc, content=deposit, book="1500.00", bank_account_id=pmc.deposit_bank_id
+        ),
+        201,
+    )
+
+    security = conn.execute(
+        "SELECT ledger_account_id FROM trust_ledger_accounts WHERE tenant_id = %s"
+        " AND kind = 'tenant_deposit' AND deposit_kind IS NULL",
+        (tenant,),
+    ).fetchone()[0]
+    assert (balance(conn, security), balance(conn, pet)) == (Decimal("1500.00"), 0)
 
 
 @pytest.mark.parametrize(

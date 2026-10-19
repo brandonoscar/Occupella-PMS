@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { LeaseDetail, Ledger } from "../rentals";
@@ -19,14 +19,18 @@ const LEASE: LeaseDetail = {
   id: "l1", property: "Property 1", unit: "Unit 1", property_id: "p1", unit_id: "u1", status: "current",
   starts_on: "2026-01-01", ends_on: null, monthly_rent: "1500.00", rent_changes: [], rent_due_day: 1, due_days: [], renters_insurance: null,
   tenants: [
-    { id: "t1", name: "Tenant 1", prepaid: "50.00", deposit: "1500.00" },
-    { id: "t2", name: "Tenant 2", prepaid: "0.00", deposit: "0.00" },
+    { id: "t1", name: "Tenant 1", prepaid: "50.00", deposit: "1500.00",
+      deposits: [{ kind: "security", amount: "1200.00" }, { kind: "pet", amount: "300.00" }] },
+    { id: "t2", name: "Tenant 2", prepaid: "0.00", deposit: "0.00", deposits: [] },
   ],
   people: [
     { id: "t1", name: "Tenant 1", email: "t1@example.com", phone: "555-555-0101", portal: "active", login_email: "t1@example.com", left_on: null, deposit_to: null },
     { id: "t2", name: "Tenant 2", email: null, phone: null, portal: "no login", login_email: null, left_on: null, deposit_to: null },
   ],
   owed: "1550.00",
+  carried: "0.00",
+  moved_from: null,
+  moved_to: null,
   on_hold: false,
   open_charges: [
     { id: "c1", due_on: "2026-10-01", kind: "rent", memo: "Rent due 2026-10-01", amount: "1500.00", open: "1500.00" },
@@ -104,6 +108,27 @@ function panel(name: string, fromMenu = false) {
 }
 
 describe("LeasePage", () => {
+  it("drops a late answer for a lease it has left, as when a move opens the new lease", async () => {
+    const MOVED: LeaseDetail = { ...LEASE, id: "l2", property: "Property 2", unit: "Unit 7" };
+    const reads = server();
+    let late: (answer: Response) => void = () => {};
+    vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
+      if (path === "/api/leases/l1") return new Promise<Response>((resolve) => { late = resolve; });
+      if (path === "/api/leases/l2") return new Response(JSON.stringify(MOVED), { status: 200 });
+      if (path === "/api/leases/l2/ledger") return new Response(JSON.stringify(LEDGER), { status: 200 });
+      return reads(path, init);
+    }));
+    const { rerender } = render(<LeasePage me={ME} id="l1" />);
+    rerender(<LeasePage me={ME} id="l2" />);
+    const heading = "Property 2 · Unit 7 · Tenant 1, Tenant 2";
+    await screen.findByRole("heading", { level: 1, name: heading });
+    await act(async () => {
+      late(new Response(JSON.stringify(LEASE), { status: 200 }));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    });
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(heading);
+  });
+
   it("heads the lease with its property, unit, tenants, where it stands and the balance due", async () => {
     server();
     await open();
@@ -117,11 +142,45 @@ describe("LeasePage", () => {
     // Summary: the rent, what is held, what is open, the monthly charges, renters insurance.
     expect(screen.getByText("$1,500.00 a month")).toBeTruthy();
     expect(screen.getByTestId("deposit-held").textContent).toBe("$1,500.00");
+    expect(screen.getByTestId("deposit-kinds").textContent).toBe("Security deposit $1,200.00 · Pet deposit $300.00");
     expect(screen.getByTestId("prepaid").textContent).toBe("$50.00");
     expect(document.body.textContent).toContain("10/06/2026 Late fee: $50.00 open");
     expect(document.body.textContent).toContain("Pet rent: $35.00 a month from 01/01/2026");
     expect(screen.getByText("Not asked for.")).toBeTruthy();
     expect(screen.queryByText(/payment hold/)).toBeNull();
+  });
+
+  it("adds what the lease its tenants moved from still owes to the balance due, and links it", async () => {
+    server({
+      ...LEASE, owed: "100.00", carried: "1000.00",
+      moved_from: { lease_id: "l0", property: "Property 0", unit: "Unit 0", moved_on: "2026-04-01" },
+    });
+    await open();
+    expect(screen.getByTestId("balance-due").textContent).toBe("$1,100.00");
+    expect(screen.getByTestId("carried").textContent).toBe("Includes $1,000.00 still owed at Property 0 · Unit 0");
+    expect(screen.getByTestId("moved-from").textContent).toBe(
+      "Moved here on 04/01/2026 from Property 0 · Unit 0. What that lease still owes is its owner's, and a payment here pays it first.",
+    );
+    expect(screen.getByRole("link", { name: "Property 0 · Unit 0" }).getAttribute("href")).toBe("/leases/l0");
+  });
+
+  it("says where a lease's tenants moved, and offers no second move", async () => {
+    server({ ...LEASE, moved_to: { lease_id: "l9", property: "Property 9", unit: "Unit 9", moved_on: "2026-11-01" } });
+    await open();
+    expect(document.body.textContent).toContain(
+      "The tenants moved to Property 9 · Unit 9 on 11/01/2026; their deposits went with them.",
+    );
+    expect(screen.getByRole("link", { name: "Open the new lease" }).getAttribute("href")).toBe("/leases/l9");
+    expect(screen.queryByTestId("carried")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for this lease" }));
+    expect(screen.queryByRole("menuitem", { name: "Move to another unit" })).toBeNull();
+  });
+
+  it("opens Move to another unit from the ⋯ menu", async () => {
+    server();
+    await open();
+    const moving = panel("Move to another unit", true);
+    expect(await within(moving).findByText(/no such page|Loading/)).toBeTruthy();
   });
 
   it("says nothing is due in plain ink, and a lease to come", async () => {
@@ -175,14 +234,23 @@ describe("LeasePage", () => {
     fireEvent.change(within(deposit).getByLabelText("Deposit from"), { target: { value: "t2" } });
     fireEvent.change(within(deposit).getByLabelText("Deposit received"), { target: { value: "500.00" } });
     fireEvent.click(within(deposit).getByRole("button", { name: "Record deposit" }));
-    expect(await screen.findByText("Deposit of $500.00 held.")).toBeTruthy();
+    expect(await screen.findByText("Security deposit of $500.00 held.")).toBeTruthy();
+    // A pet deposit, held apart from the security deposit.
+    const pet = panel("Record deposit", true);
+    expect([...(within(pet).getByLabelText("Kind of deposit") as HTMLSelectElement).options].map((o) => o.textContent))
+      .toEqual(["Security deposit", "Pet deposit", "Key deposit"]);
+    fireEvent.change(within(pet).getByLabelText("Kind of deposit"), { target: { value: "pet" } });
+    fireEvent.change(within(pet).getByLabelText("Deposit received"), { target: { value: "300.00" } });
+    fireEvent.click(within(pet).getByRole("button", { name: "Record deposit" }));
+    expect(await screen.findByText("Pet deposit of $300.00 held.")).toBeTruthy();
 
     const calls = posted(fetch);
     expect(calls.map(([path]) => path)).toEqual([
-      "/api/rent/leases/l1/use-prepaid", "/api/rent/leases/l1/charges", "/api/rent/deposits",
+      "/api/rent/leases/l1/use-prepaid", "/api/rent/leases/l1/charges", "/api/rent/deposits", "/api/rent/deposits",
     ]);
     expect(calls[1]?.[1]).toMatchObject({ kind: "credit", amount: "25.00", memo: "Leak repair" });
-    expect(calls[2]?.[1]).toMatchObject({ tenant_id: "t2", amount: "500.00" });
+    expect(calls[2]?.[1]).toMatchObject({ tenant_id: "t2", amount: "500.00", kind: "security" });
+    expect(calls[3]?.[1]).toMatchObject({ tenant_id: "t1", amount: "300.00", kind: "pet" });
   });
 
   it("shows the ledger with its running balance, and marks a payment bounced from its ⋯ menu", async () => {

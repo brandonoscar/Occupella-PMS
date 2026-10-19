@@ -679,7 +679,7 @@ test("staff find a tenant and an owner, keep their contact details and a vendor'
   await expect(page.getByRole("heading", { level: 1, name: "Demo Owner B" })).toBeVisible();
 });
 
-test("staff add a fee, a credit and a monthly charge to a lease, take a deposit and prepaid rent, and a bounce undoes a payment and charges the NSF fee", async ({
+test("staff add a fee, a credit and a monthly charge to a lease, take a deposit and a pet deposit and prepaid rent, and a bounce undoes a payment and charges the NSF fee", async ({
   page,
 }) => {
   const people = seed.features.recurring!;
@@ -782,12 +782,20 @@ test("staff add a fee, a credit and a monthly charge to a lease, take a deposit 
   await expect(lease).toContainText(`Parking stops ${us(nextMonth)}.`);
   await expect(lease).toContainText(`Parking: $40.00 a month from ${us(nextMonth)}, stops ${us(nextMonth)}`);
 
-  // A deposit held for the tenant.
-  const deposit = await leasePanel(page, "Record deposit");
+  // A deposit held for the tenant, then a pet deposit held apart from it.
+  let deposit = await leasePanel(page, "Record deposit");
   await deposit.getByLabel("Deposit received", { exact: true }).fill("100.00");
   await deposit.getByRole("button", { name: "Record deposit" }).click();
-  await expect(lease).toContainText("Deposit of $100.00 held.");
+  await expect(lease).toContainText("Security deposit of $100.00 held.");
   await expect(lease.getByTestId("deposit-held")).toHaveText("$1,280.00");
+  await expect(lease.getByTestId("deposit-kinds")).toHaveCount(0);
+  deposit = await leasePanel(page, "Record deposit");
+  await deposit.getByLabel("Kind of deposit").selectOption("pet");
+  await deposit.getByLabel("Deposit received", { exact: true }).fill("250.00");
+  await deposit.getByRole("button", { name: "Record deposit" }).click();
+  await expect(lease).toContainText("Pet deposit of $250.00 held.");
+  await expect(lease.getByTestId("deposit-held")).toHaveText("$1,530.00");
+  await expect(lease.getByTestId("deposit-kinds")).toHaveText("Security deposit $1,280.00 · Pet deposit $250.00");
 
   // A payment that bounces is owed again, with the property's NSF fee.
   charge = await leasePanel(page, "Enter charge");
@@ -3056,4 +3064,54 @@ test("staff set the screening criteria; an applicant reads them, is screened by 
   await expect(visitor.getByTestId("adverse-action-notice")).toContainText("Your application was declined.");
   await expect(visitor.getByTestId("adverse-action-notice")).toContainText("A co-signer was asked for and not given");
   await visitor.close();
+});
+
+test("staff move a tenant to another owner's unit with their deposit; the new lease's payment pays the old owner first", async ({
+  page,
+}) => {
+  const moving = seed.features["lease-transfers"]!;
+  await joinAsStaff(page, moving.manager);
+
+  // Jamie Sample's lease at Birch Flats (Demo Owner A's) owes something more: a lost key.
+  await openLease(page, "Birch Flats, Unit B");
+  const charge = await leasePanel(page, "Enter charge");
+  await charge.getByLabel("Add a").selectOption("fee");
+  await charge.getByLabel("Amount", { exact: true }).fill("75.00");
+  await charge.getByLabel("What for").fill("Lost key");
+  await charge.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByText("Fee of $75.00 added.")).toBeVisible();
+
+  // They move to Aspen Row's vacant Unit 2 (Demo Owner B's) today, having agreed in writing that
+  // their deposit stays held.
+  const move = await leasePanel(page, "Move to another unit");
+  await move.getByLabel("Move to").selectOption({ label: "Aspen Row · Unit 2" });
+  await move.getByLabel("Monthly rent there").fill("1240.00");
+  await move.getByLabel(/agreed in writing that their .* deposit stays held, on/).fill(today());
+  await move.getByRole("button", { name: "Move the tenants" }).click();
+  await expect(page.getByText(/^Moved to Aspen Row · Unit 2\./)).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Aspen Row · Unit 2 · Jamie Sample" })).toBeVisible();
+  await expect(page.getByTestId("moved-from")).toContainText(`Moved here on ${us(today())} from Birch Flats · Unit B`);
+  const carried = page.getByTestId("carried");
+  await expect(carried).toContainText("still owed at Birch Flats · Unit B");
+  const owedThere = /Includes (\$[\d,]+\.\d\d)/.exec((await carried.textContent()) ?? "")![1]!;
+  await expect(page.getByTestId("balance-due")).toHaveText(owedThere);
+  await expect(page.getByTestId("deposit-held")).not.toHaveText("$0.00");
+
+  // A payment here pays what Birch Flats is owed first, into Demo Owner A's account.
+  const pay = await leasePanel(page, "Receive payment");
+  await pay.getByLabel("Payment received").fill(owedThere.replace(/[$,]/g, ""));
+  await pay.getByLabel("Check or reference").fill("Check 901");
+  await pay.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.getByText(`${owedThere} paid what is owed.`)).toBeVisible();
+  await expect(page.getByTestId("balance-due")).toHaveText("$0.00");
+  await expect(page.getByTestId("carried")).toHaveCount(0);
+
+  // The old lease ended yesterday, is paid up and says where they went; Move-outs lists only the
+  // new one, with the deposit.
+  await page.getByRole("link", { name: "Birch Flats · Unit B" }).click();
+  await expect(page.getByText(/The tenants moved to Aspen Row · Unit 2 on .*; their deposits went with them\./)).toBeVisible();
+  await expect(page.getByTestId("balance-due")).toHaveText("$0.00");
+  await section(page, "Move-outs");
+  await expect(page.getByText("Aspen Row, Unit 2")).toBeVisible();
+  await expect(page.getByText("Birch Flats, Unit B")).toHaveCount(0);
 });

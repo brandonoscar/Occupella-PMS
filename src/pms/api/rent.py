@@ -177,6 +177,20 @@ def owner_account(
     return rows[0][0], rows[0][1]
 
 
+# The leases a lease's tenants moved from (migration 0091), oldest first: what each still owes is
+# paid first, into the owner's account its move names, in that account's trust bank account.
+MOVED_FROM = """
+SELECT m.lease_id, m.owner_account, a.bank_account_id
+FROM trust_lease_moved_from(%s) WITH ORDINALITY AS m (lease_id, owner_account, n)
+JOIN trust_ledger_accounts AS a ON a.ledger_account_id = m.owner_account
+ORDER BY m.n
+"""
+
+
+def moved_from(conn: psycopg.Connection[Any], lease_id: UUID) -> list[tuple[UUID, str, UUID]]:
+    return [(row[0], row[1], row[2]) for row in conn.execute(MOVED_FROM, (lease_id,)).fetchall()]
+
+
 def cash_of(conn: psycopg.Connection[Any], bank_id: UUID) -> str:
     row = conn.execute(
         "SELECT ledger_account_id FROM trust_ledger_accounts"
@@ -317,12 +331,17 @@ def record_payment(
 ) -> Recorded:
     """A tenant's payment into the operating trust bank account: the owner's account takes
     what the lease owes, matched to its charges oldest first; the rest is the first tenant's
-    prepaid rent. The same request id again returns the payment as it was recorded. A lease on
-    a payment hold refuses it, unless staff accept it past the hold (`past_hold_by` names them):
-    then every hold in force that day allows it, in the same transaction."""
+    prepaid rent. A lease its tenants moved into (migration 0091) pays what each lease they moved
+    from still owes first, oldest first, into the owner's account its move names. The same
+    request id again returns the payment as it was recorded. A lease on a payment hold refuses
+    it, unless staff accept it past the hold (`past_hold_by` names them): then every hold in
+    force that day allows it, in the same transaction."""
     lease = lease_of(conn, pmc_id, lease_id)
     owner, bank = owner_account(conn, pmc_id, lease.property_id, account)
     lock_lease(conn, lease_id)
+    earlier_leases = moved_from(conn, lease_id)
+    for prior, _, _ in earlier_leases:
+        lock_lease(conn, prior)
     key = f"payment/{request_id}"
     metadata = {
         "key": key,
@@ -334,22 +353,28 @@ def record_payment(
         "method": method,
         "memo": f"Rent – {lease_memo(conn, lease_id)}",
     }
-    to_owner = min(amount, max(owed(conn, lease_id), ZERO))
-    to_prepaid = amount - to_owner
-    cash = cash_of(conn, bank)
-    transfers = []
-    if to_owner > 0:
-        transfers.append((cash, owner, to_owner))
+    # Each lease's part, oldest first: (the lease, its owner's account, that account's bank, part).
+    parts = []
+    left = amount
+    for each, each_owner, each_bank in [*earlier_leases, (lease_id, owner, bank)]:
+        part = min(left, max(owed(conn, each), ZERO))
+        if part > 0:
+            parts.append((each, each_owner, each_bank, part))
+            left -= part
+    to_owner = amount - left
+    to_prepaid = left
+    transfers = [(cash_of(conn, b), o, part) for _, o, b, part in parts]
     if to_prepaid > 0:
         prepaid = tenant_account(conn, pmc_id, bank, "prepaid_rent", lease.tenants[0])
-        transfers.append((cash, prepaid, to_prepaid))
+        transfers.append((cash_of(conn, bank), prepaid, to_prepaid))
     posted = post(conn, pmc_id, key, transfers, received_on, metadata)
     if posted is None:
-        return replay(conn, pmc_id, key, metadata, owner)
-    if to_owner > 0:
+        return replay(conn, pmc_id, key, metadata, {owner, *(o for _, o, _ in earlier_leases)})
+    # The owners' parts come first; prepaid rent, if any, last.
+    for (each, _, _, part), transfer in zip(parts, posted[: len(parts)], strict=True):
         if past_hold_by is not None:
-            allow_past_holds(conn, pmc_id, lease_id, posted[0], received_on, past_hold_by)
-        match(conn, pmc_id, lease_id, posted[0], to_owner)
+            allow_past_holds(conn, pmc_id, each, transfer, received_on, past_hold_by)
+        match(conn, pmc_id, each, transfer, part)
     return Recorded(posted, to_owner, to_prepaid)
 
 
@@ -381,7 +406,11 @@ def allow_past_holds(
 
 
 def replay(
-    conn: psycopg.Connection[Any], pmc_id: UUID, key: str, metadata: dict[str, Any], owner: str
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    key: str,
+    metadata: dict[str, Any],
+    owners: set[str],
 ) -> Recorded:
     try:
         posted = earlier(conn, pmc_id, key, metadata)
@@ -390,7 +419,7 @@ def replay(
     rows = conn.execute(
         "SELECT to_account_id, amount FROM pgledger_transfers WHERE id = ANY(%s)", (posted,)
     ).fetchall()
-    to_owner = sum((Decimal(a) for to, a in rows if to == owner), ZERO)
+    to_owner = sum((Decimal(a) for to, a in rows if to in owners), ZERO)
     return Recorded(posted, to_owner, sum((Decimal(a) for _, a in rows), ZERO) - to_owner)
 
 
@@ -434,10 +463,10 @@ def use_prepaid(
             raise HTTPException(
                 409, "there is no prepaid rent to use, or nothing is owed"
             ) from None
-        return replay(conn, pmc_id, key, metadata, owner)
+        return replay(conn, pmc_id, key, metadata, {owner})
     posted = post(conn, pmc_id, key, transfers, on, metadata)
     if posted is None:
-        return replay(conn, pmc_id, key, metadata, owner)
+        return replay(conn, pmc_id, key, metadata, {owner})
     for transfer, (_, _, part) in zip(posted, transfers, strict=True):
         match(conn, pmc_id, lease_id, transfer, part)
     return Recorded(posted, sum((t[2] for t in transfers), ZERO), ZERO)
@@ -507,9 +536,11 @@ def record_deposit(
     received_on: date,
     bank_id: UUID | None = None,
     reference: str | None = None,
+    kind: DepositKind = "security",
 ) -> list[str]:
-    """A tenant's security deposit into a security-deposit trust bank account: the only one,
-    or the one staff chose."""
+    """A tenant's deposit (security, pet or key; migration 0092) into a security-deposit trust
+    bank account: the only one, or the one staff chose. Each kind is held in a deposit account of
+    its own."""
     banks = [
         row[0]
         for row in conn.execute(
@@ -530,14 +561,18 @@ def record_deposit(
     ).fetchone()
     metadata = {
         "key": key,
-        "kind": "security deposit",
+        "kind": f"{kind} deposit",
         "tenant_id": str(tenant_id),
         "amount": cents(amount),
         "received_on": received_on.isoformat(),
         "reference": reference,
-        "memo": None if who is None else f"Security deposit – {who[0]}, {who[1]}",
+        "memo": None if who is None else f"{kind.capitalize()} deposit – {who[0]}, {who[1]}",
     }
-    deposit = tenant_account(conn, pmc_id, banks[0], "tenant_deposit", tenant_id)
+    opened = conn.execute(
+        "SELECT trust_open_deposit_account(%s, %s, %s, %s)", (pmc_id, banks[0], tenant_id, kind)
+    ).fetchone()
+    assert opened is not None
+    deposit = str(opened[0])
     posted = post(
         conn, pmc_id, key, [(cash_of(conn, banks[0]), deposit, amount)], received_on, metadata
     )
@@ -570,11 +605,22 @@ class Paid(BaseModel):
     bounced: bool
 
 
+# A deposit's kind (migration 0092): each held in its own account.
+DepositKind = Literal["security", "pet", "key"]
+
+
+class Held(BaseModel):
+    kind: DepositKind
+    amount: str
+
+
 class LeaseTenant(BaseModel):
     id: UUID
     name: str
     prepaid: str
     deposit: str
+    # What the deposit is, by kind: the security deposit first; only kinds holding something.
+    deposits: list[Held]
 
 
 class RecurringCharge(BaseModel):
@@ -643,6 +689,15 @@ def renters_insurance(
     }
 
 
+class Move(BaseModel):
+    # The other lease of the move (migration 0091): where the tenants moved from, or to.
+    lease_id: UUID
+    property: str
+    unit: str
+    # The new lease's first day; the old one's last is the day before.
+    moved_on: date
+
+
 class RentLease(BaseModel):
     id: UUID
     property: str
@@ -658,6 +713,11 @@ class RentLease(BaseModel):
     due_days: list[DueDay]
     tenants: list[LeaseTenant]
     owed: str
+    # What the leases its tenants moved from still owe (owed to their owners): a payment pays it
+    # first. "0.00" for a lease no one moved into.
+    carried: str
+    moved_from: Move | None
+    moved_to: Move | None
     on_hold: bool
     open_charges: list[OpenCharge]
     payments: list[Paid]
@@ -687,7 +747,14 @@ SELECT lt.lease_id, t.id, t.display_name,
                  WHERE a.tenant_id = t.id AND a.kind = 'prepaid_rent'), 0),
        coalesce((SELECT sum(b.balance) FROM trust_ledger_accounts AS a
                  JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
-                 WHERE a.tenant_id = t.id AND a.kind = 'tenant_deposit'), 0)
+                 WHERE a.tenant_id = t.id AND a.kind = 'tenant_deposit'), 0),
+       coalesce((SELECT json_agg(json_build_object('kind', d.kind, 'amount', d.held::text)
+                                 ORDER BY d.kind <> 'security', d.kind)
+                 FROM (SELECT coalesce(a.deposit_kind, 'security') AS kind, sum(b.balance) AS held
+                       FROM trust_ledger_accounts AS a
+                       JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
+                       WHERE a.tenant_id = t.id AND a.kind = 'tenant_deposit'
+                       GROUP BY 1 HAVING sum(b.balance) <> 0) AS d), '[]')
 FROM trust_lease_tenants AS lt JOIN trust_tenants AS t ON t.id = lt.tenant_id
 WHERE lt.pmc_id = %(pmc)s AND (%(lease)s::uuid IS NULL OR lt.lease_id = %(lease)s)
 ORDER BY t.display_name COLLATE "C", t.id
@@ -745,6 +812,24 @@ ORDER BY p.received_at DESC, p.created_at DESC, p.first_id
 """
 
 
+# Each move of the PMC's leases (or of the one lease), with both homes.
+MOVES = """
+SELECT t.from_lease_id, t.to_lease_id, t.moved_on, fp.display_name, fu.display_name,
+       tp.display_name, tu.display_name,
+       (SELECT coalesce(sum(trust_lease_owed(m.lease_id)), 0)
+        FROM trust_lease_moved_from(t.to_lease_id) AS m)
+FROM trust_lease_transfers AS t
+JOIN trust_leases AS f ON f.id = t.from_lease_id
+JOIN trust_units AS fu ON fu.id = f.unit_id
+JOIN trust_properties AS fp ON fp.id = fu.property_id
+JOIN trust_leases AS n ON n.id = t.to_lease_id
+JOIN trust_units AS tu ON tu.id = n.unit_id
+JOIN trust_properties AS tp ON tp.id = tu.property_id
+WHERE t.pmc_id = %(pmc)s
+  AND (%(lease)s::uuid IS NULL OR %(lease)s::uuid IN (t.from_lease_id, t.to_lease_id))
+"""
+
+
 def leases(session: Staff, conn: Conn, as_of: date | None = None) -> list[RentLease]:
     """Leases in effect on `as_of` (today, UTC, by default) and any other lease that owes
     something or is owed, with their open charges and tenant payments (what the Dashboard's
@@ -770,9 +855,15 @@ def built(
     its latest 12 payments; one lease named: whatever it is, with all of them."""
     names = {"pmc": pmc, "as_of": day, "lease": only}
     tenants: dict[UUID, list[LeaseTenant]] = {}
-    for lease, i, name, prepaid, deposit in conn.execute(TENANTS, names).fetchall():
+    for lease, i, name, prepaid, deposit, kinds in conn.execute(TENANTS, names).fetchall():
         tenants.setdefault(lease, []).append(
-            LeaseTenant(id=i, name=name, prepaid=cents(prepaid), deposit=cents(deposit))
+            LeaseTenant(
+                id=i,
+                name=name,
+                prepaid=cents(prepaid),
+                deposit=cents(deposit),
+                deposits=[Held(kind=k["kind"], amount=cents(Decimal(k["amount"]))) for k in kinds],
+            )
         )
     payments: dict[UUID, list[Paid]] = {}
     for lease, transfer, event_at, amount, reference, method, bounced in conn.execute(
@@ -824,6 +915,15 @@ def built(
     due_days: dict[UUID, list[DueDay]] = {}
     for lease, d, starts, due_day in conn.execute(DUE_DAYS, names).fetchall():
         due_days.setdefault(lease, []).append(DueDay(id=d, starts_on=starts, due_day=due_day))
+    moved_from: dict[UUID, Move] = {}
+    moved_to: dict[UUID, Move] = {}
+    carried: dict[UUID, Decimal] = {}
+    for old, new, on, old_prop, old_unit, new_prop, new_unit, owing in conn.execute(
+        MOVES, names
+    ).fetchall():
+        moved_to[old] = Move(lease_id=new, property=new_prop, unit=new_unit, moved_on=on)
+        moved_from[new] = Move(lease_id=old, property=old_prop, unit=old_unit, moved_on=on)
+        carried[new] = owing
     insured = renters_insurance(conn, pmc, day)
     found = []
     for i, prop, unit, starts, ends, rent, due_day, due, on_hold in conn.execute(
@@ -845,6 +945,9 @@ def built(
                 due_days=due_days.get(i, []),
                 tenants=tenants.get(i, []),
                 owed=cents(due),
+                carried=cents(carried.get(i, ZERO)),
+                moved_from=moved_from.get(i),
+                moved_to=moved_to.get(i),
                 on_hold=on_hold,
                 open_charges=charges.get(i, []),
                 payments=payments.get(i, []) if only else payments.get(i, [])[:12],
@@ -1279,6 +1382,19 @@ class NewDeposit(BaseModel):
     received_on: date
     reference: Memo | None = None
     bank_account_id: UUID | None = None
+    # A security deposit unless staff say it is a pet or key deposit (migration 0092).
+    kind: DepositKind = "security"
+
+
+# The animals on a tenant's leases in effect or to come, and whether each is an assistance animal
+# (migration 0080), not taken off.
+ANIMALS = """
+SELECT p.assistance_animal FROM trust_lease_pets AS p
+JOIN trust_lease_tenants AS lt ON lt.lease_id = p.lease_id
+JOIN trust_leases AS l ON l.id = p.lease_id
+WHERE p.pmc_id = %s AND lt.tenant_id = %s AND (l.ends_on IS NULL OR l.ends_on >= %s)
+  AND NOT EXISTS (SELECT 1 FROM trust_lease_household_removals AS r WHERE r.pet_id = p.id)
+"""
 
 
 class Posted(BaseModel):
@@ -1296,6 +1412,15 @@ def deposit(session: Staff, conn: Conn, new: NewDeposit) -> Posted:
         is None
     ):
         raise HTTPException(404, "no such tenant")
+    if new.kind == "pet":
+        found = conn.execute(ANIMALS, (session.pmc_id, new.tenant_id, today())).fetchall()
+        animals = [row[0] for row in found]
+        if animals and all(animals):
+            raise HTTPException(
+                409,
+                "the tenant's only animal is an assistance animal, which takes no pet deposit"
+                " (Fair Housing Act)",
+            )
     try:
         return Posted(
             transfers=record_deposit(
@@ -1307,6 +1432,7 @@ def deposit(session: Staff, conn: Conn, new: NewDeposit) -> Posted:
                 new.received_on,
                 new.bank_account_id,
                 new.reference,
+                new.kind,
             )
         )
     except psycopg.errors.CheckViolation as refused:

@@ -1005,7 +1005,7 @@ tests = [
 
 [[report]]
 id = "deposit-return"
-statement = "The itemized statement of a lease's security deposits once returned, as staff send it to the tenants: the property and unit, the tenants and the lease's days, each tenant's deposit, what was kept for each charge, the totals, what went back to each tenant, and who returned it when. Compared to a checked-in golden file."
+statement = "The itemized statement of a lease's security deposits once returned, as staff send it to the tenants: the property and unit, the tenants and the lease's days, each lease they moved from, each tenant's deposit, what was kept for each charge (naming the home of one of a lease moved from), the totals, what went back to each tenant, and who returned it when. Compared to a checked-in golden file."
 tests = [
   "tests/golden/test_golden.py::test_every_golden_case_matches",
   "tests/test_move_out.py::test_a_deposit_pays_what_the_lease_owes_and_the_rest_goes_back",
@@ -1147,4 +1147,28 @@ tests = [
   "tests/api/test_owners_pay_api.py::test_pay_owners_pays_none_when_one_cant_be_paid",
   "tests/api/test_owners_pay_api.py::test_the_fees_page_says_what_collect_fees_takes_and_moves_nothing",
   "tests/test_payout_methods.py::test_an_owner_draw_and_a_bill_paid_each_take_one",
+]
+
+[[invariant]]
+id = "lease-transfers-pay-each-owner-its-own"
+statement = "A lease's tenants move to another unit once per lease (migration 0091): the lease ends the day before and a lease opens there for the tenants staying on it, who become its property's tenants; their deposits stay held for it only as they agreed in writing. What the old lease still owes stays owed to its owner: the new lease's payments pay it first, oldest lease first, into the account the move names, and its deposit's return keeps it first, so every match pays a charge into the owner's account of the charge's own property and every trust bank account ties out; a lease moved from has no return of its own."
+tests = [
+  "tests/properties/test_lease_transfer_properties.py::test_a_moved_tenant_s_money_pays_each_owner_what_was_owed_to_them",
+  "tests/test_lease_transfers.py::test_what_each_lease_owes_is_kept_from_the_deposit_for_its_own_owner",
+  "tests/test_lease_transfers.py::test_two_moves_keep_for_the_oldest_lease_first",
+  "tests/test_lease_transfers.py::test_a_lease_moved_from_has_no_return_of_its_own",
+  "tests/test_lease_transfers.py::test_the_tenants_agree_in_writing_to_their_deposit_staying_held",
+  "tests/api/test_lease_transfers_api.py::test_staff_move_a_lease_and_its_payments_pay_the_old_owner_first",
+]
+
+[[invariant]]
+id = "deposit-kinds-held-moved-and-returned-apart"
+statement = "A tenant's pet or key deposit is held in a deposit account of its own beside their security deposit, one of each kind per tenant and trust bank account, always in the security-deposit trust bank account (migration 0092). A tenant who leaves moves every kind to the staying tenant's of the same kind; the return keeps what the lease owes from the tenants in name order and from each one's security deposit first, returns the rest of each kind and names each kind on the statement and the register; an assistance animal takes no pet deposit."
+tests = [
+  "tests/properties/test_deposit_kind_properties.py::test_each_kind_of_deposit_is_held_moved_and_returned_as_the_model_says",
+  "tests/test_deposit_kinds.py::test_a_deposit_is_of_a_known_kind_and_only_a_tenant_deposit_has_one",
+  "tests/test_deposit_kinds.py::test_a_leaving_tenants_deposits_move_to_the_staying_tenants_of_the_same_kind",
+  "tests/test_deposit_kinds.py::test_the_statement_and_the_register_name_each_kind",
+  "tests/api/test_deposit_kinds_api.py::test_each_kind_of_deposit_is_held_apart_and_the_lease_shows_each",
+  "tests/api/test_deposit_kinds_api.py::test_an_assistance_animal_takes_no_pet_deposit",
 ]

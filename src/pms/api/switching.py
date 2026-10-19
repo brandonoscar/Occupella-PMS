@@ -514,7 +514,8 @@ def ledger_account(names: Names, bank: UUID, row: Row) -> str:
     found = one(
         conn,
         "SELECT ledger_account_id FROM trust_ledger_accounts"
-        " WHERE bank_account_id = %s AND kind = %s AND tenant_id = %s",
+        # A security deposit, the only kind the old system's balances bring (migration 0092).
+        " WHERE bank_account_id = %s AND kind = %s AND tenant_id = %s AND deposit_kind IS NULL",
         (bank, held, tenant),
     )
     if found is not None:
