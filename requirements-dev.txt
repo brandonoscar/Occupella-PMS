@@ -10,6 +10,8 @@ pip-licenses==5.5.5
 pypdf==6.20.0
 pytest==9.1.1
 ruff==0.16.10
+# Generated requests against the API's own OpenAPI schema (MIT; tests/api/test_api_fuzz.py).
+schemathesis==4.32.0
 squawk-cli==2.68.0
 types-openpyxl==3.1.5.20260827
 # Audits the GitHub workflows (MIT, a single binary with no dependencies).

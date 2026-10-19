@@ -155,6 +155,18 @@ core busy, and the slowest took 2.2 s against limits of 20 s and more. Random se
 overdraft or double-post that nobody thought to write an example for. Run it with
 `HYPOTHESIS_PROFILE=pr pytest tests/properties` (or `nightly`).
 
+The whole API is fuzzed too (`tests/api/test_api_fuzz.py`, Schemathesis, MIT): it reads the
+app's own OpenAPI schema and sends every operation its boundary cases and requests Hypothesis
+makes up, valid and broken, as a signed-in staff member. None may get a server error (5xx): what
+the API can't take is refused in words. Every PR sends `[fuzz] pr_examples` per operation with
+the other tests (measured: about 10,400 requests in 2 min 40 s locally, none a 5xx); nightly
+sends `nightly_examples` with a new seed. A route made to raise on a long name failed it within
+seconds. Those counts are floors in `ci/thresholds.toml`.
+
+The portal has its own property tests (`frontend/src/properties.test.ts`, fast-check, MIT): for
+any amount up to 10^18 dollars money reads back as the cents it came as, sums are exact in any
+order, days keep their parts and a list's scope survives its URL.
+
 **golden.yml** (PRs and main): every report function (`trust_report_*`) must have a golden case
 under `tests/golden/cases/`. Each case builds a fixed synthetic fixture and must produce exactly
 its checked-in `.expected.txt`. A PR that changes an expected file fails until a maintainer adds
@@ -364,7 +376,7 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
   job of about a minute, by when `deps-and-secrets`, a job of seconds, has finished), so a PR
   never has more than 8 jobs running at once.
 - Nightly runs are staggered so they don't overlap:
-  - 03:17 UTC ledger-invariants (16 property jobs and 1 timing job);
+  - 03:17 UTC ledger-invariants (16 property jobs, 1 timing job and 1 API fuzz job);
   - 04:17 mutation (4 shards, then 1 scoring job);
   - 05:17 selfhost (1);
   - Mondays 06:17 security (codeql, gitleaks history, pip-audit, scorecard: 4).

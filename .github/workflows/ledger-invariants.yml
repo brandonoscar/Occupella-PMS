@@ -193,3 +193,47 @@ jobs:
           done
           echo "Timing tests: $failed of 50 runs failed." | tee -a "$GITHUB_STEP_SUMMARY"
           test "$failed" -eq 0
+
+  fuzz:
+    # Every PR sends each API operation the schema's boundary cases and [fuzz] pr_examples
+    # generated requests (tests/api/test_api_fuzz.py, in ci.yml's tests); nightly sends
+    # nightly_examples, with a new seed each night. A server error fails the job.
+    name: API fuzz (nightly)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dbmate
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+            "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
+          echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/bin/dbmate"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: pip install -r requirements-dev.txt
+      - name: Every API operation, nightly depth
+        env:
+          HYPOTHESIS_PROFILE: nightly
+          SEED: ${{ github.run_id }}
+        run: pytest -v -p no:cacheprovider --hypothesis-seed="$SEED" tests/api/test_api_fuzz.py
