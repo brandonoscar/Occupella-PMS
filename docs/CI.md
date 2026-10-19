@@ -146,9 +146,12 @@ starts and control characters, money, days, times in random zones, NULLs), and c
 - the PDF always builds.
 
 `ci/registry.toml` maps every required invariant to its test or to the open issue for what isn't
-built yet. PRs run 200 examples per property. Nightly runs 16 jobs, each with its own seed and
-3,000 examples. A failing case is uploaded as an artifact with the seed and the shortest failing
-sequence. Nightly also runs every `@pytest.mark.timing` test (threads, lock waits, timeouts) 50
+built yet. PRs run 200 examples per property. Nightly runs 3,000 examples per property, each
+property twice with a seed of its own: 16 jobs, the tests shared out over 8 shards
+(`PMS_TEST_SHARD`), 2 seeds each. Until 10/19 every job ran every property; at 3,000 examples
+that is some 290 minutes a job, and every nightly job from 10/11 to 10/18 was cancelled at its
+90-minute limit with nothing checked (runs 68 to 246, measured on GitHub). A failing case is
+uploaded as an artifact with the seed and the shortest failing sequence. Nightly also runs every `@pytest.mark.timing` test (threads, lock waits, timeouts) 50
 times on GitHub's runners. One failure fails the job, because a flaky test teaches everyone to
 ignore red. Measured before adding it: 100 of 100 local runs passed, 50 of them with every CPU
 core busy, and the slowest took 2.2 s against limits of 20 s and more. Random sequences find the
@@ -166,6 +169,16 @@ seconds. Those counts are floors in `ci/thresholds.toml`.
 The portal has its own property tests (`frontend/src/properties.test.ts`, fast-check, MIT): for
 any amount up to 10^18 dollars money reads back as the cents it came as, sums are exact in any
 order, days keep their parts and a list's scope survives its URL.
+
+Nightly, sixteen workers act as staff on one company's books at once for five minutes
+(`tools/contention.py`, the demo's books, synthetic): payments, bounces, bills set aside and
+paid, owner draws, contributions, the company's fees taken out and rent runs, each through the
+API's own route functions, on the same few leases and owners. A refusal in words is part of the
+load; a deadlock, a serialization failure or any error the API would answer with a 500 fails
+the job, and so do books left wrong (an account's balance not what its transfers add up to, a
+trust bank account that doesn't tie out, an account other than a bank's cash below zero). The
+timing tests pair two transactions; this is the many-way mix. Measured locally: 8,681
+operations in 60 s, none failed, books right. Run it with `python -m tools.contention`.
 
 **golden.yml** (PRs and main): every report function (`trust_report_*`) must have a golden case
 under `tests/golden/cases/`. Each case builds a fixed synthetic fixture and must produce exactly
@@ -378,7 +391,7 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
   job of about a minute, by when `deps-and-secrets`, a job of seconds, has finished), so a PR
   never has more than 8 jobs running at once.
 - Nightly runs are staggered so they don't overlap:
-  - 03:17 UTC ledger-invariants (16 property jobs, 1 timing job and 1 API fuzz job);
+  - 03:17 UTC ledger-invariants (16 property jobs, then timing, API fuzz and many-staff jobs);
   - 04:17 mutation (4 shards, then 1 scoring job);
   - 05:17 selfhost (1);
   - Mondays 06:17 security (codeql, gitleaks history, pip-audit, scorecard: 4).
