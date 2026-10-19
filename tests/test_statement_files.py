@@ -1,6 +1,7 @@
 """Reading bank statement files (src/pms/statements.py): CSV in the shapes banks export, and OFX
 1.x (SGML) and 2.x (XML). Every file here is synthetic."""
 
+import re
 from datetime import date
 from decimal import Decimal
 
@@ -194,3 +195,105 @@ def test_an_ofx_reads_tags_left_open_and_never_slows_on_them():
     # A transaction that never closes is no line, and a file of nothing else reads in linear
     # time (a lazy regular expression took quadratic time over it).
     assert statements.read("<OFX>" + "<stmttrn>" * 200_000, "ofx").lines == []
+
+
+# --- what mutation testing found untested (mutmut, mutation.yml) ----------------------------
+
+
+@pytest.mark.parametrize(
+    "text, amount",
+    [
+        ("(12.05)", Decimal("-12.05")),
+        ("$ 1 234.56", Decimal("1234.56")),
+        (" -0.10 ", Decimal("-0.10")),
+    ],
+)
+def test_an_amount_is_read_to_the_cent(text, amount):
+    assert statements.read_amount(text, "line 2") == amount
+
+
+@pytest.mark.parametrize("text", ["(12.05", "12.05)", "()"])
+def test_parentheses_mark_money_out_only_when_they_close(text):
+    with pytest.raises(StatementError, match=f"^line 2: {re.escape(repr(text))} is not an amount$"):
+        statements.read_amount(text, "line 2")
+
+
+@pytest.mark.parametrize(
+    "content, why",
+    [
+        ("\n\n", "the file is empty"),
+        ("Amount\n5.00\n", "line 1: no date column (Date, Posted, Transaction date, ...)"),
+        (
+            "Date,Credit\n2026-01-01,5.00\n",
+            "line 1: no amount column (Amount), or columns for money out and in (Debit, Credit)",
+        ),
+        ("Date,Debit,Credit\n2026-01-01,x,\n", "line 2: 'x' is not an amount"),
+        ("Date,Debit,Credit\n2026-01-01,,y\n", "line 2: 'y' is not an amount"),
+    ],
+)
+def test_a_csv_says_why_in_full(content, why):
+    with pytest.raises(StatementError, match=f"^{re.escape(why)}$"):
+        statements.read(content, "csv")
+
+
+def test_a_line_with_no_amount_is_a_note_and_skipped():
+    read = statements.read("Date,Amount,Memo\n2026-01-01,,Note\n2026-01-02,3.00,Rent\n", "csv")
+    assert read.lines == [Line(date(2026, 1, 2), Decimal("3.00"), "Rent", None)]
+
+
+def test_a_csv_of_exactly_the_most_lines_is_read(monkeypatch):
+    monkeypatch.setattr(statements, "MAX_LINES", 2)
+    assert len(statements.read("Date,Amount\n" + "2026-01-01,1.00\n" * 2, "csv").lines) == 2
+
+
+def test_an_ofx_reads_its_tags_in_any_case():
+    lower = re.sub(r"<(/?)([A-Z]+)>", lambda tag: f"<{tag[1]}{tag[2].lower()}>", OFX_SGML)
+    assert "<stmttrn>" in lower and "Deposit" in lower
+    assert statements.read(lower, "ofx") == statements.read(OFX_SGML, "ofx")
+
+
+def test_an_ofx_reads_on_past_a_line_with_no_money():
+    def line(day, amount):
+        return f"<STMTTRN><DTPOSTED>2026010{day}<TRNAMT>{amount}<FITID>F{day}</STMTTRN>"
+
+    read = statements.read(
+        f"<OFX>{line(1, '1.00')}{line(2, '0.00')}{line(3, '-2.00')}</OFX>", "ofx"
+    )
+    assert [(lin.amount, lin.reference) for lin in read.lines] == [
+        (Decimal("1.00"), "F1"),
+        (Decimal("-2.00"), "F3"),
+    ]
+
+
+def test_an_ofx_keeps_descriptions_and_references_short():
+    block = f"<STMTTRN><DTPOSTED>20260105<TRNAMT>5.00<NAME>{'n' * 600}<FITID>{'f' * 300}</STMTTRN>"
+    (read,) = statements.read(f"<OFX>{block}</OFX>", "ofx").lines
+    assert (len(read.description), len(read.reference or "")) == (500, 255)
+
+
+@pytest.mark.parametrize(
+    "content, why",
+    [
+        ("<ofx>", None),
+        ("<OFX><DTEND>junk</OFX>", "DTEND: 'junk' is not an OFX date"),
+        (
+            "<OFX><LEDGERBAL><BALAMT>1.001</LEDGERBAL></OFX>",
+            "LEDGERBAL: '1.001' is not an amount in cents",
+        ),
+        (
+            "<OFX><STMTTRN><DTPOSTED>2026<TRNAMT>5.00</STMTTRN></OFX>",
+            "transaction 1: '2026' is not an OFX date",
+        ),
+        (
+            "<OFX><STMTTRN><DTPOSTED>20260105<TRNAMT>x</STMTTRN></OFX>",
+            "transaction 1: 'x' is not an amount",
+        ),
+        ("Date,Amount\n", "no <OFX> in the file: is it an OFX or QFX statement?"),
+    ],
+)
+def test_an_ofx_says_where_in_full(content, why):
+    if why is None:
+        assert statements.read(content, "ofx") == statements.Statement([])
+        return
+    with pytest.raises(StatementError, match=f"^{re.escape(why)}$"):
+        statements.read(content, "ofx")
