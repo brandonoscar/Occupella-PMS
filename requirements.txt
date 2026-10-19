@@ -7,7 +7,7 @@ openpyxl==3.1.5
 # The API and logins (src/pms/api, src/pms/accounts): argon2 hashes, authenticator codes, a
 # pooled Postgres connection per request.
 argon2-cffi==25.1.0
-fastapi==0.143.0
+fastapi==0.143.3
 psycopg-pool==3.3.3
 pyotp==2.10.0
 uvicorn==0.54.0
