@@ -6,11 +6,13 @@ const DOLLARS = new Intl.NumberFormat("en-US", {
   currencySign: "accounting",
 });
 
+const DECIMAL = /^-?\d+(\.\d+)?$/;
+
 export function money(amount: string | null): string {
   if (amount === null || amount === "") return "";
-  const value = Number(amount);
-  if (!Number.isFinite(value)) return amount;
-  return DOLLARS.format(value);
+  if (!DECIMAL.test(amount)) return amount;
+  // The text itself, never a float: Intl formats a decimal string exactly (ECMA-402 2023).
+  return DOLLARS.format(amount as `${number}`);
 }
 
 // The first and last day of the month before `today`, as YYYY-MM-DD in UTC.

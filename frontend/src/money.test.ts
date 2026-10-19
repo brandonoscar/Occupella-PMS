@@ -9,10 +9,17 @@ describe("money", () => {
     expect(money("999999999999.99")).toBe("$999,999,999,999.99");
   });
 
+  it("formats the text itself, so no amount passes through a float", () => {
+    // As a float this is 12345678901234568, and its cents are gone.
+    expect(money("12345678901234567.89")).toBe("$12,345,678,901,234,567.89");
+    expect(money("-0.10")).toBe("($0.10)");
+  });
+
   it("shows nothing for a missing amount, and odd text as it came", () => {
     expect(money(null)).toBe("");
     expect(money("")).toBe("");
     expect(money("n/a")).toBe("n/a");
+    expect(money("1e3")).toBe("1e3");
   });
 });
 
