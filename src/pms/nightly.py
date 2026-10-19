@@ -16,7 +16,9 @@ month (the founder's answer of 2026-10-18 to q049); charges are what tenants owe
 to be set aside and paid.
 
 The API runs it when it starts and then every day at 06:00 UTC, unless PMS_NIGHTLY is "off".
-`python -m pms.nightly` runs it once, for a server that schedules it itself.
+`python -m pms.nightly` runs it once, for a server that schedules it itself. One run at a time,
+whatever starts it (two API servers, or this command while the API runs): a run holds a database
+lock while it lasts, and one that finds it held leaves the work to that run.
 
 usage: python -m pms.nightly    (DATABASE_URL and PMS_PUBLIC_URL, acting as trust_app)
 """
@@ -44,6 +46,9 @@ log = logging.getLogger("pms.nightly")
 AT = time(6, 0)
 # How soon a run that failed (the database not up yet) is tried again, in seconds.
 RETRY = 300.0
+# The session advisory lock a run holds while it lasts (the outbox locks each email the same
+# way, src/pms/email.py).
+LOCK = "pms.nightly"
 
 
 @dataclass(frozen=True)
@@ -108,17 +113,28 @@ def run_all(
     sending: bool = False,
 ) -> list[Ran]:
     """Every PMC's run for a day (or only those named). One that fails is logged and left for
-    the next run; the others still run."""
-    if pmcs is None:
-        pmcs = [row[0] for row in conn.execute("SELECT pmc_id FROM trust_pmcs ORDER BY pmc_id")]
-        conn.commit()
-    done = []
-    for pmc_id in pmcs:
-        try:
-            done.append(run_pmc(conn, pmc_id, day, public_url, sending))
-        except psycopg.Error:
-            log.exception("the nightly run of PMC %s failed; the next run tries again", pmc_id)
-    return done
+    the next run; the others still run. While another run holds the lock, this one runs
+    nothing."""
+    held = conn.execute("SELECT pg_try_advisory_lock(hashtextextended(%s, 0))", (LOCK,)).fetchone()
+    conn.commit()
+    if held is None or not held[0]:
+        log.info("another nightly run is under way; this one leaves the work to it")
+        return []
+    try:
+        if pmcs is None:
+            pmcs = [row[0] for row in conn.execute("SELECT pmc_id FROM trust_pmcs ORDER BY pmc_id")]
+            conn.commit()
+        done = []
+        for pmc_id in pmcs:
+            try:
+                done.append(run_pmc(conn, pmc_id, day, public_url, sending))
+            except psycopg.Error:
+                log.exception("the nightly run of PMC %s failed; the next run tries again", pmc_id)
+        return done
+    finally:
+        if not conn.closed:
+            conn.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (LOCK,))
+            conn.commit()
 
 
 def seconds_until(now: datetime, at: time = AT) -> float:
