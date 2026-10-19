@@ -86,7 +86,7 @@ LATEST_STAFF = (
 def roles(session: Staff, conn: Conn) -> Roles:
     """Every custom role of the PMC: the areas it allows and who holds it."""
     rows = conn.execute(
-        f"SELECT r.id, r.name, ({LATEST_AREAS}), ({LATEST_STAFF})"
+        f"SELECT r.id, r.name, ({LATEST_AREAS}), ({LATEST_STAFF})"  # noqa: S608
         ' FROM trust_custom_roles AS r WHERE r.pmc_id = %(pmc)s ORDER BY r.name COLLATE "C", r.id',
         {"areas": list(AREAS), "pmc": session.pmc_id},
     ).fetchall()

@@ -460,7 +460,7 @@ def items(conn: psycopg.Connection[Any], bank: UUID, where: str, **more: Any) ->
 
 def in_live_match(side: str) -> str:
     return (
-        "EXISTS (SELECT 1 FROM trust_bank_match_cutover_items AS mi WHERE mi.item_id = i.id"
+        "EXISTS (SELECT 1 FROM trust_bank_match_cutover_items AS mi WHERE mi.item_id = i.id"  # noqa: S608
         f" AND mi.side = '{side}' AND " + LIVE.format("mi") + ")"
     )
 
@@ -471,7 +471,7 @@ OPEN_ITEM = in_live_match("carried") + " AND NOT " + in_live_match("cleared")
 
 def opening(conn: psycopg.Connection[Any], bank: UUID) -> Opening | None:
     row = conn.execute(
-        "SELECT o.book_cash,"
+        "SELECT o.book_cash,"  # noqa: S608
         " (SELECT coalesce(sum(i.amount), 0) FROM trust_cutover_items AS i"
         "  WHERE i.bank_account_id = o.bank_account_id),"
         " EXISTS (SELECT 1 FROM trust_cutover_signoffs AS s"
@@ -496,12 +496,12 @@ def opening(conn: psycopg.Connection[Any], bank: UUID) -> Opening | None:
 
 
 UNMATCHED_LINE = (
-    "NOT EXISTS (SELECT 1 FROM trust_bank_match_lines AS ml WHERE ml.line_id = l.id AND "
+    "NOT EXISTS (SELECT 1 FROM trust_bank_match_lines AS ml WHERE ml.line_id = l.id AND "  # noqa: S608
     + LIVE.format("ml")
     + ")"
 )
 UNMATCHED_TRANSFER = (
-    "NOT EXISTS (SELECT 1 FROM trust_bank_match_transfers AS mt JOIN trust_bank_matches AS m"
+    "NOT EXISTS (SELECT 1 FROM trust_bank_match_transfers AS mt JOIN trust_bank_matches AS m"  # noqa: S608
     " ON m.id = mt.match_id WHERE mt.transfer_id = tr.id AND m.bank_account_id = %(bank)s AND "
     + LIVE.format("mt")
     + ")"

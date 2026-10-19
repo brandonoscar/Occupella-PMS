@@ -323,7 +323,7 @@ JOIN trust_leases AS l ON l.id = c.lease_id
 JOIN trust_units AS u ON u.id = l.unit_id
 WHERE c.pmc_id = %(pmc)s AND c.work_order_id = %(order)s
 ORDER BY c.due_on, c.created_at, c.id
-"""
+"""  # noqa: S608
 LEASES = f"""
 SELECT l.id, u.display_name, {TENANT_NAMES}
 FROM trust_work_orders AS w
@@ -332,7 +332,7 @@ JOIN trust_leases AS l ON l.unit_id = u.id
 WHERE w.pmc_id = %(pmc)s AND w.id = %(order)s
   AND l.starts_on <= %(day)s AND (l.ends_on IS NULL OR %(day)s <= l.ends_on)
 ORDER BY u.display_name COLLATE "C", l.id
-"""
+"""  # noqa: S608
 
 
 @router.get("/{work_order_id}")

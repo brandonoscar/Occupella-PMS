@@ -197,7 +197,7 @@ def _write(
 ) -> UUID:
     column = PEOPLE[to_kind][1]
     row = conn.execute(
-        "INSERT INTO trust_emails (pmc_id, kind, to_address, subject, body, sent_by, needs_link,"
+        "INSERT INTO trust_emails (pmc_id, kind, to_address, subject, body, sent_by, needs_link,"  # noqa: S608
         f" {column}) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
         (pmc_id, kind, to, subject, body, sent_by, kind in ("invite", "password_reset"), person_id),
     ).fetchone()

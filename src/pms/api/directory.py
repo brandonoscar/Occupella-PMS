@@ -85,7 +85,7 @@ Person = Literal["tenant_id", "owner_id", "vendor_id"]
 def contact_of(conn: psycopg.Connection[Any], person: Person, person_id: UUID) -> Contact:
     """A person's latest contact details; none recorded, all empty."""
     row = conn.execute(
-        f"SELECT {', '.join(FIELDS)} FROM trust_contacts WHERE {person} = %s"
+        f"SELECT {', '.join(FIELDS)} FROM trust_contacts WHERE {person} = %s"  # noqa: S608
         " ORDER BY created_at DESC, id DESC LIMIT 1",
         (person_id,),
     ).fetchone()
@@ -97,7 +97,7 @@ def contacts_of(conn: psycopg.Connection[Any], pmc: UUID, person: Person) -> dic
     return {
         row[0]: Contact(**dict(zip(FIELDS, row[1:], strict=True)))
         for row in conn.execute(
-            f"SELECT DISTINCT ON ({person}) {person}, {', '.join(FIELDS)} FROM trust_contacts"
+            f"SELECT DISTINCT ON ({person}) {person}, {', '.join(FIELDS)} FROM trust_contacts"  # noqa: S608
             f" WHERE pmc_id = %s AND {person} IS NOT NULL"
             f" ORDER BY {person}, created_at DESC, id DESC",
             (pmc,),
@@ -113,7 +113,7 @@ def record_contact(
     if contact_of(conn, person, person_id) == details:
         return
     conn.execute(
-        f"INSERT INTO trust_contacts (pmc_id, {person}, {', '.join(FIELDS)})"
+        f"INSERT INTO trust_contacts (pmc_id, {person}, {', '.join(FIELDS)})"  # noqa: S608
         f" VALUES (%s, %s, {', '.join(['%s'] * len(FIELDS))})",
         (pmc, person_id, *(getattr(details, field) for field in FIELDS)),
     )
@@ -123,7 +123,8 @@ def found(conn: psycopg.Connection[Any], table: str, pmc: UUID, record: UUID, wh
     """404 unless the PMC has the record."""
     if (
         conn.execute(
-            f"SELECT 1 FROM {table} WHERE pmc_id = %s AND id = %s", (pmc, record)
+            f"SELECT 1 FROM {table} WHERE pmc_id = %s AND id = %s",  # noqa: S608
+            (pmc, record),
         ).fetchone()
         is None
     ):
@@ -136,7 +137,7 @@ def archive(
     try:
         with conn.transaction():
             conn.execute(
-                f"INSERT INTO trust_archivals (pmc_id, {person}, archived) VALUES (%s, %s, %s)",
+                f"INSERT INTO trust_archivals (pmc_id, {person}, archived) VALUES (%s, %s, %s)",  # noqa: S608
                 (pmc, record, archived),
             )
     except psycopg.errors.CheckViolation as refused:
@@ -145,7 +146,8 @@ def archive(
 
 def rename(conn: psycopg.Connection[Any], table: str, pmc: UUID, record: UUID, name: str) -> None:
     conn.execute(
-        f"UPDATE {table} SET display_name = %s WHERE pmc_id = %s AND id = %s", (name, pmc, record)
+        f"UPDATE {table} SET display_name = %s WHERE pmc_id = %s AND id = %s",  # noqa: S608
+        (name, pmc, record),
     )
 
 
@@ -203,7 +205,7 @@ WHERE t.pmc_id = %(pmc)s AND trust_is_archived(NULL, NULL, t.id) = %(archived)s
        OR u.display_name ILIKE %(like)s)
 ORDER BY t.display_name COLLATE "C", t.id
 LIMIT %(per_page)s OFFSET %(offset)s
-"""
+"""  # noqa: S608
 
 
 @router.get("/tenants")
@@ -297,7 +299,7 @@ def tenant_page(session: Staff, conn: Conn, tenant_id: UUID) -> Tenant:
         raise HTTPException(404, "no such tenant")
     name, gone, p, pn, prepaid, deposit = row
     login = conn.execute(
-        f"SELECT {PORTAL_STATUS}, g.email FROM trust_tenants AS t {PORTAL} WHERE t.id = %s",
+        f"SELECT {PORTAL_STATUS}, g.email FROM trust_tenants AS t {PORTAL} WHERE t.id = %s",  # noqa: S608
         (tenant_id,),
     ).fetchone()
     assert login is not None
@@ -399,7 +401,7 @@ WHERE o.pmc_id = %(pmc)s AND trust_is_archived(NULL, NULL, NULL, o.id) = %(archi
                   WHERE a.owner_id = o.id AND p.display_name ILIKE %(like)s))
 ORDER BY o.display_name COLLATE "C", o.id
 LIMIT %(per_page)s OFFSET %(offset)s
-"""
+"""  # noqa: S608
 
 
 @router.get("/owners")
@@ -511,7 +513,7 @@ def owner_page(session: Staff, conn: Conn, owner_id: UUID) -> Owner:
     if row is None:
         raise HTTPException(404, "no such owner")
     login = conn.execute(
-        f"SELECT {PORTAL_STATUS}, g.email FROM trust_owners AS o {OWNER_PORTAL} WHERE o.id = %s",
+        f"SELECT {PORTAL_STATUS}, g.email FROM trust_owners AS o {OWNER_PORTAL} WHERE o.id = %s",  # noqa: S608
         (owner_id,),
     ).fetchone()
     assert login is not None

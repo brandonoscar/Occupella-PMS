@@ -232,7 +232,7 @@ WHERE o.pmc_id = %(pmc)s AND (%(offer)s::uuid IS NULL OR o.id = %(offer)s::uuid)
   END
 ORDER BY o.offered_at DESC, o.id
 LIMIT %(limit)s OFFSET %(offset)s
-"""
+"""  # noqa: S608
 
 
 def offers_of(

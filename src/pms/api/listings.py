@@ -136,7 +136,7 @@ LEFT JOIN LATERAL (
 WHERE (u.free_on <= %(until)s OR k.id IS NOT NULL) AND {scope.within("p.id")}
 ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", u.id
 LIMIT %(limit)s OFFSET %(offset)s
-"""
+"""  # noqa: S608
 
 
 # A unit's listing photos not removed, oldest first.
@@ -284,7 +284,7 @@ def vacancies(conn: Conn, pmc_id: UUID) -> Vacancies:
     if pmc is None:
         raise HTTPException(404, "no such PMC")
     rows = conn.execute(
-        "SELECT s.id, p.display_name, u.display_name, l.monthly_rent, s.description, s.listed_at,"
+        "SELECT s.id, p.display_name, u.display_name, l.monthly_rent, s.description, s.listed_at,"  # noqa: S608
         f" array({PHOTOS.format(unit='u.id')})"
         f" FROM {LISTED}"
         ' ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", s.id',
@@ -312,7 +312,7 @@ def listing_photo(conn: Conn, pmc_id: UUID, photo_id: UUID) -> Response:
     """A listed unit's photo, to anyone; not found once the photo is removed or the unit is no
     longer listed. No login."""
     row = conn.execute(
-        "SELECT d.content_type, f.content FROM trust_documents AS d"
+        "SELECT d.content_type, f.content FROM trust_documents AS d"  # noqa: S608
         " JOIN trust_document_files AS f ON f.document_id = d.id"
         " WHERE d.id = %s AND d.kind = 'listing_photo'"
         "   AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)"
@@ -339,7 +339,7 @@ def unit_photos(session: Staff, conn: Conn, unit_id: UUID) -> list[ListingPhoto]
     ):
         raise HTTPException(404, "no such unit")
     rows = conn.execute(
-        "SELECT d.id, d.title, d.created_at FROM trust_documents AS d"
+        "SELECT d.id, d.title, d.created_at FROM trust_documents AS d"  # noqa: S608
         f" WHERE d.id IN ({PHOTOS.format(unit='%s')}) ORDER BY d.created_at, d.id",
         (unit_id,),
     ).fetchall()

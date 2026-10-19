@@ -59,7 +59,7 @@ FIELDS = (
 def settings_of(conn: psycopg.Connection[Any], pmc_id: UUID) -> Settings:
     """The company's latest settings; all off when it has none."""
     row = conn.execute(
-        f"SELECT {', '.join(FIELDS)} FROM trust_email_settings WHERE pmc_id = %s"
+        f"SELECT {', '.join(FIELDS)} FROM trust_email_settings WHERE pmc_id = %s"  # noqa: S608
         " ORDER BY created_at DESC, id DESC LIMIT 1",
         (pmc_id,),
     ).fetchone()
@@ -71,7 +71,7 @@ def address(conn: psycopg.Connection[Any], pmc_id: UUID, kind: Kind, person_id: 
     login's while it can sign in (owners and tenants), else nowhere."""
     column = email.PEOPLE[kind][1]
     row = conn.execute(
-        f"SELECT email FROM trust_contacts WHERE {column} = %s"
+        f"SELECT email FROM trust_contacts WHERE {column} = %s"  # noqa: S608
         " ORDER BY created_at DESC, id DESC LIMIT 1",
         (person_id,),
     ).fetchone()
@@ -80,7 +80,7 @@ def address(conn: psycopg.Connection[Any], pmc_id: UUID, kind: Kind, person_id: 
     if kind == "vendor":
         return None
     login = conn.execute(
-        f"SELECT email FROM trust_logins WHERE pmc_id = %s AND {column} = %s"
+        f"SELECT email FROM trust_logins WHERE pmc_id = %s AND {column} = %s"  # noqa: S608
         " AND disabled_at IS NULL",
         (pmc_id, person_id),
     ).fetchone()
@@ -91,7 +91,7 @@ def can_sign_in(conn: psycopg.Connection[Any], pmc_id: UUID, kind: Kind, person_
     column = email.PEOPLE[kind][1]
     return (
         conn.execute(
-            f"SELECT 1 FROM trust_logins WHERE pmc_id = %s AND {column} = %s"
+            f"SELECT 1 FROM trust_logins WHERE pmc_id = %s AND {column} = %s"  # noqa: S608
             " AND disabled_at IS NULL",
             (pmc_id, person_id),
         ).fetchone()
@@ -121,7 +121,7 @@ def _insert(conn: psycopg.Connection[Any], pmc_id: UUID, kind: str, about: dict[
     """Writes one automatic email; False when it was written already."""
     columns = ["pmc_id", "kind", *about]
     made = conn.execute(
-        f"INSERT INTO trust_emails ({', '.join(columns)})"
+        f"INSERT INTO trust_emails ({', '.join(columns)})"  # noqa: S608
         f" VALUES ({', '.join(['%s'] * len(columns))}) ON CONFLICT DO NOTHING RETURNING id",
         (pmc_id, kind, *about.values()),
     ).fetchone()
@@ -164,7 +164,7 @@ WHERE l.pmc_id = %(pmc)s
                     AND e.lease_id = l.id AND e.period = %(due)s)
 ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", l.id, t.display_name COLLATE "C",
          lt.tenant_id
-"""
+"""  # noqa: S608
 
 
 def next_due(day: date) -> date:
@@ -249,7 +249,7 @@ WHERE f.pmc_id = %(pmc)s AND f.created_at = now() AND {NO_HOLD}
   AND NOT EXISTS (SELECT 1 FROM trust_lease_departures AS d
                   WHERE d.lease_id = l.id AND d.tenant_id = lt.tenant_id AND d.left_on <= %(day)s)
 ORDER BY r.due_on, l.id, t.display_name COLLATE "C", lt.tenant_id
-"""
+"""  # noqa: S608
 
 
 def write_late_notices(

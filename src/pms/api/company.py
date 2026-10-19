@@ -86,7 +86,7 @@ def profile(conn: psycopg.Connection[Any], pmc_id: UUID) -> dict[str, Any]:
     """The latest profile row's fields (all None when there is none)."""
     fields = (*ADDRESS, *LATE, "nsf_fee")
     row = conn.execute(
-        f"SELECT {', '.join(fields)} FROM trust_company_profiles WHERE pmc_id = %s"
+        f"SELECT {', '.join(fields)} FROM trust_company_profiles WHERE pmc_id = %s"  # noqa: S608
         " ORDER BY created_at DESC, id DESC LIMIT 1",
         (pmc_id,),
     ).fetchone()
@@ -170,7 +170,7 @@ def save_company(session: Staff, conn: Conn, new: NewCompany) -> Company:
     if wanted != profile(conn, session.pmc_id):
         columns = list(wanted)
         conn.execute(
-            f"INSERT INTO trust_company_profiles (pmc_id, {', '.join(columns)})"
+            f"INSERT INTO trust_company_profiles (pmc_id, {', '.join(columns)})"  # noqa: S608
             f" VALUES (%s, {', '.join(['%s'] * len(columns))})",
             (session.pmc_id, *wanted.values()),
         )

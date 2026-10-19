@@ -109,7 +109,7 @@ coalesce((SELECT sum(CASE WHEN c.kind = 'credit' THEN -c.amount ELSE c.amount EN
 
 
 def owed(conn: psycopg.Connection[Any], lease_id: UUID) -> Decimal:
-    row = conn.execute(f"SELECT {OWED} FROM trust_leases AS l WHERE l.id = %s", (lease_id,))
+    row = conn.execute(f"SELECT {OWED} FROM trust_leases AS l WHERE l.id = %s", (lease_id,))  # noqa: S608
     found = row.fetchone()
     assert found is not None
     return Decimal(found[0])
@@ -770,7 +770,7 @@ JOIN trust_units AS u ON u.id = l.unit_id
 JOIN trust_properties AS p ON p.id = u.property_id
 WHERE l.pmc_id = %(pmc)s AND (%(lease)s::uuid IS NULL OR l.id = %(lease)s)
 ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", l.starts_on, l.id
-"""
+"""  # noqa: S608
 
 TENANTS = """
 SELECT lt.lease_id, t.id, t.display_name,

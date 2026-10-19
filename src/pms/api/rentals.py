@@ -88,7 +88,7 @@ WHERE p.pmc_id = %(pmc)s AND trust_is_archived(p.id, NULL) = %(archived)s
   AND {scope.within("p.id")}
 ORDER BY p.display_name COLLATE "C", p.id
 LIMIT %(per_page)s OFFSET %(offset)s
-"""
+"""  # noqa: S608
 
 
 @router.get("/properties")
@@ -188,7 +188,7 @@ FROM trust_leases AS l
 JOIN trust_units AS u ON u.id = l.unit_id
 WHERE l.pmc_id = %(pmc)s AND {{where}}
 ORDER BY l.starts_on DESC, l.id
-"""
+"""  # noqa: S608
 
 
 def status_of(starts: date, ends: date | None, day: date) -> Literal["current", "future", "ended"]:
@@ -361,7 +361,7 @@ class Archiving(BaseModel):
 
 def rename(conn: psycopg.Connection[Any], table: str, pmc: UUID, record: UUID, name: str) -> None:
     found = conn.execute(
-        f"UPDATE {table} SET display_name = %s WHERE pmc_id = %s AND id = %s RETURNING id",
+        f"UPDATE {table} SET display_name = %s WHERE pmc_id = %s AND id = %s RETURNING id",  # noqa: S608
         (name, pmc, record),
     ).fetchone()
     if found is None:
@@ -378,7 +378,7 @@ def archive(
     table = "trust_properties" if property_id else "trust_units"
     if (
         conn.execute(
-            f"SELECT 1 FROM {table} WHERE pmc_id = %s AND id = %s",
+            f"SELECT 1 FROM {table} WHERE pmc_id = %s AND id = %s",  # noqa: S608
             (pmc, property_id or unit_id),
         ).fetchone()
         is None
@@ -501,7 +501,7 @@ WHERE l.pmc_id = %(pmc)s
       END
 ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", l.starts_on, l.id
 LIMIT %(per_page)s OFFSET %(offset)s
-"""
+"""  # noqa: S608
 
 
 @router.get("/leases")
@@ -605,7 +605,7 @@ LEFT JOIN LATERAL (
 {PORTAL}
 WHERE lt.lease_id = %s
 ORDER BY t.display_name COLLATE "C", t.id
-"""
+"""  # noqa: S608
 
 
 @router.get("/leases/{lease_id}")

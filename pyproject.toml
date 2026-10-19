@@ -4,7 +4,21 @@ line-length = 100
 src = [".", "src"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "SIM"]
+# S: flake8-bandit's security rules. A query built with an f-string (S608) is marked where it is
+# built, each one reviewed: what goes into its text is a table or column named in the code, or
+# another query's text; a request's values go in as parameters.
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "S"]
+# An assert in the app narrows a row the database just returned (for mypy); under python -O
+# a None would still fail where it is used. It is never what keeps a request out.
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+# Tests assert, name synthetic passwords, build SQL for the schema they check, and start the
+# tools they test.
+"tests/**" = ["S104", "S105", "S106", "S311", "S314", "S603", "S607", "S608"]
+# The CI tools run the commands they name, read the coverage XML they wrote, and fetch pinned
+# upstream files over https.
+"{tools,scripts}/**" = ["S310", "S314", "S603", "S607"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

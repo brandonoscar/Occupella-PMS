@@ -45,9 +45,9 @@ RESETS_PER_HOUR = 3
 # Each kind of person's queries, written out in full: no part of a query comes from a request.
 KINDS = {
     kind: {
-        "person": f"SELECT display_name FROM {table} WHERE pmc_id = %s AND id = %s",
-        "login": f"SELECT id, email FROM trust_logins WHERE pmc_id = %s AND {kind}_id = %s",
-        "new login": f"INSERT INTO trust_logins (pmc_id, kind, {kind}_id, email)"
+        "person": f"SELECT display_name FROM {table} WHERE pmc_id = %s AND id = %s",  # noqa: S608
+        "login": f"SELECT id, email FROM trust_logins WHERE pmc_id = %s AND {kind}_id = %s",  # noqa: S608
+        "new login": f"INSERT INTO trust_logins (pmc_id, kind, {kind}_id, email)"  # noqa: S608
         f" VALUES (%s, '{kind}', %s, %s) RETURNING id",
     }
     for kind, table in (
@@ -234,7 +234,7 @@ def _open_invite(conn: psycopg.Connection[Any], token: str, lock: bool) -> Any:
     """The invite's row if it can still be used: not accepted, not expired, login enabled."""
     row = _one(
         conn,
-        "SELECT i.id, i.pmc_id, l.id, l.kind, l.email, i.expires_at"
+        "SELECT i.id, i.pmc_id, l.id, l.kind, l.email, i.expires_at"  # noqa: S608
         " FROM trust_invites AS i JOIN trust_logins AS l ON l.id = i.login_id"
         " WHERE i.token_hash = %s AND i.accepted_at IS NULL AND i.expires_at > now()"
         " AND l.disabled_at IS NULL" + (" FOR UPDATE OF i" if lock else ""),

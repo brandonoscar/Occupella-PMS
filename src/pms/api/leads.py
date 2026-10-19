@@ -211,7 +211,8 @@ def add_lead(session: Staff, conn: Conn, new: NewLead) -> Created:
     ):
         if about is not None and (
             conn.execute(
-                f"SELECT 1 FROM {table} WHERE pmc_id = %s AND id = %s", (session.pmc_id, about)
+                f"SELECT 1 FROM {table} WHERE pmc_id = %s AND id = %s",  # noqa: S608
+                (session.pmc_id, about),
             ).fetchone()
             is None
         ):
@@ -291,7 +292,8 @@ def add_showing(session: Staff, conn: Conn, lead_id: UUID, new: NewShowing) -> L
     ):
         if about is not None and (
             conn.execute(
-                f"SELECT 1 FROM {table} WHERE pmc_id = %s AND id = %s", (session.pmc_id, about)
+                f"SELECT 1 FROM {table} WHERE pmc_id = %s AND id = %s",  # noqa: S608
+                (session.pmc_id, about),
             ).fetchone()
             is None
         ):
