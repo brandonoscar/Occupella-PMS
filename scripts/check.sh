@@ -138,8 +138,12 @@ else
   step "every test" pytest -q -p no:cacheprovider
   skip "coverage gates" "needs plpgsql_check in shared_preload_libraries; CI's coverage job runs them"
 fi
-# e2e.yml: the portal's typecheck, lint (oxlint, knip), unit tests and build (the browser tests need a running
-# API and a seeded database; frontend/playwright.config.ts says how to run them by hand)
+# ledger-invariants.yml, nightly: 16 staff on one company's books at once for five minutes; here
+# 8 for 15 seconds, on a database of its own
+step "many staff at once (a short soak)" env PYTHONPATH=src python -m tools.contention --workers 8 --seconds 15
+# e2e.yml: the portal's typecheck, lint (oxlint, knip), unit tests and build (the browser tests
+# need a running API and a seeded database; frontend/playwright.config.ts says how to run them
+# by hand)
 portal() {
   (cd frontend && npm ci --no-audit --no-fund --silent && npm run --silent typecheck \
     && npm run --silent lint && npm run --silent knip && npm test --silent && npm run --silent build)

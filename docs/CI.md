@@ -381,6 +381,7 @@ One command for every PR check that can run locally, in CI's order:
 - the PL/pgSQL lint, if the server has plpgsql_check;
 - every test, with the coverage gates and diff-cover if plpgsql_check is preloaded (then in
   coverage.yml's two shards, one after the other);
+- a short soak of the nightly many-staff run (8 workers for 15 seconds, about 20 s);
 - gitleaks, if installed.
 
 It ends with a summary. A check it couldn't run is listed as NOT RUN, never as passed: CodeQL and
