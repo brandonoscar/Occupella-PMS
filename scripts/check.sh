@@ -138,6 +138,12 @@ else
   step "every test" pytest -q -p no:cacheprovider
   skip "coverage gates" "needs plpgsql_check in shared_preload_libraries; CI's coverage job runs them"
 fi
+# ci.yml's email job: each kind of email sent to Mailpit and read back (tests/test_email_mailpit.py)
+if command -v "${MAILPIT:-mailpit}" >/dev/null; then
+  step "email through Mailpit" pytest -q -p no:cacheprovider -m mailpit
+else
+  skip "email through Mailpit" "mailpit is not installed (go install github.com/axllent/mailpit@v1.31.6); CI's email job runs it"
+fi
 # ledger-invariants.yml, nightly: 16 staff on one company's books at once for five minutes; here
 # 8 for 15 seconds, on a database of its own
 step "many staff at once (a short soak)" env PYTHONPATH=src python -m tools.contention --workers 8 --seconds 15

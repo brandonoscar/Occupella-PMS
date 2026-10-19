@@ -65,3 +65,12 @@ def test_pinned_images_keep_their_digest():
     assert pinned
     for image in pinned:
         assert re.fullmatch(MIRROR + r"[\w.-]+:[\w.-]+@sha256:[0-9a-f]{64}", image), image
+
+
+def test_the_email_job_builds_mailpit_with_the_go_image_the_dockerfile_pins():
+    # Dependabot moves the Dockerfile's FROM lines; ci.yml's GO_IMAGE has to follow them.
+    workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+    (go_image,) = re.findall(r"^\s*GO_IMAGE:\s*(\S+)", workflow, re.MULTILINE)
+
+    assert go_image.startswith(MIRROR + "golang:")
+    assert go_image in [image for file, _, image in image_references() if file == "Dockerfile"]

@@ -119,6 +119,12 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   email goes to the person's contact email, else their login's. An invite's or a reset's link is
   never written to the outbox: it waits in the writing process's memory until sent, ten minutes at
   most, then the email is given up on once. Writing email is the custom roles' area 'email'.
+  Each email goes as its text and as HTML made from it when sent (`src/pms/email_html.py`, one
+  Jinja2 template, `src/pms/templates/email.html`, in the portal's tokens): the text escaped, its
+  web addresses links, its figures a table, one button for the kinds that ask one thing, and the
+  company's name and mailing address; the outbox keeps the text alone. `pytest -m mailpit`
+  (ci.yml's email job; left out of the default run) sends each kind to Mailpit over STARTTLS and
+  checks what arrived, and Mailpit's HTML check against `ci/thresholds.toml [email]`.
   Since migration 0077 the PMS also writes emails by itself (`src/pms/notices.py`), each one a
   company turns on in Company setup (`trust_email_settings`: append-only, the latest row holding,
   naming who changed it; `/api/emails/settings`, area 'email'), and only while the server sends
@@ -808,6 +814,9 @@ python3.11 -m venv .venv && . .venv/bin/activate && pip install -r requirements-
 
 scripts/check.sh      # before every push: every PR check that can run here; commit first
 ```
+
+The email tests also need Mailpit (`go install github.com/axllent/mailpit@v1.31.6`, or `MAILPIT`
+naming it); without it `check.sh` lists them as NOT RUN.
 
 `check.sh` lists what it couldn't run here (CodeQL, dependency review, the self-host image) as
 NOT RUN. Run on Postgres built from `ci/postgres-coverage.Dockerfile`, it adds the PL/pgSQL lint

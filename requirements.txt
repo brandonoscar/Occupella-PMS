@@ -11,3 +11,5 @@ fastapi==0.143.0
 psycopg-pool==3.3.3
 pyotp==2.10.0
 uvicorn==0.54.0
+# Email (src/pms/email_html.py): the HTML part of each email, from one template.
+jinja2==3.1.6

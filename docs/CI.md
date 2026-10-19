@@ -42,6 +42,19 @@ This is the first line of defense: a ledger bug that an example test can see nev
 Run it with `ruff check . && ruff format --check . && mypy && python -m
 tools.check_synthetic_data && pytest --ignore=tests/properties`.
 
+Its **email** job (after `ci`) sends the PMS's email for real: `tests/test_email_mailpit.py`
+(`pytest -m mailpit`; the default run leaves these out) starts Mailpit (MIT, a mail server for
+tests) with a certificate its own throwaway authority signed, and the PMS's SMTP sender hands it
+an invite, a bill's approval, a staff message and two owner statements over STARTTLS. Mailpit
+says what arrived: from whom, to whom, the text as written, the HTML made from it
+(`src/pms/email_html.py`), nothing attached. Its HTML check then scores the HTML against what mail
+programs support (caniemail.com's data), which may not fall below `ci/thresholds.toml [email]`
+(90.0%; 91.0% measured). A sender that doesn't trust the server's certificate sends nothing. The
+job builds Mailpit from its source at a pinned version with the Go image the self-host Dockerfile
+pins, every module checked against Go's checksum database
+(`tests/tools/test_container_images.py` keeps the two images the same). Locally:
+`go install github.com/axllent/mailpit@v1.31.6`, then `pytest -m mailpit`.
+
 **db.yml** (PRs and main): checks the migrations.
 - squawk lints new or changed migrations. A destructive change (drop, rename, type change) needs
   an explicit `-- squawk-ignore <rule>` line right above it.
@@ -383,6 +396,7 @@ One command for every PR check that can run locally, in CI's order:
 - the PL/pgSQL lint, if the server has plpgsql_check;
 - every test, with the coverage gates and diff-cover if plpgsql_check is preloaded (then in
   coverage.yml's two shards, one after the other);
+- the email tests through Mailpit, if `mailpit` is installed (or `$MAILPIT` names it);
 - a short soak of the nightly many-staff run (8 workers for 15 seconds, about 20 s);
 - gitleaks, if installed.
 
@@ -398,6 +412,7 @@ These run on every PR, so they can all be required:
 | Check | Workflow |
 |---|---|
 | `ci` | ci.yml |
+| `email (Mailpit)` | ci.yml, after `ci` |
 | `migrations` | db.yml |
 | `properties` | ledger-invariants.yml |
 | `golden` | golden.yml |
@@ -412,15 +427,16 @@ Not required, because it doesn't run on every PR: `selfhost (PR)` (path-dependen
 ## Job budget
 
 Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20.
-- A PR runs the 9 required checks above. `e2e` is chained after `licenses` (a job of seconds)
-  and the self-host check after `migrations`, and coverage's two test shards after its lint (a
-  job of about a minute, by when `deps-and-secrets`, a job of seconds, has finished), so a PR
-  never has more than 8 jobs running at once.
+- A PR runs the 10 required checks above. `e2e` is chained after `licenses` (a job of seconds),
+  `email (Mailpit)` after `ci` (about 15 minutes), the self-host check after `migrations`, and
+  coverage's two test shards after its lint (a job of about a minute, by when
+  `deps-and-secrets`, a job of seconds, has finished), so a PR never has more than 8 jobs
+  running at once.
 - Nightly runs are staggered so they don't overlap:
   - 03:17 UTC ledger-invariants (16 property jobs, then timing, API fuzz and many-staff jobs);
   - 04:17 mutation (8 SQL shards and 1 Python job, then 1 scoring job);
   - 05:17 selfhost (1);
   - Mondays 06:17 security (codeql, gitleaks history, pip-audit, scorecard: 4).
 - A push to main runs the same checks (minus `deps-and-secrets`), plus gitleaks over full
-  history, pip-audit and Scorecard: 10 jobs.
+  history, pip-audit and Scorecard: 11 jobs.
 - A new PR job is chained after another one, as `e2e` is, to stay within 8.
