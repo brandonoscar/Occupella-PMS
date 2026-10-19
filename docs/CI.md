@@ -15,9 +15,10 @@ fails on an image pulled from anywhere else.
 
 ## The workflows
 
-**ci.yml** (PRs and main): lint (ruff), format check (ruff), typecheck (mypy, strict on `tools/`,
-`selfhost/`, `scripts/` and the app in `src/`), shellcheck on `scripts/*.sh`, the synthetic-data scan, the
-standing-rule checks, and every example test against a fresh database. That includes the API
+**ci.yml** (PRs and main): lint (ruff, its security rules included: each query built with an
+f-string is marked where it was read), format check (ruff), typecheck (mypy, strict on `tools/`,
+`selfhost/`, `scripts/` and the app in `src/`), shellcheck on `scripts/*.sh`, zizmor on the
+workflows (offline, medium severity and up), the synthetic-data scan, the standing-rule checks, and every example test against a fresh database. That includes the API
 tests in `tests/api/`, which drive the app through FastAPI's test client: every endpoint for
 success, for a caller who isn't allowed (no session, the wrong kind of login, another PMC) and
 for bad input.
@@ -235,8 +236,10 @@ Run it with `python -m tools.sql_mutation --list`, then
 `python -m tools.sql_mutation --score mutation/all.json`.
 
 **selfhost.yml** (nightly, by hand, and on PRs touching the Dockerfile, compose file,
-requirements, migrations or `src/`): builds the image and runs `compose.yaml` with plain Postgres 16 and nothing from
-Supabase. It applies every migration, then runs the smoke check:
+requirements, migrations or `src/`): builds the image, lists what it holds (Syft, an SBOM kept as
+the `sbom` artifact) and fails on a known high or critical vulnerability in it that has a fix
+(Grype; both built from pinned source versions), then runs `compose.yaml` with plain Postgres 16
+and nothing from Supabase. It applies every migration, then runs the smoke check:
 - seeds a synthetic 50-door PMC;
 - posts one month of rent;
 - runs one owner statement for that month and checks it against the owner's ledgers;
@@ -301,6 +304,8 @@ the first half with `python -m tools.check_features --base origin/main`.
 - gitleaks: the PR's commits on PRs, full history on main and weekly. Besides the default rules,
   `.gitleaks.toml` adds SSN- and EIN-shaped patterns. They let through only the never-issued
   forms the synthetic-data scan accepts, and a test keeps the two in step.
+- pip-audit: the pinned Python dependencies against known vulnerabilities, weekly and on main,
+  so an advisory published after a dependency merged turns up.
 - OpenSSF Scorecard: weekly and on main.
 
 A leaked credential or a poisoned dependency in a trust-accounting system is a breach of client
@@ -362,7 +367,7 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
   - 03:17 UTC ledger-invariants (16 property jobs and 1 timing job);
   - 04:17 mutation (4 shards, then 1 scoring job);
   - 05:17 selfhost (1);
-  - Mondays 06:17 security (codeql, gitleaks history, scorecard: 3).
+  - Mondays 06:17 security (codeql, gitleaks history, pip-audit, scorecard: 4).
 - A push to main runs the same checks (minus `deps-and-secrets`), plus gitleaks over full
-  history and Scorecard: 9 jobs.
+  history, pip-audit and Scorecard: 10 jobs.
 - A new PR job is chained after another one, as `e2e` is, to stay within 8.

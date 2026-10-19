@@ -96,6 +96,7 @@ step "lint" ruff check .
 step "format" ruff format --check .
 step "typecheck" mypy
 step "synthetic data" python -m tools.check_synthetic_data
+step "workflows (zizmor)" zizmor --offline --min-severity medium .github/workflows
 if command -v shellcheck >/dev/null; then
   step "shell scripts" shellcheck scripts/*.sh
 else

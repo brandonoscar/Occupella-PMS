@@ -18,13 +18,30 @@ jobs:
   selfhost:
     name: selfhost
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Build the image
         run: docker compose build
+      # Syft lists what is in the image (an SBOM, kept as an artifact); Grype fails on a known
+      # high or critical vulnerability that has a fix. Both are built from their pinned source
+      # versions (Apache-2.0), which Go checks against its checksum database.
+      - name: What the image holds (Syft) and its fixable vulnerabilities (Grype)
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          go install github.com/anchore/syft/cmd/syft@v1.54.1
+          go install github.com/anchore/grype/cmd/grype@v0.120.1
+          "$(go env GOPATH)/bin/syft" occupella-pms:local -o cyclonedx-json="$RUNNER_TEMP/sbom.json"
+          "$(go env GOPATH)/bin/grype" "sbom:$RUNNER_TEMP/sbom.json" --only-fixed --fail-on high
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: sbom
+          path: ${{ runner.temp }}/sbom.json
+          retention-days: 14
       - name: Start plain Postgres 16
         run: docker compose up -d --wait db
       - name: Apply every migration

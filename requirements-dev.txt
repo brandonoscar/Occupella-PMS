@@ -12,3 +12,5 @@ pytest==9.1.1
 ruff==0.16.10
 squawk-cli==2.68.0
 types-openpyxl==3.1.5.20260827
+# Audits the GitHub workflows (MIT, a single binary with no dependencies).
+zizmor==1.31.1
