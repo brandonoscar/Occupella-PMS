@@ -241,6 +241,22 @@ browser = [
 ]
 
 [[feature]]
+id = "housing-assistance"
+statement = "Staff keep the company's housing authorities and set a lease's housing assistance from the first of a month; as each month's rent is charged the authority's part becomes its own charge and the tenant owes the rest, so the tenant's late fees, deposit and balance are their part alone; staff charge or credit the authority by hand, and record its payment for many leases, each lease's part paying what it owes there oldest first into the owners' accounts, counted as rent collected."
+operations = [
+  "GET /api/assistance/authorities",
+  "POST /api/assistance/authorities",
+  "GET /api/assistance/authorities/{authority_id}",
+  "GET /api/assistance/leases/{lease_id}",
+  "POST /api/assistance/leases/{lease_id}/terms",
+  "POST /api/assistance/leases/{lease_id}/charges",
+  "POST /api/assistance/payments",
+]
+browser = [
+  "features.spec.ts › staff add a housing authority, set a lease's assistance, charge and credit the authority and record its payment",
+]
+
+[[feature]]
 id = "emergencies"
 statement = "Staff say who is on call; a tenant files an emergency with a photo, whoever is on call is emailed, its work order opens urgent with the tenant's word on entry and the photo, and the tenant sees the visit's day and window once it is scheduled; each work order counts its days open."
 operations = [

@@ -28,6 +28,7 @@ import {
 } from "../rent";
 import type { LeaseDetail, LeasePerson, Ledger } from "../rentals";
 import { LEASE_STATUS, LEDGER_KIND, PORTAL, rentLabel, termLabel } from "../rentals";
+import { AssistanceCard } from "./AssistanceCard";
 import { FilesCard } from "./FilesCard";
 import { InsuranceForms } from "./InsuranceForms";
 import { LeasingFeeForm } from "./LeasingFeeForm";
@@ -245,7 +246,8 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
 }
 
 // Summary: the term and rent (and its changes), what is held for the tenants, what is still
-// open, the monthly charges (each stopped from its ⋯ menu) and renters insurance.
+// open, the monthly charges (each stopped from its ⋯ menu), housing assistance and renters
+// insurance.
 function Summary({ lease, record }: { lease: LeaseDetail; record: Recorder }) {
   const deposit = lease.tenants.reduce((sum, t) => sum + Number(t.deposit), 0).toFixed(2);
   const prepaid = lease.tenants.reduce((sum, t) => sum + Number(t.prepaid), 0).toFixed(2);
@@ -290,6 +292,7 @@ function Summary({ lease, record }: { lease: LeaseDetail; record: Recorder }) {
           </ul>
         )}
       </Card>
+      <AssistanceCard leaseId={lease.id} unit={lease.unit} />
       <Card title="Renters insurance">
         {lease.renters_insurance ? (
           <p className="flex flex-wrap items-center gap-2 text-base" data-testid="renters-insurance">

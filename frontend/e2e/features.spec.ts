@@ -2782,6 +2782,77 @@ test("staff set Birch Flats' ownership 60/40 between two owners; a payment and a
   await expect(parts).toContainText("Demo Owner BBirch Flats$20.00");
 });
 
+test("staff add a housing authority, set a lease's assistance, charge and credit the authority and record its payment", async ({
+  page,
+}) => {
+  const people = seed.features["housing-assistance"]!;
+  await joinAsStaff(page, people.manager);
+
+  await section(page, "Housing authorities");
+  await expect(page.getByText("No housing authorities yet")).toBeVisible();
+  await page.getByRole("button", { name: "Add housing authority" }).click();
+  const add = page.getByRole("dialog", { name: "Add housing authority" });
+  await add.getByLabel("Housing authority's name").fill("Demo Housing Authority");
+  await add.getByRole("button", { name: "Add housing authority" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Demo Housing Authority" })).toBeVisible();
+  await expect(page.getByText("No leases yet")).toBeVisible();
+
+  // From next month the authority pays $800.00 of each month's rent; this month is charged already.
+  await openLease(page, "Birch Flats, Unit A");
+  const card = part(page, "Housing assistance");
+  await expect(card.getByTestId("assistance-split")).toHaveText(/^The tenant pays all of the \$[\d,]+\.\d\d rent\.$/);
+  await card.getByRole("button", { name: "Set housing assistance" }).click();
+  const terms = page.getByRole("dialog", { name: "Set housing assistance" });
+  const from = await terms.getByLabel("From (the first of a month)").inputValue();
+  await terms.getByLabel("The authority pays each month").fill("800.00");
+  await terms.getByLabel("HAP contract (optional)").fill("HAP-DEMO-1");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await terms.getByRole("button", { name: "Save assistance" }).click();
+  await expect(page.getByText(`The housing authority pays $800.00 a month from ${us(from)}.`)).toBeVisible();
+  await expect(card.getByRole("list", { name: "Housing assistance, Unit A" })).toHaveText(
+    `From ${us(from)}: Demo Housing Authority pays $800.00 a month (contract HAP-DEMO-1)`,
+  );
+
+  // This month's part, before the contract was on file, charged by hand; an abatement off it.
+  await card.getByRole("button", { name: "Charge the authority" }).click();
+  const charge = page.getByRole("dialog", { name: "Charge the housing authority" });
+  await charge.getByLabel("Amount").fill("800.00");
+  await charge.getByLabel("Due on").fill(firstOfThisMonth());
+  await charge.getByLabel("What it is for").fill("This month's part");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await charge.getByRole("button", { name: "Charge the authority" }).click();
+  await expect(page.getByText("$800.00 charged to the housing authority.")).toBeVisible();
+  await card.getByRole("button", { name: "Actions for This month's part" }).click();
+  await page.getByRole("menuitem", { name: "Credit the authority" }).click();
+  const credit = page.getByRole("dialog", { name: "Credit the housing authority" });
+  await credit.getByLabel("Amount").fill("50.00");
+  await credit.getByLabel("Why").fill("Abatement");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await credit.getByRole("button", { name: "Credit the authority" }).click();
+  await expect(page.getByText("$50.00 credited off This month's part.")).toBeVisible();
+  await expect(card.getByTestId("authority-owes")).toHaveText("The housing authority owes $750.00 for this lease.");
+
+  // Its payment: what it owes on the lease, into the owner's account.
+  await section(page, "Housing authorities");
+  await expect(page.getByRole("row", { name: "Demo Housing Authority" }).getByRole("cell")).toHaveText([
+    "Demo Housing Authority", "0", "$750.00",
+  ]);
+  await page.getByRole("row", { name: "Demo Housing Authority" }).click();
+  await page.getByRole("button", { name: "Record payment" }).click();
+  const pay = page.getByRole("dialog", { name: "Record payment" });
+  await pay.getByRole("button", { name: "Fill in what it owes" }).click();
+  await expect(pay.getByTestId("authority-pay-total")).toHaveText("Total $750.00");
+  await pay.getByLabel("Check or reference").fill("HAP 0001");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await pay.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.getByText("$750.00 from Demo Housing Authority recorded.")).toBeVisible();
+  await expect(page.getByTestId("authority-owed")).toHaveText("Owes $0.00 in all.");
+  await page.getByRole("table", { name: "Leases" }).getByRole("link", { name: /Birch Flats Unit A$/ }).click();
+  await expect(part(page, "Housing assistance").getByRole("row", { name: /^This month's part/ }).getByRole("cell")).toHaveText([
+    us(firstOfThisMonth()), "This month's part", "$750.00", "$750.00", "$0.00", /.*/,
+  ]);
+});
+
 test("staff go on call; a tenant files an emergency with a photo and staff see it through to a visit the tenant sees, day and window", async ({
   browser,
   page,

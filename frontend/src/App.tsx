@@ -16,6 +16,7 @@ import { ListingsPage } from "./pages/ListingsPage";
 import { OwnerHome } from "./pages/OwnerHome";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { GroupsPage } from "./pages/GroupsPage";
+import { HousingAuthoritiesPage, HousingAuthorityPage } from "./pages/HousingAuthoritiesPages";
 import { MoveOutPage } from "./pages/MoveOutPage";
 import { GeneralLedgerPage } from "./pages/GeneralLedgerPage";
 import { ManagementFeesPage } from "./pages/ManagementFeesPage";
@@ -107,6 +108,7 @@ const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/rent-roll": (me) => <RentPage me={me} />,
   "/tenants": (me) => <TenantsPage me={me} />,
   "/owners": (me) => <OwnersPage me={me} />,
+  "/housing-authorities": (me) => <HousingAuthoritiesPage me={me} />,
   "/move-out": (me) => <MoveOutPage me={me} />,
   "/rental-listings": (me) => <RentalListingsPage me={me} />,
   "/applicants": (me) => <ApplicantsPage me={me} />,
@@ -142,6 +144,7 @@ const RECORDS: [RegExp, (me: Me, id: string) => React.ReactNode][] = [
   [/^\/leases\/([0-9a-f-]{36})$/, (me, id) => <LeasePage me={me} id={id} />],
   [/^\/tenants\/([0-9a-f-]{36})$/, (me, id) => <TenantPage me={me} id={id} />],
   [/^\/owners\/([0-9a-f-]{36})$/, (me, id) => <OwnerPage me={me} id={id} />],
+  [/^\/housing-authorities\/([0-9a-f-]{36})$/, (me, id) => <HousingAuthorityPage me={me} id={id} />],
   [/^\/bank-accounts\/([0-9a-f-]{36})$/, (me, id) => <ReconcilePage me={me} id={id} />],
   [/^\/bills\/([0-9a-f-]{36})$/, (me, id) => <BillPage me={me} id={id} />],
   [/^\/applicants\/([0-9a-f-]{36})$/, (me, id) => <ApplicantPage me={me} id={id} />],

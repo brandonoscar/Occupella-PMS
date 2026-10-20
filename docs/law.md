@@ -381,6 +381,49 @@ theirs, and no owner's money pays what another owes.
 - Management fees stay each owner's account's own terms; a fee split some other way is set in
   each owner's terms.
 
+## A housing authority's part of the rent (migration 0095)
+
+**The rule.** Under the Housing Choice Voucher program (Section 8) a public housing agency pays
+the owner its housing assistance payment (HAP) under a contract with the owner, and the family
+pays the rest of the rent. It is federal law, so it is the same in every state.
+
+- 24 CFR 982.310(b): the family is not responsible for the housing assistance payment, and the
+  owner may not end the tenancy because the agency did not pay it.
+- 24 CFR 982.313: the owner may use the family's security deposit for unpaid rent or other
+  amounts the family owes under the lease, so not for the agency's part.
+- 24 CFR 982.451(b)(4): the agency pays the HAP promptly under the contract, and a late payment
+  may carry the contract's late fee, which is the agency's to pay, not the family's.
+
+Read in search excerpts of the eCFR and of agency guidance; the regulations' full text as now in
+force is NOT VERIFIED.
+
+**What the PMS does.**
+- Staff keep the company's housing authorities (Rentals, Housing authorities) and set a lease's
+  assistance from the first of a month whose rent isn't charged yet: what the authority pays of
+  each month's rent, at most the rent, maybe its HAP contract's number. A later month's takes
+  over; 0 ends it. Append-only, naming who recorded it.
+- As each month's rent is charged (the nightly run, a renewal), the authority's part (its share
+  of the month's rent to the cent, prorated as the rent is) becomes the authority's own charge,
+  and the tenant is charged the rest, or nothing when the authority pays it all. So the tenant's
+  balance, late fees, delinquency and the deposit kept at move-out count the tenant's part
+  alone: no late fee is charged on the authority's part, and no tenant money pays it.
+- A lease's end set, moved or cleared moves both parts to the days in effect. A renewal keeps
+  the assistance in force on its first day.
+- Staff charge an authority by hand (a month from before its assistance was on file) or credit
+  one of its charges (an abatement), never past what is open of it.
+- An authority's payment (one check or deposit for many leases) pays what it owes on each lease,
+  oldest first, never more, into the property's owners' accounts (by their ownership shares), all
+  or none, recorded once per request. It counts as rent collected in the management fee, the
+  income statement and the year-end package (1099 rents).
+
+**Left to the company.**
+- The HAP contract itself, the agency's inspections and its rent reasonableness review: the PMS
+  keeps the amount staff enter and the contract's number, nothing more.
+- A late HAP payment's fee, and an authority's payment that bounces: neither is built; staff
+  charge the authority by hand, and a returned authority payment is corrected by a journal entry.
+- Payment holds (an eviction filed) hold the tenant's payments only; an authority's payment is
+  not held.
+
 ## Maintenance: emergencies, photos, entry and the visit (migration 0084)
 
 **The rule.** A landlord keeps a home fit to live in and fixes what makes it unfit within a
