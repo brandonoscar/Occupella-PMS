@@ -6,7 +6,8 @@ import { usDate } from "./money";
 export type OpenCharge = {
   id: string; due_on: string; kind: "rent" | "fee"; memo: string | null; open: string; home?: string | null;
 };
-export type OwnerAccount = { id: string; owner: string };
+// percent: their share when the property's ownership shares split what is kept (migration 0094).
+export type OwnerAccount = { id: string; owner: string; percent: string | null };
 export type Settled = { held: string; kept: string; returned: string; returned_on: string };
 export type MoveOut = {
   lease_id: string;

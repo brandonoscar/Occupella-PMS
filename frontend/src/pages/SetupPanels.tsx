@@ -7,7 +7,9 @@ import { Notice } from "../components/Notice";
 import { Said } from "../components/Said";
 import { Select } from "../components/Select";
 import { SidePanel } from "../components/SidePanel";
-import { day } from "../money";
+import { day, usDate } from "../money";
+import type { OwnerAccount as PropertyOwner } from "../rentals";
+import { sharesLine, sharesTotal } from "../rentals";
 import type { Portfolio } from "../setup";
 import { useRecord } from "./useRecord";
 
@@ -143,6 +145,53 @@ export function AddOwnerPanel({ panel, propertyId }: { panel: Panel; propertyId:
           <Notice tone="error">{error}</Notice>
         </Form>
       )}
+    </SidePanel>
+  );
+}
+
+// A property's ownership from a day (q044): each owner's percent, by their account at the
+// property, together 100. Starts from the shares in force; a blank leaves an owner out.
+export function OwnershipPanel({ panel, propertyId, name, owners }: {
+  panel: Panel;
+  propertyId: string;
+  name: string;
+  owners: PropertyOwner[];
+}) {
+  const { error, save } = useSave(panel);
+  const [from, setFrom] = useState(day(new Date()));
+  const [percents, setPercents] = useState<Record<string, string>>(
+    Object.fromEntries(owners.map((o) => [o.account, o.percent ?? ""])));
+  const total = sharesTotal(Object.values(percents));
+  const whole = total.valid && total.parts === 1_000_000;
+  const shares = owners.filter((o) => percents[o.account]!.trim() !== "")
+    .map((o) => ({ account: o.account, owner: o.owner, percent: percents[o.account]!.trim() }));
+  return (
+    <SidePanel title="Set ownership" onClose={panel.close}>
+      <Form className="flex flex-col gap-3" onSubmit={(event) => {
+        event.preventDefault();
+        if (!whole) return;
+        return save(`properties/${propertyId}/ownership`, {
+          starts_on: from, shares: shares.map(({ account, percent }) => ({ account, percent })),
+        }, () => `Ownership of ${name} from ${usDate(from)}: ${sharesLine(shares)}.`);
+      }}>
+        <p className="text-sm text-ink-muted">
+          From this day each payment, prepaid rent used and deposit kept at move-out goes to the
+          owners by their percent, to the cent; earlier days keep the shares they had.
+        </p>
+        <Field label="In force from" id="ownership-from" type="date" required value={from}
+          onChange={(e) => setFrom(e.target.value)} />
+        {owners.map((o) => (
+          <Field key={o.account} label={`${o.owner}, percent`} id={`ownership-${o.account}`} inputMode="decimal"
+            value={percents[o.account]} onChange={(e) => setPercents({ ...percents, [o.account]: e.target.value })} />
+        ))}
+        <p className="text-sm text-ink-muted" data-testid="ownership-total">
+          {!total.valid
+            ? "A percent is above 0, at most 100, to four decimals."
+            : whole ? "Together 100%." : `Together ${total.text}; the shares come to 100%.`}
+        </p>
+        <div><Button type="submit" disabled={!whole}>Set ownership</Button></div>
+        <Notice tone="error">{error}</Notice>
+      </Form>
     </SidePanel>
   );
 }

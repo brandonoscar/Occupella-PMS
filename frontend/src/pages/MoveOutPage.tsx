@@ -11,6 +11,7 @@ import { Card, PageHeader, Shell } from "../components/Shell";
 import { day, money, usDate } from "../money";
 import type { MoveOut } from "../moveout";
 import { chargeLabel, hasEnded, leaseLabel, moveOutStatus, preview } from "../moveout";
+import { sharesLine } from "../rentals";
 import { InspectionsPanel } from "./InspectionsPanel";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
@@ -63,6 +64,10 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
   const [memo, setMemo] = useState("");
   const [on, setOn] = useState(today);
   const [owner, setOwner] = useState(lease.owner_accounts[0]?.id ?? "");
+  // Kept money goes to the property's owners by their shares (migration 0094); without shares,
+  // staff choose the account when there are several.
+  const shares = lease.owner_accounts.filter((a) => a.percent !== null);
+  const choose = shares.length === 0 && lease.owner_accounts.length > 1;
   const [request] = useState(() => crypto.randomUUID());
   const next = preview(lease);
   const ended = hasEnded(lease, today);
@@ -156,7 +161,7 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
                   const body = {
                     request_id: request,
                     on,
-                    owner_account: lease.owner_accounts.length > 1 ? owner : null,
+                    owner_account: choose ? owner : null,
                   };
                   ask(`Return the deposit on ${usDate(on)}: keep ${money(next.kept)} for what the lease owes and`
                     + ` pay ${money(next.returned)} back to the tenants?`, () =>
@@ -166,7 +171,12 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
               >
                 <Field label="Paid on" id={`on-${id}`} type="date" required value={on}
                   onChange={(e) => setOn(e.target.value)} />
-                {lease.owner_accounts.length > 1 && (
+                {shares.length > 0 && (
+                  <p className="basis-full text-sm text-ink-muted" data-testid="kept-by-ownership">
+                    Kept money goes to the owners by their shares: {sharesLine(shares)}
+                  </p>
+                )}
+                {choose && (
                   <Select label="Kept money to" id={`owner-${id}`} value={owner}
                     onChange={(e) => setOwner(e.target.value)}>
                     {lease.owner_accounts.map((a) => (

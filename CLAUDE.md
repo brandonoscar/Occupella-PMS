@@ -375,6 +375,18 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`trust_bill_markup_fees`), both or neither. Draws hold a bill back with its markup until it is
   set aside; the income statement and year-end count it with the management fees; the owner sees
   it in the approval email, the portal and their statement.
+- Ownership shares (migration 0094, the founder's review q044, `docs/law.md`): a property's
+  owners' percents from a day (`trust_ownership_shares` and its lines: each above 0 to four
+  decimals, an owner's account at the property, together 100 and in one trust bank account at
+  commit; append-only, naming who; the latest from a day not after it holding,
+  `trust_ownership_on`). From that day a payment, prepaid rent used (`src/pms/api/rent.py`) and a
+  deposit kept (`trust_return_deposit`) go to the owners by their shares, and a bill may be split
+  by ownership (`by_ownership` on `POST /api/payables/shared-bills`, a bill for each share):
+  `trust_split_by_ownership` rounds each percent down to the cent and gives the cents left over
+  to the largest remainders (the account first by id, `COLLATE "C"`), so the parts come to the
+  amount. Staff set it on the property's page (Ownership, Set ownership; area setup). Without
+  shares staff choose the owner's account, as before; a lease moved from keeps the account its
+  move names. The AI role reads them.
 - Work orders: a job at a property (maybe one of its units). Its steps (assigned to a vendor,
   scheduled for a day, completed, cancelled) are append-only and in order, and nothing follows a
   close. A bill may name a work order of its property, never a cancelled one. Migration 0072: a

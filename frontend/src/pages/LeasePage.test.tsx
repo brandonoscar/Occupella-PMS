@@ -27,6 +27,7 @@ const LEASE: LeaseDetail = {
     { id: "t1", name: "Tenant 1", email: "t1@example.com", phone: "555-555-0101", portal: "active", login_email: "t1@example.com", left_on: null, deposit_to: null },
     { id: "t2", name: "Tenant 2", email: null, phone: null, portal: "no login", login_email: null, left_on: null, deposit_to: null },
   ],
+  owners: [{ account: "a1", owner: "Owner 1", percent: null }],
   owed: "1550.00",
   carried: "0.00",
   moved_from: null,
@@ -217,6 +218,38 @@ describe("LeasePage", () => {
     expect(second.reference).toBe(null);
   });
 
+  it("splits a payment by the property's ownership shares, or asks which owner without them", async () => {
+    const owners = [{ account: "a1", owner: "Owner 1", percent: "60" }, { account: "a2", owner: "Owner 2", percent: "40" }];
+    let fetch = server({ ...LEASE, owners });
+    await open();
+    let form = panel("Receive payment");
+    expect(within(form).getByTestId("split-by-ownership").textContent).toBe("Split by ownership: Owner 1 60% · Owner 2 40%");
+    expect(within(form).queryByLabelText("Owner's account")).toBeNull();
+    fireEvent.change(within(form).getByLabelText("Payment received"), { target: { value: "100.00" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Record payment" }));
+    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(1));
+    expect(posted(fetch)[0]?.[1]).not.toHaveProperty("account");
+    cleanup();
+
+    // Two owners without shares: staff choose the account, for the payment and the prepaid rent.
+    fetch = server({ ...LEASE, owners: owners.map((o) => ({ ...o, percent: null })) });
+    await open();
+    form = panel("Receive payment");
+    expect(within(form).queryByTestId("split-by-ownership")).toBeNull();
+    expect([...(within(form).getByLabelText("Owner's account") as HTMLSelectElement).options].map((o) => o.textContent))
+      .toEqual(["Owner 1", "Owner 2"]);
+    fireEvent.change(within(form).getByLabelText("Owner's account"), { target: { value: "a2" } });
+    fireEvent.change(within(form).getByLabelText("Payment received"), { target: { value: "100.00" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Record payment" }));
+    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(1));
+    expect(posted(fetch)[0]?.[1]).toMatchObject({ amount: "100.00", account: "a2" });
+    form = panel("Receive payment");
+    fireEvent.change(within(form).getByLabelText("Owner's account"), { target: { value: "a2" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Use prepaid rent" }));
+    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(2));
+    expect(posted(fetch)[1]).toEqual(["/api/rent/leases/l1/use-prepaid", expect.objectContaining({ account: "a2" })]);
+  });
+
   it("uses prepaid rent, enters a credit and records a deposit", async () => {
     const fetch = server(LEASE, {
       "/api/rent/leases/l1/use-prepaid": { transfers: ["p"], to_owner: "50.00", to_prepaid: "0.00" },
@@ -248,6 +281,8 @@ describe("LeasePage", () => {
     expect(calls.map(([path]) => path)).toEqual([
       "/api/rent/leases/l1/use-prepaid", "/api/rent/leases/l1/charges", "/api/rent/deposits", "/api/rent/deposits",
     ]);
+    // One owner: no account to choose.
+    expect(calls[0]?.[1]).not.toHaveProperty("account");
     expect(calls[1]?.[1]).toMatchObject({ kind: "credit", amount: "25.00", memo: "Leak repair" });
     expect(calls[2]?.[1]).toMatchObject({ tenant_id: "t2", amount: "500.00", kind: "security" });
     expect(calls[3]?.[1]).toMatchObject({ tenant_id: "t1", amount: "300.00", kind: "pet" });

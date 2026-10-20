@@ -202,6 +202,77 @@ def owner_account(
     return rows[0][0], rows[0][1]
 
 
+@dataclass(frozen=True)
+class Owners:
+    """Where a property's part of a payment goes on a day: its owners by their shares in force
+    (migration 0094), or its one owner's account, or the one staff named."""
+
+    property_id: UUID
+    day: date
+    bank: UUID
+    single: str | None  # the account, when the property has no shares in force
+    accounts: frozenset[str]
+
+    def parts(self, conn: psycopg.Connection[Any], amount: Decimal) -> list[tuple[str, Decimal]]:
+        """`amount` as each owner's part, to the cent; a part of nothing is left out."""
+        if self.single is not None:
+            return [(self.single, amount)] if amount > 0 else []
+        return [
+            (str(account), Decimal(part))
+            for account, part in conn.execute(
+                "SELECT ledger_account_id, amount FROM trust_split_by_ownership(%s, %s, %s)",
+                (self.property_id, self.day, amount),
+            ).fetchall()
+        ]
+
+
+OWNERSHIP = """
+SELECT o.ledger_account_id, o.percent, a.bank_account_id
+FROM trust_ownership_on(%s, %s) AS o
+JOIN trust_ledger_accounts AS a ON a.ledger_account_id = o.ledger_account_id
+"""
+
+
+def owners_of(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    property_id: UUID,
+    day: date,
+    chosen: str | None,
+) -> Owners:
+    """A property's owners on a day: by their shares when it has shares in force then (staff
+    name no account), else its one owner's account or the one staff chose."""
+    shares = conn.execute(OWNERSHIP, (property_id, day)).fetchall()
+    if not shares:
+        account, bank = owner_account(conn, pmc_id, property_id, chosen)
+        return Owners(property_id, day, bank, account, frozenset({account}))
+    if chosen is not None:
+        raise HTTPException(
+            422, "the property's owners own it in shares: its payments split between them"
+        )
+    return Owners(property_id, day, shares[0][2], None, frozenset(str(a) for a, _, _ in shares))
+
+
+def pair(
+    sources: list[tuple[str, Decimal]], sinks: list[tuple[str, Decimal]]
+) -> list[tuple[str, str, Decimal]]:
+    """Transfers that move what the sources give into what the sinks take, in order: each
+    source until it is spent, each sink until it is full."""
+    moves: list[tuple[str, str, Decimal]] = []
+    left = [amount for _, amount in sources]
+    i = 0
+    for sink, wanted in sinks:
+        while wanted > 0 and i < len(sources):
+            part = min(wanted, left[i])
+            if part > 0:
+                moves.append((sources[i][0], sink, part))
+                left[i] -= part
+                wanted -= part
+            if left[i] <= 0:
+                i += 1
+    return moves
+
+
 # The leases a lease's tenants moved from (migration 0091), oldest first: what each still owes is
 # paid first, into the owner's account its move names, in that account's trust bank account.
 MOVED_FROM = """
@@ -364,7 +435,8 @@ def record_payment(
     it, unless staff accept it past the hold (`past_hold_by` names them): then every hold in
     force that day allows it, in the same transaction."""
     lease = lease_of(conn, pmc_id, lease_id)
-    owner, bank = owner_account(conn, pmc_id, lease.property_id, account)
+    owners = owners_of(conn, pmc_id, lease.property_id, received_on, account)
+    bank = owners.bank
     lock_lease(conn, lease_id)
     earlier_leases = moved_from(conn, lease_id)
     for prior, _, _ in earlier_leases:
@@ -380,19 +452,21 @@ def record_payment(
         "method": method,
         "memo": f"Rent – {lease_memo(conn, lease_id)}",
     }
-    # Each lease's part, oldest first: (the lease, its owner's account, that account's bank, part).
-    # Every lease's rent comes before any lease's other charges.
-    chain = [*earlier_leases, (lease_id, owner, bank)]
-    still = {each: open_rent_and_fees(conn, pmc_id, each) for each, _, _ in chain}
+    # Each lease's part, oldest first. Every lease's rent comes before any lease's other charges.
+    chain = [*(each for each, _, _ in earlier_leases), lease_id]
+    still = {each: open_rent_and_fees(conn, pmc_id, each) for each in chain}
     shares: dict[UUID, Decimal] = {}
     left = amount
     for kind in (0, 1):  # rent, then the rest
-        for each, _, _ in chain:
+        for each in chain:
             share = min(left, still[each][kind])
             if share > 0:
                 shares[each] = shares.get(each, ZERO) + share
                 left -= share
-    parts = [(each, o, b, shares[each]) for each, o, b in chain if each in shares]
+    # Each part as (the lease, an owner's account, that account's bank, amount): a lease moved
+    # from pays the owner's account its move names, this lease its owners by their shares.
+    parts = [(each, o, b, shares[each]) for each, o, b in earlier_leases if each in shares]
+    parts += [(lease_id, o, bank, p) for o, p in owners.parts(conn, shares.get(lease_id, ZERO))]
     to_owner = amount - left
     to_prepaid = left
     transfers = [(cash_of(conn, b), o, part) for _, o, b, part in parts]
@@ -401,7 +475,9 @@ def record_payment(
         transfers.append((cash_of(conn, bank), prepaid, to_prepaid))
     posted = post(conn, pmc_id, key, transfers, received_on, metadata)
     if posted is None:
-        return replay(conn, pmc_id, key, metadata, {owner, *(o for _, o, _ in earlier_leases)})
+        return replay(
+            conn, pmc_id, key, metadata, {*owners.accounts, *(o for _, o, _ in earlier_leases)}
+        )
     # The owners' parts come first; prepaid rent, if any, last.
     for (each, _, _, part), transfer in zip(parts, posted[: len(parts)], strict=True):
         if past_hold_by is not None:
@@ -466,7 +542,8 @@ def use_prepaid(
     """The lease's tenants' prepaid rent paid to the owner's account for what the lease owes,
     matched to its rent first, then its other charges, each oldest first."""
     lease = lease_of(conn, pmc_id, lease_id)
-    owner, bank = owner_account(conn, pmc_id, lease.property_id, account)
+    owners = owners_of(conn, pmc_id, lease.property_id, on, account)
+    bank = owners.bank
     lock_lease(conn, lease_id)
     key = f"prepaid/{request_id}"
     metadata = {
@@ -481,13 +558,10 @@ def use_prepaid(
         for tenant in lease.tenants
     }
     held = balances(conn, list(prepaid.values()))
-    left = max(owed(conn, lease_id), ZERO)
-    transfers = []
-    for account_id in prepaid.values():
-        part = min(held.get(account_id, ZERO), left)
-        if part > 0:
-            transfers.append((account_id, owner, part))
-            left -= part
+    sources = [(account_id, held.get(account_id, ZERO)) for account_id in prepaid.values()]
+    using = min(sum((given for _, given in sources), ZERO), max(owed(conn, lease_id), ZERO))
+    # Into the owner's account, or the owners' by their shares.
+    transfers = pair(sources, owners.parts(conn, using))
     if not transfers:
         try:  # a retry finds nothing left to use: what it used the first time
             earlier(conn, pmc_id, key, metadata)
@@ -495,10 +569,10 @@ def use_prepaid(
             raise HTTPException(
                 409, "there is no prepaid rent to use, or nothing is owed"
             ) from None
-        return replay(conn, pmc_id, key, metadata, {owner})
+        return replay(conn, pmc_id, key, metadata, set(owners.accounts))
     posted = post(conn, pmc_id, key, transfers, on, metadata)
     if posted is None:
-        return replay(conn, pmc_id, key, metadata, {owner})
+        return replay(conn, pmc_id, key, metadata, set(owners.accounts))
     for transfer, (_, _, part) in zip(posted, transfers, strict=True):
         match(conn, pmc_id, lease_id, transfer, part)
     return Recorded(posted, sum((t[2] for t in transfers), ZERO), ZERO)
@@ -730,6 +804,15 @@ class Move(BaseModel):
     moved_on: date
 
 
+class LeaseOwner(BaseModel):
+    """An owner's account at the lease's property, and their percent in its ownership shares in
+    force on the day (migration 0094); None without shares, when staff pick the account."""
+
+    account: str
+    owner: str
+    percent: str | None
+
+
 class RentLease(BaseModel):
     id: UUID
     property: str
@@ -744,6 +827,8 @@ class RentLease(BaseModel):
     rent_due_day: int
     due_days: list[DueDay]
     tenants: list[LeaseTenant]
+    # Where its payments go: its property's owners, by their shares when it has shares in force.
+    owners: list[LeaseOwner]
     owed: str
     # What the leases its tenants moved from still owe (owed to their owners): a payment pays it
     # first. "0.00" for a lease no one moved into.
@@ -771,6 +856,18 @@ JOIN trust_properties AS p ON p.id = u.property_id
 WHERE l.pmc_id = %(pmc)s AND (%(lease)s::uuid IS NULL OR l.id = %(lease)s)
 ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", l.starts_on, l.id
 """  # noqa: S608
+
+LEASE_OWNERS = """
+SELECT l.id, a.ledger_account_id, o.display_name,
+       (SELECT s.percent FROM trust_ownership_on(u.property_id, %(as_of)s) AS s
+        WHERE s.ledger_account_id = a.ledger_account_id)
+FROM trust_leases AS l
+JOIN trust_units AS u ON u.id = l.unit_id
+JOIN trust_ledger_accounts AS a ON a.property_id = u.property_id AND a.kind = 'owner_property'
+JOIN trust_owners AS o ON o.id = a.owner_id
+WHERE l.pmc_id = %(pmc)s AND (%(lease)s::uuid IS NULL OR l.id = %(lease)s)
+ORDER BY o.display_name COLLATE "C", a.ledger_account_id
+"""
 
 TENANTS = """
 SELECT lt.lease_id, t.id, t.display_name,
@@ -897,6 +994,15 @@ def built(
                 deposits=[Held(kind=k["kind"], amount=cents(Decimal(k["amount"]))) for k in kinds],
             )
         )
+    owners: dict[UUID, list[LeaseOwner]] = {}
+    for lease, account, owner, percent in conn.execute(LEASE_OWNERS, names).fetchall():
+        owners.setdefault(lease, []).append(
+            LeaseOwner(
+                account=account,
+                owner=owner,
+                percent=None if percent is None else exports.text(percent),
+            )
+        )
     payments: dict[UUID, list[Paid]] = {}
     for lease, transfer, event_at, amount, reference, method, bounced in conn.execute(
         PAYMENTS, names
@@ -976,6 +1082,7 @@ def built(
                 rent_due_day=due_day,
                 due_days=due_days.get(i, []),
                 tenants=tenants.get(i, []),
+                owners=owners.get(i, []),
                 owed=cents(due),
                 carried=cents(carried.get(i, ZERO)),
                 moved_from=moved_from.get(i),

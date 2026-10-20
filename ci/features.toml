@@ -231,6 +231,16 @@ browser = [
 ]
 
 [[feature]]
+id = "ownership"
+statement = "Staff set a property's ownership from a day, each co-owner's percent together 100; from then each payment, prepaid rent used and deposit kept at move-out goes to its owners by their shares to the cent (the cent left over to the largest remainder), and a bill for it can be split between them by ownership, a bill for each share."
+operations = [
+  "POST /api/setup/properties/{property_id}/ownership",
+]
+browser = [
+  "features.spec.ts › staff set Birch Flats' ownership 60/40 between two owners; a payment and a bill split between them to the cent",
+]
+
+[[feature]]
 id = "emergencies"
 statement = "Staff say who is on call; a tenant files an emergency with a photo, whoever is on call is emailed, its work order opens urgent with the tenant's word on entry and the photo, and the tenant sees the visit's day and window once it is scheduled; each work order counts its days open."
 operations = [

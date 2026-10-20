@@ -2437,6 +2437,62 @@ $$;
 
 
 --
+-- Name: trust_check_ownership_share_line(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_ownership_share_line() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM trust_ownership_shares AS s
+        JOIN trust_ledger_accounts AS a ON a.property_id = s.property_id
+        WHERE s.id = NEW.share_id AND a.ledger_account_id = NEW.ledger_account_id
+          AND a.kind = 'owner_property' AND a.pmc_id = NEW.pmc_id AND s.pmc_id = NEW.pmc_id
+    ) THEN
+        RAISE EXCEPTION 'trust: % is not an owner''s account at the property', NEW.ledger_account_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_ownership_shares(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_ownership_shares() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_share uuid := coalesce(to_jsonb(NEW) ->> 'share_id', to_jsonb(NEW) ->> 'id')::uuid;
+    v_total numeric;
+    v_banks bigint;
+BEGIN
+    SELECT coalesce(sum(l.percent), 0), count(DISTINCT a.bank_account_id)
+    INTO v_total, v_banks
+    FROM trust_ownership_share_lines AS l
+    JOIN trust_ledger_accounts AS a ON a.ledger_account_id = l.ledger_account_id
+    WHERE l.share_id = v_share;
+    IF v_total <> 100 THEN
+        RAISE EXCEPTION 'trust: a property''s ownership shares come to 100%%, not %',
+            v_total || '%'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF v_banks <> 1 THEN
+        RAISE EXCEPTION 'trust: a property''s owners in shares have their accounts in one trust '
+            'bank account'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: trust_check_payment_hold(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4276,6 +4332,26 @@ BEGIN
 
     RETURN v_ledger_account_id;
 END;
+$$;
+
+
+--
+-- Name: trust_ownership_on(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_ownership_on(p_property_id uuid, p_day date) RETURNS TABLE(ledger_account_id text, percent numeric)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT l.ledger_account_id, l.percent
+    FROM trust_ownership_share_lines AS l
+    WHERE l.share_id = (
+        SELECT s.id FROM trust_ownership_shares AS s
+        WHERE s.property_id = p_property_id AND s.starts_on <= p_day
+        ORDER BY s.starts_on DESC, s.created_at DESC, s.id DESC
+        LIMIT 1
+    )
+    ORDER BY l.ledger_account_id COLLATE "C"
 $$;
 
 
@@ -8890,6 +8966,10 @@ DECLARE
     v_fees_open numeric;
     v_fees_pass boolean;
     i integer;
+    -- The lease's property, and whether its owners own it in shares on the day (migration 0094).
+    v_property uuid;
+    v_split boolean;
+    v_pay record;
 BEGIN
     -- What the lease owes must count every payment that committed while this waited.
     IF current_setting('transaction_isolation') <> 'read committed' THEN
@@ -8949,16 +9029,22 @@ BEGIN
             USING ERRCODE = 'check_violation';
     END IF;
 
-    SELECT count(*), min(t.ledger_account_id) INTO v_owners, v_owner.ledger_account_id
-    FROM trust_ledger_accounts AS t
-    JOIN trust_units AS u ON u.property_id = t.property_id
-    WHERE u.id = v_lease.unit_id AND t.pmc_id = p_pmc_id AND t.kind = 'owner_property'
-      AND (p_owner_account IS NULL OR t.ledger_account_id = p_owner_account);
-    IF v_owners <> 1 THEN
-        RAISE EXCEPTION 'trust: % is not the one owner''s account of the lease''s property',
-            coalesce(p_owner_account, 'no account given')
-            USING ERRCODE = 'invalid_parameter_value',
-                  HINT = 'Name the owner''s account when the property has more than one.';
+    -- A property its owners own in shares on the day keeps for each of them by their share; one
+    -- without is kept for its one owner's account, or the one named.
+    SELECT u.property_id INTO v_property FROM trust_units AS u WHERE u.id = v_lease.unit_id;
+    v_split := EXISTS (SELECT 1 FROM trust_ownership_on(v_property, v_day));
+    IF NOT v_split THEN
+        SELECT count(*), min(t.ledger_account_id) INTO v_owners, v_owner.ledger_account_id
+        FROM trust_ledger_accounts AS t
+        JOIN trust_units AS u ON u.property_id = t.property_id
+        WHERE u.id = v_lease.unit_id AND t.pmc_id = p_pmc_id AND t.kind = 'owner_property'
+          AND (p_owner_account IS NULL OR t.ledger_account_id = p_owner_account);
+        IF v_owners <> 1 THEN
+            RAISE EXCEPTION 'trust: % is not the one owner''s account of the lease''s property',
+                coalesce(p_owner_account, 'no account given')
+                USING ERRCODE = 'invalid_parameter_value',
+                      HINT = 'Name the owner''s account when the property has more than one.';
+        END IF;
     END IF;
 
     -- The leases the tenants moved from, oldest first, then this one. Each moved from waits for
@@ -9033,43 +9119,60 @@ BEGIN
             WHILE v_rest > 0 AND i <= cardinality(v_leases) LOOP
                 v_piece := least(v_rest, CASE WHEN v_fees_pass THEN v_fees[i] ELSE v_rent[i] END);
                 IF v_piece > 0 THEN
-                    SELECT t.* INTO v_owner FROM trust_ledger_accounts AS t
-                    WHERE t.ledger_account_id = v_accounts[i];
-                    SELECT t.ledger_account_id INTO v_owner_cash FROM trust_ledger_accounts AS t
-                    WHERE t.bank_account_id = v_owner.bank_account_id AND t.kind = 'bank_cash';
-                    SELECT t.id INTO v_transfer
-                    FROM pgledger_create_transfers(
-                        ARRAY[
-                            (v_deposit.account, v_owner.ledger_account_id, v_piece)
-                                ::transfer_request,
-                            (v_owner_cash, v_deposit.cash, v_piece)::transfer_request
-                        ],
-                        p_event_at,
-                        jsonb_build_object('memo', 'Security deposit kept')
-                    ) AS t
-                    WHERE t.from_account_id = v_deposit.account;
-                    v_left := v_piece;
-                    -- What is open of each, rent first: what a waiver or a credit took off it is
-                    -- not kept from the deposit.
-                    FOR v_charge IN
-                        SELECT c.id, o.open
-                        FROM trust_open_charges(p_pmc_id, v_leases[i], 'infinity') AS o
-                        JOIN trust_charges AS c ON c.id = o.charge_id
-                        WHERE (trust_pay_rank(c) = 2) = v_fees_pass
-                        ORDER BY c.due_on, trust_pay_rank(c), c.created_at, c.id
+                    -- This lease's part goes to its owners by their shares, a lease moved from
+                    -- to the owner's account its move names.
+                    FOR v_pay IN
+                        SELECT s.ledger_account_id COLLATE "C" AS account, s.amount
+                        FROM trust_split_by_ownership(v_property, v_day, v_piece) AS s
+                        WHERE v_split AND i = cardinality(v_leases)
+                        UNION ALL
+                        SELECT v_accounts[i] COLLATE "C", v_piece
+                        WHERE NOT (v_split AND i = cardinality(v_leases))
+                        ORDER BY account
                     LOOP
-                        EXIT WHEN v_left <= 0;
-                        CONTINUE WHEN v_charge.open <= 0;
-                        v_part := least(v_left, v_charge.open);
-                        PERFORM trust_apply_payment(p_pmc_id, v_charge.id, v_transfer, v_part);
-                        v_line := v_line + 1;
-                        INSERT INTO trust_deposit_return_lines (
-                            lease_id, line_no, pmc_id, tenant_id, charge_id, amount, transfer_id
-                        ) VALUES (
-                            p_lease_id, v_line, p_pmc_id, v_deposit.tenant_id, v_charge.id, v_part,
-                            v_transfer
-                        );
-                        v_left := v_left - v_part;
+                        SELECT t.* INTO v_owner FROM trust_ledger_accounts AS t
+                        WHERE t.ledger_account_id = v_pay.account;
+                        SELECT t.ledger_account_id INTO v_owner_cash
+                        FROM trust_ledger_accounts AS t
+                        WHERE t.bank_account_id = v_owner.bank_account_id
+                          AND t.kind = 'bank_cash';
+                        SELECT t.id INTO v_transfer
+                        FROM pgledger_create_transfers(
+                            ARRAY[
+                                (v_deposit.account, v_owner.ledger_account_id, v_pay.amount)
+                                    ::transfer_request,
+                                (v_owner_cash, v_deposit.cash, v_pay.amount)::transfer_request
+                            ],
+                            p_event_at,
+                            jsonb_build_object('memo', 'Security deposit kept')
+                        ) AS t
+                        WHERE t.from_account_id = v_deposit.account;
+                        v_left := v_pay.amount;
+                        -- What is open of each, rent first: what a waiver or a credit took off
+                        -- it is not kept from the deposit.
+                        FOR v_charge IN
+                            SELECT c.id, o.open
+                            FROM trust_open_charges(p_pmc_id, v_leases[i], 'infinity') AS o
+                            JOIN trust_charges AS c ON c.id = o.charge_id
+                            WHERE (trust_pay_rank(c) = 2) = v_fees_pass
+                            ORDER BY c.due_on, trust_pay_rank(c), c.created_at, c.id
+                        LOOP
+                            EXIT WHEN v_left <= 0;
+                            CONTINUE WHEN v_charge.open <= 0;
+                            v_part := least(v_left, v_charge.open);
+                            PERFORM trust_apply_payment(
+                                p_pmc_id, v_charge.id, v_transfer, v_part
+                            );
+                            v_line := v_line + 1;
+                            INSERT INTO trust_deposit_return_lines (
+                                lease_id, line_no, pmc_id, tenant_id, charge_id, amount,
+                                transfer_id
+                            ) VALUES (
+                                p_lease_id, v_line, p_pmc_id, v_deposit.tenant_id, v_charge.id,
+                                v_part, v_transfer
+                            );
+                            v_left := v_left - v_part;
+                        END LOOP;
                     END LOOP;
                     IF v_fees_pass THEN
                         v_fees[i] := v_fees[i] - v_piece;
@@ -9367,6 +9470,33 @@ CREATE FUNCTION public.trust_signer_of(p_bank_account_id uuid, p_staff_id uuid) 
     WHERE s.bank_account_id = p_bank_account_id AND s.staff_id = p_staff_id
     ORDER BY s.created_at DESC, s.id DESC
     LIMIT 1
+$$;
+
+
+--
+-- Name: trust_split_by_ownership(uuid, date, numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_split_by_ownership(p_property_id uuid, p_day date, p_amount numeric) RETURNS TABLE(ledger_account_id text, amount numeric)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    WITH exact AS (
+        SELECT o.ledger_account_id, round(p_amount * 100) * o.percent / 100 AS cents
+        FROM trust_ownership_on(p_property_id, p_day) AS o
+        WHERE p_amount > 0
+    ), ranked AS (
+        SELECT e.ledger_account_id, floor(e.cents) AS whole,
+               row_number() OVER (
+                   ORDER BY e.cents - floor(e.cents) DESC, e.ledger_account_id COLLATE "C"
+               ) AS n,
+               round(p_amount * 100) - sum(floor(e.cents)) OVER () AS spare
+        FROM exact AS e
+    )
+    SELECT r.ledger_account_id, (r.whole + CASE WHEN r.n <= r.spare THEN 1 ELSE 0 END) / 100
+    FROM ranked AS r
+    WHERE r.whole + CASE WHEN r.n <= r.spare THEN 1 ELSE 0 END > 0
+    ORDER BY r.ledger_account_id COLLATE "C"
 $$;
 
 
@@ -11515,6 +11645,34 @@ CREATE TABLE public.trust_owners (
     display_name text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_owners_display_name_check CHECK ((display_name <> ''::text))
+);
+
+
+--
+-- Name: trust_ownership_share_lines; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_ownership_share_lines (
+    share_id uuid NOT NULL,
+    ledger_account_id text NOT NULL,
+    pmc_id uuid NOT NULL,
+    percent numeric NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_ownership_share_lines_percent_check CHECK (((percent > (0)::numeric) AND (percent <= (100)::numeric) AND (percent = round(percent, 4))))
+);
+
+
+--
+-- Name: trust_ownership_shares; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_ownership_shares (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    property_id uuid NOT NULL,
+    starts_on date NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
 );
 
 
@@ -13778,6 +13936,30 @@ ALTER TABLE ONLY public.trust_owners
 
 
 --
+-- Name: trust_ownership_share_lines trust_ownership_share_lines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ownership_share_lines
+    ADD CONSTRAINT trust_ownership_share_lines_pkey PRIMARY KEY (share_id, ledger_account_id);
+
+
+--
+-- Name: trust_ownership_shares trust_ownership_shares_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ownership_shares
+    ADD CONSTRAINT trust_ownership_shares_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_ownership_shares trust_ownership_shares_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ownership_shares
+    ADD CONSTRAINT trust_ownership_shares_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_payment_hold_allowances trust_payment_hold_allowances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15304,6 +15486,34 @@ CREATE INDEX trust_owner_fees_recorded_by ON public.trust_owner_fees USING btree
 
 
 --
+-- Name: trust_ownership_share_lines_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_ownership_share_lines_account ON public.trust_ownership_share_lines USING btree (ledger_account_id);
+
+
+--
+-- Name: trust_ownership_share_lines_share; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_ownership_share_lines_share ON public.trust_ownership_share_lines USING btree (pmc_id, share_id);
+
+
+--
+-- Name: trust_ownership_shares_property; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_ownership_shares_property ON public.trust_ownership_shares USING btree (pmc_id, property_id, starts_on);
+
+
+--
+-- Name: trust_ownership_shares_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_ownership_shares_recorded_by ON public.trust_ownership_shares USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_payment_holds_lease_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -16410,6 +16620,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_ownership_share_lines trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_ownership_share_lines FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_ownership_shares trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_ownership_shares FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_payment_hold_allowances trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -17390,6 +17614,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owne
 
 
 --
+-- Name: trust_ownership_share_lines trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_ownership_share_lines FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_ownership_shares trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_ownership_shares FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_payment_hold_allowances trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -18069,6 +18307,27 @@ CREATE TRIGGER trust_opened_at BEFORE INSERT OR UPDATE OF opened_at ON public.tr
 
 
 --
+-- Name: trust_ownership_share_lines trust_ownership_share_line; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_ownership_share_line BEFORE INSERT ON public.trust_ownership_share_lines FOR EACH ROW EXECUTE FUNCTION public.trust_check_ownership_share_line();
+
+
+--
+-- Name: trust_ownership_share_lines trust_ownership_shares_whole; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_ownership_shares_whole AFTER INSERT ON public.trust_ownership_share_lines DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_ownership_shares();
+
+
+--
+-- Name: trust_ownership_shares trust_ownership_shares_whole; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_ownership_shares_whole AFTER INSERT ON public.trust_ownership_shares DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_ownership_shares();
+
+
+--
 -- Name: trust_payout_methods trust_payout_method; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -18248,6 +18507,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_on_call_staff FOR
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_owner_fees FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_ownership_shares trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_ownership_shares FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -21068,6 +21334,54 @@ ALTER TABLE ONLY public.trust_owners
 
 
 --
+-- Name: trust_ownership_share_lines trust_ownership_share_lines_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ownership_share_lines
+    ADD CONSTRAINT trust_ownership_share_lines_ledger_account_id_fkey FOREIGN KEY (ledger_account_id) REFERENCES public.trust_ledger_accounts(ledger_account_id);
+
+
+--
+-- Name: trust_ownership_share_lines trust_ownership_share_lines_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ownership_share_lines
+    ADD CONSTRAINT trust_ownership_share_lines_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_ownership_share_lines trust_ownership_share_lines_pmc_id_share_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ownership_share_lines
+    ADD CONSTRAINT trust_ownership_share_lines_pmc_id_share_id_fkey FOREIGN KEY (pmc_id, share_id) REFERENCES public.trust_ownership_shares(pmc_id, id);
+
+
+--
+-- Name: trust_ownership_shares trust_ownership_shares_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ownership_shares
+    ADD CONSTRAINT trust_ownership_shares_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_ownership_shares trust_ownership_shares_pmc_id_property_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ownership_shares
+    ADD CONSTRAINT trust_ownership_shares_pmc_id_property_id_fkey FOREIGN KEY (pmc_id, property_id) REFERENCES public.trust_properties(pmc_id, id);
+
+
+--
+-- Name: trust_ownership_shares trust_ownership_shares_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ownership_shares
+    ADD CONSTRAINT trust_ownership_shares_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_payment_hold_allowances trust_payment_hold_allowances_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22191,4 +22505,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261018000090'),
     ('20261018000091'),
     ('20261018000092'),
-    ('20261018000093');
+    ('20261018000093'),
+    ('20261019000094');

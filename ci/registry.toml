@@ -1187,3 +1187,20 @@ tests = [
   "tests/properties/test_deposit_return_properties.py::test_a_deposit_return_keeps_what_is_owed_and_gives_back_the_rest",
   "tests/properties/test_lease_transfer_properties.py::test_a_moved_tenant_s_money_pays_each_owner_what_was_owed_to_them",
 ]
+
+[[invariant]]
+id = "ownership-shares-split-to-the-cent"
+statement = "A property's ownership is each owner's percent from a day (above 0, to four decimals, together 100 at commit, each an owner's account at the property, all in one trust bank account; append-only, naming who recorded it; migration 0094). A payment, prepaid rent used, a deposit kept at move-out and a bill split by ownership go to the owners by the shares in force on the day: each percent rounded down to the cent, the cents left over to the largest remainders, the account first by id on a tie, so the parts come to the amount, each within a cent of its share; each part is matched in full, a bounce takes back each owner's part, and every trust bank account ties out. A property without shares keeps the one account staff choose."
+tests = [
+  "tests/properties/test_ownership_properties.py::test_a_co_owned_propertys_money_splits_by_its_shares_to_the_cent",
+  "tests/test_ownership_shares.py::test_an_amount_splits_to_the_cent_and_the_parts_come_to_it",
+  "tests/test_ownership_shares.py::test_the_cents_left_over_go_to_the_largest_remainders_then_the_first_account",
+  "tests/test_ownership_shares.py::test_shares_come_to_100_at_commit",
+  "tests/test_ownership_shares.py::test_the_owners_accounts_are_in_one_trust_bank_account",
+  "tests/test_ownership_shares.py::test_what_a_lease_owes_kept_from_its_deposit_goes_to_its_owners_by_their_shares",
+  "tests/api/test_ownership_api.py::test_a_payment_pays_the_owners_by_their_shares",
+  "tests/api/test_ownership_api.py::test_a_bounced_split_payment_takes_back_each_owners_part",
+  "tests/api/test_ownership_api.py::test_prepaid_rent_used_pays_the_owners_by_their_shares",
+  "tests/api/test_ownership_api.py::test_a_bill_split_by_ownership_is_a_bill_for_each_owners_share",
+  "tests/api/test_ownership_api.py::test_without_shares_staff_choose_one_of_several_owners",
+]

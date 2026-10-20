@@ -37,12 +37,19 @@ export type OwnerAccount = {
   balance: string;
   // The management terms in force today, if any.
   agreement: Agreement | null;
+  // Their percent in the ownership shares in force today (migration 0094); null without one.
+  percent: string | null;
 };
+// A property's ownership from a day: each owner's percent of it, together 100.
+export type Share = { account: string; owner: string; percent: string };
+export type Ownership = { id: string; starts_on: string; recorded_by: string | null; shares: Share[] };
 export type Property = {
   id: string;
   name: string;
   archived: boolean;
   owners: OwnerAccount[];
+  // Its ownership shares, the latest first.
+  ownership: Ownership[];
   units: UnitLine[];
   // The late fee, NSF fee and lease-break fee terms in force today, if any.
   late_fees: LateFees | null;
@@ -212,3 +219,46 @@ export type LedgerLine = {
 };
 // A lease's ledger through today (GET /api/leases/{id}/ledger).
 export type Ledger = { lines: LedgerLine[]; balance: string };
+
+// "Ann Owner 60% · Ben Owner 40%": owners' shares as they read.
+export function sharesLine(shares: { owner: string; percent: string | null }[]): string {
+  return shares.map((s) => `${s.owner} ${s.percent}%`).join(" · ");
+}
+
+export type OwnershipState = "in force" | "to come" | "replaced";
+export const OWNERSHIP_STATE: Record<OwnershipState, { word: string; tone: "positive" | "info" | "neutral" }> = {
+  "in force": { word: "In force", tone: "positive" },
+  "to come": { word: "To come", tone: "info" },
+  replaced: { word: "Replaced", tone: "neutral" },
+};
+
+// Each ownership's state today, the list newest first as the API sends it: the first from a day
+// not after today holds; those from a later day are to come; the rest were replaced.
+export function ownershipStates(all: Ownership[], today: string): OwnershipState[] {
+  const holding = all.findIndex((o) => o.starts_on <= today);
+  return all.map((o, n) => (o.starts_on > today ? "to come" : n === holding ? "in force" : "replaced"));
+}
+
+// A percent typed in, in ten-thousandths of a percent (to four decimals, above 0, at most 100);
+// null when it isn't one. Whole numbers, so shares add up exactly.
+export function percentParts(text: string): number | null {
+  const found = /^(\d{1,3})(?:\.(\d{1,4}))?$/.exec(text.trim());
+  if (!found) return null;
+  const parts = Number(found[1]) * 10_000 + Number((found[2] ?? "").padEnd(4, "0"));
+  return parts > 0 && parts <= 1_000_000 ? parts : null;
+}
+
+// What typed-in shares come to: "100%", "90.5%"; blanks count as none.
+export function sharesTotal(percents: string[]): { parts: number; text: string; valid: boolean } {
+  let parts = 0;
+  let valid = true;
+  for (const typed of percents) {
+    if (typed.trim() === "") continue;
+    const part = percentParts(typed);
+    if (part === null) valid = false;
+    else parts += part;
+  }
+  const whole = Math.floor(parts / 10_000);
+  const rest = String(parts % 10_000).padStart(4, "0").replace(/0+$/, "");
+  return { parts, text: `${whole}${rest ? `.${rest}` : ""}%`, valid };
+}

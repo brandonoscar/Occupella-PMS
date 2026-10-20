@@ -61,6 +61,9 @@ class Charge(BaseModel):
 class OwnerAccount(BaseModel):
     id: str
     owner: str
+    # Their percent in the property's ownership shares in force today (migration 0094): kept
+    # money goes to the owners by their shares, and staff choose no account.
+    percent: str | None = None
 
 
 class Settled(BaseModel):
@@ -84,7 +87,8 @@ class MoveOut(BaseModel):
     carried: str
     held: str
     open_charges: list[Charge]
-    # The owner's accounts kept money may go to: staff choose when there are several.
+    # The owner's accounts kept money may go to: staff choose when there are several and no
+    # ownership shares split it.
     owner_accounts: list[OwnerAccount]
     settled: Settled | None
 
@@ -128,7 +132,10 @@ ORDER BY trust_pay_rank(c) = 2, c.due_on, trust_pay_rank(c), c.created_at, c.id
 """
 
 OWNERS = """
-SELECT a.ledger_account_id, o.display_name FROM trust_ledger_accounts AS a
+SELECT a.ledger_account_id, o.display_name,
+       (SELECT s.percent FROM trust_ownership_on(a.property_id, (now() AT TIME ZONE 'UTC')::date)
+        AS s WHERE s.ledger_account_id = a.ledger_account_id)
+FROM trust_ledger_accounts AS a
 JOIN trust_owners AS o ON o.id = a.owner_id
 WHERE a.pmc_id = %s AND a.property_id = %s AND a.kind = 'owner_property'
 ORDER BY o.display_name COLLATE "C", a.ledger_account_id
@@ -168,8 +175,8 @@ def move_outs(session: Staff, conn: Conn) -> list[MoveOut]:
                     if o > 0
                 ],
                 owner_accounts=[
-                    OwnerAccount(id=i, owner=o)
-                    for i, o in conn.execute(OWNERS, (session.pmc_id, prop_id)).fetchall()
+                    OwnerAccount(id=i, owner=o, percent=None if p is None else exports.text(p))
+                    for i, o, p in conn.execute(OWNERS, (session.pmc_id, prop_id)).fetchall()
                 ],
                 settled=None
                 if done[0] is None

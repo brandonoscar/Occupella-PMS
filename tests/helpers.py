@@ -1206,3 +1206,42 @@ def sign_for(
                 on,
             ),
         )
+
+
+def co_own(connection, pmc, owner=1, prop=0, bank_id=None) -> str:
+    """Owner `owner` of a make_pmc PMC gets an account at property `prop` too (in its operating
+    trust bank account, or `bank_id`): a co-owner of it."""
+    return open_account(
+        connection,
+        pmc.pmc_id,
+        bank_id or pmc.operating_bank_id,
+        "owner_property",
+        pmc.owners[owner].owner_id,
+        pmc.owners[prop].property_id,
+    )
+
+
+def set_ownership(connection, pmc_id, property_id, starts_on, shares) -> UUID:
+    """A property's ownership shares from a day, `shares` as (account, percent) pairs, all in one
+    transaction as their check at commit asks (migration 0094)."""
+    with connection.transaction():
+        share = _one(
+            connection,
+            "INSERT INTO trust_ownership_shares (pmc_id, property_id, starts_on)"
+            " VALUES (%s, %s, %s) RETURNING id",
+            (pmc_id, property_id, starts_on),
+        )
+        for account, percent in shares:
+            connection.execute(
+                "INSERT INTO trust_ownership_share_lines"
+                " (share_id, ledger_account_id, pmc_id, percent) VALUES (%s, %s, %s, %s)",
+                (share, account, pmc_id, percent),
+            )
+    return share
+
+
+def split_by_ownership(connection, property_id, day, amount) -> list[tuple[str, Decimal]]:
+    return connection.execute(
+        "SELECT ledger_account_id, amount FROM trust_split_by_ownership(%s, %s, %s)",
+        (property_id, day, amount),
+    ).fetchall()

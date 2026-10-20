@@ -99,6 +99,9 @@ export type RentLease = {
   rent_due_day: number;
   due_days: DueDay[];
   tenants: LeaseTenant[];
+  // Where its payments go: its property's owners' accounts, each with their percent when the
+  // property's ownership shares split them (migration 0094); otherwise staff choose one.
+  owners: LeaseOwner[];
   owed: string;
   // What the leases its tenants moved from still owe their owners: a payment here pays it first.
   carried: string;
@@ -110,6 +113,7 @@ export type RentLease = {
   recurring: RecurringCharge[];
   renters_insurance: RentersInsurance | null;
 };
+export type LeaseOwner = { account: string; owner: string; percent: string | null };
 export type Payment = { transfers: string[]; to_owner: string; to_prepaid: string };
 // A payment the bank returned: nsf_fee is the NSF fee the lease was charged for it, if the
 // property's terms charge one.

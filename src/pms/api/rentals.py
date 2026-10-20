@@ -135,6 +135,23 @@ class OwnerAccount(BaseModel):
     balance: str
     # The management terms in force today, if any.
     agreement: setup.Agreement | None
+    # The owner's percent in the ownership shares in force today; None without one.
+    percent: str | None = None
+
+
+class Share(BaseModel):
+    account: str
+    owner: str
+    percent: str
+
+
+class Ownership(BaseModel):
+    """A property's ownership from a day (migration 0094), as recorded."""
+
+    id: UUID
+    starts_on: date
+    recorded_by: str | None
+    shares: list[Share]
 
 
 class LeaseLine(BaseModel):
@@ -163,6 +180,9 @@ class Property(BaseModel):
     name: str
     archived: bool
     owners: list[OwnerAccount]
+    # Its ownership shares, the latest first: the one from the latest day not after today holds
+    # now, any from a later day hold from then.
+    ownership: list[Ownership]
     units: list[UnitLine]
     # The late fee, NSF fee and lease-break fee terms in force today, if any.
     late_fees: setup.LateFees | None
@@ -253,6 +273,7 @@ def property_page(session: Staff, conn: Conn, property_id: UUID) -> Property:
                 approval_limit=exports.text(limit),
                 bill_markup_percent=exports.text(markup),
             ),
+            percent=None if share is None else exports.text(share),
         )
         for (
             o,
@@ -268,10 +289,13 @@ def property_page(session: Staff, conn: Conn, property_id: UUID) -> Property:
             reserve,
             limit,
             markup,
+            share,
         ) in conn.execute(
             "SELECT o.id, o.display_name, a.ledger_account_id, k.display_name, b.balance,"
             " m.starts_on, m.fee_percent, m.minimum_fee, m.flat_fee, m.leasing_fee_percent,"
-            " m.reserve, m.approval_limit, m.bill_markup_percent"
+            " m.reserve, m.approval_limit, m.bill_markup_percent,"
+            " (SELECT s.percent FROM trust_ownership_on(a.property_id, %s) AS s"
+            "  WHERE s.ledger_account_id = a.ledger_account_id)"
             " FROM trust_ledger_accounts AS a JOIN trust_owners AS o ON o.id = a.owner_id"
             " JOIN trust_bank_accounts AS k ON k.id = a.bank_account_id"
             " JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id"
@@ -280,9 +304,25 @@ def property_page(session: Staff, conn: Conn, property_id: UUID) -> Property:
             "   ORDER BY m.starts_on DESC LIMIT 1) AS m ON true"
             " WHERE a.property_id = %s AND a.kind = 'owner_property'"
             ' ORDER BY o.display_name COLLATE "C", o.id',
-            (day, property_id),
+            (day, day, property_id),
         ).fetchall()
     ]
+    ownership: dict[UUID, Ownership] = {}
+    for share, starts, by, account, owner, percent in conn.execute(
+        "SELECT s.id, s.starts_on, st.display_name, l.ledger_account_id, o.display_name,"
+        " l.percent FROM trust_ownership_shares AS s"
+        " LEFT JOIN trust_staff AS st ON st.id = s.recorded_by"
+        " JOIN trust_ownership_share_lines AS l ON l.share_id = s.id"
+        " JOIN trust_ledger_accounts AS a ON a.ledger_account_id = l.ledger_account_id"
+        " JOIN trust_owners AS o ON o.id = a.owner_id"
+        " WHERE s.pmc_id = %s AND s.property_id = %s"
+        " ORDER BY s.starts_on DESC, s.created_at DESC, s.id,"
+        ' l.percent DESC, o.display_name COLLATE "C", l.ledger_account_id',
+        (session.pmc_id, property_id),
+    ).fetchall():
+        ownership.setdefault(
+            share, Ownership(id=share, starts_on=starts, recorded_by=by, shares=[])
+        ).shares.append(Share(account=account, owner=owner, percent=exports.text(percent)))
     fees = conn.execute(
         "SELECT f.starts_on, f.grace_days, f.flat_fee, f.percent, f.maximum, s.starts_on, s.fee,"
         " b.starts_on, b.flat_fee, b.rent_months"
@@ -328,6 +368,7 @@ def property_page(session: Staff, conn: Conn, property_id: UUID) -> Property:
         name=row[0],
         archived=row[1],
         owners=owners,
+        ownership=list(ownership.values()),
         units=units,
         late_fees=None
         if late_starts is None

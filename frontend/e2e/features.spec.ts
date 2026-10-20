@@ -2717,6 +2717,71 @@ test("staff share a roofer's invoice across two owners' properties with the mark
   await expect((await ownerProperty(page, "Demo Owner B", "Aspen Row")).getByRole("cell").nth(2)).toHaveText("$50.00");
 });
 
+test("staff set Birch Flats' ownership 60/40 between two owners; a payment and a bill split between them to the cent", async ({
+  page,
+}) => {
+  const people = seed.features.ownership!;
+  await joinAsStaff(page, people.manager);
+
+  // Demo Owner B comes in as a co-owner of Birch Flats; until shares are set, staff choose.
+  await openProperty(page, "Birch Flats");
+  const add = await setupPanel(page, "Add owner");
+  await add.getByRole("combobox", { name: "Owner", exact: true }).selectOption({ label: "Demo Owner B" });
+  await add.getByRole("button", { name: "Add owner" }).click();
+  await expect(page.getByText("Added Demo Owner B's account.")).toBeVisible();
+  const ownership = part(page, "Ownership");
+  await expect(ownership).toContainText("No ownership shares.");
+
+  const shares = await setupPanel(page, "Set ownership");
+  await shares.getByLabel("In force from").fill(firstOfThisMonth());
+  await shares.getByLabel("Demo Owner A, percent").fill("60");
+  await shares.getByLabel("Demo Owner B, percent").fill("30");
+  await expect(shares.getByTestId("ownership-total")).toHaveText("Together 90%; the shares come to 100%.");
+  await shares.getByLabel("Demo Owner B, percent").fill("40");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await shares.getByRole("button", { name: "Set ownership" }).click();
+  await expect(page.getByText(
+    `Ownership of Birch Flats from ${us(firstOfThisMonth())}: Demo Owner A 60% · Demo Owner B 40%.`,
+  )).toBeVisible();
+  await expect(ownership.getByRole("table", { name: "Ownership" }).getByRole("row").nth(1).getByRole("cell")).toHaveText([
+    us(firstOfThisMonth()), "Demo Owner A 60% · Demo Owner B 40%", /Demo/, "In force",
+  ]);
+
+  // A lost key's $100.01 paid: Demo Owner A's 60% is $60.006 and B's 40% $40.004, so the cent
+  // left over goes to A, the larger remainder.
+  await openLease(page, "Birch Flats, Unit A");
+  const charge = await leasePanel(page, "Enter charge");
+  await charge.getByLabel("Amount").fill("100.01");
+  await charge.getByLabel("What for").fill("Lost key");
+  await charge.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByText("Fee of $100.01 added.")).toBeVisible();
+  const pay = await leasePanel(page, "Receive payment");
+  await expect(pay.getByTestId("split-by-ownership")).toHaveText("Split by ownership: Demo Owner A 60% · Demo Owner B 40%");
+  await pay.getByLabel("Payment received").fill("100.01");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await pay.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.getByText("$100.01 paid what is owed.")).toBeVisible();
+  await expect((await ownerProperty(page, "Demo Owner B", "Birch Flats")).getByRole("cell").nth(2)).toHaveText("$40.00");
+
+  // A plumber's $50.00 bill for Birch Flats is split the same way, a bill for each owner's share.
+  await section(page, "Bills");
+  await page.getByRole("button", { name: "Record bill" }).click();
+  const bill = page.getByRole("dialog", { name: "Record bill" });
+  await bill.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Roofing Co" });
+  await bill.getByRole("combobox", { name: "Owner and property" }).selectOption({ label: "Demo Owner A, Birch Flats" });
+  await expect(bill.getByLabel("Split by ownership: Demo Owner A 60% · Demo Owner B 40%")).toBeChecked();
+  await bill.getByLabel("Ref #").fill("GUTTER-5");
+  await bill.getByLabel("Amount").fill("50.00");
+  await bill.getByLabel("Memo").fill("Gutter cleaning");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await bill.getByRole("button", { name: "Record bill" }).click();
+  await expect(page.getByText("Bill GUTTER-5 is split between 2 owners by their shares.")).toBeVisible();
+  await billRow(page, "Demo Roofing Co", "GUTTER-5/1").getByRole("cell").first().click();
+  const parts = page.getByRole("table", { name: "Shares" });
+  await expect(parts).toContainText("Demo Owner ABirch Flats$30.00");
+  await expect(parts).toContainText("Demo Owner BBirch Flats$20.00");
+});
+
 test("staff go on call; a tenant files an emergency with a photo and staff see it through to a visit the tenant sees, day and window", async ({
   browser,
   page,

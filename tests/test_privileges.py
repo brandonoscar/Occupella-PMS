@@ -196,6 +196,10 @@ TABLES = {
     "trust_shared_bill_parts": {"SELECT", "INSERT"},
     "trust_bill_markups": {"SELECT", "INSERT"},
     "trust_bill_markup_fees": {"SELECT"},
+    # A property's ownership shares from a day: staff record them and their lines with inserts
+    # (migration 0094).
+    "trust_ownership_shares": {"SELECT", "INSERT"},
+    "trust_ownership_share_lines": {"SELECT", "INSERT"},
     "trust_on_call_staff": {"SELECT", "INSERT"},
     "trust_recurring_work_orders": {"SELECT", "INSERT"},
     "trust_recurring_work_order_ends": {"SELECT", "INSERT"},
@@ -310,6 +314,9 @@ FUNCTIONS = {
     "trust_open_charges(uuid,uuid,timestamptz)": {"trust_app"},
     # Where a charge comes in the order money pays them: rent first (migration 0093).
     "trust_pay_rank(trust_charges)": {"trust_app"},
+    # A property's ownership shares in force on a day, and an amount split by them (0094).
+    "trust_ownership_on(uuid,date)": {"trust_app"},
+    "trust_split_by_ownership(uuid,date,numeric)": {"trust_app"},
     "trust_charge_recurring_due(uuid,date)": {"trust_app"},
     "trust_charge_rent_on_due_days(uuid,date,date)": {"trust_app"},
     "trust_charge_recurring_on_due_days(uuid,date,date)": {"trust_app"},
@@ -372,6 +379,8 @@ FUNCTIONS = {
     "trust_check_rent_due_day()": set(),
     "trust_check_bill_reference()": set(),  # a trigger's: no one calls it
     "trust_check_shared_bill()": set(),
+    "trust_check_ownership_share_line()": set(),
+    "trust_check_ownership_shares()": set(),
     "trust_check_work_order_charge()": set(),
     "trust_check_vendor_link_step()": set(),
     "trust_check_lead_open()": set(),
@@ -535,6 +544,8 @@ SECURITY_DEFINER = {
     # whatever the caller reads.
     "trust_check_bill_reference()",
     "trust_check_shared_bill()",  # checks a shared invoice's parts at commit, as the owner
+    "trust_check_ownership_share_line()",  # a share's account is the property's owner's
+    "trust_check_ownership_shares()",  # a property's shares come to 100 at commit
     "trust_fill_bill_markup()",  # locks the bill's owner account, which the app can't
     # Reads lease offers for the AI role, which never reads them, and returns only each lease's
     # renewal status (founder decision, 2026-10-13).

@@ -101,6 +101,9 @@ class OwnerAccount(BaseModel):
     bank_account: str
     # The agreement in force today, if any.
     agreement: Agreement | None
+    # The owner's percent of the property in its ownership shares in force today (migration
+    # 0094); None when the property has none, or the owner has no share in them.
+    ownership_percent: str | None = None
 
 
 class Lease(BaseModel):
@@ -278,6 +281,7 @@ def portfolio(session: Staff, conn: Conn) -> Portfolio:
                 approval_limit=exports.text(limit),
                 bill_markup_percent=exports.text(markup),
             ),
+            ownership_percent=money(share),
         )
         for (
             account,
@@ -294,10 +298,13 @@ def portfolio(session: Staff, conn: Conn) -> Portfolio:
             reserve,
             limit,
             markup,
+            share,
         ) in conn.execute(
             "SELECT a.ledger_account_id, o.id, o.display_name, p.id, p.display_name,"
             " b.display_name, m.starts_on, m.fee_percent, m.minimum_fee, m.flat_fee,"
-            " m.leasing_fee_percent, m.reserve, m.approval_limit, m.bill_markup_percent"
+            " m.leasing_fee_percent, m.reserve, m.approval_limit, m.bill_markup_percent,"
+            " (SELECT s.percent FROM trust_ownership_on(p.id, (now() AT TIME ZONE 'UTC')::date)"
+            "  AS s WHERE s.ledger_account_id = a.ledger_account_id)"
             " FROM trust_ledger_accounts AS a"
             " JOIN trust_owners AS o ON o.id = a.owner_id"
             " JOIN trust_properties AS p ON p.id = a.property_id"
@@ -502,6 +509,55 @@ def add_property_owner(
     return Created(
         id=open_owner_account(conn, session.pmc_id, new.owner_id, property_id, new.bank_account_id)
     )
+
+
+# --- ownership shares (migration 0094) ------------------------------------------------------
+
+Share = Annotated[Decimal, Field(gt=0, le=100, max_digits=7, decimal_places=4)]
+
+
+class OwnerShare(BaseModel):
+    account: Annotated[str, Field(min_length=1, max_length=100)]
+    percent: Share
+
+
+class NewOwnership(BaseModel):
+    starts_on: date
+    # Each owner's percent, by their owner's property account at the property: together 100.
+    shares: Annotated[list[OwnerShare], Field(min_length=1, max_length=20)]
+
+
+@router.post("/properties/{property_id}/ownership", status_code=201)
+def set_ownership(session: Staff, conn: Conn, property_id: UUID, new: NewOwnership) -> Created:
+    """A property's ownership from a day (q044): each owner's percent of it, by their owner's
+    property account there, together 100. From that day its payments, prepaid rent used,
+    deposits kept and the bills split by ownership go to its owners by these shares."""
+    found(conn, "property", session.pmc_id, property_id)
+    accounts = [share.account for share in new.shares]
+    if len(set(accounts)) != len(accounts):
+        raise HTTPException(422, "each owner's account is in the shares once")
+    total = sum((share.percent for share in new.shares), Decimal(0))
+    if total != 100:
+        raise HTTPException(422, f"the shares come to {exports.text(total)}%, not 100%")
+    try:
+        with conn.transaction():  # a savepoint: the check at commit runs here too
+            made = insert(
+                conn,
+                "INSERT INTO trust_ownership_shares (pmc_id, property_id, starts_on)"
+                " VALUES (%s, %s, %s) RETURNING id",
+                (session.pmc_id, property_id, new.starts_on),
+            )
+            for share in new.shares:
+                conn.execute(
+                    "INSERT INTO trust_ownership_share_lines"
+                    " (share_id, ledger_account_id, pmc_id, percent) VALUES (%s, %s, %s, %s)",
+                    (made, share.account, session.pmc_id, share.percent.normalize()),
+                )
+            conn.execute("SET CONSTRAINTS trust_ownership_shares_whole IMMEDIATE")
+    except (psycopg.errors.CheckViolation, psycopg.errors.ForeignKeyViolation) as refused:
+        # an account not at the property, or not in the one trust bank account
+        raise HTTPException(422, refusal(refused)) from None
+    return Created(id=made)
 
 
 class NewUnit(BaseModel):

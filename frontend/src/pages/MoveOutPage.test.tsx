@@ -18,10 +18,10 @@ const ENDED: MoveOut = {
   lease_id: "l1", property: "Property 1", unit: "Unit 1", tenants: ["Tenant 1"],
   starts_on: "2026-01-01", ends_on: "2026-06-30", owed: "350.00", carried: "0.00", held: "1200.00",
   open_charges: [{ id: "c1", due_on: "2026-06-30", kind: "fee", memo: "Broken window", open: "350.00" }],
-  owner_accounts: [{ id: "a1", owner: "Owner 1" }, { id: "a2", owner: "Owner 2" }],
+  owner_accounts: [{ id: "a1", owner: "Owner 1", percent: null }, { id: "a2", owner: "Owner 2", percent: null }],
   settled: null,
 };
-const OPEN: MoveOut = { ...ENDED, lease_id: "l2", unit: "Unit 2", ends_on: null, open_charges: [], owner_accounts: [{ id: "a1", owner: "Owner 1" }] };
+const OPEN: MoveOut = { ...ENDED, lease_id: "l2", unit: "Unit 2", ends_on: null, open_charges: [], owner_accounts: [{ id: "a1", owner: "Owner 1", percent: null }] };
 const DONE: MoveOut = {
   ...ENDED, lease_id: "l3", unit: "Unit 3", held: "0.00",
   settled: { held: "1200.00", kept: "350.00", returned: "850.00", returned_on: "2026-07-05" },
@@ -84,6 +84,20 @@ describe("MoveOutPage", () => {
     expect(body.on).toBe("2026-07-05");
     expect(body.owner_account).toBe("a2");
     expect(body.request_id).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("keeps what a co-owned property's lease owes for its owners by their shares, choosing no account", async () => {
+    const fetch = server({}, [{
+      ...ENDED, owner_accounts: [{ id: "a1", owner: "Owner 1", percent: "60" }, { id: "a2", owner: "Owner 2", percent: "40" }],
+    }]);
+    render(<MoveOutPage me={ME} />);
+    expect((await screen.findByTestId("kept-by-ownership")).textContent)
+      .toBe("Kept money goes to the owners by their shares: Owner 1 60% · Owner 2 40%");
+    expect(screen.queryByLabelText("Kept money to")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Return the deposit" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Confirm" }));
+    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(1));
+    expect((posted(fetch)[0]![1] as { owner_account: string | null }).owner_account).toBe(null);
   });
 
   it("ends a lease and charges cleaning or damage", async () => {

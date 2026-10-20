@@ -27,6 +27,8 @@ export type OwnerAccount = {
   property: string;
   bank_account: string;
   agreement: Agreement | null;
+  // The owner's percent in the property's ownership shares in force today; null without one.
+  ownership_percent: string | null;
 };
 export type Lease = {
   id: string;

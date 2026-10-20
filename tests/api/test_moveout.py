@@ -70,8 +70,9 @@ def test_staff_see_the_leases_that_hold_a_deposit(client, conn, staff, pmc, leas
         "owed": "0.00",
         "held": "1200.00",
     }
+    # No ownership shares: no percent (migration 0094).
     assert shown[str(lease)]["owner_accounts"] == [
-        {"id": pmc.owners[0].account, "owner": "Owner 1"}
+        {"id": pmc.owners[0].account, "owner": "Owner 1", "percent": None}
     ]
     assert shown[str(lease)]["settled"] is None
 

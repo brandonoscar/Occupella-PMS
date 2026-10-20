@@ -340,6 +340,47 @@ disclosed, with no secret profit from anyone else.
   agreement counts both asks the owner on that basis.
 - Taking the markup out of trust with the company's other fees (migration 0059).
 
+## A property owned in shares (migration 0094)
+
+**The rule.** Money a manager holds in trust is accounted for by whom it belongs to: a record for
+each owner (each beneficiary) of what came in for them, what went out and what they hold, tied
+each month to the bank. When two or more people own a property, each is an owner whose money is
+theirs, and no owner's money pays what another owes.
+
+- California: 10 CCR 2831.1 requires a separate record for each beneficiary or transaction of
+  every deposit to and payment from the trust account, with a running balance, and 2831.2 a
+  monthly reconciliation of those records against the account's own record (read in search
+  excerpts of the regulation on regulations.justia.com and of dre.ca.gov; the regulation's text
+  as now in force is NOT VERIFIED).
+- West Virginia: W. Va. Code 30-40-18 requires a broker who holds others' money, rental receipts
+  and security deposits among it, to keep it in trust fund accounts and reconcile them (read in
+  search excerpts of code.wvlegislature.gov). That its rules (W. Va. CSR 174-1) also ask a ledger
+  for each owner rests on study guides only: NOT VERIFIED.
+- No state was found that sets how co-owners divide rent or costs: that is the owners' agreement
+  (NOT VERIFIED that none does).
+
+**What the PMS does.**
+- Each co-owner has an owner's account of their own at the property, so each one's money has its
+  own record, statement and draws, as before.
+- A property's ownership is each owner's percent from a day, together 100, all their accounts in
+  one trust bank account; a new one from a later day takes over from it, and earlier days keep
+  the shares they had. Staff set it on the property's page, naming who did.
+- From that day a tenant's payment, prepaid rent used and a deposit kept at move-out go to the
+  owners by their shares in force on the day: each owner's percent rounded down to the cent, and
+  the cents left over one each to the largest remainders, so the parts always come to the amount
+  and none is more than a cent from its exact share. Each part is matched to the lease's charges
+  in full; a bounce takes back from each owner exactly what the payment gave them.
+- A bill for the property can be split between its owners by their shares on the bill's date,
+  a bill for each owner's share, each following every bill rule on its own (that owner's money,
+  approval limit and draws).
+- Without shares nothing changes: staff choose which owner's account a payment goes to.
+
+**Left to the company.**
+- The co-owners' written agreement on how they share the property's income and costs: the PMS
+  keeps only the percents staff enter.
+- Management fees stay each owner's account's own terms; a fee split some other way is set in
+  each owner's terms.
+
 ## Maintenance: emergencies, photos, entry and the visit (migration 0084)
 
 **The rule.** A landlord keeps a home fit to live in and fixes what makes it unfit within a
