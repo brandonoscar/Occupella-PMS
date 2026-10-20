@@ -31,7 +31,7 @@ from helpers import (
 from people import join_as, join_as_owner, join_as_staff
 from pypdf import PdfReader
 
-from pms.api import signing
+from pms.api import offers, signing
 from pms.leasing import esign
 
 SHA = hashlib.sha256(LEASE_PDF).hexdigest()
@@ -353,6 +353,7 @@ def test_a_link_that_ran_out_or_whose_offer_was_voided_signs_nothing(
     client.post(f"/api/leasing/offers/{made.offer}/void", json={})
     voided = post(other_client, "view", made.tokens[1]).json()
     late = sign(other_client, made.tokens[1], "Applicant B")
+    certificate = client.get(f"/api/leasing/offers/{made.offer}/certificate")
 
     assert old["status"] == "expired"
     assert (ran_out.status_code, ran_out.json()["detail"]) == (
@@ -364,6 +365,8 @@ def test_a_link_that_ran_out_or_whose_offer_was_voided_signs_nothing(
         409,
         "this lease offer was withdrawn; it takes no signature",
     )
+    # Staff keep what each signer did so far, with the offer voided.
+    assert "Signed by 0 of 2; the offer was voided" in pdf_text(certificate.content)
 
 
 def test_a_step_refused_by_the_database_is_said_in_words(other_client, conn, made, monkeypatch):
@@ -387,6 +390,34 @@ def test_a_step_refused_by_the_database_is_said_in_words(other_client, conn, mad
     assert [(a.status_code, a.json()["detail"]) for a in answers] == [
         (409, "this signing link no longer signs; ask for a new one")
     ] * 2
+
+
+def test_new_links_for_an_offer_voided_since_it_was_read_are_refused_in_words(
+    client, made, monkeypatch
+):
+    # The offer is voided between the page's read of it and its new links.
+    read = offers.offer_of
+
+    def as_first_read(conn_, pmc_id, offer_id):
+        found = read(conn_, pmc_id, offer_id)
+        conn_.execute(
+            "INSERT INTO trust_lease_offer_voids (pmc_id, offer_id) VALUES (%s, %s)",
+            (pmc_id, offer_id),
+        )
+        return found
+
+    monkeypatch.setattr(offers, "offer_of", as_first_read)
+    answer = client.post(f"/api/leasing/offers/{made.offer}/links", json={})
+
+    assert answer.status_code == 409
+    assert made.offer not in answer.json()["detail"]
+
+
+def test_a_certificate_of_no_offer_sent_to_sign_is_not_found(conn, pmc):
+    with pytest.raises(signing.HTTPException) as refused:
+        signing.certificate_of(conn, pmc.pmc_id, uuid.uuid4())
+
+    assert refused.value.status_code == 404
 
 
 @pytest.mark.parametrize("step", ["view", "consent", "paper", "document", "sign", "certificate"])
@@ -480,9 +511,19 @@ def test_a_tenant_downloads_their_lease_as_signed_its_certificate_and_its_docume
     ]
     assert mine["files"][2]["url"] == f"/api/tenant/leases/{lease}/documents/{addendum}"
     assert got["signed lease"].content == LEASE_PDF
-    assert pdf_text(got["signing certificate"].content).startswith("Signing certificate")
+    certificate = pdf_text(got["signing certificate"].content)
+    assert certificate.startswith("Signing certificate")
+    assert "Signed by 2 of 2; the lease is made" in certificate
     assert got["lease document"].content == PDF
     assert all(answer.headers["content-type"] == "application/pdf" for answer in got.values())
+
+
+def test_an_offer_made_the_lease_takes_no_new_links(client, other_client, conn, made):
+    leased(client, other_client, conn, made)
+
+    answer = client.post(f"/api/leasing/offers/{made.offer}/links", json={})
+
+    assert (answer.status_code, answer.json()["detail"]) == (409, "this offer is a lease already")
 
 
 def test_a_tenant_reaches_only_their_own_leases_files(

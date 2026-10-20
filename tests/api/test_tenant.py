@@ -122,6 +122,8 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
             },
             # Only payments staff record are listed, with receipts; this one was posted directly.
             "payments": [],
+            # No lease signed through the PMS and no lease documents kept.
+            "files": [],
         },
         {
             "lease_id": str(home.old_lease),
@@ -140,6 +142,7 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
             "deposit_returned": False,
             "renters_insurance": None,  # not in effect
             "payments": [],
+            "files": [],
         },
     ]
 
