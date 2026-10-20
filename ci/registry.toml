@@ -771,6 +771,18 @@ tests = [
   "tests/test_privileges.py::test_ai_role_reads_only_what_the_app_reads",
 ]
 
+[[invariant]]
+id = "quickbooks-journal-moves-as-the-ledger"
+statement = "The QuickBooks journal of some days is the ledger's transfers of those days (UTC), each debiting the QuickBooks account the money left and crediting the one it reached, so each entry balances and each QuickBooks account's debits less credits are what its ledger accounts lost; the Desktop file's transactions and the Online file's journal numbers each sum to zero. A ledger account's QuickBooks name is the company's latest, or the PMS's, of its own company's accounts only, one QuickBooks can read, and never rewritten."
+tests = [
+  "tests/properties/test_quickbooks_properties.py::test_the_journal_moves_quickbooks_balances_as_the_ledger_moves",
+  "tests/test_quickbooks.py::test_the_journal_debits_where_money_left_and_credits_where_it_went",
+  "tests/test_quickbooks.py::test_desktop_reads_balanced_general_journal_entries",
+  "tests/test_quickbooks.py::test_online_reads_two_lines_an_entry_under_its_journal_number",
+  "tests/test_quickbooks.py::test_each_account_has_the_pms_name_until_the_company_names_it",
+  "tests/test_quickbooks.py::test_a_name_is_for_its_own_companys_account_and_never_rewritten",
+]
+
 [[report]]
 id = "income-statement"
 statement = "An owner's income statement over days (UTC), cash basis: per property and across them, what was collected from tenants (matched payments less what bounced back) by what it paid (rent, recurring charges, late fees, NSF fees, other charges; a lease end's adjustment is what it adjusts), each of the company's charge types on a line of its own after them once money was collected on it (a fee's own type, or its recurring charge's; migration 0100), the management fees (Schedule E line 11) and leasing fees (line 8), the bills set aside by their latest expense account and those in none, total expenses and net income; then the same by Schedule E line. Compared to a checked-in golden file."

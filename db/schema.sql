@@ -12904,6 +12904,35 @@ CREATE TABLE public.trust_property_groups (
 
 
 --
+-- Name: trust_quickbooks_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_quickbooks_accounts (
+    id bigint NOT NULL,
+    pmc_id uuid NOT NULL,
+    ledger_account_id text NOT NULL,
+    name text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_quickbooks_accounts_name_check CHECK (((name = btrim(name)) AND ((char_length(name) >= 1) AND (char_length(name) <= 200)) AND (name !~ '[\t\r\n]'::text) AND (name !~ '(^:|:$|::|\s:|:\s)'::text)))
+);
+
+
+--
+-- Name: trust_quickbooks_accounts_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_quickbooks_accounts ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.trust_quickbooks_accounts_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: trust_reconciliation_preparations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14987,6 +15016,14 @@ ALTER TABLE ONLY public.trust_ledger_accounts
 
 
 --
+-- Name: trust_ledger_accounts trust_ledger_accounts_pmc_id_ledger_account_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ledger_accounts
+    ADD CONSTRAINT trust_ledger_accounts_pmc_id_ledger_account_key UNIQUE (pmc_id, ledger_account_id);
+
+
+--
 -- Name: trust_listing_removals trust_listing_removals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15392,6 +15429,14 @@ ALTER TABLE ONLY public.trust_property_groups
 
 ALTER TABLE ONLY public.trust_property_groups
     ADD CONSTRAINT trust_property_groups_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_quickbooks_accounts trust_quickbooks_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_quickbooks_accounts
+    ADD CONSTRAINT trust_quickbooks_accounts_pkey PRIMARY KEY (id);
 
 
 --
@@ -17162,6 +17207,20 @@ CREATE UNIQUE INDEX trust_property_groups_name ON public.trust_property_groups U
 
 
 --
+-- Name: trust_quickbooks_accounts_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_quickbooks_accounts_account ON public.trust_quickbooks_accounts USING btree (pmc_id, ledger_account_id, id);
+
+
+--
+-- Name: trust_quickbooks_accounts_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_quickbooks_accounts_recorded_by ON public.trust_quickbooks_accounts USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_reconciliation_preparations_bank_account_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -18429,6 +18488,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_quickbooks_accounts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_quickbooks_accounts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_reconciliation_preparations trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -19556,6 +19622,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_prop
 
 
 --
+-- Name: trust_quickbooks_accounts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_quickbooks_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_reconciliation_preparations trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20491,6 +20564,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payout_methods FO
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_property_group_members FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_quickbooks_accounts trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_quickbooks_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -23804,6 +23884,30 @@ ALTER TABLE ONLY public.trust_property_groups
 
 
 --
+-- Name: trust_quickbooks_accounts trust_quickbooks_accounts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_quickbooks_accounts
+    ADD CONSTRAINT trust_quickbooks_accounts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_quickbooks_accounts trust_quickbooks_accounts_pmc_id_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_quickbooks_accounts
+    ADD CONSTRAINT trust_quickbooks_accounts_pmc_id_ledger_account_id_fkey FOREIGN KEY (pmc_id, ledger_account_id) REFERENCES public.trust_ledger_accounts(pmc_id, ledger_account_id);
+
+
+--
+-- Name: trust_quickbooks_accounts trust_quickbooks_accounts_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_quickbooks_accounts
+    ADD CONSTRAINT trust_quickbooks_accounts_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_reconciliation_preparations trust_reconciliation_preparations_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -24983,4 +25087,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261020000098'),
     ('20261020000099'),
     ('20261020000100'),
-    ('20261020000101');
+    ('20261020000101'),
+    ('20261020000102');

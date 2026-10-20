@@ -3480,3 +3480,37 @@ test("staff add charge types and give a lease's fee and monthly charge one; the 
   await expect(card.getByRole("table", { name: "Birch Flats" }).getByRole("row", { name: "Key replacement $75.00" })).toBeVisible();
   await owner.close();
 });
+
+test("staff name the operating trust account's cash for QuickBooks and download two months of journal entries for QuickBooks Desktop and Online", async ({
+  page,
+}) => {
+  const people = seed.features.quickbooks!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "QuickBooks");
+  const names = page.getByRole("table", { name: "Account names" });
+  await expect(names).toContainText("Owner funds:Demo Owner A - Birch Flats");
+  await page.getByRole("button", { name: "Rename Trust cash:Demo operating trust account" }).click();
+  const panel = page.getByRole("dialog", { name: "Name in QuickBooks" });
+  await panel.getByLabel("Name in QuickBooks").fill("Trust checking");
+  await panel.getByRole("button", { name: "Save" }).click();
+  await expect(names.getByRole("row", { name: "Trust checking" })).toBeVisible();
+
+  await page.getByLabel("From").fill(firstOfMonthsAgo(2));
+  await page.getByLabel("To").fill(today());
+  const desktop = await page.request.get(
+    (await page.getByRole("link", { name: "For QuickBooks Desktop (IIF)" }).getAttribute("href")) ?? "",
+  );
+  expect(desktop.status()).toBe(200);
+  const iif = await desktop.text();
+  expect(iif.startsWith("!TRNS\tTRNSID\tTRNSTYPE\tDATE\tACCNT\tAMOUNT\tDOCNUM\tMEMO")).toBe(true);
+  expect(iif).toContain("GENERAL JOURNAL");
+  expect(iif).toContain("\tTrust checking\t");
+  const online = await page.request.get(
+    (await page.getByRole("link", { name: "For QuickBooks Online (CSV)" }).getAttribute("href")) ?? "",
+  );
+  expect(online.headers()["content-type"]).toContain("text/csv");
+  const csv = await online.text();
+  expect(csv.split("\r\n")[0]).toBe("Journal No.,Journal Date,Account Name,Debits,Credits,Description,Name");
+  expect(csv).toContain("Trust checking");
+});
+

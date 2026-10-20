@@ -509,6 +509,7 @@ FEATURES = (
     "own-contact",
     "charge-types",
     "phone",
+    "quickbooks",
 )
 
 

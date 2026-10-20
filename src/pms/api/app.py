@@ -75,6 +75,7 @@ from pms.api import (
     owner,
     payables,
     people,
+    quickbooks,
     receipts,
     reconcile,
     recurring_work_orders,
@@ -511,6 +512,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(listings.router)
     app.include_router(signing.router)
     app.include_router(calendar.router)
+    app.include_router(quickbooks.router)
     calendar.hide_feed_tokens(logging.getLogger("uvicorn.access"))
     app.include_router(people.router)
     app.include_router(setup.router)

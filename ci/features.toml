@@ -832,3 +832,16 @@ operations = ["GET /api/setup/charge-types", "POST /api/setup/charge-types"]
 browser = [
   "features.spec.ts › staff add charge types and give a lease's fee and monthly charge one; the owner's income statement counts the type on its own line",
 ]
+
+[[feature]]
+id = "quickbooks"
+statement = "Staff see each ledger account's name in QuickBooks (the PMS's, until they give it their own; a colon nests a subaccount) and set it in Settings, QuickBooks, and download the trust ledger's transfers over days as general journal entries, each debiting the account the money left and crediting the one it went to, for QuickBooks Desktop (IIF) and QuickBooks Online (CSV)."
+operations = [
+  "GET /api/quickbooks/accounts",
+  "POST /api/quickbooks/accounts/{ledger_account_id}",
+  "GET /api/quickbooks/journal",
+]
+browser = [
+  "features.spec.ts › staff name the operating trust account's cash for QuickBooks and download two months of journal entries for QuickBooks Desktop and Online",
+]
+
