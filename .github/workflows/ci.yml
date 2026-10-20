@@ -149,11 +149,23 @@ jobs:
           chmod +x "$RUNNER_TEMP/bin/dbmate"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - name: Build Mailpit (every module checked against Go's checksum database)
+        # A module download can drop mid-stream (proxy.golang.org did, on PR #132): up to three
+        # tries, the modules already fetched kept between them (writable, so the runner can delete
+        # them). A checksum mismatch fails all three.
         run: |
-          docker run --rm --user "$(id -u):$(id -g)" -v "$RUNNER_TEMP/bin:/out" \
-            -e GOBIN=/out -e GOCACHE=/tmp/go-cache -e GOPATH=/tmp/go -e CGO_ENABLED=0 \
-            -e GOFLAGS=-trimpath -e GOTOOLCHAIN=local \
-            "$GO_IMAGE" go install "github.com/axllent/mailpit@${MAILPIT_VERSION}"
+          mkdir -p "$RUNNER_TEMP/go"
+          for try in 1 2 3; do
+            if docker run --rm --user "$(id -u):$(id -g)" -v "$RUNNER_TEMP/bin:/out" \
+              -v "$RUNNER_TEMP/go:/tmp/go" \
+              -e GOBIN=/out -e GOCACHE=/tmp/go-cache -e GOPATH=/tmp/go -e CGO_ENABLED=0 \
+              -e GOFLAGS="-trimpath -modcacherw" -e GOTOOLCHAIN=local \
+              "$GO_IMAGE" go install "github.com/axllent/mailpit@${MAILPIT_VERSION}"; then
+              break
+            fi
+            if [ "$try" = 3 ]; then exit 1; fi
+            echo "::warning::building Mailpit failed (try $try of 3); trying again in 15 seconds"
+            sleep 15
+          done
           "$RUNNER_TEMP/bin/mailpit" version
       - run: pip install -r requirements-dev.txt
       - name: Email through Mailpit (fresh database, every migration; no skips)

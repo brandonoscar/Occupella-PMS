@@ -52,7 +52,8 @@ programs support (caniemail.com's data), which may not fall below `ci/thresholds
 (90.0%; 91.0% measured). A sender that doesn't trust the server's certificate sends nothing. The
 job builds Mailpit from its source at a pinned version with the Go image the self-host Dockerfile
 pins, every module checked against Go's checksum database
-(`tests/tools/test_container_images.py` keeps the two images the same). Locally:
+(`tests/tools/test_container_images.py` keeps the two images the same); a download that drops
+gets up to three tries, keeping the modules already fetched. Locally:
 `go install github.com/axllent/mailpit@v1.31.6`, then `pytest -m mailpit`.
 
 **db.yml** (PRs and main): checks the migrations.
