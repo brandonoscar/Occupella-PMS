@@ -247,6 +247,8 @@ describe("LeasePage", () => {
     fireEvent.click(within(form).getByRole("button", { name: "Record payment" }));
     await vi.waitFor(() => expect(posted(fetch)).toHaveLength(1));
     expect(posted(fetch)[0]?.[1]).toMatchObject({ amount: "100.00", account: "a2" });
+    // The page behind a panel is hidden until the panel closes.
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     form = panel("Receive payment");
     fireEvent.change(within(form).getByLabelText("Owner's account"), { target: { value: "a2" } });
     fireEvent.click(within(form).getByRole("button", { name: "Use prepaid rent" }));
@@ -311,7 +313,7 @@ describe("LeasePage", () => {
     ]);
     const bounced = () => {
       fireEvent.click(within(received).getByRole("button", { name: "Actions for 09/01/2026 payment of $1,500.00" }));
-      fireEvent.click(within(received).getByRole("menuitem", { name: "It bounced" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "It bounced" })); // the menu opens over the page
     };
     bounced();
     fireEvent.click(within(received).getByRole("button", { name: "Cancel" }));
@@ -545,6 +547,7 @@ describe("LeasePage", () => {
     await vi.waitFor(() => expect(posted(fetch).map(([path]) => path)).toContain("/api/rent/leases/l1/payments"));
     const [, body] = posted(fetch).find(([path]) => path === "/api/rent/leases/l1/payments") ?? [];
     expect(body).toMatchObject({ amount: "700.00", past_hold: true });
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
     const release = panel("Release payment hold", true);
     expect(within(release).getByText("On hold since 10/01/2026: Eviction filed")).toBeTruthy();

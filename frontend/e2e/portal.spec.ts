@@ -1,6 +1,7 @@
 // The portal in a real browser, against the API and a database seeded by e2e/seed.py.
 import { readFileSync } from "node:fs";
-import { expect, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
+import { expectAccessible } from "./a11y";
 import { totp } from "./totp";
 
 type Seed = {
@@ -26,6 +27,7 @@ type Seed = {
   switch_invite: string;
   demo_manager_invite: string;
   demo_owner_invite: string;
+  accessibility: { pmc_id: string; manager: string; owner: string; tenant: string };
 };
 const seed: Seed = JSON.parse(readFileSync(new URL("./.seed.json", import.meta.url), "utf8"));
 const PASSWORD = "a long synthetic passphrase";
@@ -50,6 +52,7 @@ test.afterEach(async ({ page }) => {
     () => (window as unknown as { cspViolations: string[] }).cspViolations,
   );
   expect(seen).toEqual([]);
+  await expectAccessible(page);
 });
 
 test("an owner joins from the invite, reads their statement and signs back in", async ({ page }) => {
@@ -470,7 +473,7 @@ test("staff record a tenant's payment, the rest held as prepaid rent, and then i
 
   // A bounce is asked for, with the day it came back (today by default), before it is recorded.
   await payment.getByRole("button", { name: /^Actions for / }).click();
-  await payment.getByRole("menuitem", { name: "It bounced" }).click();
+  await page.getByRole("menuitem", { name: "It bounced" }).click();
   await payment.getByRole("button", { name: "Record the $1,000.00 bounce" }).click();
   // The whole $1,000.00 comes back: the $800.00 it paid is owed again, and its $200.00 of
   // prepaid rent is gone.
@@ -557,7 +560,7 @@ test("staff charge a tenant's damage at move-out, return the rest of the deposit
   await expect(card.getByText(/Keeps \$150.00 for what the lease owes; \$750.00 goes back/)).toBeVisible();
 
   await card.getByRole("button", { name: "Return the deposit" }).click();
-  await card.getByRole("button", { name: "Confirm" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
   await expect(card.getByText("Returned $750.00 to the tenants; the rest paid what the lease owed.")).toBeVisible();
   await expect(card.getByLabel("Returned, E2E Property 8 / E2E Unit 8: Leaver E2E")).toContainText(
     "kept $150.00 of $900.00, $750.00 back to the tenants",
@@ -825,5 +828,82 @@ test("the demo opens on last month waiting for its manager, who approves it and 
   await expect(holdings.getByRole("row").filter({ hasText: "Demo operating trust account" })).toHaveCount(3);
   for (const name of ["Birch Flats", "Cedar House", "Elm Court"]) {
     await expect(holdings.getByRole("row", { name: new RegExp(name) })).toContainText("Demo operating trust account");
+  }
+});
+
+// The pages a list opens, one of each kind, from the list's own links; "then" follows a link
+// from the page found before (a unit from its property's page).
+const DETAILS: [string, RegExp][] = [
+  ["/properties", /^\/properties\/[^/]+$/],
+  ["then", /^\/units\/[^/]+$/],
+  ["/tenants", /^\/tenants\/[^/]+$/],
+  ["/owners", /^\/owners\/[^/]+$/],
+  ["/rent-roll", /^\/leases\/[^/]+$/],
+  ["/bills", /^\/bills\/[^/]+$/],
+  ["/work-orders", /^\/work-orders\/[^/]+$/],
+  ["/vendors", /^\/vendors\/[^/]+$/],
+  ["/banking", /^\/bank-accounts\/[^/]+$/],
+  ["/applicants", /^\/applicants\/[^/]+$/],
+  ["/leads", /^\/leads\/[^/]+$/],
+  ["/draft-leases", /^\/draft-leases\/[^/]+$/],
+  ["/housing-authorities", /^\/housing-authorities\/[^/]+$/],
+  ["/reports", /^\/reports\/[^/]+$/],
+];
+
+async function hrefs(page: Page, where: Locator = page.locator("body")): Promise<string[]> {
+  return where.locator("a[href^='/']").evaluateAll((links) => links.map((a) => a.getAttribute("href") ?? ""));
+}
+
+async function scanned(page: Page, path: string): Promise<void> {
+  await page.goto(path);
+  await expect(page.getByRole("heading", { level: 1 }).first()).toBeVisible();
+  await page.waitForLoadState("networkidle");
+  await expectAccessible(page, path);
+}
+
+test("every page of the demo meets WCAG 2.2 AA as axe checks it: staff's, an owner's, a tenant's and the public ones", async ({
+  browser,
+  page,
+}) => {
+  test.setTimeout(600_000);
+  const demo = seed.accessibility;
+  for (const path of [`/sign-in?pmc=${demo.pmc_id}`, "/forgot-password", `/listings?pmc=${demo.pmc_id}`]) {
+    await scanned(page, path);
+  }
+
+  await page.goto(`/invite#${demo.manager}`);
+  await expectAccessible(page, "the invite");
+  await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await page.getByLabel("The same password again").fill(PASSWORD);
+  await page.getByRole("button", { name: "Set password" }).click();
+  await expect(page.locator("code")).toBeVisible();
+  await expectAccessible(page, "the authenticator step");
+  await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
+  await page.getByRole("button", { name: "Finish" }).click();
+
+  // Every page in staff's menu and in Settings, then one page of each kind a list opens.
+  const menu = await hrefs(page, page.getByRole("navigation", { name: "Sections" }));
+  await page.goto("/settings");
+  const settings = await hrefs(page, page.getByRole("list", { name: "Settings" }));
+  const pages = [...new Set([...menu, ...settings, "/pay-bills", "/journal"])];
+  expect(pages.length).toBeGreaterThan(30);
+  for (const path of pages) await scanned(page, path);
+  for (const [list, kind] of DETAILS) {
+    if (list !== "then") await scanned(page, list);
+    const found = (await hrefs(page, page.getByRole("main"))).find((href) => kind.test(href));
+    expect(found, `a link from ${list} matching ${kind}`).toBeTruthy();
+    await scanned(page, found!);
+  }
+
+  for (const who of [demo.owner, demo.tenant]) {
+    const portal = await (await browser.newContext()).newPage();
+    await portal.goto(`/invite#${who}`);
+    await portal.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+    await portal.getByLabel("The same password again").fill(PASSWORD);
+    await portal.getByRole("button", { name: "Set password" }).click();
+    await expect(portal.getByRole("navigation", { name: "Sections" })).toBeVisible();
+    await portal.waitForLoadState("networkidle");
+    await expectAccessible(portal, `the ${who === demo.owner ? "owner" : "tenant"}'s portal`);
+    await portal.context().close();
   }
 });

@@ -4,6 +4,7 @@
 // each feature, and tools/check_features.py keeps the two in step.
 import { readFileSync } from "node:fs";
 import { expect, type Locator, type Page, test } from "@playwright/test";
+import { expectAccessible } from "./a11y";
 import { totp } from "./totp";
 
 type People = {
@@ -47,6 +48,7 @@ test.afterEach(async ({ page }) => {
     () => (window as unknown as { cspViolations: string[] }).cspViolations,
   );
   expect(seen).toEqual([]);
+  await expectAccessible(page);
 });
 
 // A staff member takes their invite: a password, then the authenticator. Returns its secret.
@@ -753,7 +755,7 @@ test("staff add a fee, a credit and a monthly charge to a lease, take a deposit 
   const prepaidOnly = received.getByRole("row", { name: /Check 503/ });
   await expect(prepaidOnly).toContainText("$50.00");
   await prepaidOnly.getByRole("button", { name: /^Actions for / }).click();
-  await prepaidOnly.getByRole("menuitem", { name: "It bounced" }).click();
+  await page.getByRole("menuitem", { name: "It bounced" }).click();
   await prepaidOnly.getByRole("button", { name: "Record the $50.00 bounce" }).click();
   await expect(lease).toContainText("The $50.00 payment bounced and is undone; a $35.00 NSF fee is charged.");
   await expect(owed).toHaveText("$35.00");
@@ -776,7 +778,7 @@ test("staff add a fee, a credit and a monthly charge to a lease, take a deposit 
   await expect(lease).toContainText("Parking of $40.00 added every month.");
   await expect(lease).toContainText(`Parking: $40.00 a month from ${us(nextMonth)}`);
   await lease.getByRole("button", { name: "Actions for Parking" }).click();
-  await lease.getByRole("menuitem", { name: "Stop" }).click();
+  await page.getByRole("menuitem", { name: "Stop" }).click();
   await lease.getByLabel("Stops on, Parking").fill(nextMonth);
   await lease.getByRole("button", { name: "Stop it" }).click();
   await expect(lease).toContainText(`Parking stops ${us(nextMonth)}.`);
@@ -811,7 +813,7 @@ test("staff add a fee, a credit and a monthly charge to a lease, take a deposit 
   await leaseTab(page, "Ledger");
   const payment = received.getByRole("row", { name: /Check 502/ });
   await payment.getByRole("button", { name: /^Actions for / }).click();
-  await payment.getByRole("menuitem", { name: "It bounced" }).click();
+  await page.getByRole("menuitem", { name: "It bounced" }).click();
   await payment.getByRole("button", { name: "Record the $20.00 bounce" }).click();
   await expect(lease).toContainText("The $20.00 payment bounced and is undone; a $35.00 NSF fee is charged.");
   await expect(owed).toHaveText("$55.00");
@@ -1214,10 +1216,10 @@ test("a lease ended mid-month keeps only its days of the month's rent, and its d
   await expect(lease).toContainText(`Keeps ${dollars(kept)} for what the lease owes; ${dollars(back)} goes back.`);
   await lease.getByRole("button", { name: "Return the deposit" }).click();
   // Money leaving trust waits for staff to confirm the amounts.
-  await expect(lease.getByRole("alertdialog")).toContainText(
+  await expect(page.getByRole("alertdialog")).toContainText(
     `keep ${dollars(kept)} for what the lease owes and pay ${dollars(back)} back to the tenants?`,
   );
-  await lease.getByRole("button", { name: "Confirm" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
   await expect(lease).toContainText(`Returned ${dollars(back)} to the tenants; the rest paid what the lease owed.`);
   await expect(lease.getByText("Deposit returned")).toBeVisible();
   await downloads(page, "Statement for the tenants (PDF)", PDF);
@@ -2427,8 +2429,17 @@ test("staff waive a late fee from the lease page: it comes off that fee, and the
   await expect(charge).toHaveCount(0);
   const open = lease.getByRole("list", { name: "Open charges" });
   await expect(open).toContainText("Late fee: $50.00 open");
-  await open.getByRole("button", { name: /^Actions for Late fee due / }).click();
-  await page.getByRole("menuitem", { name: "Waive" }).click();
+  // The row's ⋯ menu: a click beside it closes it; then from the keyboard, the arrow keys reach
+  // Waive and Enter picks it.
+  const actions = open.getByRole("button", { name: /^Actions for Late fee due / });
+  await actions.click();
+  await expect(page.getByRole("menu")).toBeVisible();
+  await page.mouse.click(5, 5); // beside the menu: the page behind is out of reach while it is open
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await actions.focus();
+  await page.keyboard.press("ArrowDown");
+  await expect(page.getByRole("menuitem", { name: "Waive" })).toBeFocused();
+  await page.keyboard.press("Enter");
   await open.getByLabel("Why").fill("First time late");
   await open.getByRole("button", { name: "Waive $50.00" }).click();
   await expect(page.getByText("Waived $50.00 of Late fee.")).toBeVisible();

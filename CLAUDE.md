@@ -144,7 +144,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   light-blue left sidebar with the wordmark, the sections (lucide icons) and Sign out, a white
   bar above the page with the avatar, and on white each page's Fraunces title, its parts under
   small uppercase labels and its tables as Occupella's Operations table (`components/Shell.tsx`).
-  Its build is served by the API (`PMS_STATIC_DIR`) under a strict Content-Security-Policy.
+  Its build is served by the API (`PMS_STATIC_DIR`) under a strict Content-Security-Policy
+  (nothing inline but React Aria's two style elements, under a fresh nonce on each page).
   Colours, sizes and fonts come only from the tokens in `frontend/src/styles/globals.css`,
   Occupella's values (`designTokens.test.ts` pins them and fails on a raw colour or a size off
   the scale). A state (paid up, bounced, approved) is a badge (`components/Badge.tsx`), a page
@@ -159,7 +160,12 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`components/RowMenu.tsx`), each confirmed. What a save did shows as a toast
   (`components/Said.tsx`, which keeps an off-screen status line; `components/Toaster.tsx`), a
   refused change's reason too (`api.post`), and a form's submit button is busy while its save runs
-  (`components/Form.tsx`). A list page has no search box of its own: its top left picks All
+  (`components/Form.tsx`). Side panels, confirm questions and ⋯ menus are React Aria's
+  (`react-aria-components`): focus stays inside an open dialog, the page behind is hidden from
+  screen readers until it closes, focus goes back to what opened it, and a menu takes the arrow
+  keys; the search's results take them too. Every page the browser tests reach, and every page
+  of a demo of its own, is checked against WCAG 2.2 A and AA with axe-core (`e2e/a11y.ts`); a
+  status colour that fails contrast on its tint (caution) sits on white. A list page has no search box of its own: its top left picks All
   properties, a property group or one property (`components/ListBar.tsx`), kept in the URL
   (`?group=`, `?property=`) and the browser so it carries from page to page (`scope.ts`); the API
   narrows a list to it with `src/pms/api/scope.py`. Staff make groups at `/settings/groups`

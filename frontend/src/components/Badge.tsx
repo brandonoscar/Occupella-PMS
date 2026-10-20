@@ -1,11 +1,13 @@
 export type BadgeTone = "neutral" | "positive" | "caution" | "danger" | "info";
 
 // Occupella's status pill: a state word (paid up, bounced, approved) in a small rounded badge,
-// never loose coloured text. Each tone is one of the status colours, kept for real states.
+// never loose coloured text. Each tone is one of the status colours, kept for real states. The
+// caution colour reads 4.2:1 on its own tint, under WCAG AA's 4.5:1 for 12px text, so its pill
+// is white (4.7:1) with a caution border.
 const TONES: Record<BadgeTone, string> = {
   neutral: "border-line bg-elevated text-ink-muted",
   positive: "border-positive-bg bg-positive-bg text-positive",
-  caution: "border-caution-bg bg-caution-bg text-caution",
+  caution: "border-caution bg-canvas text-caution",
   danger: "border-danger bg-danger-bg text-danger",
   info: "border-info-bg bg-info-bg text-info",
 };

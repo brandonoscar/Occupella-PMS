@@ -3,7 +3,10 @@
 import { useEffect, useState } from "react";
 
 export function navigate(to: string): void {
-  window.history.pushState(null, "", to);
+  // A link inside a clickable row asks twice; the page it is on already adds nothing to the
+  // history, so Back goes back one page.
+  const here = window.location.pathname + window.location.search + window.location.hash;
+  if (to !== here) window.history.pushState(null, "", to);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 

@@ -81,7 +81,7 @@ function RoleRow({ role, roles, members, admin, change }: {
         <span className="font-medium">{role.name}</span>
         <span className="text-ink-muted"> · {roleSummary(role, roles.areas)}</span>
       </p>
-      <fieldset className="flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-label={`What ${role.name} may change`}>
+      <fieldset className="flex flex-wrap gap-x-4 gap-y-2 text-sm" aria-label={`What ${role.name} may change`}>
         {roles.areas.map((choice) => {
           const allowed = role.areas.includes(choice.area);
           return (
@@ -98,7 +98,7 @@ function RoleRow({ role, roles, members, admin, change }: {
           );
         })}
       </fieldset>
-      <fieldset className="flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-label={`Who holds ${role.name}`}>
+      <fieldset className="flex flex-wrap gap-x-4 gap-y-2 text-sm" aria-label={`Who holds ${role.name}`}>
         {members.map((member) => {
           const held = holds(member.staff_id);
           return (

@@ -8,7 +8,8 @@ first (last month) has postings. A second owner's property has a tenant on a lea
 month's rent paid, this month's due and a maintenance request; a vacant unit there has an open
 application link. For lease offers, another vacant unit has an approved application, and a
 third unit a tenant on a month-to-month lease to renew. Then the demo PMC (src/pms/demo.py),
-with invites for its manager and its owner of three properties. Last, a demo PMC's books
+with invites for its manager and its owner of three properties, and another for the
+accessibility sweep. Last, a demo PMC's books
 (`demo.books`, without what the demo adds to every other page) for each feature test
 (frontend/e2e/features.spec.ts), so each starts from the same books and none sees another's
 changes. Every name is synthetic.
@@ -433,6 +434,22 @@ def main() -> None:
             f"demo-owner.{tag}@example.com",
             None,
         ).token
+        # Another demo for the accessibility sweep (portal.spec.ts), so it reads every page as
+        # the demo first shows it: its manager, an owner and a tenant.
+        sweep = demo.build(app)
+        seeded["accessibility"] = {
+            "pmc_id": str(sweep.pmc_id),
+            **{
+                who: accounts.create_invite(
+                    app, sweep.pmc_id, kind, person, f"a11y-{who}.{tag}@example.com", None
+                ).token
+                for who, kind, person in (
+                    ("manager", "staff", sweep.manager),
+                    ("owner", "owner", sweep.owners["Demo Owner A"]),
+                    ("tenant", "tenant", sweep.tenants["Taylor Demo"]),
+                )
+            },
+        }
         seeded["features"] = {name: feature_pmc(app, tag, name) for name in FEATURES}
     print(json.dumps(seeded))
 

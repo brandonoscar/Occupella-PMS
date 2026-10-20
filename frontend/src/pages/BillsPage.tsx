@@ -27,6 +27,7 @@ import { scopeParams, useScope } from "../scope";
 import type { Portfolio } from "../setup";
 import { expenseAccountLabel } from "../setup";
 import { ApprovalForm, DeclineForm, PayForm, RecordBillForm, SetAsideForm } from "./BillForms";
+import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
@@ -202,7 +203,7 @@ function BillsTable({ bills, onPanel }: { bills: Bill[]; onPanel: (panel: Panel)
                 <td>{bill.vendor}</td>
                 <td>{bill.property}</td>
                 <td className="text-ink-muted">{bill.memo}</td>
-                <td>{bill.reference}</td>
+                <td><GoLink href={`/bills/${bill.id}`} className="font-medium text-iris hover:text-iris-hover hover:underline">{bill.reference}</GoLink></td>
                 <td className="text-right">{money(bill.amount)}</td>
                 <td><Badge tone={badge.tone} data-testid="status">{badge.word}</Badge></td>
                 <td className="text-right" onClick={(event) => event.stopPropagation()}>

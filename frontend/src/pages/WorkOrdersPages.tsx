@@ -128,7 +128,7 @@ export function WorkOrdersPage({ me }: { me: Me }) {
                     onClick={() => navigate(`/work-orders/${row.id}`)}>
                     <td className="text-ink-muted">{row.number}</td>
                     <td className="text-ink-muted">{whereLabel(row)}</td>
-                    <td className="font-medium text-ink">{row.summary}</td>
+                    <td><GoLink href={`/work-orders/${row.id}`} className="font-medium text-iris hover:text-iris-hover hover:underline">{row.summary}</GoLink></td>
                     <td className="text-ink-muted">{row.vendor}</td>
                     <td><Badge tone={PRIORITY[row.priority].tone}>{PRIORITY[row.priority].word}</Badge></td>
                     <td><Badge tone={STATUS[row.status].tone} data-testid="status">{STATUS[row.status].word}</Badge></td>
