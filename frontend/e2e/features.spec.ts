@@ -3415,3 +3415,52 @@ test("a tenant changes their own phone and email in the portal, and staff see th
   await expect(theirs).toContainText(`Drew Sample changed these in the portal on ${us(today())}.`);
   await staff.close();
 });
+
+test("staff add charge types and give a lease's fee and monthly charge one; the owner's income statement counts the type on its own line", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["charge-types"]!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "Chart of accounts");
+  for (const name of ["Key replacement", "Pet fees"]) {
+    await page.getByRole("button", { name: "Add charge type" }).click();
+    const adding = page.getByRole("dialog", { name: "Add charge type" });
+    await adding.getByLabel("Charge type").fill(name);
+    await adding.getByRole("button", { name: "Add charge type" }).click();
+    await expect(page.getByRole("list", { name: "Charge types" })).toContainText(name);
+  }
+
+  // A lost key charged as a Key replacement fee and paid; a dog's monthly fee as Pet fees.
+  const lease = await openLease(page, "Birch Flats, Unit A");
+  const charge = await leasePanel(page, "Enter charge");
+  await charge.getByLabel("Amount").fill("75.00");
+  await charge.getByLabel("What for").fill("Lost key");
+  await charge.getByRole("combobox", { name: "Type" }).selectOption({ label: "Key replacement" });
+  await charge.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByText("Fee of $75.00 added.")).toBeVisible();
+  const pay = await leasePanel(page, "Receive payment");
+  await pay.getByLabel("Payment received").fill("75.00");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await pay.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.getByText("$75.00 paid what is owed.")).toBeVisible();
+  const nextMonth = new Date(Date.UTC(Number(today().slice(0, 4)), Number(today().slice(5, 7)), 1))
+    .toISOString()
+    .slice(0, 10);
+  const monthly = await leasePanel(page, "Add recurring charge");
+  await monthly.getByLabel("Monthly amount").fill("25.00");
+  await monthly.getByLabel("First due on").fill(nextMonth);
+  await monthly.getByLabel("Monthly, for").fill("Dog");
+  await monthly.getByRole("combobox", { name: "Type" }).selectOption({ label: "Pet fees" });
+  await monthly.getByRole("button", { name: "Add every month" }).click();
+  await expect(lease).toContainText(`Dog (Pet fees): $25.00 a month from ${us(nextMonth)}`);
+
+  // The owner's income statement this year: the key on a line of its own.
+  const owner = await (await browser.newContext()).newPage();
+  await joinPortal(owner, people.owner_a);
+  const card = owner.locator("section", { has: owner.getByRole("heading", { level: 2, name: "Income statement" }) });
+  await card.getByLabel("Year").fill(today().slice(0, 4));
+  await card.getByRole("button", { name: "Show" }).click();
+  await expect(card.getByRole("table", { name: "Birch Flats" }).getByRole("row", { name: "Key replacement $75.00" })).toBeVisible();
+  await owner.close();
+});

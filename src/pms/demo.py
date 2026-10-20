@@ -264,6 +264,9 @@ def books(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
                     s, conn, setup.NewExpenseAccount(name=name, schedule_e_line=line)
                 )
             )
+        # The company's own kinds of fee (migration 0100), each on its own income line.
+        for name in ("Application fee", "Cleaning"):
+            setup.add_charge_type(s, conn, setup.NewChargeType(name=name))
         for owner, prop, units in PORTFOLIO:
             new = setup.NewProperty(
                 name=prop, owner_id=demo.owners[owner], bank_account_id=operating

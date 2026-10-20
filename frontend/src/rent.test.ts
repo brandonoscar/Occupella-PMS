@@ -128,8 +128,13 @@ describe("rent", () => {
   it("reads a recurring charge", () => {
     const pet: RecurringCharge = {
       id: "r", kind: "fee", memo: "Pet rent", amount: "35.00", starts_on: "2026-01-01", ends_on: null,
+      charge_type: null,
     };
     expect(recurringLabel(pet)).toBe("Pet rent: $35.00 a month from 01/01/2026");
+    // A fee of one of the company's charge types names it.
+    expect(recurringLabel({ ...pet, charge_type: "Pet fees" })).toBe(
+      "Pet rent (Pet fees): $35.00 a month from 01/01/2026",
+    );
     expect(recurringLabel({ ...pet, kind: "credit", memo: "Concession", ends_on: "2026-07-01" })).toBe(
       "Concession: credit of $35.00 a month from 01/01/2026, stops 07/01/2026",
     );

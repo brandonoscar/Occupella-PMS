@@ -42,8 +42,8 @@ const LEASE: LeaseDetail = {
     { transfer_id: "tr0", received_on: "2026-08-01", amount: "1500.00", reference: null, method: "EFT", bounced: true },
   ],
   recurring: [
-    { id: "r1", kind: "fee", memo: "Pet rent", amount: "35.00", starts_on: "2026-01-01", ends_on: null },
-    { id: "r2", kind: "credit", memo: "Concession", amount: "100.00", starts_on: "2026-02-01", ends_on: "2026-12-01" },
+    { id: "r1", kind: "fee", memo: "Pet rent", amount: "35.00", starts_on: "2026-01-01", ends_on: null, charge_type: null },
+    { id: "r2", kind: "credit", memo: "Concession", amount: "100.00", starts_on: "2026-02-01", ends_on: "2026-12-01", charge_type: null },
   ],
   holds: [],
 };

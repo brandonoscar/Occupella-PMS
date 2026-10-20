@@ -759,13 +759,28 @@ tests = [
   "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
 ]
 
+[[invariant]]
+id = "charge-types"
+statement = "A PMC's charge types: a name once per PMC whatever its case, trimmed, none of the income statement's own income lines; never rewritten. Only a fee, once or every month, names one, and only of its own PMC. trust_ai_agent reads them and writes none."
+tests = [
+  "tests/test_charge_types.py::test_a_type_is_never_one_of_the_statements_lines_or_untrimmed",
+  "tests/test_charge_types.py::test_a_name_is_once_per_pmc_whatever_its_case",
+  "tests/test_charge_types.py::test_only_a_fee_has_a_type_and_only_of_its_own_pmc",
+  "tests/test_charge_types.py::test_types_are_never_rewritten",
+  "tests/api/test_charge_types.py::test_a_type_is_a_fees_and_the_companys_own",
+  "tests/test_privileges.py::test_ai_role_reads_only_what_the_app_reads",
+]
+
 [[report]]
 id = "income-statement"
-statement = "An owner's income statement over days (UTC), cash basis: per property and across them, what was collected from tenants (matched payments less what bounced back) by what it paid (rent, recurring charges, late fees, NSF fees, other charges; a lease end's adjustment is what it adjusts), the management fees (Schedule E line 11) and leasing fees (line 8), the bills set aside by their latest expense account and those in none, total expenses and net income; then the same by Schedule E line. Compared to a checked-in golden file."
+statement = "An owner's income statement over days (UTC), cash basis: per property and across them, what was collected from tenants (matched payments less what bounced back) by what it paid (rent, recurring charges, late fees, NSF fees, other charges; a lease end's adjustment is what it adjusts), each of the company's charge types on a line of its own after them once money was collected on it (a fee's own type, or its recurring charge's; migration 0100), the management fees (Schedule E line 11) and leasing fees (line 8), the bills set aside by their latest expense account and those in none, total expenses and net income; then the same by Schedule E line. Compared to a checked-in golden file."
 tests = [
   "tests/golden/test_golden.py::test_every_golden_case_matches",
   "tests/test_income_statement.py::test_what_was_collected_is_income_by_what_it_paid",
   "tests/test_income_statement.py::test_expenses_are_the_fees_and_each_expense_accounts_bills",
+  "tests/test_charge_types.py::test_each_type_collected_on_is_a_line_of_its_own_net_of_bounces",
+  "tests/test_charge_types.py::test_the_budget_beside_the_statement_counts_a_types_line_as_income",
+  "tests/api/test_charge_types.py::test_a_fee_of_a_type_counts_on_its_own_line_of_the_income_statement",
   "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
   "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
 ]

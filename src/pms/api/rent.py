@@ -736,6 +736,7 @@ class RecurringCharge(BaseModel):
     amount: str
     starts_on: date
     ends_on: date | None  # the first due date it is no longer charged for
+    charge_type: str | None = None  # the company's type of fee it is
 
 
 class RentChange(BaseModel):
@@ -906,9 +907,10 @@ ORDER BY d.starts_on, d.id
 
 # Recurring charges not stopped by the day: still charged, or to be.
 RECURRING = """
-SELECT r.lease_id, r.id, r.kind, r.memo, r.amount, r.starts_on, e.ends_on
+SELECT r.lease_id, r.id, r.kind, r.memo, r.amount, r.starts_on, e.ends_on, t.name
 FROM trust_recurring_charges AS r
 LEFT JOIN trust_recurring_charge_ends AS e ON e.recurring_charge_id = r.id
+LEFT JOIN trust_charge_types AS t ON t.id = r.charge_type_id
 WHERE r.pmc_id = %(pmc)s AND (e.ends_on IS NULL OR %(as_of)s < e.ends_on)
   AND (%(lease)s::uuid IS NULL OR r.lease_id = %(lease)s)
 ORDER BY r.starts_on, r.memo COLLATE "C", r.id
@@ -1030,10 +1032,18 @@ def built(
             )
         )
     recurring: dict[UUID, list[RecurringCharge]] = {}
-    for lease, r, kind, memo, amount, starts, ends in conn.execute(RECURRING, names).fetchall():
+    for lease, r, kind, memo, amount, starts, ends, typed in conn.execute(
+        RECURRING, names
+    ).fetchall():
         recurring.setdefault(lease, []).append(
             RecurringCharge(
-                id=r, kind=kind, memo=memo, amount=cents(amount), starts_on=starts, ends_on=ends
+                id=r,
+                kind=kind,
+                memo=memo,
+                amount=cents(amount),
+                starts_on=starts,
+                ends_on=ends,
+                charge_type=typed,
             )
         )
     changes: dict[UUID, list[RentChange]] = {}
@@ -1186,10 +1196,30 @@ class NewCharge(BaseModel):
     # The work order it charges the tenant for (a repair they caused): a fee, of a lease at the
     # work order's unit or property (migration 0085).
     work_order_id: UUID | None = None
+    # The company's type of fee it is (migration 0100), counted on its own income line.
+    charge_type_id: UUID | None = None
 
 
 class Created(BaseModel):
     id: UUID
+
+
+def check_charge_type(
+    conn: psycopg.Connection[Any], pmc_id: UUID, kind: str, charge_type: UUID | None
+) -> None:
+    """A charge type names a fee of the company's own types."""
+    if charge_type is None:
+        return
+    if kind != "fee":
+        raise HTTPException(422, "only a fee has a charge type")
+    if (
+        conn.execute(
+            "SELECT 1 FROM trust_charge_types WHERE pmc_id = %s AND id = %s",
+            (pmc_id, charge_type),
+        ).fetchone()
+        is None
+    ):
+        raise HTTPException(404, "no such charge type")
 
 
 @router.post("/leases/{lease_id}/charges", status_code=201)
@@ -1208,11 +1238,12 @@ def add_charge(session: Staff, conn: Conn, lease_id: UUID, new: NewCharge) -> Cr
             is None
         ):
             raise HTTPException(404, "no such work order")
+    check_charge_type(conn, session.pmc_id, new.kind, new.charge_type_id)
     try:
         row = conn.execute(
             "INSERT INTO trust_charges"
-            " (pmc_id, lease_id, due_on, kind, amount, memo, work_order_id)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+            " (pmc_id, lease_id, due_on, kind, amount, memo, work_order_id, charge_type_id)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
             (
                 session.pmc_id,
                 lease_id,
@@ -1221,6 +1252,7 @@ def add_charge(session: Staff, conn: Conn, lease_id: UUID, new: NewCharge) -> Cr
                 new.amount,
                 new.memo,
                 new.work_order_id,
+                new.charge_type_id,
             ),
         ).fetchone()
     except psycopg.errors.CheckViolation as refused:
@@ -1235,6 +1267,7 @@ class NewRecurringCharge(BaseModel):
     amount: Amount
     memo: Memo
     starts_on: date
+    charge_type_id: UUID | None = None  # its type, as a one-off fee's (migration 0100)
 
 
 @router.post("/leases/{lease_id}/recurring-charges", status_code=201)
@@ -1244,10 +1277,20 @@ def add_recurring_charge(
     """A fee the lease owes every month besides its rent (pet rent, parking), or a credit it
     gets every month, charged by the rent run from the first due date on or after starts_on."""
     lease_of(conn, session.pmc_id, lease_id)
+    check_charge_type(conn, session.pmc_id, new.kind, new.charge_type_id)
     row = conn.execute(
-        "INSERT INTO trust_recurring_charges (pmc_id, lease_id, kind, amount, memo, starts_on)"
-        " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
-        (session.pmc_id, lease_id, new.kind, new.amount, new.memo, new.starts_on),
+        "INSERT INTO trust_recurring_charges"
+        " (pmc_id, lease_id, kind, amount, memo, starts_on, charge_type_id)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        (
+            session.pmc_id,
+            lease_id,
+            new.kind,
+            new.amount,
+            new.memo,
+            new.starts_on,
+            new.charge_type_id,
+        ),
     ).fetchone()
     assert row is not None
     return Created(id=row[0])

@@ -507,6 +507,7 @@ FEATURES = (
     "lease-transfers",
     "calendar",
     "own-contact",
+    "charge-types",
 )
 
 

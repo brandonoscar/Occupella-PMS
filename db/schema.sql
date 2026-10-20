@@ -5056,6 +5056,7 @@ CREATE TABLE public.trust_charges (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     recurring_charge_id uuid,
     work_order_id uuid,
+    charge_type_id uuid,
     CONSTRAINT trust_charges_amount_check CHECK ((amount > (0)::numeric)),
     CONSTRAINT trust_charges_kind_check CHECK ((kind = ANY (ARRAY['rent'::text, 'fee'::text, 'credit'::text])))
 );
@@ -6559,7 +6560,8 @@ BEGIN
                    WHEN 'expense: management fees' THEN 11
                    WHEN 'expense: leasing fees' THEN 12
                    WHEN 'expense: bills not in an expense account' THEN 14
-                   ELSE 13
+                   -- One of the company's charge types, after the other income.
+                   ELSE CASE WHEN i.what LIKE 'income: %' THEN 6 ELSE 13 END
                END AS step
         FROM items AS i
     ),
@@ -7374,10 +7376,12 @@ BEGIN
         WHERE t.pmc_id = p_pmc_id AND t.owner_id = p_owner_id AND t.kind = 'owner_property'
     ),
     -- What each charge's money is: rent, a recurring charge (pet rent, parking), a late fee, an
-    -- NSF fee, or another charge. A lease end's adjustment of a rent or recurring charge
+    -- NSF fee, or another charge, and the company's own type of it if it has one (its own, or
+    -- its recurring charge's). A lease end's adjustment of a rent or recurring charge
     -- (migration 0051) is what it adjusts.
     classes AS (
         SELECT c.id,
+               coalesce(o.charge_type_id, c.charge_type_id, rc.charge_type_id) AS charge_type,
                CASE
                    WHEN coalesce(o.kind, c.kind) = 'rent' THEN 1
                    WHEN coalesce(o.recurring_charge_id, c.recurring_charge_id) IS NOT NULL THEN 2
@@ -7390,25 +7394,27 @@ BEGIN
         LEFT JOIN trust_charges AS o ON o.id = adj.charge_id
         LEFT JOIN trust_late_fees AS lf ON lf.fee_charge_id = c.id
         LEFT JOIN trust_nsf_fees AS nf ON nf.fee_charge_id = c.id
+        LEFT JOIN trust_recurring_charges AS rc
+            ON rc.id = coalesce(o.recurring_charge_id, c.recurring_charge_id)
         WHERE c.pmc_id = p_pmc_id
     ),
     -- Collected from tenants in the days: payments matched to charges, less what bounced back,
     -- as the year-end package counts them (migration 0039).
     collected AS (
-        SELECT tr.to_account_id AS account, k.part, cp.amount
+        SELECT tr.to_account_id AS account, k.part, k.charge_type, cp.amount
         FROM trust_charge_payments AS cp
         JOIN pgledger_transfers AS tr ON tr.id = cp.transfer_id
         JOIN classes AS k ON k.id = cp.charge_id
         WHERE cp.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
         UNION ALL
-        SELECT tr.from_account_id, k.part, -r.amount
+        SELECT tr.from_account_id, k.part, k.charge_type, -r.amount
         FROM trust_payment_reversals AS r
         JOIN pgledger_transfers AS tr ON tr.id = r.reversal_id
         JOIN classes AS k ON k.id = r.charge_id
         WHERE r.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
         UNION ALL
         -- A housing authority's part of the rent, as it paid it (migration 0095): rent.
-        SELECT tr.to_account_id, 1, ap.amount
+        SELECT tr.to_account_id, 1, NULL::uuid, ap.amount
         FROM trust_assistance_payments AS ap
         JOIN pgledger_transfers AS tr ON tr.id = ap.transfer_id
         WHERE ap.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
@@ -7458,13 +7464,22 @@ BEGIN
           AND tr.event_at >= v_start AND tr.event_at < v_end
     ),
     -- Each account's lines: (group, order within it, item, Schedule E line, amount). Groups:
-    -- 1 income, 3 expenses. Income and the fees show even when nothing moved.
+    -- 1 income, 3 expenses. Income and the fees show even when nothing moved; each of the
+    -- company's charge types has a line of its own after them once money was collected on it,
+    -- and isn't counted again in the line it would be in without one.
     items AS (
         SELECT a.account, 1 AS grp, i.part AS ord, i.label AS item, 3 AS sched,
                coalesce((SELECT sum(c.amount) FROM collected AS c
-                         WHERE c.account = a.account AND c.part = i.part), 0) AS total
+                         WHERE c.account = a.account AND c.part = i.part
+                           AND c.charge_type IS NULL), 0) AS total
         FROM accounts AS a
         CROSS JOIN incomes AS i
+        UNION ALL
+        SELECT c.account, 1, 6, 'income: ' || ct.name, 3, sum(c.amount)
+        FROM collected AS c
+        JOIN accounts AS a ON a.account = c.account
+        JOIN trust_charge_types AS ct ON ct.id = c.charge_type
+        GROUP BY c.account, ct.id, ct.name
         UNION ALL
         SELECT a.account, 3, f.ord,
                CASE f.ord WHEN 0 THEN 'expense: management fees' ELSE 'expense: leasing fees' END,
@@ -11554,6 +11569,20 @@ CREATE TABLE public.trust_charge_payments (
 
 
 --
+-- Name: trust_charge_types; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_charge_types (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    name text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT trust_charge_types_name_check CHECK (((name = btrim(name)) AND (name ~ '\S'::text) AND (char_length(name) <= 100) AND (lower(name) <> ALL (ARRAY['rent'::text, 'recurring charges'::text, 'late fees'::text, 'nsf fees'::text, 'other charges'::text]))))
+);
+
+
+--
 -- Name: trust_charge_waivers; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -12986,6 +13015,7 @@ CREATE TABLE public.trust_recurring_charges (
     memo text NOT NULL,
     starts_on date NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    charge_type_id uuid,
     CONSTRAINT trust_recurring_charges_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
     CONSTRAINT trust_recurring_charges_kind_check CHECK ((kind = ANY (ARRAY['fee'::text, 'credit'::text]))),
     CONSTRAINT trust_recurring_charges_memo_check CHECK ((memo <> ''::text))
@@ -14149,11 +14179,35 @@ ALTER TABLE ONLY public.trust_charge_payments
 
 
 --
+-- Name: trust_charge_types trust_charge_types_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_charge_types
+    ADD CONSTRAINT trust_charge_types_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_charge_types trust_charge_types_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_charge_types
+    ADD CONSTRAINT trust_charge_types_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_charge_waivers trust_charge_waivers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.trust_charge_waivers
     ADD CONSTRAINT trust_charge_waivers_pkey PRIMARY KEY (credit_charge_id);
+
+
+--
+-- Name: trust_charges trust_charges_charge_type_fee; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_charges
+    ADD CONSTRAINT trust_charges_charge_type_fee CHECK (((charge_type_id IS NULL) OR (kind = 'fee'::text))) NOT VALID;
 
 
 --
@@ -15394,6 +15448,14 @@ ALTER TABLE ONLY public.trust_recurring_charge_ends
 
 
 --
+-- Name: trust_recurring_charges trust_recurring_charges_charge_type_fee; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_recurring_charges
+    ADD CONSTRAINT trust_recurring_charges_charge_type_fee CHECK (((charge_type_id IS NULL) OR (kind = 'fee'::text))) NOT VALID;
+
+
+--
 -- Name: trust_recurring_charges trust_recurring_charges_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16277,6 +16339,20 @@ CREATE INDEX trust_charge_payments_transfer_id ON public.trust_charge_payments U
 
 
 --
+-- Name: trust_charge_types_name; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_charge_types_name ON public.trust_charge_types USING btree (pmc_id, lower(name));
+
+
+--
+-- Name: trust_charge_types_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_charge_types_recorded_by ON public.trust_charge_types USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_charge_waivers_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -16288,6 +16364,13 @@ CREATE INDEX trust_charge_waivers_recorded_by ON public.trust_charge_waivers USI
 --
 
 CREATE INDEX trust_charge_waivers_waived ON public.trust_charge_waivers USING btree (pmc_id, waived_charge_id);
+
+
+--
+-- Name: trust_charges_charge_type_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_charges_charge_type_id ON public.trust_charges USING btree (charge_type_id);
 
 
 --
@@ -17089,6 +17172,13 @@ CREATE INDEX trust_recurring_bill_expense_accounts_bill ON public.trust_recurrin
 
 
 --
+-- Name: trust_recurring_charges_charge_type_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_recurring_charges_charge_type_id ON public.trust_recurring_charges USING btree (charge_type_id);
+
+
+--
 -- Name: trust_recurring_charges_lease_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -17828,6 +17918,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_charge_payments FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_charge_types trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_charge_types FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -18927,6 +19024,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_cale
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_charge_payments FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_charge_types trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_charge_types FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -20194,6 +20298,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_calendar_feed_rev
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_calendar_feeds FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_charge_types trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_charge_types FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -21602,6 +21713,22 @@ ALTER TABLE ONLY public.trust_charge_payments
 
 
 --
+-- Name: trust_charge_types trust_charge_types_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_charge_types
+    ADD CONSTRAINT trust_charge_types_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_charge_types trust_charge_types_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_charge_types
+    ADD CONSTRAINT trust_charge_types_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_charge_waivers trust_charge_waivers_pmc_id_credit_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21631,6 +21758,14 @@ ALTER TABLE ONLY public.trust_charge_waivers
 
 ALTER TABLE ONLY public.trust_charge_waivers
     ADD CONSTRAINT trust_charge_waivers_pmc_id_waived_charge_id_fkey FOREIGN KEY (pmc_id, waived_charge_id) REFERENCES public.trust_charges(pmc_id, id);
+
+
+--
+-- Name: trust_charges trust_charges_pmc_id_charge_type_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_charges
+    ADD CONSTRAINT trust_charges_pmc_id_charge_type_id_fkey FOREIGN KEY (pmc_id, charge_type_id) REFERENCES public.trust_charge_types(pmc_id, id) NOT VALID;
 
 
 --
@@ -23778,6 +23913,14 @@ ALTER TABLE ONLY public.trust_recurring_charge_ends
 
 
 --
+-- Name: trust_recurring_charges trust_recurring_charges_pmc_id_charge_type_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_recurring_charges
+    ADD CONSTRAINT trust_recurring_charges_pmc_id_charge_type_fkey FOREIGN KEY (pmc_id, charge_type_id) REFERENCES public.trust_charge_types(pmc_id, id) NOT VALID;
+
+
+--
 -- Name: trust_recurring_charges trust_recurring_charges_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -24827,4 +24970,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261020000096'),
     ('20261020000097'),
     ('20261020000098'),
-    ('20261020000099');
+    ('20261020000099'),
+    ('20261020000100');

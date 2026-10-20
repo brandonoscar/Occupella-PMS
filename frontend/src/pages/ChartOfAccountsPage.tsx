@@ -12,13 +12,15 @@ import { PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
 import type { Portfolio } from "../setup";
+import { ChargeTypesCard } from "./ChargeTypes";
 import { usePortfolio } from "./SetupPanels";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 
 // Settings → Chart of accounts (ADR 0006, step 12): the accounts bills go in, each on its line of
 // Schedule E, so an owner's income statement breaks expenses out the way their accountant
-// reports them. Add account opens a side panel. An account moves no money.
+// reports them. Add account opens a side panel. An account moves no money. Below, the company's
+// charge types, which do the same for the fees leases are charged.
 export function ChartOfAccountsPage({ me }: { me: Me }) {
   const [books, error, reload] = usePortfolio();
   const [adding, setAdding] = useState(false);
@@ -56,6 +58,7 @@ export function ChartOfAccountsPage({ me }: { me: Me }) {
       {adding && books && (
         <AddAccountPanel books={books} say={setSaid} refresh={reload} close={() => setAdding(false)} />
       )}
+      <div className="mt-6"><ChargeTypesCard say={setSaid} /></div>
     </Shell>
   );
 }

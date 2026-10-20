@@ -801,7 +801,12 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   adjustment is what it adjusts), management fees (line 11), leasing fees (line 8), bills set
   aside by expense account (a split bill by its lines; those in none on no line), net income,
   then by Schedule E line. It
-  files nothing. Owners read and download a year's in the portal (`/api/owner/income-statement`);
+  files nothing. Charge types (migration 0100, the founder's review q133): a company's own kinds
+  of fee (`trust_charge_types`: a name once per PMC whatever its case, none of the statement's
+  income lines; append-only, naming who added it; Settings, Chart of accounts), which a fee, once
+  or every month, may name (`charge_type_id`, never a credit's); the statement counts what was
+  collected on each type on a line of its own after the other income (a rent run's charge under
+  its recurring charge's type), and the budget beside it counts that line as income. Owners read and download a year's in the portal (`/api/owner/income-statement`);
   staff download any owner's from the owners page.
 - Journal entries (migration 0053): a correction between a PMC's ledger accounts that no other
   write path makes. A staff member proposes one (`trust_propose_journal_entry`: a day, what it

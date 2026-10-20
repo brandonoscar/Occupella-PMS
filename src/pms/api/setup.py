@@ -434,6 +434,43 @@ def add_expense_account(session: Staff, conn: Conn, new: NewExpenseAccount) -> C
         )
 
 
+# The income statement's own income lines: a charge type takes none of their names.
+INCOME_LINES = ("rent", "recurring charges", "late fees", "nsf fees", "other charges")
+
+
+@router.get("/charge-types")
+def charge_types(session: Staff, conn: Conn) -> list[Named]:
+    """The company's own kinds of fee (migration 0100), each on its own income statement line."""
+    return [
+        Named(id=i, name=n)
+        for i, n in conn.execute(
+            "SELECT id, name FROM trust_charge_types WHERE pmc_id = %s"
+            ' ORDER BY name COLLATE "C", id',
+            (session.pmc_id,),
+        ).fetchall()
+    ]
+
+
+class NewChargeType(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+
+
+@router.post("/charge-types", status_code=201)
+def add_charge_type(session: Staff, conn: Conn, new: NewChargeType) -> Created:
+    """A kind of fee the company charges (Application fee, Key replacement, Pet rent), which the
+    owners' income statements count on a line of its own."""
+    if new.name.lower() in INCOME_LINES:
+        raise HTTPException(422, f"{new.name} is a line of the income statement already")
+    with refusals("the company has a charge type of that name already"):
+        return Created(
+            id=insert(
+                conn,
+                "INSERT INTO trust_charge_types (pmc_id, name) VALUES (%s, %s) RETURNING id",
+                (session.pmc_id, new.name),
+            )
+        )
+
+
 class NewProperty(BaseModel):
     name: Name
     owner_id: UUID

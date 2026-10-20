@@ -824,3 +824,11 @@ operations = ["GET /api/tenant/contact", "POST /api/tenant/contact"]
 browser = [
   "features.spec.ts › a tenant changes their own phone and email in the portal, and staff see the new ones and that the tenant changed them",
 ]
+
+[[feature]]
+id = "charge-types"
+statement = "Staff add the company's own charge types (a name once whatever its case, none of the income statement's own lines) in Settings, Chart of accounts, and give a fee one on Enter charge or a monthly charge (never a credit); the owner's income statement counts what was collected on each type on a line of its own, after the other income, and the budget beside it counts that line as income."
+operations = ["GET /api/setup/charge-types", "POST /api/setup/charge-types"]
+browser = [
+  "features.spec.ts › staff add charge types and give a lease's fee and monthly charge one; the owner's income statement counts the type on its own line",
+]
