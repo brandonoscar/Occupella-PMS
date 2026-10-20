@@ -14,6 +14,8 @@ export type Company = {
   address: Address | null;
   late_fees: DefaultLateFees | null;
   nsf_fee: string | null;
+  // Where replies to the company's emails go; none, to the server's From address.
+  reply_to: string | null;
   logo: Logo | null;
 };
 // What an owner or a tenant sees of their property manager.

@@ -424,6 +424,46 @@ force is NOT VERIFIED.
 - Payment holds (an eviction filed) hold the tenant's payments only; an authority's payment is
   not held.
 
+## Utility billing: RUBS and submeters (migration 0096)
+
+**The rule.** A tenant owes only what their lease says they owe, so a utility is billed back only
+to a lease that says so. Where a state regulates billing a master-metered utility back to
+tenants, the floor found is: the lease describes how the bill is shared, and the tenants together
+are never charged more than the bill.
+
+- Texas: Water Code 13.5031 has the utility commission set rules for sharing a master-metered
+  bill among tenants, and asks the lease for a clear written description of the method and the
+  last year's average bill per unit. Its rules (16 TAC chapter 24, earlier 30 TAC 291) are said
+  to keep tenants from being charged more than the property's bill and to leave the common areas
+  and empty units' use to the owner (read in search excerpts and a commission help page: NOT
+  VERIFIED).
+- California: Civil Code 1954.201 and the sections after it set the rules for water billed by
+  submeter in rental units (each submeter measuring only its unit's water, readable by the tenant
+  and the landlord); a summary says they leave ratio billing (RUBS) as it was (read in search
+  excerpts of the bill, SB 7 of 2016: NOT VERIFIED).
+- Other states may forbid billing some utilities back, cap a fee for it or ask more of the lease:
+  NOT VERIFIED; the strictest found is built below.
+
+**What the PMS does.**
+- A property's plan for each utility from a day: by unit (each unit's days), by square feet, by
+  occupants (the tenants who haven't left and others living there, for their days) or by
+  submeter (each unit's reading of the master meter's), and the owner's share for the common
+  areas. 'Not billed back' stops it.
+- A lease is billed for a utility only from the day staff record that its lease says so.
+- A bill is shared by the plan in force on its first day. The owner's share comes off first; each
+  billed lease's share is its part of the rest, rounded down to the cent, and charged to it as a
+  fee naming the utility, the period and the method. So the tenants together are never charged
+  more than the bill less the owner's share. A vacant unit's days (by unit and by square feet), a
+  lease not billed for it, the common areas and every part of a cent stay with the owner, never
+  shifted onto another lease.
+- No two bills of a property for a utility cover the same day. A preview shows each lease's share
+  before anything is charged. No fee for billing is added.
+
+**Left to the company.**
+- The lease's own words on how the bill is shared, the average bill a state asks it to state, and
+  any registration with a state commission.
+- Whether a utility may be billed back where the property is.
+
 ## Maintenance: emergencies, photos, entry and the visit (migration 0084)
 
 **The rule.** A landlord keeps a home fit to live in and fixes what makes it unfit within a

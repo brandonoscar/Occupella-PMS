@@ -1283,3 +1283,81 @@ def apply_assistance_payment(connection, pmc_id, charge_id, transfer_id, amount)
         "SELECT trust_apply_assistance_payment(%s, %s, %s, %s)",
         (pmc_id, charge_id, transfer_id, Decimal(amount)),
     )
+
+
+def plan_utility(
+    connection, pmc_id, property_id, utility, starts_on, method, owner_percent="0"
+) -> UUID:
+    """How a property bills a utility back from a day (migration 0096): by unit, square feet,
+    occupants or submeter, and the owner's share in percent; 'none' stops it."""
+    return _one(
+        connection,
+        "INSERT INTO trust_utility_plans (pmc_id, property_id, utility, starts_on, method,"
+        " owner_percent) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, property_id, utility, starts_on, method, Decimal(owner_percent)),
+    )
+
+
+def bill_lease_for(connection, pmc_id, lease_id, utility, starts_on, billed=True) -> UUID:
+    """Whether a lease is billed for a utility from a day."""
+    return _one(
+        connection,
+        "INSERT INTO trust_lease_utilities (pmc_id, lease_id, utility, starts_on, billed)"
+        " VALUES (%s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, lease_id, utility, starts_on, billed),
+    )
+
+
+def set_area(connection, pmc_id, unit_id, square_feet) -> UUID:
+    return _one(
+        connection,
+        "INSERT INTO trust_unit_areas (pmc_id, unit_id, square_feet) VALUES (%s, %s, %s)"
+        " RETURNING id",
+        (pmc_id, unit_id, square_feet),
+    )
+
+
+def bill_back_utility(
+    connection,
+    pmc_id,
+    property_id,
+    utility,
+    period_start,
+    period_end,
+    amount,
+    due_on,
+    memo=None,
+    master_usage=None,
+    usage=None,
+    bill_id=None,
+) -> UUID:
+    """Bills a property's utility bill for a period back to its leases (migration 0096)."""
+    return _one(
+        connection,
+        "SELECT trust_bill_back_utility(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            pmc_id,
+            property_id,
+            utility,
+            period_start,
+            period_end,
+            Decimal(amount),
+            due_on,
+            memo,
+            None if master_usage is None else Decimal(master_usage),
+            None if usage is None else Jsonb({str(k): str(v) for k, v in usage.items()}),
+            bill_id,
+        ),
+    )
+
+
+def utility_shares(connection, bill_id) -> dict:
+    """A utility bill's shares by lease: (billed, weight, amount)."""
+    return {
+        lease: (billed, weight, amount)
+        for lease, billed, weight, amount in connection.execute(
+            "SELECT lease_id, billed, weight, amount FROM trust_utility_shares"
+            " WHERE utility_bill_id = %s",
+            (bill_id,),
+        ).fetchall()
+    }

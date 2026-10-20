@@ -389,18 +389,25 @@ def test_smtp_sends_over_starttls_and_signs_in(monkeypatch):
             seen.append(("login", username))
 
         def send_message(self, message):
-            seen.append(("send", message["From"], message["To"], message["Subject"]))
+            seen.append(
+                ("send", message["From"], message["To"], message["Subject"], message["Reply-To"])
+            )
 
     monkeypatch.setattr(smtplib, "SMTP", Server)
-    email.SmtpSender("mail.example.com", 2525, "pms", "synthetic", "pms@example.com").send(
-        email.Message("owner@example.com", "Hello", "Body")
-    )
+    sender = email.SmtpSender("mail.example.com", 2525, "pms", "synthetic", "pms@example.com")
+    sender.send(email.Message("owner@example.com", "Hello", "Body"))
+    # The company's own email, where replies go (q086), beside the server's From address.
+    sender.send(email.Message("owner@example.com", "Hi", "Body", reply_to="office@example.com"))
 
     assert seen == [
         ("connect", "mail.example.com", 2525),
         ("starttls",),
         ("login", "pms"),
-        ("send", "pms@example.com", "owner@example.com", "Hello"),
+        ("send", "pms@example.com", "owner@example.com", "Hello", None),
+        ("connect", "mail.example.com", 2525),
+        ("starttls",),
+        ("login", "pms"),
+        ("send", "pms@example.com", "owner@example.com", "Hi", "office@example.com"),
     ]
 
 

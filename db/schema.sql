@@ -1137,6 +1137,93 @@ $$;
 
 
 --
+-- Name: trust_bill_back_utility(uuid, uuid, text, date, date, numeric, date, text, numeric, jsonb, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_bill_back_utility(p_pmc_id uuid, p_property_id uuid, p_utility text, p_period_start date, p_period_end date, p_amount numeric, p_due_on date, p_memo text, p_master_usage numeric, p_usage jsonb, p_bill_id uuid) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bill uuid;
+    v_plan trust_utility_plans;
+    v_shares jsonb;
+    v_share jsonb;
+    v_charge uuid;
+    v_memo text;
+BEGIN
+    -- Bills of a property for a utility wait for each other, so two never cover a day.
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended('utility bills of ' || p_property_id || ' ' || p_utility, 0)
+    );
+    -- Its shares first: this refuses a bill the plan can't share.
+    SELECT coalesce(jsonb_agg(to_jsonb(a) ORDER BY a.lease_id), '[]'::jsonb) INTO v_shares
+    FROM trust_utility_allocation(
+        p_pmc_id, p_property_id, p_utility, p_period_start, p_period_end, p_amount,
+        p_master_usage, p_usage
+    ) AS a;
+    IF EXISTS (
+        SELECT 1 FROM trust_utility_bills AS b
+        WHERE b.property_id = p_property_id AND b.utility = p_utility
+          AND b.period_start <= p_period_end AND b.period_end >= p_period_start
+    ) THEN
+        RAISE EXCEPTION 'trust: a % bill of the property already covers part of % to %',
+            p_utility, p_period_start, p_period_end
+            USING ERRCODE = 'unique_violation';
+    END IF;
+    IF p_bill_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM trust_bills AS b
+        JOIN trust_ledger_accounts AS a ON a.ledger_account_id = b.ledger_account_id
+        WHERE b.id = p_bill_id AND b.pmc_id = p_pmc_id AND a.property_id = p_property_id
+    ) THEN
+        RAISE EXCEPTION 'trust: bill % is no bill of the property', p_bill_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT p.* INTO v_plan FROM trust_utility_plan_on(p_property_id, p_utility, p_period_start) AS p;
+
+    INSERT INTO trust_utility_bills (
+        pmc_id, property_id, utility, period_start, period_end, amount, method, owner_percent,
+        master_usage, due_on, memo, bill_id
+    ) VALUES (
+        p_pmc_id, p_property_id, p_utility, p_period_start, p_period_end, p_amount,
+        v_plan.method, v_plan.owner_percent, p_master_usage, p_due_on, p_memo, p_bill_id
+    )
+    RETURNING id INTO v_bill;
+
+    v_memo := initcap(p_utility) || ' ' || to_char(p_period_start, 'YYYY-MM-DD') || ' to '
+        || to_char(p_period_end, 'YYYY-MM-DD') || ', '
+        || CASE v_plan.method
+               WHEN 'units' THEN 'by unit'
+               WHEN 'square_feet' THEN 'by square feet'
+               WHEN 'occupants' THEN 'by occupants'
+               ELSE 'by meter'
+           END
+        || coalesce(': ' || p_memo, '');
+    FOR v_share IN SELECT s FROM jsonb_array_elements(v_shares) AS s
+    LOOP
+        v_charge := NULL;
+        IF (v_share ->> 'amount')::numeric > 0 THEN
+            INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)
+            VALUES (
+                p_pmc_id, (v_share ->> 'lease_id')::uuid, p_due_on, 'fee',
+                (v_share ->> 'amount')::numeric, v_memo
+            )
+            RETURNING id INTO v_charge;
+        END IF;
+        INSERT INTO trust_utility_shares (
+            utility_bill_id, lease_id, pmc_id, billed, weight, usage, amount, charge_id
+        ) VALUES (
+            v_bill, (v_share ->> 'lease_id')::uuid, p_pmc_id, (v_share ->> 'billed')::boolean,
+            (v_share ->> 'weight')::numeric, (v_share ->> 'usage')::numeric,
+            (v_share ->> 'amount')::numeric, v_charge
+        );
+    END LOOP;
+    RETURN v_bill;
+END;
+$$;
+
+
+--
 -- Name: trust_broker_of(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3903,6 +3990,23 @@ $$;
 
 
 --
+-- Name: trust_lease_billed(uuid, text, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_lease_billed(p_lease_id uuid, p_utility text, p_day date) RETURNS boolean
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT coalesce((
+        SELECT u.billed FROM trust_lease_utilities AS u
+        WHERE u.lease_id = p_lease_id AND u.utility = p_utility AND u.starts_on <= p_day
+        ORDER BY u.starts_on DESC, u.created_at DESC, u.id DESC
+        LIMIT 1
+    ), false)
+$$;
+
+
+--
 -- Name: trust_lease_moved_from(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3941,6 +4045,29 @@ CREATE FUNCTION public.trust_lease_owed(p_lease_id uuid) RETURNS numeric
                     WHERE c.lease_id = p_lease_id), 0),
         0
     )
+$$;
+
+
+--
+-- Name: trust_lease_people(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_lease_people(p_lease_id uuid, p_day date) RETURNS integer
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT (
+        SELECT count(*) FROM trust_lease_tenants AS t
+        WHERE t.lease_id = p_lease_id AND NOT EXISTS (
+            SELECT 1 FROM trust_lease_departures AS d
+            WHERE d.lease_id = t.lease_id AND d.tenant_id = t.tenant_id AND d.left_on <= p_day
+        )
+    )::integer + (
+        SELECT count(*) FROM trust_lease_occupants AS o
+        WHERE o.lease_id = p_lease_id AND NOT EXISTS (
+            SELECT 1 FROM trust_lease_household_removals AS r WHERE r.occupant_id = o.id
+        )
+    )::integer
 $$;
 
 
@@ -10251,6 +10378,21 @@ $$;
 
 
 --
+-- Name: trust_unit_area(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_unit_area(p_unit_id uuid) RETURNS bigint
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT a.square_feet FROM trust_unit_areas AS a
+    WHERE a.unit_id = p_unit_id
+    ORDER BY a.created_at DESC, a.id DESC
+    LIMIT 1
+$$;
+
+
+--
 -- Name: trust_unmatch_bank_lines(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10328,6 +10470,186 @@ CREATE FUNCTION public.trust_unpaid_bills(p_account text, p_day date) RETURNS nu
           SELECT d.bill_id FROM trust_bill_declines AS d
           WHERE d.bill_id = b.id AND d.declined_on <= p_day
       )
+$$;
+
+
+--
+-- Name: trust_utility_allocation(uuid, uuid, text, date, date, numeric, numeric, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_utility_allocation(p_pmc_id uuid, p_property_id uuid, p_utility text, p_period_start date, p_period_end date, p_amount numeric, p_master_usage numeric, p_usage jsonb) RETURNS TABLE(lease_id uuid, unit_id uuid, billed boolean, weight numeric, usage numeric, amount numeric)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_plan trust_utility_plans;
+    v_pool numeric;
+    v_total numeric;
+    v_least numeric;
+    v_unknown text;
+BEGIN
+    IF p_period_end < p_period_start OR p_amount IS NULL OR p_amount <= 0 THEN
+        RAISE EXCEPTION 'trust: a utility bill is for a period of days and an amount above 0'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM trust_properties AS p WHERE p.id = p_property_id AND p.pmc_id = p_pmc_id
+    ) THEN
+        RAISE EXCEPTION 'trust: no property % in PMC %', p_property_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT p.* INTO v_plan FROM trust_utility_plan_on(p_property_id, p_utility, p_period_start) AS p;
+    IF NOT FOUND OR v_plan.method = 'none' THEN
+        RAISE EXCEPTION 'trust: the property bills no % back on %', p_utility, p_period_start
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF (v_plan.method = 'submeter') <> (p_master_usage IS NOT NULL) THEN
+        RAISE EXCEPTION 'trust: a submetered utility''s bill gives the master meter''s reading, '
+            'and only it'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_pool := p_amount * (100 - v_plan.owner_percent) / 100;
+
+    IF v_plan.method = 'submeter' THEN
+        SELECT k INTO v_unknown FROM jsonb_object_keys(coalesce(p_usage, '{}')) AS k
+        WHERE k NOT IN (
+            SELECT w.lease_id::text FROM trust_utility_weights(
+                p_pmc_id, p_property_id, p_utility, p_period_start, p_period_end, 'units', NULL
+            ) AS w
+        )
+        ORDER BY k
+        LIMIT 1;
+        IF v_unknown IS NOT NULL THEN
+            RAISE EXCEPTION 'trust: % is no lease of the property in effect in the period',
+                v_unknown
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        SELECT coalesce(sum(w.usage), 0), min(w.usage) INTO v_total, v_least
+        FROM trust_utility_weights(
+            p_pmc_id, p_property_id, p_utility, p_period_start, p_period_end, 'submeter', p_usage
+        ) AS w;
+        IF v_least < 0 THEN
+            RAISE EXCEPTION 'trust: a reading is 0 or more'
+                USING ERRCODE = 'invalid_parameter_value';
+        END IF;
+        IF v_total > p_master_usage THEN
+            RAISE EXCEPTION 'trust: the units'' readings, %, come to more than the master '
+                'meter''s, %', v_total, p_master_usage
+                USING ERRCODE = 'check_violation';
+        END IF;
+        v_total := p_master_usage;
+    ELSIF v_plan.method = 'occupants' THEN
+        SELECT coalesce(sum(w.weight), 0) INTO v_total
+        FROM trust_utility_weights(
+            p_pmc_id, p_property_id, p_utility, p_period_start, p_period_end, 'occupants', NULL
+        ) AS w;
+    ELSE
+        -- Every unit of the property for every day: not archived, or leased in the period.
+        SELECT u.display_name INTO v_unknown
+        FROM trust_units AS u
+        WHERE v_plan.method = 'square_feet'
+          AND u.pmc_id = p_pmc_id AND u.property_id = p_property_id
+          AND trust_unit_area(u.id) IS NULL
+          AND (NOT trust_is_archived(NULL, u.id) OR EXISTS (
+              SELECT 1 FROM trust_leases AS l
+              WHERE l.unit_id = u.id AND l.starts_on <= p_period_end
+                AND (l.ends_on IS NULL OR l.ends_on >= p_period_start)
+          ))
+        ORDER BY u.display_name COLLATE "C", u.id
+        LIMIT 1;
+        IF v_unknown IS NOT NULL THEN
+            RAISE EXCEPTION 'trust: % has no square feet on file', v_unknown
+                USING ERRCODE = 'check_violation';
+        END IF;
+        SELECT coalesce(sum(
+                   CASE v_plan.method WHEN 'units' THEN 1 ELSE trust_unit_area(u.id) END
+               ), 0) * (p_period_end - p_period_start + 1)
+        INTO v_total
+        FROM trust_units AS u
+        WHERE u.pmc_id = p_pmc_id AND u.property_id = p_property_id
+          AND (NOT trust_is_archived(NULL, u.id) OR EXISTS (
+              SELECT 1 FROM trust_leases AS l
+              WHERE l.unit_id = u.id AND l.starts_on <= p_period_end
+                AND (l.ends_on IS NULL OR l.ends_on >= p_period_start)
+          ));
+    END IF;
+
+    RETURN QUERY
+    SELECT w.lease_id, w.unit_id, w.billed, w.weight, w.usage,
+           CASE WHEN w.billed AND v_total > 0
+                THEN floor(v_pool * w.weight / v_total * 100) / 100
+                ELSE 0::numeric END
+    FROM trust_utility_weights(
+        p_pmc_id, p_property_id, p_utility, p_period_start, p_period_end, v_plan.method, p_usage
+    ) AS w
+    ORDER BY w.lease_id;
+END;
+$$;
+
+
+--
+-- Name: trust_utility_plans; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_utility_plans (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    property_id uuid NOT NULL,
+    utility text NOT NULL,
+    starts_on date NOT NULL,
+    method text NOT NULL,
+    owner_percent numeric DEFAULT 0 NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_utility_plans_method_check CHECK ((method = ANY (ARRAY['units'::text, 'square_feet'::text, 'occupants'::text, 'submeter'::text, 'none'::text]))),
+    CONSTRAINT trust_utility_plans_owner_percent_check CHECK (((owner_percent >= (0)::numeric) AND (owner_percent <= (100)::numeric) AND (owner_percent = round(owner_percent, 2)))),
+    CONSTRAINT trust_utility_plans_utility_check CHECK ((utility = ANY (ARRAY['water'::text, 'sewer'::text, 'trash'::text, 'gas'::text, 'electric'::text, 'other'::text])))
+);
+
+
+--
+-- Name: trust_utility_plan_on(uuid, text, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_utility_plan_on(p_property_id uuid, p_utility text, p_day date) RETURNS SETOF public.trust_utility_plans
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT p.* FROM trust_utility_plans AS p
+    WHERE p.property_id = p_property_id AND p.utility = p_utility AND p.starts_on <= p_day
+    ORDER BY p.starts_on DESC, p.created_at DESC, p.id DESC
+    LIMIT 1
+$$;
+
+
+--
+-- Name: trust_utility_weights(uuid, uuid, text, date, date, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_utility_weights(p_pmc_id uuid, p_property_id uuid, p_utility text, p_period_start date, p_period_end date, p_method text, p_usage jsonb) RETURNS TABLE(lease_id uuid, unit_id uuid, billed boolean, weight numeric, usage numeric)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT x.id, x.unit_id, trust_lease_billed(x.id, p_utility, x.last_day),
+           CASE p_method
+               WHEN 'units' THEN x.days::numeric
+               WHEN 'square_feet' THEN trust_unit_area(x.unit_id)::numeric * x.days
+               WHEN 'occupants' THEN trust_lease_people(x.id, x.last_day)::numeric * x.days
+               ELSE coalesce((p_usage ->> x.id::text)::numeric, 0)
+           END,
+           CASE WHEN p_method = 'submeter'
+                THEN coalesce((p_usage ->> x.id::text)::numeric, 0) END
+    FROM (
+        SELECT l.id, l.unit_id,
+               least(p_period_end, coalesce(l.ends_on, p_period_end)) AS last_day,
+               least(p_period_end, coalesce(l.ends_on, p_period_end))
+               - greatest(p_period_start, l.starts_on) + 1 AS days
+        FROM trust_leases AS l
+        JOIN trust_units AS u ON u.id = l.unit_id
+        WHERE l.pmc_id = p_pmc_id AND u.property_id = p_property_id
+          AND l.starts_on <= p_period_end
+          AND (l.ends_on IS NULL OR l.ends_on >= p_period_start)
+    ) AS x
 $$;
 
 
@@ -11039,6 +11361,7 @@ CREATE TABLE public.trust_company_profiles (
     nsf_fee numeric,
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    reply_to text,
     CONSTRAINT trust_company_profiles_address_line_1_check CHECK (((btrim(address_line_1) <> ''::text) AND (char_length(address_line_1) <= 200))),
     CONSTRAINT trust_company_profiles_address_line_2_check CHECK (((btrim(address_line_2) <> ''::text) AND (char_length(address_line_2) <= 200))),
     CONSTRAINT trust_company_profiles_check CHECK (((num_nonnulls(address_line_1, city, state, postal_code) = ANY (ARRAY[0, 4])) AND ((address_line_2 IS NULL) OR (address_line_1 IS NOT NULL)))),
@@ -11050,6 +11373,7 @@ CREATE TABLE public.trust_company_profiles (
     CONSTRAINT trust_company_profiles_late_percent_check CHECK (((late_percent >= (0)::numeric) AND (late_percent <= (100)::numeric))),
     CONSTRAINT trust_company_profiles_nsf_fee_check CHECK (((nsf_fee >= (0)::numeric) AND (nsf_fee = round(nsf_fee, 2)))),
     CONSTRAINT trust_company_profiles_postal_code_check CHECK (((btrim(postal_code) <> ''::text) AND (char_length(postal_code) <= 20))),
+    CONSTRAINT trust_company_profiles_reply_to_check CHECK (((reply_to ~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'::text) AND (char_length(reply_to) <= 254))),
     CONSTRAINT trust_company_profiles_state_check CHECK (((btrim(state) <> ''::text) AND (char_length(state) <= 50)))
 );
 
@@ -11781,6 +12105,23 @@ CREATE TABLE public.trust_lease_transfers (
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT trust_lease_transfers_check CHECK ((from_lease_id <> to_lease_id))
+);
+
+
+--
+-- Name: trust_lease_utilities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_utilities (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    utility text NOT NULL,
+    starts_on date NOT NULL,
+    billed boolean NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_lease_utilities_utility_check CHECK ((utility = ANY (ARRAY['water'::text, 'sewer'::text, 'trash'::text, 'gas'::text, 'electric'::text, 'other'::text])))
 );
 
 
@@ -12788,6 +13129,21 @@ CREATE TABLE public.trust_tenants (
 
 
 --
+-- Name: trust_unit_areas; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_unit_areas (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    unit_id uuid NOT NULL,
+    square_feet bigint NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_unit_areas_square_feet_check CHECK (((square_feet > 0) AND (square_feet <= 1000000)))
+);
+
+
+--
 -- Name: trust_units; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -12798,6 +13154,59 @@ CREATE TABLE public.trust_units (
     display_name text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_units_display_name_check CHECK ((display_name <> ''::text))
+);
+
+
+--
+-- Name: trust_utility_bills; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_utility_bills (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    property_id uuid NOT NULL,
+    utility text NOT NULL,
+    period_start date NOT NULL,
+    period_end date NOT NULL,
+    amount numeric NOT NULL,
+    method text NOT NULL,
+    owner_percent numeric NOT NULL,
+    master_usage numeric,
+    due_on date NOT NULL,
+    memo text,
+    bill_id uuid,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_utility_bills_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)) AND (amount <= (10000000)::numeric))),
+    CONSTRAINT trust_utility_bills_check CHECK (((period_end >= period_start) AND (period_end < (period_start + 366)))),
+    CONSTRAINT trust_utility_bills_check1 CHECK (((method = 'submeter'::text) = (master_usage IS NOT NULL))),
+    CONSTRAINT trust_utility_bills_master_usage_check CHECK ((master_usage > (0)::numeric)),
+    CONSTRAINT trust_utility_bills_memo_check CHECK (((btrim(memo) <> ''::text) AND (length(memo) <= 100))),
+    CONSTRAINT trust_utility_bills_method_check CHECK ((method = ANY (ARRAY['units'::text, 'square_feet'::text, 'occupants'::text, 'submeter'::text]))),
+    CONSTRAINT trust_utility_bills_owner_percent_check CHECK (((owner_percent >= (0)::numeric) AND (owner_percent <= (100)::numeric))),
+    CONSTRAINT trust_utility_bills_utility_check CHECK ((utility = ANY (ARRAY['water'::text, 'sewer'::text, 'trash'::text, 'gas'::text, 'electric'::text, 'other'::text])))
+);
+
+
+--
+-- Name: trust_utility_shares; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_utility_shares (
+    utility_bill_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    billed boolean NOT NULL,
+    weight numeric NOT NULL,
+    usage numeric,
+    amount numeric NOT NULL,
+    charge_id uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_utility_shares_amount_check CHECK (((amount >= (0)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_utility_shares_check CHECK (((charge_id IS NULL) = (amount = (0)::numeric))),
+    CONSTRAINT trust_utility_shares_check1 CHECK ((billed OR (amount = (0)::numeric))),
+    CONSTRAINT trust_utility_shares_usage_check CHECK ((usage >= (0)::numeric)),
+    CONSTRAINT trust_utility_shares_weight_check CHECK ((weight >= (0)::numeric))
 );
 
 
@@ -14124,6 +14533,22 @@ ALTER TABLE ONLY public.trust_lease_transfers
 
 
 --
+-- Name: trust_lease_utilities trust_lease_utilities_lease_id_utility_starts_on_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_utilities
+    ADD CONSTRAINT trust_lease_utilities_lease_id_utility_starts_on_key UNIQUE (lease_id, utility, starts_on);
+
+
+--
+-- Name: trust_lease_utilities trust_lease_utilities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_utilities
+    ADD CONSTRAINT trust_lease_utilities_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_lease_vehicles trust_lease_vehicles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14956,6 +15381,14 @@ ALTER TABLE ONLY public.trust_tenants
 
 
 --
+-- Name: trust_unit_areas trust_unit_areas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unit_areas
+    ADD CONSTRAINT trust_unit_areas_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_units trust_units_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14969,6 +15402,62 @@ ALTER TABLE ONLY public.trust_units
 
 ALTER TABLE ONLY public.trust_units
     ADD CONSTRAINT trust_units_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_utility_bills trust_utility_bills_bill_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_utility_bills
+    ADD CONSTRAINT trust_utility_bills_bill_id_key UNIQUE (bill_id);
+
+
+--
+-- Name: trust_utility_bills trust_utility_bills_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_utility_bills
+    ADD CONSTRAINT trust_utility_bills_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_utility_bills trust_utility_bills_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_utility_bills
+    ADD CONSTRAINT trust_utility_bills_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_utility_plans trust_utility_plans_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_utility_plans
+    ADD CONSTRAINT trust_utility_plans_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_utility_plans trust_utility_plans_property_id_utility_starts_on_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_utility_plans
+    ADD CONSTRAINT trust_utility_plans_property_id_utility_starts_on_key UNIQUE (property_id, utility, starts_on);
+
+
+--
+-- Name: trust_utility_shares trust_utility_shares_charge_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_utility_shares
+    ADD CONSTRAINT trust_utility_shares_charge_id_key UNIQUE (charge_id);
+
+
+--
+-- Name: trust_utility_shares trust_utility_shares_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_utility_shares
+    ADD CONSTRAINT trust_utility_shares_pkey PRIMARY KEY (utility_bill_id, lease_id);
 
 
 --
@@ -15836,6 +16325,20 @@ CREATE INDEX trust_lease_transfers_recorded_by ON public.trust_lease_transfers U
 
 
 --
+-- Name: trust_lease_utilities_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_utilities_pmc ON public.trust_lease_utilities USING btree (pmc_id, lease_id);
+
+
+--
+-- Name: trust_lease_utilities_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_utilities_recorded_by ON public.trust_lease_utilities USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_lease_vehicles_lease; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -16452,10 +16955,80 @@ CREATE INDEX trust_staff_roles_pmc_id ON public.trust_staff_roles USING btree (p
 
 
 --
+-- Name: trust_unit_areas_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_unit_areas_recorded_by ON public.trust_unit_areas USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_unit_areas_unit; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_unit_areas_unit ON public.trust_unit_areas USING btree (pmc_id, unit_id, created_at);
+
+
+--
 -- Name: trust_units_property_id; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX trust_units_property_id ON public.trust_units USING btree (property_id);
+
+
+--
+-- Name: trust_utility_bills_bill; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_utility_bills_bill ON public.trust_utility_bills USING btree (pmc_id, bill_id);
+
+
+--
+-- Name: trust_utility_bills_property; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_utility_bills_property ON public.trust_utility_bills USING btree (pmc_id, property_id, utility, period_start);
+
+
+--
+-- Name: trust_utility_bills_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_utility_bills_recorded_by ON public.trust_utility_bills USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_utility_plans_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_utility_plans_pmc ON public.trust_utility_plans USING btree (pmc_id, property_id);
+
+
+--
+-- Name: trust_utility_plans_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_utility_plans_recorded_by ON public.trust_utility_plans USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_utility_shares_charge; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_utility_shares_charge ON public.trust_utility_shares USING btree (pmc_id, charge_id);
+
+
+--
+-- Name: trust_utility_shares_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_utility_shares_lease ON public.trust_utility_shares USING btree (pmc_id, lease_id);
+
+
+--
+-- Name: trust_utility_shares_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_utility_shares_pmc ON public.trust_utility_shares USING btree (pmc_id, utility_bill_id);
 
 
 --
@@ -17124,6 +17697,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_lease_utilities trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_utilities FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_lease_vehicles trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -17485,6 +18065,34 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_staff_roles FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_unit_areas trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_unit_areas FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_utility_bills trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_utility_bills FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_utility_plans trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_utility_plans FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_utility_shares trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_utility_shares FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -18132,6 +18740,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_leas
 
 
 --
+-- Name: trust_lease_utilities trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_utilities FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_lease_vehicles trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -18559,10 +19174,38 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_tena
 
 
 --
+-- Name: trust_unit_areas trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_unit_areas FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_units trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_units FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_utility_bills trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_utility_bills FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_utility_plans trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_utility_plans FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_utility_shares trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_utility_shares FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -19161,6 +19804,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_transfers F
 
 
 --
+-- Name: trust_lease_utilities trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_utilities FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_lease_vehicles trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -19298,6 +19948,27 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_showing_outcomes 
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_showings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_unit_areas trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_unit_areas FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_utility_bills trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_utility_bills FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_utility_plans trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_utility_plans FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -21536,6 +22207,30 @@ ALTER TABLE ONLY public.trust_lease_transfers
 
 
 --
+-- Name: trust_lease_utilities trust_lease_utilities_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_utilities
+    ADD CONSTRAINT trust_lease_utilities_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_utilities trust_lease_utilities_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_utilities
+    ADD CONSTRAINT trust_lease_utilities_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_lease_utilities trust_lease_utilities_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_utilities
+    ADD CONSTRAINT trust_lease_utilities_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_lease_vehicles trust_lease_vehicles_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22992,6 +23687,30 @@ ALTER TABLE ONLY public.trust_tenants
 
 
 --
+-- Name: trust_unit_areas trust_unit_areas_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unit_areas
+    ADD CONSTRAINT trust_unit_areas_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_unit_areas trust_unit_areas_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unit_areas
+    ADD CONSTRAINT trust_unit_areas_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_unit_areas trust_unit_areas_pmc_id_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unit_areas
+    ADD CONSTRAINT trust_unit_areas_pmc_id_unit_id_fkey FOREIGN KEY (pmc_id, unit_id) REFERENCES public.trust_units(pmc_id, id);
+
+
+--
 -- Name: trust_units trust_units_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -23005,6 +23724,94 @@ ALTER TABLE ONLY public.trust_units
 
 ALTER TABLE ONLY public.trust_units
     ADD CONSTRAINT trust_units_pmc_id_property_id_fkey FOREIGN KEY (pmc_id, property_id) REFERENCES public.trust_properties(pmc_id, id);
+
+
+--
+-- Name: trust_utility_bills trust_utility_bills_pmc_id_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_utility_bills
+    ADD CONSTRAINT trust_utility_bills_pmc_id_bill_id_fkey FOREIGN KEY (pmc_id, bill_id) REFERENCES public.trust_bills(pmc_id, id);
+
+
+--
+-- Name: trust_utility_bills trust_utility_bills_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_utility_bills
+    ADD CONSTRAINT trust_utility_bills_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_utility_bills trust_utility_bills_pmc_id_property_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_utility_bills
+    ADD CONSTRAINT trust_utility_bills_pmc_id_property_id_fkey FOREIGN KEY (pmc_id, property_id) REFERENCES public.trust_properties(pmc_id, id);
+
+
+--
+-- Name: trust_utility_bills trust_utility_bills_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_utility_bills
+    ADD CONSTRAINT trust_utility_bills_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_utility_plans trust_utility_plans_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_utility_plans
+    ADD CONSTRAINT trust_utility_plans_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_utility_plans trust_utility_plans_pmc_id_property_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_utility_plans
+    ADD CONSTRAINT trust_utility_plans_pmc_id_property_id_fkey FOREIGN KEY (pmc_id, property_id) REFERENCES public.trust_properties(pmc_id, id);
+
+
+--
+-- Name: trust_utility_plans trust_utility_plans_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_utility_plans
+    ADD CONSTRAINT trust_utility_plans_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_utility_shares trust_utility_shares_pmc_id_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_utility_shares
+    ADD CONSTRAINT trust_utility_shares_pmc_id_charge_id_fkey FOREIGN KEY (pmc_id, charge_id) REFERENCES public.trust_charges(pmc_id, id);
+
+
+--
+-- Name: trust_utility_shares trust_utility_shares_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_utility_shares
+    ADD CONSTRAINT trust_utility_shares_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_utility_shares trust_utility_shares_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_utility_shares
+    ADD CONSTRAINT trust_utility_shares_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_utility_shares trust_utility_shares_pmc_id_utility_bill_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_utility_shares
+    ADD CONSTRAINT trust_utility_shares_pmc_id_utility_bill_id_fkey FOREIGN KEY (pmc_id, utility_bill_id) REFERENCES public.trust_utility_bills(pmc_id, id);
 
 
 --
@@ -23333,4 +24140,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261018000092'),
     ('20261018000093'),
     ('20261019000094'),
-    ('20261020000095');
+    ('20261020000095'),
+    ('20261020000096');

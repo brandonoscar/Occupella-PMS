@@ -88,6 +88,7 @@ from pms.api import (
     switching,
     tenant,
     today,
+    utilities,
     vendor_links,
     vendors,
     work_orders,
@@ -501,6 +502,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(setup.router)
     app.include_router(rent.router)
     app.include_router(assistance.router)
+    app.include_router(utilities.router)
     app.include_router(receipts.router)
     app.include_router(rentals.router)
     app.include_router(groups.router)

@@ -84,8 +84,26 @@ def test_an_invite_email_carries_its_link_only_when_sent(conn, app_conn, pmc):
     (sent,) = deliver_only(app_conn, sender, {"a.owner@example.com"})
     assert link in sent.body and email.LINK not in sent.body
     assert sent.from_name.startswith("Synthetic PMC")
+    assert sent.reply_to == ""  # no reply-to on file: replies go to the From address
     assert attempts(conn, made) == [("fake", None)]
     assert deliver_only(app_conn, Kept(), {"a.owner@example.com"}) == []  # sent once
+
+
+def test_replies_go_to_the_companys_own_email_when_it_has_one(conn, app_conn, pmc):
+    conn.execute(
+        "INSERT INTO trust_company_profiles (pmc_id, reply_to) VALUES (%s, 'office@example.com')",
+        (pmc.pmc_id,),
+    )
+    owner = pmc.owners[0].owner_id
+    invite = accounts.create_invite(
+        app_conn, pmc.pmc_id, "owner", owner, "b.owner@example.com", None
+    )
+    email.write_invite(
+        app_conn, pmc.pmc_id, "owner", owner, "b.owner@example.com", "x", invite.expires_at
+    )
+
+    (sent,) = deliver_only(app_conn, Kept(), {"b.owner@example.com"})
+    assert sent.reply_to == "office@example.com"
 
 
 def test_a_staff_invite_says_an_authenticator_comes_next(conn, app_conn, pmc):

@@ -116,7 +116,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   write (`src/pms/api/emails.py`): a tenant's, owner's or vendor's Email tab
   (`components/EmailsCard.tsx`) writes to them and lists every email the PMS wrote them with
   whether it went, and a property's Email tenants writes to each tenant living there today. An
-  email goes to the person's contact email, else their login's. An invite's or a reset's link is
+  email goes to the person's contact email, else their login's, its Reply-To the company's own
+  email when Company setup has one (`trust_company_profiles.reply_to`, migration 0096; q086). An invite's or a reset's link is
   never written to the outbox: it waits in the writing process's memory until sent, ten minutes at
   most, then the email is given up on once. Writing email is the custom roles' area 'email'.
   Each email goes as its text and as HTML made from it when sent (`src/pms/email_html.py`, one
@@ -290,7 +291,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `trust_complete_lease_offer`, `trust_match_bank_lines`, `trust_unmatch_bank_lines`,
   `trust_prepare_bank_reconciliation`, `trust_approve_bank_reconciliation`,
   `trust_match_cutover_opening`, `trust_return_deposit`, `trust_transfer_lease`, `trust_open_deposit_account`, `trust_propose_journal_entry`,
-  `trust_post_journal_entry` and `trust_decline_journal_entry`, which run as the table owner (`trust_charge_rent_due`, `trust_enter_recurring_bills` and
+  `trust_post_journal_entry`, `trust_decline_journal_entry`, `trust_apply_assistance_payment` and
+  `trust_bill_back_utility`, which run as the table owner (`trust_charge_rent_due`, `trust_enter_recurring_bills` and
   `trust_run_rent` run with the app's own grants). It can't call pgledger's posting functions: every posting it makes goes through
   `trust_post_transfers`, which takes an idempotency key, unique per PMC, so it is safe to
   retry: the same key returns the original transfers, and a different posting under it is
@@ -403,6 +405,19 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`/housing-authorities`, `src/pms/api/assistance.py`, area rent) records its payment for many
   leases at once; the lease's Summary shows the split. No payment hold or bounce applies to it.
   The AI role reads all four tables.
+- Utility billing (migration 0096, the founder's review q021, `docs/law.md`): a property's plan
+  for each utility from a day (`trust_utility_plans`: by unit, square feet, occupants or submeter,
+  and the owner's percent for the common areas; 'none' stops it), units' square feet
+  (`trust_unit_areas`) and which utilities a lease is billed for from a day
+  (`trust_lease_utilities`), all append-only, the latest holding, naming who.
+  `trust_bill_back_utility` bills a utility bill for a period back once (no two of a property's
+  bills for a utility cover a day; maybe naming the vendor's bill of the property): by the plan
+  in force on its first day (`trust_utility_allocation`, which a preview reads), the owner's
+  share comes off and each billed lease's share of the rest is rounded down to the cent and
+  charged to it as a fee (`trust_utility_shares`), so tenants are never charged more than the
+  bill; a vacant unit's days, a lease not billed and every part of a cent stay with the owner.
+  Accounting, Utility billing (`/utility-billing`, `src/pms/api/utilities.py`, area rent). The
+  AI role reads all five tables.
 - Work orders: a job at a property (maybe one of its units). Its steps (assigned to a vendor,
   scheduled for a day, completed, cancelled) are append-only and in order, and nothing follows a
   close. A bill may name a work order of its property, never a cancelled one. Migration 0072: a

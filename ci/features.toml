@@ -257,6 +257,21 @@ browser = [
 ]
 
 [[feature]]
+id = "utility-billing"
+statement = "Staff set how a property bills each utility back (by unit, square feet, occupants or submeter, the owner keeping a share for the common areas), its units' square feet and which utilities each lease is billed for, preview a bill's shares and bill it back: each billed lease's share, rounded down to the cent, is a fee charged to it, and a vacant unit's days, a lease not billed and the common areas stay with the owner."
+operations = [
+  "GET /api/utilities/properties/{property_id}",
+  "POST /api/utilities/properties/{property_id}/plans",
+  "POST /api/utilities/units/{unit_id}/area",
+  "POST /api/utilities/leases/{lease_id}/billed",
+  "POST /api/utilities/preview",
+  "POST /api/utilities/bills",
+]
+browser = [
+  "features.spec.ts › staff bill last month's water back to Birch Flats' leases by unit, the owner keeping 10% and what isn't billed",
+]
+
+[[feature]]
 id = "emergencies"
 statement = "Staff say who is on call; a tenant files an emergency with a photo, whoever is on call is emailed, its work order opens urgent with the tenant's word on entry and the photo, and the tenant sees the visit's day and window once it is scheduled; each work order counts its days open."
 operations = [

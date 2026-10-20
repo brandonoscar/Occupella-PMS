@@ -53,8 +53,19 @@ def test_a_company_starts_with_its_name_alone(client, staff, pmc, conn):
         "address": None,
         "late_fees": None,
         "nsf_fee": None,
+        "reply_to": None,
         "logo": None,
     }
+
+
+def test_replies_to_the_companys_emails_go_to_its_own_email(client, staff, pmc, conn):
+    saved = ok(save(client, reply_to=" Office@Example.com "))
+    assert saved["reply_to"] == "Office@Example.com"
+    assert rows(conn, pmc) == 1
+    ok(save(client, reply_to="Office@Example.com"))
+    assert rows(conn, pmc) == 1  # the same again writes nothing
+    assert ok(save(client))["reply_to"] is None
+    assert rows(conn, pmc) == 2
 
 
 def test_staff_rename_it_keep_its_address_and_default_fees_and_a_same_save_writes_nothing(
@@ -217,6 +228,8 @@ def test_nobody_signed_out_sees_the_card_or_logo(client, pmc):
         {"late_fees": {"grace_days": 3, "percent": "100.01"}},
         {"late_fees": {"flat_fee": "25.00"}},
         {"nsf_fee": "1.001"},
+        {"reply_to": "not an email"},
+        {"reply_to": "x" * 250 + "@example.com"},
     ],
 )
 def test_a_bad_company_is_refused(client, staff, pmc, conn, body):
