@@ -156,8 +156,9 @@ def turn_on_statements(conn, pmc_id):
 
 def company_of(conn, pmc):
     conn.execute(
-        "INSERT INTO trust_company_profiles (pmc_id, address_line_1, city, state, postal_code)"
-        " VALUES (%s, '1 Synthetic Way', 'Anytown', 'ZZ', '00000')",
+        "INSERT INTO trust_company_profiles"
+        " (pmc_id, address_line_1, city, state, postal_code, reply_to)"
+        " VALUES (%s, '1 Synthetic Way', 'Anytown', 'ZZ', '00000', 'office@example.com')",
         (pmc.pmc_id,),
     )
     return conn.execute(
@@ -222,6 +223,8 @@ def test_each_kind_of_email_arrives_as_its_text_and_html_over_starttls(conn, app
         (got,) = [m for m in trusted.to(to) if m["Subject"] == subject]
         text = body.replace(email.LINK, link)
         assert got["From"] == {"Name": company, "Address": "pms@example.com"}
+        # Replies reach the company's own email (q086).
+        assert [a["Address"] for a in got["ReplyTo"]] == ["office@example.com"]
         assert [a["Address"] for a in got["To"]] == [to]
         assert got["Subject"] == subject
         assert got["Username"] == "pms"  # it signed in, after STARTTLS (Mailpit requires it)

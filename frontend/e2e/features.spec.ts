@@ -2853,6 +2853,64 @@ test("staff add a housing authority, set a lease's assistance, charge and credit
   ]);
 });
 
+test("staff bill last month's water back to Birch Flats' leases by unit, the owner keeping 10% and what isn't billed", async ({
+  page,
+}) => {
+  const people = seed.features["utility-billing"]!;
+  await joinAsStaff(page, people.manager);
+  const from = firstOfMonthsAgo(1);
+  const to = new Date(Date.parse(`${firstOfThisMonth()}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+
+  await section(page, "Utility billing");
+  await page.getByRole("combobox", { name: "Property", exact: true }).selectOption({ label: "Birch Flats" });
+  await expect(page.getByText("No utility is billed back yet.")).toBeVisible();
+
+  // Water by unit from last month, the owner keeping 10% for the common areas.
+  await page.getByRole("button", { name: "Set plan" }).click();
+  const plan = page.getByRole("dialog", { name: "Set plan" });
+  await plan.getByLabel("From").fill(from);
+  await plan.getByLabel("Owner keeps (percent, for the common areas)").fill("10");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await plan.getByRole("button", { name: "Save plan" }).click();
+  await expect(page.getByText(`Water is billed back by unit from ${us(from)}.`)).toBeVisible();
+
+  // Unit A's lease says it pays water; Unit B's doesn't.
+  await page.getByRole("button", { name: "Actions for Morgan Demo, Birch Flats Unit A" }).click();
+  await page.getByRole("menuitem", { name: "Utilities billed" }).click();
+  const billed = page.getByRole("dialog", { name: "Utilities billed" });
+  await billed.getByLabel("From").fill(from);
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await billed.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText(`Morgan Demo, Birch Flats Unit A is billed for water from ${us(from)}.`)).toBeVisible();
+
+  await page.getByRole("button", { name: "Actions for Unit A" }).click();
+  await page.getByRole("menuitem", { name: "Set square feet" }).click();
+  const area = page.getByRole("dialog", { name: "Square feet" });
+  await area.getByLabel("Square feet, Unit A").fill("750");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await area.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Unit A: 750 square feet.")).toBeVisible();
+
+  // Last month's $90.00 bill: 10% off leaves $81.00, $40.50 a unit; Unit B's isn't billed.
+  await page.getByRole("button", { name: "Bill back a utility" }).click();
+  const bill = page.getByRole("dialog", { name: "Bill back a utility" });
+  await bill.getByLabel("Period from").fill(from);
+  await bill.getByLabel("Period to").fill(to);
+  await bill.getByLabel("The bill's amount").fill("90.00");
+  await bill.getByRole("button", { name: "Preview" }).click();
+  await expect(bill.getByTestId("bill-preview")).toContainText(
+    "By unit, the owner keeping 10%: $40.50 to the leases, $49.50 stays with the owner.",
+  );
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await bill.getByRole("button", { name: "Charge the leases" }).click();
+  await expect(page.getByText("Water billed back: $40.50 charged to the leases; the owner keeps $49.50.")).toBeVisible();
+  const entered = page.getByRole("listitem", { name: `Water, ${us(from)} to ${us(to)}` });
+  await expect(entered.getByRole("row", { name: "Jamie Sample, Birch Flats Unit B" }).getByRole("cell")).toHaveText([
+    "Jamie Sample, Birch Flats Unit B", /days$/, "Not billed",
+  ]);
+  await expect(entered.getByRole("row", { name: "Morgan Demo, Birch Flats Unit A" }).getByRole("cell").last()).toHaveText("$40.50");
+});
+
 test("staff go on call; a tenant files an emergency with a photo and staff see it through to a visit the tenant sees, day and window", async ({
   browser,
   page,

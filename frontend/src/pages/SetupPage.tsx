@@ -53,6 +53,9 @@ export function SetupPage({ me }: { me: Me }) {
                 ? addressLines(company.address).map((line) => <span key={line} className="block text-ink-muted">{line}</span>)
                 : <span className="block text-ink-muted">No mailing address yet</span>}
             </address>
+            <p className="mt-2 text-sm text-ink-muted" data-testid="reply-to">
+              {company.reply_to ? `Replies to its emails go to ${company.reply_to}.` : "Replies to its emails go to the server's From address."}
+            </p>
             <div className="mt-3"><Button variant="secondary" onClick={() => setOpen("company")}>Edit company</Button></div>
           </Card>
           <LogoCard company={company} refresh={refresh} />
@@ -99,11 +102,15 @@ const blank = (text: string) => (text.trim() === "" ? null : text.trim());
 
 // What the save sends besides the part a form changes: the rest as it stands.
 function standing(company: Company) {
-  return { name: company.name, address: company.address, late_fees: company.late_fees, nsf_fee: company.nsf_fee };
+  return {
+    name: company.name, address: company.address, late_fees: company.late_fees, nsf_fee: company.nsf_fee,
+    reply_to: company.reply_to,
+  };
 }
 
 function CompanyForm({ company, save }: { company: Company; save: Save }) {
   const [name, setName] = useState(company.name);
+  const [replyTo, setReplyTo] = useState(company.reply_to ?? "");
   const [address, setAddress] = useState({
     address_line_1: company.address?.address_line_1 ?? "",
     address_line_2: company.address?.address_line_2 ?? "",
@@ -119,6 +126,7 @@ function CompanyForm({ company, save }: { company: Company; save: Save }) {
       return save({
         ...standing(company),
         name,
+        reply_to: blank(replyTo),
         address: given
           ? { ...address, address_line_2: blank(address.address_line_2) }
           : null,
@@ -130,6 +138,8 @@ function CompanyForm({ company, save }: { company: Company; save: Save }) {
       <Field label="City" id="company-city" required={given} maxLength={100} value={address.city} onChange={set("city")} />
       <Field label="State" id="company-state" required={given} maxLength={50} value={address.state} onChange={set("state")} />
       <Field label="ZIP code" id="company-zip" required={given} maxLength={20} value={address.postal_code} onChange={set("postal_code")} />
+      <Field label="Replies to the company's emails go to (optional)" id="company-reply-to" type="email" maxLength={254}
+        value={replyTo} onChange={(e) => setReplyTo(e.target.value)} />
       <div><Button type="submit">Save</Button></div>
     </Form>
   );

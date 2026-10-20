@@ -50,6 +50,7 @@ import { StaffPage } from "./pages/StaffPage";
 import { SwitchPage } from "./pages/SwitchPage";
 import { TenantHome } from "./pages/TenantHome";
 import { VendorLinkPage } from "./pages/VendorLinkPage";
+import { UtilityBillingPage } from "./pages/UtilityBillingPage";
 import { VendorsPage } from "./pages/VendorsPage";
 import { navigate, usePath } from "./router";
 
@@ -117,6 +118,7 @@ const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/renewals": (me) => <RenewalsPage me={me} />,
   "/banking": (me) => <BankingPage me={me} />,
   "/bills": (me) => <BillsPage me={me} />,
+  "/utility-billing": (me) => <UtilityBillingPage me={me} />,
   "/pay-bills": (me) => <PayBillsPage me={me} />,
   "/general-ledger": (me) => <GeneralLedgerPage me={me} />,
   "/journal": (me) => <JournalPage me={me} />,

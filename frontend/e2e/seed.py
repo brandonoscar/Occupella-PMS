@@ -480,6 +480,7 @@ FEATURES = (
     "shared-bills",
     "ownership",
     "housing-assistance",
+    "utility-billing",
     "emergencies",
     "recurring-work-orders",
     "vendor-links",

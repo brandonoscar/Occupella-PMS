@@ -22,7 +22,7 @@ from uuid import UUID
 
 import psycopg
 from fastapi import APIRouter, HTTPException, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StringConstraints
 
 from pms import exports
 from pms.api import documents
@@ -35,6 +35,12 @@ router = APIRouter(prefix="/api/company")
 LogoType = Literal["image/png", "image/jpeg"]
 ADDRESS = ("address_line_1", "address_line_2", "city", "state", "postal_code")
 LATE = ("late_grace_days", "late_flat_fee", "late_percent", "late_maximum")
+
+
+ReplyTo = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, max_length=254, pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$"),
+]
 
 
 class Address(BaseModel):
@@ -71,6 +77,8 @@ class Company(BaseModel):
     # The terms a property added from now on starts with; none, it starts with none.
     late_fees: DefaultLateFees | None
     nsf_fee: str | None
+    # Where replies to the company's emails go (q086); none, to the server's From address.
+    reply_to: str | None
     logo: Logo | None
 
 
@@ -84,7 +92,7 @@ class Card(BaseModel):
 
 def profile(conn: psycopg.Connection[Any], pmc_id: UUID) -> dict[str, Any]:
     """The latest profile row's fields (all None when there is none)."""
-    fields = (*ADDRESS, *LATE, "nsf_fee")
+    fields = (*ADDRESS, *LATE, "nsf_fee", "reply_to")
     row = conn.execute(
         f"SELECT {', '.join(fields)} FROM trust_company_profiles WHERE pmc_id = %s"  # noqa: S608
         " ORDER BY created_at DESC, id DESC LIMIT 1",
@@ -132,6 +140,7 @@ def company_of(conn: psycopg.Connection[Any], pmc_id: UUID) -> Company:
             maximum=None if found["late_maximum"] is None else exports.text(found["late_maximum"]),
         ),
         nsf_fee=None if found["nsf_fee"] is None else exports.text(found["nsf_fee"]),
+        reply_to=found["reply_to"],
         logo=logo_of(conn, pmc_id),
     )
 
@@ -147,6 +156,7 @@ class NewCompany(BaseModel):
     address: Address | None = None
     late_fees: LateFeeTerms | None = None
     nsf_fee: Money | None = None
+    reply_to: ReplyTo | None = None
 
 
 @router.post("")
@@ -166,6 +176,7 @@ def save_company(session: Staff, conn: Conn, new: NewCompany) -> Company:
         "late_percent": late.percent if late else None,
         "late_maximum": late.maximum if late else None,
         "nsf_fee": new.nsf_fee,
+        "reply_to": new.reply_to,
     }
     if wanted != profile(conn, session.pmc_id):
         columns = list(wanted)

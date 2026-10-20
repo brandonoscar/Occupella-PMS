@@ -15,10 +15,11 @@ const ME: Me = {
 const ADDRESS = {
   address_line_1: "100 Example Street", address_line_2: "Suite 2", city: "Sampletown", state: "ZZ", postal_code: "00000",
 };
-const BARE: Company = { name: "Synthetic PMC", address: null, late_fees: null, nsf_fee: null, logo: null };
+const BARE: Company = { name: "Synthetic PMC", address: null, late_fees: null, nsf_fee: null, reply_to: null, logo: null };
 const FULL: Company = {
   name: "Synthetic PMC", address: ADDRESS,
   late_fees: { grace_days: 5, flat_fee: "50.00", percent: "0", maximum: null }, nsf_fee: "35.00",
+  reply_to: "office@example.com",
   logo: { id: "d1", content_type: "image/png", uploaded_at: "2026-10-17T00:00:00Z" },
 };
 
@@ -49,6 +50,7 @@ describe("SetupPage", () => {
     expect(screen.getByRole("img", { name: "Synthetic PMC logo" }).getAttribute("src")).toBe("/api/company/logo?v=d1");
     expect(screen.getByTestId("default-late-fees").textContent).toBe("After 5 days' grace: $50.00");
     expect(screen.getByTestId("default-nsf-fee").textContent).toBe("NSF fee $35.00");
+    expect(screen.getByTestId("reply-to").textContent).toBe("Replies to its emails go to office@example.com.");
     expect(screen.getByRole("link", { name: "Settings" }).getAttribute("aria-current")).toBe("page");
   });
 
@@ -59,6 +61,7 @@ describe("SetupPage", () => {
     expect(screen.getByText("No logo yet")).toBeTruthy();
     expect(screen.getByTestId("default-late-fees").textContent).toBe("No late fee terms");
     expect(screen.getByTestId("default-nsf-fee").textContent).toBe("No NSF fee");
+    expect(screen.getByTestId("reply-to").textContent).toBe("Replies to its emails go to the server's From address.");
     expect(screen.queryByRole("button", { name: "Remove logo" })).toBeNull();
   });
 
@@ -73,8 +76,27 @@ describe("SetupPage", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(posted(fetch)).toEqual([["/api/company", {
       name: "Synthetic PMC 2", address: { ...ADDRESS, address_line_2: null },
-      late_fees: FULL.late_fees, nsf_fee: "35.00",
+      late_fees: FULL.late_fees, nsf_fee: "35.00", reply_to: "office@example.com",
     }]]);
+  });
+
+  it("sets where replies to the company's emails go, or clears it", async () => {
+    const fetch = server(BARE);
+    render(<SetupPage me={ME} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit company" }));
+    type("Replies to the company's emails go to (optional)", " leasing@example.com ");
+    fireEvent.click(within(panel()).getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(1));
+    expect(posted(fetch)[0]?.[1]).toMatchObject({ reply_to: "leasing@example.com" });
+    cleanup();
+
+    const again = server(FULL);
+    render(<SetupPage me={ME} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit company" }));
+    type("Replies to the company's emails go to (optional)", "");
+    fireEvent.click(within(panel()).getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(posted(again)).toHaveLength(1));
+    expect(posted(again)[0]?.[1]).toMatchObject({ reply_to: null });
   });
 
   it("clears the address when every part of it is emptied", async () => {
@@ -99,7 +121,7 @@ describe("SetupPage", () => {
     expect(await screen.findByText("Saved the fees new properties start with.")).toBeTruthy();
     expect(posted(fetch)).toEqual([["/api/company", {
       name: "Synthetic PMC", address: null,
-      late_fees: { grace_days: 3, flat_fee: "25.00", percent: "0", maximum: null }, nsf_fee: "35.00",
+      late_fees: { grace_days: 3, flat_fee: "25.00", percent: "0", maximum: null }, nsf_fee: "35.00", reply_to: null,
     }]]);
     cleanup();
 

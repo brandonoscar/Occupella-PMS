@@ -1189,6 +1189,19 @@ tests = [
 ]
 
 [[invariant]]
+id = "utility-billing-never-past-the-bill"
+statement = "A property's utility bill for a period is shared by the plan in force on its first day (by unit, square feet, occupants or submeter): the owner's share comes off, and each lease billed for the utility is charged its weight's part of the rest rounded down to the cent, as a fee; a lease not billed, a vacant unit's days (by unit and square feet), the common areas and every part of a cent stay with the owner, so the tenants are never charged more than the bill; no two bills of a property for a utility cover a day (migration 0096)."
+tests = [
+  "tests/properties/test_utility_properties.py::test_a_utility_bill_shares_to_the_cent_and_never_past_the_bill",
+  "tests/test_utility_billing.py::test_by_unit_a_vacant_units_days_stay_with_the_owner",
+  "tests/test_utility_billing.py::test_the_owners_share_and_each_part_of_a_cent_stay_with_the_owner",
+  "tests/test_utility_billing.py::test_by_occupants_a_lease_not_billed_keeps_its_share_with_the_owner",
+  "tests/test_utility_billing.py::test_by_submeter_each_lease_pays_its_reading_of_the_master_meter",
+  "tests/test_utility_billing.py::test_no_two_bills_cover_a_day",
+  "tests/api/test_utilities_api.py::test_staff_bill_it_back_and_each_billed_lease_is_charged_its_share",
+]
+
+[[invariant]]
 id = "housing-assistance-splits-the-rent"
 statement = "A lease's housing assistance from a month splits each month's rent as it is charged: the authority's part (its share of the month's rent to the cent, prorated as the rent, never more than it) is the authority's charge and the tenant is charged the rest, so the two come to the month's rent through every lease end set, moved or cleared; the tenant's late fees, deposit kept and balance count the tenant's part alone; an authority's payment pays its charges oldest first into the owners' accounts, never more than it owes, and counts as rent collected; a transfer pays a tenant's charges or an authority's, never both; every trust bank account ties out (migration 0095)."
 tests = [

@@ -65,6 +65,8 @@ class Message:
     from_name: str = ""
     # The same email as HTML, sent beside the text when there is one.
     html: str = ""
+    # The company's own email, where replies go (q086); none, to the From address.
+    reply_to: str = ""
 
 
 class Sender(Protocol):
@@ -98,6 +100,8 @@ class SmtpSender:
         email = EmailMessage()
         email["From"] = formataddr((message.from_name, self.from_address))
         email["To"] = message.to
+        if message.reply_to:
+            email["Reply-To"] = message.reply_to
         email["Subject"] = message.subject
         email.set_content(message.body)
         if message.html:
@@ -404,12 +408,13 @@ def write_signing_request(
 PENDING = """
 SELECT e.id, e.pmc_id, e.kind, e.to_address, e.subject, e.body, e.needs_link,
        e.created_at < now() - make_interval(mins => %(minutes)s), p.display_name,
-       a.address_line_1, a.address_line_2,
+       a.reply_to, a.address_line_1, a.address_line_2,
        a.city || ', ' || a.state || ' ' || a.postal_code
 FROM trust_emails AS e
 JOIN trust_pmcs AS p ON p.pmc_id = e.pmc_id
 -- The company's mailing address, as its latest profile says (none: no address).
-LEFT JOIN LATERAL (SELECT c.address_line_1, c.address_line_2, c.city, c.state, c.postal_code
+LEFT JOIN LATERAL (SELECT c.reply_to, c.address_line_1, c.address_line_2, c.city, c.state,
+                          c.postal_code
                    FROM trust_company_profiles AS c WHERE c.pmc_id = e.pmc_id
                    ORDER BY c.created_at DESC, c.id DESC LIMIT 1) AS a ON true
 WHERE NOT EXISTS (SELECT 1 FROM trust_email_deliveries AS d
@@ -435,7 +440,19 @@ def deliver_pending(conn: psycopg.Connection[Any], sender: Sender, limit: int = 
         PENDING,
         {"minutes": LINK_MINUTES, "lost": LINK_LOST, "attempts": MAX_ATTEMPTS, "limit": limit},
     ).fetchall():
-        email_id, pmc_id, kind, to, subject, body, needs_link, stale, company, *address = row
+        (
+            email_id,
+            pmc_id,
+            kind,
+            to,
+            subject,
+            body,
+            needs_link,
+            stale,
+            company,
+            reply_to,
+            *address,
+        ) = row
         link = _held_link(email_id) if needs_link else None
         if needs_link and link is None and not stale:
             continue  # its link is held by the process that wrote it, which sends it
@@ -456,7 +473,7 @@ def deliver_pending(conn: psycopg.Connection[Any], sender: Sender, limit: int = 
                     text = body.replace(LINK, link) if link is not None else body
                     lines = tuple(line for line in address if line)
                     html = email_html.render(text, kind, subject, company, lines)
-                    sender.send(Message(to, subject, text, company, html))
+                    sender.send(Message(to, subject, text, company, html, reply_to or ""))
                     error = None
                 except (OSError, smtplib.SMTPException) as refused:
                     error = f"{type(refused).__name__}: {refused}"[:1000]

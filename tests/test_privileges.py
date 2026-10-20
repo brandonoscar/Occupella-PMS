@@ -207,6 +207,14 @@ TABLES = {
     "trust_rent_assistance": {"SELECT", "INSERT"},
     "trust_assistance_charges": {"SELECT", "INSERT"},
     "trust_assistance_payments": {"SELECT"},
+    # Utility billing (migration 0096): staff record units' square feet, a property's plans and
+    # which utilities a lease is billed for; bills and their shares are written only by
+    # trust_bill_back_utility, with the lease charges they make.
+    "trust_unit_areas": {"SELECT", "INSERT"},
+    "trust_utility_plans": {"SELECT", "INSERT"},
+    "trust_lease_utilities": {"SELECT", "INSERT"},
+    "trust_utility_bills": {"SELECT"},
+    "trust_utility_shares": {"SELECT"},
     "trust_on_call_staff": {"SELECT", "INSERT"},
     "trust_recurring_work_orders": {"SELECT", "INSERT"},
     "trust_recurring_work_order_ends": {"SELECT", "INSERT"},
@@ -330,6 +338,17 @@ FUNCTIONS = {
     "trust_assistance_part(numeric,numeric,numeric)": {"trust_app"},
     "trust_assistance_open(uuid)": {"trust_app"},
     "trust_apply_assistance_payment(uuid,uuid,text,numeric)": {"trust_app"},
+    # Utility billing (migration 0096): what holds on a day, a bill's shares (a preview writes
+    # nothing) and billing it back.
+    "trust_unit_area(uuid)": {"trust_app"},
+    "trust_utility_plan_on(uuid,text,date)": {"trust_app"},
+    "trust_lease_billed(uuid,text,date)": {"trust_app"},
+    "trust_lease_people(uuid,date)": {"trust_app"},
+    "trust_utility_weights(uuid,uuid,text,date,date,text,jsonb)": {"trust_app"},
+    "trust_utility_allocation(uuid,uuid,text,date,date,numeric,numeric,jsonb)": {"trust_app"},
+    "trust_bill_back_utility(uuid,uuid,text,date,date,numeric,date,text,numeric,jsonb,uuid)": {
+        "trust_app"
+    },
     "trust_charge_recurring_due(uuid,date)": {"trust_app"},
     "trust_charge_rent_on_due_days(uuid,date,date)": {"trust_app"},
     "trust_charge_recurring_on_due_days(uuid,date,date)": {"trust_app"},
@@ -530,6 +549,7 @@ SECURITY_DEFINER = {
     "trust_end_lease(uuid,uuid,date)",
     "trust_apply_payment(uuid,uuid,text,numeric)",
     "trust_apply_assistance_payment(uuid,uuid,text,numeric)",  # an authority's payment (0095)
+    "trust_bill_back_utility(uuid,uuid,text,date,date,numeric,date,text,numeric,jsonb,uuid)",
     "trust_reverse_payment(uuid,uuid,text,text,numeric)",
     "trust_post_management_fee(uuid,text,date,date,timestamptz)",
     "trust_post_leasing_fee(uuid,uuid,text,timestamptz)",
