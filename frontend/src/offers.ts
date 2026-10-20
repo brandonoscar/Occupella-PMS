@@ -1,10 +1,19 @@
+import type { Progress } from "./signing";
 // Lease offers and renewals as the API sends them (src/pms/api/offers.py), and how they read.
 import type { BadgeTone } from "./components/Badge";
 import { usDate } from "./money";
 
 // A signer is a tenant to be, or the lease's guarantor, who signs without becoming a tenant.
 export type SignerRole = "tenant" | "guarantor";
-export type Signer = { position: number; name: string; email: string; role: SignerRole; signed_at: string | null };
+// Where each signer stands on the signing page (ADR 0008): see PROGRESS in signing.ts.
+export type Signer = {
+  position: number;
+  name: string;
+  email: string;
+  role: SignerRole;
+  signed_at: string | null;
+  progress: Progress;
+};
 
 // Where an offer stands: a draft, sent and signed by none, some or all of its signers, made the
 // lease, or voided.

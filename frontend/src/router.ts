@@ -17,7 +17,7 @@ export function usePath(): string {
   return path;
 }
 
-// Leaves the portal for another page, such as an e-sign partner's.
+// Leaves the page for another, such as the signing page a tenant's new link opens.
 export function leave(url: string): void {
   window.location.assign(url);
 }

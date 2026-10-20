@@ -590,7 +590,7 @@ browser = [
 
 [[feature]]
 id = "lease-offers"
-statement = "On Draft leases (Waiting for signatures, Leases made, Void, All, by property group) staff draft a lease for an approved applicant or a renewal of a lease, with the company's own PDF, the security deposit it asks and its monthly fees and credits, kept as a draft or sent at once; on its page they send it, show its links again, check signatures, void it, or activate it once everyone has signed on the partner's page (a tenant signs a renewal from the portal), its monthly charges becoming the lease's."
+statement = "On Draft leases (Waiting for signatures, Leases made, Void, All, by property group) staff draft a lease for an approved applicant or a renewal of a lease, with the company's own PDF, the security deposit it asks and its monthly fees and credits, kept as a draft or sent at once; on its page they send it, void it, or activate it once everyone has signed (a tenant signs a renewal from the portal), its monthly charges becoming the lease's."
 operations = [
   "GET /api/leasing/leases",
   "POST /api/leasing/applications/{application_id}/offer",
@@ -600,17 +600,33 @@ operations = [
   "POST /api/leasing/offers/{offer_id}/send",
   "POST /api/leasing/offers/{offer_id}/void",
   "GET /api/leasing/offers/{offer_id}/document",
-  "GET /api/leasing/offers/{offer_id}/links",
-  "POST /api/leasing/offers/{offer_id}/signatures",
   "POST /api/leasing/offers/{offer_id}/complete",
   "GET /api/tenant/renewals",
   "GET /api/tenant/renewals/{offer_id}/document",
   "POST /api/tenant/renewals/{offer_id}/signing-link",
-  "POST /api/fake-esign/view",
-  "POST /api/fake-esign/sign",
 ]
 browser = [
-  "portal.spec.ts › staff draft a lease with a deposit and a monthly charge and send it, void a renewal, send another; the signers sign on the partner's page; both become leases",
+  "portal.spec.ts › staff draft a lease with a deposit and a monthly charge and send it, void a renewal, send another; the signers sign on the PMS's own page; both become leases",
+]
+
+[[feature]]
+id = "lease-signing"
+statement = "A signer signs on the PMS's own page through their link (ADR 0008): they read the consumer disclosures and agree to sign electronically or ask for paper, open the lease, type their name and maybe draw their signature, then keep the lease and its signing certificate; staff see how far each signer got, make new links and download the certificate; a tenant downloads their lease as signed, its certificate and the lease documents staff keep on its Files tab (q120)."
+operations = [
+  "GET /api/tenant/leases/{lease_id}/signed-lease",
+  "GET /api/tenant/leases/{lease_id}/signing-certificate",
+  "GET /api/tenant/leases/{lease_id}/documents/{document_id}",
+  "POST /api/signing/view",
+  "POST /api/signing/consent",
+  "POST /api/signing/paper",
+  "POST /api/signing/document",
+  "POST /api/signing/sign",
+  "POST /api/signing/certificate",
+  "POST /api/leasing/offers/{offer_id}/links",
+  "GET /api/leasing/offers/{offer_id}/certificate",
+]
+browser = [
+  "portal.spec.ts › staff draft a lease with a deposit and a monthly charge and send it, void a renewal, send another; the signers sign on the PMS's own page; both become leases",
 ]
 
 [[feature]]

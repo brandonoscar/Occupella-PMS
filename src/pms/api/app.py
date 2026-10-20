@@ -56,7 +56,6 @@ from pms.api import (
     directory,
     documents,
     emails,
-    fake_esign,
     general_ledger,
     groups,
     household,
@@ -84,6 +83,7 @@ from pms.api import (
     screening_criteria,
     setup,
     signers,
+    signing,
     staff,
     switching,
     tenant,
@@ -94,7 +94,7 @@ from pms.api import (
     work_orders,
 )
 from pms.api.deps import COOKIE, Conn, Current, Staff, download, refusal
-from pms.leasing import esign, screening
+from pms.leasing import screening
 
 HEALTH_TIMEOUT = 2.0  # seconds to wait for a database connection before answering 503
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -110,8 +110,6 @@ class Settings:
     static_dir: Path | None = None
     # The tenant screening partner (pms.leasing.screening): "fake", or empty for none.
     screening_partner: str = ""
-    # The e-sign partner (pms.leasing.esign): "fake", or empty for none.
-    esign_partner: str = ""
     # The email sender (pms.email): "fake", "smtp" (its settings from the environment), or
     # empty for none.
     email_sender: str = ""
@@ -130,7 +128,6 @@ class Settings:
             if "PMS_STATIC_DIR" in os.environ
             else None,
             screening_partner=os.environ.get("PMS_SCREENING_PARTNER", ""),
-            esign_partner=os.environ.get("PMS_ESIGN_PARTNER", ""),
             email_sender=os.environ.get("PMS_EMAIL_SENDER", ""),
             nightly=os.environ.get("PMS_NIGHTLY", "on").lower() != "off",
         )
@@ -256,7 +253,6 @@ def create_app(settings: Settings) -> FastAPI:
     app.state.settings = settings
     app.state.pool = pool
     app.state.screening = screening.partner_named(settings.screening_partner)
-    app.state.esign = esign.partner_named(settings.esign_partner, settings.public_url)
     # The SMTP settings come straight from the environment, so a password is never part of
     # Settings (which a log or an error could print).
     app.state.email = email.sender_named(settings.email_sender, os.environ)
@@ -496,8 +492,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(leasing.router)
     app.include_router(offers.router)
     app.include_router(listings.router)
-    if isinstance(app.state.esign, esign.FakeESign):
-        app.include_router(fake_esign.router)
+    app.include_router(signing.router)
     app.include_router(people.router)
     app.include_router(setup.router)
     app.include_router(rent.router)

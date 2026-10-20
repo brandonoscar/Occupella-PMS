@@ -220,6 +220,11 @@ TABLES = {
     "trust_recurring_work_order_ends": {"SELECT", "INSERT"},
     "trust_vendor_links": {"SELECT", "INSERT"},
     "trust_vendor_link_revocations": {"SELECT", "INSERT"},
+    # E-signing on the PMS's own page (migration 0097): a signer's links, what they did through
+    # one and their signature's evidence, each written by the app as it happens.
+    "trust_signing_links": {"SELECT", "INSERT"},
+    "trust_signing_events": {"SELECT", "INSERT"},
+    "trust_signature_evidence": {"SELECT", "INSERT"},
     "trust_leads": {"SELECT", "INSERT"},
     "trust_screening_criteria": {"SELECT", "INSERT"},
     "trust_lead_closings": {"SELECT", "INSERT"},
@@ -272,6 +277,10 @@ AI_NEVER_READS = {
     "trust_signature_requests",
     "trust_signatures",
     "trust_lease_offer_completions",
+    # Signers' links, consents with the address and browser they came from, and signatures.
+    "trust_signing_links",
+    "trust_signing_events",
+    "trust_signature_evidence",
     # A document's bytes (a W-9 carries a tax ID): the AI may know it exists, never read it.
     "trust_document_files",
     # Emails to owners and their deliveries: people's addresses (ADR 0004).
@@ -338,6 +347,8 @@ FUNCTIONS = {
     "trust_assistance_part(numeric,numeric,numeric)": {"trust_app"},
     "trust_assistance_open(uuid)": {"trust_app"},
     "trust_apply_assistance_payment(uuid,uuid,text,numeric)": {"trust_app"},
+    # Whether a signing link still signs (migration 0097).
+    "trust_signing_link_open(uuid)": {"trust_app"},
     # Utility billing (migration 0096): what holds on a day, a bill's shares (a preview writes
     # nothing) and billing it back.
     "trust_unit_area(uuid)": {"trust_app"},
@@ -419,6 +430,11 @@ FUNCTIONS = {
     "trust_check_tenant_payment_transfer()": set(),
     "trust_check_work_order_charge()": set(),
     "trust_check_vendor_link_step()": set(),
+    "trust_check_signing_link()": set(),
+    "trust_check_signing_event()": set(),
+    "trust_check_signature_evidence()": set(),
+    "trust_record_evidenced_signature()": set(),
+    "trust_check_signature_evidenced()": set(),
     "trust_check_lead_open()": set(),
     "trust_check_decision_override()": set(),
     "trust_fill_bill_markup()": set(),

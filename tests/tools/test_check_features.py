@@ -45,7 +45,7 @@ def test_the_repos_own_registry_claims_everything_the_api_serves():
     operations = check_features.served(check_features.ROOT)
     on_file = tomllib.loads((check_features.ROOT / check_features.FILE).read_text())
     # The API as served, the fake partners' routes included.
-    assert {"GET /health", "POST /api/rent/run", "POST /api/fake-esign/sign"} <= operations
+    assert {"GET /health", "POST /api/rent/run", "POST /api/signing/sign"} <= operations
     assert check_features.check(on_file, operations) == []
 
 

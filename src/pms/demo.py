@@ -69,11 +69,12 @@ from pms.api import (
     rent,
     setup,
     signers,
+    signing,
     staff,
     vendors,
     work_orders,
 )
-from pms.leasing import esign, screening
+from pms.leasing import screening
 
 D = Decimal
 DAY = timedelta(days=1)
@@ -541,16 +542,17 @@ def harbor_rent(unit: str) -> D:
 
 
 class _Request:
-    """What the leasing routes read off a request: the server's settings and partners, here the
-    fakes the demo applies, screens and signs with."""
+    """What the leasing and signing routes read off a request: the server's settings and its
+    screening partner, here the fake the demo screens with; no address or browser."""
 
     def __init__(self, public_url: str) -> None:
         state = SimpleNamespace(
             settings=SimpleNamespace(public_url=public_url),
             screening=screening.FakeScreening(),
-            esign=esign.FakeESign(public_url),
         )
         self.app = SimpleNamespace(state=state)
+        self.client = None
+        self.headers: dict[str, str] = {}
 
 
 def on_or_before(day: date, today: date) -> date:
@@ -995,10 +997,20 @@ def leasing_pipeline(
                 ],
             ),
         )
+    # The first signer signs on the signing page: agrees to sign electronically, opens the
+    # lease and types their name.
     first = offered.links[0]
-    request.app.state.esign.sign(first.url.split("#", 1)[1], first.name)
-    with b.as_staff(demo.manager) as s:
-        offers.check_signatures(request, s, conn, offered.offer.id)
+    token = first.url.split("#", 1)[1]
+    seen = signing.view(conn, signing.SigningToken(token=token))
+    signing.consent(
+        request, conn, signing.Consent(token=token, disclosure_sha256=seen.disclosure_sha256)
+    )
+    signing.document(request, conn, signing.SigningToken(token=token))
+    signing.sign(
+        request,
+        conn,
+        signing.Signature(token=token, typed_name=first.name, document_sha256=seen.document_sha256),
+    )
     # Cedar House's renewal for next year, kept as a draft until its terms are agreed.
     with b.as_staff(demo.manager) as s:
         offers.offer_renewal(

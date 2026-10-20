@@ -14,6 +14,7 @@ import { when } from "../maintenance";
 import { money, usDate } from "../money";
 import type { Offer, Offered, SigningLink } from "../offers";
 import { offerBadge, sentLine, signedCount, term } from "../offers";
+import { PROGRESS } from "../signing";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
@@ -23,10 +24,10 @@ const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 const TEXTAREA = "rounded-sm border border-line-strong bg-sunken px-3 py-2 text-base text-ink";
 
 // A draft lease's own page (ADR 0006): its terms, the deposit it asks and its monthly charges, the
-// company's lease PDF, its signers and who has signed. Send sends a draft to its signers through
-// the e-sign partner; Resend shows each signer's link again; Check signatures records what the
-// partner reports; Activate lease makes a signed offer the lease, with its monthly charges. Its ⋯
-// menu voids an offer that is not a lease yet.
+// company's lease PDF, its signers and how far each got on the PMS's signing page (ADR 0008), and
+// its signing certificate. Send sends a draft to its signers; Resend makes each signer who hasn't
+// signed a new link (the old ones keep working until they run out); Activate lease makes a signed
+// offer the lease, with its monthly charges. Its ⋯ menu voids an offer that is not a lease yet.
 export function DraftLeasePage({ me, id }: { me: Me; id: string }) {
   const [found, setFound] = useState<Offer | null>(null);
   const [error, setError] = useState("");
@@ -57,14 +58,11 @@ export function DraftLeasePage({ me, id }: { me: Me; id: string }) {
   const name = `${found.property}, ${found.unit}`;
   const badge = offerBadge(found.status);
   const waiting = found.status === "sent" || found.status === "partially signed";
-  const resend = async () => {
-    setLinks(null);
-    try {
-      setLinks(await api.get<SigningLink[]>(`/api/leasing/offers/${id}/links`));
-    } catch (why) {
-      setError(why instanceof ApiError ? why.detail : String(why));
-    }
-  };
+  const resend = () =>
+    record<SigningLink[]>(`/api/leasing/offers/${id}/links`, {}, (made) => {
+      setLinks(made);
+      return `A new link for ${made.length === 1 ? "1 signer" : `${made.length} signers`}.`;
+    });
   return (
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title={`${found.kind === "renewal" ? "Renewal" : "Lease"} for ${name}`} actions={
@@ -77,15 +75,7 @@ export function DraftLeasePage({ me, id }: { me: Me; id: string }) {
               Send
             </Button>
           )}
-          {waiting && (
-            <>
-              <Button variant="secondary" onClick={resend}>Resend</Button>
-              <Button variant="secondary" onClick={() => record<Offer>(`/api/leasing/offers/${id}/signatures`, {},
-                (checked) => `${signedCount(checked)}.`)}>
-                Check signatures
-              </Button>
-            </>
-          )}
+          {waiting && <Button variant="secondary" onClick={resend}>Resend</Button>}
           {(waiting || found.status === "signed") && (
             <Button onClick={() => record<Offer>(`/api/leasing/offers/${id}/complete`, {},
               (made) => `${name} has its lease from ${usDate(made.starts_on)}.`)}>
@@ -134,6 +124,11 @@ export function DraftLeasePage({ me, id }: { me: Me; id: string }) {
           <Item label="Document">
             <a className={LINK} href={`/api/leasing/offers/${encodeURIComponent(id)}/document`}>{found.document_title} (PDF)</a>
           </Item>
+          {found.sent && (
+            <Item label="Signing certificate">
+              <a className={LINK} href={`/api/leasing/offers/${encodeURIComponent(id)}/certificate`}>Signing certificate (PDF)</a>
+            </Item>
+          )}
         </dl>
       </Card>
       <Card title="Monthly charges">
@@ -169,6 +164,7 @@ export function DraftLeasePage({ me, id }: { me: Me; id: string }) {
               <tr>
                 <th className="text-left">Signer</th>
                 <th className="text-left">Email</th>
+                <th className="text-left">Where</th>
                 <th className="text-left">Signed</th>
               </tr>
             </thead>
@@ -177,6 +173,7 @@ export function DraftLeasePage({ me, id }: { me: Me; id: string }) {
                 <tr key={s.position}>
                   <td>{s.name}{s.role === "guarantor" && <> <Badge tone="neutral">Guarantor</Badge></>}</td>
                   <td>{s.email}</td>
+                  <td>{found.sent ? <Badge tone={PROGRESS[s.progress].tone} data-testid="progress">{PROGRESS[s.progress].word}</Badge> : null}</td>
                   <td>{s.signed_at ? when(s.signed_at) : <span className="text-ink-muted">{found.sent ? "Not yet" : "Not sent"}</span>}</td>
                 </tr>
               ))}

@@ -46,7 +46,6 @@ def served(root: Path) -> set[str]:
         Settings(
             database_url="postgresql://nobody@127.0.0.1:1/none",
             screening_partner="fake",
-            esign_partner="fake",
             email_sender="fake",
         )
     )

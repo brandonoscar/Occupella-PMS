@@ -3,9 +3,11 @@
 Staff offer a lease to an approved application, or a renewal of a lease, with the PMC's own
 lease document (a PDF uploaded as base64; the PMS writes no lease text), the security deposit it
 asks and the monthly fees and credits it will owe besides rent. Leasing, Draft leases (ADR 0006)
-keeps an offer as a draft until staff send it, or sends it at once: it goes to the server's
-e-sign partner (pms.leasing.esign) for its signers, and staff send each signer their link.
-Signatures are recorded as the partner reports them. When everyone has signed, staff activate
+keeps an offer as a draft until staff send it, or sends it at once: each signer signs on the
+PMS's own signing page (ADR 0008, pms.leasing.esign, src/pms/api/signing.py) through a link of
+their own, which staff give them (and the PMS emails while the server sends email); staff make
+new links when one runs out. A signature is recorded as the signer signs, with its evidence, and
+the offer's signing certificate is staff's to download. When everyone has signed, staff activate
 it: trust_complete_lease_offer opens the lease, with the offer's monthly charges as its recurring
 charges. Staff void an offer that is not a lease yet; it takes nothing more (migration 0071).
 
@@ -30,7 +32,9 @@ from pms import accounts, exports
 from pms import email as outgoing
 from pms.api import outbox, scope
 from pms.api.deps import Conn, Staff, Tenant, refusal
+from pms.api.leasing import public_url
 from pms.api.rentals import Page, Paged, PerPage
+from pms.api.signing import certificate_pdf
 from pms.leasing import esign
 
 router = APIRouter()
@@ -83,12 +87,25 @@ class Void(BaseModel):
     reason: str | None = Field(default=None, max_length=500)
 
 
+# Where a signer stands on the signing page: nothing done yet, agreed to sign electronically,
+# opened the lease, asked to sign on paper (the latest of these, through any of their links), or
+# signed.
+Progress = Literal["waiting", "agreed", "opened", "paper", "signed"]
+PROGRESS: dict[str | None, Progress] = {
+    None: "waiting",
+    "consented": "agreed",
+    "opened": "opened",
+    "paper": "paper",
+}
+
+
 class SignerOut(BaseModel):
     position: int
     name: str
     email: str
     role: Role
     signed_at: datetime | None
+    progress: Progress
 
 
 class ChargeOut(BaseModel):
@@ -136,7 +153,7 @@ class SigningLink(BaseModel):
 
 class Offered(BaseModel):
     offer: OfferOut
-    # Shown to staff to send to each signer; GET .../links gives them again.
+    # Shown to staff to send to each signer; POST .../links makes new ones.
     links: list[SigningLink]
     # Whom the PMS emailed their link, while the server sends email (migration 0090).
     emailed: list[str] = []
@@ -156,13 +173,6 @@ class LeaseOut(BaseModel):
     ends_on: date | None
     monthly_rent: str
     tenants: list[LeaseTenant]
-
-
-def partner_of(request: Request) -> esign.Partner:
-    partner: esign.Partner | None = request.app.state.esign
-    if partner is None:
-        raise HTTPException(503, "no e-sign partner is set up on this server")
-    return partner
 
 
 def document_of(offer: OfferIn) -> bytes:
@@ -265,15 +275,26 @@ def offers_of(
     ).fetchall()
     ids = [row[0] for row in rows]
     signers: dict[UUID, list[SignerOut]] = {i: [] for i in ids}
-    for offer_id, position, name, email, role, signed_at in conn.execute(
-        "SELECT s.offer_id, s.position, s.display_name, s.email, s.role, g.signed_at"
+    for offer_id, position, name, email, role, signed_at, latest in conn.execute(
+        "SELECT s.offer_id, s.position, s.display_name, s.email, s.role, g.signed_at,"
+        " (SELECT e.kind FROM trust_signing_events AS e"
+        "  JOIN trust_signing_links AS l ON l.id = e.link_id"
+        "  WHERE l.offer_id = s.offer_id AND l.position = s.position"
+        "  ORDER BY e.created_at DESC LIMIT 1)"
         " FROM trust_lease_offer_signers AS s"
         " LEFT JOIN trust_signatures AS g ON g.offer_id = s.offer_id AND g.position = s.position"
         " WHERE s.offer_id = ANY(%s) ORDER BY s.offer_id, s.position",
         (ids,),
     ).fetchall():
         signers[offer_id].append(
-            SignerOut(position=position, name=name, email=email, role=role, signed_at=signed_at)
+            SignerOut(
+                position=position,
+                name=name,
+                email=email,
+                role=role,
+                signed_at=signed_at,
+                progress="signed" if signed_at is not None else PROGRESS[latest],
+            )
         )
     charges: dict[UUID, list[ChargeOut]] = {i: [] for i in ids}
     for offer_id, kind, memo, amount in conn.execute(
@@ -341,73 +362,60 @@ def offer_of(conn: psycopg.Connection[Any], pmc_id: UUID, offer: UUID) -> OfferO
     return found[0]
 
 
-def links_of(partner: esign.Partner, reference: str, offer: OfferOut) -> list[SigningLink]:
-    return [
-        SigningLink(
-            position=s.position,
-            name=s.name,
-            email=s.email,
-            url=partner.signing_link(reference, s.position),
-        )
-        for s in offer.signers
-    ]
+def links_of(
+    conn: psycopg.Connection[Any],
+    request: Request,
+    pmc_id: UUID,
+    offer: UUID,
+    signers: list[SignerOut],
+) -> list[SigningLink]:
+    """A new signing link for each of the signers, in the request's transaction."""
+    try:
+        return [
+            SigningLink(
+                position=s.position,
+                name=s.name,
+                email=s.email,
+                url=esign.new_link(conn, pmc_id, offer, s.position, public_url(request)),
+            )
+            for s in signers
+        ]
+    except psycopg.errors.CheckViolation as refused:
+        # Voided, made the lease or signed since it was read.
+        raise HTTPException(409, refusal(refused)) from None
 
 
-def reference_of(conn: psycopg.Connection[Any], offer: UUID) -> str:
+def sent_here(conn: psycopg.Connection[Any], offer: UUID) -> None:
+    """A 409 unless the offer was sent to sign on the PMS's own page."""
     row = conn.execute(
-        "SELECT partner_reference FROM trust_signature_requests WHERE offer_id = %s", (offer,)
+        "SELECT partner FROM trust_signature_requests WHERE offer_id = %s", (offer,)
     ).fetchone()
     if row is None:
-        raise HTTPException(409, "this offer was never sent for signing")
-    return str(row[0])
-
-
-def record_signatures(
-    conn: psycopg.Connection[Any], partner: esign.Partner, offer: OfferOut
-) -> None:
-    """Records the signatures the partner reports that aren't recorded yet."""
-    if offer.status not in ("sent", "partially signed"):
-        return
-    signed = partner.signed(reference_of(conn, offer.id))
-    with conn.cursor() as cur:
-        cur.executemany(
-            "INSERT INTO trust_signatures (pmc_id, offer_id, position, signed_at)"
-            " SELECT o.pmc_id, o.id, %s, %s FROM trust_lease_offers AS o WHERE o.id = %s"
-            " ON CONFLICT (offer_id, position) DO NOTHING",
-            [(position, at, offer.id) for position, at in signed.items()],
+        raise HTTPException(409, "this offer is a draft: send it to its signers first")
+    if row[0] != esign.PARTNER:
+        raise HTTPException(
+            409,
+            "this offer was sent to an e-sign partner the PMS no longer uses: void it and"
+            " send a new one",
         )
 
 
 def send_offer(
-    conn: psycopg.Connection[Any], session: accounts.Session, partner: esign.Partner, offer: UUID
+    conn: psycopg.Connection[Any], request: Request, session: accounts.Session, offer: UUID
 ) -> Offered:
-    """Sends an offer to the partner for its signers and records the request."""
-    row = conn.execute(
-        "SELECT document_title, document FROM trust_lease_offers WHERE id = %s", (offer,)
-    ).fetchone()
-    assert row is not None
-    title, document = row[0], bytes(row[1])
-    people = conn.execute(
-        "SELECT position, display_name, email FROM trust_lease_offer_signers"
-        " WHERE offer_id = %s ORDER BY position",
-        (offer,),
-    ).fetchall()
-    # The partner keeps an envelope even if this transaction then fails; a real partner voids
-    # what it never hears about again.
-    reference = partner.send(
-        title, document, tuple(esign.Signer(n, name, email) for n, name, email in people)
-    )
+    """Sends an offer to its signers to sign on the PMS's page: records the request and makes
+    each signer a link."""
     try:
         conn.execute(
             "INSERT INTO trust_signature_requests (pmc_id, offer_id, partner, partner_reference,"
             " sent_by) VALUES (%s, %s, %s, %s, %s)",
-            (session.pmc_id, offer, partner.name, reference, session.person_id),
+            (session.pmc_id, offer, esign.PARTNER, esign.reference(offer), session.person_id),
         )
     except psycopg.errors.CheckViolation as refused:
         # Voided since it was read.
         raise HTTPException(409, refusal(refused)) from None
     found = offer_of(conn, session.pmc_id, offer)
-    links = links_of(partner, reference, found)
+    links = links_of(conn, request, session.pmc_id, offer, found.signers)
     emailed = []
     if outbox.SENDING.get():
         what = f"the lease for {found.property}, {found.unit}"
@@ -430,7 +438,6 @@ def make_offer(
     unit: UUID,
     default_signers: list[SignerIn],
 ) -> Offered:
-    partner = partner_of(request) if new.send else None
     if new.ends_on is not None and new.ends_on < new.starts_on:
         raise HTTPException(422, "a lease ends on or after the day it starts")
     document = document_of(new)
@@ -480,9 +487,9 @@ def make_offer(
                 for n, (kind, memo, amount) in enumerate(charges, 1)
             ],
         )
-    if partner is None:
+    if not new.send:
         return Offered(offer=offer_of(conn, session.pmc_id, offer_id), links=[])
-    return send_offer(conn, session, partner, offer_id)
+    return send_offer(conn, request, session, offer_id)
 
 
 # --- staff --------------------------------------------------------------------------------
@@ -610,13 +617,13 @@ def offer(session: Staff, conn: Conn, offer_id: UUID) -> OfferOut:
 
 @router.post("/api/leasing/offers/{offer_id}/send")
 def send(request: Request, session: Staff, conn: Conn, offer_id: UUID) -> Offered:
-    """Sends a draft offer to its signers through the partner: the links to give them."""
+    """Sends a draft offer to its signers to sign on the PMS's page: the links to give them."""
     found = offer_of(conn, session.pmc_id, offer_id)
     if found.status == "void":
         raise HTTPException(409, VOIDED)
     if found.status != "draft":
-        raise HTTPException(409, "this offer was sent already; its links are under Resend")
-    return send_offer(conn, session, partner_of(request), offer_id)
+        raise HTTPException(409, "this offer was sent already; new links are under Resend")
+    return send_offer(conn, request, session, offer_id)
 
 
 @router.post("/api/leasing/offers/{offer_id}/void")
@@ -639,25 +646,30 @@ def void(session: Staff, conn: Conn, offer_id: UUID, why: Void) -> OfferOut:
     return offer_of(conn, session.pmc_id, offer_id)
 
 
-@router.get("/api/leasing/offers/{offer_id}/links")
+@router.post("/api/leasing/offers/{offer_id}/links")
 def links(request: Request, session: Staff, conn: Conn, offer_id: UUID) -> list[SigningLink]:
-    """Each signer's link again, to send once more."""
+    """A new link for each signer who hasn't signed, to send once more (the links sent before
+    keep working until they run out, 30 days after they were made)."""
     found = offer_of(conn, session.pmc_id, offer_id)
     if found.status == "void":
         raise HTTPException(409, VOIDED)
-    return links_of(partner_of(request), reference_of(conn, offer_id), found)
+    if found.status == "leased":
+        raise HTTPException(409, "this offer is a lease already")
+    sent_here(conn, offer_id)
+    waiting = [s for s in found.signers if s.signed_at is None]
+    return links_of(conn, request, session.pmc_id, offer_id, waiting)
 
 
-@router.post("/api/leasing/offers/{offer_id}/signatures")
-def check_signatures(request: Request, session: Staff, conn: Conn, offer_id: UUID) -> OfferOut:
-    """Records the signatures the partner has for the offer since it was last asked."""
-    offer = offer_of(conn, session.pmc_id, offer_id)
-    record_signatures(conn, partner_of(request), offer)
-    return offer_of(conn, session.pmc_id, offer_id)
+@router.get("/api/leasing/offers/{offer_id}/certificate")
+def offer_certificate(session: Staff, conn: Conn, offer_id: UUID) -> Response:
+    """The offer's signing certificate: what each signer did on the signing page, so far."""
+    offer_of(conn, session.pmc_id, offer_id)
+    sent_here(conn, offer_id)
+    return certificate_pdf(conn, session.pmc_id, offer_id)
 
 
 @router.post("/api/leasing/offers/{offer_id}/complete")
-def complete(request: Request, session: Staff, conn: Conn, offer_id: UUID) -> OfferOut:
+def complete(session: Staff, conn: Conn, offer_id: UUID) -> OfferOut:
     """Opens the offer's lease once everyone has signed (trust_complete_lease_offer), with the
     offer's monthly charges as its recurring charges."""
     found = offer_of(conn, session.pmc_id, offer_id)
@@ -665,7 +677,6 @@ def complete(request: Request, session: Staff, conn: Conn, offer_id: UUID) -> Of
         raise HTTPException(409, VOIDED)
     if found.status == "draft":
         raise HTTPException(409, "this offer is a draft: send it to its signers first")
-    record_signatures(conn, partner_of(request), found)
     try:
         conn.execute(
             "SELECT trust_complete_lease_offer(%s, %s, %s)",
@@ -758,28 +769,11 @@ def tenant_offer(
     return found[0]
 
 
-def as_signed_now(conn: psycopg.Connection[Any], request: Request, offer: OfferOut) -> OfferOut:
-    """The offer with the signatures its partner reports that staff haven't recorded yet, so a
-    tenant who just signed sees it. Nothing is written: staff record them (check_signatures)."""
-    partner: esign.Partner | None = request.app.state.esign
-    if partner is None or not offer.sent:
-        return offer
-    signed = partner.signed(reference_of(conn, offer.id))
-    return offer.model_copy(
-        update={
-            "signers": [
-                s if s.signed_at else s.model_copy(update={"signed_at": signed.get(s.position)})
-                for s in offer.signers
-            ]
-        }
-    )
-
-
 @router.get("/api/tenant/renewals")
-def tenant_renewals(request: Request, session: Tenant, conn: Conn) -> list[OfferOut]:
+def tenant_renewals(session: Tenant, conn: Conn) -> list[OfferOut]:
     """Renewal offers sent to sign on the tenant's leases that aren't a lease yet, nor void."""
     found, _ = offers_of(conn, session.pmc_id, None, tenant_leases(conn, session), show="open")
-    return [as_signed_now(conn, request, o) for o in found if o.status != "draft"]
+    return [o for o in found if o.status != "draft"]
 
 
 @router.post("/api/tenant/renewals/{offer_id}/signing-link")
@@ -793,9 +787,11 @@ def tenant_signing_link(
     mine = [s for s in offer.signers if s.email == session.email]
     if not mine:
         raise HTTPException(403, "you aren't one of this renewal's signers")
-    (signer,) = mine
-    url = partner_of(request).signing_link(reference_of(conn, offer_id), signer.position)
-    return SigningLink(position=signer.position, name=signer.name, email=signer.email, url=url)
+    if mine[0].signed_at is not None:
+        raise HTTPException(409, "you have signed this renewal already")
+    sent_here(conn, offer_id)
+    (link,) = links_of(conn, request, session.pmc_id, offer_id, mine)
+    return link
 
 
 @router.get("/api/tenant/renewals/{offer_id}/document")

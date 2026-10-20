@@ -38,8 +38,8 @@ const RENEWAL: Offer = {
   offered_at: "2026-10-11T18:00:00Z",
   sent: true,
   signers: [
-    { position: 1, name: "Tenant 1", email: "tenant1@example.com", role: "tenant", signed_at: null },
-    { position: 2, name: "Tenant 2", email: "tenant2@example.com", role: "tenant", signed_at: "2026-10-11T19:00:00Z" },
+    { position: 1, name: "Tenant 1", email: "tenant1@example.com", role: "tenant", signed_at: null, progress: "waiting" },
+    { position: 2, name: "Tenant 2", email: "tenant2@example.com", role: "tenant", signed_at: "2026-10-11T19:00:00Z", progress: "signed" },
   ],
   lease_id: null,
   security_deposit: null,
@@ -48,7 +48,7 @@ const RENEWAL: Offer = {
   void: null,
 };
 
-function server(renewals: Offer[], link: Response = new Response(JSON.stringify({ url: "http://x/esign#t" }))) {
+function server(renewals: Offer[], link: Response = new Response(JSON.stringify({ url: "http://x/sign#t" }))) {
   const fetch = vi.fn(async (_path: string, init?: RequestInit) =>
     init?.method === "POST" ? link : new Response(JSON.stringify(renewals), { status: 200 }),
   );
@@ -71,7 +71,7 @@ describe("RenewalsCard", () => {
     );
     fireEvent.click(within(renewal).getByRole("button", { name: "Sign" }));
 
-    await vi.waitFor(() => expect(leave).toHaveBeenCalledWith("http://x/esign#t"));
+    await vi.waitFor(() => expect(leave).toHaveBeenCalledWith("http://x/sign#t"));
     expect(fetch).toHaveBeenCalledWith(
       "/api/tenant/renewals/o1/signing-link",
       expect.objectContaining({ method: "POST" }),
@@ -93,12 +93,12 @@ describe("RenewalsCard", () => {
   });
 
   it("shows why there is no signing link", async () => {
-    server([RENEWAL], new Response(JSON.stringify({ detail: "no e-sign partner is set up" }), { status: 503 }));
+    server([RENEWAL], new Response(JSON.stringify({ detail: "you have signed this renewal already" }), { status: 409 }));
     render(<RenewalsCard me={ME} />);
 
     fireEvent.click(await screen.findByRole("button", { name: "Sign" }));
 
-    expect((await screen.findByRole("alert")).textContent).toBe("no e-sign partner is set up");
+    expect((await screen.findByRole("alert")).textContent).toBe("you have signed this renewal already");
     expect(leave).not.toHaveBeenCalled();
   });
 

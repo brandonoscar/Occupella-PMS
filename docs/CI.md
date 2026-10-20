@@ -329,8 +329,8 @@ reads a statement, the tenant reads what is due and asks for a repair, staff enr
 authenticator, invite someone and take a request through to done, and an applicant applies
 through a link that staff screen (with the fake partner, `PMS_SCREENING_PARTNER=fake`) and
 decline with a notice, and staff offer a lease and a renewal that the applicant and the tenant
-sign on the fake e-sign partner's page (`PMS_ESIGN_PARTNER=fake`) before staff make each the
-lease, and staff set up a property from nothing, lease a unit and find it on the rent roll, and
+sign on the PMS's own signing page (the tenant asks for paper first, then signs through a new
+link) before staff make each the lease, and staff set up a property from nothing, lease a unit and find it on the rent roll, and
 record a tenant's payment (the rest held as prepaid rent) and then its bounce, and pay a
 vendor's bill (after the owner's approval) and draw what is left for its owner, charge a
 tenant's damage at move-out and return the rest of their deposit with its statement, and import

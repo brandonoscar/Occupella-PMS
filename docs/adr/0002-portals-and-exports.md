@@ -174,9 +174,10 @@ migration 0031. With it, the four things this ADR moved into scope are built.
   lease's signers become its tenants, and a renewal keeps the old lease's tenants and ends it
   the day before. An application or a lease takes one completed offer, and the unit's one
   lease at a time still holds.
-- The founder picks the real e-sign partner at deploy time. Until then the only partner is a
-  fake, on only where `PMS_ESIGN_PARTNER=fake` (development and CI): its envelopes live in the
-  server process's memory, its signing page (`/esign#<token>`) is part of the portal, and
-  typing your name there is not a signature, which the page says. Without a partner no offer
-  can be sent.
+- (Superseded by ADR 0008 on 2026-10-20: the PMS signs leases on its own page and the fake
+  partner is gone.) The founder picks the real e-sign partner at deploy time. Until then the
+  only partner is a fake, on only where `PMS_ESIGN_PARTNER=fake` (development and CI): its
+  envelopes live in the server process's memory, its signing page (`/esign#<token>`) is part
+  of the portal, and typing your name there is not a signature, which the page says. Without a
+  partner no offer can be sent.
 - `trust_ai_agent` reads none of it.

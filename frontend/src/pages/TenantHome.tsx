@@ -56,6 +56,8 @@ export type Lease = {
   deposit_returned: boolean;
   // Each payment to it, newest first, each with its receipt to download.
   payments: Paid[];
+  // The lease as signed, its signing certificate and the lease's documents (q120).
+  files: { kind: "signed lease" | "signing certificate" | "lease document"; title: string; url: string }[];
 };
 
 // "Pet rent: $35.00", "Parking: $25.00 off" for a credit, with when it starts or stops.
@@ -75,6 +77,12 @@ export function comingDueLabel(charge: ComingDue): string {
 // Cells take the table style's padding (less of it on a phone); only their alignment is set here.
 const CELL = "text-left";
 const AMOUNT = "text-right";
+
+// A lease as the picker names it: its home and first day, and whether it has ended or is to come.
+export function leaseLabel(lease: Lease, today: string): string {
+  const when = lease.in_effect ? "" : lease.starts_on > today ? " (to come)" : " (ended)";
+  return `${lease.property}, ${lease.unit}, from ${usDate(lease.starts_on)}${when}`;
+}
 
 // The lease shown first: the one in effect, else the newest.
 export function firstLease(leases: Lease[]): Lease | null {
@@ -179,10 +187,7 @@ export function TenantHome({ me }: { me: Me }) {
                   onChange={(e) => setChosen(e.target.value)}
                 >
                   {leases.map((l) => (
-                    <option key={l.lease_id} value={l.lease_id}>
-                      {l.property}, {l.unit}, from {usDate(l.starts_on)}
-                      {l.in_effect ? "" : " (ended)"}
-                    </option>
+                    <option key={l.lease_id} value={l.lease_id}>{leaseLabel(l, day(new Date()))}</option>
                   ))}
                 </select>
               </label>
@@ -212,6 +217,17 @@ export function TenantHome({ me }: { me: Me }) {
                 Pay {me.pmc_name} the way you always have; payments can't be made here yet.
               </p>
             </div>
+            {lease.files.length > 0 && (
+              <ul className="mt-4 flex flex-col gap-1 text-base" aria-label="Your lease's files">
+                {lease.files.map((f) => (
+                  <li key={f.url}>
+                    <a className="font-medium text-iris hover:text-iris-hover hover:underline" href={f.url}>
+                      {f.kind === "signed lease" ? `${f.title} (as signed, PDF)` : f.title}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
             {lease.deposit_returned && (
               <div className="mt-4">
                 <LinkButton

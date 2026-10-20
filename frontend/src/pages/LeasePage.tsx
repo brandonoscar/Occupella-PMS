@@ -218,7 +218,10 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
             <HouseholdCards leaseId={id} />
           </div>
         )}
-        {tab === "files" && <FilesCard kind="move_out_photo" also={["lease_document"]} aboutId={id} name={`${lease.unit}, ${lease.property}`} />}
+        {tab === "files" && (
+          <FilesCard kind="move_out_photo" also={["lease_document"]} aboutId={id} name={`${lease.unit}, ${lease.property}`}
+            note="Its tenants download its lease documents in the portal, with the lease as signed; move-out photos stay here." />
+        )}
         {tab === "notes" && <NotesCard about="lease" aboutId={id} name={`${lease.unit}, ${lease.property}`} />}
       </div>
       {panel !== null && (

@@ -22,8 +22,8 @@ const OFFER: Offer = {
   recurring_charges: [{ kind: "fee", memo: "Pet rent", amount: "35.00" }, { kind: "credit", memo: "Autopay", amount: "10.00" }],
   document_title: "Lease", offered_at: "2026-10-12T14:00:00Z", sent: false, lease_id: null, status: "draft", void: null,
   signers: [
-    { position: 1, name: "Applicant A", email: "a@example.com", role: "tenant", signed_at: null },
-    { position: 2, name: "Applicant B", email: "b@example.com", role: "guarantor", signed_at: null },
+    { position: 1, name: "Applicant A", email: "a@example.com", role: "tenant", signed_at: null, progress: "waiting" },
+    { position: 2, name: "Applicant B", email: "b@example.com", role: "guarantor", signed_at: null, progress: "waiting" },
   ],
 };
 const APPROVED = {
@@ -37,8 +37,8 @@ const LEASE = {
   monthly_rent: "1200.00", tenants: [{ name: "Tenant 1", email: "t1@example.com" }],
 };
 const LINKS = [
-  { position: 1, name: "Applicant A", email: "a@example.com", url: "http://x/esign#one" },
-  { position: 2, name: "Applicant B", email: "b@example.com", url: "http://x/esign#two" },
+  { position: 1, name: "Applicant A", email: "a@example.com", url: "http://x/sign#one" },
+  { position: 2, name: "Applicant B", email: "b@example.com", url: "http://x/sign#two" },
 ];
 
 function server(found: Offer = OFFER, refuse: Record<string, string> = {}) {
@@ -49,10 +49,10 @@ function server(found: Offer = OFFER, refuse: Record<string, string> = {}) {
         return new Response(JSON.stringify({ offer: { ...found, status: "sent", sent: true }, links: LINKS }), { status: 201 });
       }
       if (path.endsWith("/complete")) return new Response(JSON.stringify({ ...found, status: "leased", lease_id: "l9" }));
+      if (path.endsWith("/links")) return new Response(JSON.stringify(LINKS));
       return new Response(JSON.stringify(found));
     }
     if (path === "/api/leasing/offers/o1") return new Response(JSON.stringify(found));
-    if (path === "/api/leasing/offers/o1/links") return new Response(JSON.stringify(LINKS));
     if (path.startsWith("/api/leasing/offers?")) {
       const items = path.includes("show=void") ? [] : [found];
       return new Response(JSON.stringify({ items, total: items.length, page: 1, per_page: 50 }));
@@ -203,36 +203,39 @@ describe("DraftLeasePage", () => {
     const guarantor = within(screen.getByRole("table", { name: "Signers" })).getAllByRole("row")
       .find((r) => r.textContent?.startsWith("Applicant B"));
     expect(within(guarantor!).getAllByRole("cell").map((c) => c.textContent)).toEqual([
-      "Applicant B Guarantor", "b@example.com", "Not sent",
+      "Applicant B Guarantor", "b@example.com", "", "Not sent",
     ]);
     expect(screen.queryByRole("button", { name: "Activate lease" })).toBeNull();
 
     fireEvent.click(screen.getByRole("button", { name: "Send" }));
 
     await screen.findByText("Sent to 2 signers.");
-    expect(screen.getAllByTestId("signing-link").map((l) => l.textContent)).toEqual(["http://x/esign#one", "http://x/esign#two"]);
+    expect(screen.getAllByTestId("signing-link").map((l) => l.textContent)).toEqual(["http://x/sign#one", "http://x/sign#two"]);
     expect(posted(fetch)).toEqual([["/api/leasing/offers/o1/send", {}]]);
   });
 
-  it("resends a sent offer's links, checks signatures and activates the lease", async () => {
+  it("shows how far each signer got, makes new links and activates the lease", async () => {
     const fetch = server({
       ...OFFER, status: "partially signed", sent: true,
       signers: [
-        { position: 1, name: "Applicant A", email: "a@example.com", role: "tenant", signed_at: null },
-        { position: 2, name: "Applicant B", email: "b@example.com", role: "tenant", signed_at: "2026-10-13T10:00:00Z" },
+        { position: 1, name: "Applicant A", email: "a@example.com", role: "tenant", signed_at: null, progress: "waiting" },
+        { position: 2, name: "Applicant B", email: "b@example.com", role: "tenant", signed_at: "2026-10-13T10:00:00Z", progress: "signed" },
       ],
     });
     render(<DraftLeasePage me={ME} id="o1" />);
 
     expect(await screen.findByText("1 of 2 signed")).toBeTruthy();
+    expect(screen.getAllByTestId("progress").map((b) => b.textContent)).toEqual(["Not started", "Signed"]);
+    expect(within(screen.getByLabelText("Summary")).getByRole("link", { name: "Signing certificate (PDF)" })
+      .getAttribute("href")).toBe("/api/leasing/offers/o1/certificate");
+    expect(screen.queryByRole("button", { name: "Check signatures" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Resend" }));
-    expect((await screen.findAllByTestId("signing-link")).length).toBe(2);
-    fireEvent.click(screen.getByRole("button", { name: "Check signatures" }));
-    await screen.findByText("1 of 2 signed.");
+    await screen.findByText("A new link for 2 signers.");
+    expect(screen.getAllByTestId("signing-link").length).toBe(2);
     fireEvent.click(screen.getByRole("button", { name: "Activate lease" }));
     await screen.findByText("Property 1, Unit 2 has its lease from 01/01/2027.");
 
-    expect(posted(fetch).map(([path]) => path)).toEqual(["/api/leasing/offers/o1/signatures", "/api/leasing/offers/o1/complete"]);
+    expect(posted(fetch).map(([path]) => path)).toEqual(["/api/leasing/offers/o1/links", "/api/leasing/offers/o1/complete"]);
   });
 
   it("voids an offer from its ⋯ menu with why, and shows why the server refused", async () => {

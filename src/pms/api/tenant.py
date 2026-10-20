@@ -1,5 +1,6 @@
 """The tenant portal's endpoints: a tenant's leases with what they owe and what comes due, each
-lease's ledger, the statement of a deposit returned at move-out, and maintenance requests. No
+lease's ledger, the statement of a deposit returned at move-out, the lease as signed with its
+signing certificate and the lease's documents staff keep (q120), and maintenance requests. No
 payments: online payment is out of scope (docs/adr/0002-portals-and-exports.md).
 
 The tenant and the PMC always come from the session. A lease named in the path is answered only
@@ -17,9 +18,10 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from pms import accounts, exports, notices
-from pms.api import documents, maintenance, outbox
+from pms.api import documents, maintenance, offers, outbox, signing
 from pms.api import rent as rent_api
 from pms.api.deps import Conn, Rows, Tenant, download
+from pms.leasing import esign
 
 router = APIRouter(prefix="/api/tenant")
 # A tenant files at most this many requests under one lease in a day: enough for a bad day,
@@ -58,6 +60,12 @@ class RentChangeNotice(BaseModel):
     notice_given_on: date
 
 
+class LeaseFile(BaseModel):
+    kind: Literal["signed lease", "signing certificate", "lease document"]
+    title: str
+    url: str
+
+
 class Lease(BaseModel):
     lease_id: UUID
     property: str
@@ -82,6 +90,8 @@ class Lease(BaseModel):
     renters_insurance: rent_api.RentersInsurance | None
     # Each payment to it, newest first, each with its receipt to download.
     payments: list[rent_api.Paid]
+    # The lease as signed, its signing certificate and the lease's documents, to download.
+    files: list[LeaseFile]
 
 
 class Photo(BaseModel):
@@ -183,6 +193,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
                 notice_given_on=notice,
             )
         )
+    files = {row[0]: files_of(conn, session.pmc_id, row[0]) for row in rows}
     return [
         Lease(
             lease_id=lease,
@@ -207,9 +218,94 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
             deposit_returned=returned,
             renters_insurance=insured.get(lease),
             payments=paid.get(lease, []),
+            files=files[lease],
         )
         for lease, prop, unit, starts, ends, rent, due_day, names, balance, returned in rows
     ]
+
+
+# The offer that became a lease, and whether it was signed on the PMS's own page.
+SIGNED = """
+SELECT o.id, o.document_title, r.partner = %s
+FROM trust_lease_offer_completions AS c
+JOIN trust_lease_offers AS o ON o.id = c.offer_id
+JOIN trust_signature_requests AS r ON r.offer_id = o.id
+WHERE c.pmc_id = %s AND c.lease_id = %s
+"""
+LEASE_DOCUMENTS = """
+SELECT d.id, d.title FROM trust_documents AS d
+WHERE d.pmc_id = %s AND d.lease_id = %s AND d.kind = 'lease_document'
+  AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)
+ORDER BY d.created_at DESC, d.id
+"""
+
+
+def files_of(conn: psycopg.Connection[Any], pmc_id: UUID, lease: UUID) -> list[LeaseFile]:
+    """A lease's files a tenant on it downloads: the lease as signed and, when it was signed on
+    the PMS's own page, its signing certificate; then the lease's documents, newest first."""
+    base = f"/api/tenant/leases/{lease}"
+    found = []
+    signed = conn.execute(SIGNED, (esign.PARTNER, pmc_id, lease)).fetchone()
+    if signed is not None:
+        _, title, here = signed
+        found.append(LeaseFile(kind="signed lease", title=title, url=f"{base}/signed-lease"))
+        if here:
+            found.append(
+                LeaseFile(
+                    kind="signing certificate",
+                    title="Signing certificate",
+                    url=f"{base}/signing-certificate",
+                )
+            )
+    found += [
+        LeaseFile(kind="lease document", title=title, url=f"{base}/documents/{document}")
+        for document, title in conn.execute(LEASE_DOCUMENTS, (pmc_id, lease)).fetchall()
+    ]
+    return found
+
+
+def signed_offer(
+    conn: psycopg.Connection[Any], session: accounts.Session, lease_id: UUID
+) -> tuple[UUID, bool]:
+    """The offer that became one of the tenant's leases, and whether it was signed here; 404
+    for a lease of someone else or one that came from no offer."""
+    lease_of(conn, session, lease_id)
+    row = conn.execute(SIGNED, (esign.PARTNER, session.pmc_id, lease_id)).fetchone()
+    if row is None:
+        raise HTTPException(404, "this lease wasn't signed through the PMS")
+    return row[0], row[2]
+
+
+@router.get("/leases/{lease_id}/signed-lease")
+def signed_lease(session: Tenant, conn: Conn, lease_id: UUID) -> Response:
+    """The lease as it was sent and signed: the offer's PDF that became this lease."""
+    offer, _ = signed_offer(conn, session, lease_id)
+    return offers.document_response(conn, offer)
+
+
+@router.get("/leases/{lease_id}/signing-certificate")
+def signing_certificate(session: Tenant, conn: Conn, lease_id: UUID) -> Response:
+    """The signing certificate of the lease, when it was signed on the PMS's own page."""
+    offer, here = signed_offer(conn, session, lease_id)
+    if not here:
+        raise HTTPException(404, "this lease was signed elsewhere: it has no certificate here")
+    return signing.certificate_pdf(conn, session.pmc_id, offer)
+
+
+@router.get("/leases/{lease_id}/documents/{document_id}")
+def lease_document(session: Tenant, conn: Conn, lease_id: UUID, document_id: UUID) -> Response:
+    """One of the lease's documents staff keep on its Files tab; any other reads as not found."""
+    lease_of(conn, session, lease_id)
+    if (
+        conn.execute(
+            "SELECT 1 FROM trust_documents WHERE pmc_id = %s AND id = %s AND lease_id = %s"
+            " AND kind = 'lease_document'",
+            (session.pmc_id, document_id, lease_id),
+        ).fetchone()
+        is None
+    ):
+        raise HTTPException(404, "no such document")
+    return documents.served(conn, session.pmc_id, document_id, None)
 
 
 def monthly(conn: psycopg.Connection[Any], lease: UUID, starts: date, rent: Any) -> list[Monthly]:

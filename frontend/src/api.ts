@@ -70,3 +70,29 @@ export const api = {
   get: <T>(path: string) => call<T>("GET", path),
   post: <T>(path: string, body: unknown = {}) => change<T>(path, body),
 };
+
+// A file the server answers a change with (the signing page's lease and certificate: its token
+// travels in the JSON body, never in a URL), saved by the browser under `name`. A refusal shows
+// as a toast with its reason, like any change's.
+export async function saveFile(path: string, body: unknown, name: string): Promise<void> {
+  const response = await fetch(path, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const data: unknown = await response.json().catch(() => null);
+    const failed = new ApiError(response.status, detailOf(data) ?? `the server answered ${response.status}`);
+    notify("error", failed.detail);
+    throw failed;
+  }
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
