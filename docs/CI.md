@@ -160,7 +160,10 @@ starts and control characters, money, days, times in random zones, NULLs), and c
 - the PDF always builds.
 
 `ci/registry.toml` maps every required invariant to its test or to the open issue for what isn't
-built yet. PRs run 200 examples per property. Nightly runs 3,000 examples per property, each
+built yet. A PR can't drop an entry or one of its tests, unless a founder's decision replaced
+what the entry guarded: then a `[[retired]]` row names it, the decision record in `docs/adr/` and
+the entry, with tests, that replaced it (the in-house e-signing of ADR 0008 retired signing
+through a partner). PRs run 200 examples per property. Nightly runs 3,000 examples per property, each
 property twice with a seed of its own: 16 jobs, the tests shared out over 8 shards
 (`PMS_TEST_SHARD`), 2 seeds each. Until 10/19 every job ran every property; at 3,000 examples
 that is some 290 minutes a job, and every nightly job from 10/11 to 10/18 was cancelled at its
