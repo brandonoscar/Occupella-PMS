@@ -7184,7 +7184,7 @@ $$;
 -- Name: trust_report_general_ledger(uuid, date, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.trust_report_general_ledger(p_pmc_id uuid, p_from date, p_to date) RETURNS TABLE(line integer, item text, bank text, account text, posted_at text, description text, debit numeric, credit numeric, balance numeric)
+CREATE FUNCTION public.trust_report_general_ledger(p_pmc_id uuid, p_from date, p_to date) RETURNS TABLE(line integer, item text, bank text, account text, posted_at text, description text, debit numeric, credit numeric, balance numeric, property text)
     LANGUAGE plpgsql STABLE
     SET search_path TO 'public', 'pg_temp'
     AS $$
@@ -7225,13 +7225,16 @@ BEGIN
                    ELSE tn.display_name
                END AS holder,
                -- +1 where a credit grows the balance (money held for someone), -1 for cash.
-               CASE t.kind WHEN 'bank_cash' THEN -1 ELSE 1 END AS sign
+               CASE t.kind WHEN 'bank_cash' THEN -1 ELSE 1 END AS sign,
+               -- The property it is held for: an owner's property account's, or a tenant's.
+               coalesce(pr.display_name, tp.display_name) AS property_name
         FROM trust_ledger_accounts AS t
         JOIN trust_bank_accounts AS b ON b.id = t.bank_account_id
         JOIN trust_pmcs AS pmc ON pmc.pmc_id = t.pmc_id
         LEFT JOIN trust_owners AS o ON o.id = t.owner_id
         LEFT JOIN trust_properties AS pr ON pr.id = t.property_id
         LEFT JOIN trust_tenants AS tn ON tn.id = t.tenant_id
+        LEFT JOIN trust_properties AS tp ON tp.id = tn.property_id
         LEFT JOIN trust_vendors AS v ON v.id = t.vendor_id
         WHERE t.pmc_id = p_pmc_id
     ),
@@ -7252,7 +7255,8 @@ BEGIN
                count(x.account) FILTER (WHERE x.event_at >= v_start) AS posted
         FROM accounts AS a
         LEFT JOIN entries AS x ON x.account = a.id
-        GROUP BY a.id, a.kind, a.bank_account_id, a.bank_name, a.account_name, a.holder, a.sign
+        GROUP BY a.id, a.kind, a.bank_account_id, a.bank_name, a.account_name, a.holder, a.sign,
+                 a.property_name
     ),
     shown AS (
         SELECT o.* FROM openings AS o
@@ -7277,22 +7281,22 @@ BEGIN
                NULL::text AS account_name, NULL::text AS id, 0 AS step,
                NULL::timestamptz AS event_at, NULL::bigint AS version, 'PMC' AS item,
                pmc.display_name AS label, NULL::text AS description, NULL::numeric AS dr,
-               NULL::numeric AS cr, NULL::numeric AS balance
+               NULL::numeric AS cr, NULL::numeric AS balance, NULL::text AS property_name
         FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
         UNION ALL
         SELECT 0, NULL, NULL, 0, NULL, NULL, 1, NULL, NULL, 'period',
                to_char(p_from, 'YYYY-MM-DD') || ' to ' || to_char(p_to, 'YYYY-MM-DD')
                    || ', whole days UTC',
-               NULL, NULL, NULL, NULL
+               NULL, NULL, NULL, NULL, NULL
         UNION ALL
         SELECT 1, s.bank_name, s.bank_account_id, CASE s.kind WHEN 'bank_cash' THEN 0 ELSE 1 END,
                s.account_name, s.id, 0, NULL, NULL, 'opening balance', s.account_name, NULL,
-               NULL, NULL, s.opening
+               NULL, NULL, s.opening, s.property_name
         FROM shown AS s
         UNION ALL
         SELECT 1, s.bank_name, s.bank_account_id, CASE s.kind WHEN 'bank_cash' THEN 0 ELSE 1 END,
                s.account_name, s.id, 1, p.event_at, p.version, 'entry', s.account_name,
-               p.description, p.dr, p.cr, p.running
+               p.description, p.dr, p.cr, p.running, s.property_name
         FROM postings AS p
         JOIN shown AS s ON s.id = p.account
         UNION ALL
@@ -7302,13 +7306,14 @@ BEGIN
                coalesce((SELECT sum(p.cr) FROM postings AS p WHERE p.account = s.id), 0),
                s.opening + s.sign * coalesce((
                    SELECT sum(p.cr) - sum(p.dr) FROM postings AS p WHERE p.account = s.id
-               ), 0)
+               ), 0),
+               s.property_name
         FROM shown AS s
         UNION ALL
         SELECT 2, NULL, NULL, 0, NULL, NULL, 0, NULL, NULL, 'total', NULL, NULL,
                coalesce((SELECT sum(p.dr) FROM postings AS p), 0),
                coalesce((SELECT sum(p.cr) FROM postings AS p), 0),
-               NULL
+               NULL, NULL
     )
     SELECT row_number() OVER (
                ORDER BY l.section, l.bank_name COLLATE "C", l.bank_id, l.cash_first,
@@ -7322,7 +7327,8 @@ BEGIN
            l.description,
            round(l.dr, 2),
            round(l.cr, 2),
-           round(l.balance, 2)
+           round(l.balance, 2),
+           l.property_name
     FROM lines AS l
     ORDER BY 1;
 END;
@@ -8889,7 +8895,7 @@ $$;
 -- Name: trust_report_trial_balance(uuid, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.trust_report_trial_balance(p_pmc_id uuid, p_as_of date) RETURNS TABLE(line integer, item text, bank text, account text, debit numeric, credit numeric)
+CREATE FUNCTION public.trust_report_trial_balance(p_pmc_id uuid, p_as_of date) RETURNS TABLE(line integer, item text, bank text, account text, debit numeric, credit numeric, property text)
     LANGUAGE plpgsql STABLE
     SET search_path TO 'public', 'pg_temp'
     AS $$
@@ -8919,6 +8925,8 @@ BEGIN
                        ELSE tn.display_name
                    END
                END AS account_name,
+               -- The property it is held for: an owner's property account's, or a tenant's.
+               coalesce(pr.display_name, tp.display_name) AS property_name,
                coalesce((
                    SELECT sum(e.amount)
                    FROM pgledger_entries AS e
@@ -8931,6 +8939,7 @@ BEGIN
         LEFT JOIN trust_owners AS o ON o.id = t.owner_id
         LEFT JOIN trust_properties AS pr ON pr.id = t.property_id
         LEFT JOIN trust_tenants AS tn ON tn.id = t.tenant_id
+        LEFT JOIN trust_properties AS tp ON tp.id = tn.property_id
         LEFT JOIN trust_vendors AS v ON v.id = t.vendor_id
         WHERE t.pmc_id = p_pmc_id
     ),
@@ -8943,24 +8952,25 @@ BEGIN
     lines AS (
         SELECT 0 AS section, NULL::text AS bank_name, NULL::uuid AS bank_id, 0 AS step,
                NULL::text AS account_name, NULL::text AS id, 'PMC' AS item,
-               pmc.display_name AS label, NULL::numeric AS dr, NULL::numeric AS cr
+               pmc.display_name AS label, NULL::numeric AS dr, NULL::numeric AS cr,
+               NULL::text AS property_name
         FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
         UNION ALL
         SELECT 0, NULL, NULL, 1, NULL, NULL, 'as of',
-               to_char(p_as_of, 'YYYY-MM-DD') || ', end of day UTC', NULL, NULL
+               to_char(p_as_of, 'YYYY-MM-DD') || ', end of day UTC', NULL, NULL, NULL
         UNION ALL
         SELECT 1, s.bank_name, s.bank_account_id, CASE s.kind WHEN 'bank_cash' THEN 0 ELSE 1 END,
-               s.account_name, s.id, 'account', s.account_name, s.dr, s.cr
+               s.account_name, s.id, 'account', s.account_name, s.dr, s.cr, s.property_name
         FROM sides AS s
         WHERE s.balance <> 0 OR s.kind = 'bank_cash'
         UNION ALL
         SELECT 1, s.bank_name, s.bank_account_id, 2, NULL, NULL, 'bank total', NULL,
-               sum(s.dr), sum(s.cr)
+               sum(s.dr), sum(s.cr), NULL
         FROM sides AS s
         GROUP BY s.bank_name, s.bank_account_id
         UNION ALL
         SELECT 2, NULL, NULL, 0, NULL, NULL, 'total', NULL,
-               coalesce(sum(s.dr), 0), coalesce(sum(s.cr), 0)
+               coalesce(sum(s.dr), 0), coalesce(sum(s.cr), 0), NULL
         FROM sides AS s
     )
     SELECT row_number() OVER (
@@ -8972,7 +8982,8 @@ BEGIN
            -- The PMC's name and the day sit in the account column of the first two lines.
            l.label,
            round(l.dr, 2),
-           round(l.cr, 2)
+           round(l.cr, 2),
+           l.property_name
     FROM lines AS l
     ORDER BY 1;
 END;
@@ -24971,4 +24982,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261020000097'),
     ('20261020000098'),
     ('20261020000099'),
-    ('20261020000100');
+    ('20261020000100'),
+    ('20261020000101');

@@ -1437,6 +1437,20 @@ test("staff open a report from Reports, see it on screen narrowed to one propert
   expect(csv).toContain("Cedar House");
   expect(csv).not.toContain("Aspen Row");
 
+  // The trial balance narrowed to one owner's properties (q109): their property's accounts, and
+  // none of the cash the trust bank account holds for everyone.
+  await section(page, "Reports");
+  await page.getByRole("list", { name: "Financial" }).getByRole("link", { name: "Trial balance" }).click();
+  await page.getByRole("combobox", { name: "Properties shown" }).selectOption({ label: "All properties" });
+  const trial = page.getByRole("table", { name: "Trial balance" });
+  await expect(trial).toContainText("book cash");
+  await page.getByRole("combobox", { name: "Owner" }).selectOption({ label: "Demo Owner B" });
+  await expect(trial).toContainText("narrowed to Demo Owner B's properties: lines across all properties left out");
+  await expect(trial).toContainText("owner_property: Demo Owner B / Aspen Row");
+  await expect(trial).not.toContainText("book cash");
+  await expect(trial).not.toContainText("Demo Owner A");
+  expect(await page.getByRole("link", { name: "CSV", exact: true }).getAttribute("href")).toContain("owner=");
+
   // An owner's income statement over last year.
   await section(page, "Reports");
   await page.getByRole("list", { name: "Financial" }).getByRole("link", { name: "Income statement" }).click();

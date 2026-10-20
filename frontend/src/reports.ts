@@ -15,7 +15,8 @@ export type ReportSpec = {
   label: string;
   group: string;
   args: Arg[];
-  // Its rows have a property, so it narrows to a property group or property.
+  // Its rows have a property, so it narrows to a property group, a property or an owner's
+  // properties (the general ledger and trial balance by each account's property).
   byProperty: boolean;
 };
 
@@ -26,8 +27,8 @@ export const REPORTS: ReportSpec[] = [
   { name: "balance_sheet", label: "Balance sheet", group: "Financial", args: AS_OF, byProperty: false },
   { name: "income_statement", label: "Income statement", group: "Financial", args: ["owner", "from", "to"], byProperty: false },
   { name: "cash_flow", label: "Cash flow", group: "Financial", args: DAYS, byProperty: false },
-  { name: "trial_balance", label: "Trial balance", group: "Financial", args: AS_OF, byProperty: false },
-  { name: "general_ledger", label: "General ledger", group: "Financial", args: DAYS, byProperty: false },
+  { name: "trial_balance", label: "Trial balance", group: "Financial", args: AS_OF, byProperty: true },
+  { name: "general_ledger", label: "General ledger", group: "Financial", args: DAYS, byProperty: true },
   { name: "security_deposits", label: "Security deposits", group: "Financial", args: AS_OF, byProperty: true },
   { name: "rent_roll", label: "Rent roll", group: "Rentals", args: AS_OF, byProperty: true },
   { name: "delinquency", label: "Delinquency", group: "Rentals", args: AS_OF, byProperty: true },
@@ -102,12 +103,16 @@ export function reportArgs(spec: ReportSpec, filters: Filters): string[] | null 
   return args.every((a) => a) ? args : null;
 }
 
-// The report's address with its arguments, narrowed to the scope when it is by property.
-export function reportHref(spec: ReportSpec, args: string[], scope: Scope, format: "json" | "pdf" | "xlsx" | "csv"): string {
+// The report's address with its arguments, narrowed to the scope (and to one owner's
+// properties, when one is chosen) when it is by property.
+export function reportHref(
+  spec: ReportSpec, args: string[], scope: Scope, format: "json" | "pdf" | "xlsx" | "csv", owner = "",
+): string {
   const query = new URLSearchParams([
     ...args.map((arg) => ["arg", arg]),
     ["format", format],
     ...(spec.byProperty ? Object.entries(scopeParams(scope)) : []),
+    ...(spec.byProperty && owner ? [["owner", owner]] : []),
   ]);
   return `/api/reports/trust_report_${spec.name}?${query}`;
 }

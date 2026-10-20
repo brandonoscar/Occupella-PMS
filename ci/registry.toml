@@ -907,18 +907,20 @@ tests = [
 
 [[report]]
 id = "trial-balance"
-statement = "Trial balance as of the end of a day (UTC): per trust bank account, its book cash on the debit side and every account holding money for someone on the credit side, a total per bank account and in all; debits equal credits. Compared to a checked-in golden file."
+statement = "Trial balance as of the end of a day (UTC): per trust bank account, its book cash on the debit side and every account holding money for someone on the credit side, a total per bank account and in all; debits equal credits. Each account names the property it is held for (an owner's property account's, a tenant's accounts' their property; none for cash, vendors and the company's fees; migration 0101), so it narrows to a property group, a property or an owner's properties. Compared to a checked-in golden file."
 tests = [
   "tests/golden/test_golden.py::test_every_golden_case_matches",
   "tests/test_accounting_reports.py::test_each_bank_lists_its_cash_against_what_it_holds_and_they_agree",
+  "tests/api/test_report_preview.py::test_the_ledger_reports_narrow_to_a_propertys_accounts",
   "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",
 ]
 
 [[report]]
 id = "general-ledger"
-statement = "General ledger for a period of whole days (UTC): per ledger account, by trust bank account, its balance at the start, every entry dated inside the period in date order with the account on its other side and the balance after it, and its debits, credits and balance at the end, which is its balance on the trial balance; the period's debits equal its credits. Compared to a checked-in golden file."
+statement = "General ledger for a period of whole days (UTC): per ledger account, by trust bank account, its balance at the start, every entry dated inside the period in date order with the account on its other side and the balance after it, and its debits, credits and balance at the end, which is its balance on the trial balance; the period's debits equal its credits. Each line of an account names the property it is held for, as the trial balance does (migration 0101), so it narrows the same way. Compared to a checked-in golden file."
 tests = [
   "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/api/test_report_preview.py::test_the_ledger_reports_narrow_to_a_propertys_accounts",
   "tests/test_general_ledger.py::test_each_account_runs_from_its_opening_to_its_closing_balance",
   "tests/test_general_ledger.py::test_each_closing_balance_is_the_trial_balances",
   "tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings",

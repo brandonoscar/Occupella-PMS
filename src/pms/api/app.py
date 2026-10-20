@@ -461,10 +461,12 @@ def create_app(settings: Settings) -> FastAPI:
         args: Annotated[list[str] | None, Query(alias="arg")] = None,
         group: scope.Group = None,
         property_id: scope.Property = None,
+        owner: Annotated[UUID | None, Query(alias="owner")] = None,
     ) -> Response | reports.Preview:
         # Every report takes the PMC first (tests/api pins it): it always comes from the
         # session, never from the request. "json" is the preview Reports shows on screen
-        # (src/pms/api/reports.py); a group or property narrows it and every format alike.
+        # (src/pms/api/reports.py); a group, a property or an owner's properties narrow it and
+        # every format alike.
         try:
             table = reports.narrowed(
                 conn,
@@ -472,6 +474,7 @@ def create_app(settings: Settings) -> FastAPI:
                 exports.run_report(conn, name, [session.pmc_id, *(args or [])]),
                 group,
                 property_id,
+                owner,
             )
         except exports.UnknownReport as unknown:
             raise HTTPException(404, str(unknown)) from None

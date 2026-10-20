@@ -464,7 +464,7 @@ browser = [
 
 [[feature]]
 id = "reports"
-statement = "Staff open each report from Reports, grouped as Buildium groups them, see it on screen with its filters (a day, or days with presets; an owner; a year; a property group or property when its lines have one, the lines across all properties then left out), and export it in CSV, Excel and PDF with the same filters; the whole ledger downloads as a zip of CSV from Settings, Data export."
+statement = "Staff open each report from Reports, grouped as Buildium groups them, see it on screen with its filters (a day, or days with presets; an owner; a year; a property group, a property or one owner's properties when its lines have one, the general ledger and trial balance by each account's property, the lines across all properties then left out), and export it in CSV, Excel and PDF with the same filters; the whole ledger downloads as a zip of CSV from Settings, Data export."
 operations = ["GET /api/reports/{name}", "GET /api/ledger.zip"]
 browser = [
   "features.spec.ts › staff open a report from Reports, see it on screen narrowed to one property, export it in each format, take an owner's report over last year, download the whole ledger, and every staff report in each format",

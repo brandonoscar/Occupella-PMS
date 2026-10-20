@@ -229,8 +229,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   property's, unit's, tenant's, lease's, owner's or vendor's page has a Files card of its own
   documents (`pages/FilesCard.tsx`); every report at
   `/reports` in groups, each at `/reports/<name>` (ADR 0006: its filters, its rows on screen from
-  `format=json`, narrowed to a property group or property when its lines have one by
-  `src/pms/api/reports.py`, and Export), and Settings at `/settings`: staff roles and signers at `/settings/staff`
+  `format=json`, narrowed to a property group or property when its lines have one, or to one
+  owner's properties (`?owner=`), by `src/pms/api/reports.py`, the general ledger and trial
+  balance by each account's property, migration 0101; and Export), and Settings at `/settings`: staff roles and signers at `/settings/staff`
   (`src/pms/api/staff.py`; an admin invites a staff member from their row), logins at
   `/settings/logins` (read only, by status; Disable in a row's menu), the company at
   `/settings/setup` (`src/pms/api/company.py`: its name, address, logo and the fees new
