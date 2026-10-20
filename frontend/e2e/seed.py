@@ -506,6 +506,7 @@ FEATURES = (
     "screening-criteria",
     "lease-transfers",
     "calendar",
+    "own-contact",
 )
 
 

@@ -3379,3 +3379,34 @@ test("staff and a tenant each subscribe their calendar app to a link of their ow
   expect((await calendarAt(tenant, link)).status).toBe(404);
   await tenant.close();
 });
+
+test("a tenant changes their own phone and email in the portal, and staff see the new ones and that the tenant changed them", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["own-contact"]!;
+  await joinPortal(page, people.drew);
+  const mine = page.getByRole("group", { name: "Contact details, Drew Sample" });
+  await expect(mine).toContainText("No contact details yet.");
+  await mine.getByRole("button", { name: "Edit contact details" }).click();
+  await mine.getByLabel("Email").fill("drew.new@example.com");
+  await mine.getByLabel("Phone", { exact: true }).fill("(555) 555-0142");
+  await mine.getByLabel("City").fill("Sampletown");
+  await mine.getByRole("button", { name: "Save contact details" }).click();
+  // A mailing address is whole or not there: the tenant fills it in or clears it.
+  await expect(mine.getByRole("alert")).toContainText("mailing address");
+  await mine.getByLabel("City").fill("");
+  await mine.getByRole("button", { name: "Save contact details" }).click();
+  await expect(mine).toContainText("Contact details saved.");
+  await expect(mine).toContainText("drew.new@example.com");
+  await expect(mine).toContainText("(555) 555-0142");
+
+  const staff = await browser.newPage();
+  await joinAsStaff(staff, people.manager);
+  await section(staff, "Tenants");
+  await staff.getByRole("row", { name: "Drew Sample", exact: true }).getByRole("link", { name: "Drew Sample" }).click();
+  const theirs = staff.getByRole("group", { name: "Contact details, Drew Sample" });
+  await expect(theirs).toContainText("drew.new@example.com");
+  await expect(theirs).toContainText(`Drew Sample changed these in the portal on ${us(today())}.`);
+  await staff.close();
+});

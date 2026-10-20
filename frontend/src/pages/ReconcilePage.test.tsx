@@ -152,7 +152,16 @@ describe("ReconcilePage", () => {
       ["bank line not in the books", "2026-01-28 Service fee", "($15.00)"],
     ]);
     expect(cells(screen.getByRole("table", { name: "Approved" }))).toEqual([
-      ["12/01/2025 to 12/31/2025", "$0.00", "$0.00", "Staff 1"],
+      ["12/01/2025 to 12/31/2025", "$0.00", "$0.00", "Staff 1", "PDF"],
+    ]);
+    // Each approved period's three-way report, and the reconciliation on screen, download.
+    const threeWay = screen.getByRole("link", { name: "Three-way reconciliation, 12/01/2025 to 12/31/2025, PDF" });
+    expect(threeWay.getAttribute("href")).toMatch(/^\/api\/reports\/trust_report_three_way_reconciliation\?arg=[^&]+&format=pdf$/);
+    const downloads = within(screen.getByRole("group", { name: "Download the reconciliation" })).getAllByRole("link");
+    expect(downloads.map((link) => [link.textContent, link.getAttribute("href")?.replace(/arg=[^&]+&arg=/, "arg=…&arg=")])).toEqual([
+      ["PDF", "/api/reports/trust_report_bank_reconciliation?arg=…&arg=2026-01-31&format=pdf"],
+      ["CSV", "/api/reports/trust_report_bank_reconciliation?arg=…&arg=2026-01-31&format=csv"],
+      ["Excel", "/api/reports/trust_report_bank_reconciliation?arg=…&arg=2026-01-31&format=xlsx"],
     ]);
     expect(screen.getByText(/Closed through 12\/31\/2025/)).toBeTruthy();
     const prepare = screen.getByRole("button", { name: "Prepare through 01/31/2026" });

@@ -112,6 +112,15 @@ export function reportHref(spec: ReportSpec, args: string[], scope: Scope, forma
   return `/api/reports/trust_report_${spec.name}?${query}`;
 }
 
+// A report's download from the page that shows it (a lease's ledger, a month-end): the same
+// report Reports exports, with the page's own arguments.
+export function downloadHref(name: string, args: string[], format: "pdf" | "xlsx" | "csv"): string {
+  const query = new URLSearchParams([...args.map((arg) => ["arg", arg]), ["format", format]]);
+  return `/api/reports/trust_report_${name}?${query}`;
+}
+
+export const FORMATS = [["pdf", "PDF"], ["csv", "CSV"], ["xlsx", "Excel"]] as const;
+
 // A report on screen: its columns and rows as text, and how many rows it has in all.
 export type Preview = { title: string; columns: string[]; rows: string[][]; total_rows: number };
 

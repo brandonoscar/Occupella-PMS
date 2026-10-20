@@ -2,7 +2,8 @@
 opens each trust bank account with the balances it held there, lists the checks and deposits the
 bank had not cleared at the cutover, and signs off the tie-out (trust_report_cutover). What the
 old system paid each vendor in the cutover's year comes over too, for the year's 1099s, and the
-vendors' bills it had not paid yet, which hold back owner draws from the first day.
+vendors' bills it had not paid yet, which hold back owner draws from the first day. The owners,
+vendors and tenants files may carry their contact details too.
 
 Each file goes in whole or not at all, and names are matched exactly within the PMC, so sending
 a file again adds nothing twice. Records go in through the same inserts and write paths staff use
@@ -24,10 +25,10 @@ from uuid import UUID
 import psycopg
 from fastapi import APIRouter, HTTPException
 from psycopg.types.json import Jsonb
-from pydantic import BaseModel, Field, StringConstraints
+from pydantic import BaseModel, Field, StringConstraints, ValidationError
 
 from pms import email, exports, statements
-from pms.api import outbox
+from pms.api import directory, outbox
 from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/switching")
@@ -246,12 +247,49 @@ NEEDS: dict[str, tuple[str, ...]] = {
 }
 
 
+# The contact columns an owners, vendors or tenants file may have, each optional, and the
+# detail each fills (q127). A row with any of them sets the person's contact details to those, as
+# staff saving them on the person's page does (the same again writes nothing); a row with none
+# leaves what is on file.
+CONTACT_COLUMNS = {
+    "email": "email",
+    "phone": "phone",
+    "other phone": "alternate_phone",
+    "address": "address_line_1",
+    "address line 2": "address_line_2",
+    "city": "city",
+    "state": "state",
+    "zip": "postal_code",
+}
+
+
+def import_contact(names: Names, person: directory.Person, person_id: UUID, row: Row) -> None:
+    given = {
+        field: row.get(column, required=False) or None for column, field in CONTACT_COLUMNS.items()
+    }
+    if not any(given.values()):
+        return
+    try:
+        details = directory.Contact(**given)
+    except ValidationError as bad:
+        error = bad.errors()[0]
+        field = str(error["loc"][0]) if error["loc"] else ""
+        column = next((c for c, f in CONTACT_COLUMNS.items() if f == field), None)
+        why = (
+            f"the {column} isn't one the PMS can keep"
+            if column
+            else str(error["msg"]).removeprefix("Value error, ")
+        )
+        raise Bad(f"line {row.line}: {why}") from None
+    directory.record_contact(names.conn, names.pmc, person, person_id, details)
+
+
 def import_row(names: Names, kind: str, row: Row) -> None:
     conn, pmc = names.conn, names.pmc
     if kind == "owners":
-        names.owner(row.get("name"), add=True)
+        import_contact(names, "owner_id", names.owner(row.get("name"), add=True), row)
     elif kind == "vendors":
-        names.vendor(row.get("name"), add=True)
+        import_contact(names, "vendor_id", names.vendor(row.get("name"), add=True), row)
     elif kind == "properties":
         prop = names.property(row.get("property"), row.line, add=True)
         owner = names.owner(row.get("owner"), line=row.line)
@@ -286,7 +324,8 @@ def import_row(names: Names, kind: str, row: Row) -> None:
             ),
         )
     elif kind == "tenants":
-        names.tenant(names.property(row.get("property"), row.line), row.get("tenant"), add=True)
+        prop = names.property(row.get("property"), row.line)
+        import_contact(names, "tenant_id", names.tenant(prop, row.get("tenant"), add=True), row)
     elif kind == "leases":
         import_lease(names, row)
     elif kind == "bills":

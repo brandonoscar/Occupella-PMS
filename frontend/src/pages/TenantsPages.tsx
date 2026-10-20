@@ -139,7 +139,8 @@ export function TenantPage({ me, id }: { me: Me; id: string }) {
             <Tabs label="Tenant" tabs={TENANT_TABS} value={tab} onChange={setTab} />
             {tab === "summary" && (
               <div className="flex flex-col gap-6">
-                <ContactCard path={`/api/tenants/${id}`} contact={tenant.contact} refresh={refresh} name={tenant.name} />
+                <ContactCard path={`/api/tenants/${id}`} contact={tenant.contact} refresh={refresh} name={tenant.name}
+                  byTenantAt={tenant.contact_by_tenant_at} />
                 <PortalCard kind="tenant" personId={id} name={tenant.name} portal={tenant.portal}
                   loginEmail={tenant.login_email} email={tenant.contact.email} refresh={refresh} />
               </div>

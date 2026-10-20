@@ -1,6 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { ApiError, api } from "../api";
 import type { Contact } from "../directory";
 import { addressLines, CONTACT_FIELDS, contactBody, hasContact } from "../directory";
+import { usDate } from "../money";
 import { useRecord } from "../pages/useRecord";
 import { Button } from "./Button";
 import { Field } from "./Field";
@@ -34,11 +36,13 @@ function ContactDetails({
   contact,
   refresh,
   name,
+  note,
 }: {
   path: string;
   contact: Contact;
   refresh: () => void;
   name: string;
+  note?: string;
 }) {
   const { said, error, record } = useRecord(refresh);
   const [editing, setEditing] = useState(false);
@@ -76,6 +80,7 @@ function ContactDetails({
       ) : (
         <p className="text-sm text-ink-subtle">No contact details yet.</p>
       )}
+      {note && <p className="text-sm text-ink-muted">{note}</p>}
       {!editing ? (
         <div>
           <Button variant="secondary" size="sm" onClick={() => { setDraft(draftOf(contact)); setEditing(true); }}>
@@ -110,11 +115,42 @@ function ContactDetails({
   );
 }
 
-// The same, in a card of its own under its label.
-export function ContactCard(props: { path: string; contact: Contact; refresh: () => void; name: string }) {
+// The same, in a card of its own under its label. A tenant's page says when the tenant changed
+// them themselves, in the portal.
+export function ContactCard(props: {
+  path: string;
+  contact: Contact;
+  refresh: () => void;
+  name: string;
+  byTenantAt?: string | null;
+}) {
+  const { byTenantAt, ...details } = props;
   return (
     <Card title="Contact details">
-      <ContactDetails {...props} />
+      <ContactDetails {...details}
+        note={byTenantAt ? `${props.name} changed these in the portal on ${usDate(byTenantAt)}.` : undefined} />
+    </Card>
+  );
+}
+
+// A tenant's own contact details in the portal (q121): theirs to change. The company writes to
+// this email from then on; signing in keeps the email they sign in with.
+export function MyContactCard({ name }: { name: string }) {
+  const [contact, setContact] = useState<Contact | null>(null);
+  const [error, setError] = useState("");
+  function refresh() {
+    api.get<Contact>("/api/tenant/contact").then(setContact)
+      .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
+  }
+  useEffect(refresh, []);
+  return (
+    <Card title="Your contact details">
+      {contact === null ? (
+        <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
+      ) : (
+        <ContactDetails path="/api/tenant" contact={contact} refresh={refresh} name={name}
+          note="Your manager writes to you at this email and calls you at these numbers. You still sign in with the email you signed up with." />
+      )}
     </Card>
   );
 }

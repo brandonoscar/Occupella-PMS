@@ -23,6 +23,7 @@ import { Said } from "../components/Said";
 import { Form } from "../components/Form";
 import { ManagerCard } from "./ManagerCard";
 import { CalendarCard } from "./CalendarCard";
+import { MyContactCard } from "../components/ContactCard";
 
 // What the lease charges every month: its rent, and each recurring fee or credit not stopped
 // (ends_on is the first due date it is no longer charged for).
@@ -437,6 +438,7 @@ export function TenantHome({ me }: { me: Me }) {
           </Card>
         </>
       )}
+      <MyContactCard name={me.name} />
       <CalendarCard path="/api/tenant/calendar"
         intro="Your rent due days, repair visits and your lease's last day, in your own calendar app (Google, Apple, Outlook). It updates by itself." />
       <ManagerCard />

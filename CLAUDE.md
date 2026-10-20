@@ -746,6 +746,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   phone and mailing address (whole or none), in `trust_contacts`: append-only, the latest row
   for a person holding, naming who recorded it; saving the same details again writes nothing.
   Staff see and change them on the person's page (`src/pms/api/directory.py`) and on Vendors.
+  A tenant changes their own in the portal (migration 0099, `GET`/`POST /api/tenant/contact`,
+  `components/ContactCard.tsx`'s `MyContactCard`): a row marked `by_person`, naming no staff
+  member, and the tenant's page says when the tenant changed them; their sign-in email stays.
   The AI role never reads them (`AI_NEVER_READS`), so the audit log hides their rows from it, and
   no report prints them.
 - Documents (migration 0036): a vendor's W-9, a bill's receipt, a lease's move-out photo, an

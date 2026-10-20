@@ -11624,9 +11624,11 @@ CREATE TABLE public.trust_contacts (
     postal_code text,
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    by_person boolean DEFAULT false NOT NULL,
     CONSTRAINT trust_contacts_address_line_1_check CHECK (((char_length(address_line_1) >= 1) AND (char_length(address_line_1) <= 200))),
     CONSTRAINT trust_contacts_address_line_2_check CHECK (((char_length(address_line_2) >= 1) AND (char_length(address_line_2) <= 200))),
     CONSTRAINT trust_contacts_alternate_phone_check CHECK ((alternate_phone ~ '^[+]?[0-9 ().-]{7,30}$'::text)),
+    CONSTRAINT trust_contacts_by_person CHECK (((NOT by_person) OR ((tenant_id IS NOT NULL) AND (recorded_by IS NULL)))),
     CONSTRAINT trust_contacts_check CHECK ((num_nonnulls(tenant_id, owner_id, vendor_id) = 1)),
     CONSTRAINT trust_contacts_check1 CHECK (((num_nonnulls(address_line_1, city, state, postal_code) = ANY (ARRAY[0, 4])) AND ((address_line_2 IS NULL) OR (address_line_1 IS NOT NULL)))),
     CONSTRAINT trust_contacts_city_check CHECK (((char_length(city) >= 1) AND (char_length(city) <= 100))),
@@ -24824,4 +24826,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261020000095'),
     ('20261020000096'),
     ('20261020000097'),
-    ('20261020000098');
+    ('20261020000098'),
+    ('20261020000099');

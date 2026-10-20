@@ -22,12 +22,15 @@ export type Cutover = {
 export type Counted = { added: number; kept: number };
 
 // Each roster file, in the order staff bring them in, with the columns it needs.
+// The contact columns the owners, vendors and tenants files may add, each optional (q127).
+const CONTACT_COLUMNS = "and, if the old system has them, Email, Phone, Other phone, Address, Address line 2, City, State, ZIP";
+
 export const ROSTER: { kind: RosterKind; label: string; columns: string }[] = [
-  { kind: "owners", label: "Owners", columns: "Name" },
-  { kind: "vendors", label: "Vendors", columns: "Name" },
+  { kind: "owners", label: "Owners", columns: `Name, ${CONTACT_COLUMNS}` },
+  { kind: "vendors", label: "Vendors", columns: `Name, ${CONTACT_COLUMNS}` },
   { kind: "properties", label: "Properties and their owners", columns: "Property, Owner (and Bank account if there are several)" },
   { kind: "units", label: "Units", columns: "Property, Unit" },
-  { kind: "tenants", label: "Tenants", columns: "Property, Tenant" },
+  { kind: "tenants", label: "Tenants", columns: `Property, Tenant, ${CONTACT_COLUMNS}` },
   { kind: "leases", label: "Leases in place", columns: "Property, Unit, Tenants (separated by ;), Starts on, Ends on, Monthly rent" },
   { kind: "charges", label: "Unpaid charges", columns: "Property, Unit, Due on, Amount, Kind (rent or fee), Memo" },
   {

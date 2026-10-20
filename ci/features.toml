@@ -816,3 +816,11 @@ operations = [
 browser = [
   "features.spec.ts › staff and a tenant each subscribe their calendar app to a link of their own; a new link takes the old one back",
 ]
+
+[[feature]]
+id = "own-contact"
+statement = "A tenant reads and changes their own email, phones and mailing address in the portal (a mailing address whole or not there); the company writes to that email from then on, their sign-in email stays, and staff see on the tenant's page the new details and that the tenant changed them, and when."
+operations = ["GET /api/tenant/contact", "POST /api/tenant/contact"]
+browser = [
+  "features.spec.ts › a tenant changes their own phone and email in the portal, and staff see the new ones and that the tenant changed them",
+]

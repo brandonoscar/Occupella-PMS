@@ -41,6 +41,16 @@ describe("api", () => {
     });
   });
 
+  it("says a rule of the PMS's own in its words", async () => {
+    vi.stubGlobal("fetch", answer(422, {
+      detail: [{ loc: ["body"], msg: "Value error, a mailing address needs its street, city, state and ZIP code" }],
+    }));
+
+    await expect(api.post("/api/tenant/contact")).rejects.toMatchObject({
+      detail: "a mailing address needs its street, city, state and ZIP code",
+    });
+  });
+
   it("names the status when the answer has no reason", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("oops", { status: 502 })));
 
