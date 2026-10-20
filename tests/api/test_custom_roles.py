@@ -13,7 +13,8 @@ from people import join_as_staff
 
 from pms.api.deps import AREA_PATHS, AREAS, area_of, staff_only
 
-# Staff writes that are no area's, and why: the database holds them to the admin role.
+# Staff writes that are no area's, and why: the database holds them to the admin role, or they
+# are the staff member's own.
 NOT_AN_AREA = {
     "/api/staff": "adds a staff member: admin",
     "/api/staff/{staff_id}/roles": "changes a role: admin",
@@ -22,6 +23,8 @@ NOT_AN_AREA = {
     "/api/custom-roles/{role_id}/areas": "changes a custom role: admin",
     "/api/custom-roles/{role_id}/staff": "gives a custom role: admin",
     "/api/signers": "names a trust bank account's broker (admin) or its signers (the broker)",
+    "/api/calendar/mine": "makes the staff member's own calendar link: theirs alone",
+    "/api/calendar/mine/revoke": "takes the staff member's own calendar link back",
 }
 
 

@@ -3309,3 +3309,62 @@ test("staff move a tenant to another owner's unit with their deposit; the new le
   await expect(page.getByText("Aspen Row, Unit 2")).toBeVisible();
   await expect(page.getByText("Birch Flats, Unit B")).toHaveCount(0);
 });
+
+// What a calendar app reads from a link: iCalendar text, its long lines unfolded.
+async function calendarAt(page: Page, url: string): Promise<{ status: number; type: string; text: string }> {
+  const answer = await page.request.get(url);
+  return {
+    status: answer.status(),
+    type: answer.headers()["content-type"] ?? "",
+    text: (await answer.text()).replace(/\r\n[ \t]/g, ""),
+  };
+}
+
+test("staff and a tenant each subscribe their calendar app to a link of their own; a new link takes the old one back", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["calendar"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Settings");
+  await page.getByRole("link", { name: "Your calendar" }).click();
+  const card = part(page, "Calendar");
+  await expect(card.getByTestId("calendar-state")).toHaveText("You have no calendar link.");
+  await card.getByRole("button", { name: "Make a calendar link" }).click();
+  await expect(card).toContainText("Made your calendar link.");
+  const first = await card.getByLabel("Calendar link").inputValue();
+  const feed = await calendarAt(page, first);
+  expect([feed.status, feed.type]).toEqual([200, "text/calendar; charset=utf-8"]);
+  expect(feed.text).toContain("BEGIN:VCALENDAR");
+  expect(feed.text).toContain("SUMMARY:Take the company's fees out of Demo operating trust account");
+  await expect(card.getByTestId("calendar-state")).toHaveText(`Your calendar link was made on ${us(today())}.`);
+
+  // A new link takes the old one back; taking the new one back stops it too.
+  await card.getByRole("button", { name: "Make a new link" }).click();
+  await expect(card).toContainText("Made a new calendar link; the one before stopped working.");
+  const second = await card.getByLabel("Calendar link").inputValue();
+  expect(second).not.toBe(first);
+  expect((await calendarAt(page, first)).status).toBe(404);
+  expect((await calendarAt(page, second)).status).toBe(200);
+  await card.getByRole("button", { name: "Take the link back" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Take it back" }).click();
+  await expect(card.getByTestId("calendar-state")).toHaveText("You have no calendar link.");
+  expect((await calendarAt(page, second)).status).toBe(404);
+
+  // The tenant's calendar: their rent due days, and nothing of the company's.
+  const tenant = await browser.newPage();
+  await joinPortal(tenant, people.taylor);
+  const theirs = part(tenant, "Calendar");
+  await theirs.getByRole("button", { name: "Make a calendar link" }).click();
+  await expect(theirs).toContainText("Made your calendar link.");
+  const link = await theirs.getByLabel("Calendar link").inputValue();
+  const mine = await calendarAt(tenant, link);
+  expect(mine.status).toBe(200);
+  expect(mine.text).toContain("SUMMARY:Rent due: Cedar House\\, House");
+  expect(mine.text).not.toContain("Take the company");
+  await theirs.getByRole("button", { name: "Take the link back" }).click();
+  await tenant.getByRole("alertdialog").getByRole("button", { name: "Take it back" }).click();
+  await expect(theirs.getByTestId("calendar-state")).toHaveText("You have no calendar link.");
+  expect((await calendarAt(tenant, link)).status).toBe(404);
+  await tenant.close();
+});

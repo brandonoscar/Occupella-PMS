@@ -488,6 +488,7 @@ FEATURES = (
     "leads",
     "screening-criteria",
     "lease-transfers",
+    "calendar",
 )
 
 

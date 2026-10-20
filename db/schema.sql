@@ -11509,6 +11509,37 @@ ALTER TABLE public.trust_budgets ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTIT
 
 
 --
+-- Name: trust_calendar_feed_revocations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_calendar_feed_revocations (
+    feed_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_calendar_feeds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_calendar_feeds (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    staff_id uuid,
+    tenant_id uuid,
+    group_id uuid,
+    token_sha256 bytea NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_calendar_feeds_check CHECK ((num_nonnulls(staff_id, tenant_id) = 1)),
+    CONSTRAINT trust_calendar_feeds_check1 CHECK (((group_id IS NULL) OR (staff_id IS NOT NULL))),
+    CONSTRAINT trust_calendar_feeds_token_sha256_check CHECK ((length(token_sha256) = 32))
+);
+
+
+--
 -- Name: trust_charge_payments; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14076,6 +14107,38 @@ ALTER TABLE ONLY public.trust_budgets
 
 
 --
+-- Name: trust_calendar_feed_revocations trust_calendar_feed_revocations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_calendar_feed_revocations
+    ADD CONSTRAINT trust_calendar_feed_revocations_pkey PRIMARY KEY (feed_id);
+
+
+--
+-- Name: trust_calendar_feeds trust_calendar_feeds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_calendar_feeds
+    ADD CONSTRAINT trust_calendar_feeds_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_calendar_feeds trust_calendar_feeds_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_calendar_feeds
+    ADD CONSTRAINT trust_calendar_feeds_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_calendar_feeds trust_calendar_feeds_token_sha256_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_calendar_feeds
+    ADD CONSTRAINT trust_calendar_feeds_token_sha256_key UNIQUE (token_sha256);
+
+
+--
 -- Name: trust_charge_payments trust_charge_payments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16170,6 +16233,41 @@ CREATE INDEX trust_budgets_account_month ON public.trust_budgets USING btree (le
 
 
 --
+-- Name: trust_calendar_feed_revocations_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_calendar_feed_revocations_recorded_by ON public.trust_calendar_feed_revocations USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_calendar_feeds_group; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_calendar_feeds_group ON public.trust_calendar_feeds USING btree (pmc_id, group_id);
+
+
+--
+-- Name: trust_calendar_feeds_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_calendar_feeds_recorded_by ON public.trust_calendar_feeds USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_calendar_feeds_staff; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_calendar_feeds_staff ON public.trust_calendar_feeds USING btree (pmc_id, staff_id);
+
+
+--
+-- Name: trust_calendar_feeds_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_calendar_feeds_tenant ON public.trust_calendar_feeds USING btree (pmc_id, tenant_id);
+
+
+--
 -- Name: trust_charge_payments_transfer_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -17710,6 +17808,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_calendar_feed_revocations trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_calendar_feed_revocations FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_calendar_feeds trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_calendar_feeds FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_charge_payments trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -18792,6 +18904,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_bill
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_budgets FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_calendar_feed_revocations trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_calendar_feed_revocations FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_calendar_feeds trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_calendar_feeds FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -20052,6 +20178,20 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_bill_markups FOR 
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_bill_splits FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_calendar_feed_revocations trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_calendar_feed_revocations FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_calendar_feeds trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_calendar_feeds FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -21377,6 +21517,62 @@ ALTER TABLE ONLY public.trust_budgets
 
 ALTER TABLE ONLY public.trust_budgets
     ADD CONSTRAINT trust_budgets_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_calendar_feed_revocations trust_calendar_feed_revocations_pmc_id_feed_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_calendar_feed_revocations
+    ADD CONSTRAINT trust_calendar_feed_revocations_pmc_id_feed_id_fkey FOREIGN KEY (pmc_id, feed_id) REFERENCES public.trust_calendar_feeds(pmc_id, id);
+
+
+--
+-- Name: trust_calendar_feed_revocations trust_calendar_feed_revocations_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_calendar_feed_revocations
+    ADD CONSTRAINT trust_calendar_feed_revocations_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_calendar_feeds trust_calendar_feeds_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_calendar_feeds
+    ADD CONSTRAINT trust_calendar_feeds_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_calendar_feeds trust_calendar_feeds_pmc_id_group_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_calendar_feeds
+    ADD CONSTRAINT trust_calendar_feeds_pmc_id_group_id_fkey FOREIGN KEY (pmc_id, group_id) REFERENCES public.trust_property_groups(pmc_id, id);
+
+
+--
+-- Name: trust_calendar_feeds trust_calendar_feeds_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_calendar_feeds
+    ADD CONSTRAINT trust_calendar_feeds_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_calendar_feeds trust_calendar_feeds_pmc_id_staff_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_calendar_feeds
+    ADD CONSTRAINT trust_calendar_feeds_pmc_id_staff_id_fkey FOREIGN KEY (pmc_id, staff_id) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_calendar_feeds trust_calendar_feeds_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_calendar_feeds
+    ADD CONSTRAINT trust_calendar_feeds_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
 
 
 --
@@ -24627,4 +24823,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261019000094'),
     ('20261020000095'),
     ('20261020000096'),
-    ('20261020000097');
+    ('20261020000097'),
+    ('20261020000098');

@@ -274,6 +274,18 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   unit: JPEG or PNG, twelve at most, oldest first), each served to anyone by
   `GET /api/listings/<pmc>/photos/<id>` only while the unit is listed and the photo not removed;
   staff keep them from Listings (`GET /api/leasing/units/<id>/photos`) or the unit's Files.
+- Calendar feeds (migration 0098, `src/pms/api/calendar.py`, `icalendar`): a staff member
+  (Settings, Your calendar, maybe for one property group) or a tenant (the portal's Calendar
+  card, `pages/CalendarCard.tsx`) makes a link of their own, `/api/calendar/<token>.ics`, that
+  a calendar app fetches with no login (`trust_calendar_feeds`, the token kept as its SHA-256
+  and shown once; `trust_calendar_feed_revocations`; append-only). Staff's shows move-ins,
+  leases ending, visits (with their window), open work orders due, showings, bills due (not
+  declined), rent changes, renters and vendor insurance running out and the day to take the
+  company's fees out of trust; a tenant's their rent due days, their requests' visits and their
+  lease's last day. Events name homes and work, never a tenant's contact details; each keeps
+  its UID. A new link takes the old back, one person's links wait for each other, and a link
+  taken back or whose login is disabled reads as not found. The access log prints the token as
+  "…". It is no custom-role area (each person's own); the AI role reads neither table.
 - Every table we add carries `pmc_id uuid`. It maps to Occupella's `companies.id` at merge time.
 - Table names: `pgledger_*` from upstream, `trust_*` for ours. Our functions and triggers are
   `trust_*` too. A report function is `trust_report_<name>`. `tests/test_schema_conventions.py`

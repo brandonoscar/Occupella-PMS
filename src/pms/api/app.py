@@ -24,6 +24,7 @@ refusal is answered 403.
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -50,6 +51,7 @@ from pms.api import (
     bank_deposits,
     banking,
     budgets,
+    calendar,
     company,
     custom_roles,
     dashboard,
@@ -493,6 +495,8 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(offers.router)
     app.include_router(listings.router)
     app.include_router(signing.router)
+    app.include_router(calendar.router)
+    calendar.hide_feed_tokens(logging.getLogger("uvicorn.access"))
     app.include_router(people.router)
     app.include_router(setup.router)
     app.include_router(rent.router)
