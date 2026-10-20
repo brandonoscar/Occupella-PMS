@@ -46,6 +46,7 @@ from pydantic import BaseModel, Field
 
 from pms import accounts, email, exports, nightly
 from pms.api import (
+    assistance,
     bank_deposits,
     banking,
     budgets,
@@ -314,6 +315,15 @@ def create_app(settings: Settings) -> FastAPI:
         body = json.dumps({"detail": jsonable_encoder(error.errors())}, ensure_ascii=True)
         return Response(body, status_code=422, media_type="application/json")
 
+    @app.exception_handler(psycopg.DataError)
+    async def unstorable(request: Request, error: psycopg.DataError) -> JSONResponse:
+        # Text with a NUL character, which Postgres can't store and psycopg refuses before it is
+        # sent: refused as bad input (the transaction is rolled back). Any other data error is
+        # still a server error, to be found and fixed.
+        if "NUL (0x00)" not in str(error):
+            raise error
+        return JSONResponse({"detail": "text can't contain a NUL character"}, 422)
+
     @app.exception_handler(psycopg.errors.InsufficientPrivilege)
     async def not_allowed(request: Request, error: psycopg.Error) -> JSONResponse:
         # A staff member without the role a write takes (the transaction is rolled back).
@@ -490,6 +500,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(people.router)
     app.include_router(setup.router)
     app.include_router(rent.router)
+    app.include_router(assistance.router)
     app.include_router(receipts.router)
     app.include_router(rentals.router)
     app.include_router(groups.router)

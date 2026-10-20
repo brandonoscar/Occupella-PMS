@@ -159,6 +159,7 @@ AREAS = {
 # not to be an area's).
 AREA_PATHS = (
     ("/api/rent/", "rent"),
+    ("/api/assistance/", "rent"),  # a housing authority's part of the rent
     ("/api/bank-accounts/", "rent"),  # bank deposits of what came in
     ("/api/payables/bills", "bills"),
     ("/api/payables/recurring", "bills"),

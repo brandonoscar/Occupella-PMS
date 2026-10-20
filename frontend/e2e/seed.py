@@ -479,6 +479,7 @@ FEATURES = (
     "owner-fees",
     "shared-bills",
     "ownership",
+    "housing-assistance",
     "emergencies",
     "recurring-work-orders",
     "vendor-links",

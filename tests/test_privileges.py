@@ -200,6 +200,13 @@ TABLES = {
     # (migration 0094).
     "trust_ownership_shares": {"SELECT", "INSERT"},
     "trust_ownership_share_lines": {"SELECT", "INSERT"},
+    # Housing authorities, a lease's assistance from a month, and what an authority owes: staff
+    # add them with inserts, and the rent run splits each month's part with one (migration 0095).
+    # An authority's payments are written only by trust_apply_assistance_payment.
+    "trust_housing_authorities": {"SELECT", "INSERT"},
+    "trust_rent_assistance": {"SELECT", "INSERT"},
+    "trust_assistance_charges": {"SELECT", "INSERT"},
+    "trust_assistance_payments": {"SELECT"},
     "trust_on_call_staff": {"SELECT", "INSERT"},
     "trust_recurring_work_orders": {"SELECT", "INSERT"},
     "trust_recurring_work_order_ends": {"SELECT", "INSERT"},
@@ -317,6 +324,12 @@ FUNCTIONS = {
     # A property's ownership shares in force on a day, and an amount split by them (0094).
     "trust_ownership_on(uuid,date)": {"trust_app"},
     "trust_split_by_ownership(uuid,date,numeric)": {"trust_app"},
+    # A lease's housing assistance on a day, the authority's part of rent, what is open of one of
+    # its charges, and the match of its payment to one (migration 0095).
+    "trust_assistance_on(uuid,date)": {"trust_app"},
+    "trust_assistance_part(numeric,numeric,numeric)": {"trust_app"},
+    "trust_assistance_open(uuid)": {"trust_app"},
+    "trust_apply_assistance_payment(uuid,uuid,text,numeric)": {"trust_app"},
     "trust_charge_recurring_due(uuid,date)": {"trust_app"},
     "trust_charge_rent_on_due_days(uuid,date,date)": {"trust_app"},
     "trust_charge_recurring_on_due_days(uuid,date,date)": {"trust_app"},
@@ -381,6 +394,10 @@ FUNCTIONS = {
     "trust_check_shared_bill()": set(),
     "trust_check_ownership_share_line()": set(),
     "trust_check_ownership_shares()": set(),
+    "trust_check_rent_assistance()": set(),
+    "trust_split_rent_assistance()": set(),
+    "trust_check_assistance_charge()": set(),
+    "trust_check_tenant_payment_transfer()": set(),
     "trust_check_work_order_charge()": set(),
     "trust_check_vendor_link_step()": set(),
     "trust_check_lead_open()": set(),
@@ -512,6 +529,7 @@ SECURITY_DEFINER = {
     "trust_open_lease(uuid,uuid,date,date,numeric,uuid[])",
     "trust_end_lease(uuid,uuid,date)",
     "trust_apply_payment(uuid,uuid,text,numeric)",
+    "trust_apply_assistance_payment(uuid,uuid,text,numeric)",  # an authority's payment (0095)
     "trust_reverse_payment(uuid,uuid,text,text,numeric)",
     "trust_post_management_fee(uuid,text,date,date,timestamptz)",
     "trust_post_leasing_fee(uuid,uuid,text,timestamptz)",
@@ -546,6 +564,7 @@ SECURITY_DEFINER = {
     "trust_check_shared_bill()",  # checks a shared invoice's parts at commit, as the owner
     "trust_check_ownership_share_line()",  # a share's account is the property's owner's
     "trust_check_ownership_shares()",  # a property's shares come to 100 at commit
+    "trust_check_assistance_charge()",  # locks the authority's charge, which the app can't
     "trust_fill_bill_markup()",  # locks the bill's owner account, which the app can't
     # Reads lease offers for the AI role, which never reads them, and returns only each lease's
     # renewal status (founder decision, 2026-10-13).

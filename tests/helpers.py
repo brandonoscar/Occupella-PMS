@@ -1245,3 +1245,41 @@ def split_by_ownership(connection, property_id, day, amount) -> list[tuple[str, 
         "SELECT ledger_account_id, amount FROM trust_split_by_ownership(%s, %s, %s)",
         (property_id, day, amount),
     ).fetchall()
+
+
+def add_authority(connection, pmc_id, name="Synthetic Housing Authority") -> UUID:
+    """A housing authority of the PMC (migration 0095)."""
+    return _one(
+        connection,
+        "INSERT INTO trust_housing_authorities (pmc_id, name) VALUES (%s, %s) RETURNING id",
+        (pmc_id, name),
+    )
+
+
+def assist(connection, pmc_id, lease_id, authority_id, starts_on, amount, contract=None) -> UUID:
+    """A lease's housing assistance from the first of a month: what the authority pays of the
+    rent each month (0 ends it)."""
+    return _one(
+        connection,
+        "INSERT INTO trust_rent_assistance"
+        " (pmc_id, lease_id, housing_authority_id, starts_on, amount, contract)"
+        " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, lease_id, authority_id, starts_on, Decimal(amount), contract),
+    )
+
+
+def authority_charges(connection, lease_id) -> list[tuple]:
+    """A lease's housing authority charges, oldest first: (due_on, kind, amount, source)."""
+    return connection.execute(
+        "SELECT due_on, kind, amount, source FROM trust_assistance_charges WHERE lease_id = %s"
+        " ORDER BY due_on, created_at, id",
+        (lease_id,),
+    ).fetchall()
+
+
+def apply_assistance_payment(connection, pmc_id, charge_id, transfer_id, amount) -> Decimal:
+    return _one(
+        connection,
+        "SELECT trust_apply_assistance_payment(%s, %s, %s, %s)",
+        (pmc_id, charge_id, transfer_id, Decimal(amount)),
+    )

@@ -484,6 +484,107 @@ $$;
 
 
 --
+-- Name: trust_apply_assistance_payment(uuid, uuid, text, numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_apply_assistance_payment(p_pmc_id uuid, p_charge_id uuid, p_transfer_id text, p_amount numeric) RETURNS numeric
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_charge trust_assistance_charges;
+    v_transfer pgledger_transfers;
+    v_property_id uuid;
+    v_existing numeric;
+    v_open numeric;
+    v_used numeric;
+BEGIN
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'trust: apply a payment at READ COMMITTED, not %',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
+    IF p_amount IS NULL OR p_amount <= 0 THEN
+        RAISE EXCEPTION 'trust: a payment applies a positive amount, not %', p_amount
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    SELECT c.* INTO v_charge FROM trust_assistance_charges AS c
+    WHERE c.id = p_charge_id AND c.pmc_id = p_pmc_id
+    FOR NO KEY UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no housing authority charge % in PMC %', p_charge_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF v_charge.adjusts_id IS NOT NULL THEN
+        RAISE EXCEPTION 'trust: an adjustment is not paid; pay the charge it adjusts'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    SELECT t.* INTO v_transfer FROM pgledger_transfers AS t
+    WHERE t.id = p_transfer_id
+    FOR NO KEY UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no transfer %', p_transfer_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT u.property_id INTO v_property_id
+    FROM trust_leases AS l JOIN trust_units AS u ON u.id = l.unit_id
+    WHERE l.id = v_charge.lease_id;
+    IF NOT EXISTS (
+        SELECT t.ledger_account_id FROM trust_ledger_accounts AS t
+        WHERE t.ledger_account_id = v_transfer.to_account_id AND t.pmc_id = p_pmc_id
+          AND t.kind = 'owner_property' AND t.property_id = v_property_id
+    ) OR NOT EXISTS (
+        SELECT f.ledger_account_id FROM trust_ledger_accounts AS f
+        WHERE f.ledger_account_id = v_transfer.from_account_id AND f.pmc_id = p_pmc_id
+          AND f.kind = 'bank_cash'
+    ) THEN
+        RAISE EXCEPTION 'trust: transfer % did not pay into an owner''s account of this charge''s '
+            'property from cash', p_transfer_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF EXISTS (SELECT 1 FROM trust_charge_payments AS p WHERE p.transfer_id = p_transfer_id)
+       OR EXISTS (SELECT 1 FROM trust_owner_contributions AS c WHERE c.transfer_id = p_transfer_id)
+    THEN
+        RAISE EXCEPTION 'trust: transfer % is a tenant''s payment or an owner''s contribution, '
+            'not a housing authority''s', p_transfer_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    SELECT p.amount INTO v_existing FROM trust_assistance_payments AS p
+    WHERE p.assistance_charge_id = p_charge_id AND p.transfer_id = p_transfer_id;
+    IF FOUND THEN
+        IF v_existing <> p_amount THEN
+            RAISE EXCEPTION 'trust: transfer % already pays % of charge %, not %',
+                p_transfer_id, v_existing, p_charge_id, p_amount
+                USING ERRCODE = 'unique_violation';
+        END IF;
+        RETURN v_existing;  -- a retry: the original match
+    END IF;
+
+    v_open := trust_assistance_open(p_charge_id);
+    IF p_amount > v_open THEN
+        RAISE EXCEPTION 'trust: % is more than is open of the authority''s charge, %',
+            p_amount, v_open
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT coalesce(sum(p.amount), 0) INTO v_used FROM trust_assistance_payments AS p
+    WHERE p.transfer_id = p_transfer_id;
+    IF v_used + p_amount > v_transfer.amount THEN
+        RAISE EXCEPTION 'trust: transfer % moved %, and % of it pays charges already',
+            p_transfer_id, v_transfer.amount, v_used
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    INSERT INTO trust_assistance_payments (transfer_id, assistance_charge_id, pmc_id, amount)
+    VALUES (p_transfer_id, p_charge_id, p_pmc_id, p_amount);
+    RETURN p_amount;
+END;
+$$;
+
+
+--
 -- Name: trust_apply_payment(uuid, uuid, text, numeric); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -880,6 +981,72 @@ BEGIN
     END LOOP;
     RETURN v_charged;
 END;
+$$;
+
+
+--
+-- Name: trust_rent_assistance; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_rent_assistance (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    housing_authority_id uuid NOT NULL,
+    starts_on date NOT NULL,
+    amount numeric NOT NULL,
+    contract text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_rent_assistance_amount_check CHECK (((amount >= (0)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_rent_assistance_contract_check CHECK (((btrim(contract) <> ''::text) AND (length(contract) <= 100))),
+    CONSTRAINT trust_rent_assistance_starts_on_check CHECK ((EXTRACT(day FROM starts_on) = (1)::numeric))
+);
+
+
+--
+-- Name: trust_assistance_on(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_assistance_on(p_lease_id uuid, p_day date) RETURNS SETOF public.trust_rent_assistance
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT a.* FROM trust_rent_assistance AS a
+    WHERE a.lease_id = p_lease_id AND a.starts_on <= p_day
+    ORDER BY a.starts_on DESC, a.created_at DESC, a.id DESC
+    LIMIT 1
+$$;
+
+
+--
+-- Name: trust_assistance_open(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_assistance_open(p_charge_id uuid) RETURNS numeric
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT c.amount
+           + coalesce((SELECT sum(CASE a.kind WHEN 'credit' THEN -a.amount ELSE a.amount END)
+                       FROM trust_assistance_charges AS a WHERE a.adjusts_id = c.id), 0)
+           - coalesce((SELECT sum(p.amount) FROM trust_assistance_payments AS p
+                       WHERE p.assistance_charge_id = c.id), 0)
+    FROM trust_assistance_charges AS c
+    WHERE c.id = p_charge_id
+$$;
+
+
+--
+-- Name: trust_assistance_part(numeric, numeric, numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_assistance_part(p_amount numeric, p_monthly_rent numeric, p_assistance numeric) RETURNS numeric
+    LANGUAGE sql IMMUTABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT CASE WHEN p_amount <= 0 THEN 0::numeric
+                ELSE least(p_amount, round(p_amount * p_assistance / p_monthly_rent, 2)) END
 $$;
 
 
@@ -1564,6 +1731,42 @@ BEGIN
                                  WHERE d.bill_id = bill.id))
     THEN
         RAISE EXCEPTION 'trust: % has a bill not paid; pay or decline it before archiving', v_name
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_assistance_charge(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_assistance_charge() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_target trust_assistance_charges;
+BEGIN
+    IF NEW.adjusts_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    SELECT c.* INTO v_target FROM trust_assistance_charges AS c
+    WHERE c.id = NEW.adjusts_id AND c.pmc_id = NEW.pmc_id
+    FOR NO KEY UPDATE;
+    IF NOT FOUND THEN
+        RETURN NEW;  -- the foreign key refuses it
+    END IF;
+    IF v_target.adjusts_id IS NOT NULL OR v_target.lease_id <> NEW.lease_id
+       OR v_target.housing_authority_id <> NEW.housing_authority_id THEN
+        RAISE EXCEPTION 'trust: an adjustment changes a charge of the same lease and authority, '
+            'not another adjustment'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.source = 'staff' AND NEW.amount > trust_assistance_open(v_target.id) THEN
+        RAISE EXCEPTION 'trust: % is more than is open of the authority''s charge, %',
+            NEW.amount, trust_assistance_open(v_target.id)
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
@@ -2585,6 +2788,55 @@ $$;
 
 
 --
+-- Name: trust_check_rent_assistance(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_rent_assistance() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_lease trust_leases;
+    v_charged date;
+    v_rent numeric;
+BEGIN
+    SELECT l.* INTO v_lease FROM trust_leases AS l
+    WHERE l.id = NEW.lease_id AND l.pmc_id = NEW.pmc_id;
+    IF NOT FOUND THEN
+        RETURN NEW;  -- no such lease of the PMC: the foreign key refuses it
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended('lease days of ' || NEW.pmc_id, 0));
+    IF NEW.starts_on < date_trunc('month', v_lease.starts_on::timestamp)::date
+       OR NEW.starts_on > v_lease.ends_on THEN
+        RAISE EXCEPTION 'trust: housing assistance starts in a month of the lease, from % to %',
+            v_lease.starts_on, coalesce(v_lease.ends_on::text, 'month to month')
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT max(d.due_on) INTO v_charged
+    FROM (
+        SELECT c.due_on FROM trust_charges AS c
+        WHERE c.lease_id = NEW.lease_id AND c.kind = 'rent' AND c.due_on >= NEW.starts_on
+        UNION ALL
+        SELECT a.due_on FROM trust_assistance_charges AS a
+        WHERE a.lease_id = NEW.lease_id AND a.source = 'rent' AND a.due_on >= NEW.starts_on
+    ) AS d;
+    IF v_charged IS NOT NULL THEN
+        RAISE EXCEPTION 'trust: rent due % is charged already; housing assistance starts after '
+            'its month', v_charged
+            USING ERRCODE = 'check_violation';
+    END IF;
+    v_rent := trust_rent_on(NEW.lease_id, greatest(NEW.starts_on, v_lease.starts_on));
+    IF NEW.amount > v_rent THEN
+        RAISE EXCEPTION 'trust: a housing authority pays no more than the rent, %, not %',
+            v_rent, NEW.amount
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_rent_change(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2645,8 +2897,15 @@ BEGIN
             v_lease.starts_on, coalesce(v_lease.ends_on::text, 'month to month')
             USING ERRCODE = 'check_violation';
     END IF;
-    SELECT max(c.due_on) INTO v_charged FROM trust_charges AS c
-    WHERE c.lease_id = NEW.lease_id AND c.kind = 'rent' AND c.due_on >= NEW.starts_on;
+    -- A month the authority pays all of the rent has only its charge (migration 0095).
+    SELECT max(d.due_on) INTO v_charged
+    FROM (
+        SELECT c.due_on FROM trust_charges AS c
+        WHERE c.lease_id = NEW.lease_id AND c.kind = 'rent' AND c.due_on >= NEW.starts_on
+        UNION ALL
+        SELECT a.due_on FROM trust_assistance_charges AS a
+        WHERE a.lease_id = NEW.lease_id AND a.source = 'rent' AND a.due_on >= NEW.starts_on
+    ) AS d;
     IF v_charged IS NOT NULL THEN
         RAISE EXCEPTION 'trust: rent due % is charged already; a new due day starts after its month',
             v_charged
@@ -2901,6 +3160,27 @@ BEGIN
         RAISE EXCEPTION 'trust: staff member % is the PMC''s last admin', NEW.staff_id
             USING ERRCODE = 'check_violation',
                   HINT = 'Make another staff member an admin first.';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_tenant_payment_transfer(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_tenant_payment_transfer() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM trust_assistance_payments AS p WHERE p.transfer_id = NEW.transfer_id
+    ) THEN
+        RAISE EXCEPTION 'trust: transfer % is a housing authority''s payment, not a tenant''s',
+            NEW.transfer_id
+            USING ERRCODE = 'invalid_parameter_value';
     END IF;
     RETURN NEW;
 END;
@@ -3195,6 +3475,19 @@ BEGIN
         p_pmc_id, v_offer.unit_id, v_offer.starts_on, v_offer.ends_on, v_offer.monthly_rent,
         v_tenants
     );
+    -- A renewal keeps the housing assistance in force on its first day (migration 0095), from
+    -- its first month and never past its rent, so its rent is split as the old lease's was,
+    -- the part month charged below included.
+    IF v_offer.application_id IS NULL THEN
+        INSERT INTO trust_rent_assistance (
+            pmc_id, lease_id, housing_authority_id, starts_on, amount, contract
+        )
+        SELECT p_pmc_id, v_lease, a.housing_authority_id,
+               date_trunc('month', v_offer.starts_on::timestamp)::date,
+               least(a.amount, v_offer.monthly_rent), a.contract
+        FROM trust_assistance_on(v_old.id, v_offer.starts_on) AS a
+        WHERE a.amount > 0;
+    END IF;
     INSERT INTO trust_lease_guarantors (pmc_id, lease_id, display_name, email, offer_id)
     SELECT p_pmc_id, v_lease, s.display_name, s.email, p_offer_id
     FROM trust_lease_offer_signers AS s
@@ -3349,9 +3642,7 @@ BEGIN
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
 
-    -- Each charge the rent run makes (rent, and a recurring charge's) that, with what was added
-    -- or taken off it before, stands at its month's days under the old end: added to or taken
-    -- off so it stands at its month's days under the new end.
+    -- The tenant's charges the rent run makes (rent, and a recurring charge's).
     FOR v_charge IN
         SELECT k.id, k.due_on, k.label, k.was, k.now
         FROM (
@@ -3364,20 +3655,39 @@ BEGIN
                        JOIN trust_charges AS a ON a.id = x.adjustment_charge_id
                        WHERE x.charge_id = c.id
                    ), 0) AS net,
-                   (CASE WHEN c.kind = 'credit' THEN -1 ELSE 1 END) * greatest((
-                       SELECT r.amount FROM trust_rent_for_month(
-                           v_old.starts_on, v_old.ends_on,
-                           coalesce(rc.amount, trust_rent_on(p_lease_id, c.due_on)), c.due_on
-                       ) AS r
-                   ), 0) AS was,
-                   (CASE WHEN c.kind = 'credit' THEN -1 ELSE 1 END) * greatest((
-                       SELECT r.amount FROM trust_rent_for_month(
-                           v_new.starts_on, v_new.ends_on,
-                           coalesce(rc.amount, trust_rent_on(p_lease_id, c.due_on)), c.due_on
-                       ) AS r
-                   ), 0) AS now
+                   (CASE WHEN c.kind = 'credit' THEN -1 ELSE 1 END) * (
+                       w.amount - CASE WHEN aid.id IS NULL THEN 0 ELSE
+                           trust_assistance_part(w.amount, aid.monthly_rent, aid.monthly_assistance)
+                       END
+                   ) AS was,
+                   (CASE WHEN c.kind = 'credit' THEN -1 ELSE 1 END) * (
+                       n.amount - CASE WHEN aid.id IS NULL THEN 0 ELSE
+                           trust_assistance_part(n.amount, aid.monthly_rent, aid.monthly_assistance)
+                       END
+                   ) AS now
             FROM trust_charges AS c
             LEFT JOIN trust_recurring_charges AS rc ON rc.id = c.recurring_charge_id
+            -- The authority's part of the same month's rent, if it pays part of it.
+            LEFT JOIN trust_assistance_charges AS aid
+                ON c.kind = 'rent' AND aid.lease_id = c.lease_id AND aid.source = 'rent'
+                AND date_trunc('month', aid.due_on::timestamp)
+                    = date_trunc('month', c.due_on::timestamp)
+            CROSS JOIN LATERAL (
+                SELECT greatest((
+                    SELECT r.amount FROM trust_rent_for_month(
+                        v_old.starts_on, v_old.ends_on,
+                        coalesce(rc.amount, trust_rent_on(p_lease_id, c.due_on)), c.due_on
+                    ) AS r
+                ), 0) AS amount
+            ) AS w
+            CROSS JOIN LATERAL (
+                SELECT greatest((
+                    SELECT r.amount FROM trust_rent_for_month(
+                        v_new.starts_on, v_new.ends_on,
+                        coalesce(rc.amount, trust_rent_on(p_lease_id, c.due_on)), c.due_on
+                    ) AS r
+                ), 0) AS amount
+            ) AS n
             WHERE c.lease_id = p_lease_id
               AND (c.kind = 'rent' OR c.recurring_charge_id IS NOT NULL)
         ) AS k
@@ -3399,6 +3709,51 @@ BEGIN
         RETURNING id INTO v_adjustment;
         INSERT INTO trust_lease_end_adjustments (adjustment_charge_id, pmc_id, charge_id, ends_on)
         VALUES (v_adjustment, p_pmc_id, v_charge.id, p_ends_on);
+    END LOOP;
+
+    -- The authority's part of each month's rent, the same way: one that, with the lease ends'
+    -- adjustments of it, stands at its part of the month's days under the old end.
+    FOR v_charge IN
+        SELECT k.id, k.due_on, k.housing_authority_id, k.was, k.now
+        FROM (
+            SELECT a.id, a.due_on, a.housing_authority_id,
+                   a.amount + coalesce((
+                       SELECT sum(CASE x.kind WHEN 'credit' THEN -x.amount ELSE x.amount END)
+                       FROM trust_assistance_charges AS x
+                       WHERE x.adjusts_id = a.id AND x.source = 'lease end'
+                   ), 0) AS net,
+                   trust_assistance_part(greatest((
+                       SELECT r.amount FROM trust_rent_for_month(
+                           v_old.starts_on, v_old.ends_on, trust_rent_on(p_lease_id, a.due_on),
+                           a.due_on
+                       ) AS r
+                   ), 0), a.monthly_rent, a.monthly_assistance) AS was,
+                   trust_assistance_part(greatest((
+                       SELECT r.amount FROM trust_rent_for_month(
+                           v_new.starts_on, v_new.ends_on, trust_rent_on(p_lease_id, a.due_on),
+                           a.due_on
+                       ) AS r
+                   ), 0), a.monthly_rent, a.monthly_assistance) AS now
+            FROM trust_assistance_charges AS a
+            WHERE a.lease_id = p_lease_id AND a.source = 'rent'
+        ) AS k
+        WHERE k.net = k.was AND k.now <> k.was
+        ORDER BY k.due_on, k.id
+    LOOP
+        INSERT INTO trust_assistance_charges (
+            pmc_id, lease_id, housing_authority_id, due_on, kind, amount, memo, source, adjusts_id
+        ) VALUES (
+            p_pmc_id, p_lease_id, v_charge.housing_authority_id, v_charge.due_on,
+            CASE WHEN v_charge.now < v_charge.was THEN 'credit' ELSE 'charge' END,
+            abs(v_charge.now - v_charge.was),
+            'Rent due ' || to_char(v_charge.due_on, 'YYYY-MM-DD') || CASE
+                WHEN v_charge.now < v_charge.was
+                    THEN ': the days after the lease ends ' || to_char(p_ends_on, 'YYYY-MM-DD')
+                WHEN p_ends_on IS NULL THEN ': the days back, the lease no longer ends'
+                ELSE ': the days back, the lease now ends ' || to_char(p_ends_on, 'YYYY-MM-DD')
+            END,
+            'lease end', v_charge.id
+        );
     END LOOP;
 END;
 $$;
@@ -4649,6 +5004,11 @@ BEGIN
     JOIN trust_charges AS c ON c.id = cp.charge_id
         AND (c.kind = 'rent' OR c.recurring_charge_id IS NOT NULL)
     JOIN pgledger_transfers AS t ON t.id = cp.transfer_id
+    WHERE t.to_account_id = p_account AND t.event_at >= v_start AND t.event_at < v_end;
+    -- A housing authority's part of the rent it paid (migration 0095).
+    SELECT v_collected + coalesce(sum(ap.amount), 0) INTO v_collected
+    FROM trust_assistance_payments AS ap
+    JOIN pgledger_transfers AS t ON t.id = ap.transfer_id
     WHERE t.to_account_id = p_account AND t.event_at >= v_start AND t.event_at < v_end;
     SELECT v_collected - coalesce(sum(r.amount), 0) INTO v_collected
     FROM trust_payment_reversals AS r
@@ -6753,6 +7113,12 @@ BEGIN
         JOIN pgledger_transfers AS tr ON tr.id = r.reversal_id
         JOIN classes AS k ON k.id = r.charge_id
         WHERE r.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
+        UNION ALL
+        -- A housing authority's part of the rent, as it paid it (migration 0095): rent.
+        SELECT tr.to_account_id, 1, ap.amount
+        FROM trust_assistance_payments AS ap
+        JOIN pgledger_transfers AS tr ON tr.id = ap.transfer_id
+        WHERE ap.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
     ),
     fees AS (
         SELECT f.ledger_account_id AS account, 0 AS ord, tr.amount
@@ -7479,11 +7845,17 @@ BEGIN
         JOIN pgledger_transfers AS tr ON tr.id = cp.transfer_id
         WHERE cp.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
         UNION ALL
-        -- ...less what of them bounced back.
+        -- ...less what of them bounced back...
         SELECT tr.from_account_id, 1, -r.amount
         FROM trust_payment_reversals AS r
         JOIN pgledger_transfers AS tr ON tr.id = r.reversal_id
         WHERE r.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
+        UNION ALL
+        -- ...and a housing authority's part of the rent, as it paid it (migration 0095).
+        SELECT tr.to_account_id, 1, ap.amount
+        FROM trust_assistance_payments AS ap
+        JOIN pgledger_transfers AS tr ON tr.id = ap.transfer_id
+        WHERE ap.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
         UNION ALL
         SELECT f.ledger_account_id, 2, -tr.amount
         FROM trust_management_fees AS f
@@ -9501,6 +9873,50 @@ $$;
 
 
 --
+-- Name: trust_split_rent_assistance(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_split_rent_assistance() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_aid trust_rent_assistance;
+    v_rent numeric;
+    v_part numeric;
+BEGIN
+    SELECT a.* INTO v_aid FROM trust_assistance_on(NEW.lease_id, NEW.due_on) AS a;
+    IF NOT FOUND OR v_aid.amount = 0 THEN
+        RETURN NEW;
+    END IF;
+    -- The lease's rent that day: always above 0 (its lease and rent changes check it).
+    v_rent := trust_rent_on(NEW.lease_id, NEW.due_on);
+    v_part := trust_assistance_part(NEW.amount, v_rent, v_aid.amount);
+    IF v_part <= 0 THEN
+        RETURN NEW;
+    END IF;
+    INSERT INTO trust_assistance_charges (
+        pmc_id, lease_id, housing_authority_id, due_on, kind, amount, memo, source,
+        monthly_rent, monthly_assistance
+    ) VALUES (
+        NEW.pmc_id, NEW.lease_id, v_aid.housing_authority_id, NEW.due_on, 'charge', v_part,
+        coalesce(NEW.memo, 'Rent due ' || to_char(NEW.due_on, 'YYYY-MM-DD')), 'rent',
+        v_rent, v_aid.amount
+    )
+    ON CONFLICT (lease_id, (date_trunc('month', due_on::timestamp))) WHERE source = 'rent'
+    DO NOTHING;
+    NEW.amount := NEW.amount - v_part;
+    IF NEW.amount <= 0 THEN
+        RETURN NULL;  -- the authority pays all of it
+    END IF;
+    NEW.memo := coalesce(NEW.memo, 'Rent due ' || to_char(NEW.due_on, 'YYYY-MM-DD'))
+                || ', the tenant''s part';
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_staff_holds(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10200,6 +10616,52 @@ CREATE TABLE public.trust_archivals (
 
 
 --
+-- Name: trust_assistance_charges; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_assistance_charges (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    housing_authority_id uuid NOT NULL,
+    due_on date NOT NULL,
+    kind text NOT NULL,
+    amount numeric NOT NULL,
+    memo text NOT NULL,
+    source text NOT NULL,
+    monthly_rent numeric,
+    monthly_assistance numeric,
+    adjusts_id uuid,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_assistance_charges_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_assistance_charges_check CHECK (((source = 'rent'::text) = ((monthly_rent IS NOT NULL) AND (monthly_assistance IS NOT NULL)))),
+    CONSTRAINT trust_assistance_charges_check1 CHECK (((source <> 'rent'::text) OR ((kind = 'charge'::text) AND (adjusts_id IS NULL)))),
+    CONSTRAINT trust_assistance_charges_check2 CHECK (((source <> 'lease end'::text) OR (adjusts_id IS NOT NULL))),
+    CONSTRAINT trust_assistance_charges_check3 CHECK (((kind = 'charge'::text) OR (adjusts_id IS NOT NULL))),
+    CONSTRAINT trust_assistance_charges_kind_check CHECK ((kind = ANY (ARRAY['charge'::text, 'credit'::text]))),
+    CONSTRAINT trust_assistance_charges_memo_check CHECK (((btrim(memo) <> ''::text) AND (length(memo) <= 200))),
+    CONSTRAINT trust_assistance_charges_monthly_assistance_check CHECK ((monthly_assistance > (0)::numeric)),
+    CONSTRAINT trust_assistance_charges_monthly_rent_check CHECK ((monthly_rent > (0)::numeric)),
+    CONSTRAINT trust_assistance_charges_source_check CHECK ((source = ANY (ARRAY['rent'::text, 'lease end'::text, 'staff'::text])))
+);
+
+
+--
+-- Name: trust_assistance_payments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_assistance_payments (
+    transfer_id text NOT NULL,
+    assistance_charge_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    amount numeric NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_assistance_payments_amount_check CHECK ((amount > (0)::numeric))
+);
+
+
+--
 -- Name: trust_audit_log; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -10875,6 +11337,20 @@ CREATE TABLE public.trust_expense_accounts (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_expense_accounts_name_check CHECK (((name ~ '\S'::text) AND (length(name) <= 200))),
     CONSTRAINT trust_expense_accounts_schedule_e_line_check CHECK (((schedule_e_line >= 5) AND (schedule_e_line <= 19)))
+);
+
+
+--
+-- Name: trust_housing_authorities; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_housing_authorities (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    name text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_housing_authorities_name_check CHECK (((btrim(name) <> ''::text) AND (length(name) <= 200)))
 );
 
 
@@ -12651,6 +13127,30 @@ ALTER TABLE ONLY public.trust_archivals
 
 
 --
+-- Name: trust_assistance_charges trust_assistance_charges_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_charges
+    ADD CONSTRAINT trust_assistance_charges_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_assistance_charges trust_assistance_charges_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_charges
+    ADD CONSTRAINT trust_assistance_charges_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_assistance_payments trust_assistance_payments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_payments
+    ADD CONSTRAINT trust_assistance_payments_pkey PRIMARY KEY (transfer_id, assistance_charge_id);
+
+
+--
 -- Name: trust_audit_log trust_audit_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -13261,6 +13761,22 @@ ALTER TABLE ONLY public.trust_expense_accounts
 
 ALTER TABLE ONLY public.trust_expense_accounts
     ADD CONSTRAINT trust_expense_accounts_pmc_id_name_key UNIQUE (pmc_id, name);
+
+
+--
+-- Name: trust_housing_authorities trust_housing_authorities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_housing_authorities
+    ADD CONSTRAINT trust_housing_authorities_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_housing_authorities trust_housing_authorities_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_housing_authorities
+    ADD CONSTRAINT trust_housing_authorities_pmc_id_id_key UNIQUE (pmc_id, id);
 
 
 --
@@ -14184,6 +14700,22 @@ ALTER TABLE ONLY public.trust_recurring_work_orders
 
 
 --
+-- Name: trust_rent_assistance trust_rent_assistance_lease_id_starts_on_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rent_assistance
+    ADD CONSTRAINT trust_rent_assistance_lease_id_starts_on_key UNIQUE (lease_id, starts_on);
+
+
+--
+-- Name: trust_rent_assistance trust_rent_assistance_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rent_assistance
+    ADD CONSTRAINT trust_rent_assistance_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_rent_changes trust_rent_changes_lease_id_effective_on_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -14688,6 +15220,48 @@ CREATE INDEX trust_archivals_unit ON public.trust_archivals USING btree (pmc_id,
 
 
 --
+-- Name: trust_assistance_charges_adjusts; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_assistance_charges_adjusts ON public.trust_assistance_charges USING btree (pmc_id, adjusts_id);
+
+
+--
+-- Name: trust_assistance_charges_authority; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_assistance_charges_authority ON public.trust_assistance_charges USING btree (pmc_id, housing_authority_id);
+
+
+--
+-- Name: trust_assistance_charges_one_rent_per_month; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_assistance_charges_one_rent_per_month ON public.trust_assistance_charges USING btree (lease_id, date_trunc('month'::text, (due_on)::timestamp without time zone)) WHERE (source = 'rent'::text);
+
+
+--
+-- Name: trust_assistance_charges_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_assistance_charges_pmc ON public.trust_assistance_charges USING btree (pmc_id, lease_id, due_on);
+
+
+--
+-- Name: trust_assistance_charges_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_assistance_charges_recorded_by ON public.trust_assistance_charges USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_assistance_payments_charge; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_assistance_payments_charge ON public.trust_assistance_payments USING btree (pmc_id, assistance_charge_id);
+
+
+--
 -- Name: trust_audit_log_pmc_id_at; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -15049,6 +15623,20 @@ CREATE INDEX trust_emails_tenant_id ON public.trust_emails USING btree (tenant_i
 --
 
 CREATE INDEX trust_emails_vendor_id ON public.trust_emails USING btree (vendor_id) WHERE (vendor_id IS NOT NULL);
+
+
+--
+-- Name: trust_housing_authorities_name; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_housing_authorities_name ON public.trust_housing_authorities USING btree (pmc_id, lower(name));
+
+
+--
+-- Name: trust_housing_authorities_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_housing_authorities_recorded_by ON public.trust_housing_authorities USING btree (pmc_id, recorded_by);
 
 
 --
@@ -15654,6 +16242,27 @@ CREATE INDEX trust_recurring_work_orders_vendor ON public.trust_recurring_work_o
 
 
 --
+-- Name: trust_rent_assistance_authority; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_rent_assistance_authority ON public.trust_rent_assistance USING btree (pmc_id, housing_authority_id);
+
+
+--
+-- Name: trust_rent_assistance_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_rent_assistance_pmc ON public.trust_rent_assistance USING btree (pmc_id, lease_id);
+
+
+--
+-- Name: trust_rent_assistance_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_rent_assistance_recorded_by ON public.trust_rent_assistance USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_rent_changes_pmc_lease; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -16067,6 +16676,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_assistance_charges trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_assistance_charges FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_assistance_payments trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_assistance_payments FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_audit_log trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -16323,6 +16946,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_expense_accounts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_housing_authorities trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_housing_authorities FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -16746,6 +17376,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_rent_assistance trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_rent_assistance FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_rent_changes trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -16991,6 +17628,13 @@ CREATE TRIGGER trust_archival BEFORE INSERT ON public.trust_archivals FOR EACH R
 
 
 --
+-- Name: trust_assistance_charges trust_assistance_charge_adjusts; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_assistance_charge_adjusts BEFORE INSERT ON public.trust_assistance_charges FOR EACH ROW EXECUTE FUNCTION public.trust_check_assistance_charge();
+
+
+--
 -- Name: pgledger_transfers trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -17058,6 +17702,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_appl
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_archivals FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_assistance_charges trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_assistance_charges FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_assistance_payments trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_assistance_payments FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -17296,6 +17954,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_emai
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_expense_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_housing_authorities trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_housing_authorities FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -17758,6 +18423,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_recu
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_recurring_work_orders FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_rent_assistance trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_rent_assistance FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -18349,6 +19021,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_archivals FOR EAC
 
 
 --
+-- Name: trust_assistance_charges trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_assistance_charges FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_bank_deposits trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -18395,6 +19074,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_contacts FOR EACH
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_email_settings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_housing_authorities trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_housing_authorities FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -18545,6 +19231,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_recurring_work_or
 
 
 --
+-- Name: trust_rent_assistance trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_rent_assistance FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_rent_changes trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -18650,6 +19343,20 @@ CREATE TRIGGER trust_recurring_charge_amount BEFORE INSERT ON public.trust_charg
 
 
 --
+-- Name: trust_rent_assistance trust_rent_assistance_in_time; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_rent_assistance_in_time BEFORE INSERT ON public.trust_rent_assistance FOR EACH ROW EXECUTE FUNCTION public.trust_check_rent_assistance();
+
+
+--
+-- Name: trust_charges trust_rent_assistance_split; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_rent_assistance_split BEFORE INSERT ON public.trust_charges FOR EACH ROW WHEN ((new.kind = 'rent'::text)) EXECUTE FUNCTION public.trust_split_rent_assistance();
+
+
+--
 -- Name: trust_rent_changes trust_rent_change; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -18738,6 +19445,13 @@ CREATE CONSTRAINT TRIGGER trust_signers_have_a_broker AFTER INSERT ON public.tru
 --
 
 CREATE TRIGGER trust_staff_role_change BEFORE INSERT ON public.trust_staff_roles FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role_change();
+
+
+--
+-- Name: trust_charge_payments trust_tenant_payment_not_assistance; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_tenant_payment_not_assistance BEFORE INSERT ON public.trust_charge_payments FOR EACH ROW EXECUTE FUNCTION public.trust_check_tenant_payment_transfer();
 
 
 --
@@ -19059,6 +19773,70 @@ ALTER TABLE ONLY public.trust_archivals
 
 ALTER TABLE ONLY public.trust_archivals
     ADD CONSTRAINT trust_archivals_tenant_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
+
+
+--
+-- Name: trust_assistance_charges trust_assistance_charges_pmc_id_adjusts_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_charges
+    ADD CONSTRAINT trust_assistance_charges_pmc_id_adjusts_id_fkey FOREIGN KEY (pmc_id, adjusts_id) REFERENCES public.trust_assistance_charges(pmc_id, id);
+
+
+--
+-- Name: trust_assistance_charges trust_assistance_charges_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_charges
+    ADD CONSTRAINT trust_assistance_charges_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_assistance_charges trust_assistance_charges_pmc_id_housing_authority_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_charges
+    ADD CONSTRAINT trust_assistance_charges_pmc_id_housing_authority_id_fkey FOREIGN KEY (pmc_id, housing_authority_id) REFERENCES public.trust_housing_authorities(pmc_id, id);
+
+
+--
+-- Name: trust_assistance_charges trust_assistance_charges_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_charges
+    ADD CONSTRAINT trust_assistance_charges_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_assistance_charges trust_assistance_charges_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_charges
+    ADD CONSTRAINT trust_assistance_charges_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_assistance_payments trust_assistance_payments_pmc_id_assistance_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_payments
+    ADD CONSTRAINT trust_assistance_payments_pmc_id_assistance_charge_id_fkey FOREIGN KEY (pmc_id, assistance_charge_id) REFERENCES public.trust_assistance_charges(pmc_id, id);
+
+
+--
+-- Name: trust_assistance_payments trust_assistance_payments_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_payments
+    ADD CONSTRAINT trust_assistance_payments_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_assistance_payments trust_assistance_payments_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_payments
+    ADD CONSTRAINT trust_assistance_payments_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
 
 
 --
@@ -20099,6 +20877,22 @@ ALTER TABLE ONLY public.trust_emails
 
 ALTER TABLE ONLY public.trust_expense_accounts
     ADD CONSTRAINT trust_expense_accounts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_housing_authorities trust_housing_authorities_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_housing_authorities
+    ADD CONSTRAINT trust_housing_authorities_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_housing_authorities trust_housing_authorities_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_housing_authorities
+    ADD CONSTRAINT trust_housing_authorities_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -21758,6 +22552,38 @@ ALTER TABLE ONLY public.trust_recurring_work_orders
 
 
 --
+-- Name: trust_rent_assistance trust_rent_assistance_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rent_assistance
+    ADD CONSTRAINT trust_rent_assistance_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_rent_assistance trust_rent_assistance_pmc_id_housing_authority_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rent_assistance
+    ADD CONSTRAINT trust_rent_assistance_pmc_id_housing_authority_id_fkey FOREIGN KEY (pmc_id, housing_authority_id) REFERENCES public.trust_housing_authorities(pmc_id, id);
+
+
+--
+-- Name: trust_rent_assistance trust_rent_assistance_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rent_assistance
+    ADD CONSTRAINT trust_rent_assistance_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_rent_assistance trust_rent_assistance_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_rent_assistance
+    ADD CONSTRAINT trust_rent_assistance_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_rent_changes trust_rent_changes_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22506,4 +23332,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261018000091'),
     ('20261018000092'),
     ('20261018000093'),
-    ('20261019000094');
+    ('20261019000094'),
+    ('20261020000095');

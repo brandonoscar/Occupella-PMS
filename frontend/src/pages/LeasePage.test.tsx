@@ -71,6 +71,10 @@ function server(lease: LeaseDetail = LEASE, answers: Record<string, unknown> = {
         "/api/leases/l1": lease,
         "/api/leases/l1/ledger": LEDGER,
         "/api/documents": { documents: [], subjects: { w9: [], receipt: [], move_out_photo: [], owner_document: [] } },
+        "/api/assistance/leases/l1": {
+          in_force: null, monthly_rent: lease.monthly_rent, tenant_part: lease.monthly_rent, terms: [], charges: [], owed: "0.00",
+        },
+        "/api/assistance/authorities": [],
       };
       if (path.startsWith("/api/notes")) return new Response("[]", { status: 200 });
       if (path === "/api/leases/l1/household") {
@@ -426,6 +430,13 @@ describe("LeasePage", () => {
     server({ ...LEASE, ends_on: "2026-12-31" });
     await open();
     expect(within(panel("Change rent", true)).getByLabelText("The lease term that allows it")).toBeTruthy();
+  });
+
+  it("shows the lease's housing assistance on its summary", async () => {
+    server();
+    await open();
+    expect((await screen.findByTestId("assistance-split")).textContent).toBe("The tenant pays all of the $1,500.00 rent.");
+    expect(screen.getByRole("button", { name: "Set housing assistance" })).toBeTruthy();
   });
 
   it("shows renters insurance, sets its terms and records a policy", async () => {

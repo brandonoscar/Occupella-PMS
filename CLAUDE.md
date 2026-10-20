@@ -387,6 +387,22 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   amount. Staff set it on the property's page (Ownership, Set ownership; area setup). Without
   shares staff choose the owner's account, as before; a lease moved from keeps the account its
   move names. The AI role reads them.
+- Housing assistance (migration 0095, the founder's review q034, `docs/law.md`): a PMC's housing
+  authorities (`trust_housing_authorities`) and a lease's assistance from the first of a month
+  (`trust_rent_assistance`: what the authority pays of each month's rent, at most the rent, 0
+  ends it; after the last month charged; append-only, naming who; `trust_assistance_on`). As rent
+  is charged a trigger splits it: the authority's part (`trust_assistance_part`, to the cent,
+  prorated as the rent) becomes its charge (`trust_assistance_charges`, once per lease and month)
+  and the tenant is charged the rest, so the tenant's late fees, deposit and balance count their
+  part alone (24 CFR 982.310(b)). `trust_end_lease` moves both parts; a renewal keeps the
+  assistance in force on its first day. Staff charge or credit an authority by hand (never past
+  what is open). `trust_apply_assistance_payment` matches an authority's payment (cash into the
+  property's owners' accounts, never a tenant's payment or a contribution; a transfer pays a
+  tenant's charges or an authority's, never both) to its charges; the management fee, income
+  statement and year-end count it as rent. Rentals, Housing authorities
+  (`/housing-authorities`, `src/pms/api/assistance.py`, area rent) records its payment for many
+  leases at once; the lease's Summary shows the split. No payment hold or bounce applies to it.
+  The AI role reads all four tables.
 - Work orders: a job at a property (maybe one of its units). Its steps (assigned to a vendor,
   scheduled for a day, completed, cancelled) are append-only and in order, and nothing follows a
   close. A bill may name a work order of its property, never a cancelled one. Migration 0072: a
