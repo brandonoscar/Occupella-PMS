@@ -490,6 +490,17 @@ def create_app(settings: Settings) -> FastAPI:
     def ledger(session: Staff, conn: Conn) -> Response:
         return download(exports.ledger_zip(conn, session.pmc_id), "ledger", "zip")
 
+    @app.get("/api/records.zip")
+    def records(session: Staff, conn: Conn) -> Response:
+        """Everything of the company (q132): every record, its files and its ledger. It holds
+        everyone's contact details and documents, so only an admin downloads it."""
+        row = conn.execute(
+            "SELECT trust_staff_holds(%s, %s, 'admin')", (session.pmc_id, session.person_id)
+        ).fetchone()
+        if row is None or not row[0]:
+            raise HTTPException(403, "only an admin downloads everything")
+        return download(exports.records_zip(conn, session.pmc_id), "records", "zip")
+
     app.include_router(owner.router)
     app.include_router(tenant.router)
     app.include_router(maintenance.router)

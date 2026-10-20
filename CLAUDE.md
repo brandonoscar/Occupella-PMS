@@ -242,7 +242,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   fee terms on the property's page (`GET /api/properties/<id>` gives the terms in force); a
   lease already in place on a unit's page; terms on the owner's page too. An owner or tenant is
   invited from their own page (`pages/PortalCard.tsx`). Bringing a PMC over from another system at `/settings/import`
-  (`src/pms/api/switching.py`), and the whole ledger at `/settings/data-export`. A lease's inspections are on its move-out row
+  (`src/pms/api/switching.py`), and the whole ledger at `/settings/data-export`, with, for an admin, everything
+  (`/api/records.zip`, `exports.records_zip`, q132: each record table as CSV, its documents,
+  leases and signatures as files, and the ledger; never logins' secrets, sessions or a token's
+  hash, in a table or the audit log). A lease's inspections are on its move-out row
   (`src/pms/api/inspections.py`).
   npm packages are pinned exactly and their
   licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's

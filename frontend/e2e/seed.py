@@ -508,6 +508,7 @@ FEATURES = (
     "calendar",
     "own-contact",
     "charge-types",
+    "phone",
 )
 
 

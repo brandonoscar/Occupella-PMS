@@ -34,8 +34,10 @@ describe("ReportsPage", () => {
 });
 
 describe("DataExportPage", () => {
-  it("downloads the whole ledger", () => {
+  it("downloads the whole ledger, and everything for an admin", () => {
     render(<DataExportPage me={ME} />);
     expect(screen.getByRole("link", { name: "Whole ledger (CSV, zip)" }).getAttribute("href")).toBe("/api/ledger.zip");
+    expect(screen.getByRole("link", { name: "Everything (CSV and files, zip)" }).getAttribute("href")).toBe("/api/records.zip");
+    expect(screen.getByText(/only an admin can download it/)).toBeTruthy();
   });
 });

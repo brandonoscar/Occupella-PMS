@@ -1461,9 +1461,11 @@ test("staff open a report from Reports, see it on screen narrowed to one propert
   await expect(page.getByRole("table", { name: "Income statement" })).toContainText("net income");
   await downloads(page, "PDF", PDF);
 
-  // The whole ledger, under Settings.
+  // The whole ledger, under Settings, and everything the company keeps (q132; the manager is an
+  // admin): its records as CSV and its files, never a credential.
   await settings(page, "Data export");
   await downloads(page, "Whole ledger (CSV, zip)", "application/zip");
+  await downloads(page, "Everything (CSV and files, zip)", "application/zip");
 
   // The reports the API exports for staff (the AI reads the same), each as CSV, Excel and PDF.
   const day = today();
