@@ -767,7 +767,7 @@ tests = [
   "tests/test_charge_types.py::test_a_name_is_once_per_pmc_whatever_its_case",
   "tests/test_charge_types.py::test_only_a_fee_has_a_type_and_only_of_its_own_pmc",
   "tests/test_charge_types.py::test_types_are_never_rewritten",
-  "tests/api/test_charge_types.py::test_a_type_is_a_fees_and_the_companys_own",
+  "tests/api/test_charge_types_api.py::test_a_type_is_a_fees_and_the_companys_own",
   "tests/test_privileges.py::test_ai_role_reads_only_what_the_app_reads",
 ]
 
@@ -780,7 +780,7 @@ tests = [
   "tests/test_income_statement.py::test_expenses_are_the_fees_and_each_expense_accounts_bills",
   "tests/test_charge_types.py::test_each_type_collected_on_is_a_line_of_its_own_net_of_bounces",
   "tests/test_charge_types.py::test_the_budget_beside_the_statement_counts_a_types_line_as_income",
-  "tests/api/test_charge_types.py::test_a_fee_of_a_type_counts_on_its_own_line_of_the_income_statement",
+  "tests/api/test_charge_types_api.py::test_a_fee_of_a_type_counts_on_its_own_line_of_the_income_statement",
   "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
   "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
 ]
