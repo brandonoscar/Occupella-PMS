@@ -81,11 +81,11 @@ describe("Shell", () => {
 
   it("gives staff the search in the bar, and nobody else", () => {
     render(<Shell me={STAFF} nav={STAFF_NAV}><p /></Shell>);
-    expect(within(screen.getByRole("banner")).getByLabelText("Search properties, units, tenants and owners")).toBeTruthy();
+    expect(within(screen.getByRole("banner")).getByLabelText("Search people, homes, bills, work orders and files")).toBeTruthy();
     cleanup();
 
     render(<Shell me={OWNER}><p /></Shell>);
-    expect(screen.queryByLabelText("Search properties, units, tenants and owners")).toBeNull();
+    expect(screen.queryByLabelText("Search people, homes, bills, work orders and files")).toBeNull();
   });
 
   it("names an owner's or a tenant's one page in the rail", () => {

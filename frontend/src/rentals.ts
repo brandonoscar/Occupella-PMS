@@ -76,7 +76,7 @@ export type RentRollRow = {
 };
 
 export type Found = {
-  kind: "property" | "unit" | "tenant" | "owner";
+  kind: "property" | "unit" | "tenant" | "owner" | "vendor" | "bill" | "work order" | "applicant" | "lead" | "file";
   id: string;
   label: string;
   detail: string;

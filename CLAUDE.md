@@ -187,7 +187,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   terms), Properties, Financials (their statement and Record contribution), Statements and Files.
   The Owners list shows each owner once with what they hold, keep back and may pay out, and opens
   Pay owners and Add owner. Staff keep a tenant's, owner's or vendor's contact details there, rename a tenant or owner
-  and archive one. A search in the bar finds a property, unit, tenant or owner (`/api/search`).
+  and archive one. A search in the bar finds a property, unit, tenant, owner or vendor (by name, or by the email, phone or
+  street on file), a bill, a work order, an applicant, a lead or a file (`/api/search`).
   Lists come a page at a time (`Paged`: 50 by default, at most 200); move-outs at `/move-out` (`src/pms/api/moveout.py`). Leasing:
   Listings at `/rental-listings` (`GET /api/leasing/vacancies`: each unit coming free within 90
   days or with an open link, its rent and available day, days listed and photos; List opens its

@@ -350,7 +350,7 @@ test("staff find a property, rename it and a unit, archive a vacant unit but not
   await expect(page.getByText("Unit 2B is back.")).toBeVisible();
 
   // Search, from any page: a tenant opens their page and their lease from it, a property its page.
-  const search = page.getByLabel("Search properties, units, tenants and owners");
+  const search = page.getByLabel("Search people, homes, bills, work orders and files");
   await search.fill("drew");
   await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Drew Sample/ }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Drew Sample" })).toBeVisible();
@@ -637,6 +637,11 @@ test("staff find a tenant and an owner, keep their contact details and a vendor'
   await expect(page.getByRole("row", { name: "Drew Q. Sample", exact: true })).toContainText(
     "drew.sample@example.com",
   );
+  // The search finds them by the phone on file, whatever its brackets and dashes (q135).
+  const byPhone = page.getByLabel("Search people, homes, bills, work orders and files");
+  await byPhone.fill("5550142");
+  await expect(page.getByRole("list", { name: "Search results" }).getByRole("link")).toHaveText([/^Drew Q\. Sample.*Tenant$/]);
+  await byPhone.fill("");
 
   // Owners, one row each with all their properties; an owner's page, renamed, with their details.
   await section(page, "Owners");
@@ -675,7 +680,7 @@ test("staff find a tenant and an owner, keep their contact details and a vendor'
   await expect(page.getByRole("row", { name: "Demo Plumbing Co", exact: true })).toContainText("555-555-0177");
 
   // Search finds an owner too.
-  const search = page.getByLabel("Search properties, units, tenants and owners");
+  const search = page.getByLabel("Search people, homes, bills, work orders and files");
   await search.fill("owner b");
   await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Demo Owner B/ }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Demo Owner B" })).toBeVisible();
@@ -2265,7 +2270,7 @@ test("staff email a tenant from their page and every tenant of a property, an ow
   await joinAsStaff(page, people.manager);
 
   // A tenant, from their page's Email tab: written in a side panel, kept on the tab.
-  const search = page.getByLabel("Search properties, units, tenants and owners");
+  const search = page.getByLabel("Search people, homes, bills, work orders and files");
   await search.fill("drew");
   await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Drew Sample/ }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Drew Sample" })).toBeVisible();
