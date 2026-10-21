@@ -17,7 +17,7 @@ export type AutomaticPrepaid = {
   changed_by: string | null;
 };
 
-export const AUTOMATIC_PREPAID = "/api/rent/prepaid/automatic";
+const AUTOMATIC_PREPAID = "/api/rent/prepaid/automatic";
 
 export function automaticPrepaidLine(prepaid: AutomaticPrepaid): string {
   return prepaid.automatic
