@@ -1330,3 +1330,17 @@ tests = [
   "tests/api/test_tenant_records_api.py::test_the_tenant_acts_on_the_other_propertys_lease_as_their_record_there",
 ]
 
+[[invariant]]
+id = "a-closed-year-takes-nothing-dated-in-it"
+statement = "A year closes once (the same call again returns the same close), after it has ended, by a named staff member who holds approve, when every trust bank account it touched is approved through its December 31, at least one is, no journal entry dated in it or before waits for a decision and no later year is closed (migration 0106). From then on no charge, housing authority's charge or bill dated in it or before is added, by anyone; one in flight waits for the close and is then refused. Closes are append-only and move no money."
+tests = [
+  "tests/properties/test_year_close_properties.py::test_a_closed_year_takes_no_charge_or_bill_and_closes_only_when_approved",
+  "tests/test_year_close.py::test_a_year_closes_once_every_account_it_touched_is_approved_through_its_last_day",
+  "tests/test_year_close.py::test_an_account_opened_after_the_year_holds_nothing_back_but_one_in_it_does",
+  "tests/test_year_close.py::test_after_a_close_nothing_is_charged_or_billed_in_the_closed_year",
+  "tests/test_year_close.py::test_journal_entries_waiting_in_the_year_hold_the_close_until_decided",
+  "tests/test_year_close.py::test_only_a_named_staff_member_who_holds_approve_closes_a_year",
+  "tests/test_year_close.py::test_a_later_close_closes_every_year_before_and_nothing_reopens",
+  "tests/test_year_close.py::test_a_charge_dated_in_the_year_waits_for_a_close_under_way_and_then_is_refused",
+]
+

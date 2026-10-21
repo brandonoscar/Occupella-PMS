@@ -857,3 +857,11 @@ operations = [
 browser = [
   "features.spec.ts › staff make a tenant a tenant at a second property and lease them a unit there; they sign in once, see both homes and ask for a repair at the new one",
 ]
+
+[[feature]]
+id = "year-close"
+statement = "Staff see last year's close on Banking: each trust bank account it touched with how far its month-end is approved, and the journal entries dated in it still waiting; once every one is approved through December 31 a staff member who holds approve closes the year, after a question, for good; from then on nothing is charged or billed with a day in it or before, and a charge dated there is refused in words (migration 0106, the founder's review q116)."
+operations = ["GET /api/year-close", "POST /api/year-close"]
+browser = [
+  "features.spec.ts › staff approve last December in each trust bank account, close the year, and a charge dated in it is refused in words",
+]

@@ -330,8 +330,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `trust_complete_lease_offer`, `trust_match_bank_lines`, `trust_unmatch_bank_lines`,
   `trust_prepare_bank_reconciliation`, `trust_approve_bank_reconciliation`,
   `trust_match_cutover_opening`, `trust_return_deposit`, `trust_transfer_lease`, `trust_open_deposit_account`, `trust_propose_journal_entry`,
-  `trust_post_journal_entry`, `trust_decline_journal_entry`, `trust_apply_assistance_payment` and
-  `trust_bill_back_utility`, which run as the table owner (`trust_charge_rent_due`, `trust_enter_recurring_bills` and
+  `trust_post_journal_entry`, `trust_decline_journal_entry`, `trust_apply_assistance_payment`,
+  `trust_bill_back_utility` and `trust_close_year`, which run as the table owner (`trust_charge_rent_due`, `trust_enter_recurring_bills` and
   `trust_run_rent` run with the app's own grants). It can't call pgledger's posting functions: every posting it makes goes through
   `trust_post_transfers`, which takes an idempotency key, unique per PMC, so it is safe to
   retry: the same key returns the original transfers, and a different posting under it is
@@ -897,6 +897,15 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   lease shows each kind (`tenants[].deposits`), the register and the return's statement name it,
   a leaving tenant's deposits move to the staying tenant's of the same kind, and
   `trust_return_deposit` keeps from each tenant's security deposit first, then key, then pet.
+- Closing a year (migration 0106, the founder's review q116, the founder's call on 10/21: lock it
+  all): `trust_close_year` closes a year that has ended, once (the same call again returns it), by
+  a named staff member who holds approve, when every trust bank account the year touched is
+  approved through its December 31 (at least one is), no journal entry dated in it or before waits
+  and no later year is closed (`trust_year_closes`, append-only, naming who). From then on no
+  charge, housing authority's charge or bill is dated in it or before (`trust_refuse_closed_year`,
+  which takes the PMC FOR SHARE for a day before this year, as a close takes it FOR NO KEY UPDATE),
+  so a late fix is dated in the open year; nothing reopens a year. Staff close it from Banking,
+  Year close (`src/pms/api/year_close.py`, area month-end), which lists each account's month-end.
 - A tenant at two properties (migration 0105, the founder's review q009): a tenant is a record at
   one property, holding its own deposits and prepaid rent. Someone renting at another property too
   gets a record there linked to their first (`trust_tenant_links`: append-only, naming who; a

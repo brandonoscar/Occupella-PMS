@@ -176,6 +176,7 @@ AREA_PATHS = (
     ("/api/budgets", "budgets"),
     ("/api/journal", "journal"),
     ("/api/reconcile/", "month-end"),
+    ("/api/year-close", "month-end"),
     ("/api/switching/", "switching"),
     ("/api/setup/", "setup"),
     ("/api/quickbooks/", "setup"),

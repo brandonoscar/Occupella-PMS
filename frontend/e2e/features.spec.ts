@@ -3507,6 +3507,54 @@ test("staff make a tenant a tenant at a second property and lease them a unit th
   await tenant.close();
 });
 
+test("staff approve last December in each trust bank account, close the year, and a charge dated in it is refused in words", async ({
+  page,
+}) => {
+  const people = seed.features["year-close"]!;
+  const year = new Date().getUTCFullYear() - 1;
+  const december = `12/31/${year}`;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Banking");
+  const card = part(page, "Year close");
+  const ready = card.getByRole("table", { name: `Ready to close ${year}` });
+  await expect(ready.getByRole("row", { name: "Demo operating trust account" })).toContainText("Approve December");
+  await expect(card.getByRole("button", { name: `Close ${year}` })).toBeDisabled();
+
+  // The bookkeeper prepared December in each account; the manager approves both.
+  for (const account of ["Demo operating trust account", "Demo security deposit account"]) {
+    await ready.getByRole("link", { name: account }).click();
+    await page.getByRole("button", { name: `Approve through ${december}` }).click();
+    await expect(page.getByText(`Approved through ${december}; the account is closed through it.`)).toBeVisible();
+    await section(page, "Banking");
+  }
+  for (const account of ["Demo operating trust account", "Demo security deposit account"]) {
+    await expect(ready.getByRole("row", { name: account })).toContainText(`${december}Ready`);
+  }
+  await card.getByRole("button", { name: `Close ${year}` }).click();
+  const asked = page.getByRole("alertdialog");
+  await expect(asked).toContainText("can't be reopened");
+  await asked.getByRole("button", { name: `Close ${year}` }).click();
+  await expect(card.getByTestId("closed-until")).toHaveText(
+    `Closed through ${december}: nothing dated then or before is charged or billed.`,
+  );
+  await expect(card.getByRole("list", { name: "Years closed" })).toContainText(`${year}, closed on ${us(today())} by Demo Manager`);
+
+  // A fee dated in the closed year is refused, saying why; dated today it is added.
+  const lease = await openLease(page, "Birch Flats, Unit A");
+  const charge = await leasePanel(page, "Enter charge");
+  await charge.getByLabel("Add a").selectOption("fee");
+  await charge.getByLabel("Amount", { exact: true }).fill("25.00");
+  await charge.getByLabel("Due on").fill(`${year}-12-20`);
+  await charge.getByLabel("What for").fill("Key replacement");
+  await charge.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByText(
+    `${year} is closed: a charge dated 12/20/${year} can't be added; date it 01/01/${year + 1} or later`,
+  ).first()).toBeVisible();
+  await charge.getByLabel("Due on").fill(today());
+  await charge.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(lease).toContainText("Fee of $25.00 added.");
+});
+
 test("staff add charge types and give a lease's fee and monthly charge one; the owner's income statement counts the type on its own line", async ({
   browser,
   page,

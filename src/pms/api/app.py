@@ -96,6 +96,7 @@ from pms.api import (
     vendor_links,
     vendors,
     work_orders,
+    year_close,
 )
 from pms.api.deps import COOKIE, Conn, Current, Staff, download, refusal
 from pms.leasing import screening
@@ -536,6 +537,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(renewals.router)
     app.include_router(payables.router)
     app.include_router(reconcile.router)
+    app.include_router(year_close.router)
     app.include_router(banking.router)
     app.include_router(bank_deposits.router)
     app.include_router(journal.router)

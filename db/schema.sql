@@ -3710,6 +3710,115 @@ $$;
 
 
 --
+-- Name: trust_close_year(uuid, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_close_year(p_pmc_id uuid, p_year integer) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_staff uuid := nullif(current_setting('trust.staff_id', true), '')::uuid;
+    v_end timestamptz;
+    v_done uuid;
+    v_later integer;
+    v_open text;
+    v_waiting integer;
+BEGIN
+    IF v_staff IS NULL THEN
+        RAISE EXCEPTION 'trust: name the staff member who closes the year'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    PERFORM trust_require_role(p_pmc_id, v_staff, 'approve', 'close a year');
+    IF p_year IS NULL OR p_year NOT BETWEEN 2000 AND 2999 THEN
+        RAISE EXCEPTION 'trust: % is not a year to close', p_year
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_end := make_timestamptz(p_year + 1, 1, 1, 0, 0, 0, 'UTC');
+    IF v_end > now() THEN
+        RAISE EXCEPTION 'trust: % has not ended yet', p_year
+            USING ERRCODE = 'invalid_parameter_value',
+                  HINT = 'Close a year once its last day has passed (UTC).';
+    END IF;
+
+    -- Charges and bills dated before this year started wait for this (they hold the PMC FOR
+    -- SHARE), and a close waits for them.
+    PERFORM 1 FROM trust_pmcs AS p WHERE p.pmc_id = p_pmc_id FOR NO KEY UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no PMC %', p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    SELECT c.id INTO v_done FROM trust_year_closes AS c
+    WHERE c.pmc_id = p_pmc_id AND c.year = p_year;
+    IF FOUND THEN
+        RETURN v_done;
+    END IF;
+    SELECT max(c.year) INTO v_later FROM trust_year_closes AS c
+    WHERE c.pmc_id = p_pmc_id AND c.year > p_year;
+    IF v_later IS NOT NULL THEN
+        RAISE EXCEPTION 'trust: % is closed already, and with it every year before', v_later
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    -- Every trust bank account the year touched (a posting dated in it or before, or a cutover
+    -- before its end) is approved through its last day.
+    SELECT string_agg(b.display_name, ', ' ORDER BY b.display_name COLLATE "C", b.id) INTO v_open
+    FROM trust_bank_accounts AS b
+    WHERE b.pmc_id = p_pmc_id
+      AND (b.closed_through IS NULL OR b.closed_through < v_end)
+      AND (b.opened_at < v_end OR EXISTS (
+          SELECT 1 FROM trust_ledger_accounts AS t
+          JOIN pgledger_entries AS e ON e.account_id = t.ledger_account_id
+          JOIN pgledger_transfers AS tr ON tr.id = e.transfer_id
+          WHERE t.bank_account_id = b.id AND tr.event_at < v_end
+      ));
+    IF v_open IS NOT NULL THEN
+        RAISE EXCEPTION 'trust: approve month-end through % first: %',
+            to_char(make_date(p_year, 12, 31), 'MM/DD/YYYY'), v_open
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM trust_bank_accounts AS b
+        WHERE b.pmc_id = p_pmc_id AND b.closed_through >= v_end
+    ) THEN
+        RAISE EXCEPTION 'trust: no trust bank account was reconciled through %: there is no % to close',
+            to_char(make_date(p_year, 12, 31), 'MM/DD/YYYY'), p_year
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    SELECT count(*) INTO v_waiting
+    FROM trust_journal_entries AS j
+    WHERE j.pmc_id = p_pmc_id AND j.event_on < make_date(p_year + 1, 1, 1)
+      AND NOT EXISTS (SELECT 1 FROM trust_journal_entry_decisions AS d WHERE d.entry_id = j.id);
+    IF v_waiting > 0 THEN
+        RAISE EXCEPTION 'trust: % journal entr% dated in % or before wait% for a decision: post or decline them first',
+            v_waiting, CASE WHEN v_waiting = 1 THEN 'y' ELSE 'ies' END, p_year,
+            CASE WHEN v_waiting = 1 THEN 's' ELSE '' END
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    INSERT INTO trust_year_closes (pmc_id, year, closed_by)
+    VALUES (p_pmc_id, p_year, v_staff)
+    RETURNING id INTO v_done;
+    RETURN v_done;
+END;
+$$;
+
+
+--
+-- Name: trust_closed_until(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_closed_until(p_pmc_id uuid) RETURNS date
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT make_date(max(c.year), 12, 31) FROM trust_year_closes AS c WHERE c.pmc_id = p_pmc_id
+$$;
+
+
+--
 -- Name: trust_complete_lease_offer(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5824,6 +5933,35 @@ BEGIN
             OLD.id, OLD.kind
             USING ERRCODE = 'restrict_violation',
                   HINT = 'Open a new trust bank account of the other kind.';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_refuse_closed_year(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_refuse_closed_year() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_day date := (to_jsonb(NEW) ->> TG_ARGV[0])::date;
+    v_until date;
+BEGIN
+    -- The year under way is never closed: only a day before it can be.
+    IF v_day IS NULL OR v_day >= date_trunc('year', now() AT TIME ZONE 'UTC')::date THEN
+        RETURN NEW;
+    END IF;
+    PERFORM 1 FROM trust_pmcs AS p WHERE p.pmc_id = NEW.pmc_id FOR SHARE;
+    v_until := trust_closed_until(NEW.pmc_id);
+    IF v_day <= v_until THEN
+        RAISE EXCEPTION 'trust: % is closed: a % dated % can''t be added; date it % or later',
+            extract(year FROM v_until), TG_ARGV[1], to_char(v_day, 'MM/DD/YYYY'),
+            to_char(v_until + 1, 'MM/DD/YYYY')
+            USING ERRCODE = 'check_violation';
     END IF;
     RETURN NEW;
 END;
@@ -14376,6 +14514,20 @@ CREATE TABLE public.trust_work_orders (
 
 
 --
+-- Name: trust_year_closes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_year_closes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    year integer NOT NULL,
+    closed_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_year_closes_year_check CHECK (((year >= 2000) AND (year <= 2999)))
+);
+
+
+--
 -- Name: pgledger_accounts pgledger_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16741,6 +16893,22 @@ ALTER TABLE public.trust_work_orders
 
 
 --
+-- Name: trust_year_closes trust_year_closes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_year_closes
+    ADD CONSTRAINT trust_year_closes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_year_closes trust_year_closes_pmc_id_year_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_year_closes
+    ADD CONSTRAINT trust_year_closes_pmc_id_year_key UNIQUE (pmc_id, year);
+
+
+--
 -- Name: pgledger_entries_account_id_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -18358,6 +18526,13 @@ CREATE INDEX trust_work_orders_property_id ON public.trust_work_orders USING btr
 
 
 --
+-- Name: trust_year_closes_closed_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_year_closes_closed_by ON public.trust_year_closes USING btree (pmc_id, closed_by);
+
+
+--
 -- Name: trust_ledger_accounts trust_account_in_its_bank; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -19454,6 +19629,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_work_orders FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_year_closes trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_year_closes FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -20633,6 +20815,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_work
 
 
 --
+-- Name: trust_year_closes trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_year_closes FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_bank_deposit_items trust_bank_deposit_item_brought_money; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20812,6 +21001,27 @@ CREATE TRIGGER trust_closed_period BEFORE INSERT ON public.pgledger_transfers FO
 --
 
 CREATE TRIGGER trust_closed_through BEFORE INSERT OR UPDATE OF closed_through ON public.trust_bank_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_moving_closed_through();
+
+
+--
+-- Name: trust_assistance_charges trust_closed_year; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_closed_year BEFORE INSERT ON public.trust_assistance_charges FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_closed_year('due_on', 'housing authority''s charge');
+
+
+--
+-- Name: trust_bills trust_closed_year; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_closed_year BEFORE INSERT ON public.trust_bills FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_closed_year('bill_date', 'bill');
+
+
+--
+-- Name: trust_charges trust_closed_year; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_closed_year BEFORE INSERT ON public.trust_charges FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_closed_year('due_on', 'charge');
 
 
 --
@@ -25698,6 +25908,22 @@ ALTER TABLE ONLY public.trust_work_orders
 
 
 --
+-- Name: trust_year_closes trust_year_closes_pmc_id_closed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_year_closes
+    ADD CONSTRAINT trust_year_closes_pmc_id_closed_by_fkey FOREIGN KEY (pmc_id, closed_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_year_closes trust_year_closes_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_year_closes
+    ADD CONSTRAINT trust_year_closes_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
 -- Name: trust_audit_log; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -25833,4 +26059,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261020000102'),
     ('20261021000103'),
     ('20261021000104'),
-    ('20261021000105');
+    ('20261021000105'),
+    ('20261021000106');

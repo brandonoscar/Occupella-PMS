@@ -240,6 +240,8 @@ TABLES = {
     "trust_showing_outcomes": {"SELECT", "INSERT"},
     # A tenant's records at other properties, the same person (migration 0105).
     "trust_tenant_links": {"SELECT", "INSERT"},
+    # Years closed (migration 0106): written only by trust_close_year.
+    "trust_year_closes": {"SELECT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -349,6 +351,7 @@ FUNCTIONS = {
     "trust_rent_for_month(date,date,numeric,date)": {"trust_app"},
     "trust_rent_on(uuid,date)": {"trust_app"},
     "trust_tenant_records(uuid,uuid)": {"trust_app"},
+    "trust_closed_until(uuid)": {"trust_app"},
     "trust_open_charges(uuid,uuid,timestamptz)": {"trust_app"},
     # Where a charge comes in the order money pays them: rent first (migration 0093).
     "trust_pay_rank(trust_charges)": {"trust_app"},
@@ -394,6 +397,7 @@ FUNCTIONS = {
     "trust_return_deposit(uuid,uuid,text,text,timestamptz)": {"trust_app"},
     "trust_remove_lease_tenant(uuid,uuid,uuid,date,uuid)": {"trust_app"},
     "trust_transfer_lease(uuid,uuid,uuid,date,date,numeric,text,date)": {"trust_app"},
+    "trust_close_year(uuid,integer)": {"trust_app"},
     "trust_propose_journal_entry(uuid,date,text,transfer_request[])": {"trust_app"},
     "trust_post_journal_entry(uuid,uuid)": {"trust_app"},
     "trust_decline_journal_entry(uuid,uuid,text)": {"trust_app"},
@@ -452,6 +456,7 @@ FUNCTIONS = {
     "trust_check_lead_open()": set(),
     "trust_check_tenant_link()": set(),
     "trust_check_tenant_login()": set(),
+    "trust_refuse_closed_year()": set(),
     "trust_check_decision_override()": set(),
     "trust_fill_bill_markup()": set(),
     # Reports read trust records, so only the app and the AI; they run with the caller's own
@@ -605,6 +610,7 @@ SECURITY_DEFINER = {
     "trust_return_deposit(uuid,uuid,text,text,timestamptz)",
     "trust_remove_lease_tenant(uuid,uuid,uuid,date,uuid)",
     "trust_transfer_lease(uuid,uuid,uuid,date,date,numeric,text,date)",
+    "trust_close_year(uuid,integer)",
     "trust_propose_journal_entry(uuid,date,text,transfer_request[])",
     "trust_post_journal_entry(uuid,uuid)",
     "trust_decline_journal_entry(uuid,uuid,text)",

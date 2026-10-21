@@ -38,6 +38,7 @@ import { GoLink } from "./NeedsAttention";
 import { navigate } from "../router";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
+import { YearCloseCard } from "./YearCloseCard";
 import { Said } from "../components/Said";
 import { Form } from "../components/Form";
 import type { BankKind } from "../setup";
@@ -133,6 +134,7 @@ export function BankingPage({ me }: { me: Me }) {
           </table>
         </Wide>
       )}
+      {banks !== null && banks.length > 0 && <YearCloseCard refresh={() => setRuns((n) => n + 1)} />}
       {transferring && (
         <SidePanel title="Transfer company fees" onClose={() => setTransfer(null)}>
           <p className="text-base text-ink">{transferring.bank_account}</p>
