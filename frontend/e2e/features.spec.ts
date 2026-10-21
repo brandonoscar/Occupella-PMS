@@ -3034,6 +3034,27 @@ test("staff set Birch Flats' ownership 60/40 between two owners; a payment and a
   const parts = page.getByRole("table", { name: "Shares" });
   await expect(parts).toContainText("Demo Owner ABirch Flats$30.00");
   await expect(parts).toContainText("Demo Owner BBirch Flats$20.00");
+
+  // The same management terms for both owners (q044): one fee for Birch Flats, split 60/40. No
+  // rent came in this month, so it is the $25.00 minimum: $15.00 and $10.00, not $25.00 each.
+  await openProperty(page, "Birch Flats");
+  const terms = await setupPanel(page, "Set terms", "Set management terms",
+    page.getByRole("table", { name: "Owners" }).getByRole("row", { name: "Demo Owner B" }));
+  await terms.getByRole("combobox", { name: "For" }).selectOption({ label: "Every owner of Birch Flats (one fee, split by their shares)" });
+  await terms.getByLabel("In force from").fill(firstOfThisMonth());
+  await terms.getByLabel("Fee, percent of rent and recurring fees collected").fill("8");
+  await terms.getByLabel("Minimum fee").fill("25.00");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await terms.getByRole("button", { name: "Set terms" }).click();
+  await expect(page.getByText(`New terms for every owner of Birch Flats from ${firstOfThisMonth()}.`)).toBeVisible();
+  await section(page, "Management fees");
+  const nextMonth = new Date(Date.UTC(Number(today().slice(0, 4)), Number(today().slice(5, 7)), 1))
+    .toISOString()
+    .slice(0, 10);
+  await page.getByLabel("Period from").fill(firstOfThisMonth());
+  await page.getByLabel("Up to (not including)").fill(nextMonth);
+  await expect(page.getByRole("row", { name: "Demo Owner A, Birch Flats", exact: true })).toContainText("$15.00");
+  await expect(page.getByRole("row", { name: "Demo Owner B, Birch Flats", exact: true })).toContainText("$10.00");
 });
 
 test("staff add a housing authority, set a lease's assistance, charge and credit the authority and record its payment", async ({

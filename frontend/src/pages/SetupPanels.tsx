@@ -208,8 +208,12 @@ const AMOUNTS = [
 type Amount = (typeof AMOUNTS)[number][0];
 
 // Management terms of an owner's property account from a day: new terms are a new row from that
-// day; earlier ones stay as they were.
-export function TermsPanel({ panel, accounts }: { panel: Panel; accounts: { account: string; label: string }[] }) {
+// day; earlier ones stay as they were. A property with several owners can take the same terms for
+// every one of them (q044), so its management fee is one for the property, split by their shares.
+const EVERY = "every-owner";
+export function TermsPanel({ panel, accounts, everyOwnerOf }: {
+  panel: Panel; accounts: { account: string; label: string }[]; everyOwnerOf?: string;
+}) {
   const { error, save } = useSave(panel);
   const [account, setAccount] = useState(accounts[0]?.account ?? "");
   const [from, setFrom] = useState(day(new Date()));
@@ -220,13 +224,16 @@ export function TermsPanel({ panel, accounts }: { panel: Panel; accounts: { acco
     <SidePanel title="Set management terms" onClose={panel.close}>
       <Form className="flex flex-col gap-3" onSubmit={(event) => {
         event.preventDefault();
-        const label = accounts.find((a) => a.account === account)?.label ?? "";
+        const every = account === EVERY;
+        const label = every ? `every owner of ${everyOwnerOf}` : (accounts.find((a) => a.account === account)?.label ?? "");
         return save("agreements", {
-          account, starts_on: from,
+          account: every ? accounts[0]!.account : account, starts_on: from,
+          ...(every ? { every_owner: true } : {}),
           ...Object.fromEntries(AMOUNTS.map(([key]) => [key, amounts[key].trim() || "0"])),
         }, () => `New terms for ${label} from ${from}.`);
       }}>
         <Select label="For" id="terms-account" required value={account} onChange={(e) => setAccount(e.target.value)}>
+          {everyOwnerOf && <option value={EVERY}>Every owner of {everyOwnerOf} (one fee, split by their shares)</option>}
           {accounts.map((a) => <option key={a.account} value={a.account}>{a.label}</option>)}
         </Select>
         <Field label="In force from" id="terms-from" type="date" required value={from} onChange={(e) => setFrom(e.target.value)} />

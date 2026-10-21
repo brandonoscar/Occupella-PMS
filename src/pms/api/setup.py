@@ -648,41 +648,63 @@ class NewAgreement(BaseModel):
     reserve: Money = Decimal(0)
     approval_limit: Money = Decimal(0)
     bill_markup_percent: Percent = Decimal(0)
+    # The same terms for every owner's account at the account's property (q044): a property owned
+    # in shares takes one management fee, under the terms its owners share, split by the shares.
+    every_owner: bool = False
 
 
 @router.post("/agreements", status_code=201)
 def add_agreement(session: Staff, conn: Conn, new: NewAgreement) -> Created:
-    """Management terms for an owner's property account, in force from a day. New terms are a
-    new agreement from a later day; earlier ones stay as they were."""
+    """Management terms for an owner's property account, in force from a day, or for every
+    owner's account at its property. New terms are a new agreement from a later day; earlier ones
+    stay as they were. The id is the named account's agreement."""
     row = conn.execute(
-        "SELECT 1 FROM trust_ledger_accounts WHERE pmc_id = %s AND ledger_account_id = %s"
-        " AND kind = 'owner_property'",
+        "SELECT property_id FROM trust_ledger_accounts WHERE pmc_id = %s"
+        " AND ledger_account_id = %s AND kind = 'owner_property'",
         (session.pmc_id, new.account),
     ).fetchone()
     if row is None:
         raise HTTPException(404, "no such owner account")
-    with refusals("this account has terms starting that day already"):
-        return Created(
-            id=insert(
-                conn,
-                "INSERT INTO trust_management_agreements (pmc_id, ledger_account_id, starts_on,"
-                " fee_percent, minimum_fee, flat_fee, leasing_fee_percent, reserve,"
-                " approval_limit, bill_markup_percent)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
-                (
-                    session.pmc_id,
-                    new.account,
-                    new.starts_on,
-                    new.fee_percent,
-                    new.minimum_fee,
-                    new.flat_fee,
-                    new.leasing_fee_percent,
-                    new.reserve,
-                    new.approval_limit,
-                    new.bill_markup_percent,
-                ),
+    accounts = [new.account]
+    if new.every_owner:
+        accounts += [
+            other
+            for (other,) in conn.execute(
+                "SELECT ledger_account_id FROM trust_ledger_accounts WHERE pmc_id = %s"
+                " AND property_id = %s AND kind = 'owner_property' AND ledger_account_id <> %s"
+                " ORDER BY ledger_account_id",
+                (session.pmc_id, row[0], new.account),
+            ).fetchall()
+        ]
+    made = []
+    with refusals(
+        "an owner's account at this property has terms starting that day already"
+        if new.every_owner
+        else "this account has terms starting that day already"
+    ):
+        for account in accounts:
+            made.append(
+                insert(
+                    conn,
+                    "INSERT INTO trust_management_agreements (pmc_id, ledger_account_id,"
+                    " starts_on, fee_percent, minimum_fee, flat_fee, leasing_fee_percent,"
+                    " reserve, approval_limit, bill_markup_percent)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                    (
+                        session.pmc_id,
+                        account,
+                        new.starts_on,
+                        new.fee_percent,
+                        new.minimum_fee,
+                        new.flat_fee,
+                        new.leasing_fee_percent,
+                        new.reserve,
+                        new.approval_limit,
+                        new.bill_markup_percent,
+                    ),
+                )
             )
-        )
+    return Created(id=made[0])
 
 
 class NewLateFees(BaseModel):

@@ -1321,7 +1321,7 @@ tests = [
 
 [[invariant]]
 id = "ownership-shares-split-to-the-cent"
-statement = "A property's ownership is each owner's percent from a day (above 0, to four decimals, together 100 at commit, each an owner's account at the property, all in one trust bank account; append-only, naming who recorded it; migration 0094). A payment, prepaid rent used, a deposit kept at move-out and a bill split by ownership go to the owners by the shares in force on the day: each percent rounded down to the cent, the cents left over to the largest remainders, the account first by id on a tie, so the parts come to the amount, each within a cent of its share; each part is matched in full, a bounce takes back each owner's part, and every trust bank account ties out. A property without shares keeps the one account staff choose."
+statement = "A property's ownership is each owner's percent from a day (above 0, to four decimals, together 100 at commit, each an owner's account at the property, all in one trust bank account; append-only, naming who recorded it; migration 0094). A payment, prepaid rent used, a deposit kept at move-out and a bill split by ownership go to the owners by the shares in force on the day: each percent rounded down to the cent, the cents left over to the largest remainders, the account first by id on a tie, so the parts come to the amount, each within a cent of its share; each part is matched in full, a bounce takes back each owner's part, and every trust bank account ties out. A property without shares keeps the one account staff choose. A management fee for a period is one for the property owned in shares on its last day (migration 0115, q044): its owners' rent and recurring fees collected added up, under the fee terms they share, the minimum and flat fee once, split by those shares to the cent, each owner's account paying its part once; an owner outside the shares takes their own fee; owners whose terms differ take none."
 tests = [
   "tests/properties/test_ownership_properties.py::test_a_co_owned_propertys_money_splits_by_its_shares_to_the_cent",
   "tests/test_ownership_shares.py::test_an_amount_splits_to_the_cent_and_the_parts_come_to_it",
@@ -1329,6 +1329,10 @@ tests = [
   "tests/test_ownership_shares.py::test_shares_come_to_100_at_commit",
   "tests/test_ownership_shares.py::test_the_owners_accounts_are_in_one_trust_bank_account",
   "tests/test_ownership_shares.py::test_what_a_lease_owes_kept_from_its_deposit_goes_to_its_owners_by_their_shares",
+  "tests/test_ownership_shares.py::test_a_shared_propertys_management_fee_is_one_fee_split_by_its_shares",
+  "tests/test_ownership_shares.py::test_the_minimum_is_charged_once_for_the_property_not_once_per_owner",
+  "tests/test_ownership_shares.py::test_owners_whose_terms_differ_take_no_fee_until_their_terms_agree",
+  "tests/api/test_setup.py::test_terms_for_every_owner_of_a_property_go_to_each_of_their_accounts",
   "tests/api/test_ownership_api.py::test_a_payment_pays_the_owners_by_their_shares",
   "tests/api/test_ownership_api.py::test_a_bounced_split_payment_takes_back_each_owners_part",
   "tests/api/test_ownership_api.py::test_prepaid_rent_used_pays_the_owners_by_their_shares",

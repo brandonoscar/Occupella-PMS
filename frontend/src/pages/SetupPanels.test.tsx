@@ -174,6 +174,25 @@ describe("setup panels", () => {
     }]]);
   });
 
+  it("sets the same terms for every owner of a property owned by several (q044)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-17T12:00:00Z") });
+    const fetch = server();
+    const p = panel();
+    render(<TermsPanel panel={p} everyOwnerOf="Property A"
+      accounts={[{ account: "acct-1", label: "Owner A, Property A" }, { account: "acct-2", label: "Owner B, Property A" }]} />);
+
+    expect((screen.getByLabelText("For") as HTMLSelectElement).value).toBe("acct-1");
+    type("For", "every-owner");
+    type("Fee, percent of rent and recurring fees collected", "8");
+    type("Minimum fee", "50.00");
+    press("Set terms");
+    await vi.waitFor(() => expect(p.said).toEqual(["New terms for every owner of Property A from 2026-10-17."]));
+    expect(posted(fetch)).toEqual([["/api/setup/agreements", {
+      account: "acct-1", starts_on: "2026-10-17", every_owner: true, fee_percent: "8", minimum_fee: "50.00",
+      flat_fee: "0", leasing_fee_percent: "0", reserve: "0", approval_limit: "0", bill_markup_percent: "0",
+    }]]);
+  });
+
   it("sets late fees, with no cap when none is given, and an NSF fee", async () => {
     vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-17T12:00:00Z") });
     const fetch = server();

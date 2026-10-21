@@ -433,6 +433,7 @@ FUNCTIONS = {
     # Helpers the fee, draw and bill functions call as the owner: nobody else.
     "trust_lock_owner_account(uuid,text)": set(),
     "trust_agreement_on(text,date)": set(),
+    "trust_management_fee_collected(text,timestamptz,timestamptz)": set(),
     "trust_post_fee(trust_ledger_accounts,numeric,timestamptz,text)": set(),
     "trust_lock_bill(uuid,uuid)": set(),
     "trust_lock_journal_entry(uuid,uuid)": set(),
