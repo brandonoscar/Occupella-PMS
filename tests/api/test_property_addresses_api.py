@@ -4,13 +4,16 @@ the server's geocoder (the fake one here; nothing reaches the network), and find
 its address. The database's side is in tests/test_property_addresses.py. Every address here is
 synthetic."""
 
+import uuid
+
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
 from helpers import make_pmc
 from people import join_as_owner, join_as_staff
 
-from pms import geocoding
-from pms.api import Settings, create_app
+from pms import accounts, geocoding
+from pms.api import Settings, addresses, create_app
 
 HOME = {"line_1": "100 Synthetic Way", "city": "Demo City", "state": "CA", "zip": "00001"}
 ONE_LINE = "100 Synthetic Way, Demo City, CA 00001"
@@ -226,3 +229,16 @@ def test_addresses_take_staff_whose_roles_allow_setup(
     assert refused.status_code == 403
     assert "your roles don't let you change" in refused.json()["detail"]
     assert rows(conn, prop) == 0
+
+
+def test_a_refusal_other_than_the_states_reaches_the_caller_as_it_is(app_conn, pmc, prop):
+    """The request's own shape keeps every check but the list of states from failing; one that
+    failed anyway is not passed off as a bad state."""
+    session = accounts.Session(
+        login_id=uuid.UUID(int=0), pmc_id=pmc.pmc_id, kind="staff", person_id=uuid.UUID(int=0),
+        email="",
+    )  # fmt: skip
+    unchecked = addresses.NewAddress.model_construct(**{**HOME, "line_1": " 100 Synthetic Way"})
+
+    with pytest.raises(psycopg.errors.CheckViolation, match="line_1_check"):
+        addresses.set_address(session, app_conn, prop, unchecked)

@@ -31,6 +31,8 @@ CREATE TABLE trust_income_certifications (
     lease_id uuid NOT NULL,
     kind text NOT NULL CHECK (kind IN ('move-in', 'annual', 'interim')),
     effective_on date NOT NULL,
+    -- People in the household, thirty at most.
+    -- squawk-ignore prefer-bigint-over-int
     household_size integer NOT NULL CHECK (household_size BETWEEN 1 AND 30),
     annual_income numeric NOT NULL
         CHECK (annual_income >= 0 AND annual_income = round(annual_income, 2)

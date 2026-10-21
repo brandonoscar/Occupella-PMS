@@ -6,7 +6,7 @@ side is in tests/test_housing_assistance.py. Every name here is synthetic."""
 
 import json
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
@@ -698,3 +698,15 @@ def test_a_custom_role_without_rent_sees_assistance_and_changes_none(
     refused(certify(other_client, lease), 403, "your roles don't let you change")
     refused(inspect(other_client, lease), 403, "your roles don't let you change")
     assert ok(other_client.get(f"/api/assistance/leases/{lease}"), 200)["terms"] == []
+
+
+@pytest.mark.parametrize(
+    ("day", "later", "on"),
+    [
+        (date(2026, 3, 1), 1, date(2027, 3, 1)),
+        (date(2028, 2, 29), 1, date(2029, 2, 28)),
+        (date(2028, 2, 29), 4, date(2032, 2, 29)),
+    ],
+)
+def test_a_year_on_is_the_same_day_or_february_28_for_a_29th(day, later, on):
+    assert a_year_after(day, later) == on
