@@ -74,6 +74,21 @@ gets up to three tries, keeping the modules already fetched. Locally:
 
   The empty-database check misses migrations that only fail once rows exist, such as a NOT NULL
   column with no default or a CHECK constraint that existing rows break.
+- Back up and restore (`tools/check_backup.py`, the script companies back up with,
+  `scripts/backup.sh`, docs/backup.md):
+  - it applies this branch's migrations to an empty database and fills it with money: the
+    self-host seed (50 doors, deposits, a month of rent) and the demo company (leases, charges,
+    bills, reconciliations, logins, documents' files, the audit log);
+  - it dumps it with `scripts/backup.sh dump` and restores the file with `scripts/backup.sh
+    restore` into a second, empty database;
+  - the copy must have the same schema (`pg_dump --schema-only`: tables, functions, triggers,
+    grants, policies; a CHECK constraint whose nested ANDs Postgres flattens as it restores
+    counts as the same), every table and sequence row for row, and a ledger that ties out.
+
+  `tests/tools/test_check_backup.py` runs it too, and checks the script restores through a pipe,
+  onto a server without the PMS's roles (it makes them without a login, as the migrations do),
+  and refuses a database that isn't empty or a ledger that doesn't tie out. Measured locally:
+  241 transfers and 175 tables and sequences; the whole check, migrations included, 11 s.
 
 Trust records are kept for years, so a migration that silently drops or rewrites ledger data is
 the worst kind of change. On PRs that touch the Dockerfile, compose file or migrations, it then
@@ -82,6 +97,7 @@ runs the self-host check. Run it with:
 - `dbmate --no-dump-schema up && python -m tools.check_rollback`
 - `scripts/dump_schema.sh && git diff --exit-code db/schema.sql`
 - `python -m tools.check_upgrade --base origin/main`
+- `PYTHONPATH=src python -m tools.check_backup`
 
 **ledger-invariants.yml** (PRs, main and nightly): property-based tests with Hypothesis. They
 throw random sequences of postings, batches, reversals, cross-PMC attempts, history rewrites and
@@ -409,6 +425,24 @@ the first half with `python -m tools.check_features --base origin/main`.
 A leaked credential or a poisoned dependency in a trust-accounting system is a breach of client
 money. Run gitleaks locally with `gitleaks git --config .gitleaks.toml --redact .`.
 
+**daily-scan.yml** (daily at 07:17 UTC on main, by hand, and on a PR that changes it): what was
+published since main last changed, every morning, in one job whose every step reports even when
+one before it failed:
+- gitleaks over every commit (security.yml's version, checksum and config);
+- pip-audit on `requirements.txt` and `requirements-dev.txt` (security.yml's pinned version);
+- `npm audit --omit=dev` on the portal's runtime packages, in the Node image the portal is built
+  with (e2e.yml's);
+- Grype on the self-host image, through Syft's list of what it holds: a known high or critical
+  vulnerability with a fix fails it (selfhost.yml's pinned versions and command).
+
+`tests/tools/test_daily_scan.py` keeps each version and image the same as the workflow it comes
+from, and fails on `continue-on-error`, a write permission or a secret. Its first local run
+(2026-10-21) found pypdf 6.20.0's three advisories (CVE-2026-113786, -113792, -113793; a test
+dependency): pypdf is now 6.21.1, and pip-audit, npm audit and gitleaks over 199 commits find
+nothing. Grype ran only in CI: the image doesn't build in that sandbox (NOT VERIFIED locally).
+Run the parts locally with the commands above, `cd frontend && npm audit --omit=dev`, and
+`docker compose build`, then syft and grype as in the workflow.
+
 **licenses.yml** (PRs and main): every installed dependency, direct or transitive, must carry a
 license on the allowlist in `ci/licenses.toml`: compatible with this repo's Apache-2.0, and never
 non-commercial or source-available. A PMC that self-hosts needs to be able to use every piece
@@ -425,7 +459,7 @@ as soon as one merged.
 One command for every PR check that can run locally, in CI's order:
 - the ci, licenses and db checks, with the database ones on a throwaway database;
 - the portal's typecheck, lint, unit tests and build, if `npm` is installed;
-- the upgrade check;
+- the upgrade check, and the backup and restore check;
 - the PL/pgSQL lint, if the server has plpgsql_check;
 - every test, with the coverage gates and diff-cover if plpgsql_check is preloaded (then in
   coverage.yml's two shards, one after the other);
@@ -456,7 +490,9 @@ These run on every PR, so they can all be required:
 | `licenses` | licenses.yml |
 | `e2e / e2e` | e2e.yml, called by licenses.yml |
 
-Not required, because it doesn't run on every PR: `selfhost (PR)` (path-dependent).
+Not required, because they don't run on every PR: `selfhost (PR) / selfhost` and `daily scan`
+(path-dependent). docs/release.md gives the settings and the clicks; branch protection on
+`main` is off (GitHub's API, 2026-10-21) until an admin turns it on.
 
 ## Job budget
 
@@ -470,7 +506,9 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
   - 03:17 UTC ledger-invariants (16 property jobs, then timing, API fuzz and many-staff jobs);
   - 04:17 mutation (8 SQL shards and 1 Python job, then 1 scoring job);
   - 05:17 selfhost (1);
-  - Mondays 06:17 security (codeql, gitleaks history, pip-audit, scorecard: 4).
+  - Mondays 06:17 security (codeql, gitleaks history, pip-audit, scorecard: 4);
+  - 07:17 daily-scan (1).
 - A push to main runs the same checks (minus `deps-and-secrets`), plus gitleaks over full
   history, pip-audit and Scorecard: 11 jobs.
-- A new PR job is chained after another one, as `e2e` is, to stay within 8.
+- A new PR job is chained after another one, as `e2e` is, to stay within 8. The daily scan's one
+  job runs on a PR only when the PR changes `daily-scan.yml`.

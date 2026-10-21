@@ -9,7 +9,7 @@ mypy==2.4.0
 # Python mutation testing, nightly (BSD-3-Clause; mutation.yml, pyproject.toml [tool.mutmut]).
 mutmut==3.8.0
 pip-licenses==5.5.5
-pypdf==6.20.0
+pypdf==6.21.1
 pytest==9.1.1
 ruff==0.16.10
 # Generated requests against the API's own OpenAPI schema (MIT; tests/api/test_api_fuzz.py).

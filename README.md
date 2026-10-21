@@ -74,3 +74,10 @@ member, the manager signs in with a password and an authenticator app.
 Read [CLAUDE.md](CLAUDE.md) first: the hard rules, the standing rule that tests come with the
 code, the conventions, and how to run the checks. [docs/CI.md](docs/CI.md) explains every CI
 workflow and lists the required checks.
+
+## Running it yourself
+
+A company runs the PMS on its own server with its own Postgres 16: [docs/release.md](docs/release.md)
+says how a release reaches it and how to upgrade (fixed forward, never rolled back once money is
+posted), and [docs/backup.md](docs/backup.md) how to back up the books and restore them
+(`scripts/backup.sh`).

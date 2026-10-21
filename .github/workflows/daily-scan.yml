@@ -1,0 +1,83 @@
+name: daily-scan
+
+# main, scanned every day for what was published since it last changed: Grype on the self-host
+# image (a known high or critical vulnerability that has a fix), pip-audit on the pinned Python
+# dependencies, npm audit on the portal's runtime packages, and gitleaks over every commit. Each
+# step reuses the pinned version and command of the workflow that already runs it (selfhost.yml,
+# security.yml, e2e.yml's Node image); tests/tools/test_daily_scan.py keeps them the same.
+# Every step reports even when one before it failed, and the job fails if any did. A PR that
+# changes this file runs it too, so a broken scan never waits for the next morning to show.
+# No secrets beyond the automatic read-only token.
+on:
+  schedule:
+    - cron: "17 7 * * *" # daily 07:17 UTC, after selfhost (05:17) and Monday's security (06:17)
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/daily-scan.yml
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GITLEAKS_VERSION: 8.30.1
+  # From gitleaks_8.30.1_checksums.txt in the release.
+  GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+  NODE_IMAGE: mirror.gcr.io/library/node:22.22.0-slim@sha256:dd9d21971ec4395903fa6143c2b9267d048ae01ca6d3ea96f16cb30df6187d94
+
+jobs:
+  scan:
+    name: daily scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install gitleaks
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/gitleaks.tgz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tgz" | sha256sum --check
+          tar -xzf "$RUNNER_TEMP/gitleaks.tgz" -C "$RUNNER_TEMP" gitleaks
+      - name: gitleaks on every commit
+        run: |
+          "$RUNNER_TEMP/gitleaks" git --config .gitleaks.toml --redact --no-banner .
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        if: ${{ !cancelled() }}
+        with:
+          python-version: "3.11"
+      # In an environment of its own: pip-audit is a CI tool, never one of ours.
+      - name: Known vulnerabilities in the pinned Python dependencies (pip-audit)
+        if: ${{ !cancelled() }}
+        run: |
+          python -m venv "$RUNNER_TEMP/audit"
+          "$RUNNER_TEMP/audit/bin/pip" install pip-audit==2.10.1
+          "$RUNNER_TEMP/audit/bin/pip-audit" --desc -r requirements.txt -r requirements-dev.txt
+      # Only what the portal ships (dependencies, not devDependencies), read from
+      # package-lock.json in the Node image the portal is built with.
+      - name: Known vulnerabilities in the portal's runtime packages (npm audit)
+        if: ${{ !cancelled() }}
+        run: |
+          docker run --rm -v "$PWD/frontend:/w" -w /w "$NODE_IMAGE" npm audit --omit=dev
+      - name: Build the self-host image
+        if: ${{ !cancelled() }}
+        run: docker compose build
+      # Syft lists what is in the image; Grype fails on a known high or critical vulnerability
+      # that has a fix. Both built from their pinned source versions (Apache-2.0), which Go checks
+      # against its checksum database.
+      - name: The self-host image's fixable vulnerabilities (Syft, Grype)
+        if: ${{ !cancelled() }}
+        env:
+          GOTOOLCHAIN: auto
+        run: |
+          go install github.com/anchore/syft/cmd/syft@v1.54.1
+          go install github.com/anchore/grype/cmd/grype@v0.120.1
+          "$(go env GOPATH)/bin/syft" occupella-pms:local -o cyclonedx-json="$RUNNER_TEMP/sbom.json"
+          "$(go env GOPATH)/bin/grype" "sbom:$RUNNER_TEMP/sbom.json" --only-fixed --fail-on high
