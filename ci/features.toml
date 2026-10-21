@@ -799,3 +799,19 @@ operations = [
 browser = [
   "features.spec.ts › staff move a tenant to another owner's unit with their deposit; the new lease's payment pays the old owner first",
 ]
+
+[[feature]]
+id = "calendar"
+statement = "A staff member (from Settings, Your calendar, maybe for one property group) or a tenant (from the portal) makes a link of their own that a calendar app subscribes to, with no login: staff see move-ins, leases ending, visits, work orders due, showings, bills due, rent changes, insurance running out and the day to take the company's fees out of trust; a tenant their rent due days, repair visits and their lease's last day. A new link takes the old one back, and a link taken back, or whose person's login is disabled, stops."
+operations = [
+  "GET /api/calendar/{token}.ics",
+  "GET /api/calendar/mine",
+  "POST /api/calendar/mine",
+  "POST /api/calendar/mine/revoke",
+  "GET /api/tenant/calendar",
+  "POST /api/tenant/calendar",
+  "POST /api/tenant/calendar/revoke",
+]
+browser = [
+  "features.spec.ts › staff and a tenant each subscribe their calendar app to a link of their own; a new link takes the old one back",
+]

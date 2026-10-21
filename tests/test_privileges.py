@@ -225,6 +225,9 @@ TABLES = {
     "trust_signing_links": {"SELECT", "INSERT"},
     "trust_signing_events": {"SELECT", "INSERT"},
     "trust_signature_evidence": {"SELECT", "INSERT"},
+    # Calendar feeds (migration 0098): a person's link, kept as its SHA-256, and taking it back.
+    "trust_calendar_feeds": {"SELECT", "INSERT"},
+    "trust_calendar_feed_revocations": {"SELECT", "INSERT"},
     "trust_leads": {"SELECT", "INSERT"},
     "trust_screening_criteria": {"SELECT", "INSERT"},
     "trust_lead_closings": {"SELECT", "INSERT"},
@@ -281,6 +284,9 @@ AI_NEVER_READS = {
     "trust_signing_links",
     "trust_signing_events",
     "trust_signature_evidence",
+    # Calendar links: whoever holds one reads a person's calendar without a login.
+    "trust_calendar_feeds",
+    "trust_calendar_feed_revocations",
     # A document's bytes (a W-9 carries a tax ID): the AI may know it exists, never read it.
     "trust_document_files",
     # Emails to owners and their deliveries: people's addresses (ADR 0004).

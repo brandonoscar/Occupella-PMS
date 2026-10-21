@@ -1,5 +1,5 @@
 # Runtime dependencies (the self-host image installs only these). Pinned; dependabot proposes
-# updates weekly. scripts/check_licenses.py fails CI on a license outside ci/licenses.toml.
+# updates weekly. tools/check_licenses.py fails CI on a license outside ci/licenses.toml.
 psycopg[binary]==3.3.6
 # Exports (src/pms/exports.py): Excel files, and PDFs (fpdf2 brings Pillow, MIT-CMU).
 fpdf2==2.8.9
@@ -13,3 +13,6 @@ pyotp==2.10.0
 uvicorn==0.54.0
 # Email (src/pms/email_html.py): the HTML part of each email, from one template.
 jinja2==3.1.6
+# Calendar feeds (src/pms/api/calendar.py): iCalendar text, escaped and folded as RFC 5545
+# asks (it brings python-dateutil, Apache-2.0 or BSD, and tzdata, Apache-2.0).
+icalendar==7.3.0

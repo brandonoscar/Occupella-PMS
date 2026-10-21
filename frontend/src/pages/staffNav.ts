@@ -72,4 +72,5 @@ export const SETTINGS = [
   { href: "/settings/accounts", label: "Chart of accounts" },
   { href: "/settings/import", label: "Import from another PMS" },
   { href: "/settings/data-export", label: "Data export" },
+  { href: "/settings/calendar", label: "Your calendar" },
 ] as const;

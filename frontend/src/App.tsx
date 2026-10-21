@@ -38,6 +38,7 @@ import { LoginsPage } from "./pages/LoginsPage";
 import { BankingPage, ReconcilePage } from "./pages/ReconcilePage";
 import { ReportPage } from "./pages/ReportPage";
 import { ReportsPage } from "./pages/ReportsPage";
+import { CalendarPage } from "./pages/CalendarCard";
 import { DataExportPage } from "./pages/DataExportPage";
 import { RentPage } from "./pages/RentPage";
 import { LeasePage } from "./pages/LeasePage";
@@ -137,6 +138,7 @@ const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/settings/accounts": (me) => <ChartOfAccountsPage me={me} />,
   "/settings/import": (me) => <SwitchPage me={me} />,
   "/settings/data-export": (me) => <DataExportPage me={me} />,
+  "/settings/calendar": (me) => <CalendarPage me={me} />,
 };
 
 // A record's own page, by its address (ADR 0005).
