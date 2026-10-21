@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { Preview, PropertyUtilities } from "../utilities";
@@ -120,6 +120,9 @@ describe("UtilityBillingPage", () => {
     fireEvent.change(within(form).getByLabelText("Owner keeps (percent, for the common areas)"), { target: { value: "5" } });
     fireEvent.click(within(form).getByRole("button", { name: "Save plan" }));
     expect(await screen.findByText("Gas is billed back by occupants from 11/01/2026.")).toBeTruthy();
+    // The page is hidden from everything but the panel until the panel has closed.
+    const closed = () => waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await closed();
 
     fireEvent.click(screen.getByRole("button", { name: "Actions for Unit B" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Set square feet" }));
@@ -127,6 +130,7 @@ describe("UtilityBillingPage", () => {
     fireEvent.change(within(form).getByLabelText("Square feet, Unit B"), { target: { value: "1200" } });
     fireEvent.click(within(form).getByRole("button", { name: "Save" }));
     expect(await screen.findByText("Unit B: 1,200 square feet.")).toBeTruthy();
+    await closed();
 
     fireEvent.click(screen.getByRole("button", { name: "Actions for Tenant 2, Birch Flats Unit B" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Utilities billed" }));

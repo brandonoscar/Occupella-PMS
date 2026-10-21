@@ -103,3 +103,16 @@ def test_only_the_companys_rows_and_the_same_bytes_for_the_same_books(everything
 def test_an_unknown_company_is_refused(app_conn):
     with pytest.raises(exports.ExportError, match="no PMC"):
         exports.records_zip(app_conn, uuid.uuid4())
+
+
+@pytest.mark.parametrize(
+    ("first_bytes", "extension"),
+    [
+        (b"%PDF-1.4", "pdf"),
+        (b"\x89PNG\r\n\x1a\n", "png"),
+        (b"\xff\xd8\xff\xe0", "jpg"),
+        (b"GIF89a", "bin"),
+    ],
+)
+def test_a_files_name_ends_as_its_first_bytes_say(first_bytes, extension):
+    assert exports._extension(first_bytes + b" synthetic file") == extension

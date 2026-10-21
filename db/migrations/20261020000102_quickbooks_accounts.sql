@@ -17,7 +17,7 @@ SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 
 -- A ledger account is named with its PMC, so a name keeps to its own company's accounts.
--- squawk-ignore disallowed-unique-constraint
+-- squawk-ignore disallowed-unique-constraint, constraint-missing-not-valid
 ALTER TABLE trust_ledger_accounts ADD CONSTRAINT trust_ledger_accounts_pmc_id_ledger_account_key
 UNIQUE (pmc_id, ledger_account_id);
 

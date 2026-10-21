@@ -1893,9 +1893,9 @@ test("staff add a vendor with their trade, 1099 and how they are paid, record a 
   await expect(workers).toContainText("$1,000,000.00");
   await expect(page.getByTestId("standing")).toHaveText("Insurance: Expired");
 
-  // A policy can't expire before it starts.
+  // A policy can't expire before it starts, and the refusal says so.
   const wrong = await record("other", "OT-0001", daysFromToday(5), daysFromToday(4));
-  await expect(wrong.getByRole("alert")).toHaveText("check what you entered and try again");
+  await expect(wrong.getByRole("alert")).toHaveText("a policy expires no earlier than it starts");
   await wrong.getByRole("button", { name: "Close" }).click();
 
   // Today lists both; the renewal takes the place of the policy running out.
@@ -1946,7 +1946,7 @@ test("staff record a lease's move-in and move-out inspections room by room, and 
   await panel.getByRole("button", { name: "Add a room" }).click();
   await panel.getByLabel("Room 5", { exact: true }).fill("kitchen");
   await panel.getByRole("button", { name: "Record inspection" }).click();
-  await expect(panel.getByRole("alert")).toHaveText("check what you entered and try again");
+  await expect(panel.getByRole("alert")).toHaveText("an inspection names each room once");
   await panel.getByLabel("Room 5", { exact: true }).fill("Hallway");
   await panel.getByRole("combobox", { name: "Room 5 condition" }).selectOption("missing");
   await panel.getByLabel("Room 5 note").fill("Smoke detector gone");

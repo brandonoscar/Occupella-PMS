@@ -11,7 +11,9 @@ SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 
 -- A report's columns are its return type, which only a new function changes.
+-- squawk-ignore ban-drop-function
 DROP FUNCTION trust_report_general_ledger(uuid, date, date);
+-- squawk-ignore ban-drop-function
 DROP FUNCTION trust_report_trial_balance(uuid, date);
 
 CREATE FUNCTION trust_report_general_ledger(
@@ -295,7 +297,9 @@ GRANT EXECUTE ON FUNCTION trust_report_trial_balance(uuid, date) TO trust_app, t
 
 -- migrate:down
 -- The reports as they were, without the property column.
+-- squawk-ignore ban-drop-function
 DROP FUNCTION trust_report_general_ledger(uuid, date, date);
+-- squawk-ignore ban-drop-function
 DROP FUNCTION trust_report_trial_balance(uuid, date);
 
 CREATE FUNCTION trust_report_general_ledger(

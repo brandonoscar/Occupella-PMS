@@ -485,6 +485,7 @@ browser = [
   "features.spec.ts › an owner reads last month's statement and their year-end package, and downloads each",
   "portal.spec.ts › an owner joins from the invite, reads their statement and signs back in",
   "portal.spec.ts › the demo opens on last month waiting for its manager, who approves it and sees on the Dashboard what else waits; its owner reads three properties",
+  "phone.spec.ts › an owner reads their properties and statement on a phone",
 ]
 
 [[feature]]
@@ -500,6 +501,7 @@ browser = [
   "features.spec.ts › a tenant sees their lease, what comes each month and two months of charges and payments, and downloads them",
   "portal.spec.ts › a tenant joins, sees what is due and asks for a repair",
   "features.spec.ts › a lease ended mid-month keeps only its days of the month's rent, and its deposit goes back less what it owes",
+  "phone.spec.ts › a tenant reads their lease and what they owe, and files a repair request on a phone",
 ]
 
 [[feature]]
