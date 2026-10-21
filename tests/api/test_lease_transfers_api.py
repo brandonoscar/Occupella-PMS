@@ -23,7 +23,9 @@ from people import join_as_owner, join_as_staff, join_as_tenant, tenant_of
 
 TODAY = datetime.now(UTC).date()
 STARTED = TODAY - timedelta(days=200)
-OWED_ON = TODAY - timedelta(days=20)
+# Rent owed from last month: a lease that ends yesterday keeps all of it. (Twenty days back fell in
+# this month from its 21st on, when the end rightly credits the days after the move.)
+OWED_ON = (TODAY.replace(day=1) - timedelta(days=1)).replace(day=1)
 
 
 def at(day):
