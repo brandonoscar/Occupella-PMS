@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid5
 
 import psycopg
 from fastapi import APIRouter, HTTPException
@@ -1127,6 +1127,8 @@ class RentRunDone(RentRun):
     emails: int
     # Housing authorities' parts of rents charged their late payment fee (migration 0116).
     authority_late_fees: int = 0
+    # Leases whose tenants' prepaid rent paid what they owe, for a company that turned it on.
+    prepaid_used: int = 0
 
 
 class RentRunLine(RentRun):
@@ -1160,6 +1162,7 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
         "SELECT trust_assess_authority_late_fees(%s, %s)", (session.pmc_id, run.late_fees_as_of)
     ).fetchone()
     assert authority is not None
+    prepaid_used = use_prepaid_by_itself(conn, session.pmc_id, today())
     written = (
         notices.write_scheduled(conn, session.pmc_id, today(), outbox.PUBLIC_URL.get())
         if outbox.SENDING.get()
@@ -1171,6 +1174,7 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
         late_fees=row[2],
         emails=sum(vars(written).values()),
         authority_late_fees=authority[0],
+        prepaid_used=prepaid_used,
     )
 
 
@@ -1575,6 +1579,99 @@ def prepaid(session: Staff, conn: Conn, lease_id: UUID, use: UsePrepaid) -> Paym
         )
     except psycopg.errors.CheckViolation as refused:
         raise HTTPException(409, refusal(refused)) from None
+
+
+# --- prepaid rent used by itself (migration 0117, the founder's review q031) -------------------
+
+
+class AutomaticPrepaid(BaseModel):
+    automatic: bool
+
+
+class AutomaticPrepaidSet(AutomaticPrepaid):
+    # When it was last changed, and by whom (None: never, or by the command line).
+    changed_at: datetime | None
+    changed_by: str | None
+
+
+PREPAID_SETTINGS = (
+    "SELECT s.automatic, s.created_at, st.display_name FROM trust_prepaid_rent_settings AS s"
+    " LEFT JOIN trust_staff AS st ON st.id = s.recorded_by"
+    " WHERE s.pmc_id = %s ORDER BY s.created_at DESC, s.id DESC LIMIT 1"
+)
+
+
+def prepaid_settings(conn: psycopg.Connection[Any], pmc_id: UUID) -> AutomaticPrepaidSet:
+    row = conn.execute(PREPAID_SETTINGS, (pmc_id,)).fetchone()
+    if row is None:
+        return AutomaticPrepaidSet(automatic=False, changed_at=None, changed_by=None)
+    return AutomaticPrepaidSet(automatic=row[0], changed_at=row[1], changed_by=row[2])
+
+
+@router.get("/prepaid/automatic")
+def automatic_prepaid(session: Staff, conn: Conn) -> AutomaticPrepaidSet:
+    """Whether tenants' prepaid rent pays what their lease owes by itself, each night once new
+    charges post; off until a company turns it on."""
+    return prepaid_settings(conn, session.pmc_id)
+
+
+@router.post("/prepaid/automatic")
+def set_automatic_prepaid(
+    session: Staff, conn: Conn, wanted: AutomaticPrepaid
+) -> AutomaticPrepaidSet:
+    """Turns using prepaid rent by itself on or off. Saving what holds already writes nothing."""
+    if prepaid_settings(conn, session.pmc_id).automatic != wanted.automatic:
+        conn.execute(
+            "INSERT INTO trust_prepaid_rent_settings (pmc_id, automatic) VALUES (%s, %s)",
+            (session.pmc_id, wanted.automatic),
+        )
+    return prepaid_settings(conn, session.pmc_id)
+
+
+# The leases whose tenants hold prepaid rent, in the order they were made.
+PREPAID_LEASES = """
+SELECT l.id FROM trust_leases AS l
+WHERE l.pmc_id = %s AND EXISTS (
+    SELECT 1 FROM trust_lease_tenants AS lt
+    JOIN trust_ledger_accounts AS a ON a.tenant_id = lt.tenant_id AND a.kind = 'prepaid_rent'
+    JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
+    WHERE lt.lease_id = l.id AND a.pmc_id = l.pmc_id AND b.balance > 0
+)
+ORDER BY l.created_at, l.id
+"""
+# Each day's use of a lease's prepaid rent is keyed by the lease and the day, so a run again
+# that day uses nothing more.
+PREPAID_DAYS = UUID("0f7c6c0e-6b1a-5c55-9a59-2f1f7d5d0117")
+
+
+def use_prepaid_by_itself(conn: psycopg.Connection[Any], pmc_id: UUID, day: date) -> int:
+    """For a company that turned it on: each lease's tenants' prepaid rent pays what the lease
+    owes, as Use prepaid rent does, once a day per lease; the number of leases it paid. A lease on
+    a payment hold that day, or one whose owner's account staff must choose, is left for staff,
+    each in a savepoint of its own."""
+    if not prepaid_settings(conn, pmc_id).automatic:
+        return 0
+    used = 0
+    for (lease_id,) in conn.execute(PREPAID_LEASES, (pmc_id,)).fetchall():
+        if owed(conn, lease_id) <= 0:
+            continue
+        if conn.execute(IN_FORCE, {"pmc": pmc_id, "lease": lease_id, "day": day}).fetchone():
+            continue
+        request = uuid5(PREPAID_DAYS, f"{lease_id}/{day.isoformat()}")
+        if conn.execute(
+            "SELECT 1 FROM pgledger_transfers AS t"
+            " JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id"
+            " WHERE a.pmc_id = %s AND t.metadata ->> 'key' = %s LIMIT 1",
+            (pmc_id, f"prepaid/{request}"),
+        ).fetchone():
+            continue  # used already that day
+        try:
+            with conn.transaction():
+                use_prepaid(conn, pmc_id, lease_id, request, day)
+        except (HTTPException, psycopg.errors.CheckViolation):
+            continue  # an owner's account to choose, a period closed, or nothing to use after all
+        used += 1
+    return used
 
 
 class NewDeposit(BaseModel):

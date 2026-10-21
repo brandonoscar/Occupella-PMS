@@ -121,7 +121,7 @@ export type Payment = { transfers: string[]; to_owner: string; to_prepaid: strin
 export type Bounce = { transfers: string[]; nsf_fee: string | null };
 // What a rent run charged: leases their rent, recurring charges and late fees.
 // A run by hand also says how many emails it wrote (rent reminders, late notices, statements).
-export type RentRun = { rents: number; recurring: number; late_fees: number; emails?: number };
+export type RentRun = { rents: number; recurring: number; late_fees: number; emails?: number; prepaid_used?: number };
 // A run as recorded: the nightly run (by null) or an admin's by hand.
 export type RentRunLine = RentRun & { at: string; due_on: string; late_fees_as_of: string; by: string | null };
 
@@ -162,7 +162,9 @@ export function recurringLabel(recurring: RecurringCharge): string {
 export function rentRunSummary(run: RentRun): string {
   const count = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
   const charged = `${count(run.rents, "rent")}, ${count(run.recurring, "recurring charge")} and ${count(run.late_fees, "late fee")} charged.`;
-  return run.emails ? `${charged} ${count(run.emails, "email")} written.` : charged;
+  // Prepaid rent used by itself (migration 0117), for a company that turned it on.
+  const prepaid = run.prepaid_used ? ` Prepaid rent paid what ${count(run.prepaid_used, "lease")} owed.` : "";
+  return run.emails ? `${charged}${prepaid} ${count(run.emails, "email")} written.` : `${charged}${prepaid}`;
 }
 
 const SERVED: Record<RentChange["served_by"], string> = {

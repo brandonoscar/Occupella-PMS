@@ -787,14 +787,20 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   rent and recurring charges for the month (due on its first day, or on a lease's own due day
   once it comes; migration 0081), the late fees of rents past
   their grace as of the day, the recurring bills due, with their owners' emails, and the recurring
-  work orders due (migration 0085). Rent and late
+  work orders due (migration 0085), and, for a company that turns it on in Company setup
+  (`trust_prepaid_rent_settings`, migration 0117: append-only, the latest row holding, naming who
+  changed it; `/api/rent/prepaid/automatic`, area rent; off by default), each lease's tenants'
+  prepaid rent for what it owes, as Use prepaid rent does, once a day per lease, leaving a lease on
+  a payment hold or whose owner's account staff choose (`rent.use_prepaid_by_itself`; Run rent now
+  too). Rent and late
   fees go through `trust_run_rent`, which records the run (`trust_rent_runs`, append-only, naming
   nobody); an admin runs it by hand from the rent roll (Run rent now), and a named staff member
   without admin is refused. Each part charges once per date, so a run again charges nothing new.
   The API runs it at start and every day at 06:00 UTC unless `PMS_NIGHTLY` is "off" (e2e turns it
   off); `python -m pms.nightly` runs it once, one run at a time across servers (an advisory lock:
   another leaves the work to it). It moves no trust money but a company's monthly
-  management fees, once it turns them on (migration 0082), inside trust.
+  management fees and tenants' prepaid rent, once it turns them on (migrations 0082 and 0117),
+  inside trust.
 - Notes (migration 0066, ADR 0006): what staff write about a property, unit, lease, tenant, owner
   or vendor of the PMC (`trust_notes`, exactly one of them, append-only, naming who wrote it; a
   correction is a new note), on its Notes tab (`src/pms/api/notes.py`). They move no money, and

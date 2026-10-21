@@ -193,6 +193,7 @@ TABLES = {
     # A lease's rent due day from a month: staff record it with an insert (migration 0081).
     "trust_rent_due_days": {"SELECT", "INSERT"},
     "trust_management_fee_settings": {"SELECT", "INSERT"},
+    "trust_prepaid_rent_settings": {"SELECT", "INSERT"},
     "trust_owner_fees": {"SELECT"},  # written only by trust_take_owner_fee
     # One invoice shared across properties: staff enter it and its parts with inserts, and a
     # markup on a bill too; the markup taken is written only by trust_set_aside_bill

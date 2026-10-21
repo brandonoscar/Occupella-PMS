@@ -2906,6 +2906,44 @@ test("a company has its management fees taken each month, staff set a flat fee a
   await expect((await ownerProperty(page, "Demo Owner A", "Birch Flats")).getByRole("cell").nth(2)).toHaveText("$210.00");
 });
 
+test("a company has tenants' prepaid rent pay their new rent by itself, and Run rent now uses it", async ({ page }) => {
+  const people = seed.features["prepaid-rent"]!;
+  await joinAsStaff(page, people.manager);
+
+  // Company setup: off until the company turns it on.
+  await settings(page, "Company setup");
+  await expect(page.getByTestId("automatic-prepaid")).toHaveText("Used by hand with Use prepaid rent on the lease");
+  await page.getByRole("button", { name: "Edit prepaid rent" }).click();
+  const panel = page.getByRole("dialog", { name: "Prepaid rent" });
+  await panel.getByLabel("Use tenants' prepaid rent by itself for new rent").check();
+  await panel.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved how prepaid rent is used.")).toBeVisible();
+  await expect(page.getByTestId("automatic-prepaid")).toHaveText("Used by itself each night for what the lease owes");
+
+  // Aspen Row Unit 1 owes nothing before this month's rent: $500.00 paid ahead is prepaid rent.
+  const aspen = await openLease(page, "Aspen Row, Unit 1");
+  await expect(page.getByTestId("balance-due")).toHaveText("$0.00");
+  const pay = await leasePanel(page, "Receive payment");
+  await pay.getByLabel("Payment received").fill("500.00");
+  await pay.getByRole("button", { name: "Record payment" }).click();
+  await expect(aspen).toContainText("$500.00 held as prepaid rent.");
+
+  // Run rent now charges this month's $1,180.00 rent, then the prepaid rent pays $500.00 of it
+  // (a rent past its five days' grace took its $50.00 late fee first).
+  await section(page, "Rent roll");
+  await page.getByRole("button", { name: "Actions for the rent roll" }).click();
+  await page.getByRole("menuitem", { name: "Run rent now" }).click();
+  const run = page.getByRole("dialog", { name: "Run rent now" });
+  await run.getByLabel("Late fees as of").fill(today());
+  await run.getByRole("button", { name: "Run rent now" }).click();
+  await expect(run).toHaveCount(0);
+  await expect(page.getByRole("main")).toContainText("Prepaid rent paid what 1 lease owed.");
+  const late = dayOfMonth() > 6;
+  await expect(page.getByRole("row", { name: "Aspen Row, Unit 1", exact: true }).getByTestId("balance")).toHaveText(
+    late ? "$730.00" : "$680.00",
+  );
+});
+
 test("staff share a roofer's invoice across two owners' properties with the markup Birch Flats' terms set, and pay both shares at once", async ({
   page,
 }) => {

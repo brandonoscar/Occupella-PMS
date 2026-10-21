@@ -223,6 +223,17 @@ browser = [
 ]
 
 [[feature]]
+id = "prepaid-rent"
+statement = "A company turns on tenants' prepaid rent paying what their lease owes by itself: the nightly run, and an admin's Run rent now, use it once a day per lease once new charges post, rent first, oldest first, as Use prepaid rent does, leaving a lease on a payment hold or whose owner's account staff choose. Off until a company turns it on."
+operations = [
+  "GET /api/rent/prepaid/automatic",
+  "POST /api/rent/prepaid/automatic",
+]
+browser = [
+  "features.spec.ts › a company has tenants' prepaid rent pay their new rent by itself, and Run rent now uses it",
+]
+
+[[feature]]
 id = "shared-bills"
 statement = "Staff share one vendor invoice across properties, a bill for each owner's share following every bill rule on its own, add the markup each owner's management terms set (taken with the bill's money into the company's fee account), and pay several bills at once."
 operations = [

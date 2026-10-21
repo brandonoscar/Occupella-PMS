@@ -1410,3 +1410,14 @@ tests = [
   "tests/api/test_assistance_api.py::test_records_are_of_a_lease_with_assistance_on_file_of_the_company",
 ]
 
+
+[[invariant]]
+id = "prepaid-rent-used-by-itself"
+statement = "A company that turns it on (migration 0117, append-only, the latest row holding, off by default) has the nightly run and an admin's Run rent now use each lease's tenants' prepaid rent for what the lease owes, as Use prepaid rent does: no more than either, once a day per lease, never for a lease on a payment hold that day or whose owner's account staff must choose; it uses nothing while off, and every trust bank account ties out."
+tests = [
+  "tests/properties/test_prepaid_by_itself_properties.py::test_prepaid_rent_used_by_itself_follows_the_setting_holds_and_days",
+  "tests/api/test_prepaid_by_itself_api.py::test_run_rent_now_uses_prepaid_rent_for_the_new_rent_once_it_is_on",
+  "tests/api/test_prepaid_by_itself_api.py::test_a_lease_uses_its_prepaid_rent_once_a_day",
+  "tests/api/test_prepaid_by_itself_api.py::test_a_lease_on_hold_or_whose_owners_account_staff_choose_is_left_for_staff",
+  "tests/api/test_prepaid_by_itself_api.py::test_the_nightly_run_uses_it_for_its_company_only",
+]

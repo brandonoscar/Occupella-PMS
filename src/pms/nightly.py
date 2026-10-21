@@ -2,7 +2,8 @@
 month's rent and recurring charges (due on its first day, each lease in effect for its days and
 each starting later in the month its first part month; a lease due on another day on that day),
 the late fees of rents still open after their grace days (and housing authorities' late payment
-fees, migration 0116), the recurring bills due by today, each
+fees, migration 0116), each lease's tenants' prepaid rent for what it owes for a company that
+turned that on (migration 0117), the recurring bills due by today, each
 with its email to an owner whose approval it waits for, for a company that turned it on, last
 month's management fees from its day of the month, and the recurring work orders due by today
 (trust_open_recurring_work_orders, migration 0085). Rent and late fees go through
@@ -40,6 +41,7 @@ import psycopg
 from psycopg import sql
 
 from pms import email, notices
+from pms.api import rent
 
 log = logging.getLogger("pms.nightly")
 
@@ -67,6 +69,8 @@ class Ran:
     work_orders: int = 0
     # Housing authorities' parts of rents charged their late payment fee (migration 0116).
     authority_late_fees: int = 0
+    # Leases whose tenants' prepaid rent paid what they owe (migration 0117).
+    prepaid_used: int = 0
 
 
 def run_pmc(
@@ -100,6 +104,7 @@ def run_pmc(
         ).fetchone()
         assert run is not None and entered is not None and fees is not None and opened is not None
         assert authority is not None
+        prepaid = rent.use_prepaid_by_itself(conn, pmc_id, day)
         # The bills this transaction entered (their created_at is its start, now()), each with
         # the email to an owner whose approval it waits for.
         for (bill,) in conn.execute(
@@ -109,7 +114,18 @@ def run_pmc(
             email.write_bill_approval(conn, pmc_id, bill, public_url)
         written = notices.write_scheduled(conn, pmc_id, day, public_url) if sending else None
     emails = 0 if written is None else sum(vars(written).values())
-    return Ran(pmc_id, run[0], run[1], run[2], entered[0], emails, fees[0], opened[0], authority[0])
+    return Ran(
+        pmc_id,
+        run[0],
+        run[1],
+        run[2],
+        entered[0],
+        emails,
+        fees[0],
+        opened[0],
+        authority[0],
+        prepaid,
+    )
 
 
 def run_all(

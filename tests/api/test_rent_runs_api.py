@@ -156,6 +156,7 @@ def test_an_admin_runs_rent_by_hand_and_it_is_listed_with_the_nightly_runs(
         "late_fees": 0,
         "emails": 0,
         "authority_late_fees": 0,
+        "prepaid_used": 0,
     }
     assert [(r["due_on"], r["by"]) for r in runs] == [
         (str(FIRST), "Staff 1"),
