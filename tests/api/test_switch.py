@@ -282,6 +282,26 @@ def test_bad_contact_details_say_their_line_and_bring_nothing(client, conn, staf
     ).fetchone() == (0,)
 
 
+def test_a_file_that_is_not_csv_is_refused_in_words_not_a_server_error(client, conn, staff, pmc):
+    # A bare carriage return ends a line (old Mac files); the API fuzz test found it answered 500.
+    refused(
+        client.post("/api/switching/import", json={"kind": "bills", "content": "\r0"}),
+        422,
+        "line 1: no vendor, owner, property, reference, bill date, due on, amount, memo column",
+    )
+    # A field longer than the csv module reads.
+    refused(
+        client.post(
+            "/api/switching/import", json={"kind": "owners", "content": "Name\n" + "x" * 140_000}
+        ),
+        422,
+        "line 2: this isn't CSV the PMS can read (field larger than field limit (131072))",
+    )
+    assert conn.execute(
+        "SELECT count(*) FROM trust_owners WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone() == (len(pmc.owners),)
+
+
 def test_a_lease_over_another_is_refused_with_its_line(client, staff, pmc):
     roster(client)
     ok(
