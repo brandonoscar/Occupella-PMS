@@ -474,7 +474,7 @@ operations = [
 ]
 browser = [
   "features.spec.ts › staff keep a vendor's W-9, a bill's receipt, a move-out photo and a property's document from Files, narrow the list, refuse a file that isn't what it says, and remove one",
-  "portal.spec.ts › staff keep an owner's document and the owner downloads it from the portal",
+  "portal.spec.ts › staff keep an owner's document and a property's, and the owner downloads them from the portal",
 ]
 
 [[feature]]
@@ -760,7 +760,7 @@ operations = [
   "POST /api/emails/settings",
 ]
 browser = [
-  "features.spec.ts › staff turn on the emails the PMS writes by itself, and a run of rent sends each owner last month's statement onto their Email tab",
+  "features.spec.ts › staff turn on the emails the PMS writes by itself, and a run of rent sends each owner last month's statement onto their Email tab, its PDF attached; a payment sends its tenant the receipt",
 ]
 
 [[feature]]
