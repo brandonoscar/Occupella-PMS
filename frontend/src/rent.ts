@@ -59,6 +59,7 @@ export type RecurringCharge = {
   amount: string;
   starts_on: string;
   ends_on: string | null;
+  charge_type: string | null; // the company's type of fee it is
 };
 export type RentChange = {
   id: string;
@@ -154,7 +155,8 @@ export function chargeLabel(charge: OpenCharge): string {
 export function recurringLabel(recurring: RecurringCharge): string {
   const amount = recurring.kind === "credit" ? `credit of ${money(recurring.amount)}` : money(recurring.amount);
   const stops = recurring.ends_on ? `, stops ${usDate(recurring.ends_on)}` : "";
-  return `${recurring.memo}: ${amount} a month from ${usDate(recurring.starts_on)}${stops}`;
+  const typed = recurring.charge_type ? ` (${recurring.charge_type})` : "";
+  return `${recurring.memo}${typed}: ${amount} a month from ${usDate(recurring.starts_on)}${stops}`;
 }
 
 export function rentRunSummary(run: RentRun): string {

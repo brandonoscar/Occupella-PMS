@@ -464,8 +464,8 @@ browser = [
 
 [[feature]]
 id = "reports"
-statement = "Staff open each report from Reports, grouped as Buildium groups them, see it on screen with its filters (a day, or days with presets; an owner; a year; a property group or property when its lines have one, the lines across all properties then left out), and export it in CSV, Excel and PDF with the same filters; the whole ledger downloads as a zip of CSV from Settings, Data export."
-operations = ["GET /api/reports/{name}", "GET /api/ledger.zip"]
+statement = "Staff open each report from Reports, grouped as Buildium groups them, see it on screen with its filters (a day, or days with presets; an owner; a year; a property group, a property or one owner's properties when its lines have one, the general ledger and trial balance by each account's property, the lines across all properties then left out), and export it in CSV, Excel and PDF with the same filters; the whole ledger downloads as a zip of CSV from Settings, Data export, and for an admin everything the company keeps: each record table as CSV, its documents, leases and signatures as files, and the ledger, never a credential or a token's hash."
+operations = ["GET /api/reports/{name}", "GET /api/ledger.zip", "GET /api/records.zip"]
 browser = [
   "features.spec.ts › staff open a report from Reports, see it on screen narrowed to one property, export it in each format, take an owner's report over last year, download the whole ledger, and every staff report in each format",
   "portal.spec.ts › staff set up a property from nothing where each thing lives, lease a unit and see it on the rent roll",
@@ -485,6 +485,7 @@ browser = [
   "features.spec.ts › an owner reads last month's statement and their year-end package, and downloads each",
   "portal.spec.ts › an owner joins from the invite, reads their statement and signs back in",
   "portal.spec.ts › the demo opens on last month waiting for its manager, who approves it and sees on the Dashboard what else waits; its owner reads three properties",
+  "phone.spec.ts › an owner reads their properties and statement on a phone",
 ]
 
 [[feature]]
@@ -500,6 +501,7 @@ browser = [
   "features.spec.ts › a tenant sees their lease, what comes each month and two months of charges and payments, and downloads them",
   "portal.spec.ts › a tenant joins, sees what is due and asks for a repair",
   "features.spec.ts › a lease ended mid-month keeps only its days of the month's rent, and its deposit goes back less what it owes",
+  "phone.spec.ts › a tenant reads their lease and what they owe, and files a repair request on a phone",
 ]
 
 [[feature]]
@@ -816,3 +818,32 @@ operations = [
 browser = [
   "features.spec.ts › staff and a tenant each subscribe their calendar app to a link of their own; a new link takes the old one back",
 ]
+
+[[feature]]
+id = "own-contact"
+statement = "A tenant reads and changes their own email, phones and mailing address in the portal (a mailing address whole or not there); the company writes to that email from then on, their sign-in email stays, and staff see on the tenant's page the new details and that the tenant changed them, and when."
+operations = ["GET /api/tenant/contact", "POST /api/tenant/contact"]
+browser = [
+  "features.spec.ts › a tenant changes their own phone and email in the portal, and staff see the new ones and that the tenant changed them",
+]
+
+[[feature]]
+id = "charge-types"
+statement = "Staff add the company's own charge types (a name once whatever its case, none of the income statement's own lines) in Settings, Chart of accounts, and give a fee one on Enter charge or a monthly charge (never a credit); the owner's income statement counts what was collected on each type on a line of its own, after the other income, and the budget beside it counts that line as income."
+operations = ["GET /api/setup/charge-types", "POST /api/setup/charge-types"]
+browser = [
+  "features.spec.ts › staff add charge types and give a lease's fee and monthly charge one; the owner's income statement counts the type on its own line",
+]
+
+[[feature]]
+id = "quickbooks"
+statement = "Staff see each ledger account's name in QuickBooks (the PMS's, until they give it their own; a colon nests a subaccount) and set it in Settings, QuickBooks, and download the trust ledger's transfers over days as general journal entries, each debiting the account the money left and crediting the one it went to, for QuickBooks Desktop (IIF) and QuickBooks Online (CSV)."
+operations = [
+  "GET /api/quickbooks/accounts",
+  "POST /api/quickbooks/accounts/{ledger_account_id}",
+  "GET /api/quickbooks/journal",
+]
+browser = [
+  "features.spec.ts › staff name the operating trust account's cash for QuickBooks and download two months of journal entries for QuickBooks Desktop and Online",
+]
+

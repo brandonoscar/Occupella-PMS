@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
-import { Button } from "../components/Button";
+import { Button, LinkButton } from "../components/Button";
 import { EmptyState } from "../components/EmptyState";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
@@ -11,6 +11,7 @@ import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import { day, money, usDate } from "../money";
+import { downloadHref, FORMATS } from "../reports";
 import type { CompanyFees } from "../payables";
 import { companyFeesDue } from "../payables";
 import { RowMenu } from "../components/RowMenu";
@@ -394,6 +395,14 @@ function WorksheetCard({
                 <Badge tone="caution">{`Off by ${money(gap)}`}</Badge>
               ))}
           </div>
+          {day && (
+            <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Download the reconciliation">
+              <span className="text-sm text-ink-muted">Download it:</span>
+              {FORMATS.map(([format, label]) => (
+                <LinkButton key={format} href={downloadHref("bank_reconciliation", [bank.id, day], format)}>{label}</LinkButton>
+              ))}
+            </div>
+          )}
           <table className="text-sm" aria-label="Figures">
             <tbody>
               {Object.entries(shown).map(([item, amount]) => (
@@ -659,6 +668,7 @@ function ApprovedCard({ bank }: { bank: BankBooks }) {
               <th className="text-right">Bank</th>
               <th className="text-right">Books</th>
               <th className="text-left">Approved by</th>
+              <th className="text-left">Three-way</th>
             </tr>
           </thead>
           <tbody>
@@ -668,6 +678,11 @@ function ApprovedCard({ bank }: { bank: BankBooks }) {
                 <td className="text-right">{money(r.statement_balance)}</td>
                 <td className="text-right">{money(r.book_balance)}</td>
                 <td>{r.approved_by}</td>
+                <td>
+                  <a href={downloadHref("three_way_reconciliation", [r.id], "pdf")}
+                    aria-label={`Three-way reconciliation, ${usDate(r.period_start)} to ${usDate(lastDayOf(r.period_end))}, PDF`}
+                    className="text-iris hover:text-iris-hover hover:underline">PDF</a>
+                </td>
               </tr>
             ))}
           </tbody>

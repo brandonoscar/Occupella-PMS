@@ -42,8 +42,8 @@ const LEASE: LeaseDetail = {
     { transfer_id: "tr0", received_on: "2026-08-01", amount: "1500.00", reference: null, method: "EFT", bounced: true },
   ],
   recurring: [
-    { id: "r1", kind: "fee", memo: "Pet rent", amount: "35.00", starts_on: "2026-01-01", ends_on: null },
-    { id: "r2", kind: "credit", memo: "Concession", amount: "100.00", starts_on: "2026-02-01", ends_on: "2026-12-01" },
+    { id: "r1", kind: "fee", memo: "Pet rent", amount: "35.00", starts_on: "2026-01-01", ends_on: null, charge_type: null },
+    { id: "r2", kind: "credit", memo: "Concession", amount: "100.00", starts_on: "2026-02-01", ends_on: "2026-12-01", charge_type: null },
   ],
   holds: [],
 };
@@ -305,6 +305,15 @@ describe("LeasePage", () => {
       ["08/05/2026", "NSF fee", "NSF fee", "$35.00", "", "$35.00"],
       ["08/05/2026", "Bounced payment", "", "", "($1,500.00)", "$1,535.00"],
     ]);
+    // The ledger downloads as the tenant's own does, as of today.
+    const today = new Date().toISOString().slice(0, 10);
+    const downloads = within(screen.getByRole("group", { name: "Download the ledger" })).getAllByRole("link");
+    expect(downloads.map((link) => [link.textContent, link.getAttribute("href")])).toEqual(
+      (["pdf", "csv", "xlsx"] as const).map((format, n) => [
+        ["PDF", "CSV", "Excel"][n],
+        `/api/reports/trust_report_tenant_ledger?arg=l1&arg=${today}&format=${format}`,
+      ]),
+    );
     // Each payment as it came in, whole; It bounced is in the ⋯ menu of the one that hasn't.
     const received = screen.getByRole("table", { name: "Payments received" });
     expect(within(received).getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").map((c) => c.textContent))).toEqual([

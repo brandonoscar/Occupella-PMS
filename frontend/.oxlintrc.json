@@ -19,6 +19,9 @@
     // role="status" and role="group" on a div are ARIA's own patterns for a live message and
     // a set of fields; <output> and <fieldset> mean something else and lay out differently.
     "jsx-a11y/prefer-tag-over-role": "off",
+    // A table's frame that scrolls sideways takes focus as a named region (WAI's pattern for a
+    // scrollable region, WCAG 2.1.1): components/Wide.tsx. Every other role stays refused.
+    "jsx-a11y/no-noninteractive-tabindex": ["error", { "roles": ["tabpanel", "region"] }],
     "no-unused-vars": ["error", { "argsIgnorePattern": "^_", "ignoreRestSiblings": true }],
     // Testing Library's findBy* fails the test when what it looks for never shows.
     "vitest/expect-expect": ["error", { "assertFunctionNames": ["expect", "screen.findBy*"] }],

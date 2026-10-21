@@ -51,6 +51,7 @@ const TENANT: Tenant = {
     address_line_1: "100 Example Street", address_line_2: "Apt 2", city: "Sampletown", state: "ZZ",
     postal_code: "00000",
   },
+  contact_by_tenant_at: null,
   prepaid: "25.00",
   deposit: "1500.00",
   leases: [LINE, { ...LINE, id: "l0", starts_on: "2025-01-01", ends_on: "2025-12-31", owed: "0.00", status: "ended" }],
@@ -137,6 +138,7 @@ describe("TenantPage", () => {
     );
     expect(contact.textContent).toContain("555-555-0101");
     expect(contact.textContent).toContain("100 Example Street, Apt 2Sampletown, ZZ 00000");
+    expect(contact.textContent).not.toContain("changed these in the portal");
     const portal = screen.getByRole("heading", { name: "Portal" }).closest("section") as HTMLElement;
     expect(portal.textContent).toContain("Invitedtenant1.login@example.com");
     expect((within(portal).getByLabelText("Email to sign in with") as HTMLInputElement).value).toBe("tenant1.login@example.com");
@@ -148,6 +150,14 @@ describe("TenantPage", () => {
       ["Unit 1, Property 1", "01/01/2025 – 12/31/2025", "Ended", "$1,500.00", "$0.00"],
     ]);
     expect(within(rows[0]!).getByRole("link").getAttribute("href")).toBe("/leases/l1");
+  });
+
+  it("says when the tenant changed their contact details themselves, in the portal", async () => {
+    server({ "/api/tenants/t1": { ...TENANT, contact_by_tenant_at: "2026-10-20T15:00:00Z" } });
+    render(<TenantPage me={ME} id="t1" />);
+
+    const contact = await screen.findByRole("group", { name: "Contact details, Tenant 1" });
+    expect(contact.textContent).toContain("Tenant 1 changed these in the portal on 10/20/2026.");
   });
 
   it("invites them to the portal from their page", async () => {

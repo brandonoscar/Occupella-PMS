@@ -506,6 +506,10 @@ FEATURES = (
     "screening-criteria",
     "lease-transfers",
     "calendar",
+    "own-contact",
+    "charge-types",
+    "phone",
+    "quickbooks",
 )
 
 

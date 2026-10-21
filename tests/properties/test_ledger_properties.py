@@ -587,6 +587,32 @@ class LedgerMachine(RuleBasedStateMachine):
             == rows[-1][4]
             == sum((r[3] for r in rows if r[0] == "bank total"), Decimal(0))
         )
+        # Each account's property (migration 0101): an owner's property account's, a tenant's
+        # accounts' their property, and no one property's for cash, vendors and the company.
+        held_for = {
+            f"{kind}: {holder}": prop
+            for kind, holder, prop in self.conns[role].execute(
+                "SELECT t.kind, coalesce(o.display_name || ' / ' || p.display_name,"
+                "  tn.display_name), coalesce(p.display_name, tp.display_name)"
+                " FROM trust_ledger_accounts AS t"
+                " LEFT JOIN trust_owners AS o ON o.id = t.owner_id"
+                " LEFT JOIN trust_properties AS p ON p.id = t.property_id"
+                " LEFT JOIN trust_tenants AS tn ON tn.id = t.tenant_id"
+                " LEFT JOIN trust_properties AS tp ON tp.id = tn.property_id"
+                " WHERE t.pmc_id = %s AND t.kind IN"
+                "  ('owner_property', 'prepaid_rent', 'tenant_deposit')",
+                (self.pmc_id,),
+            )
+        }
+        for item, _, account, prop in self.conns[role].execute(
+            "SELECT item, bank, account, property FROM trust_report_trial_balance(%s, %s)"
+            " WHERE item NOT IN ('PMC', 'as of')",
+            (self.pmc_id, as_of),
+        ):
+            if item == "account":
+                assert prop == held_for.get(account), (account, prop)
+            if item != "account" or account == "book cash":
+                assert prop is None
 
         register = (
             self.conns[role]

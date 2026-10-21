@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
-import { Button } from "../components/Button";
+import { Button, LinkButton } from "../components/Button";
 import { Field } from "../components/Field";
 import { Form } from "../components/Form";
 import { NotesCard } from "../components/NotesCard";
@@ -14,7 +14,8 @@ import { Card, PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Tabs } from "../components/Tabs";
 import { Wide } from "../components/Wide";
-import { money, usDate } from "../money";
+import { day, money, usDate } from "../money";
+import { downloadHref, FORMATS } from "../reports";
 import {
   balanceDue,
   depositKindsLine,
@@ -314,8 +315,15 @@ function Summary({ lease, record }: { lease: LeaseDetail; record: Recorder }) {
 // own lines), then each payment as it came in, whole, where It bounced is.
 function LedgerTab({ lease, ledger, record }: { lease: LeaseDetail; ledger: Ledger | null; record: Recorder }) {
   if (ledger === null) return <Notice tone="info">Loading</Notice>;
+  const today = day(new Date());
   return (
     <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Download the ledger">
+        <span className="text-sm text-ink-muted">Download the ledger:</span>
+        {FORMATS.map(([format, label]) => (
+          <LinkButton key={format} href={downloadHref("tenant_ledger", [lease.id, today], format)}>{label}</LinkButton>
+        ))}
+      </div>
       {ledger.lines.length === 0 ? (
         <p className="text-sm text-ink-subtle">Nothing charged or paid yet.</p>
       ) : (

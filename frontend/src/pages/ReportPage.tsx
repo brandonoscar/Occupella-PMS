@@ -20,8 +20,8 @@ const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 const HIDDEN = new Set(["line", "lease_id", "vendor_id", "staff_id", "bank_account_id"]);
 
 // One report (ADR 0006, step 11): its filters (a day, or days with presets; an owner; a year;
-// the property group or property when its rows have one), its rows on screen, and Export as
-// PDF, Excel or CSV with the same filters.
+// the property group or property, and an owner's properties, when its rows have one; q109), its
+// rows on screen, and Export as PDF, Excel or CSV with the same filters.
 export function ReportPage({ me, name }: { me: Me; name: string }) {
   const spec = reportSpec(name);
   if (!spec) {
@@ -39,23 +39,25 @@ function Report({ me, spec }: { me: Me; spec: ReportSpec }) {
   const [filters, setFilters] = useState<Filters>(() => defaultFilters(new Date()));
   const [scope, setScope] = useScope();
   const [owners, setOwners] = useState<{ id: string; name: string }[]>([]);
+  // A report by property narrowed to one owner's properties; "" is all of them.
+  const [byOwner, setByOwner] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState("");
   const needsOwner = spec.args.includes("owner");
   const ranged = spec.args.includes("from") || spec.args.includes("periodStart");
   const args = reportArgs(spec, filters);
-  const previewHref = args && reportHref(spec, args, scope, "json");
+  const previewHref = args && reportHref(spec, args, scope, "json", byOwner);
 
   useEffect(() => {
-    if (!needsOwner) return;
+    if (!needsOwner && !spec.byProperty) return;
     api
       .get<Portfolio>("/api/setup")
       .then((books) => {
         setOwners(books.owners);
-        setFilters((now) => (now.owner ? now : { ...now, owner: books.owners[0]?.id ?? "" }));
+        if (needsOwner) setFilters((now) => (now.owner ? now : { ...now, owner: books.owners[0]?.id ?? "" }));
       })
       .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
-  }, [needsOwner]);
+  }, [needsOwner, spec.byProperty]);
   useEffect(() => {
     setPreview(null);
     setError("");
@@ -72,14 +74,20 @@ function Report({ me, spec }: { me: Me; spec: ReportSpec }) {
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title={spec.label} actions={args && (
         <div className="flex flex-wrap gap-2" aria-label="Export">
-          <LinkButton href={reportHref(spec, args, scope, "pdf")}>PDF</LinkButton>
-          <LinkButton href={reportHref(spec, args, scope, "xlsx")}>Excel</LinkButton>
-          <LinkButton href={reportHref(spec, args, scope, "csv")}>CSV</LinkButton>
+          <LinkButton href={reportHref(spec, args, scope, "pdf", byOwner)}>PDF</LinkButton>
+          <LinkButton href={reportHref(spec, args, scope, "xlsx", byOwner)}>Excel</LinkButton>
+          <LinkButton href={reportHref(spec, args, scope, "csv", byOwner)}>CSV</LinkButton>
         </div>
       )} />
       <p className="text-base text-ink-muted"><GoLink href="/reports" className={LINK}>Reports</GoLink></p>
       <div className="flex flex-wrap items-end gap-3" aria-label="Filters">
         {spec.byProperty && <ListBar scope={scope} onScope={setScope} />}
+        {spec.byProperty && (
+          <Select label="Owner" id="report-by-owner" value={byOwner} onChange={(e) => setByOwner(e.target.value)}>
+            <option value="">All owners</option>
+            {owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
+          </Select>
+        )}
         {needsOwner && (
           <Select label="Owner" id="report-owner" value={filters.owner} onChange={(e) => change({ owner: e.target.value })}>
             {owners.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}

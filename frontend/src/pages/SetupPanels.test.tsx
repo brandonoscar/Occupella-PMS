@@ -92,6 +92,8 @@ const BOOKS: Portfolio = {
 // The API: the books on GET; a POST is added, or refused with `refuse[path]`.
 function server(refuse: Record<string, string> = {}) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
+    // The company's charge types are their own list (Chart of accounts reads them too).
+    if (path === "/api/setup/charge-types") return new Response(JSON.stringify([]), { status: 200 });
     if (init?.method !== "POST") return new Response(JSON.stringify(BOOKS), { status: 200 });
     const detail = refuse[path];
     return detail
@@ -270,8 +272,11 @@ describe("ChartOfAccountsPage", () => {
   });
 
   it("says when there is no expense account yet", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ ...BOOKS, expense_accounts: [] }), { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(
+      JSON.stringify(path === "/api/setup/charge-types" ? [] : { ...BOOKS, expense_accounts: [] }), { status: 200 },
+    )));
     render(<ChartOfAccountsPage me={ME} />);
     expect(await screen.findByText("No expense accounts yet")).toBeTruthy();
+    expect(await screen.findByText("No charge types yet")).toBeTruthy();
   });
 });

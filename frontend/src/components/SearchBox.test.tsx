@@ -22,7 +22,7 @@ function server(found: Found[] = FOUND) {
   return fetch;
 }
 
-const box = () => screen.getByLabelText("Search properties, units, tenants and owners");
+const box = () => screen.getByLabelText("Search people, homes, bills, work orders and files");
 
 describe("SearchBox", () => {
   it("asks from two letters and lists what it found, each with its kind", async () => {
@@ -41,6 +41,24 @@ describe("SearchBox", () => {
       ["Unit 1 · Property 1Unit", "/units/u1"],
       ["Tenant 1Tenant", "/tenants/t1"],
       ["Owner 1Owner", "/owners/o1"],
+    ]);
+  });
+
+  it("names each kind it finds beyond homes and people", async () => {
+    server([
+      { kind: "vendor", id: "v1", label: "Vendor 1", detail: "Plumbing", href: "/vendors/v1" },
+      { kind: "bill", id: "b1", label: "Vendor 1 INV-1", detail: "Property 1 · Repair · due 10/20/2026", href: "/bills/b1" },
+      { kind: "work order", id: "w1", label: "Leak", detail: "Unit 1, Property 1", href: "/work-orders/w1" },
+      { kind: "applicant", id: "a1", label: "Applicant 1", detail: "Unit 2, Property 1", href: "/applicants/a1" },
+      { kind: "lead", id: "l1", label: "Lead 1", detail: "any home", href: "/leads/l1" },
+      { kind: "file", id: "f1", label: "W-9", detail: "10/20/2026", href: "/vendors/v1" },
+    ]);
+    render(<SearchBox />);
+
+    fireEvent.change(box(), { target: { value: "in" } });
+    const results = await screen.findByRole("list", { name: "Search results" });
+    expect(within(results).getAllByRole("link").map((link) => link.lastElementChild?.textContent)).toEqual([
+      "Vendor", "Bill", "Work order", "Applicant", "Lead", "File",
     ]);
   });
 

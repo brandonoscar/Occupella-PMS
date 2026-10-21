@@ -309,6 +309,117 @@ def ledger_zip(conn: psycopg.Connection[Any], pmc_id: Any) -> bytes:
     return out.getvalue()
 
 
+# Everything of one PMC (the founder's review q132): every record table as CSV, its files as
+# files, and the ledger. Tables whose rows are credentials are never in it, nor the hash of any
+# token (an invite's, a signing link's...), in a table or in the audit log's copies of rows.
+NEVER_EXPORTED = frozenset({"trust_login_secrets", "trust_sessions"})
+CREDENTIAL_COLUMNS = ("token_hash", "token_sha256", "status_token_sha256")
+# The binary columns that are files (a document's bytes, a lease offered, a signature drawn):
+# each written as a file of its own under files/, the CSV naming it. Other binary columns are
+# digests, written as hex.
+FILE_COLUMNS = frozenset(
+    {
+        ("trust_document_files", "content"),
+        ("trust_lease_offers", "document"),
+        ("trust_signature_evidence", "drawing"),
+    }
+)
+RECORD_TABLES = """
+SELECT c.relname
+FROM pg_class AS c
+JOIN pg_namespace AS n ON n.oid = c.relnamespace
+WHERE n.nspname = 'public' AND c.relkind = 'r' AND c.relname LIKE 'trust\\_%%'
+  AND EXISTS (
+      SELECT 1 FROM pg_attribute AS a
+      WHERE a.attrelid = c.oid AND a.attname = 'pmc_id' AND NOT a.attisdropped
+  )
+  AND has_table_privilege(c.oid, 'SELECT')
+ORDER BY c.relname COLLATE "C"
+"""
+RECORD_COLUMNS = """
+SELECT a.attname, format_type(a.atttypid, a.atttypmod)
+FROM pg_attribute AS a
+WHERE a.attrelid = %s::regclass AND a.attnum > 0 AND NOT a.attisdropped
+ORDER BY a.attnum
+"""
+
+
+def _extension(data: bytes) -> str:
+    if data.startswith(b"%PDF-"):
+        return "pdf"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    return "bin"
+
+
+def _add(archive: zipfile.ZipFile, name: str, data: bytes) -> None:
+    info = zipfile.ZipInfo(name, ZIP_TIME)
+    info.compress_type = zipfile.ZIP_DEFLATED
+    archive.writestr(info, data)
+
+
+def records_zip(conn: psycopg.Connection[Any], pmc_id: Any) -> bytes:
+    """Every record of one PMC: records/<table>.csv for each of its tables the caller may read
+    (rows in a fixed order, so the same books give the same file), files/<table>/... for its
+    documents, leases offered and signatures drawn, and ledger/ as ledger_zip has it."""
+    known = conn.execute("SELECT 1 FROM trust_pmcs WHERE pmc_id = %s::uuid", (pmc_id,))
+    if known.fetchone() is None:
+        raise ExportError(f"no PMC {pmc_id}")
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as archive:
+        tables = [t for (t,) in conn.execute(RECORD_TABLES).fetchall() if t not in NEVER_EXPORTED]
+        for table in tables:
+            columns = [
+                (name, kind)
+                for name, kind in conn.execute(RECORD_COLUMNS, (table,)).fetchall()
+                if name not in CREDENTIAL_COLUMNS
+            ]
+            picked = [
+                sql.SQL("{} - {}::text[]").format(
+                    sql.Identifier(name), sql.Literal(list(CREDENTIAL_COLUMNS))
+                )
+                if kind == "jsonb"
+                else sql.Identifier(name)
+                for name, kind in columns
+            ]
+            where: sql.Composable = sql.SQL("pmc_id = %(pmc)s::uuid")
+            if table == "trust_audit_log":
+                where = sql.SQL("{} AND table_name <> ALL(%(never)s)").format(where)
+            query = sql.SQL(
+                'SELECT {} FROM {} AS r WHERE {} ORDER BY row_to_json(r)::text COLLATE "C"'
+            ).format(sql.SQL(", ").join(picked), sql.Identifier(table), where)
+            rows = conn.execute(query, {"pmc": pmc_id, "never": list(NEVER_EXPORTED)}).fetchall()
+            written: list[tuple[Any, ...]] = []
+            for n, row in enumerate(rows, start=1):
+                cells: list[Any] = []
+                for (name, _), value in zip(columns, row, strict=True):
+                    if isinstance(value, bytes | memoryview):
+                        data = bytes(value)
+                        if (table, name) in FILE_COLUMNS:
+                            path = f"files/{table}/{n:06d}-{name}.{_extension(data)}"
+                            _add(archive, path, data)
+                            value = path
+                        else:
+                            value = data.hex()
+                    cells.append(value)
+                written.append(tuple(cells))
+            names = tuple(name for name, _ in columns)
+            _add(archive, f"records/{table}.csv", to_csv(Table(table, names, tuple(written))))
+        for name, of_ledger in (
+            ("accounts", LEDGER_ACCOUNTS),
+            ("transfers", LEDGER_TRANSFERS),
+            ("entries", LEDGER_ENTRIES),
+        ):
+            with conn.cursor() as cursor:
+                cursor.execute(of_ledger, {"pmc": pmc_id})
+                columns_of = tuple(column.name for column in cursor.description or [])
+                ledger = Table(name, columns_of, tuple(cursor.fetchall()))
+            _add(archive, f"ledger/{name}.csv", to_csv(ledger))
+    return out.getvalue()
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m pms.exports",

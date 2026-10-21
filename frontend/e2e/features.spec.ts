@@ -350,7 +350,7 @@ test("staff find a property, rename it and a unit, archive a vacant unit but not
   await expect(page.getByText("Unit 2B is back.")).toBeVisible();
 
   // Search, from any page: a tenant opens their page and their lease from it, a property its page.
-  const search = page.getByLabel("Search properties, units, tenants and owners");
+  const search = page.getByLabel("Search people, homes, bills, work orders and files");
   await search.fill("drew");
   await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Drew Sample/ }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Drew Sample" })).toBeVisible();
@@ -637,6 +637,11 @@ test("staff find a tenant and an owner, keep their contact details and a vendor'
   await expect(page.getByRole("row", { name: "Drew Q. Sample", exact: true })).toContainText(
     "drew.sample@example.com",
   );
+  // The search finds them by the phone on file, whatever its brackets and dashes (q135).
+  const byPhone = page.getByLabel("Search people, homes, bills, work orders and files");
+  await byPhone.fill("5550142");
+  await expect(page.getByRole("list", { name: "Search results" }).getByRole("link")).toHaveText([/^Drew Q\. Sample.*Tenant$/]);
+  await byPhone.fill("");
 
   // Owners, one row each with all their properties; an owner's page, renamed, with their details.
   await section(page, "Owners");
@@ -675,7 +680,7 @@ test("staff find a tenant and an owner, keep their contact details and a vendor'
   await expect(page.getByRole("row", { name: "Demo Plumbing Co", exact: true })).toContainText("555-555-0177");
 
   // Search finds an owner too.
-  const search = page.getByLabel("Search properties, units, tenants and owners");
+  const search = page.getByLabel("Search people, homes, bills, work orders and files");
   await search.fill("owner b");
   await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Demo Owner B/ }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Demo Owner B" })).toBeVisible();
@@ -1432,6 +1437,20 @@ test("staff open a report from Reports, see it on screen narrowed to one propert
   expect(csv).toContain("Cedar House");
   expect(csv).not.toContain("Aspen Row");
 
+  // The trial balance narrowed to one owner's properties (q109): their property's accounts, and
+  // none of the cash the trust bank account holds for everyone.
+  await section(page, "Reports");
+  await page.getByRole("list", { name: "Financial" }).getByRole("link", { name: "Trial balance" }).click();
+  await page.getByRole("combobox", { name: "Properties shown" }).selectOption({ label: "All properties" });
+  const trial = page.getByRole("table", { name: "Trial balance" });
+  await expect(trial).toContainText("book cash");
+  await page.getByRole("combobox", { name: "Owner" }).selectOption({ label: "Demo Owner B" });
+  await expect(trial).toContainText("narrowed to Demo Owner B's properties: lines across all properties left out");
+  await expect(trial).toContainText("owner_property: Demo Owner B / Aspen Row");
+  await expect(trial).not.toContainText("book cash");
+  await expect(trial).not.toContainText("Demo Owner A");
+  expect(await page.getByRole("link", { name: "CSV", exact: true }).getAttribute("href")).toContain("owner=");
+
   // An owner's income statement over last year.
   await section(page, "Reports");
   await page.getByRole("list", { name: "Financial" }).getByRole("link", { name: "Income statement" }).click();
@@ -1442,9 +1461,11 @@ test("staff open a report from Reports, see it on screen narrowed to one propert
   await expect(page.getByRole("table", { name: "Income statement" })).toContainText("net income");
   await downloads(page, "PDF", PDF);
 
-  // The whole ledger, under Settings.
+  // The whole ledger, under Settings, and everything the company keeps (q132; the manager is an
+  // admin): its records as CSV and its files, never a credential.
   await settings(page, "Data export");
   await downloads(page, "Whole ledger (CSV, zip)", "application/zip");
+  await downloads(page, "Everything (CSV and files, zip)", "application/zip");
 
   // The reports the API exports for staff (the AI reads the same), each as CSV, Excel and PDF.
   const day = today();
@@ -1872,9 +1893,9 @@ test("staff add a vendor with their trade, 1099 and how they are paid, record a 
   await expect(workers).toContainText("$1,000,000.00");
   await expect(page.getByTestId("standing")).toHaveText("Insurance: Expired");
 
-  // A policy can't expire before it starts.
+  // A policy can't expire before it starts, and the refusal says so.
   const wrong = await record("other", "OT-0001", daysFromToday(5), daysFromToday(4));
-  await expect(wrong.getByRole("alert")).toHaveText("check what you entered and try again");
+  await expect(wrong.getByRole("alert")).toHaveText("a policy expires no earlier than it starts");
   await wrong.getByRole("button", { name: "Close" }).click();
 
   // Today lists both; the renewal takes the place of the policy running out.
@@ -1925,7 +1946,7 @@ test("staff record a lease's move-in and move-out inspections room by room, and 
   await panel.getByRole("button", { name: "Add a room" }).click();
   await panel.getByLabel("Room 5", { exact: true }).fill("kitchen");
   await panel.getByRole("button", { name: "Record inspection" }).click();
-  await expect(panel.getByRole("alert")).toHaveText("check what you entered and try again");
+  await expect(panel.getByRole("alert")).toHaveText("an inspection names each room once");
   await panel.getByLabel("Room 5", { exact: true }).fill("Hallway");
   await panel.getByRole("combobox", { name: "Room 5 condition" }).selectOption("missing");
   await panel.getByLabel("Room 5 note").fill("Smoke detector gone");
@@ -2265,7 +2286,7 @@ test("staff email a tenant from their page and every tenant of a property, an ow
   await joinAsStaff(page, people.manager);
 
   // A tenant, from their page's Email tab: written in a side panel, kept on the tab.
-  const search = page.getByLabel("Search properties, units, tenants and owners");
+  const search = page.getByLabel("Search people, homes, bills, work orders and files");
   await search.fill("drew");
   await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Drew Sample/ }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Drew Sample" })).toBeVisible();
@@ -3379,3 +3400,117 @@ test("staff and a tenant each subscribe their calendar app to a link of their ow
   expect((await calendarAt(tenant, link)).status).toBe(404);
   await tenant.close();
 });
+
+test("a tenant changes their own phone and email in the portal, and staff see the new ones and that the tenant changed them", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["own-contact"]!;
+  await joinPortal(page, people.drew);
+  const mine = page.getByRole("group", { name: "Contact details, Drew Sample" });
+  await expect(mine).toContainText("No contact details yet.");
+  await mine.getByRole("button", { name: "Edit contact details" }).click();
+  await mine.getByLabel("Email").fill("drew.new@example.com");
+  await mine.getByLabel("Phone", { exact: true }).fill("(555) 555-0142");
+  await mine.getByLabel("City").fill("Sampletown");
+  await mine.getByRole("button", { name: "Save contact details" }).click();
+  // A mailing address is whole or not there: the tenant fills it in or clears it.
+  await expect(mine.getByRole("alert")).toContainText("mailing address");
+  await mine.getByLabel("City").fill("");
+  await mine.getByRole("button", { name: "Save contact details" }).click();
+  await expect(mine).toContainText("Contact details saved.");
+  await expect(mine).toContainText("drew.new@example.com");
+  await expect(mine).toContainText("(555) 555-0142");
+
+  const staff = await browser.newPage();
+  await joinAsStaff(staff, people.manager);
+  await section(staff, "Tenants");
+  await staff.getByRole("row", { name: "Drew Sample", exact: true }).getByRole("link", { name: "Drew Sample" }).click();
+  const theirs = staff.getByRole("group", { name: "Contact details, Drew Sample" });
+  await expect(theirs).toContainText("drew.new@example.com");
+  await expect(theirs).toContainText(`Drew Sample changed these in the portal on ${us(today())}.`);
+  await staff.close();
+});
+
+test("staff add charge types and give a lease's fee and monthly charge one; the owner's income statement counts the type on its own line", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["charge-types"]!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "Chart of accounts");
+  for (const name of ["Key replacement", "Pet fees"]) {
+    await page.getByRole("button", { name: "Add charge type" }).click();
+    const adding = page.getByRole("dialog", { name: "Add charge type" });
+    await adding.getByLabel("Charge type").fill(name);
+    await adding.getByRole("button", { name: "Add charge type" }).click();
+    await expect(page.getByRole("list", { name: "Charge types" })).toContainText(name);
+  }
+
+  // A lost key charged as a Key replacement fee and paid; a dog's monthly fee as Pet fees.
+  const lease = await openLease(page, "Birch Flats, Unit A");
+  const charge = await leasePanel(page, "Enter charge");
+  await charge.getByLabel("Amount").fill("75.00");
+  await charge.getByLabel("What for").fill("Lost key");
+  await charge.getByRole("combobox", { name: "Type" }).selectOption({ label: "Key replacement" });
+  await charge.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByText("Fee of $75.00 added.")).toBeVisible();
+  const pay = await leasePanel(page, "Receive payment");
+  await pay.getByLabel("Payment received").fill("75.00");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await pay.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.getByText("$75.00 paid what is owed.")).toBeVisible();
+  const nextMonth = new Date(Date.UTC(Number(today().slice(0, 4)), Number(today().slice(5, 7)), 1))
+    .toISOString()
+    .slice(0, 10);
+  const monthly = await leasePanel(page, "Add recurring charge");
+  await monthly.getByLabel("Monthly amount").fill("25.00");
+  await monthly.getByLabel("First due on").fill(nextMonth);
+  await monthly.getByLabel("Monthly, for").fill("Dog");
+  await monthly.getByRole("combobox", { name: "Type" }).selectOption({ label: "Pet fees" });
+  await monthly.getByRole("button", { name: "Add every month" }).click();
+  await expect(lease).toContainText(`Dog (Pet fees): $25.00 a month from ${us(nextMonth)}`);
+
+  // The owner's income statement this year: the key on a line of its own.
+  const owner = await (await browser.newContext()).newPage();
+  await joinPortal(owner, people.owner_a);
+  const card = owner.locator("section", { has: owner.getByRole("heading", { level: 2, name: "Income statement" }) });
+  await card.getByLabel("Year").fill(today().slice(0, 4));
+  await card.getByRole("button", { name: "Show" }).click();
+  await expect(card.getByRole("table", { name: "Birch Flats" }).getByRole("row", { name: "Key replacement $75.00" })).toBeVisible();
+  await owner.close();
+});
+
+test("staff name the operating trust account's cash for QuickBooks and download two months of journal entries for QuickBooks Desktop and Online", async ({
+  page,
+}) => {
+  const people = seed.features.quickbooks!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "QuickBooks");
+  const names = page.getByRole("table", { name: "Account names" });
+  await expect(names).toContainText("Owner funds:Demo Owner A - Birch Flats");
+  await page.getByRole("button", { name: "Rename Trust cash:Demo operating trust account" }).click();
+  const panel = page.getByRole("dialog", { name: "Name in QuickBooks" });
+  await panel.getByLabel("Name in QuickBooks").fill("Trust checking");
+  await panel.getByRole("button", { name: "Save" }).click();
+  await expect(names.getByRole("row", { name: "Trust checking" })).toBeVisible();
+
+  await page.getByLabel("From").fill(firstOfMonthsAgo(2));
+  await page.getByLabel("To").fill(today());
+  const desktop = await page.request.get(
+    (await page.getByRole("link", { name: "For QuickBooks Desktop (IIF)" }).getAttribute("href")) ?? "",
+  );
+  expect(desktop.status()).toBe(200);
+  const iif = await desktop.text();
+  expect(iif.startsWith("!TRNS\tTRNSID\tTRNSTYPE\tDATE\tACCNT\tAMOUNT\tDOCNUM\tMEMO")).toBe(true);
+  expect(iif).toContain("GENERAL JOURNAL");
+  expect(iif).toContain("\tTrust checking\t");
+  const online = await page.request.get(
+    (await page.getByRole("link", { name: "For QuickBooks Online (CSV)" }).getAttribute("href")) ?? "",
+  );
+  expect(online.headers()["content-type"]).toContain("text/csv");
+  const csv = await online.text();
+  expect(csv.split("\r\n")[0]).toBe("Journal No.,Journal Date,Account Name,Debits,Credits,Description,Name");
+  expect(csv).toContain("Trust checking");
+});
+

@@ -187,7 +187,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   terms), Properties, Financials (their statement and Record contribution), Statements and Files.
   The Owners list shows each owner once with what they hold, keep back and may pay out, and opens
   Pay owners and Add owner. Staff keep a tenant's, owner's or vendor's contact details there, rename a tenant or owner
-  and archive one. A search in the bar finds a property, unit, tenant or owner (`/api/search`).
+  and archive one. A search in the bar finds a property, unit, tenant, owner or vendor (by name, or by the email, phone or
+  street on file), a bill, a work order, an applicant, a lead or a file (`/api/search`).
   Lists come a page at a time (`Paged`: 50 by default, at most 200); move-outs at `/move-out` (`src/pms/api/moveout.py`). Leasing:
   Listings at `/rental-listings` (`GET /api/leasing/vacancies`: each unit coming free within 90
   days or with an open link, its rent and available day, days listed and photos; List opens its
@@ -228,8 +229,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   property's, unit's, tenant's, lease's, owner's or vendor's page has a Files card of its own
   documents (`pages/FilesCard.tsx`); every report at
   `/reports` in groups, each at `/reports/<name>` (ADR 0006: its filters, its rows on screen from
-  `format=json`, narrowed to a property group or property when its lines have one by
-  `src/pms/api/reports.py`, and Export), and Settings at `/settings`: staff roles and signers at `/settings/staff`
+  `format=json`, narrowed to a property group or property when its lines have one, or to one
+  owner's properties (`?owner=`), by `src/pms/api/reports.py`, the general ledger and trial
+  balance by each account's property, migration 0101; and Export), and Settings at `/settings`: staff roles and signers at `/settings/staff`
   (`src/pms/api/staff.py`; an admin invites a staff member from their row), logins at
   `/settings/logins` (read only, by status; Disable in a row's menu), the company at
   `/settings/setup` (`src/pms/api/company.py`: its name, address, logo and the fees new
@@ -240,7 +242,15 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   fee terms on the property's page (`GET /api/properties/<id>` gives the terms in force); a
   lease already in place on a unit's page; terms on the owner's page too. An owner or tenant is
   invited from their own page (`pages/PortalCard.tsx`). Bringing a PMC over from another system at `/settings/import`
-  (`src/pms/api/switching.py`), and the whole ledger at `/settings/data-export`. A lease's inspections are on its move-out row
+  (`src/pms/api/switching.py`), and the whole ledger at `/settings/data-export`, with, for an admin, everything
+  (`/api/records.zip`, `exports.records_zip`, q132: each record table as CSV, its documents,
+  leases and signatures as files, and the ledger; never logins' secrets, sessions or a token's
+  hash, in a table or the audit log), and QuickBooks at `/settings/quickbooks`
+  (`src/pms/quickbooks.py`, `src/pms/api/quickbooks.py`, migration 0102, q117: each ledger
+  account's name in QuickBooks, the PMS's until staff give it the company's own,
+  `trust_quickbooks_accounts`, append-only, the latest holding; the trust ledger's transfers over
+  days as general journal entries for QuickBooks Desktop (IIF) and Online (CSV), each debiting
+  the account the money left and crediting the one it went to; read only). A lease's inspections are on its move-out row
   (`src/pms/api/inspections.py`).
   npm packages are pinned exactly and their
   licenses checked like Python's. An owner's pages (`src/pms/api/owner.py`) show the session's
@@ -746,6 +756,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   phone and mailing address (whole or none), in `trust_contacts`: append-only, the latest row
   for a person holding, naming who recorded it; saving the same details again writes nothing.
   Staff see and change them on the person's page (`src/pms/api/directory.py`) and on Vendors.
+  A tenant changes their own in the portal (migration 0099, `GET`/`POST /api/tenant/contact`,
+  `components/ContactCard.tsx`'s `MyContactCard`): a row marked `by_person`, naming no staff
+  member, and the tenant's page says when the tenant changed them; their sign-in email stays.
   The AI role never reads them (`AI_NEVER_READS`), so the audit log hides their rows from it, and
   no report prints them.
 - Documents (migration 0036): a vendor's W-9, a bill's receipt, a lease's move-out photo, an
@@ -797,7 +810,12 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   adjustment is what it adjusts), management fees (line 11), leasing fees (line 8), bills set
   aside by expense account (a split bill by its lines; those in none on no line), net income,
   then by Schedule E line. It
-  files nothing. Owners read and download a year's in the portal (`/api/owner/income-statement`);
+  files nothing. Charge types (migration 0100, the founder's review q133): a company's own kinds
+  of fee (`trust_charge_types`: a name once per PMC whatever its case, none of the statement's
+  income lines; append-only, naming who added it; Settings, Chart of accounts), which a fee, once
+  or every month, may name (`charge_type_id`, never a credit's); the statement counts what was
+  collected on each type on a line of its own after the other income (a rent run's charge under
+  its recurring charge's type), and the budget beside it counts that line as income. Owners read and download a year's in the portal (`/api/owner/income-statement`);
   staff download any owner's from the owners page.
 - Journal entries (migration 0053): a correction between a PMC's ledger accounts that no other
   write path makes. A staff member proposes one (`trust_propose_journal_entry`: a day, what it

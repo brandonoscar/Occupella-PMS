@@ -89,6 +89,11 @@ TABLES = {
     # Expense accounts (migration 0052): staff add accounts and put bills in them; a bill's
     # latest row is its account, so a correction is an insert too. The ids order the rows.
     "trust_expense_accounts": {"SELECT", "INSERT"},
+    "trust_charge_types": {"SELECT", "INSERT"},
+    # QuickBooks names (migration 0102): staff name a ledger account for QuickBooks; the latest
+    # row holds, so a change is an insert. The ids order the rows.
+    "trust_quickbooks_accounts": {"SELECT", "INSERT"},
+    "trust_quickbooks_accounts_id_seq": set(),
     "trust_bill_expense_accounts": {"SELECT", "INSERT"},
     "trust_bill_expense_accounts_id_seq": set(),
     "trust_bill_splits": {"SELECT", "INSERT"},

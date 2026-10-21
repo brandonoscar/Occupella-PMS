@@ -47,11 +47,21 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   return data as T;
 }
 
+// How FastAPI words a refusal raised by one of the API's own validators (pydantic's ValueError).
+const OWN_RULE = "Value error, ";
+
 function detailOf(data: unknown): string | null {
   if (data && typeof data === "object" && "detail" in data) {
     const detail = (data as { detail: unknown }).detail;
     if (typeof detail === "string") return detail;
-    if (Array.isArray(detail)) return "check what you entered and try again";
+    if (Array.isArray(detail)) {
+      // A rule of the PMS's own ("a mailing address needs its street, city, state and ZIP code")
+      // says what it is; a field of the wrong kind or length only that something isn't right.
+      const rule = detail.find(
+        (d): d is { msg: string } => typeof d?.msg === "string" && d.msg.startsWith(OWN_RULE),
+      );
+      return rule ? rule.msg.slice(OWN_RULE.length) : "check what you entered and try again";
+    }
   }
   return null;
 }

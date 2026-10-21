@@ -1,5 +1,6 @@
 """A report on screen and narrowed (src/pms/api/reports.py, ADR 0006 step 11): any report's
-rows as text to preview, and a report narrowed to a property group or one property, in the
+rows as text to preview, and a report narrowed to a property group, one property or an owner's
+properties (the general ledger and trial balance too, by the property of each account), in the
 preview and every download alike. The PMC still comes from the session."""
 
 import csv
@@ -7,7 +8,7 @@ import io
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from helpers import add_tenant, add_unit, make_pmc, open_lease
+from helpers import add_tenant, add_unit, make_pmc, open_lease, transfer_batch
 from people import join_as_owner, join_as_staff
 
 from pms.api import reports
@@ -114,13 +115,102 @@ def test_a_report_narrowed_to_a_group_keeps_its_properties(client, staff, pmc, l
 
 
 def test_a_report_with_no_property_is_not_narrowed(client, staff, pmc):
+    # The balance sheet is by trust bank account: the cash in one is held for every property.
     refused = client.get(
-        "/api/reports/trust_report_trial_balance",
+        "/api/reports/trust_report_balance_sheet",
         params={"arg": str(TODAY), "format": "json", "property": str(pmc.owners[0].property_id)},
     )
 
     assert refused.status_code == 422
     assert refused.json()["detail"] == "this report is not by property; choose All properties"
+
+
+def test_a_report_narrowed_to_an_owner_keeps_their_properties(client, staff, pmc, leased):
+    found = ok(
+        client.get(
+            ROLL,
+            params={"arg": str(TODAY), "format": "json", "owner": str(pmc.owners[1].owner_id)},
+        )
+    )
+
+    assert set(column(found, "property")) == {"", "Property 2"}
+    assert column(found, "item")[-1] == (
+        "narrowed to Owner 2's properties: lines across all properties left out"
+    )
+    # With a group too: the owner's properties in the group, here none of them.
+    group = ok(
+        client.post(
+            "/api/property-groups",
+            json={"name": "South", "property_ids": [str(pmc.owners[0].property_id)]},
+        ),
+        201,
+    )["id"]
+    both = ok(
+        client.get(
+            ROLL,
+            params={
+                "arg": str(TODAY),
+                "format": "json",
+                "owner": str(pmc.owners[1].owner_id),
+                "group": group,
+            },
+        )
+    )
+    assert set(column(both, "property")) == {""}
+    assert both["title"].endswith(", South, Owner 2's properties")
+
+
+@pytest.mark.parametrize(
+    ("report", "args"),
+    [
+        ("trust_report_trial_balance", lambda: [str(TODAY)]),
+        ("trust_report_general_ledger", lambda: [str(TODAY - timedelta(days=60)), str(TODAY)]),
+    ],
+)
+def test_the_ledger_reports_narrow_to_a_propertys_accounts(
+    client, conn, staff, pmc, leased, report, args
+):
+    """The general ledger and trial balance (migration 0101): an owner's property account and a
+    tenant's accounts are their property's; cash, vendors and the company's fees are no one
+    property's and are left out with the totals."""
+    transfer_batch(
+        conn,
+        [
+            (pmc.operating_cash, pmc.owners[0].account, "100.00"),
+            (pmc.operating_cash, pmc.owners[1].account, "50.00"),
+            (pmc.operating_cash, pmc.prepaid_rent, "10.00"),
+        ],
+        datetime.now(UTC) - timedelta(days=1),
+    )
+    path = f"/api/reports/{report}"
+    one = str(pmc.owners[0].property_id)
+    whole = ok(client.get(path, params={"arg": args(), "format": "json"}))
+    found = ok(client.get(path, params={"arg": args(), "format": "json", "property": one}))
+
+    assert {p for p in column(whole, "property") if p} >= {"Property 1", "Property 2"}
+    kept = [
+        (item, account, prop)
+        for item, account, prop in zip(
+            column(found, "item"), column(found, "account"), column(found, "property"), strict=True
+        )
+    ]
+    assert {prop for _, _, prop in kept} == {"", "Property 1"}
+    # The heading lines (the company, the day or days) and the property's accounts stay.
+    assert [item for item, _, prop in kept if not prop][:2] in (["PMC", "as of"], ["PMC", "period"])
+    assert all(
+        account.startswith(
+            (
+                "owner_property: Owner 1 / Property 1",
+                "prepaid_rent: Tenant 1",
+                "tenant_deposit: Tenant 1",
+                "prepaid_rent: Tenant A",
+                "tenant_deposit: Tenant A",
+            )
+        )
+        for _, account, prop in kept
+        if prop
+    )
+    assert not any(account == "book cash" for _, account, _ in kept)
 
 
 def test_another_pmcs_group_or_property_narrows_nothing_of_theirs(client, conn, staff, pmc):
@@ -140,6 +230,10 @@ def test_another_pmcs_group_or_property_narrows_nothing_of_theirs(client, conn, 
         ).status_code
         == 422
     )
+    their_owner = client.get(
+        ROLL, params={"arg": str(TODAY), "owner": str(theirs.owners[0].owner_id)}
+    )
+    assert (their_owner.status_code, their_owner.json()["detail"]) == (422, "no such owner")
 
 
 def test_only_staff_preview_a_report(client, other_client, conn, app_conn, pmc):
@@ -154,6 +248,7 @@ def test_only_staff_preview_a_report(client, other_client, conn, app_conn, pmc):
         {"arg": "soon", "format": "json"},
         {"arg": str(TODAY), "format": "html"},
         {"arg": str(TODAY), "format": "json", "group": "north"},
+        {"arg": str(TODAY), "format": "json", "owner": "owner 1"},
         {"arg": str(TODAY), "format": "json", "property": "1"},
     ],
 )

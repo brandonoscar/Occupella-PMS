@@ -9,10 +9,17 @@ const KIND: Record<Found["kind"], string> = {
   unit: "Unit",
   tenant: "Tenant",
   owner: "Owner",
+  vendor: "Vendor",
+  bill: "Bill",
+  "work order": "Work order",
+  applicant: "Applicant",
+  lead: "Lead",
+  file: "File",
 };
 
-// Staff's search at the top of every page: a property, unit, tenant or owner by name, from two
-// letters; choosing one opens its page. The results are links (a new tab, a copied link), and the
+// Staff's search at the top of every page, from two letters: a property, unit, tenant, owner or
+// vendor by name or by the email, phone or street on file, a bill, a work order, an applicant, a
+// lead or a file; choosing one opens its page. The results are links (a new tab, a copied link), and the
 // arrow keys move from the box through them; Escape clears the search and goes back to the box.
 export function SearchBox() {
   const [q, setQ] = useState("");
@@ -58,8 +65,8 @@ export function SearchBox() {
       <input
         ref={input}
         type="search"
-        aria-label="Search properties, units, tenants and owners"
-        placeholder="Search properties, units, tenants and owners"
+        aria-label="Search people, homes, bills, work orders and files"
+        placeholder="Search people, homes, bills, work orders and files"
         className="h-7 w-full rounded-sm border border-line-strong bg-sunken pr-2 pl-8 text-sm text-ink placeholder:text-ink-faint"
         value={q}
         onChange={(event) => setQ(event.target.value)}

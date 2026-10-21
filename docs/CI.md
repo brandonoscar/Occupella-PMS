@@ -354,7 +354,10 @@ report and the API's log for 7 days. After every browser test, axe-core checks t
 ended on against WCAG 2.2 A and AA (`frontend/e2e/a11y.ts`), and one test walks every page of a
 demo of its own (staff's menu and Settings, a page of each kind a list opens, an owner's and a
 tenant's portal and the public pages) the same way; a violation fails the run, naming the rule
-and the elements. Run it locally with `cd frontend && npm ci && npm test &&
+and the elements. `frontend/e2e/phone.spec.ts` opens the owner's and the tenant's portal on a
+phone's screen (390 x 844, touch): the menu folds behind its button, nothing runs off the side of
+the screen outside a table's own sideways scroll, axe checks each page, a tenant files a repair
+request, and a screenshot of each page is kept with the run (q124). Run it locally with `cd frontend && npm ci && npm test &&
 npm run build`, then the same steps as the workflow (`PW_CHROMIUM` points Playwright at a
 Chromium already installed).
 

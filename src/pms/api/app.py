@@ -75,6 +75,7 @@ from pms.api import (
     owner,
     payables,
     people,
+    quickbooks,
     receipts,
     reconcile,
     recurring_work_orders,
@@ -461,10 +462,12 @@ def create_app(settings: Settings) -> FastAPI:
         args: Annotated[list[str] | None, Query(alias="arg")] = None,
         group: scope.Group = None,
         property_id: scope.Property = None,
+        owner: Annotated[UUID | None, Query(alias="owner")] = None,
     ) -> Response | reports.Preview:
         # Every report takes the PMC first (tests/api pins it): it always comes from the
         # session, never from the request. "json" is the preview Reports shows on screen
-        # (src/pms/api/reports.py); a group or property narrows it and every format alike.
+        # (src/pms/api/reports.py); a group, a property or an owner's properties narrow it and
+        # every format alike.
         try:
             table = reports.narrowed(
                 conn,
@@ -472,6 +475,7 @@ def create_app(settings: Settings) -> FastAPI:
                 exports.run_report(conn, name, [session.pmc_id, *(args or [])]),
                 group,
                 property_id,
+                owner,
             )
         except exports.UnknownReport as unknown:
             raise HTTPException(404, str(unknown)) from None
@@ -487,6 +491,17 @@ def create_app(settings: Settings) -> FastAPI:
     def ledger(session: Staff, conn: Conn) -> Response:
         return download(exports.ledger_zip(conn, session.pmc_id), "ledger", "zip")
 
+    @app.get("/api/records.zip")
+    def records(session: Staff, conn: Conn) -> Response:
+        """Everything of the company (q132): every record, its files and its ledger. It holds
+        everyone's contact details and documents, so only an admin downloads it."""
+        row = conn.execute(
+            "SELECT trust_staff_holds(%s, %s, 'admin')", (session.pmc_id, session.person_id)
+        ).fetchone()
+        if row is None or not row[0]:
+            raise HTTPException(403, "only an admin downloads everything")
+        return download(exports.records_zip(conn, session.pmc_id), "records", "zip")
+
     app.include_router(owner.router)
     app.include_router(tenant.router)
     app.include_router(maintenance.router)
@@ -497,6 +512,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(listings.router)
     app.include_router(signing.router)
     app.include_router(calendar.router)
+    app.include_router(quickbooks.router)
     calendar.hide_feed_tokens(logging.getLogger("uvicorn.access"))
     app.include_router(people.router)
     app.include_router(setup.router)

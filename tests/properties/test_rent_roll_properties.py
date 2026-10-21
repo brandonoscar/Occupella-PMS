@@ -43,8 +43,9 @@ The rule check_the_owner_year_end reads an owner's year-end package for a random
 compares each part (collected from tenants net of bounces, fees, draws, contributions, the
 balances at the year's start and end, and the 1099-MISC rents) with the model. The rule
 check_the_income_statement reads an owner's income statement over random days and compares
-each line (collected by what each charge is, the fees, net income and the Schedule E lines)
-with the model. The rule
+each line (collected by what each charge is, each of the company's charge types on a line of its
+own once money was collected on it (migration 0100), the fees, net income and the Schedule E
+lines) with the model. The rule
 check_the_tenant_reports reads the delinquency report as of a random day and compares
 every lease line with the model's aging, and checks a lease's tenant ledger closes at its
 balance due. The rule check_owner_balances reads the owner balances report as of a random day
@@ -107,6 +108,8 @@ AMOUNTS = st.integers(min_value=1, max_value=300_000).map(lambda cents: Decimal(
 BASE = date(2000, 1, 1)
 DAYS = st.integers(min_value=0, max_value=400)
 LAST_DAY = date(9999, 12, 31)  # stands for "no last day" when comparing
+# A fee's charge type (migration 0100), if any.
+TYPED = st.sampled_from([None, "Cleaning", "Pet rent"])
 ROLES = st.sampled_from(["owner", "app"])
 # A lease's length in days after its first day; None is month to month.
 LENGTHS = st.one_of(st.integers(min_value=0, max_value=200), st.sampled_from([None, 0, 30, 364]))
@@ -147,6 +150,7 @@ class Charge:
     due_on: date
     kind: str
     amount: Decimal
+    charge_type: str | None = None  # the company's type of a fee (migration 0100)
 
 
 @dataclass
@@ -156,6 +160,7 @@ class Recurring:
     amount: Decimal
     starts_on: date
     ends_on: date | None = None  # the first due date it is no longer charged for
+    charge_type: str | None = None  # the company's type of a fee (migration 0100)
 
     def in_force(self, day):
         return self.starts_on <= day < (self.ends_on or LAST_DAY)
@@ -287,6 +292,15 @@ class RentRollMachine(RuleBasedStateMachine):
         self.recurring_charged: dict[tuple[UUID, date], UUID] = {}
         # Lease ends: charge -> the credits and fees that followed its lease's end since.
         self.adjusted: dict[UUID, list[UUID]] = {}
+        # The company's charge types (migration 0100): name -> id. Names that sort the same by
+        # byte and by language rules, so the statement's order is the model's either way.
+        self.charge_types = {
+            name: owner_conn.execute(
+                "INSERT INTO trust_charge_types (pmc_id, name) VALUES (%s, %s) RETURNING id",
+                (self.pmc_id, name),
+            ).fetchone()[0]
+            for name in ("Cleaning", "Pet rent")
+        }
 
     # --- helpers -------------------------------------------------------------------------
 
@@ -641,8 +655,9 @@ class RentRollMachine(RuleBasedStateMachine):
         due=st.integers(min_value=-20, max_value=220),
         kind=st.sampled_from(["rent", "rent", "fee", "credit"]),
         amount=AMOUNTS,
+        typed=TYPED,
     )
-    def charge_a_lease(self, data, role, due, kind, amount):
+    def charge_a_lease(self, data, role, due, kind, amount, typed):
         lease_id = data.draw(st.sampled_from(list(self.leases)))
         due_on = self.leases[lease_id].starts_on + timedelta(days=due)
         billed = any(
@@ -652,6 +667,18 @@ class RentRollMachine(RuleBasedStateMachine):
         if kind == "rent" and billed:  # a retried rent run
             with pytest.raises(psycopg.errors.UniqueViolation, match="one_rent_per_due_date"):
                 charge(self.conns[role], self.pmc_id, lease_id, due_on, amount, kind)
+        elif kind == "fee" and typed:  # a fee of one of the company's types
+            charge_id = (
+                self.conns[role]
+                .execute(
+                    "INSERT INTO trust_charges"
+                    " (pmc_id, lease_id, due_on, kind, amount, memo, charge_type_id)"
+                    " VALUES (%s, %s, %s, 'fee', %s, %s, %s) RETURNING id",
+                    (self.pmc_id, lease_id, due_on, amount, typed, self.charge_types[typed]),
+                )
+                .fetchone()[0]
+            )
+            self.charges[charge_id] = Charge(lease_id, due_on, kind, amount, typed)
         else:
             charge_id = charge(self.conns[role], self.pmc_id, lease_id, due_on, amount, kind)
             self.charges[charge_id] = Charge(lease_id, due_on, kind, amount)
@@ -1391,14 +1418,30 @@ class RentRollMachine(RuleBasedStateMachine):
         start=st.one_of(st.just(0), st.integers(min_value=-20, max_value=220)),
         kind=st.sampled_from(["fee", "fee", "credit"]),
         amount=AMOUNTS,
+        typed=TYPED,
     )
-    def add_a_recurring_charge(self, data, role, start, kind, amount):
+    def add_a_recurring_charge(self, data, role, start, kind, amount, typed):
         lease_id = data.draw(st.sampled_from(list(self.leases)))
         starts_on = self.leases[lease_id].starts_on + timedelta(days=start)
-        recurring_id = add_recurring_charge(
-            self.conns[role], self.pmc_id, lease_id, amount, starts_on, "Parking", kind
+        typed = typed if kind == "fee" else None
+        recurring_id = (
+            self.conns[role]
+            .execute(
+                "INSERT INTO trust_recurring_charges"
+                " (pmc_id, lease_id, kind, amount, memo, starts_on, charge_type_id)"
+                " VALUES (%s, %s, %s, %s, 'Parking', %s, %s) RETURNING id",
+                (
+                    self.pmc_id,
+                    lease_id,
+                    kind,
+                    amount,
+                    starts_on,
+                    self.charge_types[typed] if typed else None,
+                ),
+            )
+            .fetchone()[0]
         )
-        self.recurring[recurring_id] = Recurring(lease_id, kind, amount, starts_on)
+        self.recurring[recurring_id] = Recurring(lease_id, kind, amount, starts_on, None, typed)
 
     @precondition(lambda self: self.recurring)
     @rule(data=st.data(), role=ROLES, after=st.integers(min_value=-10, max_value=220))
@@ -1715,7 +1758,6 @@ class RentRollMachine(RuleBasedStateMachine):
         is (rent, a recurring charge, a late fee, another charge; a lease end's adjustment is
         what it adjusts), the management and leasing fees, net income, and the Schedule E
         lines. The owner's one property account here, so its lines and the totals agree."""
-        account = self.owner_account[owner]
         days = sorted({t.event_at.astimezone(UTC).date() for t in self.transfers.values()}) or [
             BASE
         ]
@@ -1723,6 +1765,63 @@ class RentRollMachine(RuleBasedStateMachine):
         last = data.draw(st.sampled_from(days)) + timedelta(days=data.draw(st.integers(-1, 3)))
         if last < first:
             first, last = last, first
+        self.income_statement_is_the_models(role, owner, first, last)
+
+    @precondition(lambda self: self.leases)
+    @rule(
+        data=st.data(),
+        role=ROLES,
+        typed=st.sampled_from(["Cleaning", "Pet rent"]),
+        monthly=st.booleans(),
+        cents=st.integers(min_value=100, max_value=50_000),
+        day=st.integers(0, 27),
+    )
+    def collect_a_typed_fee_and_read_the_statement(self, data, role, typed, monthly, cents, day):
+        """A fee of one of the company's types (migration 0100) on a lease, once or every month
+        from the lease's first day (charged by the rent run then), paid in cash and matched,
+        then the owner's income statement over the day it was paid."""
+        lease_id = data.draw(st.sampled_from(list(self.leases)))
+        lease = self.leases[lease_id]
+        owner = lease.unit.property_index
+        amount = Decimal(cents) / 100
+        if monthly:
+            due_on = lease.starts_on
+            recurring_id = (
+                self.conns[role]
+                .execute(
+                    "INSERT INTO trust_recurring_charges"
+                    " (pmc_id, lease_id, kind, amount, memo, starts_on, charge_type_id)"
+                    " VALUES (%s, %s, 'fee', %s, 'Parking', %s, %s) RETURNING id",
+                    (self.pmc_id, lease_id, amount, due_on, self.charge_types[typed]),
+                )
+                .fetchone()[0]
+            )
+            self.recurring[recurring_id] = Recurring(lease_id, "fee", amount, due_on, None, typed)
+            self.charge_recurring_on(role, due_on)
+            charge_id = self.recurring_charged.get((recurring_id, due_on))
+            if charge_id is None:  # nothing to charge for its month (the lease's own rules)
+                return
+        else:
+            due_on = lease.starts_on + timedelta(days=day)
+            charge_id = (
+                self.conns[role]
+                .execute(
+                    "INSERT INTO trust_charges"
+                    " (pmc_id, lease_id, due_on, kind, amount, memo, charge_type_id)"
+                    " VALUES (%s, %s, %s, 'fee', %s, %s, %s) RETURNING id",
+                    (self.pmc_id, lease_id, due_on, amount, typed, self.charge_types[typed]),
+                )
+                .fetchone()[0]
+            )
+            self.charges[charge_id] = Charge(lease_id, due_on, "fee", amount, typed)
+        owed = self.charges[charge_id].amount - self.paid_on(charge_id)
+        when = datetime.combine(due_on + timedelta(days=day), time(12), tzinfo=UTC)
+        paid = self.pay_in("cash", self.tenants[0], self.owner_account[owner], owed, when)
+        self.attempt_match(role, charge_id, paid, owed)
+        self.income_statement_is_the_models(role, owner, when.date(), when.date())
+
+    def income_statement_is_the_models(self, role, owner, first, last):
+        account = self.owner_account[owner]
         start = datetime.combine(first, time(0), UTC)
         end = datetime.combine(last + timedelta(days=1), time(0), UTC)
 
@@ -1731,10 +1830,20 @@ class RentRollMachine(RuleBasedStateMachine):
 
         adjusts = {a: c for c, adjustments in self.adjusted.items() for a in adjustments}
         recurring = set(self.recurring_charged.values())
+        recurring_of = {c: r for (r, _), c in self.recurring_charged.items()}
         late = {fee for _, _, fee in self.late_fees.values()}
 
         def part(charge_id):
+            """What a charge's money is: one of the company's charge types if it (or the
+            recurring charge it was charged for) has one, else what kind of charge it is."""
             charge_id = adjusts.get(charge_id, charge_id)
+            typed = (
+                self.recurring[recurring_of[charge_id]].charge_type
+                if charge_id in recurring_of
+                else self.charges[charge_id].charge_type
+            )
+            if typed:
+                return typed
             if self.charges[charge_id].kind == "rent":
                 return "rent"
             if charge_id in recurring:
@@ -1744,12 +1853,21 @@ class RentRollMachine(RuleBasedStateMachine):
         income = dict.fromkeys(
             ["rent", "recurring charges", "late fees", "NSF fees", "other charges"], Decimal(0)
         )
+        # A type has a line once money was collected on it in the days, after the others.
+        typed: dict[str, Decimal] = {}
         for (charge_id, t), amount in self.matches.items():
             if self.transfers[t].target == account and within(t):
-                income[part(charge_id)] += amount
+                kind = part(charge_id)
+                (income if kind in income else typed).setdefault(kind, Decimal(0))
+                (income if kind in income else typed)[kind] += amount
         for (charge_id, _, r), amount in self.reversals.items():
             if self.transfers[r].source == account and within(r):
-                income[part(charge_id)] -= amount
+                kind = part(charge_id)
+                (income if kind in income else typed).setdefault(kind, Decimal(0))
+                (income if kind in income else typed)[kind] -= amount
+        if typed:
+            event("income statement: a line of a charge type")
+        income |= {name: typed[name] for name in sorted(typed)}
 
         def fees(ids):
             return sum(
@@ -2253,9 +2371,10 @@ class RentRollMachine(RuleBasedStateMachine):
     @invariant()
     def recurring_charges_are_the_models(self):
         stored = self.conn.execute(
-            "SELECT r.id, r.lease_id, r.kind, r.amount, r.starts_on, e.ends_on"
+            "SELECT r.id, r.lease_id, r.kind, r.amount, r.starts_on, e.ends_on, t.name"
             " FROM trust_recurring_charges r LEFT JOIN trust_recurring_charge_ends e"
-            " ON e.recurring_charge_id = r.id WHERE r.pmc_id = %s",
+            " ON e.recurring_charge_id = r.id"
+            " LEFT JOIN trust_charge_types t ON t.id = r.charge_type_id WHERE r.pmc_id = %s",
             (self.pmc_id,),
         ).fetchall()
         assert {i: Recurring(*rest) for i, *rest in stored} == self.recurring

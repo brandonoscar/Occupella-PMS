@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from pms import accounts, exports, notices
-from pms.api import documents, maintenance, offers, outbox, signing
+from pms.api import directory, documents, maintenance, offers, outbox, signing
 from pms.api import rent as rent_api
 from pms.api.deps import Conn, Rows, Tenant, download
 from pms.leasing import esign
@@ -380,6 +380,22 @@ def deposit_return_download(
     except psycopg.errors.InvalidParameterValue:
         raise HTTPException(404, "this lease's deposit has not been returned") from None
     return download(exports.export(table, fmt), "deposit-return", fmt)
+
+
+@router.get("/contact")
+def my_contact(session: Tenant, conn: Conn) -> directory.Contact:
+    """The tenant's contact details as the company has them."""
+    return directory.contact_of(conn, "tenant_id", session.person_id)
+
+
+@router.post("/contact", status_code=204)
+def change_my_contact(session: Tenant, conn: Conn, body: directory.Contact) -> None:
+    """The tenant's own email, phones and mailing address, as they give them (all of them, so a
+    field left empty is cleared): the company's emails go to this email from now on, and staff
+    see on the tenant's page that the tenant changed them. Their sign-in email stays as it is."""
+    directory.record_contact(
+        conn, session.pmc_id, "tenant_id", session.person_id, body, by_person=True
+    )
 
 
 @router.get("/requests")

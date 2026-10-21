@@ -11,7 +11,7 @@ owner's draws and contributions go through the owners' money paths (`payables.py
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -106,17 +106,35 @@ def contacts_of(conn: psycopg.Connection[Any], pmc: UUID, person: Person) -> dic
 
 
 def record_contact(
-    conn: psycopg.Connection[Any], pmc: UUID, person: Person, person_id: UUID, details: Contact
+    conn: psycopg.Connection[Any],
+    pmc: UUID,
+    person: Person,
+    person_id: UUID,
+    details: Contact,
+    by_person: bool = False,
 ) -> None:
     """Records a person's contact details as given (all of them, so a field left empty is
-    cleared); the same details again write nothing."""
+    cleared), by staff or by the person themselves (a tenant in the portal); the same details
+    again write nothing."""
     if contact_of(conn, person, person_id) == details:
         return
     conn.execute(
-        f"INSERT INTO trust_contacts (pmc_id, {person}, {', '.join(FIELDS)})"  # noqa: S608
-        f" VALUES (%s, %s, {', '.join(['%s'] * len(FIELDS))})",
-        (pmc, person_id, *(getattr(details, field) for field in FIELDS)),
+        f"INSERT INTO trust_contacts (pmc_id, {person}, by_person, {', '.join(FIELDS)})"  # noqa: S608
+        f" VALUES (%s, %s, %s, {', '.join(['%s'] * len(FIELDS))})",
+        (pmc, person_id, by_person, *(getattr(details, field) for field in FIELDS)),
     )
+
+
+def changed_by_person(
+    conn: psycopg.Connection[Any], person: Person, person_id: UUID
+) -> datetime | None:
+    """When the person themselves gave the contact details that hold, if they did."""
+    row = conn.execute(
+        f"SELECT by_person, created_at FROM trust_contacts WHERE {person} = %s"  # noqa: S608
+        " ORDER BY created_at DESC, id DESC LIMIT 1",
+        (person_id,),
+    ).fetchone()
+    return row[1] if row is not None and row[0] else None
 
 
 def found(conn: psycopg.Connection[Any], table: str, pmc: UUID, record: UUID, what: str) -> None:
@@ -273,6 +291,9 @@ class Tenant(BaseModel):
     archived: bool
     property: Ref
     contact: Contact
+    # When the tenant gave the contact details that hold themselves, in the portal; None when
+    # staff did (or nobody has).
+    contact_by_tenant_at: datetime | None
     prepaid: str
     deposit: str
     leases: list[TenantLease]
@@ -331,6 +352,7 @@ def tenant_page(session: Staff, conn: Conn, tenant_id: UUID) -> Tenant:
         archived=gone,
         property=Ref(id=p, name=pn),
         contact=contact_of(conn, "tenant_id", tenant_id),
+        contact_by_tenant_at=changed_by_person(conn, "tenant_id", tenant_id),
         prepaid=rent.cents(prepaid),
         deposit=rent.cents(deposit),
         leases=leases,

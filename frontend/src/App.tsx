@@ -40,6 +40,7 @@ import { ReportPage } from "./pages/ReportPage";
 import { ReportsPage } from "./pages/ReportsPage";
 import { CalendarPage } from "./pages/CalendarCard";
 import { DataExportPage } from "./pages/DataExportPage";
+import { QuickBooksPage } from "./pages/QuickBooksPage";
 import { RentPage } from "./pages/RentPage";
 import { LeasePage } from "./pages/LeasePage";
 import { PropertiesPage, PropertyPage, UnitPage } from "./pages/RentalsPages";
@@ -138,6 +139,7 @@ const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/settings/accounts": (me) => <ChartOfAccountsPage me={me} />,
   "/settings/import": (me) => <SwitchPage me={me} />,
   "/settings/data-export": (me) => <DataExportPage me={me} />,
+  "/settings/quickbooks": (me) => <QuickBooksPage me={me} />,
   "/settings/calendar": (me) => <CalendarPage me={me} />,
 };
 

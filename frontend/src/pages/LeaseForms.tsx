@@ -21,6 +21,7 @@ import {
   requestId,
 } from "../rent";
 import { sharesLine } from "../rentals";
+import { ChargeTypeSelect, useChargeTypes } from "./ChargeTypes";
 
 // The forms of a lease's rent work (pages/LeasePage.tsx), each one thing recorded: a payment, a
 // fee or credit, one every month, a new rent, a deposit; and a payment's row, which can bounce,
@@ -156,12 +157,15 @@ export function ChargeForm({ lease, record }: { lease: RentLease; record: Record
   const [amount, setAmount] = useState("");
   const [due, setDue] = useState(day(new Date()));
   const [memo, setMemo] = useState("");
+  const [types] = useChargeTypes();
+  const [type, setType] = useState("");
   return (
     <Form
       className="flex flex-wrap items-end gap-3"
       onSubmit={async (event) => {
         event.preventDefault();
-        const body = { kind, amount, due_on: due, memo };
+        const typed = kind === "fee" && type ? { charge_type_id: type } : {};
+        const body = { kind, amount, due_on: due, memo, ...typed };
         const said = () => `${kind === "fee" ? "Fee" : "Credit"} of ${money(amount)} added.`;
         if (await record(`/api/rent/leases/${lease.id}/charges`, body, said)) {
           setAmount("");
@@ -180,6 +184,9 @@ export function ChargeForm({ lease, record }: { lease: RentLease; record: Record
         onChange={(e) => setDue(e.target.value)} />
       <Field label="What for" id={`charge-memo-${lease.id}`} required maxLength={200} value={memo}
         onChange={(e) => setMemo(e.target.value)} />
+      {kind === "fee" && (
+        <ChargeTypeSelect id={`charge-type-${lease.id}`} types={types} value={type} onChange={setType} />
+      )}
       <Button type="submit" variant="secondary">Add</Button>
     </Form>
   );
@@ -223,12 +230,15 @@ export function RecurringForm({ lease, record }: { lease: RentLease; record: Rec
   const [amount, setAmount] = useState("");
   const [from, setFrom] = useState(day(new Date()));
   const [memo, setMemo] = useState("");
+  const [types] = useChargeTypes();
+  const [type, setType] = useState("");
   return (
     <Form
       className="flex flex-wrap items-end gap-3"
       onSubmit={async (event) => {
         event.preventDefault();
-        const body = { kind, amount, memo, starts_on: from };
+        const typed = kind === "fee" && type ? { charge_type_id: type } : {};
+        const body = { kind, amount, memo, starts_on: from, ...typed };
         const said = () => `${memo} of ${money(amount)} added every month.`;
         if (await record(`/api/rent/leases/${lease.id}/recurring-charges`, body, said)) {
           setAmount("");
@@ -247,6 +257,9 @@ export function RecurringForm({ lease, record }: { lease: RentLease; record: Rec
         onChange={(e) => setFrom(e.target.value)} />
       <Field label="Monthly, for" id={`recurring-memo-${lease.id}`} required maxLength={200}
         value={memo} onChange={(e) => setMemo(e.target.value)} />
+      {kind === "fee" && (
+        <ChargeTypeSelect id={`recurring-type-${lease.id}`} types={types} value={type} onChange={setType} />
+      )}
       <Button type="submit" variant="secondary">Add every month</Button>
     </Form>
   );

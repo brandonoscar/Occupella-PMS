@@ -780,7 +780,18 @@ def lease_ledger(session: Staff, conn: Conn, lease_id: UUID) -> Ledger:
 
 
 class Found(BaseModel):
-    kind: Literal["property", "unit", "tenant", "owner"]
+    kind: Literal[
+        "property",
+        "unit",
+        "tenant",
+        "owner",
+        "vendor",
+        "bill",
+        "work order",
+        "applicant",
+        "lead",
+        "file",
+    ]
     id: UUID
     label: str
     detail: str
@@ -789,7 +800,28 @@ class Found(BaseModel):
 
 SearchWords = Annotated[str, StringConstraints(strip_whitespace=True, min_length=2, max_length=100)]
 
-SEARCH = """
+# A person's contact details that hold (the latest row), for finding them by email, phone or
+# street; a phone matches by its digits, whatever its dashes and brackets.
+CONTACT = """
+LEFT JOIN LATERAL (
+    SELECT k.email, k.phone, k.alternate_phone, k.address_line_1 FROM trust_contacts AS k
+    WHERE k.{column} = {key} ORDER BY k.created_at DESC, k.id DESC LIMIT 1
+) AS k ON true"""
+CONTACT_MATCHES = """(k.email ILIKE %(like)s OR k.address_line_1 ILIKE %(like)s
+     OR (%(digits)s::text IS NOT NULL AND (
+         regexp_replace(k.phone, '[^0-9]', '', 'g') LIKE %(digits)s
+         OR regexp_replace(k.alternate_phone, '[^0-9]', '', 'g') LIKE %(digits)s)))"""
+
+
+def contact(column: str, key: str) -> str:
+    """The person's contact details that hold, joined beside them (`k`)."""
+    return CONTACT.format(column=column, key=key)  # noqa: S608 (a column and key of this module)
+
+
+# Made of this module's constants only; the words searched are parameters.
+SEARCH = "".join(
+    (
+        """
 (SELECT 'property', p.id, p.display_name, '', '/properties/' || p.id
  FROM trust_properties AS p
  WHERE p.pmc_id = %(pmc)s AND p.display_name ILIKE %(like)s AND NOT trust_is_archived(p.id, NULL)
@@ -807,26 +839,109 @@ UNION ALL
      SELECT x.unit_id FROM trust_lease_tenants AS lt JOIN trust_leases AS x
      ON x.id = lt.lease_id WHERE lt.tenant_id = t.id ORDER BY x.starts_on DESC, x.id LIMIT 1
  ) AS l ON true
- LEFT JOIN trust_units AS u ON u.id = l.unit_id
- WHERE t.pmc_id = %(pmc)s AND t.display_name ILIKE %(like)s
+ LEFT JOIN trust_units AS u ON u.id = l.unit_id""",
+        contact("tenant_id", "t.id"),
+        """
+ WHERE t.pmc_id = %(pmc)s AND (t.display_name ILIKE %(like)s OR """,
+        CONTACT_MATCHES,
+        """)
    AND NOT trust_is_archived(NULL, NULL, t.id)
  ORDER BY t.display_name COLLATE "C", t.id LIMIT 10)
 UNION ALL
 (SELECT 'owner', o.id, o.display_name, '', '/owners/' || o.id
- FROM trust_owners AS o
- WHERE o.pmc_id = %(pmc)s AND o.display_name ILIKE %(like)s
+ FROM trust_owners AS o""",
+        contact("owner_id", "o.id"),
+        """
+ WHERE o.pmc_id = %(pmc)s AND (o.display_name ILIKE %(like)s OR """,
+        CONTACT_MATCHES,
+        """)
    AND NOT trust_is_archived(NULL, NULL, NULL, o.id)
  ORDER BY o.display_name COLLATE "C", o.id LIMIT 10)
-"""
+UNION ALL
+(SELECT 'vendor', v.id, v.display_name, coalesce(f.trade, ''), '/vendors/' || v.id
+ FROM trust_vendors AS v
+ LEFT JOIN LATERAL (
+     SELECT x.trade FROM trust_vendor_profiles AS x WHERE x.vendor_id = v.id
+     ORDER BY x.created_at DESC, x.id DESC LIMIT 1
+ ) AS f ON true""",
+        contact("vendor_id", "v.id"),
+        """
+ WHERE v.pmc_id = %(pmc)s AND (v.display_name ILIKE %(like)s OR f.trade ILIKE %(like)s OR """,
+        CONTACT_MATCHES,
+        """)
+ ORDER BY v.display_name COLLATE "C", v.id LIMIT 10)
+UNION ALL
+(SELECT 'bill', b.id, v.display_name || ' ' || b.reference,
+        p.display_name || ' · ' || b.memo || ' · due ' || to_char(b.due_on, 'MM/DD/YYYY'),
+        '/bills/' || b.id
+ FROM trust_bills AS b JOIN trust_vendors AS v ON v.id = b.vendor_id
+ JOIN trust_ledger_accounts AS a ON a.ledger_account_id = b.ledger_account_id
+ JOIN trust_properties AS p ON p.id = a.property_id
+ WHERE b.pmc_id = %(pmc)s AND (b.reference ILIKE %(like)s OR b.memo ILIKE %(like)s)
+ ORDER BY b.due_on DESC, b.id LIMIT 10)
+UNION ALL
+(SELECT 'work order', w.id, w.summary,
+        coalesce(u.display_name || ', ', '') || p.display_name, '/work-orders/' || w.id
+ FROM trust_work_orders AS w JOIN trust_properties AS p ON p.id = w.property_id
+ LEFT JOIN trust_units AS u ON u.id = w.unit_id
+ WHERE w.pmc_id = %(pmc)s AND w.summary ILIKE %(like)s
+ ORDER BY w.opened_at DESC, w.id LIMIT 10)
+UNION ALL
+(SELECT 'applicant', a.application_id, a.display_name,
+        u.display_name || ', ' || p.display_name, '/applicants/' || a.application_id
+ FROM trust_applicants AS a JOIN trust_applications AS x ON x.id = a.application_id
+ JOIN trust_application_links AS k ON k.id = x.link_id
+ JOIN trust_units AS u ON u.id = k.unit_id JOIN trust_properties AS p ON p.id = u.property_id
+ WHERE a.pmc_id = %(pmc)s AND (a.display_name ILIKE %(like)s OR a.email ILIKE %(like)s)
+ ORDER BY x.submitted_at DESC, a.id LIMIT 10)
+UNION ALL
+(SELECT 'lead', l.id, l.display_name, coalesce(u.display_name || ', ', '')
+        || coalesce(p.display_name, 'any home'), '/leads/' || l.id
+ FROM trust_leads AS l LEFT JOIN trust_properties AS p ON p.id = l.property_id
+ LEFT JOIN trust_units AS u ON u.id = l.unit_id
+ WHERE l.pmc_id = %(pmc)s AND (l.display_name ILIKE %(like)s OR l.email ILIKE %(like)s
+     OR (%(digits)s::text IS NOT NULL
+         AND regexp_replace(l.phone, '[^0-9]', '', 'g') LIKE %(digits)s))
+ ORDER BY l.created_at DESC, l.id LIMIT 10)
+UNION ALL
+(SELECT 'file', d.id, d.title, to_char(d.created_at, 'MM/DD/YYYY'),
+        CASE
+          WHEN d.vendor_id IS NOT NULL THEN '/vendors/' || d.vendor_id
+          WHEN d.bill_id IS NOT NULL THEN '/bills/' || d.bill_id
+          WHEN d.lease_id IS NOT NULL THEN '/leases/' || d.lease_id
+          WHEN d.owner_id IS NOT NULL THEN '/owners/' || d.owner_id
+          WHEN d.work_order_id IS NOT NULL THEN '/work-orders/' || d.work_order_id
+          WHEN d.tenant_id IS NOT NULL THEN '/tenants/' || d.tenant_id
+          WHEN d.unit_id IS NOT NULL THEN '/units/' || d.unit_id
+          WHEN d.property_id IS NOT NULL THEN '/properties/' || d.property_id
+          ELSE '/files'
+        END
+ FROM trust_documents AS d
+ WHERE d.pmc_id = %(pmc)s AND d.title ILIKE %(like)s AND d.kind <> 'company_logo'
+   AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)
+ ORDER BY d.created_at DESC, d.id LIMIT 10)
+""",
+    )
+)
+
+
+def digits(q: str) -> str | None:
+    """A search that looks like part of a phone number (four digits or more) as a pattern for a
+    phone's digits; otherwise None."""
+    found = "".join(c for c in q if c.isdigit())
+    return f"%{found}%" if len(found) >= 4 else None
 
 
 @router.get("/search")
 def search(session: Staff, conn: Conn, q: Annotated[SearchWords, Query()]) -> list[Found]:
-    """Properties, units, tenants and owners not archived whose names hold the words, up to 10
-    of each, each with the page it opens (a tenant's says their latest unit)."""
+    """Up to 10 of each kind that hold the words, each with the page it opens: properties, units,
+    tenants and owners not archived (a tenant's says their latest unit), and vendors, by name or
+    by the email, phone or street on file; bills by reference or memo; work orders by what they
+    are for; applicants and leads by name or email (a lead by phone too); and files by title,
+    opening the page of what they are about."""
     return [
         Found(kind=k, id=i, label=label, detail=detail, href=href)
         for k, i, label, detail, href in conn.execute(
-            SEARCH, {"pmc": session.pmc_id, "like": like(q)}
+            SEARCH, {"pmc": session.pmc_id, "like": like(q), "digits": digits(q)}
         ).fetchall()
     ]

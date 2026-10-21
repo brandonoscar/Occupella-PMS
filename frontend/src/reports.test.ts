@@ -40,8 +40,17 @@ describe("reports", () => {
       "/api/reports/trust_report_rent_roll?arg=2026-03-10&format=json&group=g1",
     );
     expect(reportHref(roll, ["2026-03-10"], {}, "pdf")).toBe("/api/reports/trust_report_rent_roll?arg=2026-03-10&format=pdf");
+    // The trial balance narrows by each account's property (q109); the balance sheet, by trust
+    // bank account, does not.
     expect(reportHref(reportSpec("trial_balance")!, ["2026-03-10"], { property: "p1" }, "csv")).toBe(
-      "/api/reports/trust_report_trial_balance?arg=2026-03-10&format=csv",
+      "/api/reports/trust_report_trial_balance?arg=2026-03-10&format=csv&property=p1",
+    );
+    expect(reportHref(reportSpec("balance_sheet")!, ["2026-03-10"], { property: "p1" }, "csv", "o1")).toBe(
+      "/api/reports/trust_report_balance_sheet?arg=2026-03-10&format=csv",
+    );
+    // An owner's properties, with or without a group.
+    expect(reportHref(roll, ["2026-03-10"], { group: "g1" }, "json", "o1")).toBe(
+      "/api/reports/trust_report_rent_roll?arg=2026-03-10&format=json&group=g1&owner=o1",
     );
   });
 

@@ -19,6 +19,8 @@ MEDIA = {
     "csv": "text/csv; charset=utf-8",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "pdf": "application/pdf",
+    # QuickBooks Desktop's import file: tab-separated Windows text.
+    "iif": "text/plain; charset=windows-1252",
 }
 
 
@@ -176,6 +178,7 @@ AREA_PATHS = (
     ("/api/reconcile/", "month-end"),
     ("/api/switching/", "switching"),
     ("/api/setup/", "setup"),
+    ("/api/quickbooks/", "setup"),
     ("/api/company", "setup"),
     ("/api/properties/", "setup"),
     ("/api/property-groups", "setup"),

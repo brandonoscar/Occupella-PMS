@@ -127,3 +127,40 @@ def test_staff_download_their_pmcs_ledger(client, conn, app_conn, pmc):
     archive = zipfile.ZipFile(io.BytesIO(answer.content))
     transfers = rows(archive.read("transfers.csv"))
     assert len(transfers) == 2 and transfers[1][5] == "10.00"
+
+
+def test_an_admin_downloads_everything_of_their_company(client, conn, app_conn, pmc):
+    """Settings, Data export (q132): every record, its files and its ledger, in one zip."""
+    join_as_staff(client, conn, app_conn, pmc)
+    transfer_batch(conn, [(pmc.operating_cash, pmc.owners[0].account, "10.00")], NOON)
+
+    answer = client.get("/api/records.zip")
+
+    assert answer.status_code == 200
+    assert answer.headers["content-disposition"] == 'attachment; filename="records.zip"'
+    archive = zipfile.ZipFile(io.BytesIO(answer.content))
+    names = archive.namelist()
+    assert {"records/trust_properties.csv", "ledger/transfers.csv"} <= set(names)
+    assert "records/trust_login_secrets.csv" not in names
+    assert "records/trust_sessions.csv" not in names
+
+
+def test_only_an_admin_downloads_everything(client, conn, app_conn, pmc):
+    join_as_staff(client, conn, app_conn, pmc, roles=("approve", "disburse"))
+
+    answer = client.get("/api/records.zip")
+
+    assert (answer.status_code, answer.json()["detail"]) == (
+        403,
+        "only an admin downloads everything",
+    )
+
+
+@pytest.mark.parametrize("caller", ["nobody", "owner", "tenant"])
+def test_nobody_but_staff_reaches_everything(client, conn, app_conn, pmc, caller):
+    if caller == "owner":
+        join_as_owner(client, app_conn, pmc)
+    elif caller == "tenant":
+        join_as_tenant(client, conn, app_conn, pmc)
+
+    assert client.get("/api/records.zip").status_code == (401 if caller == "nobody" else 403)

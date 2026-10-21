@@ -43,6 +43,8 @@ export type Tenant = {
   archived: boolean;
   property: Ref;
   contact: Contact;
+  // When the tenant gave these contact details themselves, in the portal (null: staff did).
+  contact_by_tenant_at: string | null;
   prepaid: string;
   deposit: string;
   leases: (LeaseLine & { unit: Ref; property: Ref })[];

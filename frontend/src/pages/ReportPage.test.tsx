@@ -76,6 +76,19 @@ describe("ReportPage", () => {
     );
     expect(within(exports).getByRole("link", { name: "Excel" }).getAttribute("href")).toContain("format=xlsx");
     expect(within(exports).getByRole("link", { name: "CSV" }).getAttribute("href")).toContain("format=csv");
+
+    // One owner's properties (q109): All owners until one is picked, then the preview and the
+    // exports name them.
+    const owner = screen.getByLabelText("Owner") as HTMLSelectElement;
+    expect(owner.value).toBe("");
+    await screen.findByRole("option", { name: "Owner 2" });
+    fireEvent.change(owner, { target: { value: "o2" } });
+    await vi.waitFor(() =>
+      expect(asked(fetch)).toContain("/api/reports/trust_report_rent_roll?arg=2026-03-31&format=json&group=g1&owner=o2"),
+    );
+    expect(within(exports).getByRole("link", { name: "PDF" }).getAttribute("href")).toBe(
+      "/api/reports/trust_report_rent_roll?arg=2026-03-31&format=pdf&group=g1&owner=o2",
+    );
   });
 
   it("takes an owner and days with presets for an owner's report", async () => {
