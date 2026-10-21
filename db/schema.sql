@@ -10266,7 +10266,14 @@ BEGIN
                    WHERE l.unit_id = u.id AND l.starts_on <= p_as_of
                      AND (l.ends_on IS NULL OR l.ends_on >= p_as_of)
                ) AS occupied,
-               last.ends_on + 1 AS since,
+               -- Vacant from the day after its last lease ended; a unit never leased by the
+               -- day, from the day it was added to the PMS (UTC), if that is by the day.
+               coalesce(
+                   last.ends_on + 1,
+                   CASE WHEN (u.created_at AT TIME ZONE 'UTC')::date <= p_as_of
+                        THEN (u.created_at AT TIME ZONE 'UTC')::date END
+               ) AS since,
+               last.ends_on IS NULL AS never_leased,
                last.monthly_rent AS rent,
                (SELECT min(l.starts_on) FROM trust_leases AS l
                 WHERE l.unit_id = u.id AND l.starts_on > p_as_of) AS next_start
@@ -10296,11 +10303,21 @@ BEGIN
         SELECT 0, NULL, NULL, NULL, 1, 'as of',
                to_char(p_as_of, 'YYYY-MM-DD') || ', end of day UTC', NULL, NULL, NULL, NULL
         UNION ALL
-        -- A unit never leased has no day it became vacant: unknown, not zero.
         SELECT 1, o.place, o.unit_name, o.id, 0, 'vacant', o.place, o.since,
                p_as_of - o.since + 1, o.rent, o.next_start
         FROM units AS o
         WHERE NOT o.occupied
+        UNION ALL
+        -- A unit never leased by the day says so under it: vacant since it was added, or, added
+        -- after the day, since a day not known (q084).
+        SELECT 1, o.place, o.unit_name, o.id, 1, 'never leased',
+               CASE WHEN o.since IS NULL
+                    THEN 'added to the PMS after this day: vacant since a day not known'
+                    ELSE 'vacant since it was added to the PMS'
+               END,
+               NULL, NULL, NULL, NULL
+        FROM units AS o
+        WHERE NOT o.occupied AND o.never_leased
         UNION ALL
         SELECT 2, NULL, NULL, NULL, 0, 'total',
                CASE WHEN c.total = 0 THEN 'no units'
@@ -10499,6 +10516,8 @@ CREATE FUNCTION public.trust_report_vendor_payments(p_pmc_id uuid, p_year intege
 DECLARE
     v_start timestamptz;
     v_end timestamptz;
+    v_threshold numeric;
+    v_why text;
 BEGIN
     IF p_year IS NULL OR p_year NOT BETWEEN 1900 AND 9998 THEN
         RAISE EXCEPTION 'trust: vendor payments are for a calendar year, not %', p_year
@@ -10510,6 +10529,21 @@ BEGIN
     END IF;
     v_start := make_date(p_year, 1, 1)::timestamp AT TIME ZONE 'UTC';
     v_end := make_date(p_year + 1, 1, 1)::timestamp AT TIME ZONE 'UTC';
+    -- The IRS's threshold for a 1099-NEC or 1099-MISC in the year.
+    IF p_year <= 2025 THEN
+        v_threshold := 600.00;
+        v_why := 'a 1099 for a vendor marked for one and paid this much or more'
+            || ' (IRS, payments through 2025)';
+    ELSIF p_year = 2026 THEN
+        v_threshold := 2000.00;
+        v_why := 'a 1099 for a vendor marked for one and paid this much or more'
+            || ' (IRS, payments from 2026)';
+    ELSE
+        v_threshold := 2000.00;
+        v_why := 'a 1099 for a vendor marked for one and paid this much or more'
+            || ' (IRS, payments from 2026; its adjustment for inflation from 2027 is not known'
+            || ' here)';
+    END IF;
 
     RETURN QUERY
     WITH here AS (
@@ -10526,14 +10560,34 @@ BEGIN
         FROM trust_vendor_payments_carried_over AS c
         WHERE c.pmc_id = p_pmc_id AND c.year = p_year
     ),
-    paid AS (
+    -- Each vendor's latest profile: whether they get a 1099.
+    profiles AS (
+        SELECT DISTINCT ON (pr.vendor_id) pr.vendor_id, pr.gets_1099
+        FROM trust_vendor_profiles AS pr
+        WHERE pr.pmc_id = p_pmc_id
+        ORDER BY pr.vendor_id, pr.created_at DESC, pr.id DESC
+    ),
+    totals AS (
         SELECT v.id AS vendor_id, v.display_name, coalesce(h.payments, 0) AS payments,
                coalesce(h.total, 0) + coalesce(c.amount, 0) AS total,
-               c.paid_before, c.amount AS carried
+               c.paid_before, c.amount AS carried, pf.gets_1099
         FROM trust_vendors AS v
         LEFT JOIN here AS h ON h.vendor_id = v.id
         LEFT JOIN before AS c ON c.vendor_id = v.id
+        LEFT JOIN profiles AS pf ON pf.vendor_id = v.id
         WHERE v.pmc_id = p_pmc_id AND (h.vendor_id IS NOT NULL OR c.vendor_id IS NOT NULL)
+    ),
+    -- Where each one goes: 1 a 1099 vendor at or over the threshold, 3 under it, 4 no 1099
+    -- setting, 5 marked for none.
+    paid AS (
+        SELECT t.*,
+               CASE
+                   WHEN t.gets_1099 IS NULL THEN 4
+                   WHEN NOT t.gets_1099 THEN 5
+                   WHEN t.total >= v_threshold THEN 1
+                   ELSE 3
+               END AS section
+        FROM totals AS t
     ),
     lines AS (
         SELECT 0 AS section, NULL::text AS name, NULL::uuid AS id, 0 AS part, 'PMC' AS item,
@@ -10543,24 +10597,39 @@ BEGIN
         SELECT 0, NULL, NULL, 1, 'year', p_year::text || ', paid January 1 to December 31 UTC',
                NULL, NULL
         UNION ALL
-        SELECT 1, p.display_name, p.vendor_id, 0, 'vendor', p.display_name, p.payments, p.total
-        FROM paid AS p
+        SELECT 0, NULL, NULL, 2, 'threshold', v_why, NULL, v_threshold
+        UNION ALL
+        SELECT p.section, p.display_name, p.vendor_id, 0,
+               CASE p.section
+                   WHEN 1 THEN 'vendor' WHEN 3 THEN 'under the threshold'
+                   ELSE 'no 1099 setting'
+               END,
+               p.display_name, p.payments, p.total
+        FROM paid AS p WHERE p.section <> 5
         UNION ALL
         -- What of the vendor's total the old system paid, under the vendor's line.
-        SELECT 1, p.display_name, p.vendor_id, 1, 'carried over',
+        SELECT p.section, p.display_name, p.vendor_id, 1, 'carried over',
                'paid in the old system before ' || to_char(p.paid_before, 'YYYY-MM-DD'),
                NULL, p.carried
-        FROM paid AS p WHERE p.carried IS NOT NULL
+        FROM paid AS p WHERE p.carried IS NOT NULL AND p.section <> 5
         UNION ALL
-        SELECT 2, NULL, NULL, 0, 'total', NULL, coalesce(sum(p.payments), 0)::bigint,
-               coalesce(sum(p.total), 0)
+        -- The 1099 vendors' total, right after them.
+        SELECT 2, NULL, NULL, 0, 'total', NULL,
+               coalesce(sum(p.payments) FILTER (WHERE p.section = 1), 0)::bigint,
+               coalesce(sum(p.total) FILTER (WHERE p.section = 1), 0)
         FROM paid AS p
+        UNION ALL
+        SELECT 5, NULL, NULL, 0, 'not marked for a 1099',
+               count(*)::text || CASE count(*) WHEN 1 THEN ' vendor' ELSE ' vendors' END,
+               coalesce(sum(p.payments), 0)::bigint, coalesce(sum(p.total), 0)
+        FROM paid AS p WHERE p.section = 5
     )
     SELECT row_number() OVER (
                ORDER BY l.section, l.name COLLATE "C", l.id, l.part
            )::integer,
            l.item,
-           -- The PMC's name and the year sit in the vendor column of the first two lines.
+           -- The PMC's name, the year and the threshold sit in the vendor column of the first
+           -- three lines.
            l.label,
            l.payments,
            round(l.total, 2)
@@ -27021,4 +27090,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261021000109'),
     ('20261021000110'),
     ('20261021000111'),
-    ('20261021000112');
+    ('20261021000112'),
+    ('20261021000113'),
+    ('20261021000114');

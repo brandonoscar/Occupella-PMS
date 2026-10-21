@@ -205,6 +205,53 @@ def test_a_lease_ending_on_the_day_keeps_its_unit_occupied_that_day(conn, pmc):
     )
 
 
+def test_a_unit_never_leased_is_vacant_since_it_was_added(conn, pmc):
+    """q084: a unit never leased by the day is vacant from the day it was added to the PMS (UTC),
+    a line under it saying so; one added after the day, since a day not known. A lease starting
+    later doesn't change that."""
+    prop = pmc.owners[0].property_id
+    added = {
+        "Unit 1": datetime(2026, 3, 1, 23, 30, tzinfo=UTC),
+        "Unit 2": datetime(2026, 4, 1, 0, 30, tzinfo=UTC),
+    }
+    units = {
+        name: conn.execute(
+            "INSERT INTO trust_units (pmc_id, property_id, display_name, created_at)"
+            " VALUES (%s, %s, %s, %s) RETURNING id",
+            (pmc.pmc_id, prop, name, when),
+        ).fetchone()[0]
+        for name, when in added.items()
+    }
+    tenant = conn.execute(
+        "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
+        (pmc.prepaid_rent,),
+    ).fetchone()[0]
+    open_lease(conn, pmc.pmc_id, units["Unit 1"], DAY + 10 * ONE, None, "900.00", [tenant])
+
+    rows = [row[1:] for row in report(conn, "trust_report_vacancy", pmc.pmc_id, DAY)][2:-1]
+
+    assert rows == [
+        ("vacant", "Property 1", "Unit 1", date(2026, 3, 1), 31, None, DAY + 10 * ONE),
+        ("never leased", "vacant since it was added to the PMS", "Unit 1", None, None, None, None),
+        ("vacant", "Property 1", "Unit 2", None, None, None, None),
+        (
+            "never leased",
+            "added to the PMS after this day: vacant since a day not known",
+            "Unit 2",
+            None,
+            None,
+            None,
+            None,
+        ),
+    ]
+    # On the lease's first day Unit 1 is let; Unit 2, added by then, is vacant since it was.
+    later = [row[1:] for row in report(conn, "trust_report_vacancy", pmc.pmc_id, DAY + 10 * ONE)]
+    assert later[2:-1] == [
+        ("vacant", "Property 1", "Unit 2", date(2026, 4, 1), 10, None, None),
+        ("never leased", "vacant since it was added to the PMS", "Unit 2", None, None, None, None),
+    ]
+
+
 def test_a_company_with_no_units_says_so(conn, pmc):
     assert report(conn, "trust_report_vacancy", pmc.pmc_id, DAY)[-1][1:3] == ("total", "no units")
 

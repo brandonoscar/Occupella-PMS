@@ -1013,10 +1013,12 @@ tests = [
 
 [[report]]
 id = "vendor-payments"
-statement = "Vendor payments for a calendar year (UTC): what each vendor was paid through trust_pay_bill, by payment date, with the number of payments and the total, for 1099 preparation (nothing is filed and no threshold applied). Compared to a checked-in golden file."
+statement = "The 1099 summary for a calendar year (UTC): what each vendor was paid through trust_pay_bill, by payment date, and what the old system paid it that year before the cutover, with the number of payments; a vendor whose latest profile marks them for a 1099 and was paid the IRS's threshold or more (600.00 through 2025, 2000.00 from 2026) on it and in its total, one paid less under the threshold, one with no profile listed apart, and those marked for none on one line (q060, migration 0113). Nothing is filed. Compared to checked-in golden files."
 tests = [
   "tests/golden/test_golden.py::test_every_golden_case_matches",
   "tests/test_recurring_bills.py::test_each_vendor_shows_what_it_was_paid_in_the_year",
+  "tests/test_recurring_bills.py::test_only_vendors_marked_for_a_1099_are_on_it_by_their_latest_profile",
+  "tests/test_recurring_bills.py::test_the_threshold_is_the_irss_for_the_year",
   "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
 ]
 
@@ -1062,7 +1064,7 @@ tests = [
 
 [[invariant]]
 id = "a-document-is-its-file-and-its-bytes-stay-out-of-the-log"
-statement = "A document is a PDF, a JPEG or a PNG of at most 5 MB about one record of its own PMC (a vendor's W-9, a bill's receipt, a lease's move-out photo, an owner's document), and has its file at commit: bytes of the type, size and SHA-256 its row says. Documents and removals are append-only; the bytes are never copied into the audit log and trust_ai_agent never reads them. An owner downloads only their own owner documents."
+statement = "A document is a PDF, a JPEG or a PNG of at most 5 MB about one record of its own PMC (a vendor's W-9, a bill's receipt, a lease's move-out photo, an owner's document), and has its file at commit: bytes of the type, size and SHA-256 its row says. Documents and removals are append-only; the bytes are never copied into the audit log and trust_ai_agent never reads them. An owner downloads only their own owner documents, the files about the properties they hold an account for and those properties' units, and their accounts' bills' receipts (q046)."
 tests = [
   "tests/test_documents.py::test_a_file_is_the_type_its_document_says",
   "tests/test_documents.py::test_a_file_is_the_size_and_digest_its_document_says",
@@ -1070,6 +1072,7 @@ tests = [
   "tests/test_documents.py::test_the_log_records_the_document_and_never_its_bytes",
   "tests/test_documents.py::test_the_ai_knows_a_document_exists_and_never_reads_it",
   "tests/api/test_documents_api.py::test_an_owner_reads_their_own_documents_only",
+  "tests/api/test_documents_api.py::test_an_owner_reads_their_properties_files_and_their_bills_receipts",
   "tests/properties/test_document_properties.py::test_documents_are_their_files_and_their_bytes_stay_out_of_the_log",
 ]
 
@@ -1130,11 +1133,12 @@ tests = [
 
 [[report]]
 id = "vacancy"
-statement = "Vacancy at a day's end: each unit with no lease in effect, since the day after its last lease ended (unknown if never leased), its last rent and the next lease booked; then units, occupied, vacant and occupancy. Compared to a checked-in golden file."
+statement = "Vacancy at a day's end: each unit with no lease in effect, since the day after its last lease ended (one never leased by the day since the day it was added to the PMS, UTC, a line under it saying so, and since a day not known if it was added after the day; q084, migration 0114), its last rent and the next lease booked; then units, occupied, vacant and occupancy. Compared to a checked-in golden file."
 tests = [
   "tests/golden/test_golden.py::test_every_golden_case_matches",
   "tests/test_more_reports.py::test_a_lease_ending_on_the_day_keeps_its_unit_occupied_that_day",
   "tests/test_more_reports.py::test_a_company_with_no_units_says_so",
+  "tests/test_more_reports.py::test_a_unit_never_leased_is_vacant_since_it_was_added",
 ]
 
 [[report]]

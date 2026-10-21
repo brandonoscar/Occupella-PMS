@@ -1555,6 +1555,20 @@ test("staff open a report from Reports, see it on screen narrowed to one propert
   await expect(everyone).toContainText("all properties: net income");
   await downloads(page, "PDF", PDF);
 
+  // The 1099 summary (q060): the vendors marked for a 1099, against the year's IRS threshold.
+  await section(page, "Reports");
+  await page.getByRole("list", { name: "Vendors" }).getByRole("link", { name: "1099 summary" }).click();
+  const summary = page.getByRole("table", { name: "1099 summary" });
+  await expect(summary).toContainText("a 1099 for a vendor marked for one and paid this much or more");
+  await expect(summary).toContainText("not marked for a 1099");
+
+  // Vacancy (q084): Aspen Row's Unit 2, never leased, is vacant since it was added.
+  await section(page, "Reports");
+  await page.getByRole("list", { name: "Rentals" }).getByRole("link", { name: "Vacancy" }).click();
+  const vacancy = page.getByRole("table", { name: "Vacancy" });
+  await expect(vacancy).toContainText("Aspen Row");
+  await expect(vacancy).toContainText("vacant since it was added to the PMS");
+
   // The same owner on the accrual basis (q115): what was charged and billed this month, and
   // their balance sheet today, its equity what they hold, are owed and owe.
   await section(page, "Reports");
@@ -2515,7 +2529,7 @@ test("staff email a tenant from their page and every tenant of a property, an ow
   await expect(owner).toContainText("Password reset");
 });
 
-test("staff turn on the emails the PMS writes by itself, and a run of rent sends each owner last month's statement onto their Email tab", async ({
+test("staff turn on the emails the PMS writes by itself, and a run of rent sends each owner last month's statement onto their Email tab, its PDF attached; a payment sends its tenant the receipt", async ({
   page,
 }) => {
   const people = seed.features["automatic-email"]!;
@@ -2530,11 +2544,13 @@ test("staff turn on the emails the PMS writes by itself, and a run of rent sends
   await editing.getByLabel("Monthly statements to owners").check();
   await editing.getByLabel("Day of the month they go").selectOption("1");
   await editing.getByLabel("Work orders to vendors").check();
+  await editing.getByLabel("Payment receipts to tenants").check();
   await editing.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Saved the automatic emails.")).toBeVisible();
   await expect(editing).toHaveCount(0);
   await expect(shown).toContainText("Last month's, from the 1st of each month");
   await expect(shown).toContainText("Work orders to vendorsOn");
+  await expect(shown).toContainText("Payment receipts to tenantsOn, the PDF attached");
 
   // What runs every night, run by hand: each owner with an email gets last month's statement.
   await section(page, "Rent roll");
@@ -2553,6 +2569,22 @@ test("staff turn on the emails the PMS writes by itself, and a run of rent sends
   const owner = page.getByRole("list", { name: "Email, Demo Owner A" });
   await expect(owner).toContainText(`Your statement for ${month}`);
   await expect(owner).toContainText(`Monthly statement to ${people.emails.owner_a}`);
+  await expect(owner).toContainText("The month's statement attached (PDF)");
+
+  // A payment recorded: its tenant gets the receipt, its PDF attached (q029).
+  await openLease(page, "Aspen Row, Unit 1");
+  const pay = await leasePanel(page, "Receive payment");
+  await pay.getByLabel("Payment received").fill("50.00");
+  await pay.getByLabel("Check or reference").fill("Check 31");
+  await pay.getByRole("button", { name: "Record payment" }).click();
+  await expect(pay).toHaveCount(0);
+  await page.getByLabel("Search people, homes, bills, work orders and files").fill("drew");
+  await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Drew Sample/ }).click();
+  await page.getByRole("tab", { name: "Email", exact: true }).click();
+  const drew = page.getByRole("list", { name: "Email, Drew Sample" });
+  await expect(drew).toContainText("Your receipt: $50.00 received");
+  await expect(drew).toContainText(`Payment receipt to ${people.emails.drew}`);
+  await expect(drew).toContainText("The receipt attached (PDF)");
 });
 
 test("staff put a lease on a payment hold, accept a cashier's check past it and release it, print receipts, take payments to the bank together and print the slip; the tenant downloads their receipt", async ({

@@ -572,7 +572,7 @@ test("staff charge a tenant's damage at move-out, return the rest of the deposit
   expect(statement.headers()["content-type"]).toBe("application/pdf");
 });
 
-test("staff keep an owner's document and the owner downloads it from the portal", async ({ page, browser }) => {
+test("staff keep an owner's document and a property's, and the owner downloads them from the portal", async ({ page, browser }) => {
   await page.goto(`/invite#${seed.documents_invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
   await page.getByLabel("The same password again").fill(PASSWORD);
@@ -596,6 +596,17 @@ test("staff keep an owner's document and the owner downloads it from the portal"
   await expect(kept).toContainText("Owner E2E");
   await expect(kept).toContainText("Owner document");
 
+  // A file about one of the owner's properties (q046): the owner reads it too.
+  await page.getByRole("button", { name: "Upload" }).click();
+  const another = page.getByRole("dialog", { name: "Upload" });
+  await another.getByLabel("File").setInputFiles({ name: "roof-inspection.pdf", mimeType: "application/pdf", buffer: pdf });
+  await another.getByLabel("Name").fill("Roof inspection");
+  await another.getByRole("combobox", { name: "Attached to" }).selectOption("Property");
+  await another.getByRole("combobox", { name: "Property" }).selectOption({ label: "E2E Property 1" });
+  await expect(another.getByRole("combobox", { name: "Category" })).toHaveValue("property_document");
+  await another.getByRole("button", { name: "Upload" }).click();
+  await expect(page.getByText("Uploaded Roof inspection.")).toBeVisible();
+
   // The owner, who joined in the first test, signs in on their own and downloads it.
   const owner = await (await browser.newContext()).newPage();
   await owner.goto(`/sign-in?pmc=${seed.pmc_id}`);
@@ -608,6 +619,11 @@ test("staff keep an owner's document and the owner downloads it from the portal"
   expect(file.headers()["content-type"]).toBe("application/pdf");
   expect(file.headers()["content-disposition"]).toBe('attachment; filename="Management-agreement-2026.pdf"');
   expect(Buffer.from(await file.body()).equals(pdf)).toBe(true);
+  const theirs = owner.getByRole("list", { name: "Your documents" });
+  await expect(theirs).toContainText("E2E Property 1");
+  const roof = await owner.request.get((await theirs.getByRole("link", { name: "Roof inspection" }).getAttribute("href")) ?? "");
+  expect(roof.status()).toBe(200);
+  expect(roof.headers()["content-type"]).toBe("application/pdf");
   await owner.context().close();
 });
 

@@ -687,3 +687,26 @@ same way to every applicant, and its reasons when it departs from them.
   charge, to whoever asks.
 - Whether its state asks more of a lease's signing (a separate signature beside a disclosure, a
   witness) and the lease's own words.
+
+## The 1099 summary's threshold (migration 0113)
+
+**The rule.** A business that pays a non-employee for services reports it on Form 1099-NEC (rents
+and some other payments on 1099-MISC) once the year's payments reach a threshold. That threshold
+was $600 for payments made through December 31, 2025. The One Big Beautiful Bill Act (Pub. L.
+119-21, section 70433) raised it to $2,000 for payments made after December 31, 2025, adjusted
+for inflation from 2027. (From tax practitioners' summaries of the Act, e.g. NATP and Sovos; the
+statute's text and the IRS's Publication 1099 figures are NOT VERIFIED here.)
+
+**What the PMS does.**
+- The 1099 summary lists the vendors whose latest profile marks them for a 1099. Each paid the
+  year's threshold or more (600.00 through 2025, 2000.00 for 2026) is on it and in its total;
+  one paid less is listed under the threshold, so nothing marked disappears.
+- A vendor with no profile is listed apart as having no 1099 setting, so staff can say; those
+  marked for none are one line with how many and what they were paid.
+- For 2027 and later it uses 2000.00 and says on its threshold line that the inflation
+  adjustment is not known to it.
+- It counts what the old system paid a vendor in the cutover's year.
+
+**Left to the company.** Whether a vendor gets a 1099 at all (a corporation usually doesn't; the
+W-9 says), the year's adjusted threshold from 2027, and filing: the PMS files nothing and keeps
+no tax ID.

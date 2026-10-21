@@ -135,11 +135,16 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   email (`outbox.SENDING`; the nightly run's `sending`): a rent reminder to each tenant of a lease
   in effect on its next due day (the first unless it picked another), from 1 to 15 days before it; a late notice to each tenant when the
   run charges a late fee; last month's statement in brief to each owner with a property account,
-  from a day of the month (1 to 28); a vendor's work order when assigned or scheduled; and the
+  from a day of the month (1 to 28); a vendor's work order when assigned or scheduled; the
   adverse action notice to each applicant when a decision rests on a screening (the PDF's text,
-  shown on the applicant's page). Each names what it is about and is written once (a unique index
-  per kind); a lease under a payment hold gets no reminder or late notice. The nightly run and an
-  admin's Run rent now write the first three, after the run, in its transaction.
+  shown on the applicant's page); and, since migration 0111 (q029), a payment's receipt to each
+  tenant on its lease when staff record it (`payment_receipt`, once per tenant and payment). Each
+  names what it is about and is written once (a unique index per kind); a lease under a payment
+  hold gets no reminder or late notice. The nightly run and an admin's Run rent now write the
+  first three, after the run, in its transaction. A receipt carries the receipt's PDF and an owner's
+  statement the whole month's statement as a PDF (`src/pms/attachments.py`, q045, q055), made when
+  the email is handed to the sender from what the database holds then (the outbox keeps no file);
+  one whose file can't be made is a failed delivery saying why.
 - The portal (`frontend/`): React 19, Vite and Tailwind v4, following Occupella's `DESIGN.md`
   and looking like Occupella's app (founder, 2026-10-14): its light theme, a full-height
   light-blue left sidebar with the wordmark, the sections (lucide icons) and Sign out, a white
@@ -809,7 +814,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   insert against the type's first bytes, the size and SHA-256 its row says, and there at
   commit): never audited and never read by `trust_ai_agent`. A removal is a row
   (`trust_document_removals`); nothing is deleted. The PMS reads nothing out of a file. An
-  owner downloads their own owner documents in the portal. The company's logo is a document too
+  owner downloads their own owner documents in the portal, and since q046 the files about the
+  properties they hold an account for and those properties' units, and the receipts of their
+  accounts' bills (`OWNER_SEES` in `src/pms/api/documents.py`), each named with what it is about. The company's logo is a document too
   (`company_logo`, migration 0075: a PNG or JPEG about no one record, the latest not removed
   holding), kept by `src/pms/api/company.py` and in no list of files.
 - The company (migration 0075, ADR 0006): its name is `trust_pmcs.display_name`, which staff
@@ -818,8 +825,12 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (append-only, the latest row holding, naming who recorded it; saving the same again writes
   nothing). A default changes no property already there. The AI role never reads it.
 - Vendor payments: `trust_report_vendor_payments` lists what each vendor was paid through
-  `trust_pay_bill` in a calendar year (UTC), for 1099 preparation. It files nothing, holds no
-  tax IDs and applies no threshold. What the old system paid a vendor in the cutover's year
+  `trust_pay_bill` in a calendar year (UTC), for 1099 preparation. It files nothing and holds no
+  tax IDs. Since migration 0113 (q060) it is the 1099 summary: a vendor whose latest profile marks
+  them for a 1099 and was paid the IRS's threshold or more (600.00 through 2025, 2000.00 from
+  2026; the inflation adjustment from 2027 is not known to it, and its line says so) is on it and
+  in its total, one paid less is under the threshold, one with no profile is listed apart (no
+  1099 setting), and those marked for none are one line. What the old system paid a vendor in the cutover's year
   before it (`trust_vendor_payments_carried_over`, migration 0038, once per vendor and year; a
   January 1 cutover carries over the year before) is added to the vendor's year, on a line of
   its own.
@@ -878,7 +889,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   sheet (`trust_report_balance_sheet`: each trust bank account's cash by the books against what
   it holds by kind, at a day's end), cash flow (`trust_report_cash_flow`: each one's cash over
   days, every move of it in or out once, by what it was), vacancy (units with no lease in
-  effect, since when; never leased is unknown), work orders (status and vendor as of a day,
+  effect, since when; never leased, since it was added to the PMS, a line saying so: migration
+  0114, q084), work orders (status and vendor as of a day,
   days open, billed), and directories of tenants, owners and vendors (names and what they are
   to the company on a day; contact details stay out of reports).
 - Budgets (migration 0055): a month's budget of an owner's property account on one of the
@@ -892,7 +904,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - Vendor profiles (migration 0073, ADR 0006): a vendor's trade, whether they are a 1099 vendor
   and how they are paid (check or EFT), in `trust_vendor_profiles` (append-only, the latest row
   holding, naming who recorded it; the same again writes nothing). No tax ID is kept: it stays on
-  the W-9. A profile decides nothing and moves no money; the AI role reads it.
+  the W-9. A profile moves no money; whether a vendor gets a 1099 decides only whether the 1099
+  summary lists them (migration 0113). The AI role reads it.
 - A lease's people (migration 0080, `docs/law.md`): a tenant leaves a lease others stay on, once,
   from a day within it (`trust_remove_lease_tenant`, writing `trust_lease_departures`, naming
   who recorded it); the last tenant can't (the lease ends instead), nor anyone once its deposit
