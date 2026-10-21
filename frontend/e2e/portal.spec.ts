@@ -881,10 +881,15 @@ test("every page of the demo meets WCAG 2.2 AA as axe checks it: staff's, an own
   await page.getByLabel("Code").fill(totp((await page.locator("code").textContent()) ?? ""));
   await page.getByRole("button", { name: "Finish" }).click();
 
-  // Every page in staff's menu and in Settings, then one page of each kind a list opens.
-  const menu = await hrefs(page, page.getByRole("navigation", { name: "Sections" }));
+  // Every page in staff's menu and in Settings, then one page of each kind a list opens. Each
+  // list is read once it shows, since reading links doesn't wait for them.
+  const sections = page.getByRole("navigation", { name: "Sections" });
+  await expect(sections.getByRole("link", { name: "Dashboard" })).toBeVisible();
+  const menu = await hrefs(page, sections);
   await page.goto("/settings");
-  const settings = await hrefs(page, page.getByRole("list", { name: "Settings" }));
+  const settingsList = page.getByRole("list", { name: "Settings" });
+  await expect(settingsList.getByRole("link").first()).toBeVisible();
+  const settings = await hrefs(page, settingsList);
   const pages = [...new Set([...menu, ...settings, "/pay-bills", "/journal"])];
   expect(pages.length).toBeGreaterThan(30);
   for (const path of pages) await scanned(page, path);
