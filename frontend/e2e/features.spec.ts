@@ -3449,6 +3449,64 @@ test("a tenant changes their own phone and email in the portal, and staff see th
   await staff.close();
 });
 
+test("staff make a tenant a tenant at a second property and lease them a unit there; they sign in once, see both homes and ask for a repair at the new one", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["two-homes"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Tenants");
+  await page.getByRole("row", { name: /^Taylor Demo/ }).getByRole("link", { name: "Taylor Demo" }).click();
+  const others = part(page, "Other properties");
+  await expect(others).toContainText("Renting at another property too?");
+  await others.getByRole("button", { name: "Rent at another property" }).click();
+  const elsewhere = page.getByRole("dialog", { name: "Rent at another property" });
+  await elsewhere.getByLabel("Property").selectOption({ label: "Aspen Row" });
+  await elsewhere.getByRole("button", { name: "Make them a tenant there" }).click();
+  await expect(page.getByText("Taylor Demo is a tenant at Aspen Row too: put them on the lease there.")).toBeVisible();
+  // Their record at Aspen Row: they sign in as their first, at Cedar House.
+  await expect(page.getByRole("link", { name: "Aspen Row", exact: true })).toBeVisible();
+  await expect(part(page, "Portal")).toContainText("signs in once, as their record at Cedar House");
+  await expect(part(page, "Other properties").getByRole("link", { name: "Tenant at Cedar House" })).toBeVisible();
+
+  // Aspen Row's vacant Unit 2, leased to them from today.
+  await section(page, "Properties");
+  await page.getByRole("link", { name: "Aspen Row", exact: true }).click();
+  await page.getByRole("row", { name: /^Unit 2/ }).getByRole("link", { name: "Unit 2", exact: true }).click();
+  await page.getByRole("button", { name: "Add lease in place" }).click();
+  const lease = page.getByRole("dialog", { name: "Add lease" });
+  await lease.getByLabel("Taylor Demo").check();
+  await lease.getByLabel("Starts").fill(today());
+  await lease.getByLabel("Rent a month").fill("1240.00");
+  await lease.getByRole("button", { name: "Add lease" }).click();
+  await expect(page.getByRole("row", { name: /Taylor Demo/ })).toContainText(`${us(today())} – Month to month`);
+
+  // Drew Sample at Aspen Row isn't Taylor: and anyone who signs in is linked to nobody.
+  await section(page, "Tenants");
+  await page.getByRole("row", { name: /^Drew Sample/ }).getByRole("link", { name: "Drew Sample" }).click();
+  await part(page, "Other properties").getByRole("button", { name: "Same person as…" }).click();
+  const same = page.getByRole("dialog", { name: "Same person as…" });
+  await same.getByLabel("Name, email or phone").fill("Taylor");
+  await same.getByRole("button", { name: "Find" }).click();
+  await same.getByRole("button", { name: /^Same person: Taylor Demo, .*Cedar House/ }).click();
+  await expect(same.getByRole("alert")).toContainText("Drew Sample signs in to the portal: link Taylor Demo to them instead");
+
+  // Taylor signs in once and has both homes; a repair asked for at Aspen Row is theirs there.
+  const tenant = await browser.newPage();
+  await joinPortal(tenant, people.taylor);
+  const picker = tenant.getByRole("combobox", { name: /^Lease/ });
+  await picker.selectOption({ label: `Aspen Row, Unit 2, from ${us(today())}` });
+  await expect(part(tenant, "Your lease")).toContainText("Aspen Row, Unit 2");
+  await tenant.getByLabel("What needs fixing?").fill("The porch light flickers");
+  await tenant.getByRole("button", { name: "Send request" }).click();
+  await expect(part(tenant, "Maintenance requests").getByRole("listitem").filter({ hasText: "The porch light flickers" }))
+    .toContainText("Received");
+  // Newest first: the lease at Aspen Row, then the one at Cedar House.
+  await picker.selectOption({ index: 1 });
+  await expect(part(tenant, "Your lease")).toContainText("Cedar House, House");
+  await tenant.close();
+});
+
 test("staff add charge types and give a lease's fee and monthly charge one; the owner's income statement counts the type on its own line", async ({
   browser,
   page,

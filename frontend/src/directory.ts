@@ -50,6 +50,8 @@ export type Tenant = {
   leases: (LeaseLine & { unit: Ref; property: Ref })[];
   portal: Portal;
   login_email: string | null;
+  // Renting at other properties too (migration 0105): their records there; `first` signs in.
+  same_person: { id: string; property: Ref; first: boolean }[];
 };
 
 export type OwnerRow = {

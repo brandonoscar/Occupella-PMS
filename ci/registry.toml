@@ -1315,3 +1315,18 @@ tests = [
   "tests/api/test_calendar.py::test_two_links_made_at_once_leave_one_standing",
   "tests/api/test_calendar.py::test_a_feed_stops_once_its_persons_login_is_disabled",
 ]
+
+[[invariant]]
+id = "a-tenant-is-one-record-a-property"
+statement = "Someone renting at two properties at once is a record at each, linked to their first (migration 0105): a record joins a person only while it is linked to nothing, is no one's first, signs in to nothing, and sits at a property where the person has no record yet; only a record linked to nothing takes a portal login, once; trust_tenant_records gives every record its person's records; links are append-only, name who made them, move no money and wait for a login of the same record (and it for them); each record keeps its own leases and money."
+tests = [
+  "tests/properties/test_tenant_record_properties.py::test_a_person_is_one_record_a_property_and_signs_in_once_as_their_first",
+  "tests/test_tenant_records.py::test_a_tenant_renting_at_another_property_is_a_record_there_linked_to_their_first",
+  "tests/test_tenant_records.py::test_a_record_links_to_the_persons_first_and_a_first_record_links_to_nobody",
+  "tests/test_tenant_records.py::test_the_person_has_one_record_a_property",
+  "tests/test_tenant_records.py::test_the_person_signs_in_through_their_first_record_only",
+  "tests/test_tenant_records.py::test_a_login_waits_for_a_link_of_its_record_and_then_is_refused",
+  "tests/test_tenant_records.py::test_a_link_waits_for_a_login_of_its_record_and_then_is_refused",
+  "tests/api/test_tenant_records_api.py::test_the_tenant_acts_on_the_other_propertys_lease_as_their_record_there",
+]
+

@@ -847,3 +847,13 @@ browser = [
   "features.spec.ts › staff name the operating trust account's cash for QuickBooks and download two months of journal entries for QuickBooks Desktop and Online",
 ]
 
+[[feature]]
+id = "tenant-at-two-properties"
+statement = "Staff make a tenant who rents at another property too a tenant there (the same name and contact details, linked to their first record), or say a tenant there is the same person; each record keeps its own leases and money, the person signs in once, and the portal shows and acts on their leases at every property (migration 0105, the founder's review q009)."
+operations = [
+  "POST /api/tenants/{tenant_id}/elsewhere",
+  "POST /api/tenants/{tenant_id}/same-person",
+]
+browser = [
+  "features.spec.ts › staff make a tenant a tenant at a second property and lease them a unit there; they sign in once, see both homes and ask for a repair at the new one",
+]

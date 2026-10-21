@@ -535,7 +535,8 @@ def leases(session: Staff, conn: Conn) -> list[LeaseOut]:
         "SELECT l.id, p.display_name, u.display_name, l.starts_on, l.ends_on, l.monthly_rent,"
         " array(SELECT jsonb_build_object('name', t.display_name, 'email', g.email)"
         "       FROM trust_lease_tenants AS lt JOIN trust_tenants AS t ON t.id = lt.tenant_id"
-        "       LEFT JOIN trust_logins AS g ON g.tenant_id = t.id"
+        "       LEFT JOIN trust_logins AS g"
+        "         ON g.tenant_id IN (SELECT trust_tenant_records(t.pmc_id, t.id))"
         '       WHERE lt.lease_id = l.id ORDER BY t.display_name COLLATE "C", t.id)'
         " FROM trust_leases AS l JOIN trust_units AS u ON u.id = l.unit_id"
         " JOIN trust_properties AS p ON p.id = u.property_id"
@@ -748,8 +749,9 @@ def tenant_leases(conn: psycopg.Connection[Any], session: accounts.Session) -> l
     return [
         row[0]
         for row in conn.execute(
-            "SELECT lease_id FROM trust_lease_tenants WHERE pmc_id = %s AND tenant_id = %s",
-            (session.pmc_id, session.person_id),
+            "SELECT lease_id FROM trust_lease_tenants WHERE pmc_id = %s"
+            " AND tenant_id IN (SELECT trust_tenant_records(%s, %s))",
+            (session.pmc_id, session.pmc_id, session.person_id),
         ).fetchall()
     ]
 

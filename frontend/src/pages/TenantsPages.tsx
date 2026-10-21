@@ -20,6 +20,7 @@ import { EmailsCard } from "../components/EmailsCard";
 import { NotesCard } from "../components/NotesCard";
 import { FilesCard } from "./FilesCard";
 import { PortalCard } from "./PortalCard";
+import { SamePersonCard, SignsInElsewhere } from "./SamePersonCard";
 import { Tabs } from "../components/Tabs";
 import { navigate } from "../router";
 import { ListBar } from "../components/ListBar";
@@ -141,8 +142,13 @@ export function TenantPage({ me, id }: { me: Me; id: string }) {
               <div className="flex flex-col gap-6">
                 <ContactCard path={`/api/tenants/${id}`} contact={tenant.contact} refresh={refresh} name={tenant.name}
                   byTenantAt={tenant.contact_by_tenant_at} />
-                <PortalCard kind="tenant" personId={id} name={tenant.name} portal={tenant.portal}
-                  loginEmail={tenant.login_email} email={tenant.contact.email} refresh={refresh} />
+                {tenant.same_person.some((other) => other.first) ? (
+                  <SignsInElsewhere tenant={tenant} />
+                ) : (
+                  <PortalCard kind="tenant" personId={id} name={tenant.name} portal={tenant.portal}
+                    loginEmail={tenant.login_email} email={tenant.contact.email} refresh={refresh} />
+                )}
+                <SamePersonCard tenant={tenant} refresh={refresh} say={setSaid} />
               </div>
             )}
             {tab === "files" && <FilesCard kind="tenant_document" aboutId={id} name={tenant.name} />}

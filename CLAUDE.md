@@ -897,6 +897,16 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   lease shows each kind (`tenants[].deposits`), the register and the return's statement name it,
   a leaving tenant's deposits move to the staying tenant's of the same kind, and
   `trust_return_deposit` keeps from each tenant's security deposit first, then key, then pet.
+- A tenant at two properties (migration 0105, the founder's review q009): a tenant is a record at
+  one property, holding its own deposits and prepaid rent. Someone renting at another property too
+  gets a record there linked to their first (`trust_tenant_links`: append-only, naming who; a
+  record joins a person only while linked to nothing, nobody's first, signing in to nothing, and at
+  a property where the person has no record), made from the tenant's page, Other properties
+  (`POST /api/tenants/<id>/elsewhere`, the same name and contact details; or `/same-person` for a
+  record there already). Money and leases stay each record's own. Only a record linked to nothing
+  takes a portal login; `trust_tenant_records` gives a person's records, and the tenant portal,
+  receipts, calendar, renewals and emails read every one of them (a request or a policy filed
+  under a lease is the record on it). The AI role reads the links.
 - Vendor insurance and inspections (migration 0058): a vendor's policies
   (`trust_vendor_insurance`: coverage, carrier, number, the days it runs, a limit; a renewal is
   a new policy), and a lease's move-in and move-out inspections (`trust_inspections`, their

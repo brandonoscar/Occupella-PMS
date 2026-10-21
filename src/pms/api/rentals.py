@@ -599,9 +599,11 @@ def rent_roll(
 
 
 # Whether a tenant (on t) can sign in to the portal: no login, invited (no password set yet),
-# active, or disabled; and their login's id.
+# active, or disabled; and their login's id. A record at another property linked to their first
+# (migration 0105) signs in through the first's login.
 PORTAL = """
-LEFT JOIN trust_logins AS g ON g.pmc_id = t.pmc_id AND g.tenant_id = t.id
+LEFT JOIN trust_logins AS g
+  ON g.pmc_id = t.pmc_id AND g.tenant_id IN (SELECT trust_tenant_records(t.pmc_id, t.id))
 LEFT JOIN trust_login_secrets AS s ON s.login_id = g.id
 """
 PORTAL_STATUS = """

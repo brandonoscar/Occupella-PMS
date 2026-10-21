@@ -4,7 +4,9 @@ signing certificate and the lease's documents staff keep (q120), and maintenance
 payments: online payment is out of scope (docs/adr/0002-portals-and-exports.md).
 
 The tenant and the PMC always come from the session. A lease named in the path is answered only
-if the tenant is on it; any other reads as not found, whoever's it is.
+if the tenant is on it; any other reads as not found, whoever's it is. Someone renting at two
+properties at once is a record at each (migration 0105, q009): they sign in through their first,
+and see and act on the leases of every record of theirs, each lease as the record on it.
 """
 
 from __future__ import annotations
@@ -112,51 +114,59 @@ class NewRequest(BaseModel):
     photos: list[Photo] = Field(default=[], max_length=PHOTOS_PER_REQUEST)
 
 
-def lease_of(conn: psycopg.Connection[Any], session: accounts.Session, lease_id: UUID) -> None:
-    """Refuses, as not found, a lease the tenant isn't on."""
-    if (
-        conn.execute(
-            "SELECT 1 FROM trust_lease_tenants"
-            " WHERE pmc_id = %s AND lease_id = %s AND tenant_id = %s",
-            (session.pmc_id, lease_id, session.person_id),
-        ).fetchone()
-        is None
-    ):
+# The leases of every record of the signed-in person: their own and any linked to it.
+MINE = "mine.tenant_id IN (SELECT trust_tenant_records(%(pmc)s, %(person)s))"
+
+
+def lease_of(conn: psycopg.Connection[Any], session: accounts.Session, lease_id: UUID) -> UUID:
+    """The person's record on a lease (theirs, or one at another property linked to it); refuses,
+    as not found, a lease they aren't on."""
+    row = conn.execute(
+        f"SELECT mine.tenant_id FROM trust_lease_tenants AS mine"  # noqa: S608
+        f" WHERE mine.pmc_id = %(pmc)s AND mine.lease_id = %(lease)s AND {MINE}",
+        {"pmc": session.pmc_id, "lease": lease_id, "person": session.person_id},
+    ).fetchone()
+    if row is None:
         raise HTTPException(404, "no such lease of yours")
+    return UUID(str(row[0]))
 
 
-def still_on(conn: psycopg.Connection[Any], session: accounts.Session, lease_id: UUID) -> None:
-    """Refuses a lease the tenant left by today while others stayed on it (migration 0080): they
-    still read it, but file nothing under it."""
+def still_on(conn: psycopg.Connection[Any], session: accounts.Session, lease_id: UUID) -> UUID:
+    """The person's record on a lease, refusing one they left by today while others stayed on it
+    (migration 0080): they still read it, but file nothing under it."""
+    tenant = lease_of(conn, session, lease_id)
     row = conn.execute(
         "SELECT left_on FROM trust_lease_departures"
         " WHERE pmc_id = %s AND lease_id = %s AND tenant_id = %s AND left_on <= %s",
-        (session.pmc_id, lease_id, session.person_id, today()),
+        (session.pmc_id, lease_id, tenant, today()),
     ).fetchone()
     if row is not None:
         raise HTTPException(409, f"you left this lease on {row[0]:%m/%d/%Y}")
+    return tenant
 
 
 @router.get("/leases")
 def leases(session: Tenant, conn: Conn) -> list[Lease]:
-    """Every lease the tenant is on, newest first, with its balance due at the end of today."""
+    """Every lease the tenant is on, at any property, newest first, with its balance due at the
+    end of today."""
     on = today()
+    mine = {"on": on, "pmc": session.pmc_id, "person": session.person_id}
     rows = conn.execute(
-        "SELECT l.id, p.display_name, u.display_name, l.starts_on, l.ends_on,"
-        " trust_rent_on(l.id, %s), trust_rent_due_day(l.id, %s),"
+        "SELECT l.id, p.display_name, u.display_name, l.starts_on, l.ends_on,"  # noqa: S608
+        " trust_rent_on(l.id, %(on)s), trust_rent_due_day(l.id, %(on)s),"
         " array(SELECT t.display_name FROM trust_lease_tenants AS everyone"
         "       JOIN trust_tenants AS t ON t.id = everyone.tenant_id"
         '       WHERE everyone.lease_id = l.id ORDER BY t.display_name COLLATE "C", t.id),'
-        " (SELECT b.balance FROM trust_report_tenant_ledger(l.pmc_id, l.id, %s) AS b"
+        " (SELECT b.balance FROM trust_report_tenant_ledger(l.pmc_id, l.id, %(on)s) AS b"
         "  WHERE b.item = 'balance'),"
         " EXISTS (SELECT 1 FROM trust_deposit_returns AS r WHERE r.lease_id = l.id)"
         " FROM trust_lease_tenants AS mine"
         " JOIN trust_leases AS l ON l.id = mine.lease_id"
         " JOIN trust_units AS u ON u.id = l.unit_id"
         " JOIN trust_properties AS p ON p.id = u.property_id"
-        " WHERE mine.pmc_id = %s AND mine.tenant_id = %s"
+        f" WHERE mine.pmc_id = %(pmc)s AND {MINE}"
         " ORDER BY l.starts_on DESC, l.id",
-        (on, on, on, session.pmc_id, session.person_id),
+        mine,
     ).fetchall()
     insured = rent_api.renters_insurance(conn, session.pmc_id, on)
     paid: dict[UUID, list[rent_api.Paid]] = {}
@@ -179,12 +189,12 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
         )
     coming: dict[UUID, list[RentChangeNotice]] = {}
     for lease, effective, monthly_rent, notice in conn.execute(
-        "SELECT c.lease_id, c.effective_on, c.monthly_rent, c.notice_given_on"
+        "SELECT c.lease_id, c.effective_on, c.monthly_rent, c.notice_given_on"  # noqa: S608
         " FROM trust_rent_changes AS c"
         " JOIN trust_lease_tenants AS mine ON mine.lease_id = c.lease_id"
-        " WHERE mine.pmc_id = %s AND mine.tenant_id = %s AND c.effective_on > %s"
+        f" WHERE mine.pmc_id = %(pmc)s AND {MINE} AND c.effective_on > %(on)s"
         " ORDER BY c.effective_on",
-        (session.pmc_id, session.person_id, on),
+        mine,
     ).fetchall():
         coming.setdefault(lease, []).append(
             RentChangeNotice(
@@ -392,10 +402,12 @@ def my_contact(session: Tenant, conn: Conn) -> directory.Contact:
 def change_my_contact(session: Tenant, conn: Conn, body: directory.Contact) -> None:
     """The tenant's own email, phones and mailing address, as they give them (all of them, so a
     field left empty is cleared): the company's emails go to this email from now on, and staff
-    see on the tenant's page that the tenant changed them. Their sign-in email stays as it is."""
-    directory.record_contact(
-        conn, session.pmc_id, "tenant_id", session.person_id, body, by_person=True
-    )
+    see on the tenant's page that the tenant changed them. Their sign-in email stays as it is.
+    Renting at more than one property, the details are theirs at each."""
+    for (record,) in conn.execute(
+        "SELECT trust_tenant_records(%s, %s) ORDER BY 1", (session.pmc_id, session.person_id)
+    ).fetchall():
+        directory.record_contact(conn, session.pmc_id, "tenant_id", record, body, by_person=True)
 
 
 @router.get("/requests")
@@ -413,9 +425,8 @@ def record_my_policy(
 ) -> rent_api.Created:
     """The tenant's own renters insurance policy for a lease they are on, with whatever insurer
     they chose; it is recorded as theirs."""
-    lease_of(conn, session, lease_id)
-    still_on(conn, session, lease_id)
-    return rent_api.add_policy(conn, session.pmc_id, lease_id, policy, session.person_id)
+    tenant = still_on(conn, session, lease_id)
+    return rent_api.add_policy(conn, session.pmc_id, lease_id, policy, tenant)
 
 
 @router.post("/requests", status_code=201)
@@ -424,8 +435,7 @@ def file_request(session: Tenant, conn: Conn, new: NewRequest) -> maintenance.Re
     summary = new.summary.strip()
     if not summary:
         raise HTTPException(422, "say what needs fixing")
-    lease_of(conn, session, new.lease_id)
-    still_on(conn, session, new.lease_id)
+    tenant = still_on(conn, session, new.lease_id)
     on = today()
     row = conn.execute(
         "SELECT starts_on <= %s AND (ends_on IS NULL OR %s <= ends_on) FROM trust_leases"
@@ -450,7 +460,7 @@ def file_request(session: Tenant, conn: Conn, new: NewRequest) -> maintenance.Re
         (
             session.pmc_id,
             new.lease_id,
-            session.person_id,
+            tenant,
             summary,
             new.entry_allowed,
             new.emergency,

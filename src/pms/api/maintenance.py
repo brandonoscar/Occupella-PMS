@@ -73,7 +73,8 @@ ORDER BY r.submitted_at DESC, r.id
 """
 FOR_TENANT = (
     "r.lease_id IN (SELECT lt.lease_id FROM trust_lease_tenants AS lt"
-    " WHERE lt.pmc_id = %(pmc)s AND lt.tenant_id = %(person)s)"
+    " WHERE lt.pmc_id = %(pmc)s"
+    " AND lt.tenant_id IN (SELECT trust_tenant_records(%(pmc)s, %(person)s)))"
 )
 ONE = "r.id = %(request)s"
 EVERY = "true"

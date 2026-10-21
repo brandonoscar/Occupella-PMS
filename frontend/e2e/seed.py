@@ -510,6 +510,7 @@ FEATURES = (
     "charge-types",
     "phone",
     "quickbooks",
+    "two-homes",
 )
 
 
