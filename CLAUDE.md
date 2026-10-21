@@ -264,6 +264,18 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the lease as signed, its signing certificate when signed on the PMS's page, and the lease
   documents staff keep on its Files tab (move-out photos stay with staff). Both portals show the
   manager's name, mailing address and logo (`/api/company/card`). The portal takes no payments.
+- Property addresses (migration 0109, `src/pms/api/addresses.py`, `src/pms/geocoding.py`): a
+  property's street address, whole (street, maybe a building or unit, city, a state's USPS code,
+  ZIP code), in `trust_property_addresses` (append-only, the latest holding,
+  `trust_property_address`; saving the same again writes nothing), kept from the property's
+  Address card (`pages/AddressCard.tsx`, area setup). Find on map
+  (`POST /api/properties/<id>/locate`) asks the server's `PMS_GEOCODER` ("census", the Census
+  Bureau's geocoder called directly over HTTPS since its Python wrapper is GPL; "fake" for
+  development and CI, calling nothing; none by default, and finding is refused), sending the
+  property's address alone, never a person's; what it matched goes in `trust_property_locations`
+  and the card links to OpenStreetMap at the point. A location counts only for the address it
+  was found for (`trust_property_location`). The Properties list shows each address and finds a
+  property by it, as `/api/search` does. The AI role reads both tables.
 - Leasing (`src/pms/api/leasing.py`, `src/pms/leasing/`): applicants have no login. They apply
   through a link staff open for a unit (`/apply#<token>`) and follow it with a status link;
   both tokens travel in JSON bodies and are kept only as SHA-256. Screening goes through
@@ -444,6 +456,21 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`/housing-authorities`, `src/pms/api/assistance.py`, area rent) records its payment for many
   leases at once; the lease's Summary shows the split. No payment hold or bounce applies to it.
   The AI role reads all four tables.
+- Assisted lease compliance (migration 0108, the founder's review q143, `docs/law.md`): the
+  household's income certifications (`trust_income_certifications`: move-in, annual or interim,
+  the day it takes effect, household size, annual income, the day the next annual one is due) and
+  the home's inspections for its authority (`trust_assistance_inspections`: passed with the day
+  the next is due, failed with the day to pass a reinspection by, never dated after it is
+  recorded), each of a lease with assistance on file and within it, once per day and kind or
+  result, append-only, naming who. The lease's housing assistance card records them (`POST
+  /api/assistance/leases/<id>/certifications`, `/inspections`, area rent: a year on and two years
+  on unless given, an interim one keeping the due day before it) and says where each stands today
+  (`trust_due_standing`, `trust_inspection_standing`). `trust_report_assistance_compliance` lists
+  each lease with assistance in force on a day with its latest of each: current, due within 120
+  days, overdue, none on file, failed (reinspection due or overdue), and the counts to do. It runs
+  as the owner and prints days and words, never income or household size, so the AI runs it but
+  never reads a certification (`AI_NEVER_READS`); it reads the inspections. The PMS files nothing
+  with HUD and checks no income limit.
 - Utility billing (migration 0096, the founder's review q021, `docs/law.md`): a property's plan
   for each utility from a day (`trust_utility_plans`: by unit, square feet, occupants or submeter,
   and the owner's percent for the common areas; 'none' stops it), units' square feet
@@ -752,15 +779,18 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   or vendor of the PMC (`trust_notes`, exactly one of them, append-only, naming who wrote it; a
   correction is a new note), on its Notes tab (`src/pms/api/notes.py`). They move no money, and
   the AI role never reads them (`AI_NEVER_READS`).
-- Archiving (migrations 0063 and 0064, ADR 0005): nothing in a PMC is deleted; a property, unit,
-  tenant or owner is archived instead, a row in `trust_archivals` (append-only, the latest for a
-  record holding, `trust_is_archived` reading it), naming who did it. It is refused while
-  anything is open on it: a lease in effect or to come (of a unit, of a property's units, or with
-  the tenant on it), money held (a property's owners', an owner's, a tenant's prepaid rent or
-  deposit) or a bill neither paid nor declined (a property's or an owner's). Bringing one back is
-  always allowed. An archived one leaves its list (and search) unless staff ask for archived
-  ones, an archived unit is marked on its property's page, and each keeps its history; it moves
-  no money.
+- Archiving (migrations 0063 and 0064, ADR 0005; vendors since migration 0110, the founder's
+  review q131): nothing in a PMC is deleted; a property, unit, tenant, owner or vendor is archived
+  instead, a row in `trust_archivals` (append-only, the latest for a record holding,
+  `trust_is_archived` reading it), naming who did it. It is refused while anything is open on it:
+  a lease in effect or to come (of a unit, of a property's units, or with the tenant on it), money
+  held (a property's owners', an owner's, a tenant's prepaid rent or deposit, money set aside for a
+  vendor), a bill neither paid nor declined (a property's, an owner's or a vendor's), and for a
+  vendor a work order last assigned to them still open or a recurring bill or job of theirs
+  running through today. Bringing one back is always allowed. An archived one leaves its list
+  (and search) unless staff ask for archived ones, an archived vendor leaves the vendor pickers
+  too, an archived unit is marked on its property's page, and each keeps its history; it moves no
+  money.
 - Contact details (migration 0064, ADR 0005): a tenant's, owner's or vendor's email, phone, other
   phone and mailing address (whole or none), in `trust_contacts`: append-only, the latest row
   for a person holding, naming who recorded it; saving the same details again writes nothing.
@@ -901,7 +931,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`trust_ledger_accounts.deposit_kind`, NULL for the security deposit; one of each kind per tenant
   and trust bank account, always in the security-deposit one), opened by
   `trust_open_deposit_account`. Staff pick the kind on Record deposit (`POST /api/rent/deposits`,
-  `kind`); a pet deposit is refused for a tenant whose only animals are assistance animals. The
+  `kind`), and the security-deposit account when the company has more than one (q036,
+  `bank_account_id`); a pet deposit is refused for a tenant whose only animals are assistance animals. The
   lease shows each kind (`tenants[].deposits`), the register and the return's statement name it,
   a leaving tenant's deposits move to the staying tenant's of the same kind, and
   `trust_return_deposit` keeps from each tenant's security deposit first, then key, then pet.

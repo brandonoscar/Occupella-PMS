@@ -197,6 +197,7 @@ operations = [
 ]
 browser = [
   "features.spec.ts › staff raise a month-to-month rent after a full month's notice, and the tenant sees it coming",
+  "features.spec.ts › staff move a tenant in mid-month on a year's lease and the rent run charges its days, a late fee stops at its cap, and the lease's own terms let its rent change mid-term",
 ]
 
 [[feature]]
@@ -429,6 +430,7 @@ browser = [
   "portal.spec.ts › staff bring a roster in, open an account with its old balances and a check not cleared, sign off and match the opening",
   "features.spec.ts › staff carry over what the old system paid each vendor this year, and the year's vendor payments count it",
   "features.spec.ts › staff carry over the old system's unpaid bills, once, and draws hold them back",
+  "features.spec.ts › staff bring a property's units, tenants, lease and unpaid charges in from files, and open two new trust bank accounts with the owner's balance and the tenant's deposit",
 ]
 
 [[feature]]
@@ -872,4 +874,34 @@ statement = "Staff bring the old system's past lines in at Settings, Import as h
 operations = ["GET /api/history"]
 browser = [
   "features.spec.ts › staff bring the old system's tenant, owner and vendor history in once, and read it under Before the switch on each page",
+]
+
+[[feature]]
+id = "assistance-compliance"
+statement = "Staff keep an assisted lease in compliance on its page: the household's income certifications (move-in, annual, interim; due again a year on, an interim one keeping the due day before it) and the home's inspections for its housing authority (passed, due again two years on; failed, with the day to pass a reinspection by), each saying where it stands today, and the Housing assistance compliance report lists every lease with assistance in force on a day that way, never printing income (migration 0108, the founder's review q143)."
+operations = [
+  "POST /api/assistance/leases/{lease_id}/certifications",
+  "POST /api/assistance/leases/{lease_id}/inspections",
+]
+browser = [
+  "features.spec.ts › staff record an assisted household's annual certification and a failed inspection, and the compliance report says where each stands",
+]
+
+[[feature]]
+id = "property-addresses"
+statement = "Staff keep a property's street address on its page (whole: street, maybe a building or unit, city, a state's USPS code and ZIP code; the same again writes nothing), find it on a map with the server's geocoder (PMS_GEOCODER: the Census Bureau's, or the fake one for development and CI), sending the property's address alone, and open OpenStreetMap at the point; the Properties list shows each address and finds a property by it, as the search bar does; a new address is found again (migration 0109)."
+operations = [
+  "POST /api/properties/{property_id}/address",
+  "POST /api/properties/{property_id}/locate",
+]
+browser = [
+  "features.spec.ts › staff add Cedar House's street address, find it on a map, find it by its street, and a new address is found again",
+]
+
+[[feature]]
+id = "vendor-archive"
+statement = "Staff archive a vendor with nothing open with them, after a question: they leave the Vendors list (Status, Archived lists them), the work order and bill pickers and search, and keep their history; a vendor with a bill not paid, money set aside, a work order last assigned to them still open or a recurring bill or job running stays, the refusal saying why; staff bring one back (migration 0110, the founder's review q131)."
+operations = ["POST /api/vendors/{vendor_id}/archive"]
+browser = [
+  "features.spec.ts › staff archive a vendor with nothing open, who leaves the list, the work order picker and search, keep one with a bill not paid, and bring the first back",
 ]

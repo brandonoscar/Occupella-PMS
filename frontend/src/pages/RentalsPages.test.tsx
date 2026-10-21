@@ -31,9 +31,12 @@ const ME: Me = {
 
 const ROWS: Paged<PropertyRow> = {
   items: [
-    { id: "p1", name: "Property 1", owners: ["Owner 1", "Owner 2"], units: 5, occupied: 4, archived: false },
-    { id: "p2", name: "Property 2", owners: ["Owner 3"], units: 2, occupied: 0, archived: false },
-    { id: "p3", name: "Property 3", owners: [], units: 0, occupied: 0, archived: false },
+    {
+      id: "p1", name: "Property 1", address: "100 Synthetic Way, Demo City, CA 00001", owners: ["Owner 1", "Owner 2"],
+      units: 5, occupied: 4, archived: false,
+    },
+    { id: "p2", name: "Property 2", address: null, owners: ["Owner 3"], units: 2, occupied: 0, archived: false },
+    { id: "p3", name: "Property 3", address: null, owners: [], units: 0, occupied: 0, archived: false },
   ],
   total: 3,
   page: 1,
@@ -50,6 +53,9 @@ const PROPERTY: Property = {
   id: "p1",
   name: "Property 1",
   archived: false,
+  address: null,
+  location: null,
+  can_locate: true,
   owners: [{
     owner_id: "o1", owner: "Owner 1", account: "a1", bank_account: "Operating 1", balance: "2400.00",
     agreement: {
@@ -120,11 +126,11 @@ describe("PropertiesPage", () => {
 
     const first = await screen.findByRole("row", { name: "Property 1" });
     expect(within(first).getAllByRole("cell").map((c) => c.textContent)).toEqual([
-      "Property 1", "Owner 1, Owner 2", "4 of 5 occupied",
+      "Property 1", "100 Synthetic Way, Demo City, CA 00001", "Owner 1, Owner 2", "4 of 5 occupied",
     ]);
     expect(within(first).getByRole("link", { name: "Property 1" }).getAttribute("href")).toBe("/properties/p1");
-    expect(within(screen.getByRole("row", { name: "Property 2" })).getAllByRole("cell")[2]?.textContent).toBe("Vacant");
-    expect(within(screen.getByRole("row", { name: "Property 3" })).getAllByRole("cell")[2]?.textContent).toBe("No units");
+    expect(within(screen.getByRole("row", { name: "Property 2" })).getAllByRole("cell")[3]?.textContent).toBe("Vacant");
+    expect(within(screen.getByRole("row", { name: "Property 3" })).getAllByRole("cell")[3]?.textContent).toBe("No units");
     fireEvent.click(screen.getByRole("button", { name: "Add property" }));
     expect(screen.getByRole("dialog", { name: "Add property" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Close" }));

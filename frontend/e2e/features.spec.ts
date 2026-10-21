@@ -293,6 +293,59 @@ test("staff charge this month's rent and its late fees, and the Dashboard shows 
   } else {
     await expect(page.getByRole("region", { name: "Late rent" })).toHaveCount(0);
   }
+
+  // A payment pays rent first, then the monthly charges, then other fees: Birch Flats Unit A owes
+  // a key fee from last month, older than its rent, yet $1,415.00 pays all its rent and $20.00 of
+  // its pet rent, and the key fee waits.
+  const lastMonthEnd = new Date(Date.UTC(Number(today().slice(0, 4)), Number(today().slice(5, 7)) - 1, 0))
+    .toISOString()
+    .slice(0, 10);
+  const unitA = await openLease(page, "Birch Flats, Unit A");
+  const charge = await leasePanel(page, "Enter charge");
+  await charge.getByLabel("Add a").selectOption("fee");
+  await charge.getByLabel("Amount", { exact: true }).fill("25.00");
+  await charge.getByLabel("Due on").fill(lastMonthEnd);
+  await charge.getByLabel("What for").fill("Key replacement");
+  await charge.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(unitA).toContainText("Fee of $25.00 added.");
+  const paying = await leasePanel(page, "Receive payment");
+  await paying.getByLabel("Payment received").fill("1415.00");
+  await paying.getByLabel("Check or reference").fill("Check 7001");
+  await paying.getByRole("button", { name: "Record payment" }).click();
+  await expect(unitA).toContainText("$1,415.00 paid what is owed.");
+  const open = unitA.getByRole("list", { name: "Open charges" });
+  await expect(open).toContainText(`${us(lastMonthEnd)} Key replacement: $25.00 open`);
+  await expect(open).toContainText(`Pet rent due ${firstOfThisMonth()}: $15.00 open of $35.00`);
+  await expect(open).not.toContainText(`Rent due ${firstOfThisMonth()}`);
+  await expect(open.getByRole("listitem")).toHaveCount(late ? 3 : 2);
+
+  // Aspen Row Unit 1 pays the rest of what it owes, so the rent roll's Owing list leaves it out,
+  // narrowed to a property with the picker; the Delinquency report on screen narrows the same way.
+  await openLease(page, "Aspen Row, Unit 1");
+  const rest = await leasePanel(page, "Receive payment");
+  await rest.getByLabel("Payment received").fill(late ? "1130.00" : "1080.00");
+  await rest.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.getByTestId("balance-due")).toHaveText("$0.00");
+  await section(page, "Rent roll");
+  await page.getByRole("combobox", { name: "Status" }).selectOption({ label: "Owing" });
+  const rows = page.getByRole("table").getByRole("row");
+  await expect(rows).toHaveCount(6);
+  await expect(lease("Aspen Row, Unit 1")).toHaveCount(0);
+  await expect(lease("Birch Flats, Unit A").getByTestId("balance")).toHaveText(late ? "$90.00" : "$40.00");
+  const shown = page.getByRole("combobox", { name: "Properties shown" });
+  await shown.selectOption({ label: "Aspen Row" });
+  await expect(page.getByTestId("empty-state")).toContainText("No leases found.");
+  await shown.selectOption({ label: "Birch Flats" });
+  await expect(rows).toHaveCount(3);
+  await section(page, "Reports");
+  await page.getByRole("list", { name: "Rentals" }).getByRole("link", { name: "Delinquency" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Delinquency" })).toBeVisible();
+  const delinquency = page.getByRole("table", { name: "Delinquency" });
+  await expect(delinquency).toContainText("Unit A");
+  await expect(delinquency).toContainText("Unit B");
+  await expect(delinquency).not.toContainText("Elm Court");
+  await page.getByRole("combobox", { name: "Properties shown" }).selectOption({ label: "All properties" });
+  await expect(delinquency).toContainText("Elm Court");
 });
 
 test("staff find a property, rename it and a unit, archive a vacant unit but not a property with a lease, and search for a tenant", async ({
@@ -571,6 +624,14 @@ test("staff open a work order with its details, schedule its vendor (not one who
   await page.getByRole("combobox", { name: "Status" }).selectOption({ label: "Scheduled" });
   await expect(page.getByRole("table").getByRole("row")).toHaveCount(2);
   await expect(latch).toContainText("Scheduled");
+  // Narrowed to one property: Aspen Row's keeps it, Birch Flats' has none scheduled.
+  const shown = page.getByRole("combobox", { name: "Properties shown" });
+  await shown.selectOption({ label: "Aspen Row" });
+  await expect(latch).toBeVisible();
+  await shown.selectOption({ label: "Birch Flats" });
+  await expect(page.getByTestId("empty-state")).toContainText("No work orders found.");
+  await shown.selectOption({ label: "All properties" });
+  await expect(latch).toBeVisible();
 
   // The vendor's page lists it and the bill; the vendor is renamed there.
   await section(page, "Vendors");
@@ -751,13 +812,16 @@ test("staff add a fee, a credit and a monthly charge to a lease, take a deposit 
   const received = lease.getByRole("table", { name: "Payments received" });
   await expect(received.getByRole("row", { name: /Check 501/ })).toContainText("$100.00");
 
-  // A payment when nothing is owed is all prepaid rent; it is listed, and it can bounce.
+  // A payment when nothing is owed is all prepaid rent; it is listed with how it came (a money
+  // order here), and it can bounce.
   pay = await leasePanel(page, "Receive payment");
   await pay.getByLabel("Payment received").fill("50.00");
-  await pay.getByLabel("Check or reference").fill("Check 503");
+  await pay.getByLabel("Method").selectOption({ label: "Money order" });
+  await pay.getByLabel("Check or reference").fill("MO 503");
   await pay.getByRole("button", { name: "Record payment" }).click();
   await expect(lease).toContainText("$50.00 held as prepaid rent.");
-  const prepaidOnly = received.getByRole("row", { name: /Check 503/ });
+  const prepaidOnly = received.getByRole("row", { name: /MO 503/ });
+  await expect(prepaidOnly).toContainText("Money order · MO 503");
   await expect(prepaidOnly).toContainText("$50.00");
   await prepaidOnly.getByRole("button", { name: /^Actions for / }).click();
   await page.getByRole("menuitem", { name: "It bounced" }).click();
@@ -1017,6 +1081,27 @@ test("staff take the month's management fees once, find no leasing fee due, and 
   await payOwner(page, "Demo Owner B", "Aspen Row");
   await expect(page.getByRole("main")).toContainText("1 payout of $200.00 recorded, by EFT.");
   await expect(aspen.getByRole("cell").nth(6)).toHaveText("$0.00");
+
+  // Several owners at once: money comes in for Aspen Row and Elm Court, the box at the top chooses
+  // every owner with money available, and Pay records both payouts by check, all or none.
+  await recordContribution(page, "Demo Owner B", "Aspen Row", "150.00");
+  await recordContribution(page, "Demo Owner A", "Elm Court", "400.00");
+  await section(page, "Pay owners");
+  await page.getByLabel("Choose every owner with money available").check();
+  const choice = (name: string) => page.getByRole("checkbox", { name: `Pay ${name}`, exact: true });
+  await expect(choice("Demo Owner B, Aspen Row")).toBeChecked();
+  await expect(choice("Demo Owner A, Elm Court")).toBeChecked();
+  await expect(choice("Demo Owner A, Birch Flats")).not.toBeChecked();
+  // Each pays everything available unless an amount is typed: Elm Court pays $300.00 of it.
+  const elm = page.getByRole("row", { name: "Demo Owner A, Elm Court", exact: true });
+  const elmAvailable = Number(((await elm.getByRole("cell").nth(6).textContent()) ?? "").replace(/[$,]/g, ""));
+  await elm.getByLabel("Amount to pay Demo Owner A, Elm Court").fill("300.00");
+  await page.getByLabel("Sent by").selectOption({ label: "Check" });
+  await page.getByRole("button", { name: "Pay $450.00" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByRole("main")).toContainText("2 payouts of $450.00 recorded, by check.");
+  await expect(aspen.getByRole("cell").nth(6)).toHaveText("$0.00");
+  await expect(elm.getByRole("cell").nth(6)).toHaveText(DOLLARS.format(elmAvailable - 300));
 });
 
 test("only staff holding a role do its work: an admin grants pay-out and adds staff, staff sign in again with their code, and a disabled login is signed out for good", async ({
@@ -2157,6 +2242,85 @@ test("staff raise a month-to-month rent after a full month's notice, and the ten
   await tenant.close();
 });
 
+test("staff move a tenant in mid-month on a year's lease and the rent run charges its days, a late fee stops at its cap, and the lease's own terms let its rent change mid-term", async ({
+  page,
+}) => {
+  const people = seed.features["rent-terms"]!;
+  await joinAsStaff(page, people.manager);
+
+  // Birch Flats' late fees from this month: no grace, $25.00 and 10% of what is unpaid, up to
+  // $60.00 (the cap a state's law may set; the PMS knows none, so staff type it).
+  await openProperty(page, "Birch Flats");
+  const fees = await setupPanel(page, "Set late fees");
+  await fees.getByLabel("Late fees from").fill(firstOfThisMonth());
+  await fees.getByLabel("Grace days").fill("0");
+  await fees.getByLabel("Flat fee").fill("25.00");
+  await fees.getByLabel("Percent of unpaid").fill("10");
+  await fees.getByLabel("Up to").fill("60.00");
+  await fees.getByRole("button", { name: "Set late fees" }).click();
+  await expect(page.getByTestId("late-fees")).toContainText(
+    /After 0 days' grace: \$25\.00 and 10(\.0+)?% of what is unpaid, up to \$60\.00/,
+  );
+
+  // A year's lease on Aspen Row's vacant unit, from the 16th of this month.
+  const [year, month] = today().split("-") as [string, string];
+  const starts = `${year}-${month}-16`;
+  const ends = `${Number(year) + 1}-${month}-15`;
+  const days = new Date(Date.UTC(Number(year), Number(month), 0)).getUTCDate();
+  const firstPart = DOLLARS.format(Math.round((124000 * (days - 15)) / days) / 100);
+  await openProperty(page, "Aspen Row");
+  await page.getByRole("row", { name: "Unit 2" }).getByRole("link", { name: "Unit 2" }).click();
+  const adding = await setupPanel(page, "Add lease in place", "Add lease");
+  await adding.getByLabel("Tenant's name").fill("Avery Sample");
+  await adding.getByRole("button", { name: "Add tenant" }).click();
+  await expect(adding.getByLabel("Avery Sample")).toBeChecked();
+  await adding.getByLabel("Starts").fill(starts);
+  await adding.getByLabel("Ends (empty for month to month)").fill(ends);
+  await adding.getByLabel("Rent a month").fill("1240.00");
+  await adding.getByRole("button", { name: "Add lease" }).click();
+  await expect(page.getByRole("row", { name: "Avery Sample" })).toContainText(`${us(starts)} – ${us(ends)}`);
+
+  // The month's run charges the six leases in effect and the new one its days from the 16th, due
+  // that day; Birch Flats' rents are late from the 2nd, each fee capped at $60.00.
+  await section(page, "Rent roll");
+  await page.getByRole("button", { name: "Actions for the rent roll" }).click();
+  await page.getByRole("menuitem", { name: "Run rent now" }).click();
+  const run = page.getByRole("dialog", { name: "Run rent now" });
+  await run.getByLabel("Late fees as of").fill(today());
+  await run.getByRole("button", { name: "Run rent now" }).click();
+  await expect(run).toHaveCount(0);
+  await expect(page.getByRole("main")).toContainText(/7 rents, 1 recurring charge and \d+ late fees? charged\./);
+  const unitB = await openLease(page, "Birch Flats, Unit B");
+  const lateFee = `Late fee, rent due ${firstOfThisMonth()}`;
+  if (dayOfMonth() > 1) {
+    await expect(unitB.getByRole("list", { name: "Open charges" })).toContainText(`${lateFee}: $60.00 open`);
+  } else {
+    await expect(unitB.getByRole("list", { name: "Open charges" })).not.toContainText(lateFee);
+  }
+  await section(page, "Rent roll");
+  await page.getByRole("combobox", { name: "Status" }).selectOption({ label: "All" });
+  await page.getByRole("row", { name: "Aspen Row, Unit 2", exact: true }).getByRole("link", { name: "Unit 2", exact: true }).click();
+  const yearLease = page.getByRole("main");
+  await expect(page.getByRole("heading", { level: 1, name: /^Aspen Row · Unit 2 · / })).toBeVisible();
+  await expect(yearLease.getByRole("list", { name: "Open charges" })).toContainText(
+    `${us(starts)} Rent due ${starts}, ${starts} to ${year}-${month}-${days} (${days - 15} of ${days} days): ${firstPart} open`,
+  );
+
+  // Mid-term, the rent changes only as the lease's own terms allow, which staff name with it.
+  const change = await leasePanel(page, "Change rent");
+  const from = dayOfMonth() === 1 ? firstOfMonthsAgo(-1) : firstOfMonthsAgo(-2);
+  await change.getByLabel("New monthly rent").fill("1290.00");
+  await change.getByLabel("From (the first of a month)").fill(from);
+  await change.getByLabel("Served").selectOption("in person");
+  await change.getByLabel("The lease term that allows it").fill("Section 4: one increase a year, on a month's notice");
+  await change.getByRole("button", { name: "Change rent" }).click();
+  await expect(change).toHaveCount(0);
+  await expect(yearLease).toContainText(`Rent of $1,290.00 a month from ${us(from)} recorded.`);
+  await expect(yearLease.getByRole("list", { name: "Rent changes, Unit 2" })).toHaveText(
+    `From ${us(from)}: $1,290.00 a month (notice in person on ${us(today())}; Section 4: one increase a year, on a month's notice)`,
+  );
+});
+
 test("staff require renters insurance on a lease, Today flags it, the tenant records their own policy and staff its renewal", async ({
   browser,
   page,
@@ -2902,6 +3066,174 @@ test("staff add a housing authority, set a lease's assistance, charge and credit
   ]);
 });
 
+test("staff record an assisted household's annual certification and a failed inspection, and the compliance report says where each stands", async ({
+  page,
+}) => {
+  const people = seed.features["assistance-compliance"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Housing authorities");
+  await page.getByRole("button", { name: "Add housing authority" }).click();
+  const add = page.getByRole("dialog", { name: "Add housing authority" });
+  await add.getByLabel("Housing authority's name").fill("Demo Housing Authority");
+  await add.getByRole("button", { name: "Add housing authority" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Demo Housing Authority" })).toBeVisible();
+
+  // Assistance from next month; nothing to certify or inspect for until it is on file.
+  await openLease(page, "Birch Flats, Unit A");
+  const card = part(page, "Housing assistance");
+  await expect(card.getByRole("button", { name: "Record certification" })).toHaveCount(0);
+  await card.getByRole("button", { name: "Set housing assistance" }).click();
+  const terms = page.getByRole("dialog", { name: "Set housing assistance" });
+  const from = await terms.getByLabel("From (the first of a month)").inputValue();
+  await terms.getByLabel("The authority pays each month").fill("800.00");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await terms.getByRole("button", { name: "Save assistance" }).click();
+  await expect(page.getByText(`The housing authority pays $800.00 a month from ${us(from)}.`)).toBeVisible();
+  await expect(card.getByTestId("recertification")).toHaveText("none on fileNo income certification on file");
+
+  // This year's certification, due again a year on.
+  await card.getByRole("button", { name: "Record certification" }).click();
+  const certification = page.getByRole("dialog", { name: "Record an income certification" });
+  await certification.getByLabel("Kind").selectOption("annual");
+  await certification.getByLabel("Takes effect").fill(today());
+  await certification.getByLabel("People in the household").fill("3");
+  await certification.getByLabel("Annual income").fill("24000.00");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await certification.getByRole("button", { name: "Record certification" }).click();
+  await expect(page.getByText(`Annual certification from ${us(today())} recorded.`)).toBeVisible();
+  const due = `${Number(today().slice(0, 4)) + 1}${today().slice(4)}`.replace(/-02-29$/, "-02-28");
+  await expect(card.getByTestId("recertification")).toHaveText(`currentRecertify by ${us(due)}`);
+
+  // Today's inspection failed; the home must pass a reinspection within 45 days.
+  await card.getByRole("button", { name: "Record inspection" }).click();
+  const inspection = page.getByRole("dialog", { name: "Record an inspection" });
+  await inspection.getByLabel("Inspected on").fill(today());
+  await inspection.getByLabel("Result").selectOption("failed");
+  await inspection.getByLabel("Must pass a reinspection by").fill(daysFromToday(45));
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await inspection.getByRole("button", { name: "Record inspection" }).click();
+  await expect(page.getByText(`Inspection on ${us(today())} recorded: failed.`)).toBeVisible();
+  await expect(card.getByTestId("inspection")).toHaveText(`failed, reinspection dueInspect by ${us(daysFromToday(45))}`);
+  await expect(card.getByRole("table", { name: "Inspections" })).toContainText("Demo Housing Authority");
+
+  // The report, as of the first day of the assistance: days and words, never the household's income.
+  await section(page, "Reports");
+  await page.getByRole("list", { name: "Compliance" }).getByRole("link", { name: "Housing assistance compliance" }).click();
+  await page.getByLabel("As of").fill(from);
+  const report = page.getByRole("table", { name: "Housing assistance compliance" });
+  const row = report.getByRole("row").filter({ hasText: "Unit A" });
+  await expect(row).toContainText(`annual ${us(today())}`);
+  await expect(row).toContainText("failed, reinspection due");
+  await expect(report).toContainText("0 to certify now, 0 within 120 days");
+  await expect(report).not.toContainText("24,000");
+  const href = (await page.getByRole("link", { name: "CSV", exact: true }).getAttribute("href")) ?? "";
+  const csv = await (await page.request.get(href)).text();
+  expect(csv).toContain(`${due},current,failed ${us(today())},${daysFromToday(45)},"failed, reinspection due"`);
+  expect(csv).not.toContain("24000");
+});
+
+test("staff add Cedar House's street address, find it on a map, find it by its street, and a new address is found again", async ({
+  page,
+}) => {
+  const people = seed.features["property-addresses"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Properties");
+  await page.getByRole("row", { name: "Cedar House", exact: true }).getByRole("link", { name: "Cedar House" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Cedar House" })).toBeVisible();
+  const card = part(page, "Address");
+  await expect(card).toContainText("No address yet.");
+
+  await card.getByRole("button", { name: "Add address" }).click();
+  const add = page.getByRole("dialog", { name: "Add address" });
+  await add.getByLabel("Street").fill("100 Synthetic Way");
+  await add.getByLabel("City").fill("Demo City");
+  await add.getByLabel("State (two letters)").fill("ca");
+  await add.getByLabel("ZIP code").fill("00001");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await add.getByRole("button", { name: "Save address" }).click();
+  await expect(page.getByText("Address saved.")).toBeVisible();
+  await expect(card.getByTestId("property-address")).toHaveText("100 Synthetic WayDemo City, CA 00001");
+  await expect(card).toContainText("Not found on a map yet.");
+
+  // The fake geocoder calls nothing; the link opens OpenStreetMap at its point.
+  await card.getByRole("button", { name: "Find on map" }).click();
+  await expect(page.getByText("Found on the map.")).toBeVisible();
+  await expect(card.getByTestId("property-location")).toContainText("as the geocoder matched it: 100 SYNTHETIC WAY, DEMO CITY, CA 00001.");
+  await expect(card.getByRole("link", { name: "Open in OpenStreetMap" })).toHaveAttribute(
+    "href", /^https:\/\/www\.openstreetmap\.org\/\?mlat=-?\d+\.\d{6}&mlon=-?\d+\.\d{6}#map=17\//,
+  );
+
+  // The list shows it, and the search bar finds the property by its street.
+  await section(page, "Properties");
+  await expect(page.getByRole("row", { name: "Cedar House", exact: true })).toContainText("100 Synthetic Way, Demo City, CA 00001");
+  const search = page.getByLabel("Search people, homes, bills, work orders and files");
+  await search.fill("synthetic way");
+  await expect(page.getByRole("list", { name: "Search results" })).toContainText("100 Synthetic Way, Demo City, CA 00001");
+  await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Cedar House/ }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Cedar House" })).toBeVisible();
+
+  // A new address isn't where the old one was until it is found.
+  await card.getByRole("button", { name: "Edit address" }).click();
+  const edit = page.getByRole("dialog", { name: "Edit address" });
+  await edit.getByLabel("Street").fill("200 Example Street");
+  await edit.getByLabel("Building or unit (optional)").fill("Building B");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await edit.getByRole("button", { name: "Save address" }).click();
+  await expect(card.getByTestId("property-address")).toHaveText("200 Example StreetBuilding BDemo City, CA 00001");
+  await expect(card.getByTestId("property-location")).toHaveCount(0);
+  await expect(card).toContainText("Not found on a map yet.");
+});
+
+test("staff archive a vendor with nothing open, who leaves the list, the work order picker and search, keep one with a bill not paid, and bring the first back", async ({
+  page,
+}) => {
+  const people = seed.features["vendor-archive"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Vendors");
+  await page.getByRole("button", { name: "Add vendor" }).click();
+  const adding = page.getByRole("dialog", { name: "Add vendor" });
+  await adding.getByLabel("Vendor's name").fill("Demo Painting Co");
+  await adding.getByRole("button", { name: "Add vendor" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Demo Painting Co" })).toBeVisible();
+
+  // Nothing open with them: archived, after a question.
+  await chooseAction(page, "Demo Painting Co", "Archive");
+  await expect(page.getByText("Archived", { exact: true })).toBeVisible();
+  await section(page, "Vendors");
+  await expect(page.getByRole("row", { name: "Demo Painting Co", exact: true })).toHaveCount(0);
+  await page.getByRole("combobox", { name: "Status" }).selectOption("archived");
+  await expect(page.getByRole("row", { name: "Demo Painting Co", exact: true })).toBeVisible();
+  const search = page.getByLabel("Search people, homes, bills, work orders and files");
+  await search.fill("painting");
+  await expect(page.getByRole("list", { name: "Search results" })).toHaveCount(0);
+  await search.fill("");
+
+  // Work orders don't offer them.
+  await section(page, "Work orders");
+  const vendors = page.getByRole("combobox", { name: "Vendor", exact: true });
+  await expect(vendors.locator("option", { hasText: "Demo Plumbing Co" })).toHaveCount(1);
+  await expect(vendors.locator("option", { hasText: "Demo Painting Co" })).toHaveCount(0);
+
+  // A vendor with a bill not paid stays, and the refusal says why in words.
+  await section(page, "Bills");
+  await recordBill(page, "Demo Plumbing Co", "Demo Owner A, Birch Flats", "PLB-9001", "120.00", "Drain");
+  await section(page, "Vendors");
+  await page.getByRole("row", { name: "Demo Plumbing Co", exact: true }).getByRole("link").click();
+  await chooseAction(page, "Demo Plumbing Co", "Archive");
+  await expect(page.getByRole("alert")).toHaveText(
+    "Demo Plumbing Co has a bill not paid; pay or decline it before archiving",
+  );
+
+  // Brought back, they are on the list again.
+  await section(page, "Vendors");
+  await page.getByRole("combobox", { name: "Status" }).selectOption("archived");
+  await page.getByRole("row", { name: "Demo Painting Co", exact: true }).getByRole("link").click();
+  await chooseAction(page, "Demo Painting Co", "Bring back");
+  await expect(page.getByText("Archived", { exact: true })).toHaveCount(0);
+  await section(page, "Vendors");
+  await expect(page.getByRole("row", { name: "Demo Painting Co", exact: true })).toBeVisible();
+});
+
 test("staff bill last month's water back to Birch Flats' leases by unit, the owner keeping 10% and what isn't billed", async ({
   page,
 }) => {
@@ -3553,6 +3885,77 @@ test("staff approve last December in each trust bank account, close the year, an
   await charge.getByLabel("Due on").fill(today());
   await charge.getByRole("button", { name: "Add", exact: true }).click();
   await expect(lease).toContainText("Fee of $25.00 added.");
+});
+
+test("staff bring a property's units, tenants, lease and unpaid charges in from files, and open two new trust bank accounts with the owner's balance and the tenant's deposit", async ({
+  page,
+}) => {
+  const people = seed.features["switching-balances"]!;
+  await joinAsStaff(page, people.manager);
+  // Two trust bank accounts with nothing in them yet, one of each kind.
+  for (const [holds, name] of [
+    ["Operating: rent and owners' money", "Harbor operating trust account"],
+    ["Security deposits", "Harbor deposit account"],
+  ] as const) {
+    await section(page, "Banking");
+    await page.getByRole("button", { name: "Add bank account" }).click();
+    const adding = page.getByRole("dialog", { name: "Add bank account" });
+    await adding.getByLabel("Holds").selectOption({ label: holds });
+    await adding.getByLabel("Bank account name").fill(name);
+    await adding.getByRole("button", { name: "Add bank account" }).click();
+    await expect(page.getByRole("heading", { level: 1, name })).toBeVisible();
+  }
+
+  // The roster, a file at a time; sent again, a file adds nothing twice.
+  await settings(page, "Import from another PMS");
+  const roster = part(page, "Bring the roster in");
+  const bring = async (label: string, csv: string, said: string) => {
+    await roster.getByRole("combobox", { name: "File of" }).selectOption({ label });
+    await roster.getByLabel("CSV file").setInputFiles({ name: "roster.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+    await roster.getByRole("button", { name: "Import" }).click();
+    await expect(roster).toContainText(said);
+  };
+  const started = firstOfMonthsAgo(3);
+  const owed = firstOfMonthsAgo(1);
+  await bring("Properties and their owners",
+    "Property,Owner,Bank account\nHarbor View,Demo Owner B,Harbor operating trust account\n", "1 added.");
+  const units = "Property,Unit\nHarbor View,Unit 1\nHarbor View,Unit 2\nHarbor View,Unit 3\n";
+  await bring("Units", units, "3 added.");
+  await bring("Units", units, "0 added; 3 already here.");
+  await bring("Tenants", "Property,Tenant\nHarbor View,Reese Sample\nHarbor View,Rowan Sample\n", "2 added.");
+  await bring("Leases in place",
+    `Property,Unit,Tenants,Starts on,Monthly rent\nHarbor View,Unit 1,Reese Sample,${started},975.00\n`,
+    "1 added; 1 already here.");
+  await bring("Unpaid charges",
+    "Property,Unit,Due on,Amount,Kind,Memo\n"
+      + `Harbor View,Unit 1,${owed},975.00,rent,\n`
+      + `Harbor View,Unit 1,${owed},40.00,fee,Late fee from the old system\n`,
+    "2 added.");
+
+  // Each new account opens with what it held at the start of this month: the owner's money in the
+  // operating one, the tenant's deposit in the deposit one.
+  const open = async (account: string, cash: string, csv: string) => {
+    const card = part(page, `Cutover: ${account}`);
+    await card.getByLabel("Cutover date").fill(firstOfThisMonth());
+    await card.getByLabel("Old system's book cash").fill(cash);
+    await card.getByLabel("Opening balances (CSV)").setInputFiles({ name: "balances.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+    await card.getByRole("button", { name: "Open with balances" }).click();
+    await expect(card).toContainText("Opened with 1 balance.");
+  };
+  await open("Harbor operating trust account", "1500.00", "Kind,Owner,Property,Amount\nowner,Demo Owner B,Harbor View,1500.00\n");
+  await open("Harbor deposit account", "975.00", "Kind,Property,Tenant,Amount\ndeposit,Harbor View,Reese Sample,975.00\n");
+
+  // The property has its three units; the lease holds the deposit and owes what was unpaid; the
+  // owner holds the balance.
+  await openProperty(page, "Harbor View");
+  for (const unit of ["Unit 1", "Unit 2", "Unit 3"]) await expect(page.getByRole("row", { name: unit })).toBeVisible();
+  const lease = await openLease(page, "Harbor View, Unit 1");
+  await expect(lease.getByTestId("deposit-held")).toHaveText("$975.00");
+  await expect(lease.getByTestId("balance-due")).toHaveText("$1,015.00");
+  const charges = lease.getByRole("list", { name: "Open charges" });
+  await expect(charges).toContainText(`${us(owed)} Rent: $975.00 open`);
+  await expect(charges).toContainText(`${us(owed)} Late fee from the old system: $40.00 open`);
+  await expect((await ownerProperty(page, "Demo Owner B", "Harbor View")).getByRole("cell").nth(2)).toHaveText("$1,500.00");
 });
 
 test("staff bring the old system's tenant, owner and vendor history in once, and read it under Before the switch on each page", async ({

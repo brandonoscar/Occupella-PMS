@@ -73,23 +73,34 @@ describe("VendorsPage", () => {
 
   it("goes a page at a time", async () => {
     const fetch = server({
-      "/api/vendors?page=1": { ...PAGE, total: 51 },
-      "/api/vendors?page=2": { ...PAGE, items: [ROWS[1]], page: 2, total: 51 },
+      "/api/vendors?page=1&archived=false": { ...PAGE, total: 51 },
+      "/api/vendors?page=2&archived=false": { ...PAGE, items: [ROWS[1]], page: 2, total: 51 },
     });
     render(<VendorsPage me={ME} />);
     await screen.findByRole("row", { name: "Vendor 1" });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await vi.waitFor(() => expect(screen.queryByRole("row", { name: "Vendor 1" })).toBeNull());
-    expect(fetch.mock.calls.map(([p]) => p)).toEqual(["/api/vendors?page=1", "/api/vendors?page=2"]);
+    expect(fetch.mock.calls.map(([p]) => p)).toEqual(["/api/vendors?page=1&archived=false", "/api/vendors?page=2&archived=false"]);
+  });
+
+  it("lists the archived vendors when asked, from their first page", async () => {
+    const fetch = server({ "/api/vendors?page=1&archived=true": { ...PAGE, items: [], total: 0 } });
+    render(<VendorsPage me={ME} />);
+    await screen.findByRole("row", { name: "Vendor 1" });
+
+    fireEvent.change(screen.getByRole("combobox", { name: "Status" }), { target: { value: "archived" } });
+
+    expect(await screen.findByText("No archived vendors.")).toBeTruthy();
+    expect(fetch.mock.calls.map(([p]) => p)).toEqual(["/api/vendors?page=1&archived=false", "/api/vendors?page=1&archived=true"]);
   });
 
   it("shows the page of vendors asked for now, even when an earlier page's answer comes back last", async () => {
     server({
-      "/api/vendors?page=1": { ...PAGE, items: [ROWS[0]], total: 151 },
-      "/api/vendors?page=2": { ...PAGE, items: [ROWS[1]], page: 2, total: 151 },
-      "/api/vendors?page=3": { ...PAGE, items: [{ ...ROWS[0], id: "v3", name: "Vendor 3" }], page: 3, total: 151 },
+      "/api/vendors?page=1&archived=false": { ...PAGE, items: [ROWS[0]], total: 151 },
+      "/api/vendors?page=2&archived=false": { ...PAGE, items: [ROWS[1]], page: 2, total: 151 },
+      "/api/vendors?page=3&archived=false": { ...PAGE, items: [{ ...ROWS[0], id: "v3", name: "Vendor 3" }], page: 3, total: 151 },
     });
-    const release = holdBack((path) => path === "/api/vendors?page=3");
+    const release = holdBack((path) => path === "/api/vendors?page=3&archived=false");
     render(<VendorsPage me={ME} />);
     await screen.findByRole("row", { name: "Vendor 1" });
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
@@ -126,7 +137,7 @@ describe("VendorsPage", () => {
   });
 
   it("says why a vendor was refused, when there are none, and when they can't be read", async () => {
-    server({ "/api/vendors?page=1": { ...PAGE, items: [], total: 0 } }, "check what you entered and try again");
+    server({ "/api/vendors?page=1&archived=false": { ...PAGE, items: [], total: 0 } }, "check what you entered and try again");
     render(<VendorsPage me={ME} />);
     expect((await screen.findByTestId("empty-state")).textContent).toContain("No vendors yet");
     fireEvent.click(screen.getByRole("button", { name: "Add vendor" }));

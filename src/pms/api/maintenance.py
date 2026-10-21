@@ -198,8 +198,10 @@ def staff_requests(
 
 @router.get("/vendors")
 def vendors(session: Staff, conn: Conn) -> list[Vendor]:
+    """The vendors a work order may be assigned to: those not archived (migration 0110)."""
     rows = conn.execute(
         "SELECT id, display_name FROM trust_vendors WHERE pmc_id = %s"
+        " AND NOT trust_is_archived(NULL, NULL, NULL, NULL, id)"
         ' ORDER BY display_name COLLATE "C", id',
         (session.pmc_id,),
     ).fetchall()
