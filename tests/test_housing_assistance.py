@@ -30,6 +30,7 @@ from helpers import (
     bank_sums,
     charge_rent_due,
     complete_offer,
+    draw_owner,
     end_lease,
     hold_payments,
     make_pmc,
@@ -642,6 +643,8 @@ def test_terms_of_0_charge_no_late_fee_and_terms_are_the_authoritys_on_the_due_d
     assert assess_authority_late_fees(app_conn, pmc.pmc_id, date(2026, 10, 31)) == 0
     with pytest.raises(psycopg.errors.CheckViolation):
         add_authority_late_fee(conn, pmc.pmc_id, authority, NOV_1, 61, "5.00")
+    with pytest.raises(psycopg.errors.InvalidParameterValue, match="as of a day"):
+        assess_authority_late_fees(app_conn, pmc.pmc_id, None)
 
 
 def test_a_late_fee_is_on_a_rents_part_of_the_same_lease_and_authority(conn, pmc, authority):
@@ -732,6 +735,45 @@ def test_a_reversal_moves_the_money_back_the_way_the_payment_came(conn, app_conn
         reverse_assistance_payment(app_conn, pmc.pmc_id, owed, paid, early, "5.00")
     with pytest.raises(psycopg.errors.InvalidParameterValue, match="pays nothing"):
         reverse_assistance_payment(app_conn, pmc.pmc_id, owed, early, early, "5.00")
+
+
+def test_a_reversal_is_of_a_charge_of_the_company_by_a_transfer_back_and_no_more_than_it_moved(
+    conn, app_conn, pmc, authority
+):
+    lease = lease_of(conn, pmc)
+    account = pmc.owners[0].account
+    assist(conn, pmc.pmc_id, lease, authority, OCT_1, "800.00")
+    charge_rent_due(conn, pmc.pmc_id, OCT_1)
+    owed = base_charge(conn, lease)
+    (paid,) = transfer_batch(conn, [(pmc.operating_cash, account, "800.00")], at(date(2026, 10, 3)))
+    apply_assistance_payment(app_conn, pmc.pmc_id, owed, paid, "800.00")
+    (back,) = transfer_batch(conn, [(account, pmc.operating_cash, "1.00")], at(date(2026, 10, 9)))
+    draw_owner(conn, pmc.pmc_id, account, "draw/1", "100.00", at(date(2026, 10, 9)))
+    (drawn,) = conn.execute(
+        "SELECT transfer_id FROM trust_owner_draws WHERE request_key = 'draw/1'"
+    ).fetchone()
+    refused = psycopg.errors.InvalidParameterValue
+
+    with pytest.raises(refused, match="positive amount"):
+        reverse_assistance_payment(app_conn, pmc.pmc_id, owed, paid, back, "0")
+    with pytest.raises(refused, match="no housing authority charge"):
+        reverse_assistance_payment(app_conn, make_pmc(conn).pmc_id, owed, paid, back, "1.00")
+    with pytest.raises(refused, match="no transfer"):
+        reverse_assistance_payment(app_conn, pmc.pmc_id, owed, paid, "no-such-transfer", "1.00")
+    # A draw also moves money from the owner's account to cash, but it paid the owner.
+    with pytest.raises(refused, match="an owner draw"):
+        reverse_assistance_payment(app_conn, pmc.pmc_id, owed, paid, drawn, "1.00")
+    # 1.00 moved back undoes no more than 1.00 of the payment.
+    with pytest.raises(psycopg.errors.CheckViolation, match="moved 1.00 and already reverses 0;"):
+        reverse_assistance_payment(app_conn, pmc.pmc_id, owed, paid, back, "2.00")
+    with app_conn.transaction():
+        app_conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        with pytest.raises(psycopg.errors.InvalidTransactionState, match="READ COMMITTED"):
+            reverse_assistance_payment(app_conn, pmc.pmc_id, owed, paid, back, "1.00")
+        raise psycopg.Rollback()
+
+    assert reverse_assistance_payment(app_conn, pmc.pmc_id, owed, paid, back, "1.00") == 1
+    assert open_of(conn, owed) == Decimal("1.00")
 
 
 def test_an_authority_payment_in_a_payment_hold_is_refused_unless_allowed(
