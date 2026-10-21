@@ -72,6 +72,7 @@ from pms.api import (
     maintenance,
     moveout,
     notes,
+    notice_templates,
     offers,
     outbox,
     owner,
@@ -564,6 +565,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(documents.router)
     app.include_router(company.router)
     app.include_router(notes.router)
+    app.include_router(notice_templates.router)
     app.include_router(emails.router)
     app.include_router(today.router)
     app.include_router(dashboard.router)

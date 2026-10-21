@@ -933,3 +933,20 @@ operations = [
 browser = [
   "features.spec.ts › staff bring in a lockbox's payment file once: lines naming one lease are recorded to it, and staff record or set aside the ones that wait",
 ]
+
+[[feature]]
+id = "notice-templates"
+statement = "Settings, Notice templates (the founder's review q095; migration 0119): staff keep the company's own notices in its own words, with blanks the PMS fills from a lease (tenants, home, rent, balance due, lease days, the notice's day, the company, who made it); a blank it doesn't fill is refused; a name is the company's once; each save is a version, and a removed template stays on the notices made from it. A lease's Files tab writes a notice from one, dated a day staff pick, read filled in before it is made, kept as made and downloaded as a PDF. The PMS checks no state's notice period or wording."
+operations = [
+  "GET /api/notices/templates",
+  "POST /api/notices/templates",
+  "POST /api/notices/templates/{template_id}",
+  "POST /api/notices/templates/{template_id}/remove",
+  "POST /api/notices/preview",
+  "POST /api/notices",
+  "GET /api/notices",
+  "GET /api/notices/{notice_id}/pdf",
+]
+browser = [
+  "features.spec.ts › staff keep the company's own notice templates, make one into a notice for a lease, read it filled in and download its PDF",
+]

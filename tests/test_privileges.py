@@ -262,6 +262,11 @@ TABLES = {
     "trust_payment_file_lines": {"SELECT", "INSERT"},
     "trust_payment_file_postings": {"SELECT", "INSERT"},
     "trust_payment_file_skips": {"SELECT", "INSERT"},
+    # The company's notice templates and the notices made from them (migration 0119).
+    "trust_notice_templates": {"SELECT", "INSERT"},
+    "trust_notice_template_versions": {"SELECT", "INSERT"},
+    "trust_notice_template_removals": {"SELECT", "INSERT"},
+    "trust_notices": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -283,6 +288,8 @@ COLUMN_UPDATES = {
 # their credentials, and rental applicants with their consumer report results, are no business
 # of the role behind Occupella's key.
 AI_NEVER_READS = {
+    # A notice made for a lease, as filled in (migration 0119): like a document's file.
+    "trust_notices",
     "trust_screening_criteria",
     "trust_leads",
     "trust_lead_closings",
@@ -491,6 +498,8 @@ FUNCTIONS = {
     "trust_check_payment_file_lines()": set(),
     "trust_check_payment_file_outcome()": set(),
     "trust_check_payment_file_posting()": set(),
+    "trust_check_notice_template_version()": set(),
+    "trust_lock_notice_templates()": set(),
     # Reports read trust records, so only the app and the AI; they run with the caller's own
     # read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app", "trust_ai_agent"},

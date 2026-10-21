@@ -2965,6 +2965,43 @@ $$;
 
 
 --
+-- Name: trust_check_notice_template_version(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_notice_template_version() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('notice templates ' || NEW.pmc_id::text, 0));
+    IF EXISTS (
+        SELECT 1 FROM trust_notice_template_removals AS r WHERE r.template_id = NEW.template_id
+    ) THEN
+        RAISE EXCEPTION 'trust: notice template % is removed', NEW.template_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM trust_notice_templates AS t
+        CROSS JOIN LATERAL (
+            SELECT v.name FROM trust_notice_template_versions AS v
+            WHERE v.template_id = t.id ORDER BY v.created_at DESC, v.id DESC LIMIT 1
+        ) AS latest
+        WHERE t.pmc_id = NEW.pmc_id AND t.id <> NEW.template_id
+          AND lower(btrim(latest.name)) = lower(btrim(NEW.name))
+          AND NOT EXISTS (
+              SELECT 1 FROM trust_notice_template_removals AS r WHERE r.template_id = t.id
+          )
+    ) THEN
+        RAISE EXCEPTION 'trust: a notice template is named % already', NEW.name
+            USING ERRCODE = 'unique_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_ownership_share_line(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4915,6 +4952,21 @@ BEGIN
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     RETURN v_entry;
+END;
+$$;
+
+
+--
+-- Name: trust_lock_notice_templates(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_lock_notice_templates() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('notice templates ' || NEW.pmc_id::text, 0));
+    RETURN NEW;
 END;
 $$;
 
@@ -14332,6 +14384,68 @@ CREATE TABLE public.trust_notes (
 
 
 --
+-- Name: trust_notice_template_removals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_notice_template_removals (
+    template_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_notice_template_versions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_notice_template_versions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    template_id uuid NOT NULL,
+    name text NOT NULL,
+    body text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_notice_template_versions_body_check CHECK (((body ~ '\S'::text) AND (length(body) <= 20000))),
+    CONSTRAINT trust_notice_template_versions_name_check CHECK (((name ~ '\S'::text) AND (length(name) <= 100)))
+);
+
+
+--
+-- Name: trust_notice_templates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_notice_templates (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_notices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_notices (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    template_version_id uuid NOT NULL,
+    dated_on date NOT NULL,
+    title text NOT NULL,
+    letterhead text NOT NULL,
+    body text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_notices_body_check CHECK (((body ~ '\S'::text) AND (length(body) <= 40000))),
+    CONSTRAINT trust_notices_letterhead_check CHECK (((letterhead ~ '\S'::text) AND (length(letterhead) <= 1000))),
+    CONSTRAINT trust_notices_title_check CHECK (((title ~ '\S'::text) AND (length(title) <= 100)))
+);
+
+
+--
 -- Name: trust_nsf_fee_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17141,6 +17255,54 @@ ALTER TABLE ONLY public.trust_notes
 
 
 --
+-- Name: trust_notice_template_removals trust_notice_template_removals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_template_removals
+    ADD CONSTRAINT trust_notice_template_removals_pkey PRIMARY KEY (template_id);
+
+
+--
+-- Name: trust_notice_template_versions trust_notice_template_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_template_versions
+    ADD CONSTRAINT trust_notice_template_versions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_notice_template_versions trust_notice_template_versions_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_template_versions
+    ADD CONSTRAINT trust_notice_template_versions_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_notice_templates trust_notice_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_templates
+    ADD CONSTRAINT trust_notice_templates_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_notice_templates trust_notice_templates_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_templates
+    ADD CONSTRAINT trust_notice_templates_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_notices trust_notices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notices
+    ADD CONSTRAINT trust_notices_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_nsf_fee_policies trust_nsf_fee_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19264,6 +19426,55 @@ CREATE INDEX trust_notes_vendor ON public.trust_notes USING btree (pmc_id, vendo
 
 
 --
+-- Name: trust_notice_template_removals_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notice_template_removals_recorded_by ON public.trust_notice_template_removals USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_notice_template_versions_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notice_template_versions_recorded_by ON public.trust_notice_template_versions USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_notice_template_versions_template; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notice_template_versions_template ON public.trust_notice_template_versions USING btree (template_id, created_at);
+
+
+--
+-- Name: trust_notice_templates_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notice_templates_recorded_by ON public.trust_notice_templates USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_notices_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notices_lease ON public.trust_notices USING btree (pmc_id, lease_id, created_at);
+
+
+--
+-- Name: trust_notices_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notices_recorded_by ON public.trust_notices USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_notices_version; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notices_version ON public.trust_notices USING btree (pmc_id, template_version_id);
+
+
+--
 -- Name: trust_nsf_fees_policy_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20720,6 +20931,34 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_notice_template_removals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_notice_template_removals FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_notice_template_versions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_notice_template_versions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_notice_templates trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_notice_templates FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_notices trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_notices FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_nsf_fee_policies trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -21931,6 +22170,34 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_note
 
 
 --
+-- Name: trust_notice_template_removals trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_notice_template_removals FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_notice_template_versions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_notice_template_versions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_notice_templates trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_notice_templates FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_notices trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_notices FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_nsf_fee_policies trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22855,6 +23122,20 @@ CREATE TRIGGER trust_no_negative_balance BEFORE INSERT OR UPDATE OF balance ON p
 
 
 --
+-- Name: trust_notice_template_removals trust_notice_template_removal; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_notice_template_removal BEFORE INSERT ON public.trust_notice_template_removals FOR EACH ROW EXECUTE FUNCTION public.trust_lock_notice_templates();
+
+
+--
+-- Name: trust_notice_template_versions trust_notice_template_version; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_notice_template_version BEFORE INSERT ON public.trust_notice_template_versions FOR EACH ROW EXECUTE FUNCTION public.trust_check_notice_template_version();
+
+
+--
 -- Name: trust_leases trust_one_lease_at_a_time; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23160,6 +23441,34 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_management_fee_se
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_notes FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_notice_template_removals trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_notice_template_removals FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_notice_template_versions trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_notice_template_versions FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_notice_templates trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_notice_templates FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_notices trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_notices FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -26348,6 +26657,102 @@ ALTER TABLE ONLY public.trust_notes
 
 
 --
+-- Name: trust_notice_template_removals trust_notice_template_removals_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_template_removals
+    ADD CONSTRAINT trust_notice_template_removals_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_notice_template_removals trust_notice_template_removals_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_template_removals
+    ADD CONSTRAINT trust_notice_template_removals_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_notice_template_removals trust_notice_template_removals_pmc_id_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_template_removals
+    ADD CONSTRAINT trust_notice_template_removals_pmc_id_template_id_fkey FOREIGN KEY (pmc_id, template_id) REFERENCES public.trust_notice_templates(pmc_id, id);
+
+
+--
+-- Name: trust_notice_template_versions trust_notice_template_versions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_template_versions
+    ADD CONSTRAINT trust_notice_template_versions_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_notice_template_versions trust_notice_template_versions_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_template_versions
+    ADD CONSTRAINT trust_notice_template_versions_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_notice_template_versions trust_notice_template_versions_pmc_id_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_template_versions
+    ADD CONSTRAINT trust_notice_template_versions_pmc_id_template_id_fkey FOREIGN KEY (pmc_id, template_id) REFERENCES public.trust_notice_templates(pmc_id, id);
+
+
+--
+-- Name: trust_notice_templates trust_notice_templates_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_templates
+    ADD CONSTRAINT trust_notice_templates_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_notice_templates trust_notice_templates_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_templates
+    ADD CONSTRAINT trust_notice_templates_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_notices trust_notices_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notices
+    ADD CONSTRAINT trust_notices_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_notices trust_notices_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notices
+    ADD CONSTRAINT trust_notices_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_notices trust_notices_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notices
+    ADD CONSTRAINT trust_notices_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_notices trust_notices_pmc_id_template_version_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notices
+    ADD CONSTRAINT trust_notices_pmc_id_template_version_id_fkey FOREIGN KEY (pmc_id, template_version_id) REFERENCES public.trust_notice_template_versions(pmc_id, id);
+
+
+--
 -- Name: trust_nsf_fee_policies trust_nsf_fee_policies_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -28184,4 +28589,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261021000115'),
     ('20261021000116'),
     ('20261021000117'),
-    ('20261021000118');
+    ('20261021000118'),
+    ('20261021000119');

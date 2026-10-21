@@ -4304,3 +4304,65 @@ test("staff bring in a lockbox's payment file once: lines naming one lease are r
   await page.getByRole("tab", { name: "Ledger" }).click();
   await expect(page.getByRole("main")).toContainText("$1,395.00");
 });
+
+test("staff keep the company's own notice templates, make one into a notice for a lease, read it filled in and download its PDF", async ({
+  page,
+}) => {
+  const people = seed.features["notice-templates"]!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "Notice templates");
+  await expect(page.getByText("No notice template yet.")).toBeVisible();
+
+  // A blank the PMS doesn't fill is refused in words; the ones it does are listed beside the text.
+  await page.getByRole("button", { name: "Add template" }).click();
+  const add = page.getByRole("dialog", { name: "Add a notice template" });
+  await expect(add.getByRole("region", { name: "Blanks the PMS fills" })).toContainText("{{balance_due}}");
+  await add.getByLabel("Name").fill("Late rent");
+  await add.getByLabel("Text").fill("Dear {{tenant_names}}, please pay {{amount}}.");
+  await add.getByRole("button", { name: "Save template" }).click();
+  await expect(add.getByRole("alert")).toHaveText(
+    "{{amount}} is not a blank the PMS fills; the list beside the text shows the ones it does",
+  );
+  await add.getByLabel("Text").fill(
+    "Dear {{tenant_names}},\n\nAs of {{notice_date}} the lease of {{property}} {{unit}} owes {{balance_due}}.\n\n{{company_name}}",
+  );
+  await add.getByRole("button", { name: "Save template" }).click();
+  await expect(page.getByText("Late rent is saved.")).toBeVisible();
+
+  // Renamed later: a new version.
+  await page.getByRole("row", { name: "Late rent" }).click();
+  const edit = page.getByRole("dialog", { name: "Edit Late rent" });
+  await edit.getByLabel("Name").fill("Notice of late rent");
+  await edit.getByRole("button", { name: "Save template" }).click();
+  await expect(page.getByText("Notice of late rent is saved.")).toBeVisible();
+
+  // On Morgan Demo's lease, its Files tab makes it into a notice, read filled in first.
+  await section(page, "Rent roll");
+  await page.getByRole("row", { name: "Birch Flats, Unit A" }).click();
+  await page.getByRole("button", { name: "Actions for this lease" }).click();
+  await page.getByRole("menuitem", { name: "Write a notice" }).click();
+  await page.getByRole("button", { name: "Write a notice" }).click();
+  const filled = page.getByRole("article", { name: "The notice as it will read" });
+  await expect(filled).toContainText("Notice of late rent");
+  await expect(filled).toContainText(`Dear Morgan Demo,`);
+  await expect(filled).toContainText(`As of ${us(today())} the lease of Birch Flats Unit A owes $`);
+  await page.getByRole("button", { name: "Make the notice" }).click();
+  await expect(page.getByText(`Notice of late rent, dated ${us(today())}, is made.`)).toBeVisible();
+  const pdf = page.getByRole("list", { name: "Notices made" }).getByRole("link", { name: "Notice of late rent (PDF)" });
+  const answer = await page.request.get((await pdf.getAttribute("href")) ?? "");
+  expect(answer.status()).toBe(200);
+  expect((await answer.body()).subarray(0, 5).toString()).toBe("%PDF-");
+
+  // Removing the template keeps the notice made from it.
+  await settings(page, "Notice templates");
+  await page.getByRole("row", { name: "Notice of late rent" }).getByRole("button", { name: "Actions for Notice of late rent" }).click();
+  await page.getByRole("menuitem", { name: "Remove" }).click();
+  await page.getByRole("button", { name: "Remove" }).click();
+  await expect(page.getByText("No notice template yet.")).toBeVisible();
+  await section(page, "Rent roll");
+  await page.getByRole("row", { name: "Birch Flats, Unit A" }).click();
+  await page.getByRole("tab", { name: "Files" }).click();
+  await expect(page.getByRole("list", { name: "Notices made" })).toContainText("Notice of late rent (PDF)");
+  // The saved toasts sit over the page's corner until they go.
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+});

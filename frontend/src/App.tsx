@@ -41,6 +41,7 @@ import { ReportsPage } from "./pages/ReportsPage";
 import { CalendarPage } from "./pages/CalendarCard";
 import { DataExportPage } from "./pages/DataExportPage";
 import { QuickBooksPage } from "./pages/QuickBooksPage";
+import { NoticeTemplatesPage } from "./pages/NoticeTemplatesPage";
 import { PaymentFilePage, PaymentFilesPage } from "./pages/PaymentFilesPages";
 import { RentPage } from "./pages/RentPage";
 import { LeasePage } from "./pages/LeasePage";
@@ -143,6 +144,7 @@ const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/settings/data-export": (me) => <DataExportPage me={me} />,
   "/settings/quickbooks": (me) => <QuickBooksPage me={me} />,
   "/settings/calendar": (me) => <CalendarPage me={me} />,
+  "/settings/notices": (me) => <NoticeTemplatesPage me={me} />,
 };
 
 // A record's own page, by its address (ADR 0005).
