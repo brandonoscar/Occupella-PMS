@@ -807,6 +807,16 @@ tests = [
   "tests/api/test_property_addresses_api.py::test_a_geocoder_that_fails_is_said_in_words_and_keeps_nothing",
 ]
 
+[[invariant]]
+id = "a-vendor-is-archived-only-with-nothing-open"
+statement = "A vendor is archived (migration 0110), like a property, unit, tenant or owner, by a row of trust_archivals naming who, the latest holding: refused while a bill of theirs is neither paid nor declined, money is set aside for them, a work order last assigned to them is still open, or a recurring bill or job of theirs runs through today; never archived or brought back twice in a row; brought back at any time. An archival is of one record of its own company."
+tests = [
+  "tests/properties/test_vendor_archival_properties.py::test_a_vendor_is_archived_exactly_while_nothing_is_open_with_them",
+  "tests/test_vendor_archivals.py::test_a_vendor_stays_while_a_bill_of_theirs_is_not_paid",
+  "tests/test_vendor_archivals.py::test_a_vendor_stays_while_a_work_order_last_assigned_to_them_is_open",
+  "tests/test_vendor_archivals.py::test_a_vendors_archival_is_of_one_record_of_the_pmc_and_names_who_made_it",
+]
+
 [[report]]
 id = "assistance-compliance"
 statement = "Each lease with housing assistance in force on a day (an amount above 0 from the latest terms by then): its latest income certification and inspection in effect by that day (the later recorded on one day), the day each is due and where it stands: current, due within 120 days (HUD Handbook 4350.3's first notice), overdue or none on file, and a failed inspection's reinspection due or overdue; then how many to certify and inspect now and within 120 days. Never income or household size. Compared to a checked-in golden file and to a model."

@@ -519,6 +519,7 @@ FEATURES = (
     "history",
     "assistance-compliance",
     "property-addresses",
+    "vendor-archive",
 )
 
 

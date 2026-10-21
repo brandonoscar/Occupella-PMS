@@ -22,6 +22,8 @@ export type Vendor = {
   insurance: Policy[];
   contact: Contact;
   profile: Profile | null;
+  // Archived: off the list, its pickers and search, history kept (migration 0110).
+  archived: boolean;
 };
 // A row of the Vendors list; insurance is how it stands by the coverage that runs out first.
 export type VendorRow = {

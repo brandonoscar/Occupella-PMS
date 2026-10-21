@@ -571,6 +571,14 @@ test("staff open a work order with its details, schedule its vendor (not one who
   await page.getByRole("combobox", { name: "Status" }).selectOption({ label: "Scheduled" });
   await expect(page.getByRole("table").getByRole("row")).toHaveCount(2);
   await expect(latch).toContainText("Scheduled");
+  // Narrowed to one property: Aspen Row's keeps it, Birch Flats' has none scheduled.
+  const shown = page.getByRole("combobox", { name: "Properties shown" });
+  await shown.selectOption({ label: "Aspen Row" });
+  await expect(latch).toBeVisible();
+  await shown.selectOption({ label: "Birch Flats" });
+  await expect(page.getByTestId("empty-state")).toContainText("No work orders found.");
+  await shown.selectOption({ label: "All properties" });
+  await expect(latch).toBeVisible();
 
   // The vendor's page lists it and the bill; the vendor is renamed there.
   await section(page, "Vendors");
@@ -751,13 +759,16 @@ test("staff add a fee, a credit and a monthly charge to a lease, take a deposit 
   const received = lease.getByRole("table", { name: "Payments received" });
   await expect(received.getByRole("row", { name: /Check 501/ })).toContainText("$100.00");
 
-  // A payment when nothing is owed is all prepaid rent; it is listed, and it can bounce.
+  // A payment when nothing is owed is all prepaid rent; it is listed with how it came (a money
+  // order here), and it can bounce.
   pay = await leasePanel(page, "Receive payment");
   await pay.getByLabel("Payment received").fill("50.00");
-  await pay.getByLabel("Check or reference").fill("Check 503");
+  await pay.getByLabel("Method").selectOption({ label: "Money order" });
+  await pay.getByLabel("Check or reference").fill("MO 503");
   await pay.getByRole("button", { name: "Record payment" }).click();
   await expect(lease).toContainText("$50.00 held as prepaid rent.");
-  const prepaidOnly = received.getByRole("row", { name: /Check 503/ });
+  const prepaidOnly = received.getByRole("row", { name: /MO 503/ });
+  await expect(prepaidOnly).toContainText("Money order · MO 503");
   await expect(prepaidOnly).toContainText("$50.00");
   await prepaidOnly.getByRole("button", { name: /^Actions for / }).click();
   await page.getByRole("menuitem", { name: "It bounced" }).click();
@@ -3018,6 +3029,56 @@ test("staff add Cedar House's street address, find it on a map, find it by its s
   await expect(card.getByTestId("property-address")).toHaveText("200 Example StreetBuilding BDemo City, CA 00001");
   await expect(card.getByTestId("property-location")).toHaveCount(0);
   await expect(card).toContainText("Not found on a map yet.");
+});
+
+test("staff archive a vendor with nothing open, who leaves the list, the work order picker and search, keep one with a bill not paid, and bring the first back", async ({
+  page,
+}) => {
+  const people = seed.features["vendor-archive"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Vendors");
+  await page.getByRole("button", { name: "Add vendor" }).click();
+  const adding = page.getByRole("dialog", { name: "Add vendor" });
+  await adding.getByLabel("Vendor's name").fill("Demo Painting Co");
+  await adding.getByRole("button", { name: "Add vendor" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Demo Painting Co" })).toBeVisible();
+
+  // Nothing open with them: archived, after a question.
+  await chooseAction(page, "Demo Painting Co", "Archive");
+  await expect(page.getByText("Archived", { exact: true })).toBeVisible();
+  await section(page, "Vendors");
+  await expect(page.getByRole("row", { name: "Demo Painting Co", exact: true })).toHaveCount(0);
+  await page.getByRole("combobox", { name: "Status" }).selectOption("archived");
+  await expect(page.getByRole("row", { name: "Demo Painting Co", exact: true })).toBeVisible();
+  const search = page.getByLabel("Search people, homes, bills, work orders and files");
+  await search.fill("painting");
+  await expect(page.getByRole("list", { name: "Search results" })).toHaveCount(0);
+  await search.fill("");
+
+  // Work orders don't offer them.
+  await section(page, "Work orders");
+  const vendors = page.getByRole("combobox", { name: "Vendor", exact: true });
+  await expect(vendors.locator("option", { hasText: "Demo Plumbing Co" })).toHaveCount(1);
+  await expect(vendors.locator("option", { hasText: "Demo Painting Co" })).toHaveCount(0);
+
+  // A vendor with a bill not paid stays, and the refusal says why in words.
+  await section(page, "Bills");
+  await recordBill(page, "Demo Plumbing Co", "Demo Owner A, Birch Flats", "PLB-9001", "120.00", "Drain");
+  await section(page, "Vendors");
+  await page.getByRole("row", { name: "Demo Plumbing Co", exact: true }).getByRole("link").click();
+  await chooseAction(page, "Demo Plumbing Co", "Archive");
+  await expect(page.getByRole("alert")).toHaveText(
+    "Demo Plumbing Co has a bill not paid; pay or decline it before archiving",
+  );
+
+  // Brought back, they are on the list again.
+  await section(page, "Vendors");
+  await page.getByRole("combobox", { name: "Status" }).selectOption("archived");
+  await page.getByRole("row", { name: "Demo Painting Co", exact: true }).getByRole("link").click();
+  await chooseAction(page, "Demo Painting Co", "Bring back");
+  await expect(page.getByText("Archived", { exact: true })).toHaveCount(0);
+  await section(page, "Vendors");
+  await expect(page.getByRole("row", { name: "Demo Painting Co", exact: true })).toBeVisible();
 });
 
 test("staff bill last month's water back to Birch Flats' leases by unit, the owner keeping 10% and what isn't billed", async ({

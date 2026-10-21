@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { api } from "../api";
 import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Form } from "../components/Form";
@@ -21,6 +22,7 @@ import {
   requestId,
 } from "../rent";
 import { sharesLine } from "../rentals";
+import type { Named, Portfolio } from "../setup";
 import { ChargeTypeSelect, useChargeTypes } from "./ChargeTypes";
 
 // The forms of a lease's rent work (pages/LeasePage.tsx), each one thing recorded: a payment, a
@@ -336,7 +338,21 @@ export function DueDayForm({ lease, record }: { lease: RentLease; record: Record
   );
 }
 
+// The company's security-deposit trust bank accounts: with more than one, staff pick the one a
+// deposit goes in (the API takes the only one when there is one).
+function useDepositAccounts(): Named[] {
+  const [accounts, setAccounts] = useState<Named[]>([]);
+  useEffect(() => {
+    api.get<Portfolio>("/api/setup")
+      .then((books) => setAccounts(books.bank_accounts.filter((b) => b.kind === "security_deposit")))
+      .catch(() => setAccounts([]));
+  }, []);
+  return accounts;
+}
+
 export function DepositForm({ lease, record }: { lease: RentLease; record: Recorder }) {
+  const accounts = useDepositAccounts();
+  const [bank, setBank] = useState("");
   const [id, setId] = useState(requestId);
   const [tenant, setTenant] = useState(lease.tenants[0]?.id ?? "");
   const [amount, setAmount] = useState("");
@@ -348,7 +364,8 @@ export function DepositForm({ lease, record }: { lease: RentLease; record: Recor
       className="flex flex-wrap items-end gap-3"
       onSubmit={async (event) => {
         event.preventDefault();
-        const body = { request_id: id, tenant_id: tenant, amount, received_on: on, kind };
+        const chosen = accounts.length > 1 ? { bank_account_id: bank || accounts[0]!.id } : {};
+        const body = { request_id: id, tenant_id: tenant, amount, received_on: on, kind, ...chosen };
         if (await record("/api/rent/deposits", body, () => `${label} of ${money(amount)} held.`)) {
           setId(requestId());
           setAmount("");
@@ -369,6 +386,12 @@ export function DepositForm({ lease, record }: { lease: RentLease; record: Recor
         onChange={(e) => setKind(e.target.value as DepositKind)}>
         {DEPOSIT_KINDS.map((k) => <option key={k.value} value={k.value}>{k.label}</option>)}
       </Select>
+      {accounts.length > 1 && (
+        <Select label="Deposit account" id={`deposit-bank-${lease.id}`} value={bank || accounts[0]!.id}
+          onChange={(e) => setBank(e.target.value)}>
+          {accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+        </Select>
+      )}
       <Field label="Deposit received" id={`deposit-${lease.id}`} inputMode="decimal" required
         value={amount} onChange={(e) => setAmount(e.target.value)} />
       <Field label="Deposit received on" id={`deposit-on-${lease.id}`} type="date" required value={on}

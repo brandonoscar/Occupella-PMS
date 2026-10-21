@@ -29,22 +29,31 @@ export function VendorsPage({ me }: { me: Me }) {
   const [page, setPage] = useState<Paged<VendorRow> | null>(null);
   const [error, setError] = useState("");
   const [adding, setAdding] = useState(false);
+  const [archived, setArchived] = useState(false);
 
   useEffect(() => {
     api
-      .get<Paged<VendorRow>>(`/api/vendors?page=${number}`)
+      .get<Paged<VendorRow>>(`/api/vendors?page=${number}&archived=${archived}`)
       .then(setPage)
       .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
-  }, [number]);
+  }, [number, archived]);
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title="Vendors" actions={<Button onClick={() => setAdding(true)}>Add vendor</Button>} />
+      <div className="flex flex-wrap items-center gap-3">
+        <select aria-label="Status" value={archived ? "archived" : "active"}
+          className="h-9 rounded-sm border border-line-strong bg-canvas px-2 text-sm text-ink"
+          onChange={(event) => { setArchived(event.target.value === "archived"); setNumber(1); }}>
+          <option value="active">Active</option>
+          <option value="archived">Archived</option>
+        </select>
+      </div>
       <Notice tone="error">{error}</Notice>
       {page === null ? (
         !error && <Notice tone="info">Loading</Notice>
       ) : page.items.length === 0 ? (
-        <EmptyState icon={Truck} title="No vendors yet" />
+        <EmptyState icon={Truck} title={archived ? "No archived vendors." : "No vendors yet"} />
       ) : (
         <>
           <Wide>

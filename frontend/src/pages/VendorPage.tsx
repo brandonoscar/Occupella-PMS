@@ -77,7 +77,7 @@ export function VendorPage({ me, id }: { me: Me; id: string }) {
   return (
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title={vendor.name} actions={
-        <RecordActions path={`/api/vendors/${id}`} name={vendor.name}
+        <RecordActions path={`/api/vendors/${id}`} name={vendor.name} archived={vendor.archived}
           onChange={(done) => { setRenamed(done); refresh(); }} />
       } />
       <p className="flex flex-wrap items-center gap-3 text-sm text-ink-muted">

@@ -779,15 +779,18 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   or vendor of the PMC (`trust_notes`, exactly one of them, append-only, naming who wrote it; a
   correction is a new note), on its Notes tab (`src/pms/api/notes.py`). They move no money, and
   the AI role never reads them (`AI_NEVER_READS`).
-- Archiving (migrations 0063 and 0064, ADR 0005): nothing in a PMC is deleted; a property, unit,
-  tenant or owner is archived instead, a row in `trust_archivals` (append-only, the latest for a
-  record holding, `trust_is_archived` reading it), naming who did it. It is refused while
-  anything is open on it: a lease in effect or to come (of a unit, of a property's units, or with
-  the tenant on it), money held (a property's owners', an owner's, a tenant's prepaid rent or
-  deposit) or a bill neither paid nor declined (a property's or an owner's). Bringing one back is
-  always allowed. An archived one leaves its list (and search) unless staff ask for archived
-  ones, an archived unit is marked on its property's page, and each keeps its history; it moves
-  no money.
+- Archiving (migrations 0063 and 0064, ADR 0005; vendors since migration 0110, the founder's
+  review q131): nothing in a PMC is deleted; a property, unit, tenant, owner or vendor is archived
+  instead, a row in `trust_archivals` (append-only, the latest for a record holding,
+  `trust_is_archived` reading it), naming who did it. It is refused while anything is open on it:
+  a lease in effect or to come (of a unit, of a property's units, or with the tenant on it), money
+  held (a property's owners', an owner's, a tenant's prepaid rent or deposit, money set aside for a
+  vendor), a bill neither paid nor declined (a property's, an owner's or a vendor's), and for a
+  vendor a work order last assigned to them still open or a recurring bill or job of theirs
+  running through today. Bringing one back is always allowed. An archived one leaves its list
+  (and search) unless staff ask for archived ones, an archived vendor leaves the vendor pickers
+  too, an archived unit is marked on its property's page, and each keeps its history; it moves no
+  money.
 - Contact details (migration 0064, ADR 0005): a tenant's, owner's or vendor's email, phone, other
   phone and mailing address (whole or none), in `trust_contacts`: append-only, the latest row
   for a person holding, naming who recorded it; saving the same details again writes nothing.
@@ -928,7 +931,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`trust_ledger_accounts.deposit_kind`, NULL for the security deposit; one of each kind per tenant
   and trust bank account, always in the security-deposit one), opened by
   `trust_open_deposit_account`. Staff pick the kind on Record deposit (`POST /api/rent/deposits`,
-  `kind`); a pet deposit is refused for a tenant whose only animals are assistance animals. The
+  `kind`), and the security-deposit account when the company has more than one (q036,
+  `bank_account_id`); a pet deposit is refused for a tenant whose only animals are assistance animals. The
   lease shows each kind (`tenants[].deposits`), the register and the return's statement name it,
   a leaving tenant's deposits move to the staying tenant's of the same kind, and
   `trust_return_deposit` keeps from each tenant's security deposit first, then key, then pet.

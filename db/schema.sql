@@ -1753,11 +1753,61 @@ DECLARE
     v_today date := (now() AT TIME ZONE 'UTC')::date;
     v_name text;
 BEGIN
-    IF trust_is_archived(NEW.property_id, NEW.unit_id, NEW.tenant_id, NEW.owner_id) = NEW.archived THEN
+    IF trust_is_archived(
+        NEW.property_id, NEW.unit_id, NEW.tenant_id, NEW.owner_id, NEW.vendor_id
+    ) = NEW.archived THEN
         RAISE EXCEPTION 'trust: it is % already', CASE WHEN NEW.archived THEN 'archived' ELSE 'not archived' END
             USING ERRCODE = 'check_violation';
     END IF;
     IF NOT NEW.archived THEN
+        RETURN NEW;
+    END IF;
+    IF NEW.vendor_id IS NOT NULL THEN
+        SELECT v.display_name INTO v_name FROM trust_vendors AS v WHERE v.id = NEW.vendor_id;
+        IF EXISTS (SELECT 1 FROM trust_bills AS bill
+                   WHERE bill.vendor_id = NEW.vendor_id
+                     AND NOT EXISTS (SELECT 1 FROM trust_bill_payments AS p
+                                     WHERE p.bill_id = bill.id AND p.step = 'paid')
+                     AND NOT EXISTS (SELECT 1 FROM trust_bill_declines AS d
+                                     WHERE d.bill_id = bill.id))
+        THEN
+            RAISE EXCEPTION 'trust: % has a bill not paid; pay or decline it before archiving',
+                v_name USING ERRCODE = 'check_violation';
+        END IF;
+        IF EXISTS (SELECT 1 FROM trust_ledger_accounts AS a
+                   JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
+                   WHERE a.kind = 'vendor_payable' AND a.vendor_id = NEW.vendor_id
+                     AND b.balance <> 0)
+        THEN
+            RAISE EXCEPTION 'trust: % has money set aside for them; pay it before archiving',
+                v_name USING ERRCODE = 'check_violation';
+        END IF;
+        IF EXISTS (SELECT 1 FROM trust_work_orders AS w
+                   WHERE w.pmc_id = NEW.pmc_id
+                     AND NOT EXISTS (SELECT 1 FROM trust_work_order_steps AS c
+                                     WHERE c.work_order_id = w.id
+                                       AND c.step IN ('completed', 'cancelled'))
+                     AND (SELECT s.vendor_id FROM trust_work_order_steps AS s
+                          WHERE s.work_order_id = w.id AND s.step = 'assigned'
+                          ORDER BY s.taken_at DESC, s.created_at DESC, s.id DESC
+                          LIMIT 1) = NEW.vendor_id)
+        THEN
+            RAISE EXCEPTION 'trust: % has a work order open; complete, cancel or reassign it before archiving',
+                v_name USING ERRCODE = 'check_violation';
+        END IF;
+        IF EXISTS (SELECT 1 FROM trust_recurring_bills AS r
+                   WHERE r.vendor_id = NEW.vendor_id
+                     AND NOT EXISTS (SELECT 1 FROM trust_recurring_bill_ends AS e
+                                     WHERE e.recurring_bill_id = r.id AND e.ends_on < v_today))
+           OR EXISTS (SELECT 1 FROM trust_recurring_work_orders AS r
+                      WHERE r.vendor_id = NEW.vendor_id
+                        AND NOT EXISTS (SELECT 1 FROM trust_recurring_work_order_ends AS e
+                                        WHERE e.recurring_work_order_id = r.id
+                                          AND e.ends_on < v_today))
+        THEN
+            RAISE EXCEPTION 'trust: % has a recurring bill or job still running; stop it before archiving',
+                v_name USING ERRCODE = 'check_violation';
+        END IF;
         RETURN NEW;
     END IF;
     IF NEW.tenant_id IS NOT NULL THEN
@@ -4417,10 +4467,10 @@ $$;
 
 
 --
--- Name: trust_is_archived(uuid, uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+-- Name: trust_is_archived(uuid, uuid, uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.trust_is_archived(p_property_id uuid, p_unit_id uuid, p_tenant_id uuid DEFAULT NULL::uuid, p_owner_id uuid DEFAULT NULL::uuid) RETURNS boolean
+CREATE FUNCTION public.trust_is_archived(p_property_id uuid, p_unit_id uuid, p_tenant_id uuid DEFAULT NULL::uuid, p_owner_id uuid DEFAULT NULL::uuid, p_vendor_id uuid DEFAULT NULL::uuid) RETURNS boolean
     LANGUAGE sql STABLE
     SET search_path TO 'public', 'pg_temp'
     AS $$
@@ -4430,6 +4480,7 @@ CREATE FUNCTION public.trust_is_archived(p_property_id uuid, p_unit_id uuid, p_t
            OR (p_unit_id IS NOT NULL AND a.unit_id = p_unit_id)
            OR (p_tenant_id IS NOT NULL AND a.tenant_id = p_tenant_id)
            OR (p_owner_id IS NOT NULL AND a.owner_id = p_owner_id)
+           OR (p_vendor_id IS NOT NULL AND a.vendor_id = p_vendor_id)
         ORDER BY a.created_at DESC, a.id DESC
         LIMIT 1
     ), false)
@@ -12206,7 +12257,8 @@ CREATE TABLE public.trust_archivals (
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     tenant_id uuid,
     owner_id uuid,
-    CONSTRAINT trust_archivals_one_record CHECK ((num_nonnulls(property_id, unit_id, tenant_id, owner_id) = 1))
+    vendor_id uuid,
+    CONSTRAINT trust_archivals_one_of_five CHECK ((num_nonnulls(property_id, unit_id, tenant_id, owner_id, vendor_id) = 1))
 );
 
 
@@ -17477,6 +17529,13 @@ CREATE INDEX trust_archivals_tenant ON public.trust_archivals USING btree (pmc_i
 --
 
 CREATE INDEX trust_archivals_unit ON public.trust_archivals USING btree (pmc_id, unit_id, created_at);
+
+
+--
+-- Name: trust_archivals_vendor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_archivals_vendor ON public.trust_archivals USING btree (pmc_id, vendor_id, created_at);
 
 
 --
@@ -22806,6 +22865,14 @@ ALTER TABLE ONLY public.trust_archivals
 
 
 --
+-- Name: trust_archivals trust_archivals_vendor_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_archivals
+    ADD CONSTRAINT trust_archivals_vendor_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
 -- Name: trust_assistance_charges trust_assistance_charges_pmc_id_adjusts_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26913,4 +26980,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261021000106'),
     ('20261021000107'),
     ('20261021000108'),
-    ('20261021000109');
+    ('20261021000109'),
+    ('20261021000110');

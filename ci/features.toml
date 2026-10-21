@@ -895,3 +895,11 @@ operations = [
 browser = [
   "features.spec.ts › staff add Cedar House's street address, find it on a map, find it by its street, and a new address is found again",
 ]
+
+[[feature]]
+id = "vendor-archive"
+statement = "Staff archive a vendor with nothing open with them, after a question: they leave the Vendors list (Status, Archived lists them), the work order and bill pickers and search, and keep their history; a vendor with a bill not paid, money set aside, a work order last assigned to them still open or a recurring bill or job running stays, the refusal saying why; staff bring one back (migration 0110, the founder's review q131)."
+operations = ["POST /api/vendors/{vendor_id}/archive"]
+browser = [
+  "features.spec.ts › staff archive a vendor with nothing open, who leaves the list, the work order picker and search, keep one with a bill not paid, and bring the first back",
+]

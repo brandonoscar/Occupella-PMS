@@ -507,7 +507,7 @@ FUNCTIONS = {
     "trust_report_vendor_insurance(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_trust_account_signers(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_renters_insurance(uuid,date)": {"trust_app", "trust_ai_agent"},
-    "trust_is_archived(uuid,uuid,uuid,uuid)": {"trust_app"},
+    "trust_is_archived(uuid,uuid,uuid,uuid,uuid)": {"trust_app"},
     "trust_group_properties(uuid)": {"trust_app"},
     "trust_run_rent(uuid,date,date)": {"trust_app"},
     "trust_report_inspection(uuid,uuid)": {"trust_app", "trust_ai_agent"},

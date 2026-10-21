@@ -333,7 +333,16 @@ def portfolio(session: Staff, conn: Conn) -> Portfolio:
         properties=properties,
         accounts=accounts,
         tenants=tenants,
-        vendors=named(conn, "trust_vendors", pmc),
+        # Vendors not archived: an archived one takes no new bill (migration 0110).
+        vendors=[
+            Named(id=i, name=n)
+            for i, n in conn.execute(
+                "SELECT id, display_name FROM trust_vendors WHERE pmc_id = %s"
+                " AND NOT trust_is_archived(NULL, NULL, NULL, NULL, id)"
+                ' ORDER BY display_name COLLATE "C", id',
+                (pmc,),
+            ).fetchall()
+        ],
         expense_accounts=[
             ExpenseAccount(id=i, name=n, schedule_e_line=line)
             for i, n, line in conn.execute(

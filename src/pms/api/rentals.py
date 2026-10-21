@@ -891,6 +891,7 @@ UNION ALL
  WHERE v.pmc_id = %(pmc)s AND (v.display_name ILIKE %(like)s OR f.trade ILIKE %(like)s OR """,
         CONTACT_MATCHES,
         """)
+   AND NOT trust_is_archived(NULL, NULL, NULL, NULL, v.id)
  ORDER BY v.display_name COLLATE "C", v.id LIMIT 10)
 UNION ALL
 (SELECT 'bill', b.id, v.display_name || ' ' || b.reference,
@@ -957,9 +958,9 @@ def digits(q: str) -> str | None:
 @router.get("/search")
 def search(session: Staff, conn: Conn, q: Annotated[SearchWords, Query()]) -> list[Found]:
     """Up to 10 of each kind that hold the words, each with the page it opens: properties, units,
-    tenants and owners not archived (a property's says its address and is found by it too; a
-    tenant's says their latest unit), and vendors, by name or
-    by the email, phone or street on file; bills by reference or memo; work orders by what they
+    tenants, owners and vendors not archived (a property's says its address and is found by it
+    too; a tenant's says their latest unit; vendors by name or trade, or by the email, phone or
+    street on file); bills by reference or memo; work orders by what they
     are for; applicants and leads by name or email (a lead by phone too); and files by title,
     opening the page of what they are about."""
     return [

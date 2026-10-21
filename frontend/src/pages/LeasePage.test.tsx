@@ -101,6 +101,16 @@ async function open(lease: LeaseDetail = LEASE) {
   await screen.findByRole("heading", { level: 1, name: `${lease.property} · ${lease.unit} · Tenant 1, Tenant 2` });
 }
 
+// The company's books as /api/setup gives them: two security-deposit trust bank accounts.
+const TWO_DEPOSIT_ACCOUNTS = {
+  bank_accounts: [
+    { id: "b1", name: "Operating 1", kind: "operating", opened_at: null, closed_through: null },
+    { id: "b2", name: "Deposits 1", kind: "security_deposit", opened_at: null, closed_through: null },
+    { id: "b3", name: "Deposits 2", kind: "security_deposit", opened_at: null, closed_through: null },
+  ],
+  owners: [], properties: [], accounts: [], tenants: [], vendors: [], expense_accounts: [], schedule_e_lines: [],
+};
+
 // One of the lease's side panels, from its button or its ⋯ menu.
 function panel(name: string, fromMenu = false) {
   if (fromMenu) {
@@ -291,7 +301,28 @@ describe("LeasePage", () => {
     expect(calls[0]?.[1]).not.toHaveProperty("account");
     expect(calls[1]?.[1]).toMatchObject({ kind: "credit", amount: "25.00", memo: "Leak repair" });
     expect(calls[2]?.[1]).toMatchObject({ tenant_id: "t2", amount: "500.00", kind: "security" });
+    // No books to read here: no deposit account to choose, so the API takes the only one.
+    expect(calls[2]?.[1]).not.toHaveProperty("bank_account_id");
     expect(calls[3]?.[1]).toMatchObject({ tenant_id: "t1", amount: "300.00", kind: "pet" });
+  });
+
+  it("asks which deposit account a deposit goes in when the company has two, and only then", async () => {
+    const base = server();
+    const fetch = vi.fn((path: string, init?: RequestInit) =>
+      path === "/api/setup" ? Promise.resolve(new Response(JSON.stringify(TWO_DEPOSIT_ACCOUNTS), { status: 200 }))
+        : base(path, init));
+    vi.stubGlobal("fetch", fetch);
+    await open();
+
+    const deposit = panel("Record deposit", true);
+    const account = await within(deposit).findByLabelText("Deposit account");
+    expect([...(account as HTMLSelectElement).options].map((o) => o.textContent)).toEqual(["Deposits 1", "Deposits 2"]);
+    fireEvent.change(account, { target: { value: "b3" } });
+    fireEvent.change(within(deposit).getByLabelText("Deposit received"), { target: { value: "500.00" } });
+    fireEvent.click(within(deposit).getByRole("button", { name: "Record deposit" }));
+    expect(await screen.findByText("Security deposit of $500.00 held.")).toBeTruthy();
+
+    expect(posted(base)).toEqual([["/api/rent/deposits", expect.objectContaining({ amount: "500.00", bank_account_id: "b3" })]]);
   });
 
   it("shows the ledger with its running balance, and marks a payment bounced from its ⋯ menu", async () => {
