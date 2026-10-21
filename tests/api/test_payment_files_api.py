@@ -381,6 +381,8 @@ def test_another_pmcs_file_line_or_lease_reads_as_not_found(client, conn, staff,
         (a_file(f"{TODAY},100.00,,1A,,,barter"), "line 2: 'barter' is not a way money comes"),
         (a_file(",100.00,,1A,,,"), "line 2: no date"),
         ("\n\n", "the file is empty"),
+        ("\r0", "line 1: no date, amount column"),  # a bare carriage return ends a line
+        ("Date,Amount,Unit\n" + "x" * 140_000, "line 2: this isn't CSV the PMS can read"),
     ],
 )
 def test_a_file_that_is_not_payments_received_is_refused_whole(
