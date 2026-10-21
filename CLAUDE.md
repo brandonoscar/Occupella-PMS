@@ -264,6 +264,18 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the lease as signed, its signing certificate when signed on the PMS's page, and the lease
   documents staff keep on its Files tab (move-out photos stay with staff). Both portals show the
   manager's name, mailing address and logo (`/api/company/card`). The portal takes no payments.
+- Property addresses (migration 0109, `src/pms/api/addresses.py`, `src/pms/geocoding.py`): a
+  property's street address, whole (street, maybe a building or unit, city, a state's USPS code,
+  ZIP code), in `trust_property_addresses` (append-only, the latest holding,
+  `trust_property_address`; saving the same again writes nothing), kept from the property's
+  Address card (`pages/AddressCard.tsx`, area setup). Find on map
+  (`POST /api/properties/<id>/locate`) asks the server's `PMS_GEOCODER` ("census", the Census
+  Bureau's geocoder called directly over HTTPS since its Python wrapper is GPL; "fake" for
+  development and CI, calling nothing; none by default, and finding is refused), sending the
+  property's address alone, never a person's; what it matched goes in `trust_property_locations`
+  and the card links to OpenStreetMap at the point. A location counts only for the address it
+  was found for (`trust_property_location`). The Properties list shows each address and finds a
+  property by it, as `/api/search` does. The AI role reads both tables.
 - Leasing (`src/pms/api/leasing.py`, `src/pms/leasing/`): applicants have no login. They apply
   through a link staff open for a unit (`/apply#<token>`) and follow it with a status link;
   both tokens travel in JSON bodies and are kept only as SHA-256. Screening goes through

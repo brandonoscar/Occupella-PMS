@@ -248,6 +248,9 @@ TABLES = {
     # A housing-assistance household's certifications and the home's inspections (migration 0108).
     "trust_income_certifications": {"SELECT", "INSERT"},
     "trust_assistance_inspections": {"SELECT", "INSERT"},
+    # A property's street address and where it is (migration 0109); the AI reads both.
+    "trust_property_addresses": {"SELECT", "INSERT"},
+    "trust_property_locations": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -489,6 +492,8 @@ FUNCTIONS = {
     "trust_report_assistance_compliance(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_due_standing(date,date)": {"trust_app"},
     "trust_inspection_standing(text,date,date)": {"trust_app"},
+    "trust_property_address(uuid)": {"trust_app"},
+    "trust_property_location(uuid)": {"trust_app"},
     "trust_report_vendor_payments(uuid,integer)": {"trust_app", "trust_ai_agent"},
     "trust_report_bank_reconciliation(uuid,uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_cutover(uuid,uuid)": {"trust_app", "trust_ai_agent"},

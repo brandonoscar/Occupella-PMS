@@ -884,3 +884,14 @@ operations = [
 browser = [
   "features.spec.ts › staff record an assisted household's annual certification and a failed inspection, and the compliance report says where each stands",
 ]
+
+[[feature]]
+id = "property-addresses"
+statement = "Staff keep a property's street address on its page (whole: street, maybe a building or unit, city, a state's USPS code and ZIP code; the same again writes nothing), find it on a map with the server's geocoder (PMS_GEOCODER: the Census Bureau's, or the fake one for development and CI), sending the property's address alone, and open OpenStreetMap at the point; the Properties list shows each address and finds a property by it, as the search bar does; a new address is found again (migration 0109)."
+operations = [
+  "POST /api/properties/{property_id}/address",
+  "POST /api/properties/{property_id}/locate",
+]
+browser = [
+  "features.spec.ts › staff add Cedar House's street address, find it on a map, find it by its street, and a new address is found again",
+]

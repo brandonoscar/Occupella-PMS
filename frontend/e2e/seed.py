@@ -518,6 +518,7 @@ FEATURES = (
     "two-homes",
     "history",
     "assistance-compliance",
+    "property-addresses",
 )
 
 

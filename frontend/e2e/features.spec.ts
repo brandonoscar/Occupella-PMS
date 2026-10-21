@@ -2968,6 +2968,58 @@ test("staff record an assisted household's annual certification and a failed ins
   expect(csv).not.toContain("24000");
 });
 
+test("staff add Cedar House's street address, find it on a map, find it by its street, and a new address is found again", async ({
+  page,
+}) => {
+  const people = seed.features["property-addresses"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Properties");
+  await page.getByRole("row", { name: "Cedar House", exact: true }).getByRole("link", { name: "Cedar House" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Cedar House" })).toBeVisible();
+  const card = part(page, "Address");
+  await expect(card).toContainText("No address yet.");
+
+  await card.getByRole("button", { name: "Add address" }).click();
+  const add = page.getByRole("dialog", { name: "Add address" });
+  await add.getByLabel("Street").fill("100 Synthetic Way");
+  await add.getByLabel("City").fill("Demo City");
+  await add.getByLabel("State (two letters)").fill("ca");
+  await add.getByLabel("ZIP code").fill("00001");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await add.getByRole("button", { name: "Save address" }).click();
+  await expect(page.getByText("Address saved.")).toBeVisible();
+  await expect(card.getByTestId("property-address")).toHaveText("100 Synthetic WayDemo City, CA 00001");
+  await expect(card).toContainText("Not found on a map yet.");
+
+  // The fake geocoder calls nothing; the link opens OpenStreetMap at its point.
+  await card.getByRole("button", { name: "Find on map" }).click();
+  await expect(page.getByText("Found on the map.")).toBeVisible();
+  await expect(card.getByTestId("property-location")).toContainText("as the geocoder matched it: 100 SYNTHETIC WAY, DEMO CITY, CA 00001.");
+  await expect(card.getByRole("link", { name: "Open in OpenStreetMap" })).toHaveAttribute(
+    "href", /^https:\/\/www\.openstreetmap\.org\/\?mlat=-?\d+\.\d{6}&mlon=-?\d+\.\d{6}#map=17\//,
+  );
+
+  // The list shows it, and the search bar finds the property by its street.
+  await section(page, "Properties");
+  await expect(page.getByRole("row", { name: "Cedar House", exact: true })).toContainText("100 Synthetic Way, Demo City, CA 00001");
+  const search = page.getByLabel("Search people, homes, bills, work orders and files");
+  await search.fill("synthetic way");
+  await expect(page.getByRole("list", { name: "Search results" })).toContainText("100 Synthetic Way, Demo City, CA 00001");
+  await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Cedar House/ }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Cedar House" })).toBeVisible();
+
+  // A new address isn't where the old one was until it is found.
+  await card.getByRole("button", { name: "Edit address" }).click();
+  const edit = page.getByRole("dialog", { name: "Edit address" });
+  await edit.getByLabel("Street").fill("200 Example Street");
+  await edit.getByLabel("Building or unit (optional)").fill("Building B");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await edit.getByRole("button", { name: "Save address" }).click();
+  await expect(card.getByTestId("property-address")).toHaveText("200 Example StreetBuilding BDemo City, CA 00001");
+  await expect(card.getByTestId("property-location")).toHaveCount(0);
+  await expect(card).toContainText("Not found on a map yet.");
+});
+
 test("staff bill last month's water back to Birch Flats' leases by unit, the owner keeping 10% and what isn't billed", async ({
   page,
 }) => {

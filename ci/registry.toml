@@ -795,6 +795,18 @@ tests = [
   "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
 ]
 
+[[invariant]]
+id = "a-property-is-where-its-latest-address-was-found"
+statement = "A property's address (migration 0109) is its latest saved, whole, with a state's USPS code and a ZIP code, and the same address again writes nothing; where it is on a map is the latest location found for that very address, so a new address has none until it is found; a geocoder that finds nothing or fails keeps nothing; addresses and locations are of their own company's property and never rewritten. Only a property's address goes to the geocoder."
+tests = [
+  "tests/properties/test_property_address_properties.py::test_a_property_is_where_its_latest_address_was_last_found",
+  "tests/test_property_addresses.py::test_the_latest_address_holds_and_its_own_location_with_it",
+  "tests/test_property_addresses.py::test_an_address_and_its_location_are_of_one_company",
+  "tests/test_property_addresses.py::test_addresses_are_never_rewritten_and_the_ai_reads_them",
+  "tests/test_geocoding.py::test_the_census_geocoder_sends_the_street_address_alone_and_reads_its_match",
+  "tests/api/test_property_addresses_api.py::test_a_geocoder_that_fails_is_said_in_words_and_keeps_nothing",
+]
+
 [[report]]
 id = "assistance-compliance"
 statement = "Each lease with housing assistance in force on a day (an amount above 0 from the latest terms by then): its latest income certification and inspection in effect by that day (the later recorded on one day), the day each is due and where it stands: current, due within 120 days (HUD Handbook 4350.3's first notice), overdue or none on file, and a failed inspection's reinspection due or overdue; then how many to certify and inspect now and within 120 days. Never income or household size. Compared to a checked-in golden file and to a model."

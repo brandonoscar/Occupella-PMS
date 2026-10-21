@@ -20,6 +20,7 @@ import { LEASE_STATUS, OWNERSHIP_STATE, occupancy, ownershipStates, sharesLine, 
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { Said } from "../components/Said";
+import { AddressCard } from "./AddressCard";
 import { FilesCard } from "./FilesCard";
 import { navigate } from "../router";
 import { agreementSummary, lateFeeSummary, leaseBreakFeeSummary, nsfFeeSummary } from "../setup";
@@ -92,6 +93,7 @@ export function PropertiesPage({ me }: { me: Me }) {
               <thead>
                 <tr>
                   <th className="text-left">Property</th>
+                  <th className="text-left">Address</th>
                   <th className="text-left">Owners</th>
                   <th className="text-left">Units</th>
                 </tr>
@@ -100,6 +102,7 @@ export function PropertiesPage({ me }: { me: Me }) {
                 {page.items.map((row) => (
                   <tr key={row.id} aria-label={row.name}>
                     <td><RecordLink href={`/properties/${row.id}`}>{row.name}</RecordLink></td>
+                    <td className="text-ink-muted">{row.address ?? ""}</td>
                     <td className="text-ink-muted">{row.owners.join(", ")}</td>
                     <td>{occupancy(row)}</td>
                   </tr>
@@ -153,6 +156,8 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
             </div>
           } />
           <Said>{said}</Said>
+          <AddressCard propertyId={id} address={property.address} location={property.location}
+            canLocate={property.can_locate} onChange={refresh} />
           <Card title="Owners">
             {property.owners.length === 0 ? (
               <EmptyState icon={Building2} title="No owner's account yet." />

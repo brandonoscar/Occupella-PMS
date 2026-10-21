@@ -46,8 +46,9 @@ from psycopg import sql
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
-from pms import accounts, email, exports, nightly
+from pms import accounts, email, exports, geocoding, nightly
 from pms.api import (
+    addresses,
     assistance,
     bank_deposits,
     banking,
@@ -119,6 +120,9 @@ class Settings:
     # The email sender (pms.email): "fake", "smtp" (its settings from the environment), or
     # empty for none.
     email_sender: str = ""
+    # The geocoder that finds a property on a map (pms.geocoding): "census", "fake", or empty
+    # for none.
+    geocoder: str = ""
     # The nightly run (pms.nightly): rent, late fees and recurring bills post by themselves at
     # start and every day at 06:00 UTC. On unless PMS_NIGHTLY is "off".
     nightly: bool = False
@@ -135,6 +139,7 @@ class Settings:
             else None,
             screening_partner=os.environ.get("PMS_SCREENING_PARTNER", ""),
             email_sender=os.environ.get("PMS_EMAIL_SENDER", ""),
+            geocoder=os.environ.get("PMS_GEOCODER", ""),
             nightly=os.environ.get("PMS_NIGHTLY", "on").lower() != "off",
         )
 
@@ -263,6 +268,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.state.settings = settings
     app.state.pool = pool
     app.state.screening = screening.partner_named(settings.screening_partner)
+    app.state.geocoder = geocoding.geocoder_named(settings.geocoder)
     # The SMTP settings come straight from the environment, so a password is never part of
     # Settings (which a log or an error could print).
     app.state.email = email.sender_named(settings.email_sender, os.environ)
@@ -524,6 +530,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(setup.router)
     app.include_router(rent.router)
     app.include_router(assistance.router)
+    app.include_router(addresses.router)
     app.include_router(utilities.router)
     app.include_router(receipts.router)
     app.include_router(rentals.router)

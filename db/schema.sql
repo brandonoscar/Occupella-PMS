@@ -5894,6 +5894,80 @@ $$;
 
 
 --
+-- Name: trust_property_addresses; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_property_addresses (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    property_id uuid NOT NULL,
+    line_1 text NOT NULL,
+    line_2 text,
+    city text NOT NULL,
+    state text NOT NULL,
+    zip text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_property_addresses_city_check CHECK (((city = btrim(city)) AND ((length(city) >= 1) AND (length(city) <= 100)))),
+    CONSTRAINT trust_property_addresses_line_1_check CHECK (((line_1 = btrim(line_1)) AND ((length(line_1) >= 1) AND (length(line_1) <= 200)))),
+    CONSTRAINT trust_property_addresses_line_2_check CHECK (((line_2 = btrim(line_2)) AND ((length(line_2) >= 1) AND (length(line_2) <= 200)))),
+    CONSTRAINT trust_property_addresses_state_check CHECK ((state = ANY (ARRAY['AL'::text, 'AK'::text, 'AZ'::text, 'AR'::text, 'CA'::text, 'CO'::text, 'CT'::text, 'DE'::text, 'DC'::text, 'FL'::text, 'GA'::text, 'HI'::text, 'ID'::text, 'IL'::text, 'IN'::text, 'IA'::text, 'KS'::text, 'KY'::text, 'LA'::text, 'ME'::text, 'MD'::text, 'MA'::text, 'MI'::text, 'MN'::text, 'MS'::text, 'MO'::text, 'MT'::text, 'NE'::text, 'NV'::text, 'NH'::text, 'NJ'::text, 'NM'::text, 'NY'::text, 'NC'::text, 'ND'::text, 'OH'::text, 'OK'::text, 'OR'::text, 'PA'::text, 'RI'::text, 'SC'::text, 'SD'::text, 'TN'::text, 'TX'::text, 'UT'::text, 'VT'::text, 'VA'::text, 'WA'::text, 'WV'::text, 'WI'::text, 'WY'::text, 'AS'::text, 'GU'::text, 'MP'::text, 'PR'::text, 'VI'::text]))),
+    CONSTRAINT trust_property_addresses_zip_check CHECK ((zip ~ '^[0-9]{5}(-[0-9]{4})?$'::text))
+);
+
+
+--
+-- Name: trust_property_address(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_property_address(p_property_id uuid) RETURNS SETOF public.trust_property_addresses
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT a.* FROM trust_property_addresses AS a
+    WHERE a.property_id = p_property_id
+    ORDER BY a.created_at DESC, a.id DESC
+    LIMIT 1
+$$;
+
+
+--
+-- Name: trust_property_locations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_property_locations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    address_id uuid NOT NULL,
+    latitude numeric NOT NULL,
+    longitude numeric NOT NULL,
+    matched text NOT NULL,
+    geocoder text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_property_locations_geocoder_check CHECK ((geocoder = ANY (ARRAY['census'::text, 'fake'::text]))),
+    CONSTRAINT trust_property_locations_latitude_check CHECK ((((latitude >= ('-90'::integer)::numeric) AND (latitude <= (90)::numeric)) AND (latitude = round(latitude, 6)))),
+    CONSTRAINT trust_property_locations_longitude_check CHECK ((((longitude >= ('-180'::integer)::numeric) AND (longitude <= (180)::numeric)) AND (longitude = round(longitude, 6)))),
+    CONSTRAINT trust_property_locations_matched_check CHECK (((length(matched) >= 1) AND (length(matched) <= 300)))
+);
+
+
+--
+-- Name: trust_property_location(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_property_location(p_property_id uuid) RETURNS SETOF public.trust_property_locations
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT g.* FROM trust_property_address(p_property_id) AS a
+    JOIN trust_property_locations AS g ON g.address_id = a.id
+    ORDER BY g.created_at DESC, g.id DESC
+    LIMIT 1
+$$;
+
+
+--
 -- Name: trust_propose_journal_entry(uuid, date, text, public.transfer_request[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -16574,6 +16648,22 @@ ALTER TABLE ONLY public.trust_properties
 
 
 --
+-- Name: trust_property_addresses trust_property_addresses_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_addresses
+    ADD CONSTRAINT trust_property_addresses_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_property_addresses trust_property_addresses_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_addresses
+    ADD CONSTRAINT trust_property_addresses_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_property_group_members trust_property_group_members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16595,6 +16685,14 @@ ALTER TABLE ONLY public.trust_property_groups
 
 ALTER TABLE ONLY public.trust_property_groups
     ADD CONSTRAINT trust_property_groups_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_property_locations trust_property_locations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_locations
+    ADD CONSTRAINT trust_property_locations_pkey PRIMARY KEY (id);
 
 
 --
@@ -18432,6 +18530,20 @@ CREATE INDEX trust_pmc_fee_withdrawals_transfer_id ON public.trust_pmc_fee_withd
 
 
 --
+-- Name: trust_property_addresses_property; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_property_addresses_property ON public.trust_property_addresses USING btree (pmc_id, property_id, created_at);
+
+
+--
+-- Name: trust_property_addresses_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_property_addresses_recorded_by ON public.trust_property_addresses USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_property_group_members_group; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -18457,6 +18569,20 @@ CREATE INDEX trust_property_group_members_recorded_by ON public.trust_property_g
 --
 
 CREATE UNIQUE INDEX trust_property_groups_name ON public.trust_property_groups USING btree (pmc_id, lower(display_name));
+
+
+--
+-- Name: trust_property_locations_address; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_property_locations_address ON public.trust_property_locations USING btree (pmc_id, address_id, created_at);
+
+
+--
+-- Name: trust_property_locations_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_property_locations_recorded_by ON public.trust_property_locations USING btree (pmc_id, recorded_by);
 
 
 --
@@ -19783,10 +19909,24 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_property_addresses trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_property_addresses FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_property_group_members trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_property_group_members FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_property_locations trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_property_locations FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -20952,6 +21092,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_prop
 
 
 --
+-- Name: trust_property_addresses trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_property_addresses FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_property_group_members trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20963,6 +21110,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_prop
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_property_groups FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_property_locations trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_property_locations FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -21995,10 +22149,24 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payout_methods FO
 
 
 --
+-- Name: trust_property_addresses trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_property_addresses FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_property_group_members trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_property_group_members FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_property_locations trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_property_locations FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -25398,6 +25566,30 @@ ALTER TABLE ONLY public.trust_properties
 
 
 --
+-- Name: trust_property_addresses trust_property_addresses_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_addresses
+    ADD CONSTRAINT trust_property_addresses_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_property_addresses trust_property_addresses_pmc_id_property_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_addresses
+    ADD CONSTRAINT trust_property_addresses_pmc_id_property_id_fkey FOREIGN KEY (pmc_id, property_id) REFERENCES public.trust_properties(pmc_id, id);
+
+
+--
+-- Name: trust_property_addresses trust_property_addresses_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_addresses
+    ADD CONSTRAINT trust_property_addresses_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_property_group_members trust_property_group_members_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -25435,6 +25627,30 @@ ALTER TABLE ONLY public.trust_property_group_members
 
 ALTER TABLE ONLY public.trust_property_groups
     ADD CONSTRAINT trust_property_groups_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_property_locations trust_property_locations_pmc_id_address_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_locations
+    ADD CONSTRAINT trust_property_locations_pmc_id_address_id_fkey FOREIGN KEY (pmc_id, address_id) REFERENCES public.trust_property_addresses(pmc_id, id);
+
+
+--
+-- Name: trust_property_locations trust_property_locations_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_locations
+    ADD CONSTRAINT trust_property_locations_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_property_locations trust_property_locations_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_locations
+    ADD CONSTRAINT trust_property_locations_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -26696,4 +26912,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261021000105'),
     ('20261021000106'),
     ('20261021000107'),
-    ('20261021000108');
+    ('20261021000108'),
+    ('20261021000109');
