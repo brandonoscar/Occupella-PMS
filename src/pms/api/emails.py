@@ -218,6 +218,8 @@ class EmailSettings(BaseModel):
     work_order_notices: bool = False
     # Each applicant gets the adverse action notice of a decision that rests on a screening.
     adverse_action_notices: bool = False
+    # Each tenant of a lease gets the receipt of a payment staff record to it, as a PDF.
+    payment_receipts: bool = False
 
 
 class EmailSettingsOut(EmailSettings):

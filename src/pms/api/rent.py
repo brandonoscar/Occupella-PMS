@@ -1519,25 +1519,35 @@ def not_after_today(day: date) -> None:
 
 @router.post("/leases/{lease_id}/payments", status_code=201)
 def pay(session: Staff, conn: Conn, lease_id: UUID, new: NewPayment) -> Payment:
+    """Records a tenant's payment; each tenant of the lease is emailed its receipt when the
+    company asks for receipts and the server sends email (once per payment)."""
     not_after_today(new.received_on)
     try:
-        return answer(
-            record_payment(
-                conn,
-                session.pmc_id,
-                lease_id,
-                new.request_id,
-                new.amount,
-                new.received_on,
-                new.reference,
-                new.account,
-                new.method,
-                staff_name(conn, session.pmc_id, session.person_id) if new.past_hold else None,
-            )
+        recorded = record_payment(
+            conn,
+            session.pmc_id,
+            lease_id,
+            new.request_id,
+            new.amount,
+            new.received_on,
+            new.reference,
+            new.account,
+            new.method,
+            staff_name(conn, session.pmc_id, session.person_id) if new.past_hold else None,
         )
     except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
         # a payment hold, a closed period, or a match made differently before
         raise HTTPException(409, refusal(refused)) from None
+    if outbox.SENDING.get():
+        notices.write_payment_receipts(
+            conn,
+            session.pmc_id,
+            lease_id,
+            recorded.transfers[0],
+            new.amount,
+            new.received_on,
+        )
+    return answer(recorded)
 
 
 class UsePrepaid(BaseModel):

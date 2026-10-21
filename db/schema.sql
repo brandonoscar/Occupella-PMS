@@ -13000,6 +13000,7 @@ CREATE TABLE public.trust_email_settings (
     adverse_action_notices boolean NOT NULL,
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    payment_receipts boolean DEFAULT false NOT NULL,
     CONSTRAINT trust_email_settings_owner_statement_day_check CHECK (((owner_statement_day >= 1) AND (owner_statement_day <= 28))),
     CONSTRAINT trust_email_settings_rent_reminder_days_check CHECK (((rent_reminder_days >= 1) AND (rent_reminder_days <= 15)))
 );
@@ -13033,6 +13034,7 @@ CREATE TABLE public.trust_emails (
     request_id uuid,
     offer_id uuid,
     signer_position bigint,
+    transfer_id text,
     CONSTRAINT trust_emails_body_check CHECK (((body <> ''::text) AND (length(body) <= 10000))),
     CONSTRAINT trust_emails_check CHECK (((kind = 'bill_approval'::text) = (bill_id IS NOT NULL))),
     CONSTRAINT trust_emails_subject_check CHECK (((subject <> ''::text) AND (length(subject) <= 200))),
@@ -15755,7 +15757,7 @@ ALTER TABLE ONLY public.trust_email_settings
 --
 
 ALTER TABLE public.trust_emails
-    ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text, 'rent_reminder'::text, 'late_notice'::text, 'owner_statement'::text, 'work_order'::text, 'adverse_action'::text, 'emergency_request'::text, 'signing_request'::text]))) NOT VALID;
+    ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text, 'rent_reminder'::text, 'late_notice'::text, 'owner_statement'::text, 'work_order'::text, 'adverse_action'::text, 'emergency_request'::text, 'signing_request'::text, 'payment_receipt'::text]))) NOT VALID;
 
 
 --
@@ -15791,8 +15793,9 @@ CASE kind
     WHEN 'adverse_action'::text THEN ((applicant_id IS NOT NULL) AND (application_id IS NOT NULL) AND (num_nonnulls(tenant_id, owner_id, vendor_id, staff_id) = 0))
     WHEN 'emergency_request'::text THEN ((staff_id IS NOT NULL) AND (request_id IS NOT NULL) AND (num_nonnulls(tenant_id, owner_id, vendor_id) = 0))
     WHEN 'signing_request'::text THEN ((offer_id IS NOT NULL) AND (signer_position IS NOT NULL) AND (num_nonnulls(tenant_id, owner_id, vendor_id, staff_id) = 0))
+    WHEN 'payment_receipt'::text THEN ((tenant_id IS NOT NULL) AND (lease_id IS NOT NULL) AND (transfer_id IS NOT NULL) AND (num_nonnulls(owner_id, vendor_id, staff_id) = 0))
     ELSE ((tenant_id IS NULL) AND (vendor_id IS NULL) AND (staff_id IS NULL))
-END AND ((kind = 'message'::text) = (sent_by IS NOT NULL)) AND ((kind = ANY (ARRAY['invite'::text, 'password_reset'::text, 'signing_request'::text])) = needs_link) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'late_notice'::text])) = (lease_id IS NOT NULL)) AND ((kind = 'late_notice'::text) = (charge_id IS NOT NULL)) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'owner_statement'::text])) = (period IS NOT NULL)) AND ((kind = 'owner_statement'::text) <= (period = (date_trunc('month'::text, (period)::timestamp with time zone))::date)) AND ((kind = 'work_order'::text) = (work_order_step_id IS NOT NULL)) AND ((kind = 'adverse_action'::text) = ((application_id IS NOT NULL) AND (applicant_id IS NOT NULL))) AND ((kind = 'emergency_request'::text) = (request_id IS NOT NULL)) AND ((kind = 'signing_request'::text) = ((offer_id IS NOT NULL) OR (signer_position IS NOT NULL))))) NOT VALID;
+END AND ((kind = 'message'::text) = (sent_by IS NOT NULL)) AND ((kind = ANY (ARRAY['invite'::text, 'password_reset'::text, 'signing_request'::text])) = needs_link) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'late_notice'::text, 'payment_receipt'::text])) = (lease_id IS NOT NULL)) AND ((kind = 'late_notice'::text) = (charge_id IS NOT NULL)) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'owner_statement'::text])) = (period IS NOT NULL)) AND ((kind = 'owner_statement'::text) <= (period = (date_trunc('month'::text, (period)::timestamp with time zone))::date)) AND ((kind = 'work_order'::text) = (work_order_step_id IS NOT NULL)) AND ((kind = 'adverse_action'::text) = ((application_id IS NOT NULL) AND (applicant_id IS NOT NULL))) AND ((kind = 'emergency_request'::text) = (request_id IS NOT NULL)) AND ((kind = 'signing_request'::text) = ((offer_id IS NOT NULL) OR (signer_position IS NOT NULL))) AND ((kind = 'payment_receipt'::text) = (transfer_id IS NOT NULL)))) NOT VALID;
 
 
 --
@@ -17970,6 +17973,13 @@ CREATE UNIQUE INDEX trust_emails_one_late_notice ON public.trust_emails USING bt
 --
 
 CREATE UNIQUE INDEX trust_emails_one_owner_statement ON public.trust_emails USING btree (owner_id, period) WHERE (kind = 'owner_statement'::text);
+
+
+--
+-- Name: trust_emails_one_payment_receipt; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_emails_one_payment_receipt ON public.trust_emails USING btree (tenant_id, transfer_id) WHERE (kind = 'payment_receipt'::text);
 
 
 --
@@ -24073,6 +24083,14 @@ ALTER TABLE ONLY public.trust_emails
 
 
 --
+-- Name: trust_emails trust_emails_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id) NOT VALID;
+
+
+--
 -- Name: trust_emails trust_emails_work_order_step_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26981,4 +26999,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261021000107'),
     ('20261021000108'),
     ('20261021000109'),
-    ('20261021000110');
+    ('20261021000110'),
+    ('20261021000111');
