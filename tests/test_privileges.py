@@ -256,6 +256,12 @@ TABLES = {
     # A property's street address and where it is (migration 0109); the AI reads both.
     "trust_property_addresses": {"SELECT", "INSERT"},
     "trust_property_locations": {"SELECT", "INSERT"},
+    # A bank's or lockbox's payment files (migration 0118): what each line says, and the payment
+    # it became or why staff set it aside. The money moves through rent.record_payment.
+    "trust_payment_files": {"SELECT", "INSERT"},
+    "trust_payment_file_lines": {"SELECT", "INSERT"},
+    "trust_payment_file_postings": {"SELECT", "INSERT"},
+    "trust_payment_file_skips": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -481,6 +487,10 @@ FUNCTIONS = {
     "trust_check_assistance_record()": set(),
     "trust_check_decision_override()": set(),
     "trust_fill_bill_markup()": set(),
+    "trust_check_payment_file_line()": set(),
+    "trust_check_payment_file_lines()": set(),
+    "trust_check_payment_file_outcome()": set(),
+    "trust_check_payment_file_posting()": set(),
     # Reports read trust records, so only the app and the AI; they run with the caller's own
     # read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app", "trust_ai_agent"},

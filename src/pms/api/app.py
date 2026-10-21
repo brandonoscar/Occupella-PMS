@@ -76,6 +76,7 @@ from pms.api import (
     outbox,
     owner,
     payables,
+    payment_files,
     people,
     quickbooks,
     receipts,
@@ -528,6 +529,7 @@ def create_app(settings: Settings) -> FastAPI:
     calendar.hide_feed_tokens(logging.getLogger("uvicorn.access"))
     app.include_router(people.router)
     app.include_router(setup.router)
+    app.include_router(payment_files.router)
     app.include_router(rent.router)
     app.include_router(assistance.router)
     app.include_router(addresses.router)
