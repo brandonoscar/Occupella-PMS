@@ -4,6 +4,7 @@ renewal status as of the end of the day (UTC): none, drafted, sent, signed or re
 
 The golden case under tests/golden/cases/ pins the layout; these check the rules."""
 
+import sys
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -27,6 +28,16 @@ DAY = timedelta(days=1)
 YEAR_AGO = TODAY - timedelta(days=365)
 
 
+@pytest.fixture(autouse=True)
+def today(monkeypatch):
+    """The day each test runs on, read as it starts. Read once as the file loaded, a run that
+    crossed midnight UTC counted the steps a test recorded after it from the day before."""
+    day = datetime.now(UTC).date()
+    monkeypatch.setattr(sys.modules[__name__], "TODAY", day)
+    monkeypatch.setattr(sys.modules[__name__], "YEAR_AGO", day - timedelta(days=365))
+    return day
+
+
 @pytest.fixture
 def pmc(conn):
     return make_pmc(conn)
@@ -44,11 +55,15 @@ def lease_ending(conn, pmc, ends_on, name, rent="1000.00", tenants=None, owner=0
     return unit, open_lease(conn, pmc.pmc_id, unit, YEAR_AGO, ends_on, rent, people)
 
 
-def report(conn, pmc, as_of=TODAY):
+# report()'s day when none is given: today, as the test runs (a test may give None).
+AS_TODAY = object()
+
+
+def report(conn, pmc, as_of=AS_TODAY):
     return conn.execute(
         "SELECT line, item, property, unit, tenants, ends_on, days_left, bucket, monthly_rent,"
         " renewal FROM trust_report_lease_expirations(%s, %s)",
-        (pmc.pmc_id, as_of),
+        (pmc.pmc_id, TODAY if as_of is AS_TODAY else as_of),
     ).fetchall()
 
 

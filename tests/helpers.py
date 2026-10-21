@@ -5,9 +5,11 @@ Every fixture is synthetic: no real names, addresses, bank numbers or tax IDs.
 
 import os
 import shutil
+import struct
 import threading
 import time
 import uuid
+import zlib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -1361,3 +1363,19 @@ def utility_shares(connection, bill_id) -> dict:
             (bill_id,),
         ).fetchall()
     }
+
+
+def png(width=40, height=20):
+    """A small, valid PNG: a white image of the size asked."""
+
+    def chunk(kind, data):
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    rows = b"".join(b"\x00" + b"\xff" * width * 3 for _ in range(height))
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(rows))
+        + chunk(b"IEND", b"")
+    )

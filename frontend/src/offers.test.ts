@@ -18,8 +18,8 @@ const OFFER: Offer = {
   offered_at: "2026-10-11T18:00:00Z",
   sent: true,
   signers: [
-    { position: 1, name: "A", email: "a@example.com", role: "tenant", signed_at: "2026-10-11T19:00:00Z" },
-    { position: 2, name: "B", email: "b@example.com", role: "tenant", signed_at: null },
+    { position: 1, name: "A", email: "a@example.com", role: "tenant", signed_at: "2026-10-11T19:00:00Z", progress: "signed" },
+    { position: 2, name: "B", email: "b@example.com", role: "tenant", signed_at: null, progress: "waiting" },
   ],
   lease_id: null,
   security_deposit: null,

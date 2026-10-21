@@ -143,3 +143,41 @@ def test_main_with_issue_check(monkeypatch, root, capsys):
     monkeypatch.setattr(check_registry, "issue_state", lambda number, token: "closed")
     assert check_registry.main(["--root", str(root), "--check-issues"]) == 1
     assert "is closed" in capsys.readouterr().out
+
+
+def test_an_entry_goes_only_as_a_founders_decision_replaced_it(root):
+    (root / "docs/adr").mkdir(parents=True)
+    (root / "docs/adr/0008-esign.md").write_text("# The decision\n")
+    base = {"invariant": [{"id": "old", "statement": "s", "tests": ["t1"]}]}
+    new = {"id": "new", "statement": "s", "tests": ["tests/test_a.py::test_plain"]}
+    retired = {"id": "invariant:old", "decision": "docs/adr/0008-esign.md"}
+    head = {"invariant": [new], "retired": [{**retired, "replaced_by": "invariant:new"}]}
+
+    assert check_registry.check(head, root) == []
+    assert check_registry.compare(base, head) == []
+    # Without its row, or with the row naming no record or no tested replacement, it can't go.
+    assert check_registry.compare(base, {"invariant": [new]}) == [
+        "invariant:old was removed from ci/registry.toml."
+    ]
+    for row, problem in [
+        ({**retired, "decision": None, "replaced_by": "invariant:new"}, "decision must be"),
+        (
+            {**retired, "decision": "docs/adr/0009-none.md", "replaced_by": "invariant:new"},
+            "decision",
+        ),
+        ({**retired, "decision": "README.md", "replaced_by": "invariant:new"}, "decision must be"),
+        ({**retired, "replaced_by": "invariant:gone"}, "replaced_by must be"),
+        ({**retired, "replaced_by": None}, "replaced_by must be"),
+    ]:
+        assert [
+            problem in p for p in check_registry.check({"invariant": [new], "retired": [row]}, root)
+        ] == [True]
+    untested = {**new, "tests": [], "pending": ISSUE}
+    assert check_registry.check(
+        {"invariant": [untested], "retired": [{**retired, "replaced_by": "invariant:new"}]}, root
+    ) == ["retired invariant:old: replaced_by must be an entry with tests, got 'invariant:new'."]
+    # A retired entry is gone for good: one still listed is refused.
+    still = {"invariant": [new, {**base["invariant"][0], "tests": ["tests/test_a.py::test_plain"]}]}
+    assert check_registry.check(
+        {**still, "retired": [{**retired, "replaced_by": "invariant:new"}]}, root
+    ) == ["retired invariant:old is still an entry."]

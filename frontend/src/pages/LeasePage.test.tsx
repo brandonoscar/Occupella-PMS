@@ -616,6 +616,8 @@ describe("LeasePage", () => {
     await open();
     fireEvent.click(screen.getByRole("tab", { name: "Files" }));
     expect(await screen.findByText("No file yet.")).toBeTruthy();
+    // Its tenants see its lease documents in the portal; staff are told so.
+    expect(screen.getByText(/Its tenants download its lease documents in the portal/)).toBeTruthy();
     fireEvent.click(screen.getByRole("tab", { name: "Notes" }));
     expect(await screen.findByText("No notes yet.")).toBeTruthy();
   });

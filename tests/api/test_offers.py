@@ -1,6 +1,6 @@
 """Lease offers through the API (src/pms/api/offers.py): staff offer a lease or a renewal with
-the PMC's own PDF, signers sign on the fake e-sign partner's page, and staff complete the offer
-into a lease. Tenants see and sign their renewals."""
+the PMC's own PDF, signers sign on the PMS's own signing page (src/pms/api/signing.py, ADR 0008),
+and staff complete the offer into a lease. Tenants see and sign their renewals."""
 
 import base64
 import hashlib
@@ -36,7 +36,6 @@ def settings(database_url):
         database_url=database_url,
         public_url="http://testserver",
         cookie_secure=False,
-        esign_partner="fake",
     )
 
 
@@ -93,8 +92,19 @@ def offer(client, place, **changes):
 
 
 def sign(browser, link, name):
+    """Signs on the signing page as a signer does: agrees to sign electronically, opens the
+    lease, and types a name. The answer is the signing's."""
     token = link["url"].split("#", 1)[1]
-    return browser.post("/api/fake-esign/sign", json={"token": token, "name": name})
+    seen = browser.post("/api/signing/view", json={"token": token}).json()
+    browser.post(
+        "/api/signing/consent",
+        json={"token": token, "disclosure_sha256": seen["disclosure_sha256"]},
+    )
+    browser.post("/api/signing/document", json={"token": token})
+    return browser.post(
+        "/api/signing/sign",
+        json={"token": token, "typed_name": name, "document_sha256": seen["document_sha256"]},
+    )
 
 
 def test_staff_offer_a_lease_to_the_applicants_and_each_gets_a_link(client, staff, place):
@@ -108,12 +118,21 @@ def test_staff_offer_a_lease_to_the_applicants_and_each_gets_a_link(client, staf
         (1, "Applicant A", "a@example.com", None),
         (2, "Applicant B", "b@example.com", None),
     ]
-    assert [link["url"].startswith("http://testserver/esign#") for link in made["links"]] == [
+    assert [link["url"].startswith("http://testserver/sign#") for link in made["links"]] == [
         True
     ] * 2
+    assert [s["progress"] for s in made["offer"]["signers"]] == ["waiting", "waiting"]
     assert client.get("/api/leasing/offers").json()["items"] == [made["offer"]]
-    again = client.get(f"/api/leasing/offers/{made['offer']['id']}/links").json()
-    assert again == made["links"]
+    # New links on asking again; the first ones still work.
+    again = client.post(f"/api/leasing/offers/{made['offer']['id']}/links", json={}).json()
+    assert [(a["position"], a["email"]) for a in again] == [
+        (1, "a@example.com"),
+        (2, "b@example.com"),
+    ]
+    assert {a["url"] for a in again}.isdisjoint(link["url"] for link in made["links"])
+    for link in [*made["links"], *again]:
+        token = link["url"].split("#", 1)[1]
+        assert client.post("/api/signing/view", json={"token": token}).json()["status"] == "open"
 
 
 def test_signers_sign_and_staff_complete_the_offer_into_a_lease(
@@ -124,18 +143,19 @@ def test_signers_sign_and_staff_complete_the_offer_into_a_lease(
 
     early = client.post(complete, json={})
     viewed = other_client.post(
-        "/api/fake-esign/view", json={"token": made["links"][0]["url"].split("#", 1)[1]}
+        "/api/signing/view", json={"token": made["links"][0]["url"].split("#", 1)[1]}
     ).json()
     signed = [sign(other_client, link, link["name"].upper()) for link in made["links"]]
-    checked = client.post(f"/api/leasing/offers/{made['offer']['id']}/signatures", json={}).json()
+    checked = client.get(f"/api/leasing/offers/{made['offer']['id']}").json()
     done = client.post(complete, json={})
 
     assert early.status_code == 409
     assert "not signed by everyone" in early.json()["detail"]
-    assert viewed["signer"] == "Applicant A" and viewed["signed"] is False
+    assert viewed["signer"] == "Applicant A" and viewed["status"] == "open"
     assert viewed["document_sha256"] == hashlib.sha256(LEASE_PDF).hexdigest()
-    assert [s.status_code for s in signed] == [204, 204]
+    assert [s.status_code for s in signed] == [200, 200]
     assert all(s["signed_at"] for s in checked["signers"])
+    assert [s["progress"] for s in checked["signers"]] == ["signed", "signed"]
     assert done.status_code == 200, done.text
     lease = done.json()["lease_id"]
     assert conn.execute(
@@ -175,9 +195,9 @@ def test_a_tenant_signs_their_renewal_and_staff_complete_it(
     assert lease["tenants"] == [{"name": "Tenant 1", "email": tenant.email}]
     assert renewal.status_code == 201 and offered["kind"] == "renewal"
     assert [o["id"] for o in seen] == [offered["id"]]
-    assert link.status_code == 200 and link.json()["url"].startswith("http://testserver/esign#")
+    assert link.status_code == 200 and link.json()["url"].startswith("http://testserver/sign#")
     assert document.content == LEASE_PDF
-    assert signed.status_code == 204
+    assert signed.status_code == 200
     assert done.status_code == 200, done.text
     assert conn.execute(
         "SELECT starts_on, ends_on, monthly_rent FROM trust_leases WHERE unit_id = %s"
@@ -219,7 +239,7 @@ def test_a_renewal_keeps_the_rent_due_day_of_the_lease_it_renews(
         ),
     ).json()
     for link in made["links"]:
-        assert sign(other_client, link, "Tenant 1").status_code == 204
+        assert sign(other_client, link, "Tenant 1").status_code == 200
     done = client.post(f"/api/leasing/offers/{made['offer']['id']}/complete", json={})
 
     assert done.status_code == 200, done.text
@@ -233,7 +253,7 @@ def test_a_renewal_keeps_the_rent_due_day_of_the_lease_it_renews(
     )
 
 
-def test_a_tenant_sees_their_signature_at_once_and_only_staff_record_it(
+def test_a_signature_is_recorded_as_the_signer_signs(
     client, other_client, conn, app_conn, staff, place
 ):
     tenant = join_as(other_client, app_conn, place.pmc.pmc_id, "tenant", place.tenant)
@@ -251,27 +271,34 @@ def test_a_tenant_sees_their_signature_at_once_and_only_staff_record_it(
     before = other_client.get("/api/tenant/renewals").json()
     sign(other_client, link.json(), "Tenant 1")
     after = other_client.get("/api/tenant/renewals").json()
-    unrecorded = conn.execute(recorded, (renewal["id"],)).fetchall()
-    client.post(f"/api/leasing/offers/{renewal['id']}/signatures", json={})
-    then = other_client.get("/api/tenant/renewals").json()
+    again = other_client.post(f"/api/tenant/renewals/{renewal['id']}/signing-link", json={})
+    staff_see = client.get(f"/api/leasing/offers/{renewal['id']}").json()
 
     signed = lambda seen: [s["signed_at"] is not None for s in seen[0]["signers"]]  # noqa: E731
     assert signed(before) == [False, False]
     assert signed(after) == [True, False]
-    assert unrecorded == []
     assert conn.execute(recorded, (renewal["id"],)).fetchall() == [(1,)]
-    assert then[0]["signers"][0]["signed_at"] == after[0]["signers"][0]["signed_at"]
+    assert (again.status_code, again.json()["detail"]) == (
+        409,
+        "you have signed this renewal already",
+    )
+    assert [s["progress"] for s in staff_see["signers"]] == ["signed", "waiting"]
+    assert staff_see["status"] == "partially signed"
 
 
-def test_a_tenant_sees_only_renewals_sent_to_sign_on_a_server_with_or_without_a_partner(
-    other_client, conn, app_conn, database_url, place
-):
+def test_a_tenant_sees_only_renewals_sent_to_sign(other_client, conn, app_conn, place):
     pmc_id = place.pmc.pmc_id
-    join_as(other_client, app_conn, pmc_id, "tenant", place.tenant)
+    tenant = join_as(other_client, app_conn, pmc_id, "tenant", place.tenant)
     staff_id = add_staff(conn, pmc_id, "Offering staff")
     offer_lease(conn, pmc_id, place.leased_unit, staff_id, JAN_1, renews_lease_id=place.lease)
     sent = offer_lease(
-        conn, pmc_id, place.leased_unit, staff_id, JUN_30, renews_lease_id=place.lease
+        conn,
+        pmc_id,
+        place.leased_unit,
+        staff_id,
+        JUN_30,
+        renews_lease_id=place.lease,
+        signers=(("Tenant 1", tenant.email),),
     )
     send_offer(conn, pmc_id, sent, staff_id)
     voided = offer_lease(
@@ -282,50 +309,51 @@ def test_a_tenant_sees_only_renewals_sent_to_sign_on_a_server_with_or_without_a_
         "INSERT INTO trust_lease_offer_voids (pmc_id, offer_id) VALUES (%s, %s)", (pmc_id, voided)
     )
 
-    with_fake = other_client.get("/api/tenant/renewals").json()
-    bare = Settings(database_url=database_url, public_url="http://testserver", cookie_secure=False)
-    with TestClient(create_app(bare)) as plain:
-        plain.cookies = other_client.cookies
-        without = plain.get("/api/tenant/renewals").json()
+    seen = other_client.get("/api/tenant/renewals").json()
     draft_document = other_client.get(f"/api/tenant/renewals/{voided}/document")
+    # Sent through another partner (before the PMS signed itself), it takes no link here.
+    elsewhere = other_client.post(f"/api/tenant/renewals/{sent}/signing-link", json={})
 
-    for seen in (with_fake, without):
-        assert [(o["id"], o["status"]) for o in seen] == [(str(sent), "sent")]
-        assert [s["signed_at"] for o in seen for s in o["signers"]] == [None]
+    assert [(o["id"], o["status"]) for o in seen] == [(str(sent), "sent")]
+    assert [s["signed_at"] for o in seen for s in o["signers"]] == [None]
     assert draft_document.status_code == 404
+    assert (elsewhere.status_code, elsewhere.json()["detail"]) == (
+        409,
+        "this offer was sent to an e-sign partner the PMS no longer uses: void it and send a new"
+        " one",
+    )
 
 
-def test_the_fake_partner_takes_only_the_signers_name_on_a_real_link(
-    client, other_client, staff, place
-):
+def test_a_signer_signs_only_with_their_name_on_a_real_link(client, other_client, staff, place):
     made = offer(client, place)
 
     wrong_name = sign(other_client, made["links"][0], "Someone Else")
     made_up = other_client.post(
-        "/api/fake-esign/sign", json={"token": "x" * 40, "name": "Applicant A"}
+        "/api/signing/sign",
+        json={"token": "x" * 40, "typed_name": "Applicant A", "document_sha256": "0" * 64},
     )
-    unseen = other_client.post("/api/fake-esign/view", json={"token": "x" * 40})
+    unseen = other_client.post("/api/signing/view", json={"token": "x" * 40})
 
     assert (wrong_name.status_code, wrong_name.json()["detail"]) == (
         422,
         "type your name as it is on the lease",
     )
-    assert made_up.status_code == 422
+    assert made_up.status_code == 404
     assert unseen.status_code == 404
 
 
-def test_without_a_partner_there_is_no_signing(conn, app_conn, database_url, pmc, place):
-    bare = Settings(database_url=database_url, public_url="http://testserver", cookie_secure=False)
+def test_every_server_signs_on_its_own_page(conn, app_conn, database_url, pmc, place):
+    bare = Settings(database_url=database_url, public_url="http://pms.example", cookie_secure=False)
     with TestClient(create_app(bare)) as client:
         join_as_staff(client, conn, app_conn, pmc)
         answer = client.post(f"/api/leasing/applications/{place.application}/offer", json=terms())
-        page = client.post("/api/fake-esign/view", json={"token": "x" * 40})
 
-    assert (answer.status_code, answer.json()["detail"]) == (
-        503,
-        "no e-sign partner is set up on this server",
-    )
-    assert page.status_code == 404
+    assert answer.status_code == 201, answer.text
+    assert [link["url"][:24] for link in answer.json()["links"]] == ["http://pms.example/sign#"] * 2
+    assert conn.execute(
+        "SELECT partner, partner_reference FROM trust_signature_requests WHERE offer_id = %s",
+        (answer.json()["offer"]["id"],),
+    ).fetchone() == ("PMS e-sign", f"pms-esign-{answer.json()['offer']['id']}")
 
 
 @pytest.mark.parametrize(
@@ -449,8 +477,8 @@ def test_another_pmcs_offers_are_not_found(client, other_client, conn, app_conn,
     answers = [
         client.post(f"/api/leasing/applications/{theirs.application}/offer", json=terms()),
         client.post(f"/api/leasing/leases/{theirs.lease}/renewal", json=terms()),
-        client.get(f"/api/leasing/offers/{their_offer}/links"),
-        client.post(f"/api/leasing/offers/{their_offer}/signatures", json={}),
+        client.post(f"/api/leasing/offers/{their_offer}/links", json={}),
+        client.get(f"/api/leasing/offers/{their_offer}/certificate"),
         client.post(f"/api/leasing/offers/{their_offer}/complete", json={}),
         client.get(f"/api/leasing/offers/{their_offer}/document"),
         client.get(f"/api/leasing/offers/{their_offer}"),
@@ -476,8 +504,8 @@ def test_only_staff_reach_the_offer_endpoints(client, conn, app_conn, pmc, place
         client.get("/api/leasing/leases"),
         client.post(f"/api/leasing/leases/{place.lease}/renewal", json=terms()),
         client.get("/api/leasing/offers"),
-        client.get(f"/api/leasing/offers/{some}/links"),
-        client.post(f"/api/leasing/offers/{some}/signatures", json={}),
+        client.post(f"/api/leasing/offers/{some}/links", json={}),
+        client.get(f"/api/leasing/offers/{some}/certificate"),
         client.post(f"/api/leasing/offers/{some}/complete", json={}),
         client.get(f"/api/leasing/offers/{some}/document"),
         client.get(f"/api/leasing/offers/{some}"),
@@ -541,13 +569,15 @@ def test_an_offer_never_sent_has_no_links(client, other_client, conn, app_conn, 
         signers=(("Tenant 1", tenant.email),),
     )
 
-    links = client.get(f"/api/leasing/offers/{unsent}/links")
+    links = client.post(f"/api/leasing/offers/{unsent}/links", json={})
+    certificate = client.get(f"/api/leasing/offers/{unsent}/certificate")
     signing = other_client.post(f"/api/tenant/renewals/{unsent}/signing-link", json={})
 
-    assert (links.status_code, links.json()["detail"]) == (
-        409,
-        "this offer was never sent for signing",
-    )
+    for refused in (links, certificate):
+        assert (refused.status_code, refused.json()["detail"]) == (
+            409,
+            "this offer is a draft: send it to its signers first",
+        )
     # A draft is not the tenant's to see.
     assert (signing.status_code, signing.json()["detail"]) == (
         404,
@@ -586,6 +616,8 @@ def test_a_renewal_that_is_a_lease_already_gives_no_signing_link(
         ("post", "/api/leasing/offers/not-an-offer/complete"),
         ("post", "/api/leasing/offers/not-an-offer/send"),
         ("post", "/api/leasing/offers/not-an-offer/void"),
+        ("post", "/api/leasing/offers/not-an-offer/links"),
+        ("get", "/api/leasing/offers/not-an-offer/certificate"),
         ("post", "/api/leasing/leases/not-a-lease/renewal"),
     ],
 )
@@ -600,7 +632,7 @@ def test_bad_offer_paths_are_refused(client, staff, method, path):
 
 def signed_all(client, other_client, made):
     for link in made["links"]:
-        assert sign(other_client, link, link["name"]).status_code == 204
+        assert sign(other_client, link, link["name"]).status_code == 200
 
 
 def test_staff_keep_an_offer_as_a_draft_and_send_it_later(client, staff, place):
@@ -623,23 +655,7 @@ def test_staff_keep_an_offer_as_a_draft_and_send_it_later(client, staff, place):
     assert [link["name"] for link in sent.json()["links"]] == ["Applicant A", "Applicant B"]
     assert (again.status_code, again.json()["detail"]) == (
         409,
-        "this offer was sent already; its links are under Resend",
-    )
-
-
-def test_a_draft_needs_no_partner_until_it_is_sent(app_conn, conn, database_url, pmc, place):
-    bare = Settings(database_url=database_url, public_url="http://testserver", cookie_secure=False)
-    with TestClient(create_app(bare)) as plain:
-        join_as_staff(plain, conn, app_conn, pmc)
-        drafted = plain.post(
-            f"/api/leasing/applications/{place.application}/offer", json=terms(send=False)
-        )
-        sending = plain.post(f"/api/leasing/offers/{drafted.json()['offer']['id']}/send", json={})
-
-    assert drafted.status_code == 201, drafted.text
-    assert (sending.status_code, sending.json()["detail"]) == (
-        503,
-        "no e-sign partner is set up on this server",
+        "this offer was sent already; new links are under Resend",
     )
 
 
@@ -700,14 +716,15 @@ def test_staff_void_an_offer_and_it_takes_nothing_more(client, other_client, con
     path = f"/api/leasing/offers/{made['offer']['id']}"
 
     voided = client.post(f"{path}/void", json={"reason": "  Terms changed "})
-    signed_all(client, other_client, made)  # on the partner's page, after the void
+    # On the signing page, after the void.
+    late = [sign(other_client, link, link["name"]) for link in made["links"]]
     answers = [
         client.post(f"{path}/send", json={}),
-        client.get(f"{path}/links"),
+        client.post(f"{path}/links", json={}),
         client.post(f"{path}/complete", json={}),
         client.post(f"{path}/void", json={}),
     ]
-    checked = client.post(f"{path}/signatures", json={}).json()
+    checked = client.get(path).json()
 
     assert voided.status_code == 200, voided.text
     body = voided.json()
@@ -722,6 +739,9 @@ def test_staff_void_an_offer_and_it_takes_nothing_more(client, other_client, con
         (409, "this lease offer was voided; it takes nothing more"),
         (409, "this offer is voided already"),
     ]
+    assert [(a.status_code, a.json()["detail"]) for a in late] == [
+        (409, "this lease offer was withdrawn; it takes no signature")
+    ] * 2
     assert [s["signed_at"] for s in checked["signers"]] == [None, None]  # never recorded
     assert conn.execute(
         "SELECT recorded_by FROM trust_lease_offer_voids WHERE offer_id = %s",
@@ -820,7 +840,6 @@ def test_the_list_shows_offers_by_where_they_stand(client, other_client, conn, s
 def test_a_partly_signed_offer_says_so_and_today_lists_it(client, other_client, staff, place):
     made = offer(client, place)
     sign(other_client, made["links"][0], "Applicant A")
-    client.post(f"/api/leasing/offers/{made['offer']['id']}/signatures", json={})
     offer(client, place, send=False)  # a draft is not waiting on signers
 
     found = client.get(f"/api/leasing/offers/{made['offer']['id']}").json()
@@ -866,7 +885,7 @@ def test_sending_an_offer_emails_each_signer_their_own_link(client, conn, staff,
         (made["offer"]["id"],),
     ).fetchall()
     assert [(position, needs) for position, needs, _ in rows] == [(1, True), (2, True)]
-    assert all("/esign#" not in body and "{{link}}" in body for _, _, body in rows)
+    assert all("/sign#" not in body and "{{link}}" in body for _, _, body in rows)
     assert again.status_code == 409
 
 

@@ -599,8 +599,51 @@ the same follow-up), and what its staff write in a lead's note or a closing's re
 - A decision that goes against the latest screening's recommendation is refused unless it says
   why, and the applicant's page marks it, so each departure is on the record.
 - A declined or conditionally approved applicant reads the adverse action notice on their status
-  page. Sending a lease for signing emails each signer their own link (the e-sign partner may
-  also email them).
+  page. Sending a lease for signing emails each signer their own link to the PMS's signing page
+  (below).
 
 **Left to the company.** Its criteria themselves (legal in its state and city), applying them the
 same way to every applicant, and its reasons when it departs from them.
+
+## Signing a lease electronically (migration 0097, ADR 0008)
+
+**The rule.**
+- Federal ESIGN, in every state: a signature or contract is not denied legal effect only because
+  it is electronic, and an electronic signature is any sound, symbol or process attached to a
+  record and adopted with the intent to sign it (15 U.S.C. 7001(a), 7006(5)).
+- Before a record the law requires in writing is given to a consumer electronically, the consumer
+  agrees after a clear and conspicuous statement of: their right to have it on paper, and to
+  withdraw their agreement (with what follows and any fee); whether the agreement covers this
+  transaction only; how to withdraw it and update their contact details; how to get a paper copy
+  after agreeing, and any fee; and the hardware and software needed. They agree electronically in
+  a way that reasonably shows they can open the electronic form (7001(c)(1)). Read in search
+  excerpts of the code's text; the hardware and software clause's exact words are NOT VERIFIED.
+- An electronic contract may be denied effect if it can't be kept and accurately reproduced by
+  everyone entitled to it (7001(e)).
+- ESIGN's rule leaves out notices of default, eviction or the right to cure under a rental
+  agreement for a primary residence (7003(b)(2)(B)): those follow state law, and in practice go
+  on paper.
+- The Uniform Electronic Transactions Act, adopted by 49 states and DC, says the same for
+  transactions between parties who agree to deal electronically; an electronic signature is the
+  person's if it was their act, which may be shown by any means, including the security procedure
+  used (UETA 9). New York, the one state without UETA, has its own Electronic Signatures and
+  Records Act, under which an electronic signature binds as a handwritten one does. (Adoption
+  count from search excerpts, Illinois the 49th in 2021: NOT VERIFIED against each state's code.)
+
+**What the PMS does.**
+- Each signer signs through a link of their own, sent to their email, which works for 30 days.
+- They read the disclosures above, naming how to reach the company, and agree; the words they
+  agreed to are kept. Paper is free and there is no fee to withdraw. "I'd rather sign on paper"
+  is on the page, before and after agreeing, and ends the link.
+- They open the lease (the very PDF sent) before they can sign, which shows they can open it.
+- They type their name as it is on the offer, may draw their signature, and tick that they read
+  the lease and sign it. The signature names the lease's SHA-256.
+- Every step keeps its time, address and browser; nothing is rewritten. The signer downloads the
+  lease and a signing certificate saying all of it; staff download the certificate too.
+- The PMS sends no eviction or default notice electronically.
+
+**Left to the company.**
+- Keeping the promises the disclosures make for it: the lease on paper, and a paper copy, at no
+  charge, to whoever asks.
+- Whether its state asks more of a lease's signing (a separate signature beside a disclosure, a
+  witness) and the lease's own words.

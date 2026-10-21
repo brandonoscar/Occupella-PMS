@@ -3086,6 +3086,91 @@ $$;
 
 
 --
+-- Name: trust_check_signature_evidence(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_signature_evidence() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_link trust_signing_links;
+BEGIN
+    NEW.signed_at := clock_timestamp();
+    -- Offers of one application or one lease wait for each other (trust_complete_lease_offer),
+    -- so a void and a signature do too.
+    PERFORM pg_advisory_xact_lock(hashtextextended(
+        'lease offer of ' || coalesce(o.application_id, o.renews_lease_id), 0
+    ))
+    FROM trust_lease_offers AS o WHERE o.id = NEW.offer_id;
+    SELECT l.* INTO v_link FROM trust_signing_links AS l WHERE l.id = NEW.link_id;
+    IF v_link.offer_id IS DISTINCT FROM NEW.offer_id OR v_link.position <> NEW.position THEN
+        RAISE EXCEPTION 'trust: this link is another signer''s' USING ERRCODE = 'check_violation';
+    END IF;
+    IF NOT trust_signing_link_open(NEW.link_id) THEN
+        RAISE EXCEPTION 'trust: this signing link no longer signs; ask for a new one'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM trust_signing_events AS e WHERE e.link_id = NEW.link_id AND e.kind = 'paper'
+    ) THEN
+        RAISE EXCEPTION 'trust: the signer asked to sign on paper through this link'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM trust_signing_events AS e
+        WHERE e.link_id = NEW.link_id AND e.kind = 'consented'
+    ) OR NOT EXISTS (
+        SELECT 1 FROM trust_signing_events AS e
+        WHERE e.link_id = NEW.link_id AND e.kind = 'opened'
+    ) THEN
+        RAISE EXCEPTION 'trust: the signer agrees to sign electronically and opens the lease first'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM trust_lease_offer_signers AS s
+        WHERE s.offer_id = NEW.offer_id AND s.position = NEW.position
+          AND lower(btrim(s.display_name)) = lower(btrim(NEW.typed_name))
+    ) THEN
+        RAISE EXCEPTION 'trust: type your name as it is on the lease'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM trust_lease_offers AS o
+        WHERE o.id = NEW.offer_id AND sha256(o.document) = NEW.document_sha256
+    ) THEN
+        RAISE EXCEPTION 'trust: this is not the lease sent to sign' USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_signature_evidenced(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_signature_evidenced() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM trust_signature_requests AS r
+        WHERE r.offer_id = NEW.offer_id AND r.partner = 'PMS e-sign'
+    ) AND NOT EXISTS (
+        SELECT 1 FROM trust_signature_evidence AS s
+        WHERE s.offer_id = NEW.offer_id AND s.position = NEW.position
+    ) THEN
+        RAISE EXCEPTION 'trust: a signature here is made through the signer''s link'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_signer_change(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3165,6 +3250,71 @@ BEGIN
                   HINT = 'Name the new broker in the same change, or take the signers away.';
     END IF;
     RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: trust_check_signing_event(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_signing_event() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    NEW.created_at := clock_timestamp();
+    IF NOT trust_signing_link_open(NEW.link_id) THEN
+        RAISE EXCEPTION 'trust: this signing link no longer signs; ask for a new one'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.kind <> 'paper' AND EXISTS (
+        SELECT 1 FROM trust_signing_events AS e
+        WHERE e.link_id = NEW.link_id AND e.kind = 'paper'
+    ) THEN
+        RAISE EXCEPTION 'trust: the signer asked to sign on paper through this link'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.kind = 'opened' AND NOT EXISTS (
+        SELECT 1 FROM trust_signing_events AS e
+        WHERE e.link_id = NEW.link_id AND e.kind = 'consented'
+    ) THEN
+        RAISE EXCEPTION 'trust: the signer agrees to sign electronically before opening the lease'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_signing_link(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_signing_link() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM trust_signature_requests AS r
+        WHERE r.offer_id = NEW.offer_id AND r.partner = 'PMS e-sign'
+    ) THEN
+        RAISE EXCEPTION 'trust: this offer is not sent to sign here'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM trust_lease_offer_completions AS c WHERE c.offer_id = NEW.offer_id
+    ) THEN
+        RAISE EXCEPTION 'trust: this offer is a lease already' USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM trust_signatures AS g
+        WHERE g.offer_id = NEW.offer_id AND g.position = NEW.position
+    ) THEN
+        RAISE EXCEPTION 'trust: this signer has signed already' USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
 END;
 $$;
 
@@ -5493,6 +5643,22 @@ BEGIN
     SELECT v_entry, p_pmc_id, l.n, l.from_account_id, l.to_account_id, l.amount
     FROM unnest(p_lines) WITH ORDINALITY AS l (from_account_id, to_account_id, amount, n);
     RETURN v_entry;
+END;
+$$;
+
+
+--
+-- Name: trust_record_evidenced_signature(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_record_evidenced_signature() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    INSERT INTO trust_signatures (pmc_id, offer_id, position, signed_at)
+    VALUES (NEW.pmc_id, NEW.offer_id, NEW.position, NEW.signed_at);
+    RETURN NULL;
 END;
 $$;
 
@@ -9973,6 +10139,35 @@ $$;
 
 
 --
+-- Name: trust_signing_link_open(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_signing_link_open(p_link_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT EXISTS (
+        SELECT 1
+        FROM trust_signing_links AS l
+        JOIN trust_signature_requests AS r
+            ON r.offer_id = l.offer_id AND r.partner = 'PMS e-sign'
+        WHERE l.id = p_link_id
+          AND l.created_at > now() - interval '30 days'
+          AND NOT EXISTS (
+              SELECT 1 FROM trust_lease_offer_voids AS v WHERE v.offer_id = l.offer_id
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM trust_lease_offer_completions AS c WHERE c.offer_id = l.offer_id
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM trust_signatures AS g
+              WHERE g.offer_id = l.offer_id AND g.position = l.position
+          )
+    );
+$$;
+
+
+--
 -- Name: trust_split_by_ownership(uuid, date, numeric); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -13028,6 +13223,28 @@ CREATE TABLE public.trust_showings (
 
 
 --
+-- Name: trust_signature_evidence; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_signature_evidence (
+    offer_id uuid NOT NULL,
+    "position" bigint NOT NULL,
+    pmc_id uuid NOT NULL,
+    link_id uuid NOT NULL,
+    typed_name text NOT NULL,
+    drawing bytea,
+    document_sha256 bytea NOT NULL,
+    ip inet,
+    user_agent text,
+    signed_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_signature_evidence_document_sha256_check CHECK ((length(document_sha256) = 32)),
+    CONSTRAINT trust_signature_evidence_drawing_check CHECK ((((length(drawing) >= 9) AND (length(drawing) <= 100000)) AND (SUBSTRING(drawing FROM 1 FOR 8) = '\x89504e470d0a1a0a'::bytea))),
+    CONSTRAINT trust_signature_evidence_typed_name_check CHECK (((typed_name ~ '\S'::text) AND (char_length(typed_name) <= 200))),
+    CONSTRAINT trust_signature_evidence_user_agent_check CHECK ((char_length(user_agent) <= 500))
+);
+
+
+--
 -- Name: trust_signature_requests; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -13053,6 +13270,41 @@ CREATE TABLE public.trust_signatures (
     pmc_id uuid NOT NULL,
     signed_at timestamp with time zone NOT NULL,
     recorded_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: trust_signing_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_signing_events (
+    link_id uuid NOT NULL,
+    kind text NOT NULL,
+    pmc_id uuid NOT NULL,
+    disclosure text,
+    ip inet,
+    user_agent text,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_signing_events_check CHECK (((kind = 'consented'::text) = (disclosure IS NOT NULL))),
+    CONSTRAINT trust_signing_events_disclosure_check CHECK (((btrim(disclosure) <> ''::text) AND (char_length(disclosure) <= 5000))),
+    CONSTRAINT trust_signing_events_kind_check CHECK ((kind = ANY (ARRAY['consented'::text, 'opened'::text, 'paper'::text]))),
+    CONSTRAINT trust_signing_events_user_agent_check CHECK ((char_length(user_agent) <= 500))
+);
+
+
+--
+-- Name: trust_signing_links; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_signing_links (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    offer_id uuid NOT NULL,
+    "position" bigint NOT NULL,
+    token_sha256 bytea NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_signing_links_token_sha256_check CHECK ((length(token_sha256) = 32))
 );
 
 
@@ -15309,6 +15561,22 @@ ALTER TABLE ONLY public.trust_showings
 
 
 --
+-- Name: trust_signature_evidence trust_signature_evidence_link_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signature_evidence
+    ADD CONSTRAINT trust_signature_evidence_link_id_key UNIQUE (link_id);
+
+
+--
+-- Name: trust_signature_evidence trust_signature_evidence_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signature_evidence
+    ADD CONSTRAINT trust_signature_evidence_pkey PRIMARY KEY (offer_id, "position");
+
+
+--
 -- Name: trust_signature_requests trust_signature_requests_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15322,6 +15590,38 @@ ALTER TABLE ONLY public.trust_signature_requests
 
 ALTER TABLE ONLY public.trust_signatures
     ADD CONSTRAINT trust_signatures_pkey PRIMARY KEY (offer_id, "position");
+
+
+--
+-- Name: trust_signing_events trust_signing_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signing_events
+    ADD CONSTRAINT trust_signing_events_pkey PRIMARY KEY (link_id, kind);
+
+
+--
+-- Name: trust_signing_links trust_signing_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signing_links
+    ADD CONSTRAINT trust_signing_links_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_signing_links trust_signing_links_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signing_links
+    ADD CONSTRAINT trust_signing_links_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_signing_links trust_signing_links_token_sha256_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signing_links
+    ADD CONSTRAINT trust_signing_links_token_sha256_key UNIQUE (token_sha256);
 
 
 --
@@ -16941,6 +17241,20 @@ CREATE INDEX trust_showings_unit ON public.trust_showings USING btree (pmc_id, u
 
 
 --
+-- Name: trust_signing_links_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_signing_links_recorded_by ON public.trust_signing_links USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_signing_links_signer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_signing_links_signer ON public.trust_signing_links USING btree (offer_id, "position");
+
+
+--
 -- Name: trust_staff_custom_roles_staff; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -18040,6 +18354,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_signature_evidence trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_signature_evidence FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_signature_requests trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -18051,6 +18372,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_signatures FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_signing_events trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_signing_events FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_signing_links trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_signing_links FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -19132,6 +19467,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_show
 
 
 --
+-- Name: trust_signature_evidence trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_signature_evidence FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_signature_requests trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -19143,6 +19485,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_sign
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_signatures FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_signing_events trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_signing_events FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_signing_links trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_signing_links FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -19587,6 +19943,13 @@ CREATE TRIGGER trust_lease_offer_not_void BEFORE INSERT ON public.trust_signatur
 
 
 --
+-- Name: trust_signing_links trust_lease_offer_not_void; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_lease_offer_not_void BEFORE INSERT ON public.trust_signing_links FOR EACH ROW EXECUTE FUNCTION public.trust_check_lease_offer_not_void();
+
+
+--
 -- Name: trust_lease_offers trust_lease_offer_terms; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -19951,6 +20314,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_showings FOR EACH
 
 
 --
+-- Name: trust_signing_links trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_signing_links FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_unit_areas trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20063,6 +20433,27 @@ CREATE CONSTRAINT TRIGGER trust_shared_bill_whole AFTER INSERT ON public.trust_s
 
 
 --
+-- Name: trust_signature_evidence trust_signature_evidence_link; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_signature_evidence_link BEFORE INSERT ON public.trust_signature_evidence FOR EACH ROW EXECUTE FUNCTION public.trust_check_signature_evidence();
+
+
+--
+-- Name: trust_signature_evidence trust_signature_evidence_signs; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_signature_evidence_signs AFTER INSERT ON public.trust_signature_evidence FOR EACH ROW EXECUTE FUNCTION public.trust_record_evidenced_signature();
+
+
+--
+-- Name: trust_signatures trust_signature_evidenced; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_signature_evidenced BEFORE INSERT ON public.trust_signatures FOR EACH ROW EXECUTE FUNCTION public.trust_check_signature_evidenced();
+
+
+--
 -- Name: trust_bill_payments trust_signer; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20109,6 +20500,20 @@ CREATE TRIGGER trust_signer_change BEFORE INSERT ON public.trust_account_signers
 --
 
 CREATE CONSTRAINT TRIGGER trust_signers_have_a_broker AFTER INSERT ON public.trust_account_signers DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_signers_have_a_broker();
+
+
+--
+-- Name: trust_signing_events trust_signing_event_order; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_signing_event_order BEFORE INSERT ON public.trust_signing_events FOR EACH ROW EXECUTE FUNCTION public.trust_check_signing_event();
+
+
+--
+-- Name: trust_signing_links trust_signing_link_signer; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_signing_link_signer BEFORE INSERT ON public.trust_signing_links FOR EACH ROW EXECUTE FUNCTION public.trust_check_signing_link();
 
 
 --
@@ -23559,6 +23964,38 @@ ALTER TABLE ONLY public.trust_showings
 
 
 --
+-- Name: trust_signature_evidence trust_signature_evidence_offer_id_position_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signature_evidence
+    ADD CONSTRAINT trust_signature_evidence_offer_id_position_fkey FOREIGN KEY (offer_id, "position") REFERENCES public.trust_lease_offer_signers(offer_id, "position");
+
+
+--
+-- Name: trust_signature_evidence trust_signature_evidence_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signature_evidence
+    ADD CONSTRAINT trust_signature_evidence_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_signature_evidence trust_signature_evidence_pmc_id_link_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signature_evidence
+    ADD CONSTRAINT trust_signature_evidence_pmc_id_link_id_fkey FOREIGN KEY (pmc_id, link_id) REFERENCES public.trust_signing_links(pmc_id, id);
+
+
+--
+-- Name: trust_signature_evidence trust_signature_evidence_pmc_id_offer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signature_evidence
+    ADD CONSTRAINT trust_signature_evidence_pmc_id_offer_id_fkey FOREIGN KEY (pmc_id, offer_id) REFERENCES public.trust_lease_offers(pmc_id, id);
+
+
+--
 -- Name: trust_signature_requests trust_signature_requests_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -23612,6 +24049,54 @@ ALTER TABLE ONLY public.trust_signatures
 
 ALTER TABLE ONLY public.trust_signatures
     ADD CONSTRAINT trust_signatures_pmc_id_offer_id_fkey FOREIGN KEY (pmc_id, offer_id) REFERENCES public.trust_lease_offers(pmc_id, id);
+
+
+--
+-- Name: trust_signing_events trust_signing_events_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signing_events
+    ADD CONSTRAINT trust_signing_events_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_signing_events trust_signing_events_pmc_id_link_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signing_events
+    ADD CONSTRAINT trust_signing_events_pmc_id_link_id_fkey FOREIGN KEY (pmc_id, link_id) REFERENCES public.trust_signing_links(pmc_id, id);
+
+
+--
+-- Name: trust_signing_links trust_signing_links_offer_id_position_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signing_links
+    ADD CONSTRAINT trust_signing_links_offer_id_position_fkey FOREIGN KEY (offer_id, "position") REFERENCES public.trust_lease_offer_signers(offer_id, "position");
+
+
+--
+-- Name: trust_signing_links trust_signing_links_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signing_links
+    ADD CONSTRAINT trust_signing_links_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_signing_links trust_signing_links_pmc_id_offer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signing_links
+    ADD CONSTRAINT trust_signing_links_pmc_id_offer_id_fkey FOREIGN KEY (pmc_id, offer_id) REFERENCES public.trust_lease_offers(pmc_id, id);
+
+
+--
+-- Name: trust_signing_links trust_signing_links_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_signing_links
+    ADD CONSTRAINT trust_signing_links_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -24141,4 +24626,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261018000093'),
     ('20261019000094'),
     ('20261020000095'),
-    ('20261020000096');
+    ('20261020000096'),
+    ('20261020000097');

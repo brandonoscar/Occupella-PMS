@@ -32,7 +32,9 @@ bank statement import, a switching tool, staff roles, move-out and documents. Si
 2026-10-13 (`docs/adr/0004-email.md`): one email, to a rental owner when a bill waits for
 their approval; since 2026-10-17 (`docs/adr/0007-email.md`) invites, password resets, what
 staff write to tenants, owners and vendors, and the emails the PMS writes by itself once a company
-turns them on. Since 2026-10-15 (`docs/adr/0005-property-management-pages.md`): pages built
+turns them on. Since 2026-10-20 (`docs/adr/0008-esign-in-house.md`): leases signed on the
+PMS's own page instead of an outside e-sign partner. Since 2026-10-15
+(`docs/adr/0005-property-management-pages.md`): pages built
 around properties, units, leases, tenants, owners and vendors, with paged lists, edits (never
 deletes: archive) and contact details the AI never reads. Since 2026-10-16
 (`docs/adr/0006-buildium-punch-list.md`): the founder's punch list, built in its order (property
@@ -97,7 +99,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   something on every other page, the founder's seed among it (six properties, one of 48 units,
   two groups, applicants, offers, bills, work orders and files at every step; ADR 0006).
   `demo.books` is its books alone, for the feature tests.
-  Payments and the real screening and e-sign partners are still out
+  Payments and a real screening partner are still out
   (`docs/adr/0002-portals-and-exports.md`).
 - Email (`src/pms/email.py`, migration 0042, `docs/adr/0004-email.md`): entering a bill over
   the owner's approval limit writes, in the same transaction, an email to the owner's active
@@ -190,7 +192,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   Withdrawn, All) with each application's page at `/applicants/<id>` (screen, approve or reject,
   record a withdrawal, Create draft lease), Draft leases at `/draft-leases` (Waiting for
   signatures, Leases made, Void, All; New draft lease in a side panel) with each at
-  `/draft-leases/<id>` (Send, Resend, Check signatures, Activate lease, Void), the leases ending in the next 90 days with
+  `/draft-leases/<id>` (Send, Resend, Activate lease, Void; each signer's progress and the signing certificate), the leases ending in the next 90 days with
   their renewal status at `/renewals` (`src/pms/api/renewals.py`, the expirations report's rows). Accounting:
   the trust bank accounts at `/banking` (Add bank account), each at `/bank-accounts/<id>` in tabs:
   its register and balance breakdown (`src/pms/api/banking.py`), its deposits, its month-end
@@ -241,7 +243,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`src/pms/api/tenant.py`) show the session's tenant only: a lease named in a path is answered
   only if they are on it, and reads as not found otherwise. They show what each lease charges
   every month and what is charged already but due later, and once a deposit was returned at
-  move-out, its statement (`trust_report_deposit_return`) to download. Both portals show the
+  move-out, its statement (`trust_report_deposit_return`) to download; and a lease's files (q120):
+  the lease as signed, its signing certificate when signed on the PMS's page, and the lease
+  documents staff keep on its Files tab (move-out photos stay with staff). Both portals show the
   manager's name, mailing address and logo (`/api/company/card`). The portal takes no payments.
 - Leasing (`src/pms/api/leasing.py`, `src/pms/leasing/`): applicants have no login. They apply
   through a link staff open for a unit (`/apply#<token>`) and follow it with a status link;
@@ -249,9 +253,15 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `pms.leasing.screening.Partner`; the server's `PMS_SCREENING_PARTNER` picks one ("fake" for
   development and CI, none by default). The PMS keeps only applicants' names and emails; the
   partner collects anything else on its own side. Lease offers (`src/pms/api/offers.py`) carry
-  the PMC's own lease PDF (the PMS writes no lease text) and are signed through
-  `pms.leasing.esign.Partner`, picked by `PMS_ESIGN_PARTNER` ("fake" for development and CI,
-  none by default; the fake's signing page, `/esign#<token>`, is served only while it is on).
+  the PMC's own lease PDF (the PMS writes no lease text) and are signed on the PMS's own signing
+  page (ADR 0008, migration 0097, `src/pms/api/signing.py`, `pms.leasing.esign`; it replaced the
+  fake partner): each signer's link (`/sign#<token>`, kept as its SHA-256, 30 days, the token in
+  JSON bodies) shows the ESIGN consumer disclosures to agree to, or "I'd rather sign on paper";
+  then the lease to open; then a typed name, maybe a drawn signature (`SignaturePad`), on the
+  lease's SHA-256. Each step keeps the address and browser it came from, the signature is
+  recorded as it is made, and the signer and staff download its signing certificate
+  (`pms.leasing.certificate`, a PDF; no digital seal). Staff make new links (Resend, which keeps
+  the old ones) and see each signer's progress.
   Since migration 0090 (q081), sending an offer while the server sends email emails each signer
   their own signing link (`signing_request`, once per signer; the link held in memory like an
   invite's, never in the outbox), and Send says whom.
@@ -581,9 +591,16 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   notice (q080).
 - Lease offers: a new lease for an approved (or conditionally approved) application at the unit
   it applied for, or the renewal of a lease at its unit, starting after it; the terms, the
-  PMC's PDF (at most 5 MB) and its signers (names and emails). It is sent to the e-sign
-  partner once; a signature is recorded only for a sent offer's signer, as the partner reports
-  it. `trust_complete_lease_offer` makes it the lease once everyone has signed, once per offer
+  PMC's PDF (at most 5 MB) and its signers (names and emails). It is sent to sign once; a
+  signature is recorded only for a sent offer's signer. Since migration 0097 (ADR 0008) an offer
+  sent to sign here ('PMS e-sign') is signed only through a signer's link that still signs
+  (`trust_signing_link_open`: made in the last 30 days, the offer neither void nor a lease, the
+  signer not signed), after they agreed to sign electronically (`trust_signing_events`, the
+  disclosures' words kept) and opened the lease, never after asking for paper through it; the
+  signature (`trust_signature_evidence`: their name as on the offer, the lease's SHA-256, a drawn
+  PNG of at most 100 KB if any, the address and browser, the database's own time) writes their
+  `trust_signatures` row, which such an offer takes no other way. A void and a signature wait
+  for each other. `trust_complete_lease_offer` makes it the lease once everyone has signed, once per offer
   and safe to retry, and an application or a lease takes one completed offer: a new lease's
   signers become its tenants; a renewal keeps the lease's tenants and ends it the day before.
   READ COMMITTED; all append-only. Since migration 0071 an offer may be kept as a draft (no

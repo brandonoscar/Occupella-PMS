@@ -25,9 +25,10 @@ through it and follow their application, and staff screen (through a partner; a 
 now), decide, and record the adverse action notice a decline or conditional approval needs.
 
 Leasing basics, part two: staff offer a lease to an approved applicant, or the renewal of a
-lease, with the PMC's own lease document (a PDF); the signers sign through an e-sign partner (a
-fake one for now), a tenant from their portal; and once everyone has signed, staff make it the
-lease. That completes the founder's list in `docs/adr/0002-portals-and-exports.md`.
+lease, with the PMC's own lease document (a PDF); the signers sign on the PMS's own signing page
+(`docs/adr/0008-esign-in-house.md`: the consumer disclosures ESIGN asks, a typed and maybe drawn
+signature, and a signing certificate), a tenant from their portal; and once everyone has signed,
+staff make it the lease. That completes the founder's list in `docs/adr/0002-portals-and-exports.md`.
 
 The staff back office (`docs/adr/0003-staff-back-office.md`) is being built: staff set up
 their books in the portal (trust bank accounts, owners, properties, units, tenants, vendors,

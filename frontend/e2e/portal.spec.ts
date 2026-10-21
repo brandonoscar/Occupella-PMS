@@ -196,7 +196,7 @@ test("an applicant applies; staff screen, decline with a notice, and the applica
   await expect(page.getByTestId("application-status")).toContainText("Declined");
 });
 
-test("staff draft a lease with a deposit and a monthly charge and send it, void a renewal, send another; the signers sign on the partner's page; both become leases", async ({
+test("staff draft a lease with a deposit and a monthly charge and send it, void a renewal, send another; the signers sign on the PMS's own page; both become leases", async ({
   page,
   browser,
 }) => {
@@ -247,15 +247,41 @@ test("staff draft a lease with a deposit and a monthly charge and send it, void 
   await expect(page.getByTestId("status")).toHaveText("Sent");
   const link = new URL((await page.getByTestId("signing-link").textContent()) ?? "");
 
+  // The applicant signs on the PMS's own page (ADR 0008): they agree to sign electronically after
+  // reading the disclosures, open the lease, type their name and draw their signature.
   const mover = await (await browser.newContext()).newPage();
   await mover.goto(link.pathname + link.hash);
-  await expect(mover.getByText("For Mover E2E")).toBeVisible();
-  await mover.getByLabel("Type your name as it is on the lease").fill("Someone Else");
-  await mover.getByRole("button", { name: "Sign" }).click();
+  await expect(mover.getByText("For Mover E2E, as a tenant")).toBeVisible();
+  await expect(mover.getByTestId("disclosure")).toContainText("asks you to receive and sign this lease electronically");
+  await mover.getByLabel("I have read this and agree to receive and sign this lease electronically").check();
+  await mover.getByRole("button", { name: "Continue" }).click();
+  const opened = mover.waitForEvent("download");
+  await mover.getByRole("button", { name: "Open the lease (PDF)" }).click();
+  expect(readFileSync((await (await opened).path()) ?? "")).toEqual(document.buffer);
+  const pad = mover.getByTestId("signature-pad");
+  const box = (await pad.boundingBox())!;
+  await mover.mouse.move(box.x + 20, box.y + box.height / 2);
+  await mover.mouse.down();
+  await mover.mouse.move(box.x + box.width / 2, box.y + 20, { steps: 8 });
+  await mover.mouse.up();
+  await mover.getByLabel("Type your name as it is on the lease (Mover E2E)").fill("Someone Else");
+  await mover.getByLabel("I have read the lease and I sign it").check();
+  await mover.getByRole("button", { name: "Sign the lease" }).click();
   await expect(mover.getByRole("alert")).toHaveText("type your name as it is on the lease");
-  await mover.getByLabel("Type your name as it is on the lease").fill("mover e2e");
-  await mover.getByRole("button", { name: "Sign" }).click();
-  await expect(mover.getByTestId("esign-status")).toHaveText("Signed. You can close this page.");
+  await mover.getByLabel("Type your name as it is on the lease (Mover E2E)").fill("mover e2e");
+  await mover.getByRole("button", { name: "Sign the lease" }).click();
+  await expect(mover.getByTestId("sign-status")).toContainText("You signed on");
+  const kept = mover.waitForEvent("download");
+  await mover.getByRole("button", { name: "Download the signing certificate (PDF)" }).click();
+  expect(readFileSync((await (await kept).path()) ?? "").subarray(0, 5).toString()).toBe("%PDF-");
+
+  // Staff see it signed at once, and download the certificate.
+  await page.reload();
+  await expect(page.getByTestId("progress")).toHaveText("Signed");
+  const certificate = await page.request.get(
+    (await page.getByRole("link", { name: "Signing certificate (PDF)" }).getAttribute("href")) ?? "",
+  );
+  expect(certificate.headers()["content-type"]).toBe("application/pdf");
 
   await page.getByRole("button", { name: "Activate lease" }).click();
   await expect(page.getByText(`E2E Property 3, E2E Unit 4 has its lease from ${us(day(30))}.`)).toBeVisible();
@@ -288,9 +314,9 @@ test("staff draft a lease with a deposit and a monthly charge and send it, void 
   await panel.getByRole("button", { name: "Send for signing" }).click();
   await expect(page.getByTestId("status")).toHaveText("Sent");
   await expect(page.getByText("0 of 1 signed", { exact: true })).toBeVisible();
-  // Staff can show each signer's link again.
+  // Staff can make each signer a new link.
   await page.getByRole("button", { name: "Resend" }).click();
-  await expect(page.getByTestId("signing-link")).toContainText("/esign#");
+  await expect(page.getByTestId("signing-link")).toContainText("/sign#");
 
   const tenant = await (await browser.newContext()).newPage();
   await tenant.goto(`/invite#${seed.renewer_invite}`);
@@ -304,17 +330,44 @@ test("staff draft a lease with a deposit and a monthly charge and send it, void 
     (await offered.getByRole("link", { name: "Read the lease (PDF)" }).getAttribute("href")) ?? "",
   );
   expect(await read.body()).toEqual(document.buffer);
+  // The tenant first asks to sign on paper: that link signs nothing more, and staff see it.
   await offered.getByRole("button", { name: "Sign" }).click();
-  await tenant.getByLabel("Type your name as it is on the lease").fill("Renewer E2E");
-  await tenant.getByRole("button", { name: "Sign" }).click();
-  await expect(tenant.getByTestId("esign-status")).toBeVisible();
+  await tenant.getByRole("button", { name: "I'd rather sign on paper" }).click();
+  await tenant.getByRole("button", { name: "Sign on paper", exact: true }).click();
+  await expect(tenant.getByText(/You asked to sign on paper/)).toBeVisible();
+  await page.reload();
+  await expect(page.getByTestId("progress")).toHaveText("Asked for paper");
+  // They change their mind: the portal gives them a new link, and they sign through it.
+  await tenant.goto("/");
+  await tenant.getByRole("listitem", { name: "Renewal of E2E Unit 3" }).getByRole("button", { name: "Sign" }).click();
+  await tenant.getByLabel("I have read this and agree to receive and sign this lease electronically").check();
+  await tenant.getByRole("button", { name: "Continue" }).click();
+  const read2 = tenant.waitForEvent("download");
+  await tenant.getByRole("button", { name: "Open the lease (PDF)" }).click();
+  await read2;
+  await tenant.getByLabel("Type your name as it is on the lease (Renewer E2E)").fill("Renewer E2E");
+  await tenant.getByLabel("I have read the lease and I sign it").check();
+  await tenant.getByRole("button", { name: "Sign the lease" }).click();
+  await expect(tenant.getByTestId("sign-status")).toBeVisible();
   await tenant.goto("/");
   await expect(tenant.getByTestId("renewal-signed")).toContainText("You signed");
 
-  await page.getByRole("button", { name: "Check signatures" }).click();
-  await expect(page.getByText("1 of 1 signed.")).toBeVisible();
+  await page.reload();
+  await expect(page.getByText("1 of 1 signed", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Activate lease" }).click();
   await expect(page.getByTestId("status")).toHaveText("Lease active");
+  // Staff keep the renewal's pet addendum on the lease's own Files tab.
+  await page.getByRole("link", { name: "Open the lease" }).click();
+  await page.getByRole("tab", { name: "Files" }).click();
+  await page.getByRole("combobox", { name: "Category" }).selectOption({ label: "Lease document" });
+  await page.getByLabel("Lease document file").setInputFiles({
+    name: "addendum.pdf",
+    mimeType: "application/pdf",
+    buffer: Buffer.from("%PDF-1.4 a synthetic pet addendum"),
+  });
+  await page.getByLabel("Title").fill("Pet addendum");
+  await page.getByRole("button", { name: "Upload", exact: true }).click();
+  await expect(page.getByText("Uploaded Pet addendum.")).toBeVisible();
   await draftLeases();
   await page.getByRole("tab", { name: "Leases made", exact: true }).click();
   for (const row of ["Lease for E2E Property 3, E2E Unit 4", "Renewal for E2E Property 3, E2E Unit 3"]) {
@@ -323,6 +376,14 @@ test("staff draft a lease with a deposit and a monthly charge and send it, void 
   await tenant.reload();
   await expect(tenant.getByRole("heading", { name: "Welcome, Renewer E2E" })).toBeVisible();
   await expect(tenant.getByRole("heading", { name: "Lease renewal" })).toHaveCount(0);
+  // The tenant keeps the renewal as signed, its signing certificate and its addendum (q120).
+  await tenant.getByRole("combobox", { name: /^Lease/ }).first().selectOption({ label: `E2E Property 3, E2E Unit 3, from ${us(day(60))} (to come)` });
+  const files = tenant.getByRole("list", { name: "Your lease's files" });
+  const fetched = async (name: string) =>
+    (await tenant.request.get((await files.getByRole("link", { name }).getAttribute("href")) ?? "")).body();
+  expect(await fetched("Lease renewal (as signed, PDF)")).toEqual(document.buffer);
+  expect((await fetched("Signing certificate")).subarray(0, 5).toString()).toBe("%PDF-");
+  expect((await fetched("Pet addendum")).toString()).toBe("%PDF-1.4 a synthetic pet addendum");
 });
 
 test("staff set up a property from nothing where each thing lives, lease a unit and see it on the rent roll", async ({ page }) => {

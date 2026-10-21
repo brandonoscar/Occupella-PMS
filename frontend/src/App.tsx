@@ -9,7 +9,7 @@ import { BillPage } from "./pages/BillPage";
 import { PayBillsPage } from "./pages/PayBillsPage";
 import { BudgetsPage } from "./pages/BudgetsPage";
 import { DashboardPage } from "./pages/DashboardPage";
-import { ESignPage } from "./pages/ESignPage";
+import { SignPage } from "./pages/SignPage";
 import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { InvitePage } from "./pages/InvitePage";
 import { ListingsPage } from "./pages/ListingsPage";
@@ -62,8 +62,8 @@ export function App() {
   if (path === "/application") return <ApplicationStatusPage />;
   // A PMC's public vacancy page; nobody signs in to read it.
   if (path === "/listings") return <ListingsPage />;
-  // The fake e-sign partner's page; a signer's link carries what lets them in.
-  if (path === "/esign") return <ESignPage />;
+  // The PMS's own signing page (ADR 0008); a signer's link carries what lets them in.
+  if (path === "/sign") return <SignPage />;
   // A vendor's work orders; their link carries what lets them in.
   if (path === "/vendor") return <VendorLinkPage />;
   if (path === "/sign-in") return <SignInPage />;

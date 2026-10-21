@@ -477,6 +477,10 @@ def test_every_write_but_the_first_staff_member_and_their_role_names_a_staff_mem
         ("trust_applicants", 6),
         ("trust_applications", 5),
         ("trust_pmcs", 1),
+        # A signer signs through their link (ADR 0008): they have no login either.
+        ("trust_signature_evidence", 1),
+        ("trust_signatures", 1),
+        ("trust_signing_events", 2),
         ("trust_staff", 1),
         ("trust_staff_roles", 1),
     ]

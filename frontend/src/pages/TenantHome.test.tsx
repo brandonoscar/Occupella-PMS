@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { Lease } from "./TenantHome";
-import { TenantHome, comingDueLabel, firstLease, monthlyLabel } from "./TenantHome";
+import { TenantHome, comingDueLabel, firstLease, leaseLabel, monthlyLabel } from "./TenantHome";
 
 afterEach(() => {
   cleanup();
@@ -35,6 +35,7 @@ const lease = (id: string, inEffect: boolean): Lease => ({
   coming_due: [],
   deposit_returned: false,
   payments: [],
+  files: [],
 });
 
 const LEDGER = {
@@ -74,6 +75,16 @@ function server(answers: Record<string, unknown>) {
   vi.stubGlobal("fetch", fetch);
   return fetch;
 }
+
+describe("leaseLabel", () => {
+  it("names a lease by its home and first day, and says one ended or is to come", () => {
+    expect(leaseLabel(lease("1", true), "2026-10-20")).toBe("Property 1, Unit 1, from 01/01/2026");
+    expect(leaseLabel(lease("2", false), "2026-10-20")).toBe("Property 1, Unit 2, from 01/01/2026 (ended)");
+    expect(leaseLabel({ ...lease("3", false), starts_on: "2027-01-01", ends_on: null }, "2026-10-20")).toBe(
+      "Property 1, Unit 3, from 01/01/2027 (to come)",
+    );
+  });
+});
 
 describe("firstLease", () => {
   it("shows the lease in effect first, else the newest, else none", () => {
@@ -122,6 +133,30 @@ describe("TenantHome", () => {
     expect(screen.getByRole("link", { name: "Deposit statement (PDF)" }).getAttribute("href")).toBe(
       "/api/tenant/leases/1/deposit-return/download?format=pdf",
     );
+  });
+
+  it("lists the lease as signed, its signing certificate and its documents to download", async () => {
+    server({
+      "GET /api/tenant/leases": [{
+        ...lease("1", true),
+        files: [
+          { kind: "signed lease", title: "Residential lease", url: "/api/tenant/leases/1/signed-lease" },
+          { kind: "signing certificate", title: "Signing certificate", url: "/api/tenant/leases/1/signing-certificate" },
+          { kind: "lease document", title: "Pet addendum", url: "/api/tenant/leases/1/documents/d1" },
+        ],
+      }],
+      "GET /api/tenant/requests": [],
+      "GET /api/tenant/renewals": [],
+      "GET /api/tenant/leases/1/ledger": LEDGER,
+    });
+    render(<TenantHome me={ME} />);
+
+    const files = await screen.findByRole("list", { name: "Your lease's files" });
+    expect(within(files).getAllByRole("link").map((a) => [a.textContent, a.getAttribute("href")])).toEqual([
+      ["Residential lease (as signed, PDF)", "/api/tenant/leases/1/signed-lease"],
+      ["Signing certificate", "/api/tenant/leases/1/signing-certificate"],
+      ["Pet addendum", "/api/tenant/leases/1/documents/d1"],
+    ]);
   });
 
   it("lists each payment with how it came and its receipt, and says one bounced", async () => {
