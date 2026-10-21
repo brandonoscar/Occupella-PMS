@@ -703,6 +703,18 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   how, what it paid of each charge, what was held as prepaid rent and, once it bounced, that it
   came back, with the company's name and address; staff print it from the lease's Ledger tab and
   the tenant downloads their own in the portal (another's reads as not found).
+- Payment files (migration 0118, `src/pms/api/payment_files.py`, the founder's review q035; Rentals,
+  Payment files at `/payment-files`): a bank's or lockbox's CSV file of the tenants' payments it
+  received (Date, Amount, and each line's Unit, with its Property when units share a name, or its
+  Payer; Reference and Method if given), shown line by line before it comes in, and brought in
+  once per PMC by its SHA-256 (`trust_payment_files`, all its lines at commit). A line naming one
+  lease in effect on its day is recorded to it through `rent.record_payment`, its request id from
+  the line's own id; one naming none or several, looking recorded already (that lease, day and
+  amount) or refused by the books (a hold, a closed period, an owner's account to choose) waits
+  with why (`trust_payment_file_lines.note`). Staff record a waiting line to a lease they find,
+  past a hold if they say, or set it aside with why: `trust_payment_file_postings` (checked at
+  commit to be a tenant payment of the line's amount and day to its lease) or
+  `trust_payment_file_skips`, once per line and never both. Append-only; area rent.
 - Bills and owners' money (`src/pms/api/payables.py`): staff enter, approve, set aside and pay
   bills, run recurring bills, record owner draws and contributions, and take management and
   leasing fees, each through its `trust_*` write path. What the owners page shows as available

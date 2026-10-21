@@ -4232,3 +4232,75 @@ test("staff name the operating trust account's cash for QuickBooks and download 
   expect(csv).toContain("Trust checking");
 });
 
+
+test("staff bring in a lockbox's payment file once: lines naming one lease are recorded to it, and staff record or set aside the ones that wait", async ({
+  page,
+}) => {
+  const people = seed.features["payment-files"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Payment files");
+  await expect(page.getByText("No payment file has come in yet.")).toBeVisible();
+
+  const day = today();
+  const lockbox =
+    "Date,Amount,Property,Unit,Payer,Reference,Method\n" +
+    `${day},1395.00,Birch Flats,Unit A,,2201,check\n` +
+    `${day},100.00,,Unit 1,,,\n` + // Elm Court and Aspen Row both have a Unit 1
+    `${day},50.00,,,Jamie Sample,,ACH\n`;
+  const bringIn = async (name: string, csv: string) => {
+    await page.getByRole("button", { name: "Bring in a file" }).click();
+    const panel = page.getByRole("dialog", { name: "Bring in a payment file" });
+    await panel.getByLabel("Payment file (CSV)").setInputFiles({ name, mimeType: "text/csv", buffer: Buffer.from(csv) });
+    return panel;
+  };
+
+  // What each line will do, before anything is written.
+  const panel = await bringIn("lockbox.csv", lockbox);
+  await expect(panel.getByTestId("preview-summary")).toHaveText(
+    "2 payments ($1,445.00) will be recorded; 1 will wait for you.",
+  );
+  await expect(panel.getByRole("table", { name: "What the file will do" }).getByRole("row")).toHaveText([
+    "LineReceivedAmountNamesWhat happens",
+    `2${us(day)}$1,395.00Birch Flats Unit ATo record Morgan Demo, Birch Flats Unit A`,
+    `3${us(day)}$100.00Unit 1Waiting 2 leases in effect on ${us(day)} at unit Unit 1; name the property too`,
+    `4${us(day)}$50.00Jamie SampleTo record Jamie Sample, Birch Flats Unit B`,
+  ]);
+  await panel.getByRole("button", { name: "Bring it in" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "lockbox.csv" })).toBeVisible();
+  await expect(page.getByTestId("file-summary")).toContainText("lockbox.csv: 2 payments recorded ($1,445.00); 1 wait for you.");
+  await expect(page.getByRole("row", { name: "Line 2" })).toContainText("RecordedMorgan Demo, Birch Flats Unit A");
+
+  // The line that waits goes to the lease staff find.
+  await page.getByRole("row", { name: "Line 3" }).getByRole("button", { name: "Actions for line 3" }).click();
+  await page.getByRole("menuitem", { name: "Record to a lease" }).click();
+  const record = page.getByRole("dialog", { name: "Record line 3" });
+  await record.getByLabel("Lease").fill("Riley");
+  await record.getByRole("button", { name: "Elm Court · Unit 1 · Riley Demo" }).click();
+  await record.getByRole("button", { name: "Record $100.00 to this lease" }).click();
+  await expect(page.getByText(`Line 3: $100.00 received ${us(day)} recorded to Riley Demo, Elm Court Unit 1.`)).toBeVisible();
+  await expect(page.getByTestId("file-summary")).toContainText("3 payments recorded ($1,545.00); nothing waits.");
+
+  // The same file again comes in once; a line naming nobody is set aside, with why.
+  await section(page, "Payment files");
+  const again = await bringIn("lockbox-again.csv", lockbox);
+  await expect(again.getByText(`This file came in on ${us(day)}; it comes in once.`)).toBeVisible();
+  await expect(again.getByRole("button", { name: "Bring it in" })).toHaveCount(0);
+  await again.getByRole("button", { name: "Close" }).click();
+  const stray = await bringIn("stray.csv", `Date,Amount,Payer\n${day},12.34,Nobody Sample\n`);
+  await stray.getByRole("button", { name: "Bring it in" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "stray.csv" })).toBeVisible();
+  await page.getByRole("row", { name: "Line 2" }).getByRole("button", { name: "Actions for line 2" }).click();
+  await page.getByRole("menuitem", { name: "Set aside" }).click();
+  const aside = page.getByRole("dialog", { name: "Set line 2 aside" });
+  await aside.getByLabel("Why").fill("A refund from the water utility, not rent");
+  await aside.getByRole("button", { name: "Set it aside" }).click();
+  await expect(page.getByRole("row", { name: "Line 2" })).toContainText("Set asideA refund from the water utility, not rent");
+
+  // Both files are listed, newest first; the payment is on Morgan Demo's lease.
+  await section(page, "Payment files");
+  await expect(page.getByRole("table", { name: "Payment files" }).getByRole("row")).toHaveCount(3);
+  await page.getByRole("row", { name: "lockbox.csv" }).click();
+  await page.getByRole("row", { name: "Line 2" }).getByRole("link", { name: "Morgan Demo, Birch Flats Unit A" }).click();
+  await page.getByRole("tab", { name: "Ledger" }).click();
+  await expect(page.getByRole("main")).toContainText("$1,395.00");
+});
