@@ -1254,3 +1254,13 @@ tests = [
 id = "invariant:signing-through-the-partner"
 decision = "docs/adr/0008-esign-in-house.md"
 replaced_by = "invariant:signing-on-the-pms-page"
+
+[[invariant]]
+id = "one-calendar-link-per-person"
+statement = "A calendar link (migration 0098) answers only while it is its person's latest one not taken back and the person's login is not disabled, and only for its own company and person: a new link takes the old one back, taking back says whether there was one, and each person has at most one link standing."
+tests = [
+  "tests/properties/test_calendar_properties.py::test_only_a_persons_latest_link_answers_and_only_while_they_can_sign_in",
+  "tests/api/test_calendar.py::test_a_new_link_takes_back_the_old_and_a_link_taken_back_stops",
+  "tests/api/test_calendar.py::test_two_links_made_at_once_leave_one_standing",
+  "tests/api/test_calendar.py::test_a_feed_stops_once_its_persons_login_is_disabled",
+]
