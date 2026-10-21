@@ -166,7 +166,8 @@ jobs:
             echo "::warning::building Mailpit failed (try $try of 3); trying again in 15 seconds"
             sleep 15
           done
-          "$RUNNER_TEMP/bin/mailpit" version
+          # Offline: its default release check asks GitHub's API, which answered 403 on PR #139.
+          "$RUNNER_TEMP/bin/mailpit" version --no-release-check
       - run: pip install -r requirements-dev.txt
       - name: Email through Mailpit (fresh database, every migration; no skips)
         run: pytest -v -m mailpit -p no:cacheprovider
