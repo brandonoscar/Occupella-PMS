@@ -848,7 +848,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   what each charge is (rent, recurring charges, late fees, NSF fees, other; a lease end's
   adjustment is what it adjusts), management fees (line 11), leasing fees (line 8), bills set
   aside by expense account (a split bill by its lines; those in none on no line), net income,
-  then by Schedule E line. It
+  then by Schedule E line; with no owner, every owner's, each property account named by its
+  property and owner (migration 0112, q108; Reports, Income statement, all owners:
+  `trust_report_income_statement_all_owners`). It
   files nothing. Charge types (migration 0100, the founder's review q133): a company's own kinds
   of fee (`trust_charge_types`: a name once per PMC whatever its case, none of the statement's
   income lines; append-only, naming who added it; Settings, Chart of accounts), which a fee, once

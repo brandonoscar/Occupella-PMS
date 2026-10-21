@@ -1546,6 +1546,15 @@ test("staff open a report from Reports, see it on screen narrowed to one propert
   await expect(page.getByRole("table", { name: "Income statement" })).toContainText("net income");
   await downloads(page, "PDF", PDF);
 
+  // Every owner's in one (q108): each property named with its owner, the lines across them all.
+  await section(page, "Reports");
+  await page.getByRole("list", { name: "Financial" }).getByRole("link", { name: "Income statement, all owners" }).click();
+  const everyone = page.getByRole("table", { name: "Income statement, all owners" });
+  await expect(everyone).toContainText("all owners");
+  await expect(everyone).toContainText("Aspen Row, Demo Owner B");
+  await expect(everyone).toContainText("all properties: net income");
+  await downloads(page, "PDF", PDF);
+
   // The same owner on the accrual basis (q115): what was charged and billed this month, and
   // their balance sheet today, its equity what they hold, are owed and owe.
   await section(page, "Reports");

@@ -7906,7 +7906,8 @@ BEGIN
             p_from, p_through
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
-    IF NOT EXISTS (
+    -- No owner: every owner of the PMC (q108).
+    IF p_owner_id IS NOT NULL AND NOT EXISTS (
         SELECT o.id FROM trust_owners AS o WHERE o.id = p_owner_id AND o.pmc_id = p_pmc_id
     ) THEN
         RAISE EXCEPTION 'trust: no owner % in PMC %', p_owner_id, p_pmc_id
@@ -7929,10 +7930,16 @@ BEGIN
                (4, 'income: NSF fees'), (5, 'income: other charges')
     ),
     accounts AS (
-        SELECT t.ledger_account_id AS account, pr.display_name AS name
+        -- An owner's property accounts by their property; every owner's, each named by its
+        -- property and owner, when no owner is given.
+        SELECT t.ledger_account_id AS account,
+               CASE WHEN p_owner_id IS NULL THEN pr.display_name || ', ' || o.display_name
+                    ELSE pr.display_name END AS name
         FROM trust_ledger_accounts AS t
         JOIN trust_properties AS pr ON pr.id = t.property_id
-        WHERE t.pmc_id = p_pmc_id AND t.owner_id = p_owner_id AND t.kind = 'owner_property'
+        JOIN trust_owners AS o ON o.id = t.owner_id
+        WHERE t.pmc_id = p_pmc_id AND (p_owner_id IS NULL OR t.owner_id = p_owner_id)
+          AND t.kind = 'owner_property'
     ),
     -- What each charge's money is: rent, a recurring charge (pet rent, parking), a late fee, an
     -- NSF fee, or another charge, and the company's own type of it if it has one (its own, or
@@ -8102,8 +8109,9 @@ BEGIN
                NULL::numeric AS total
         FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
         UNION ALL
-        SELECT 0, NULL, NULL, 0, 2, 'owner', o.display_name, NULL, NULL
-        FROM trust_owners AS o WHERE o.id = p_owner_id
+        SELECT 0, NULL, NULL, 0, 2, 'owner', coalesce(o.display_name, 'all owners'), NULL, NULL
+        FROM (SELECT 1) AS one
+        LEFT JOIN trust_owners AS o ON o.id = p_owner_id
         UNION ALL
         SELECT 0, NULL, NULL, 0, 3, 'period',
                p_from::text || ' to ' || p_through::text || ' UTC, cash basis', NULL, NULL
@@ -8404,6 +8412,18 @@ BEGIN
     FROM lines AS l
     ORDER BY 1;
 END;
+$$;
+
+
+--
+-- Name: trust_report_income_statement_all_owners(uuid, date, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_income_statement_all_owners(p_pmc_id uuid, p_from date, p_through date) RETURNS TABLE(line integer, property text, item text, schedule_e integer, amount numeric)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT * FROM trust_report_income_statement(p_pmc_id, NULL, p_from, p_through);
 $$;
 
 
@@ -27000,4 +27020,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261021000108'),
     ('20261021000109'),
     ('20261021000110'),
-    ('20261021000111');
+    ('20261021000111'),
+    ('20261021000112');

@@ -242,7 +242,8 @@ over a period, with who made it) and `trust_report_vendor_payments` (what each v
 a calendar year, for 1099 preparation; it files nothing) and
 `trust_report_income_statement` (an owner's income and expenses over days, cash basis, per
 property and across them: collected by what it paid, the fees, each expense account's bills, net
-income, and the Schedule E lines) and `trust_report_balance_sheet` (each trust bank account's
+income, and the Schedule E lines; `trust_report_income_statement_all_owners` the same across every
+owner, each property named with its owner) and `trust_report_balance_sheet` (each trust bank account's
 cash against what it holds, by kind) and `trust_report_cash_flow` (each trust bank account's cash
 over days, from opening to closing, by what came in and went out) and `trust_report_vacancy`
 (units without a lease, since when, and occupancy) and `trust_report_work_orders` (each work

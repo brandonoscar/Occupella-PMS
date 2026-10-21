@@ -501,6 +501,7 @@ FUNCTIONS = {
     "trust_report_owner_year_end(uuid,uuid,integer)": {"trust_app", "trust_ai_agent"},
     "trust_report_income_statement(uuid,uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_income_statement_accrual(uuid,uuid,date,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_income_statement_all_owners(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_owner_balance_sheet(uuid,uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_balance_sheet(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_budget_vs_actual(uuid,uuid,date,date)": {"trust_app", "trust_ai_agent"},
