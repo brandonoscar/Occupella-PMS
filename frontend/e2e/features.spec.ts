@@ -1461,6 +1461,23 @@ test("staff open a report from Reports, see it on screen narrowed to one propert
   await expect(page.getByRole("table", { name: "Income statement" })).toContainText("net income");
   await downloads(page, "PDF", PDF);
 
+  // The same owner on the accrual basis (q115): what was charged and billed this month, and
+  // their balance sheet today, its equity what they hold, are owed and owe.
+  await section(page, "Reports");
+  await page.getByRole("list", { name: "Financial" }).getByRole("link", { name: "Income statement, accrual basis" }).click();
+  await page.getByRole("combobox", { name: "Owner" }).selectOption({ label: "Demo Owner B" });
+  const accrual = page.getByRole("table", { name: "Income statement, accrual basis" });
+  await expect(accrual).toContainText("accrual basis");
+  await expect(accrual).toContainText("income: rent");
+  await downloads(page, "Excel", XLSX);
+  await section(page, "Reports");
+  await page.getByRole("list", { name: "Owners" }).getByRole("link", { name: "Owner balance sheet" }).click();
+  await page.getByRole("combobox", { name: "Owner" }).selectOption({ label: "Demo Owner B" });
+  const sheet = page.getByRole("table", { name: "Owner balance sheet" });
+  await expect(sheet).toContainText("Aspen Row");
+  await expect(sheet).toContainText("owner's equity");
+  await downloads(page, "PDF", PDF);
+
   // The whole ledger, under Settings, and everything the company keeps (q132; the manager is an
   // admin): its records as CSV and its files, never a credential.
   await settings(page, "Data export");

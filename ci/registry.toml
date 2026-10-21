@@ -784,6 +784,28 @@ tests = [
 ]
 
 [[report]]
+id = "income-statement-accrual"
+statement = "An owner's income statement over days (UTC) on the accrual basis (the founder's review q115): the cash basis statement's lines, but income is what was charged in the days to the leases at the owner's properties (a credit as less; a lease end's adjustment or a waiver as what it changes; a credit on its own as rent) and a housing authority's part of the rent as rent, each at the owner's share of a property owned in shares on its due day; bills count on their dates with any markup, never once the owner declined them by the period's end; fees as taken. Compared to a checked-in golden file and to the rent roll model."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_accrual_reports.py::test_a_property_owned_in_shares_counts_each_owners_share_of_what_was_charged",
+  "tests/test_accrual_reports.py::test_a_housing_authoritys_part_is_rent_charged_and_owed_until_it_pays",
+  "tests/test_accrual_reports.py::test_a_waiver_and_a_lease_ends_credit_come_off_what_they_change",
+  "tests/test_accrual_reports.py::test_bills_count_on_their_date_with_their_markup_and_never_once_declined",
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+]
+
+[[report]]
+id = "owner-balance-sheet"
+statement = "An owner's balance sheet at a day's end (UTC), accrual basis: per property account and across them, the money it holds in trust, what tenants owe it of what was due by then (as the delinquency report counts it) and what housing authorities owe, the bills dated by then not yet set aside (with any markup, never a declined one), and the owner's equity, the first three less the fourth. Compared to a checked-in golden file and to the rent roll model."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_accrual_reports.py::test_a_housing_authoritys_part_is_rent_charged_and_owed_until_it_pays",
+  "tests/test_accrual_reports.py::test_bills_count_on_their_date_with_their_markup_and_never_once_declined",
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+]
+
+[[report]]
 id = "income-statement"
 statement = "An owner's income statement over days (UTC), cash basis: per property and across them, what was collected from tenants (matched payments less what bounced back) by what it paid (rent, recurring charges, late fees, NSF fees, other charges; a lease end's adjustment is what it adjusts), each of the company's charge types on a line of its own after them once money was collected on it (a fee's own type, or its recurring charge's; migration 0100), the management fees (Schedule E line 11) and leasing fees (line 8), the bills set aside by their latest expense account and those in none, total expenses and net income; then the same by Schedule E line. Compared to a checked-in golden file."
 tests = [

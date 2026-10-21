@@ -1923,6 +1923,160 @@ class RentRollMachine(RuleBasedStateMachine):
             *((None, f"all properties: {item}", 0, amount, amount) for item, amount in lines),
         ]
 
+    @rule(data=st.data(), role=st.sampled_from(["owner", "app", "ai"]), owner=st.integers(0, 1))
+    def check_the_owner_on_the_accrual_basis(self, data, role, owner):
+        """An owner's income statement on the accrual basis over random days, and their balance
+        sheet at the end of the last, as the model has them (migration 0104). Income is what was
+        charged in the days to the leases at the owner's property, a credit as less: a lease
+        end's adjustment as what it adjusts, a credit on its own as rent; the fees as taken. The
+        sheet holds the account's money at the day's end and what tenants owe then of what was
+        due by it (as the delinquency report counts it), and the owner's equity is the two: no
+        bills here."""
+        mine = {
+            c: b
+            for c, b in self.charges.items()
+            if self.leases[b.lease_id].unit.property_index == owner
+        }
+        days = sorted(
+            {b.due_on for b in mine.values()}
+            | {t.event_at.astimezone(UTC).date() for t in self.transfers.values()}
+        ) or [BASE]
+        first = data.draw(st.sampled_from(days)) + timedelta(days=data.draw(st.integers(-3, 1)))
+        last = data.draw(st.sampled_from(days)) + timedelta(days=data.draw(st.integers(-1, 3)))
+        if last < first:
+            first, last = last, first
+        self.accrual_is_the_models(role, owner, first, last)
+
+    @precondition(lambda self: self.leases)
+    @rule(data=st.data(), role=ROLES, amount=AMOUNTS, due=st.integers(0, 60))
+    def credit_a_lease_and_read_the_accrual_basis(self, data, role, amount, due):
+        """A credit given to a lease on its own, then its owner's accrual income statement and
+        balance sheet over the day it is due: less rent, and less owed once due."""
+        lease_id = data.draw(st.sampled_from(list(self.leases)))
+        due_on = self.leases[lease_id].starts_on + timedelta(days=due)
+        charge_id = charge(self.conns[role], self.pmc_id, lease_id, due_on, amount, "credit")
+        self.charges[charge_id] = Charge(lease_id, due_on, "credit", amount)
+        owner = self.leases[lease_id].unit.property_index
+        self.accrual_is_the_models(role, owner, due_on, due_on)
+
+    def accrual_is_the_models(self, role, owner, first, last):
+        account = self.owner_account[owner]
+        mine = {
+            c: b
+            for c, b in self.charges.items()
+            if self.leases[b.lease_id].unit.property_index == owner
+        }
+        start = datetime.combine(first, time(0), UTC)
+        cutoff = datetime.combine(last + timedelta(days=1), time(0), UTC)
+
+        adjusts = {a: c for c, adjustments in self.adjusted.items() for a in adjustments}
+        recurring_of = {c: r for (r, _), c in self.recurring_charged.items()}
+        late = {fee for _, _, fee in self.late_fees.values()}
+
+        def part(charge_id):
+            original = adjusts.get(charge_id, charge_id)
+            typed = (
+                self.recurring[recurring_of[original]].charge_type
+                if original in recurring_of
+                else self.charges[original].charge_type
+            )
+            if typed:
+                return typed
+            kind = self.charges[original].kind
+            if kind == "rent":
+                return "rent"
+            if original in recurring_of:
+                return "recurring charges"
+            if original in late:
+                return "late fees"
+            return "rent" if kind == "credit" else "other charges"
+
+        income = dict.fromkeys(
+            ["rent", "recurring charges", "late fees", "NSF fees", "other charges"], Decimal(0)
+        )
+        typed: dict[str, Decimal] = {}
+        for charge_id, bill in mine.items():
+            if first <= bill.due_on <= last:
+                kind = part(charge_id)
+                lines = income if kind in income else typed
+                sign = -1 if bill.kind == "credit" else 1
+                lines[kind] = lines.get(kind, Decimal(0)) + sign * bill.amount
+        if any(b.kind == "credit" for b in mine.values() if first <= b.due_on <= last):
+            event("accrual income statement: a credit in the days")
+        income |= {name: typed[name] for name in sorted(typed)}
+
+        def fees(ids):
+            return sum(
+                (
+                    self.transfers[t].amount
+                    for t in ids
+                    if self.transfers[t].source == account
+                    and start <= self.transfers[t].event_at < cutoff
+                ),
+                Decimal(0),
+            )
+
+        management, leasing = fees(self.fee_transfers), fees(self.leasing_transfers)
+        charged = sum(income.values(), Decimal(0))
+        expected = [
+            *((f"income: {name}", 3, amount) for name, amount in income.items()),
+            ("total income", None, charged),
+            ("expense: management fees", 11, management),
+            ("expense: leasing fees", 8, leasing),
+            ("total expenses", None, management + leasing),
+            ("net income", None, charged - management - leasing),
+            ("Schedule E line 3: Rents received", 3, charged),
+            *([("Schedule E line 8: Commissions", 8, leasing)] if leasing else []),
+            *([("Schedule E line 11: Management fees", 11, management)] if management else []),
+        ]
+        owner_id = self.pmc.owners[owner].owner_id
+        rows = (
+            self.conns[role]
+            .execute(
+                "SELECT property, item, schedule_e, amount"
+                " FROM trust_report_income_statement_accrual(%s, %s, %s, %s) WHERE line > 3",
+                (self.pmc_id, owner_id, first, last),
+            )
+            .fetchall()
+        )
+        name = self.property_names[owner]
+        assert rows == [
+            *((name, item, line, amount) for item, line, amount in expected),
+            *((None, f"all properties: {item}", line, amount) for item, line, amount in expected),
+        ]
+
+        cash = self.held_on(account, cutoff)
+        # What tenants owe, as the delinquency report counts it.
+        owed = sum(
+            (
+                total
+                for lease_id, lease in self.leases.items()
+                if lease.unit.property_index == owner
+                and (total := self.aging(lease_id, last)[-1]) > 0
+            ),
+            Decimal(0),
+        )
+        sheet = [
+            ("cash held in trust", cash),
+            ("owed by tenants", owed),
+            ("owed by housing authorities", Decimal(0)),
+            ("bills not yet set aside", Decimal(0)),
+            ("owner's equity", cash + owed),
+        ]
+        rows = (
+            self.conns[role]
+            .execute(
+                "SELECT property, item, amount FROM trust_report_owner_balance_sheet(%s, %s, %s)"
+                " WHERE line > 3",
+                (self.pmc_id, owner_id, last),
+            )
+            .fetchall()
+        )
+        assert rows == [
+            *((name, item, amount) for item, amount in sheet),
+            *((None, f"all properties: {item}", amount) for item, amount in sheet),
+        ]
+
     @rule(
         role=st.sampled_from(["owner", "app", "ai"]), day=st.integers(min_value=-5, max_value=640)
     )

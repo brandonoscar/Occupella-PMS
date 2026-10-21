@@ -8,7 +8,8 @@ describe("reports", () => {
     expect(new Set(REPORTS.map((r) => r.name)).size).toBe(REPORTS.length);
     expect(REPORTS.every((r) => GROUPS.includes(r.group))).toBe(true);
     expect(REPORTS.filter((r) => r.group === "Financial").map((r) => r.label)).toEqual([
-      "Balance sheet", "Income statement", "Cash flow", "Trial balance", "General ledger", "Security deposits",
+      "Balance sheet", "Income statement", "Income statement, accrual basis", "Cash flow", "Trial balance",
+      "General ledger", "Security deposits",
     ]);
     expect(reportSpec("vendor_payments")?.label).toBe("1099 summary");
     expect(reportSpec("nope")).toBeUndefined();
@@ -27,6 +28,9 @@ describe("reports", () => {
     expect(reportArgs(reportSpec("rent_roll")!, filters)).toEqual(["2026-03-10"]);
     expect(reportArgs(reportSpec("income_statement")!, filters)).toEqual(["o1", "2026-03-01", "2026-03-10"]);
     expect(reportArgs(reportSpec("owner_year_end")!, filters)).toEqual(["o1", "2026"]);
+    expect(reportArgs(reportSpec("income_statement_accrual")!, filters)).toEqual(["o1", "2026-03-01", "2026-03-10"]);
+    expect(reportArgs(reportSpec("owner_balance_sheet")!, filters)).toEqual(["o1", "2026-03-10"]);
+    expect(reportArgs(reportSpec("owner_balance_sheet")!, { ...filters, owner: "" })).toBeNull();
     // An owner statement runs from the start of its first day to the end of its last (UTC).
     expect(reportArgs(reportSpec("owner_statement")!, { ...filters, to: "2026-02-28" })).toEqual([
       "o1", "2026-03-01T00:00:00Z", "2026-03-01T00:00:00Z",

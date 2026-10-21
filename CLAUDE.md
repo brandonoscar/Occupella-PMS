@@ -818,6 +818,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   collected on each type on a line of its own after the other income (a rent run's charge under
   its recurring charge's type), and the budget beside it counts that line as income. Owners read and download a year's in the portal (`/api/owner/income-statement`);
   staff download any owner's from the owners page.
+- Accrual basis (migration 0104, the founder's review q115): `trust_report_income_statement_accrual`
+  is the income statement's lines counting what was charged in the days (a credit as less, a lease
+  end's adjustment or a waiver as what it changes, a credit on its own as rent, a housing
+  authority's part as rent) and bills on their dates with any markup, never declined ones, each at
+  the owner's share on the day; `trust_report_owner_balance_sheet` holds each property account's
+  money in trust at a day's end, what tenants (as the delinquency report counts it) and housing
+  authorities owe it, the bills not yet set aside, and the owner's equity. Both on Reports, read
+  only, and the AI runs them.
 - Journal entries (migration 0053): a correction between a PMC's ledger accounts that no other
   write path makes. A staff member proposes one (`trust_propose_journal_entry`: a day, what it
   corrects, 1 to 20 lines of whole cents between accounts of the PMC); another who holds approve
