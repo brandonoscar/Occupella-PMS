@@ -113,7 +113,12 @@ export type RentLease = {
   payments: Paid[];
   recurring: RecurringCharge[];
   renters_insurance: RentersInsurance | null;
+  // The security deposit its signed lease offer asked, what is held of it and what is still to
+  // receive; null when no offer asked one, or once its deposits were returned.
+  deposit_asked?: DepositAsked | null;
 };
+// Asking holds nothing: staff record the deposit when it comes in (migration 0071, q036).
+export type DepositAsked = { asked: string; held: string; to_receive: string };
 export type LeaseOwner = { account: string; owner: string; percent: string | null };
 export type Payment = { transfers: string[]; to_owner: string; to_prepaid: string };
 // A payment the bank returned: nsf_fee is the NSF fee the lease was charged for it, if the
@@ -263,4 +268,21 @@ export function balanceDue(lease: RentLease): string {
 // "Birch Flats · Unit A": the other home of a move.
 export function moveHome(move: Move): string {
   return `${move.property} · ${move.unit}`;
+}
+
+// "The signed lease asked $1,500.00: $1,000.00 held, $500.00 still to receive", or "... all held".
+export function depositAskedLine(deposit: DepositAsked): string {
+  const asked = `The signed lease asked ${money(deposit.asked)}`;
+  return Number(deposit.to_receive) > 0
+    ? `${asked}: ${money(deposit.held)} held, ${money(deposit.to_receive)} still to receive`
+    : `${asked}: all held`;
+}
+
+// The tenant's words: "Security deposit your lease asks: $1,500.00. Held: $1,000.00; $500.00 still
+// to give the manager", or "... Held: all of it".
+export function tenantDepositLine(deposit: DepositAsked): string {
+  const asks = `Security deposit your lease asks: ${money(deposit.asked)}.`;
+  return Number(deposit.to_receive) > 0
+    ? `${asks} Held: ${money(deposit.held)}; ${money(deposit.to_receive)} still to give the manager.`
+    : `${asks} Held: all of it.`;
 }

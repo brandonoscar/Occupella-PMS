@@ -681,8 +681,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   signers become its tenants; a renewal keeps the lease's tenants and ends it the day before.
   READ COMMITTED; all append-only. Since migration 0071 an offer may be kept as a draft (no
   signature request until staff send it), asks a security deposit (`security_deposit`; asked,
-  not held) and lists up to ten monthly fees or credits (`trust_lease_offer_charges`, written
-  only before it is sent) that become the lease's recurring charges from its first day when it
+  not held: the lease's page, the tenant portal and the Dashboard say what its signed offer asked,
+  what is held of it for its tenants and what is still to receive, until staff record it;
+  `rent.deposits_asked`, the founder's review q036) and lists up to ten monthly fees or credits
+  (`trust_lease_offer_charges`, written only before it is sent) that become the lease's recurring charges from its first day when it
   completes; staff void an offer that is not a lease yet (`trust_lease_offer_voids`, once,
   naming who and why), after which it is never sent, signed or completed (a void and a
   completion wait for each other), the tenant no longer sees it, and the expirations report

@@ -13,8 +13,8 @@ import type { MaintenanceRequest } from "../maintenance";
 import { PHOTOS_PER_REQUEST, photosLabel, photosProblem, statusLabel, visitLabel, when } from "../maintenance";
 import { day, money, usDate } from "../money";
 import type { StatementData } from "../statement";
-import type { Paid, RentersInsurance } from "../rent";
-import { dueDayLabel, insuranceLine, methodLabel } from "../rent";
+import type { DepositAsked, Paid, RentersInsurance } from "../rent";
+import { dueDayLabel, insuranceLine, methodLabel, tenantDepositLine } from "../rent";
 import { Badge } from "../components/Badge";
 import { PolicyForm } from "./InsuranceForms";
 import { RenewalsCard } from "./RenewalsCard";
@@ -56,6 +56,9 @@ export type Lease = {
   each_month: Monthly[];
   coming_due: ComingDue[];
   deposit_returned: boolean;
+  // The security deposit the signed lease asked, what is held of it and what is still to give
+  // the manager (q036); null when it asked none, or once the deposit was returned.
+  deposit_asked: DepositAsked | null;
   // Each payment to it, newest first, each with its receipt to download.
   payments: Paid[];
   // The lease as signed, its signing certificate and the lease's documents (q120).
@@ -229,6 +232,11 @@ export function TenantHome({ me }: { me: Me }) {
                   </li>
                 ))}
               </ul>
+            )}
+            {lease.deposit_asked && (
+              <p className="mt-4 text-base" data-testid="deposit-asked">
+                {tenantDepositLine(lease.deposit_asked)}
+              </p>
             )}
             {lease.deposit_returned && (
               <div className="mt-4">

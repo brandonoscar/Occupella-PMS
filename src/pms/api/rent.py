@@ -814,6 +814,17 @@ class LeaseOwner(BaseModel):
     percent: str | None
 
 
+class DepositAsked(BaseModel):
+    """The security deposit a lease's signed offer asked (migration 0071). Asking holds nothing:
+    staff record the deposit when it comes in (Record deposit), into the security deposit trust
+    account. Held counts the security deposits held for the lease's tenants (a pet or key
+    deposit is its own)."""
+
+    asked: str
+    held: str
+    to_receive: str
+
+
 class RentLease(BaseModel):
     id: UUID
     property: str
@@ -842,6 +853,48 @@ class RentLease(BaseModel):
     recurring: list[RecurringCharge]
     # A lease in effect on the day: its renters insurance; None for one that isn't.
     renters_insurance: RentersInsurance | None
+    # The security deposit its signed lease offer asked, what is held of it and what is still to
+    # receive; None when no offer asked one, or once its deposits were returned.
+    deposit_asked: DepositAsked | None = None
+
+
+# The security deposit each lease's signed offer asked, and the security deposits held for its
+# tenants: of the PMC, or one lease, or those not ended by a day; none once its deposits were
+# returned at move-out.
+DEPOSITS_ASKED = """
+SELECT c.lease_id, o.security_deposit,
+       coalesce((SELECT sum(b.balance) FROM trust_lease_tenants AS lt
+                 JOIN trust_ledger_accounts AS a
+                   ON a.tenant_id = lt.tenant_id AND a.kind = 'tenant_deposit'
+                  AND coalesce(a.deposit_kind, 'security') = 'security'
+                 JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
+                 WHERE lt.lease_id = c.lease_id), 0)
+FROM trust_lease_offer_completions AS c
+JOIN trust_lease_offers AS o ON o.id = c.offer_id
+JOIN trust_leases AS l ON l.id = c.lease_id
+WHERE c.pmc_id = %(pmc)s AND o.security_deposit IS NOT NULL
+  AND (%(lease)s::uuid IS NULL OR c.lease_id = %(lease)s)
+  AND (%(open_on)s::date IS NULL OR l.ends_on IS NULL OR l.ends_on >= %(open_on)s)
+  AND NOT EXISTS (SELECT 1 FROM trust_deposit_returns AS r WHERE r.lease_id = c.lease_id)
+"""
+
+
+def deposits_asked(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    lease_id: UUID | None = None,
+    open_on: date | None = None,
+) -> dict[UUID, DepositAsked]:
+    """The deposit each lease's signed offer asked, of the PMC's leases (or the one named, or
+    those not ended by `open_on`)."""
+    found = {}
+    for lease, asked, held in conn.execute(
+        DEPOSITS_ASKED, {"pmc": pmc_id, "lease": lease_id, "open_on": open_on}
+    ).fetchall():
+        found[lease] = DepositAsked(
+            asked=cents(asked), held=cents(held), to_receive=cents(max(asked - held, ZERO))
+        )
+    return found
 
 
 LEASES = f"""
@@ -1073,6 +1126,7 @@ def built(
         moved_from[new] = Move(lease_id=old, property=old_prop, unit=old_unit, moved_on=on)
         carried[new] = owing
     insured = renters_insurance(conn, pmc, day)
+    asked = deposits_asked(conn, pmc, only)
     found = []
     for i, prop, unit, starts, ends, rent, due_day, due, on_hold in conn.execute(
         LEASES, names
@@ -1102,6 +1156,7 @@ def built(
                 payments=payments.get(i, []) if only else payments.get(i, [])[:12],
                 recurring=recurring.get(i, []),
                 renters_insurance=insured.get(i),
+                deposit_asked=asked.get(i),
             )
         )
     return found

@@ -584,13 +584,16 @@ def offer_lease(
     application_id=None,
     renews_lease_id=None,
     signers=(("Signer 1", "signer1@example.com"),),
+    security_deposit=None,
 ) -> UUID:
-    """A lease offer (for an application or renewing a lease) and its signers."""
+    """A lease offer (for an application or renewing a lease) and its signers, maybe asking a
+    security deposit."""
     offer = _one(
         connection,
         "INSERT INTO trust_lease_offers (pmc_id, application_id, renews_lease_id, unit_id,"
-        " starts_on, ends_on, monthly_rent, document_title, document, offered_by)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s, 'Lease', %s, %s) RETURNING id",
+        " starts_on, ends_on, monthly_rent, document_title, document, offered_by,"
+        " security_deposit)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, 'Lease', %s, %s, %s) RETURNING id",
         (
             pmc_id,
             application_id,
@@ -601,6 +604,7 @@ def offer_lease(
             Decimal(rent),
             LEASE_PDF,
             staff_id,
+            None if security_deposit is None else Decimal(security_deposit),
         ),
     )
     for n, (name, email) in enumerate(signers, 1):

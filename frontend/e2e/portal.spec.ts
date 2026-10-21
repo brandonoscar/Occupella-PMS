@@ -292,6 +292,15 @@ test("staff draft a lease with a deposit and a monthly charge and send it, void 
   // The lease owes the pet rent every month from its first day.
   await page.getByRole("link", { name: "Open the lease" }).click();
   await expect(page.getByRole("main")).toContainText("Pet rent");
+  // Asking a deposit held nothing: the lease says what its signed offer asked and is still to
+  // receive, and Record deposit starts from it (q036).
+  const asked = page.getByTestId("deposit-asked");
+  await expect(asked).toContainText("The signed lease asked $1,000.00: $0.00 held, $1,000.00 still to receive");
+  await page.locator("section", { has: asked }).getByRole("button", { name: "Record deposit" }).click();
+  const received = page.getByRole("dialog", { name: "Record deposit" });
+  await expect(received.getByLabel("Deposit received", { exact: true })).toHaveValue("1000.00");
+  await received.getByRole("button", { name: "Record deposit" }).click();
+  await expect(asked).toContainText("The signed lease asked $1,000.00: all held");
 
   // A renewal kept as a draft, then voided: it is never sent.
   panel = await newDraft("E2E Property 3, E2E Unit 3: Renewer E2E");
