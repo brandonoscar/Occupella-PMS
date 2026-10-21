@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -39,7 +40,7 @@ import psycopg
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from psycopg import sql
 from psycopg_pool import ConnectionPool
@@ -547,13 +548,22 @@ STRICT_TRANSPORT = "max-age=63072000; includeSubDomains"
 # Nothing in the portal uses these.
 PERMISSIONS_POLICY = "camera=(), microphone=(), geolocation=(), payment=()"
 
+
 # The portal's own pages: a built React app (frontend/dist). Its scripts and styles are files
-# of its own, so the policy allows nothing inline and nothing from another origin.
-CONTENT_SECURITY_POLICY = (
-    "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self';"
-    " font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none';"
-    " form-action 'self'"
-)
+# of its own, so the policy allows nothing inline and nothing from another origin, but for the
+# two fixed <style> elements React Aria (its dialogs and menus) writes: each page carries a fresh
+# nonce for them in <meta property="csp-nonce">, and a style element is allowed only with it.
+def content_security_policy(nonce: str) -> str:
+    return (
+        f"default-src 'self'; img-src 'self' data:; style-src 'self' 'nonce-{nonce}';"
+        " script-src 'self'; font-src 'self'; connect-src 'self'; frame-ancestors 'none';"
+        " base-uri 'none'; form-action 'self'"
+    )
+
+
+def with_nonce(html: str, nonce: str) -> str:
+    """The page with the nonce React Aria reads, first thing in its head."""
+    return html.replace("<head>", f'<head><meta property="csp-nonce" nonce="{nonce}">', 1)
 
 
 def serve_portal(app: FastAPI, static_dir: Path) -> None:
@@ -564,10 +574,12 @@ def serve_portal(app: FastAPI, static_dir: Path) -> None:
     def page(path: str) -> Response:
         if path.startswith("api/") or path == "api":
             raise HTTPException(404, "no such endpoint")
-        return FileResponse(
-            index,
+        nonce = secrets.token_urlsafe(16)
+        return Response(
+            with_nonce(index.read_text(encoding="utf-8"), nonce),
+            media_type="text/html",
             headers={
-                "Content-Security-Policy": CONTENT_SECURITY_POLICY,
+                "Content-Security-Policy": content_security_policy(nonce),
                 "Cache-Control": "no-cache",
                 "X-Frame-Options": "DENY",
             },

@@ -1,5 +1,6 @@
 import { MoreHorizontal } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
+import { Button, Menu, MenuItem, MenuTrigger, Popover } from "react-aria-components";
 import { ConfirmDialog } from "./Confirm";
 
 export type RowAction = {
@@ -11,51 +12,37 @@ export type RowAction = {
 };
 
 // A row's risky actions behind ⋯ (the founder's punch list: It bounced, Archive, Stop, Undo,
-// Decline, Disable, Void), each one confirmed before it is sent.
+// Decline, Disable, Void), each one confirmed before it is sent. React Aria's menu: the arrow
+// keys move through it, a letter jumps to an action, Escape or a click outside closes it.
 export function RowMenu({ label, actions }: { label: string; actions: RowAction[] }) {
-  const [open, setOpen] = useState(false);
   const [asking, setAsking] = useState<RowAction | null>(null);
-  const box = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    const close = (event: Event) => {
-      if (event instanceof KeyboardEvent ? event.key === "Escape" : !box.current?.contains(event.target as Node)) {
-        setOpen(false);
-      }
-    };
-    window.addEventListener("keydown", close);
-    window.addEventListener("mousedown", close);
-    return () => {
-      window.removeEventListener("keydown", close);
-      window.removeEventListener("mousedown", close);
-    };
-  }, [open]);
 
   function choose(action: RowAction) {
-    setOpen(false);
     if (action.confirm) setAsking(action);
     else void action.onSelect();
   }
 
   return (
-    <div ref={box} className="relative inline-block">
-      <button type="button" aria-label={`Actions for ${label}`} aria-haspopup="menu" aria-expanded={open}
-        onClick={() => setOpen((was) => !was)}
-        className="inline-flex h-8 w-8 items-center justify-center rounded-sm text-ink-muted hover:bg-raised hover:text-ink">
-        <MoreHorizontal size={16} strokeWidth={1.75} aria-hidden="true" />
-      </button>
-      {open && (
-        <div role="menu" aria-label={`Actions for ${label}`}
-          className="absolute right-0 z-30 mt-1 flex min-w-[180px] flex-col rounded-md border border-card-edge bg-canvas py-1 shadow-lg">
-          {actions.map((action) => (
-            <button key={action.label} type="button" role="menuitem" onClick={() => choose(action)}
-              className={"px-3 py-2 text-left text-sm hover:bg-raised " + (action.danger ? "text-danger" : "text-ink")}>
-              {action.label}
-            </button>
-          ))}
-        </div>
-      )}
+    <>
+      <MenuTrigger>
+        <Button aria-label={`Actions for ${label}`}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-sm text-ink-muted hover:bg-raised hover:text-ink">
+          <MoreHorizontal size={16} strokeWidth={1.75} aria-hidden="true" />
+        </Button>
+        <Popover placement="bottom end"
+          className="z-30 min-w-[180px] rounded-md border border-card-edge bg-canvas py-1 shadow-lg">
+          <Menu aria-label={`Actions for ${label}`} className="flex flex-col outline-none"
+            onAction={(key) => choose(actions[Number(key)]!)}>
+            {actions.map((action, n) => (
+              <MenuItem key={action.label} id={n} textValue={action.label}
+                className={"cursor-default px-3 py-2 text-left text-sm outline-none data-[focused]:bg-raised "
+                  + (action.danger ? "text-danger" : "text-ink")}>
+                {action.label}
+              </MenuItem>
+            ))}
+          </Menu>
+        </Popover>
+      </MenuTrigger>
       {asking && (
         <ConfirmDialog question={asking.confirm ?? asking.label} confirmLabel={asking.label}
           danger={asking.danger}
@@ -66,6 +53,6 @@ export function RowMenu({ label, actions }: { label: string; actions: RowAction[
           }}
           onCancel={() => setAsking(null)} />
       )}
-    </div>
+    </>
   );
 }

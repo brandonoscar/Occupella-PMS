@@ -63,7 +63,7 @@ export function HousingAuthoritiesPage({ me }: { me: Me }) {
               {rows.map((row) => (
                 <tr key={row.id} aria-label={row.name} className="cursor-pointer hover:bg-raised"
                   onClick={() => navigate(`/housing-authorities/${row.id}`)}>
-                  <td className="font-medium text-ink">{row.name}</td>
+                  <td><GoLink href={`/housing-authorities/${row.id}`} className={LINK}>{row.name}</GoLink></td>
                   <td className="text-right">{row.leases}</td>
                   <td className="text-right">{money(row.owed)}</td>
                 </tr>

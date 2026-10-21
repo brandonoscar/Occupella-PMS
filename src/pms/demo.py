@@ -52,6 +52,7 @@ from psycopg import sql
 
 from pms import accounts, nightly
 from pms.api import (
+    assistance,
     budgets,
     company,
     custom_roles,
@@ -60,6 +61,7 @@ from pms.api import (
     groups,
     inspections,
     journal,
+    leads,
     leasing,
     listings,
     maintenance,
@@ -727,6 +729,39 @@ def showcase(conn: psycopg.Connection[Any], demo: Demo, today: date, public_url:
     work_orders_at_every_step(b, demo, units, today)
     files(b, demo)
     company_profile(b, demo)
+    lead_and_housing_authority(b, demo, units, today)
+
+
+def lead_and_housing_authority(b: Builder, demo: Demo, units: dict[str, UUID], today: date) -> None:
+    """A lead who asked about a vacant unit at Harbor Tower, to be shown it next week, and a
+    housing authority on file, so Leads and Housing authorities have something to open."""
+    conn = b.conn
+    harbor = property_of(conn, demo, "Harbor Tower")
+    with b.as_staff(demo.manager) as s:
+        lead = leads.add_lead(
+            s,
+            conn,
+            leads.NewLead(
+                name="Morgan Sample",
+                email="morgan.sample@example.com",
+                property_id=harbor,
+                unit_id=units["Unit 412"],
+                source="Website",
+            ),
+        )
+        leads.add_showing(
+            s,
+            conn,
+            lead.id,
+            leads.NewShowing(
+                unit_id=units["Unit 412"],
+                starts_at=datetime.combine(today + 7 * DAY, time(17, 0), UTC),
+                shown_by=demo.manager,
+            ),
+        )
+        assistance.add_authority(
+            s, conn, assistance.NewAuthority(name="Sample County Housing Authority")
+        )
 
 
 def company_profile(b: Builder, demo: Demo) -> None:

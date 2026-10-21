@@ -19,6 +19,7 @@ import type { PaymentMethod, VendorRow } from "../vendors";
 import { PAYMENT, standingTone, standingWord } from "../vendors";
 import { useRecord } from "./useRecord";
 import { STAFF_NAV } from "./staffNav";
+import { GoLink } from "./NeedsAttention";
 
 // Maintenance → Vendors (ADR 0006, Buildium's): every vendor a page at a time, by name: trade,
 // phone, email, W-9 on file or missing, and how their insurance stands (by the coverage that runs
@@ -62,7 +63,7 @@ export function VendorsPage({ me }: { me: Me }) {
                 {page.items.map((row) => (
                   <tr key={row.id} aria-label={row.name} className="cursor-pointer hover:bg-raised"
                     onClick={() => navigate(`/vendors/${row.id}`)}>
-                    <td className="font-medium text-ink">{row.name}</td>
+                    <td><GoLink href={`/vendors/${row.id}`} className="font-medium text-iris hover:text-iris-hover hover:underline">{row.name}</GoLink></td>
                     <td className="text-ink-muted">{row.trade}</td>
                     <td className="text-ink-muted">{row.phone}</td>
                     <td className="text-ink-muted">{row.email}</td>

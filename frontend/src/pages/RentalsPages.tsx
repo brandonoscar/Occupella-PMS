@@ -202,12 +202,12 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
                     ? `${lateFeeSummary(property.late_fees)} (from ${usDate(property.late_fees.starts_on)})`
                     : "No late fee terms"}
                 </dd>
-                <Button size="sm" variant="secondary" onClick={() => setOpen("late")}>Set late fees</Button>
+                <dd><Button size="sm" variant="secondary" onClick={() => setOpen("late")}>Set late fees</Button></dd>
               </div>
               <div>
                 <dt className="text-sm text-ink-muted">NSF fee</dt>
                 <dd data-testid="nsf-fee">{nsfFeeSummary(property.nsf_fee)}</dd>
-                <Button size="sm" variant="secondary" onClick={() => setOpen("nsf")}>Set NSF fee</Button>
+                <dd><Button size="sm" variant="secondary" onClick={() => setOpen("nsf")}>Set NSF fee</Button></dd>
               </div>
               <div>
                 <dt className="text-sm text-ink-muted">Lease-break fee</dt>
@@ -216,7 +216,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
                     ? `${leaseBreakFeeSummary(property.lease_break_fee)} (leases from ${usDate(property.lease_break_fee.starts_on)})`
                     : "No lease-break fee"}
                 </dd>
-                <Button size="sm" variant="secondary" onClick={() => setOpen("break")}>Set lease-break fee</Button>
+                <dd><Button size="sm" variant="secondary" onClick={() => setOpen("break")}>Set lease-break fee</Button></dd>
               </div>
             </dl>
           </Card>

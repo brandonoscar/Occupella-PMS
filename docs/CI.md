@@ -350,7 +350,11 @@ approves or declines in the portal, recurring bills, management and leasing fees
 staff roles and disabled logins, the owner's statement and year-end package, the tenant's lease
 and ledger, a mid-month move-out, a listing on the public vacancy page, setup, every report in
 every format, documents, and vendor payments carried over. On failure it keeps the Playwright
-report and the API's log for 7 days. Run it locally with `cd frontend && npm ci && npm test &&
+report and the API's log for 7 days. After every browser test, axe-core checks the page it
+ended on against WCAG 2.2 A and AA (`frontend/e2e/a11y.ts`), and one test walks every page of a
+demo of its own (staff's menu and Settings, a page of each kind a list opens, an owner's and a
+tenant's portal and the public pages) the same way; a violation fails the run, naming the rule
+and the elements. Run it locally with `cd frontend && npm ci && npm test &&
 npm run build`, then the same steps as the workflow (`PW_CHROMIUM` points Playwright at a
 Chromium already installed).
 

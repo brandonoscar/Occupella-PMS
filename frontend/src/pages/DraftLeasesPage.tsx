@@ -22,6 +22,7 @@ import { scopeParams, useScope } from "../scope";
 import { DraftLeaseForm } from "./DraftLeaseForm";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
+import { GoLink } from "./NeedsAttention";
 
 type Show = "open" | "leased" | "void" | "all";
 const TABS: { value: Show; label: string }[] = [
@@ -100,7 +101,7 @@ export function DraftLeasesPage({ me }: { me: Me }) {
                     return (
                       <tr key={offer.id} aria-label={`${offer.kind === "renewal" ? "Renewal" : "Lease"} for ${name}`}
                         className="cursor-pointer hover:bg-raised" onClick={() => navigate(`/draft-leases/${offer.id}`)}>
-                        <td className="font-medium text-ink">{name}</td>
+                        <td><GoLink href={`/draft-leases/${offer.id}`} className="font-medium text-iris hover:text-iris-hover hover:underline">{name}</GoLink></td>
                         <td>{offer.signers.map((s) => s.name).join(", ")}</td>
                         <td className="whitespace-nowrap">{usDate(offer.starts_on)}</td>
                         <td className="text-right">{money(offer.monthly_rent)}</td>

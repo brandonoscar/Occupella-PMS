@@ -77,4 +77,25 @@ describe("SearchBox", () => {
     await new Promise((done) => setTimeout(done, 250));
     expect(screen.queryByRole("list", { name: "Search results" })).toBeNull();
   });
+
+  it("moves from the box through the results with the arrow keys, and Escape goes back to the box", async () => {
+    server();
+    render(<SearchBox />);
+    fireEvent.change(box(), { target: { value: "Pr" } });
+    const results = await screen.findByRole("list", { name: "Search results" });
+    const links = within(results).getAllByRole("link");
+
+    fireEvent.keyDown(box(), { key: "ArrowDown" });
+    expect(document.activeElement).toBe(links[0]);
+    fireEvent.keyDown(links[0]!, { key: "ArrowDown" });
+    expect(document.activeElement).toBe(links[1]);
+    fireEvent.keyDown(links[1]!, { key: "ArrowUp" });
+    fireEvent.keyDown(links[0]!, { key: "ArrowUp" });
+    expect(document.activeElement).toBe(box());
+
+    fireEvent.keyDown(box(), { key: "ArrowDown" });
+    fireEvent.keyDown(links[0]!, { key: "Escape" });
+    expect(document.activeElement).toBe(box());
+    expect((box() as HTMLInputElement).value).toBe("");
+  });
 });

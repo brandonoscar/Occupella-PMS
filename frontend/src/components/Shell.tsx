@@ -100,7 +100,7 @@ export function Shell({
         <nav aria-label="Sections" className="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-6 pt-3 pb-3">
           {items.map((entry) =>
             isGroup(entry) ? (
-              <div key={entry.label} role="group" aria-label={entry.label} className="flex flex-col gap-px pt-2">
+              <div key={entry.label} role="group" aria-label={entry.label} className="flex shrink-0 flex-col gap-px pt-2">
                 <span className="flex h-7 items-center gap-2.5 pl-4 text-xs font-medium tracking-wider text-chrome-ink-muted uppercase">
                   <entry.icon size={16} strokeWidth={1.5} aria-hidden="true" />
                   {entry.label}
@@ -189,8 +189,10 @@ function useNarrow(): boolean {
 
 // A row of the rail, as Occupella's NavItem draws one: 32px, 13px medium; the selected row lifts
 // to white with a small shadow and a 3px accent bar at its left.
+// A row never shrinks below its 32px when the menu is longer than the screen (it scrolls instead):
+// a squeezed row is too small a target to tap (WCAG 2.5.8).
 const RAIL_ROW =
-  "group relative flex h-8 w-full items-center gap-2.5 rounded-md pr-3 pl-4 text-sm font-medium" +
+  "group relative flex h-8 w-full shrink-0 items-center gap-2.5 rounded-md pr-3 pl-4 text-sm font-medium" +
   " transition-colors duration-150";
 // A group's page, its text in line with the group name's (past the 16px icon and its gap).
 const INSET_ROW = RAIL_ROW.replace("pl-4", "pl-[42px]");

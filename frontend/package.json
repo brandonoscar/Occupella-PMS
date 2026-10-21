@@ -20,9 +20,11 @@
     "lucide-react": "1.35.0",
     "qrcode-generator": "2.0.4",
     "react": "19.3.0",
+    "react-aria-components": "1.21.1",
     "react-dom": "19.3.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
     "@fast-check/vitest": "0.5.0",
     "@playwright/test": "1.64.0",
     "@tailwindcss/vite": "4.3.3",

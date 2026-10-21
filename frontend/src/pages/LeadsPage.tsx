@@ -24,6 +24,7 @@ import { scopeParams, useScope } from "../scope";
 import type { Portfolio } from "../setup";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
+import { GoLink } from "./NeedsAttention";
 
 type Show = "open" | "closed" | "all";
 const TABS: { value: Show; label: string }[] = [
@@ -86,7 +87,7 @@ export function LeadsPage({ me }: { me: Me }) {
                     return (
                       <tr key={lead.id} aria-label={`Lead ${lead.name}`} className="cursor-pointer hover:bg-raised"
                         onClick={() => navigate(`/leads/${lead.id}`)}>
-                        <td className="font-medium text-ink">{lead.name}</td>
+                        <td><GoLink href={`/leads/${lead.id}`} className="font-medium text-iris hover:text-iris-hover hover:underline">{lead.name}</GoLink></td>
                         <td>{askedAbout(lead)}</td>
                         <td className="text-ink-muted">{lead.source ?? ""}</td>
                         <td className="whitespace-nowrap">{usDate(lead.added_at)}</td>

@@ -17,6 +17,7 @@ import type { Paged } from "../rentals";
 import { navigate } from "../router";
 import { scopeParams, useScope } from "../scope";
 import { STAFF_NAV } from "./staffNav";
+import { GoLink } from "./NeedsAttention";
 
 type Show = "open" | "rejected" | "withdrawn" | "all";
 const TABS: { value: Show; label: string }[] = [
@@ -81,7 +82,7 @@ export function ApplicantsPage({ me }: { me: Me }) {
                       <tr key={application.id} aria-label={`Application from ${names}`}
                         className="cursor-pointer hover:bg-raised"
                         onClick={() => navigate(`/applicants/${application.id}`)}>
-                        <td className="font-medium text-ink">{names}</td>
+                        <td><GoLink href={`/applicants/${application.id}`} className="font-medium text-iris hover:text-iris-hover hover:underline">{names}</GoLink></td>
                         <td>{application.property}, {application.unit}</td>
                         <td className="whitespace-nowrap">{usDate(application.submitted_at)}</td>
                         <td><Badge tone={badge.tone} data-testid="status">{badge.word}</Badge></td>
