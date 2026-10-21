@@ -9,7 +9,7 @@ from decimal import Decimal
 import pytest
 
 from pms import demo
-from pms.api import reconcile, rent, today
+from pms.api import offers, payables, reconcile, rent, today
 
 DAY = timedelta(days=1)
 
@@ -126,7 +126,13 @@ def test_the_owners_bills_show_on_their_income_statement_as_repairs(conn, built)
     assert ("Elm Court", "Schedule E line 14: Repairs", 14, Decimal("380.00")) in rows
 
 
-def test_two_months_of_the_work_staff_do(conn, built):
+@pytest.fixture
+def books(app_conn):
+    return demo.books(app_conn)
+
+
+def test_two_months_of_the_work_staff_do(conn, books):
+    built = books
     month_ago, last_month, this_month = built.months
     count = lambda query: conn.execute(query, (built.pmc_id,)).fetchone()[0]  # noqa: E731
 
@@ -186,8 +192,10 @@ def test_today_lists_what_waits_on_staff(conn, app_conn, built):
     assert [(f.bank_account, Decimal(f.held), f.since) for f in waiting.company_fees] == [
         ("Demo operating trust account", last_months_fees, this_month - DAY)
     ]
-    assert [(v.vendor, v.expires_on - waiting.on) for v in waiting.vendor_insurance] == [
-        ("Demo Roofing Co", 20 * DAY)
+    # The electrician's policy ran out five days before this month; the roofer's runs out soon.
+    assert [(v.vendor, v.expires_on) for v in waiting.vendor_insurance] == [
+        ("Demo Electric Co", this_month - 5 * DAY),
+        ("Demo Roofing Co", waiting.on + 20 * DAY),
     ]
     assert [(u.property, u.unit, u.standing) for u in waiting.renters_insurance] == [
         ("Aspen Row", "Unit 1", "none on file")
@@ -237,7 +245,11 @@ def test_every_other_page_has_something_on_it(conn, app_conn, built):
         " WHERE item = 'policy' ORDER BY line",
         pmc,
         on,
-    ) == [("Demo Plumbing Co", "current"), ("Demo Roofing Co", "expires in 20 days")]
+    ) == [
+        ("Demo Electric Co", "expired"),
+        ("Demo Plumbing Co", "current"),
+        ("Demo Roofing Co", "expires in 20 days"),
+    ]
     assert report(
         conn,
         "SELECT room, move_in, detail FROM trust_report_inspection(%s, %s) WHERE item = 'room'"
@@ -286,9 +298,152 @@ def test_every_other_page_has_something_on_it(conn, app_conn, built):
     ) == [("Aspen Row", "none on file", False), ("Cedar House", "current", False)]
 
 
+def test_the_founders_seed_puts_something_on_every_list(conn, app_conn, built):
+    on = datetime.now(UTC).date()
+    pmc = built.pmc_id
+    this_month = built.months[2]
+    rows = lambda query, *more: report(conn, query, pmc, *more)  # noqa: E731
+
+    # Six properties, Harbor Tower with 48 units, in two groups.
+    assert rows(
+        "SELECT p.display_name, count(u.id) FROM trust_properties AS p"
+        " LEFT JOIN trust_units AS u ON u.property_id = p.id WHERE p.pmc_id = %s"
+        ' GROUP BY p.display_name ORDER BY p.display_name COLLATE "C"'
+    ) == [
+        ("Aspen Row", 2),
+        ("Birch Flats", 2),
+        ("Cedar House", 1),
+        ("Elm Court", 2),
+        ("Harbor Tower", 48),
+        ("Oak Terrace", 2),
+    ]
+    assert rows(
+        "SELECT g.display_name, count(*) FROM trust_property_groups AS g"
+        " CROSS JOIN LATERAL trust_group_properties(g.id) AS p WHERE g.pmc_id = %s"
+        " GROUP BY g.display_name ORDER BY g.display_name"
+    ) == [("North portfolio", 3), ("South portfolio", 3)]
+    # This month's rent charged to every lease in effect: three Harbor Tower tenants owe it, one
+    # paid part, one none and one's payment bounced, with its NSF fee.
+    assert rows(
+        "SELECT count(*) FROM trust_charges WHERE pmc_id = %s AND kind = 'rent' AND due_on = %s",
+        this_month,
+    ) == [(50,)]
+    owing = sorted(
+        unit for (prop, unit), lease in built.leases.items() if rent.owed(conn, lease) > 0
+    )
+    assert owing == [demo.HARBOR_PARTIAL, demo.HARBOR_UNPAID, demo.HARBOR_BOUNCED]
+    assert rows("SELECT count(*) FROM trust_nsf_fees WHERE pmc_id = %s") == [(1,)]
+    # A lease ending in 45 days, one to come, and one ended with its deposit still held.
+    oak = built.leases[("Oak Terrace", "Unit 1")]
+    assert rows("SELECT ends_on FROM trust_leases WHERE pmc_id = %s AND id = %s", oak) == [
+        (on + 45 * DAY,)
+    ]
+    assert rows(
+        "SELECT starts_on FROM trust_leases WHERE pmc_id = %s AND id = %s",
+        built.leases[("Oak Terrace", "Unit 2")],
+    ) == [(demo.first_of_month(on, -1),)]
+    ended = built.leases[("Harbor Tower", demo.HARBOR_ENDED)]
+    assert rows(
+        "SELECT count(*) FROM trust_deposit_returns WHERE pmc_id = %s AND lease_id = %s", ended
+    ) == [(0,)]
+    # Applicants at each step, a lease sent to sign and a renewal half signed.
+    assert rows(
+        "SELECT (SELECT count(*) FROM trust_screenings AS s WHERE s.application_id = a.id),"
+        " d.decision FROM trust_applications AS a"
+        " LEFT JOIN trust_application_decisions AS d ON d.application_id = a.id"
+        " WHERE a.pmc_id = %s ORDER BY a.submitted_at"
+    ) == [(0, None), (1, None), (1, "approved"), (1, "declined"), (0, None)]
+    assert rows(
+        "SELECT p.display_name, w.reason FROM trust_application_withdrawals AS w"
+        " JOIN trust_applicants AS p ON p.application_id = w.application_id"
+        " WHERE w.pmc_id = %s"
+    ) == [("Kendall Applicant", "Took a home closer to work")]
+    # Two of Harbor Tower's vacant units are on the public page.
+    assert rows(
+        "SELECT u.display_name FROM trust_listings AS s"
+        " JOIN trust_application_links AS l ON l.id = s.link_id"
+        " JOIN trust_units AS u ON u.id = l.unit_id"
+        ' WHERE s.pmc_id = %s ORDER BY u.display_name COLLATE "C"'
+    ) == [("Unit 409",), ("Unit 410",)]
+    assert sorted(
+        rows(
+            "SELECT o.renews_lease_id IS NOT NULL, count(g.signed_at), count(*)"
+            " FROM trust_lease_offers AS o"
+            " JOIN trust_lease_offer_signers AS s ON s.offer_id = o.id"
+            " LEFT JOIN trust_signatures AS g"
+            " ON g.offer_id = s.offer_id AND g.position = s.position"
+            " WHERE o.pmc_id = %s GROUP BY o.id"
+        )
+    ) == [(False, 0, 2), (True, 0, 2), (True, 1, 2)]
+    # Draft leases: the applicant's sent with its deposit and parking, a renewal half signed and
+    # Cedar House's renewal a draft.
+    with demo.Builder(app_conn, pmc).as_staff(built.manager):
+        drafts, _ = offers.offers_of(app_conn, pmc, show="open")
+    assert sorted((o.property, o.status, o.security_deposit) for o in drafts) == [
+        ("Cedar House", "draft", None),
+        ("Harbor Tower", "sent", f"{demo.harbor_rent(demo.APPLICANTS[2][0]):.2f}"),
+        ("Oak Terrace", "partially signed", None),
+    ]
+    # Eight bills: two due this week, one overdue, one waiting for its owner, three paid and
+    # this month's landscaping, entered by the nightly run.
+    with demo.Builder(app_conn, pmc).as_staff(built.manager):
+        bills, _ = payables.find_bills(app_conn, pmc)
+    assert sorted((b.reference, b.status, b.overdue) for b in bills) == [
+        ("ELC-3005", "paid", False),
+        (f"LAWN-{this_month:%Y-%m}", "to set aside", on.day > 28),
+        ("LND-3001", "to set aside", False),
+        ("PLB-1001", "paid", False),
+        ("PLB-3002", "to set aside", False),
+        ("PLB-3003", "to set aside", True),
+        ("RF-2207", "paid", False),
+        ("RF-3004", "needs approval", False),
+    ]
+    # Six work orders, one at each step, the roofer's among them, each with its priority.
+    assert rows(
+        "SELECT w.summary, (SELECT s.step FROM trust_work_order_steps AS s"
+        "  WHERE s.work_order_id = w.id ORDER BY s.created_at DESC, s.id DESC LIMIT 1),"
+        " (SELECT d.priority FROM trust_work_order_details AS d WHERE d.work_order_id = w.id)"
+        " FROM trust_work_orders AS w WHERE w.pmc_id = %s ORDER BY w.summary"
+    ) == [
+        ("Front walk light out", None, "normal"),
+        ("Inspect roof after the storm", "assigned", "high"),
+        ("Kitchen faucet drips", "completed", "low"),
+        ("Repaint the mailbox", "cancelled", None),
+        ("Smoke detector chirping", None, "urgent"),
+        ("Water heater rumbles", "scheduled", "normal"),
+    ]
+    # Four vendors, a W-9 on file, and files on a lease, an owner, a bill and a work order too.
+    assert rows("SELECT count(*) FROM trust_vendors WHERE pmc_id = %s") == [(4,)]
+    # Each with their trade, whether they get a 1099 and how they are paid.
+    assert rows(
+        "SELECT v.display_name, p.trade, p.gets_1099, p.payment_method FROM trust_vendors AS v"
+        " JOIN trust_vendor_profiles AS p ON p.vendor_id = v.id WHERE v.pmc_id = %s"
+        ' ORDER BY v.display_name COLLATE "C"'
+    ) == [
+        ("Demo Electric Co", "Electrical", False, "check"),
+        ("Demo Landscaping Co", "Landscaping", True, "EFT"),
+        ("Demo Plumbing Co", "Plumbing", True, "EFT"),
+        ("Demo Roofing Co", "Roofing", True, "check"),
+    ]
+    assert rows("SELECT kind, title FROM trust_documents WHERE pmc_id = %s ORDER BY kind") == [
+        ("move_out_photo", "Kitchen at move-out"),
+        ("owner_document", "Management agreement"),
+        ("receipt", "Roof repair receipt"),
+        ("w9", "W-9, Demo Plumbing Co"),
+        ("work_order_photo", "Faucet before the repair"),
+    ]
+    # The company's address and the fee terms a property added from now on starts with; the
+    # demo's own properties keep their own.
+    assert rows(
+        "SELECT address_line_1, city, late_grace_days, late_flat_fee, nsf_fee"
+        " FROM trust_company_profiles WHERE pmc_id = %s"
+    ) == [("100 Example Street", "Sampletown", 5, Decimal("50.00"), Decimal("35.00"))]
+
+
 def test_the_books_alone_leave_every_other_page_for_the_feature_tests(conn, app_conn):
     # Each browser test of a feature starts from the books (frontend/e2e/seed.py): no broker
-    # named, no policy, inspection, budget, rent change, insurance terms, role or entry yet.
+    # named, no policy, inspection, budget, rent change, insurance terms, role, entry, company
+    # profile or email settings yet.
     books = demo.books(app_conn)
 
     for table in (
@@ -300,6 +455,8 @@ def test_the_books_alone_leave_every_other_page_for_the_feature_tests(conn, app_
         "trust_rent_changes",
         "trust_renters_insurance_terms",
         "trust_journal_entries",
+        "trust_company_profiles",
+        "trust_email_settings",
     ):
         assert conn.execute(
             f"SELECT count(*) FROM {table} WHERE pmc_id = %s", (books.pmc_id,)
@@ -315,7 +472,18 @@ def test_every_write_but_the_first_staff_member_and_their_role_names_a_staff_mem
         "SELECT table_name, count(*) FROM trust_audit_log"
         " WHERE pmc_id = %s AND staff_id IS NULL GROUP BY table_name ORDER BY table_name",
         (built.pmc_id,),
-    ).fetchall() == [("trust_pmcs", 1), ("trust_staff", 1), ("trust_staff_roles", 1)]
+    ).fetchall() == [
+        # Applicants apply themselves, through a link: they have no login to name.
+        ("trust_applicants", 6),
+        ("trust_applications", 5),
+        ("trust_pmcs", 1),
+        # A signer signs through their link (ADR 0008): they have no login either.
+        ("trust_signature_evidence", 1),
+        ("trust_signatures", 1),
+        ("trust_signing_events", 2),
+        ("trust_staff", 1),
+        ("trust_staff_roles", 1),
+    ]
 
 
 def test_another_demo_goes_in_beside_the_first(conn, app_conn, built):

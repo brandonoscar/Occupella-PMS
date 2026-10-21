@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { House } from "lucide-react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Badge } from "./Badge";
 import { Button } from "./Button";
 import { EmptyState } from "./EmptyState";
@@ -79,6 +79,23 @@ describe("EmptyState", () => {
 describe("Wide", () => {
   it("lets a wide table scroll sideways inside its frame, not the page", () => {
     render(<Wide><table aria-label="Ledger"><tbody><tr><td>1</td></tr></tbody></table></Wide>);
-    expect(screen.getByRole("table", { name: "Ledger" }).parentElement?.className).toBe("overflow-x-auto");
+    const frame = screen.getByRole("table", { name: "Ledger" }).parentElement;
+    expect(frame?.className).toBe("overflow-x-auto");
+    // It fits: no stop in the tab order.
+    expect(frame?.hasAttribute("tabindex")).toBe(false);
+  });
+
+  it("takes keyboard focus while it scrolls, so the arrow keys scroll it", () => {
+    const wider = vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockReturnValue(800);
+    const shown = vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(390);
+    try {
+      render(<Wide><table aria-label="Ledger"><tbody><tr><td>1</td></tr></tbody></table></Wide>);
+      const frame = screen.getByRole("region", { name: "Ledger, scrolls sideways" });
+      expect(frame.getAttribute("tabindex")).toBe("0");
+      expect(frame.contains(screen.getByRole("table", { name: "Ledger" }))).toBe(true);
+    } finally {
+      wider.mockRestore();
+      shown.mockRestore();
+    }
   });
 });

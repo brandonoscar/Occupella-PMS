@@ -3,10 +3,10 @@ portal (src/pms/api/owner.py). Every file here is synthetic."""
 
 import base64
 import uuid
-from datetime import date
+from datetime import UTC, date, datetime
 
 import pytest
-from helpers import JPEG, PDF, PNG, add_document, enter_bill, make_pmc
+from helpers import JPEG, PDF, PNG, add_document, add_work_order, enter_bill, make_pmc
 from people import join_as_owner, join_as_staff, join_as_tenant
 
 
@@ -72,6 +72,32 @@ def test_staff_keep_each_kind_of_document_and_download_it(client, conn, staff, p
     assert got.headers["content-type"] == "application/pdf"
     assert got.headers["content-disposition"] == 'attachment; filename="W-9-2026.pdf"'
     assert got.headers["content-security-policy"] == "default-src 'none'; sandbox"
+
+
+def test_a_work_orders_photos_are_documents_about_it(client, conn, staff, pmc):
+    order = add_work_order(
+        conn, pmc.pmc_id, pmc.owners[0].property_id, None, "Leak", datetime(2026, 3, 2, tzinfo=UTC)
+    )
+    assert ok(client.get("/api/documents"))["subjects"]["work_order_photo"] == [
+        {"id": str(order), "label": "Property 1: Leak"}
+    ]
+
+    photo = ok(upload(client, "work_order_photo", order, PNG, "image/png", "Under the sink"), 201)
+
+    (listed,) = ok(client.get("/api/documents"))["documents"]
+    assert (listed["id"], listed["kind"], listed["about_id"], listed["about"]) == (
+        photo["id"],
+        "work_order_photo",
+        str(order),
+        "Property 1: Leak",
+    )
+    # A work order photo is about a work order of the PMC, not anything else.
+    refused(upload(client, "work_order_photo", pmc.vendor_id, PNG, "image/png"), 404)
+    other = make_pmc(conn)
+    theirs = add_work_order(
+        conn, other.pmc_id, other.owners[0].property_id, None, "X", datetime(2026, 3, 2, tzinfo=UTC)
+    )
+    refused(upload(client, "work_order_photo", theirs, PNG, "image/png"), 404)
 
 
 def test_a_removed_document_is_no_longer_listed_or_served(client, conn, staff, pmc):

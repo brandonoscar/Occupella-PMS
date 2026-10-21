@@ -8,7 +8,8 @@ first (last month) has postings. A second owner's property has a tenant on a lea
 month's rent paid, this month's due and a maintenance request; a vacant unit there has an open
 application link. For lease offers, another vacant unit has an approved application, and a
 third unit a tenant on a month-to-month lease to renew. Then the demo PMC (src/pms/demo.py),
-with invites for its manager and its owner of three properties. Last, a demo PMC's books
+with invites for its manager and its owner of three properties, and another for the
+accessibility sweep. Last, a demo PMC's books
 (`demo.books`, without what the demo adds to every other page) for each feature test
 (frontend/e2e/features.spec.ts), so each starts from the same books and none sees another's
 changes. Every name is synthetic.
@@ -18,7 +19,7 @@ import json
 import os
 import secrets
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import psycopg
@@ -433,7 +434,28 @@ def main() -> None:
             f"demo-owner.{tag}@example.com",
             None,
         ).token
+        # Another demo for the accessibility sweep (portal.spec.ts), so it reads every page as
+        # the demo first shows it: its manager, an owner and a tenant.
+        sweep = demo.build(app)
+        seeded["accessibility"] = {
+            "pmc_id": str(sweep.pmc_id),
+            **{
+                who: accounts.create_invite(
+                    app, sweep.pmc_id, kind, person, f"a11y-{who}.{tag}@example.com", None
+                ).token
+                for who, kind, person in (
+                    ("manager", "staff", sweep.manager),
+                    ("owner", "owner", sweep.owners["Demo Owner A"]),
+                    ("tenant", "tenant", sweep.tenants["Taylor Demo"]),
+                )
+            },
+        }
         seeded["features"] = {name: feature_pmc(app, tag, name) for name in FEATURES}
+        # Year close: books as of this year's first day, so last year's November is approved and
+        # its December waits for approval in each trust bank account, whatever the day today.
+        seeded["features"]["year-close"] = feature_pmc(
+            app, tag, "year-close", today=date(datetime.now(UTC).year, 1, 1)
+        )
     print(json.dumps(seeded))
 
 
@@ -463,15 +485,53 @@ FEATURES = (
     "cutover-bills",
     "signers",
     "rent-changes",
+    "rent-terms",
     "renters-insurance",
     "rentals",
+    "people",
+    "general-ledger",
+    "maintenance-pages",
+    "groups",
+    "company",
+    "email",
+    "automatic-email",
+    "rent-in",
+    "waive",
+    "lease-people",
+    "rent-due-day",
+    "owner-fees",
+    "shared-bills",
+    "ownership",
+    "housing-assistance",
+    "utility-billing",
+    "emergencies",
+    "recurring-work-orders",
+    "vendor-links",
+    "listing-photos",
+    "leads",
+    "screening-criteria",
+    "lease-transfers",
+    "calendar",
+    "own-contact",
+    "charge-types",
+    "phone",
+    "quickbooks",
+    "two-homes",
+    "history",
+    "switching-balances",
+    "assistance-compliance",
+    "property-addresses",
+    "vendor-archive",
 )
 
 
-def feature_pmc(app: psycopg.Connection[Any], tag: str, name: str) -> dict[str, Any]:
-    """A demo PMC's books and invites (with their emails) for its people: the manager (admin,
-    approve, disburse), the bookkeeper (no role), both owners and two tenants."""
-    made = demo.books(app)
+def feature_pmc(
+    app: psycopg.Connection[Any], tag: str, name: str, today: date | None = None
+) -> dict[str, Any]:
+    """A demo PMC's books (as of today, or another day) and invites (with their emails) for its
+    people: the manager (admin, approve, disburse), the bookkeeper (no role), both owners and two
+    tenants."""
+    made = demo.books(app, today)
     people = {
         "manager": ("staff", made.manager),
         "bookkeeper": ("staff", made.bookkeeper),

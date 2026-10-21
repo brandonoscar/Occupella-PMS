@@ -1,24 +1,33 @@
+import { ChevronRight } from "lucide-react";
 import type { Me } from "../api";
-import { LinkButton } from "../components/Button";
 import { Card, PageHeader, Shell } from "../components/Shell";
-import { staffDownloads } from "../reports";
+import { GROUPS, REPORTS } from "../reports";
+import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 
-// Every report as of today, in each format, and the whole ledger (ADR 0005: the downloads that
-// were on Overview).
+// Reports (ADR 0006, step 11): every report in its group; each opens its own page with its
+// filters, a preview and Export. The whole ledger is under Settings, Data export.
 export function ReportsPage({ me }: { me: Me }) {
   return (
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title="Reports" />
-      <Card title="Downloads">
-        <div className="flex flex-wrap gap-2">
-          {staffDownloads(new Date()).map((download) => (
-            <LinkButton key={download.label} href={download.href}>
-              {download.label}
-            </LinkButton>
-          ))}
-        </div>
-      </Card>
+      <div className="grid gap-6 md:grid-cols-2">
+        {GROUPS.map((group) => (
+          <Card key={group} title={group}>
+            <ul aria-label={group} className="divide-y divide-line rounded-md border border-card-edge">
+              {REPORTS.filter((r) => r.group === group).map((report) => (
+                <li key={report.name}>
+                  <GoLink href={`/reports/${report.name}`}
+                    className="flex items-center justify-between px-4 py-3 text-base text-ink hover:bg-raised">
+                    {report.label}
+                    <ChevronRight size={16} strokeWidth={1.5} aria-hidden="true" className="text-ink-subtle" />
+                  </GoLink>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        ))}
+      </div>
     </Shell>
   );
 }

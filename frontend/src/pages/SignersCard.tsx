@@ -13,6 +13,8 @@ import { signerLine, standingTone } from "../signers";
 import type { Member } from "../staff";
 import { holds } from "../staff";
 import { useRecord } from "./useRecord";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 // Who may pay money out of each trust bank account: its broker on file and the signers the broker
 // authorized in writing, licensed or bonded. Once an account has its broker on file, the
@@ -34,11 +36,6 @@ export function SignersCard({ me, members }: { me: Me; members: Member[] }) {
 
   return (
     <Card title="Who signs each trust bank account">
-      <p className="mb-4 text-sm text-ink-muted">
-        The broker controls each trust bank account; anyone else pays money out of it only with the
-        broker's written authorization. Once an account has its broker here, only its signers may
-        pay money out of it.
-      </p>
       {accounts === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : (
@@ -75,7 +72,7 @@ export function SignersCard({ me, members }: { me: Me; members: Member[] }) {
         <SignerForm accounts={accounts} members={members} admin={holds(me, "admin")} today={today}
           record={record} />
       )}
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{refused}</Notice>
     </Card>
   );
@@ -98,7 +95,7 @@ function SignerForm({ accounts, members, admin, today, record }: {
   const name = members.find((m) => m.staff_id === staff)?.name ?? "";
   const accountName = accounts.find((a) => a.bank_account_id === account)?.bank_account ?? "";
   return (
-    <form
+    <Form
       className="mt-4 flex flex-wrap items-end gap-3"
       onSubmit={async (event) => {
         event.preventDefault();
@@ -139,6 +136,6 @@ function SignerForm({ accounts, members, admin, today, record }: {
       <Field label="Authorized in writing on" id="signer-on" type="date" required value={on}
         onChange={(e) => setOn(e.target.value)} />
       <Button type="submit">Record</Button>
-    </form>
+    </Form>
   );
 }

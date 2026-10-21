@@ -5,9 +5,11 @@ Every fixture is synthetic: no real names, addresses, bank numbers or tax IDs.
 
 import os
 import shutil
+import struct
 import threading
 import time
 import uuid
+import zlib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -265,13 +267,21 @@ JPEG = b"\xff\xd8\xff\xe0 synthetic"
 def add_document(
     connection, pmc_id, kind, about, content=PDF, content_type="application/pdf", title="W-9"
 ) -> UUID:
-    """A document of a kind about one thing (a vendor, bill, lease or owner), with its file, in
-    one transaction."""
+    """A document of a kind about one thing (a vendor, bill, lease, owner or work order), with
+    its file, in one transaction."""
     column = {
         "w9": "vendor_id",
         "receipt": "bill_id",
         "move_out_photo": "lease_id",
         "owner_document": "owner_id",
+        "work_order_photo": "work_order_id",
+        "property_document": "property_id",
+        "unit_document": "unit_id",
+        "tenant_document": "tenant_id",
+        "lease_document": "lease_id",
+        "vendor_document": "vendor_id",
+        "request_photo": "request_id",
+        "listing_photo": "unit_id",
     }[kind]
     with connection.transaction():
         document = _one(
@@ -342,13 +352,14 @@ def add_agreement(
     leasing_fee_percent="0",
     reserve="0",
     approval_limit="0",
+    bill_markup_percent="0",
 ) -> UUID:
     """A management agreement for one owner's property account, in force from starts_on."""
     return _one(
         connection,
         "INSERT INTO trust_management_agreements (pmc_id, ledger_account_id, starts_on,"
-        " fee_percent, minimum_fee, flat_fee, leasing_fee_percent, reserve, approval_limit)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        " fee_percent, minimum_fee, flat_fee, leasing_fee_percent, reserve, approval_limit,"
+        " bill_markup_percent) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
         (
             pmc_id,
             account,
@@ -359,6 +370,7 @@ def add_agreement(
             Decimal(leasing_fee_percent),
             Decimal(reserve),
             Decimal(approval_limit),
+            Decimal(bill_markup_percent),
         ),
     )
 
@@ -445,12 +457,16 @@ def add_work_order(connection, pmc_id, property_id, unit_id, summary, opened_at)
     )
 
 
-def step_work_order(connection, pmc_id, work_order_id, step, taken_at, vendor_id=None) -> None:
-    """Record what happened to a work order: assigned (to vendor_id), completed or cancelled."""
+def step_work_order(
+    connection, pmc_id, work_order_id, step, taken_at, vendor_id=None, scheduled_for=None
+) -> None:
+    """Record what happened to a work order: assigned (to vendor_id), scheduled (for a day),
+    completed or cancelled."""
     connection.execute(
-        "INSERT INTO trust_work_order_steps (pmc_id, work_order_id, step, vendor_id, taken_at)"
-        " VALUES (%s, %s, %s, %s, %s)",
-        (pmc_id, work_order_id, step, vendor_id, taken_at),
+        "INSERT INTO trust_work_order_steps"
+        " (pmc_id, work_order_id, step, vendor_id, taken_at, scheduled_for)"
+        " VALUES (%s, %s, %s, %s, %s, %s)",
+        (pmc_id, work_order_id, step, vendor_id, taken_at, scheduled_for),
     )
 
 
@@ -525,13 +541,21 @@ def record_screening(
 
 
 def record_decision(
-    connection, pmc_id, application_id, staff_id, decision, screening_id=None, conditions=None
+    connection,
+    pmc_id,
+    application_id,
+    staff_id,
+    decision,
+    screening_id=None,
+    conditions=None,
+    override_reason=None,
 ) -> None:
+    """A decision; one against the latest screening's recommendation says why (migration 0089)."""
     connection.execute(
         "INSERT INTO trust_application_decisions"
-        " (pmc_id, application_id, decision, conditions, screening_id, decided_by)"
-        " VALUES (%s, %s, %s, %s, %s, %s)",
-        (pmc_id, application_id, decision, conditions, screening_id, staff_id),
+        " (pmc_id, application_id, decision, conditions, screening_id, decided_by, override_reason)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s)",
+        (pmc_id, application_id, decision, conditions, screening_id, staff_id, override_reason),
     )
 
 
@@ -1184,3 +1208,174 @@ def sign_for(
                 on,
             ),
         )
+
+
+def co_own(connection, pmc, owner=1, prop=0, bank_id=None) -> str:
+    """Owner `owner` of a make_pmc PMC gets an account at property `prop` too (in its operating
+    trust bank account, or `bank_id`): a co-owner of it."""
+    return open_account(
+        connection,
+        pmc.pmc_id,
+        bank_id or pmc.operating_bank_id,
+        "owner_property",
+        pmc.owners[owner].owner_id,
+        pmc.owners[prop].property_id,
+    )
+
+
+def set_ownership(connection, pmc_id, property_id, starts_on, shares) -> UUID:
+    """A property's ownership shares from a day, `shares` as (account, percent) pairs, all in one
+    transaction as their check at commit asks (migration 0094)."""
+    with connection.transaction():
+        share = _one(
+            connection,
+            "INSERT INTO trust_ownership_shares (pmc_id, property_id, starts_on)"
+            " VALUES (%s, %s, %s) RETURNING id",
+            (pmc_id, property_id, starts_on),
+        )
+        for account, percent in shares:
+            connection.execute(
+                "INSERT INTO trust_ownership_share_lines"
+                " (share_id, ledger_account_id, pmc_id, percent) VALUES (%s, %s, %s, %s)",
+                (share, account, pmc_id, percent),
+            )
+    return share
+
+
+def split_by_ownership(connection, property_id, day, amount) -> list[tuple[str, Decimal]]:
+    return connection.execute(
+        "SELECT ledger_account_id, amount FROM trust_split_by_ownership(%s, %s, %s)",
+        (property_id, day, amount),
+    ).fetchall()
+
+
+def add_authority(connection, pmc_id, name="Synthetic Housing Authority") -> UUID:
+    """A housing authority of the PMC (migration 0095)."""
+    return _one(
+        connection,
+        "INSERT INTO trust_housing_authorities (pmc_id, name) VALUES (%s, %s) RETURNING id",
+        (pmc_id, name),
+    )
+
+
+def assist(connection, pmc_id, lease_id, authority_id, starts_on, amount, contract=None) -> UUID:
+    """A lease's housing assistance from the first of a month: what the authority pays of the
+    rent each month (0 ends it)."""
+    return _one(
+        connection,
+        "INSERT INTO trust_rent_assistance"
+        " (pmc_id, lease_id, housing_authority_id, starts_on, amount, contract)"
+        " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, lease_id, authority_id, starts_on, Decimal(amount), contract),
+    )
+
+
+def authority_charges(connection, lease_id) -> list[tuple]:
+    """A lease's housing authority charges, oldest first: (due_on, kind, amount, source)."""
+    return connection.execute(
+        "SELECT due_on, kind, amount, source FROM trust_assistance_charges WHERE lease_id = %s"
+        " ORDER BY due_on, created_at, id",
+        (lease_id,),
+    ).fetchall()
+
+
+def apply_assistance_payment(connection, pmc_id, charge_id, transfer_id, amount) -> Decimal:
+    return _one(
+        connection,
+        "SELECT trust_apply_assistance_payment(%s, %s, %s, %s)",
+        (pmc_id, charge_id, transfer_id, Decimal(amount)),
+    )
+
+
+def plan_utility(
+    connection, pmc_id, property_id, utility, starts_on, method, owner_percent="0"
+) -> UUID:
+    """How a property bills a utility back from a day (migration 0096): by unit, square feet,
+    occupants or submeter, and the owner's share in percent; 'none' stops it."""
+    return _one(
+        connection,
+        "INSERT INTO trust_utility_plans (pmc_id, property_id, utility, starts_on, method,"
+        " owner_percent) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, property_id, utility, starts_on, method, Decimal(owner_percent)),
+    )
+
+
+def bill_lease_for(connection, pmc_id, lease_id, utility, starts_on, billed=True) -> UUID:
+    """Whether a lease is billed for a utility from a day."""
+    return _one(
+        connection,
+        "INSERT INTO trust_lease_utilities (pmc_id, lease_id, utility, starts_on, billed)"
+        " VALUES (%s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, lease_id, utility, starts_on, billed),
+    )
+
+
+def set_area(connection, pmc_id, unit_id, square_feet) -> UUID:
+    return _one(
+        connection,
+        "INSERT INTO trust_unit_areas (pmc_id, unit_id, square_feet) VALUES (%s, %s, %s)"
+        " RETURNING id",
+        (pmc_id, unit_id, square_feet),
+    )
+
+
+def bill_back_utility(
+    connection,
+    pmc_id,
+    property_id,
+    utility,
+    period_start,
+    period_end,
+    amount,
+    due_on,
+    memo=None,
+    master_usage=None,
+    usage=None,
+    bill_id=None,
+) -> UUID:
+    """Bills a property's utility bill for a period back to its leases (migration 0096)."""
+    return _one(
+        connection,
+        "SELECT trust_bill_back_utility(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+        (
+            pmc_id,
+            property_id,
+            utility,
+            period_start,
+            period_end,
+            Decimal(amount),
+            due_on,
+            memo,
+            None if master_usage is None else Decimal(master_usage),
+            None if usage is None else Jsonb({str(k): str(v) for k, v in usage.items()}),
+            bill_id,
+        ),
+    )
+
+
+def utility_shares(connection, bill_id) -> dict:
+    """A utility bill's shares by lease: (billed, weight, amount)."""
+    return {
+        lease: (billed, weight, amount)
+        for lease, billed, weight, amount in connection.execute(
+            "SELECT lease_id, billed, weight, amount FROM trust_utility_shares"
+            " WHERE utility_bill_id = %s",
+            (bill_id,),
+        ).fetchall()
+    }
+
+
+def png(width=40, height=20):
+    """A small, valid PNG: a white image of the size asked."""
+
+    def chunk(kind, data):
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    rows = b"".join(b"\x00" + b"\xff" * width * 3 for _ in range(height))
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+        + chunk(b"IDAT", zlib.compress(rows))
+        + chunk(b"IEND", b"")
+    )

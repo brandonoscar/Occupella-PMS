@@ -250,6 +250,36 @@ def test_a_request_from_our_own_site_goes_through(client):
     assert answer.status_code == 422  # past the guard, refused for its empty body
 
 
+@pytest.mark.parametrize("fetched_from", ["cross-site", "same-site"])
+def test_a_browser_saying_another_site_is_refused_with_or_without_an_origin(client, fetched_from):
+    """Sec-Fetch-Site (OWASP's CSRF cheat sheet): another site, or another origin of this one,
+    is refused even when the request carries no Origin, or our own."""
+    for origin in ({}, {"Origin": "http://testserver"}):
+        answer = client.post(
+            "/api/sign-in", json={}, headers={"Sec-Fetch-Site": fetched_from, **origin}
+        )
+
+        assert answer.status_code == 403
+        assert answer.json() == {"detail": "this request came from another site"}
+
+
+@pytest.mark.parametrize("fetched_from", ["same-origin", "none"])
+def test_a_browser_saying_this_origin_goes_through(client, fetched_from):
+    answer = client.post("/api/sign-in", json={}, headers={"Sec-Fetch-Site": fetched_from})
+
+    assert answer.status_code == 422  # past the guard
+
+
+def test_a_browser_saying_this_origin_is_still_refused_from_another_origin(client):
+    answer = client.post(
+        "/api/sign-in",
+        json={},
+        headers={"Sec-Fetch-Site": "same-origin", "Origin": "https://attacker.invalid"},
+    )
+
+    assert answer.status_code == 403
+
+
 def test_a_change_must_be_sent_as_json(client):
     answer = client.post(
         "/api/sign-in",
@@ -266,3 +296,19 @@ def test_api_answers_are_never_cached_or_sniffed(client):
     assert answer.headers["cache-control"] == "no-store"
     assert answer.headers["x-content-type-options"] == "nosniff"
     assert answer.headers["referrer-policy"] == "no-referrer"
+    assert answer.headers["cross-origin-opener-policy"] == "same-origin"
+    assert answer.headers["permissions-policy"] == (
+        "camera=(), microphone=(), geolocation=(), payment=()"
+    )
+    # Plain http on a laptop: no HSTS, which would only stick to https anyway.
+    assert "strict-transport-security" not in answer.headers
+
+
+def test_over_https_the_browser_is_told_to_use_nothing_else(database_url):
+    settings = Settings(
+        database_url=database_url, public_url="https://pms.example.com", cookie_secure=True
+    )
+    with TestClient(create_app(settings)) as https_client:
+        answer = https_client.get("/api/me")
+
+    assert answer.headers["strict-transport-security"] == "max-age=63072000; includeSubDomains"

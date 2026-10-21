@@ -3,7 +3,10 @@
 import { useEffect, useState } from "react";
 
 export function navigate(to: string): void {
-  window.history.pushState(null, "", to);
+  // A link inside a clickable row asks twice; the page it is on already adds nothing to the
+  // history, so Back goes back one page.
+  const here = window.location.pathname + window.location.search + window.location.hash;
+  if (to !== here) window.history.pushState(null, "", to);
   window.dispatchEvent(new PopStateEvent("popstate"));
 }
 
@@ -17,7 +20,7 @@ export function usePath(): string {
   return path;
 }
 
-// Leaves the portal for another page, such as an e-sign partner's.
+// Leaves the page for another, such as the signing page a tenant's new link opens.
 export function leave(url: string): void {
   window.location.assign(url);
 }

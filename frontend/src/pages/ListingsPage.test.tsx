@@ -20,8 +20,8 @@ describe("ListingsPage", () => {
     const fetch = server({
       pmc: "Synthetic PMC",
       listings: [
-        { id: "v1", property: "Property 1", unit: "Unit 1", monthly_rent: "1250.50", description: null, listed_at: "2026-10-13T00:00:00Z" },
-        { id: "v2", property: "Property 1", unit: "Unit 2", monthly_rent: "1500.00", description: "Two bedrooms,\nsunny.", listed_at: "2026-10-13T00:00:00Z" },
+        { id: "v1", property: "Property 1", unit: "Unit 1", monthly_rent: "1250.50", description: null, listed_at: "2026-10-13T00:00:00Z", photos: [] },
+        { id: "v2", property: "Property 1", unit: "Unit 2", monthly_rent: "1500.00", description: "Two bedrooms,\nsunny.", listed_at: "2026-10-13T00:00:00Z", photos: ["d1", "d2"] },
       ],
     });
     render(<ListingsPage />);
@@ -33,6 +33,13 @@ describe("ListingsPage", () => {
     expect(within(second).getByRole("link", { name: "Apply" }).getAttribute("href")).toBe("/apply?listing=v2");
     const first = screen.getByRole("listitem", { name: "Property 1, Unit 1" });
     expect(within(first).getByRole("link", { name: "Apply" }).getAttribute("href")).toBe("/apply?listing=v1");
+    // A unit's photos, in order, from the public page's own address for them; none, no list.
+    const photos = within(second).getByRole("list", { name: "Photos, Property 1, Unit 2" });
+    expect(within(photos).getAllByRole("img").map((img) => [img.getAttribute("alt"), img.getAttribute("src")])).toEqual([
+      ["Property 1, Unit 2, 1 of 2", "/api/listings/p1/photos/d1"],
+      ["Property 1, Unit 2, 2 of 2", "/api/listings/p1/photos/d2"],
+    ]);
+    expect(within(first).queryByRole("list")).toBeNull();
     expect(fetch.mock.calls[0]?.[0]).toBe("/api/listings/p1");
   });
 

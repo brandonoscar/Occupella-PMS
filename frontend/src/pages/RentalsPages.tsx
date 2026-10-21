@@ -1,22 +1,42 @@
-import { Building2 } from "lucide-react";
+import { Building2, ChartPie } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
+import { WriteEmail } from "../components/EmailsCard";
 import { EmptyState } from "../components/EmptyState";
-import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Pager } from "../components/Pager";
+import { ListBar } from "../components/ListBar";
+import { RecordActions } from "../components/RecordActions";
 import { Card, PageHeader, Shell } from "../components/Shell";
+import { TenantLinks } from "../components/TenantLinks";
 import { Wide } from "../components/Wide";
 import { money } from "../money";
-import type { RentLease } from "../rent";
+import { scopeParams, useScope } from "../scope";
 import type { Paged, Property, PropertyRow, Unit } from "../rentals";
-import { LEASE_STATUS, occupancy, rentLabel, termLabel, unitState } from "../rentals";
+import { LEASE_STATUS, OWNERSHIP_STATE, occupancy, ownershipStates, sharesLine, termLabel, unitState } from "../rentals";
 import { GoLink } from "./NeedsAttention";
-import { LeaseRow } from "./RentPage";
 import { STAFF_NAV } from "./staffNav";
+import { Said } from "../components/Said";
+import { AddressCard } from "./AddressCard";
+import { FilesCard } from "./FilesCard";
+import { navigate } from "../router";
+import { agreementSummary, lateFeeSummary, leaseBreakFeeSummary, nsfFeeSummary } from "../setup";
+import { day, usDate } from "../money";
+import type { Panel } from "./SetupPanels";
+import {
+  AddLeasePanel,
+  AddOwnerPanel,
+  AddPropertyPanel,
+  AddUnitPanel,
+  LateFeesPanel,
+  LeaseBreakFeePanel,
+  NsfFeePanel,
+  OwnershipPanel,
+  TermsPanel,
+} from "./SetupPanels";
 
 function detail(failed: unknown): string {
   return failed instanceof ApiError ? failed.detail : String(failed);
@@ -31,114 +51,41 @@ function RecordLink({ href, children }: { href: string; children: React.ReactNod
   );
 }
 
-// A record's name and whether it is archived, changed in place: Rename opens a field, and
-// Archive (or Bring back) asks before it does anything. The database refuses archiving while
-// something is open on it, and says what in words.
-function RecordActions({
-  path,
-  name,
-  archived,
-  onChange,
-}: {
-  path: string;
-  name: string;
-  archived: boolean;
-  onChange: (said: string) => void;
-}) {
-  const [renaming, setRenaming] = useState(false);
-  const [asking, setAsking] = useState(false);
-  const [draft, setDraft] = useState(name);
-  const [error, setError] = useState("");
-
-  async function post(to: string, body: object, said: string) {
-    setError("");
-    try {
-      await api.post(`${path}/${to}`, body);
-      setRenaming(false);
-      setAsking(false);
-      onChange(said);
-    } catch (failed) {
-      setError(detail(failed));
-    }
-  }
-
-  return (
-    <div className="flex flex-col items-end gap-2">
-      <div className="flex flex-wrap items-center justify-end gap-2">
-        {archived && <Badge tone="neutral">Archived</Badge>}
-        <Button variant="secondary" size="sm" onClick={() => { setDraft(name); setRenaming(!renaming); }}>
-          Rename
-        </Button>
-        <Button variant="ghost" size="sm" onClick={() => setAsking(!asking)}>
-          {archived ? "Bring back" : "Archive"}
-        </Button>
-      </div>
-      {renaming && (
-        <form
-          className="flex items-end gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            post("name", { name: draft }, `Renamed ${draft.trim()}.`);
-          }}
-        >
-          <Field label="New name" id={`rename-${path}`} required maxLength={200} value={draft}
-            onChange={(event) => setDraft(event.target.value)} />
-          <Button type="submit" size="sm">Save name</Button>
-        </form>
-      )}
-      {asking && (
-        <div className="flex flex-wrap items-center justify-end gap-2 text-sm text-ink-muted">
-          <span>
-            {archived
-              ? `${name} comes back into lists.`
-              : `${name} leaves the lists; its history stays.`}
-          </span>
-          <Button size="sm" onClick={() => post("archive", { archived: !archived }, archived ? `${name} is back.` : `${name} is archived.`)}>
-            {archived ? `Bring back ${name}` : `Archive ${name}`}
-          </Button>
-          <Button variant="ghost" size="sm" onClick={() => setAsking(false)}>Cancel</Button>
-        </div>
-      )}
-      <Notice tone="error">{error}</Notice>
-    </div>
-  );
-}
-
-// Rentals → Properties: the company's properties a page at a time, found by name, each opening
-// its own page (ADR 0005).
+// Rentals → Properties: the company's properties a page at a time, narrowed to a property group
+// or one property (the picker every list page has; search is the bar's), each opening its own
+// page (ADR 0005).
 export function PropertiesPage({ me }: { me: Me }) {
   const [page, setPage] = useState<Paged<PropertyRow> | null>(null);
-  const [q, setQ] = useState("");
+  const [scope, setScope] = useScope();
   const [archived, setArchived] = useState(false);
   const [number, setNumber] = useState(1);
   const [error, setError] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [said, setSaid] = useState("");
 
   useEffect(() => {
-    const query = new URLSearchParams({ page: String(number), archived: String(archived) });
-    if (q.trim()) query.set("q", q.trim());
+    const query = new URLSearchParams({ page: String(number), archived: String(archived), ...scopeParams(scope) });
     api
       .get<Paged<PropertyRow>>(`/api/properties?${query}`)
       .then(setPage)
       .catch((failed) => setError(detail(failed)));
-  }, [q, archived, number]);
+  }, [scope, archived, number]);
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Properties" actions={<GoLink href="/settings/setup" className="inline-flex h-9 items-center rounded-sm bg-iris px-3.5 text-base font-medium text-canvas hover:bg-iris-hover">Add property</GoLink>} />
-      <div className="flex flex-wrap items-end gap-4">
-        <Field label="Find a property" id="find-property" type="search" value={q}
-          onChange={(event) => { setQ(event.target.value); setNumber(1); }} />
-        <label className="flex items-center gap-2 pb-2 text-sm text-ink-muted">
-          <input type="checkbox" checked={archived} onChange={(event) => { setArchived(event.target.checked); setNumber(1); }} />
-          Archived only
-        </label>
-      </div>
+      <PageHeader title="Properties" actions={<Button onClick={() => setAdding(true)}>Add property</Button>} />
+      <Said>{said}</Said>
+      {adding && (
+        <AddPropertyPanel panel={{ say: setSaid, refresh: () => undefined, close: () => setAdding(false) }}
+          opened={(id) => navigate(`/properties/${id}`)} />
+      )}
+      <ListBar scope={scope} onScope={(next) => { setScope(next); setNumber(1); }}
+        archived={archived} onArchived={(next) => { setArchived(next); setNumber(1); }} />
       <Notice tone="error">{error}</Notice>
       {page === null ? (
         !error && <Notice tone="info">Loading</Notice>
       ) : page.items.length === 0 ? (
-        <EmptyState icon={Building2} title={archived ? "No archived properties." : "No properties found."}
-          body="Add a property from Settings, Company setup." />
+        <EmptyState icon={Building2} title={archived ? "No archived properties." : "No properties found."} />
       ) : (
         <>
           <Wide>
@@ -146,6 +93,7 @@ export function PropertiesPage({ me }: { me: Me }) {
               <thead>
                 <tr>
                   <th className="text-left">Property</th>
+                  <th className="text-left">Address</th>
                   <th className="text-left">Owners</th>
                   <th className="text-left">Units</th>
                 </tr>
@@ -154,6 +102,7 @@ export function PropertiesPage({ me }: { me: Me }) {
                 {page.items.map((row) => (
                   <tr key={row.id} aria-label={row.name}>
                     <td><RecordLink href={`/properties/${row.id}`}>{row.name}</RecordLink></td>
+                    <td className="text-ink-muted">{row.address ?? ""}</td>
                     <td className="text-ink-muted">{row.owners.join(", ")}</td>
                     <td>{occupancy(row)}</td>
                   </tr>
@@ -169,15 +118,29 @@ export function PropertiesPage({ me }: { me: Me }) {
 }
 
 // A property: what its owners' accounts hold, and its units with each one's lease.
+type EmailedTenants = { emailed: { name: string; to: string }[]; without_email: string[] };
+
+// What emailing a property's tenants did: how many were written to, and who has no email.
+export function tenantsEmailed(sent: EmailedTenants): string {
+  const count = sent.emailed.length;
+  const emailed = `Emailed ${count} tenant${count === 1 ? "" : "s"}.`;
+  return sent.without_email.length
+    ? `${emailed} No email on file: ${sent.without_email.join(", ")}.`
+    : emailed;
+}
+
 export function PropertyPage({ me, id }: { me: Me; id: string }) {
   const [property, setProperty] = useState<Property | null>(null);
   const [said, setSaid] = useState("");
   const [error, setError] = useState("");
+  const [open, setOpen] = useState<"" | "unit" | "owner" | "terms" | "ownership" | "late" | "nsf" | "break" | "email">("");
+  const [account, setAccount] = useState("");
 
   function refresh() {
     api.get<Property>(`/api/properties/${id}`).then(setProperty).catch((failed) => setError(detail(failed)));
   }
   useEffect(refresh, [id]);
+  const panel: Panel = { say: setSaid, refresh, close: () => setOpen("") };
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
@@ -186,39 +149,85 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
       ) : (
         <>
           <PageHeader title={property.name} actions={
-            <RecordActions path={`/api/properties/${id}`} name={property.name} archived={property.archived}
-              onChange={(done) => { setSaid(done); refresh(); }} />
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="secondary" onClick={() => setOpen("email")}>Email tenants</Button>
+              <RecordActions path={`/api/properties/${id}`} name={property.name} archived={property.archived}
+                onChange={(done) => { setSaid(done); refresh(); }} />
+            </div>
           } />
-          <Notice tone="info">{said}</Notice>
+          <Said>{said}</Said>
+          <AddressCard propertyId={id} address={property.address} location={property.location}
+            canLocate={property.can_locate} onChange={refresh} />
           <Card title="Owners">
             {property.owners.length === 0 ? (
-              <EmptyState icon={Building2} title="No owner's account yet." body="Open one from Settings, Company setup." />
+              <EmptyState icon={Building2} title="No owner's account yet." />
             ) : (
             <Wide>
-              <table className="w-full text-base">
+              <table className="w-full text-base" aria-label="Owners">
                 <thead>
                   <tr>
                     <th className="text-left">Owner</th>
                     <th className="text-left">Trust bank account</th>
+                    <th className="text-left">Management terms</th>
                     <th className="text-right">Holds</th>
+                    <th><span className="sr-only">Actions</span></th>
                   </tr>
                 </thead>
                 <tbody>
                   {property.owners.map((owner) => (
-                    <tr key={owner.account}>
-                      <td>{owner.owner}</td>
+                    <tr key={owner.account} aria-label={owner.owner}>
+                      <td><RecordLink href={`/owners/${owner.owner_id}`}>{owner.owner}</RecordLink></td>
                       <td className="text-ink-muted">{owner.bank_account}</td>
+                      <td className="text-sm text-ink-muted">
+                        {owner.agreement
+                          ? `${agreementSummary(owner.agreement)} (from ${usDate(owner.agreement.starts_on)})`
+                          : "No terms in force"}
+                      </td>
                       <td className="text-right">{money(owner.balance)}</td>
+                      <td className="text-right">
+                        <Button size="sm" variant="secondary" onClick={() => { setAccount(owner.account); setOpen("terms"); }}>
+                          Set terms
+                        </Button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </Wide>
             )}
+            <div className="mt-3"><Button variant="secondary" onClick={() => setOpen("owner")}>Add owner</Button></div>
+          </Card>
+          {property.owners.length > 0 && <OwnershipCard property={property} onSet={() => setOpen("ownership")} />}
+          <Card title="Fees">
+            <dl className="grid grid-cols-1 gap-3 text-base sm:grid-cols-2">
+              <div>
+                <dt className="text-sm text-ink-muted">Late fees</dt>
+                <dd data-testid="late-fees">
+                  {property.late_fees
+                    ? `${lateFeeSummary(property.late_fees)} (from ${usDate(property.late_fees.starts_on)})`
+                    : "No late fee terms"}
+                </dd>
+                <dd><Button size="sm" variant="secondary" onClick={() => setOpen("late")}>Set late fees</Button></dd>
+              </div>
+              <div>
+                <dt className="text-sm text-ink-muted">NSF fee</dt>
+                <dd data-testid="nsf-fee">{nsfFeeSummary(property.nsf_fee)}</dd>
+                <dd><Button size="sm" variant="secondary" onClick={() => setOpen("nsf")}>Set NSF fee</Button></dd>
+              </div>
+              <div>
+                <dt className="text-sm text-ink-muted">Lease-break fee</dt>
+                <dd data-testid="lease-break-fee">
+                  {property.lease_break_fee
+                    ? `${leaseBreakFeeSummary(property.lease_break_fee)} (leases from ${usDate(property.lease_break_fee.starts_on)})`
+                    : "No lease-break fee"}
+                </dd>
+                <dd><Button size="sm" variant="secondary" onClick={() => setOpen("break")}>Set lease-break fee</Button></dd>
+              </div>
+            </dl>
           </Card>
           <Card title="Units">
             {property.units.length === 0 ? (
-              <EmptyState icon={Building2} title="No units yet." body="Add units from Settings, Company setup." />
+              <EmptyState icon={Building2} title="No units yet." />
             ) : (
               <Wide>
                 <table className="w-full text-base">
@@ -229,7 +238,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
                       <th className="text-left">Tenants</th>
                       <th className="text-right">Rent</th>
                       <th className="text-right">Owes</th>
-                      <th />
+                      <th><span className="sr-only">Actions</span></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -237,7 +246,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
                       <tr key={unit.id} aria-label={unit.name}>
                         <td><RecordLink href={`/units/${unit.id}`}>{unit.name}</RecordLink></td>
                         <td><Badge tone={unitState(unit).tone}>{unitState(unit).word}</Badge></td>
-                        <td className="text-ink-muted">{unit.lease?.tenants.join(", ")}</td>
+                        <td>{unit.lease && <TenantLinks people={unit.lease.people} />}</td>
                         <td className="text-right">{unit.lease && money(unit.lease.monthly_rent)}</td>
                         <td className="text-right">{unit.lease && money(unit.lease.owed)}</td>
                         <td className="text-right">
@@ -249,18 +258,88 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
                 </table>
               </Wide>
             )}
+            <div className="mt-3"><Button variant="secondary" onClick={() => setOpen("unit")}>Add unit</Button></div>
           </Card>
+          <FilesCard kind="property_document" aboutId={id} name={property.name} />
+          {open === "unit" && <AddUnitPanel panel={panel} propertyId={id} />}
+          {open === "owner" && <AddOwnerPanel panel={panel} propertyId={id} />}
+          {open === "ownership" && (
+            <OwnershipPanel panel={panel} propertyId={id} name={property.name} owners={property.owners} />
+          )}
+          {open === "late" && <LateFeesPanel panel={panel} propertyId={id} />}
+          {open === "nsf" && <NsfFeePanel panel={panel} propertyId={id} />}
+          {open === "break" && <LeaseBreakFeePanel panel={panel} propertyId={id} />}
+          {open === "email" && (
+            <WriteEmail title={`Email tenants of ${property.name}`} onClose={panel.close}
+              note="Everyone on a lease in effect today gets their own copy, kept on their Email tab."
+              onSend={async (subject, body) => {
+                try {
+                  const sent = await api.post<EmailedTenants>("/api/emails/property", { property_id: id, subject, body });
+                  setSaid(tenantsEmailed(sent));
+                  return "";
+                } catch (failed) {
+                  return detail(failed);
+                }
+              }} />
+          )}
+          {open === "terms" && (
+            <TermsPanel panel={panel} accounts={property.owners
+              .map((o) => ({ account: o.account, label: `${o.owner}, ${property.name}` }))
+              .sort((a, b) => (a.account === account ? -1 : b.account === account ? 1 : 0))} />
+          )}
         </>
       )}
     </Shell>
   );
 }
 
-// A unit and every lease it has had, newest first.
+// Who owns what part of a property (migration 0094, q044): each ownership from its day, the one
+// in force today marked. With one in force its payments, prepaid rent used, deposits kept and
+// bills split by ownership go to the owners by their shares; without, staff choose an account.
+function OwnershipCard({ property, onSet }: { property: Property; onSet: () => void }) {
+  const states = ownershipStates(property.ownership, day(new Date()));
+  return (
+    <Card title="Ownership">
+      {property.ownership.length === 0 ? (
+        <EmptyState icon={ChartPie} title="No ownership shares."
+          body={property.owners.length > 1
+            ? "Staff choose which owner's account each payment goes to. Set each owner's percent to split them."
+            : "Set each owner's percent when another owner shares the property."} />
+      ) : (
+        <Wide>
+          <table className="w-full text-base" aria-label="Ownership">
+            <thead>
+              <tr>
+                <th className="text-left">From</th>
+                <th className="text-left">Shares</th>
+                <th className="text-left">Recorded by</th>
+                <th className="text-left">State</th>
+              </tr>
+            </thead>
+            <tbody>
+              {property.ownership.map((o, n) => (
+                <tr key={o.id}>
+                  <td className="whitespace-nowrap">{usDate(o.starts_on)}</td>
+                  <td>{sharesLine(o.shares)}</td>
+                  <td className="text-ink-muted">{o.recorded_by ?? "—"}</td>
+                  <td><Badge tone={OWNERSHIP_STATE[states[n]!].tone}>{OWNERSHIP_STATE[states[n]!].word}</Badge></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Wide>
+      )}
+      <div className="mt-3"><Button variant="secondary" onClick={onSet}>Set ownership</Button></div>
+    </Card>
+  );
+}
+
+// A unit, every lease it has had (newest first) and its files.
 export function UnitPage({ me, id }: { me: Me; id: string }) {
   const [unit, setUnit] = useState<Unit | null>(null);
   const [said, setSaid] = useState("");
   const [error, setError] = useState("");
+  const [adding, setAdding] = useState(false);
 
   function refresh() {
     api.get<Unit>(`/api/units/${id}`).then(setUnit).catch((failed) => setError(detail(failed)));
@@ -283,10 +362,10 @@ export function UnitPage({ me, id }: { me: Me; id: string }) {
           <p className="text-sm">
             <RecordLink href={`/properties/${unit.property.id}`}>{unit.property.name}</RecordLink>
           </p>
-          <Notice tone="info">{said}</Notice>
+          <Said>{said}</Said>
           <Card title="Leases">
             {unit.leases.length === 0 ? (
-              <EmptyState icon={Building2} title="No lease yet." body="A lease comes through Leasing, Draft leases." />
+              <EmptyState icon={Building2} title="No lease yet." body="A new tenant's lease comes through Leasing, Draft leases." />
             ) : (
               <Wide>
                 <table className="w-full text-base">
@@ -302,8 +381,8 @@ export function UnitPage({ me, id }: { me: Me; id: string }) {
                   <tbody>
                     {unit.leases.map((lease) => (
                       <tr key={lease.id} aria-label={lease.tenants.join(", ")}>
-                        <td><RecordLink href={`/leases/${lease.id}`}>{lease.tenants.join(", ")}</RecordLink></td>
-                        <td>{termLabel(lease)}</td>
+                        <td><TenantLinks people={lease.people} /></td>
+                        <td><RecordLink href={`/leases/${lease.id}`}>{termLabel(lease)}</RecordLink></td>
                         <td><Badge tone={LEASE_STATUS[lease.status].tone}>{LEASE_STATUS[lease.status].word}</Badge></td>
                         <td className="text-right">{money(lease.monthly_rent)}</td>
                         <td className="text-right">{money(lease.owed)}</td>
@@ -313,45 +392,16 @@ export function UnitPage({ me, id }: { me: Me; id: string }) {
                 </table>
               </Wide>
             )}
+            <div className="mt-3"><Button variant="secondary" onClick={() => setAdding(true)}>Add lease in place</Button></div>
           </Card>
+          {adding && (
+            <AddLeasePanel panel={{ say: setSaid, refresh, close: () => setAdding(false) }} unitId={id}
+              propertyId={unit.property.id} propertyName={unit.property.name} />
+          )}
+          <FilesCard kind="unit_document" also={["listing_photo"]} aboutId={id} name={`${unit.name}, ${unit.property.name}`} />
         </>
       )}
     </Shell>
   );
 }
 
-type LeaseDetail = RentLease & { property_id: string; unit_id: string };
-
-// A lease and all of its rent work (ADR 0005): its charges, payments, recurring charges, rent
-// changes and renters insurance, with the forms to record each; move-out once it has ended.
-export function LeasePage({ me, id }: { me: Me; id: string }) {
-  const [lease, setLease] = useState<LeaseDetail | null>(null);
-  const [error, setError] = useState("");
-
-  function refresh() {
-    api.get<LeaseDetail>(`/api/leases/${id}`).then(setLease).catch((failed) => setError(detail(failed)));
-  }
-  useEffect(refresh, [id]);
-
-  return (
-    <Shell me={me} nav={STAFF_NAV}>
-      {lease === null ? (
-        <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
-      ) : (
-        <>
-          <PageHeader title={`${lease.unit}, ${lease.property}`} />
-          <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink-muted">
-            <RecordLink href={`/properties/${lease.property_id}`}>{lease.property}</RecordLink>
-            <RecordLink href={`/units/${lease.unit_id}`}>{lease.unit}</RecordLink>
-            <span>{termLabel(lease)}</span>
-            <span>{rentLabel(lease.monthly_rent)}</span>
-            {lease.ends_on !== null && <GoLink href="/move-out">Move-out</GoLink>}
-          </p>
-          <ul className="flex flex-col">
-            <LeaseRow lease={lease} refresh={refresh} />
-          </ul>
-        </>
-      )}
-    </Shell>
-  );
-}

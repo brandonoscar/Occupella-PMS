@@ -10,6 +10,8 @@ import type { CustomRole, CustomRoles } from "../customRoles";
 import { roleSummary } from "../customRoles";
 import type { Member } from "../staff";
 import { useRecord } from "./useRecord";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 // The company's custom roles: the areas each may change and who holds it. A staff member given
 // custom roles changes only what their roles allow and still sees everything; one with none
@@ -30,10 +32,6 @@ export function CustomRolesCard({ members, admin }: { members: Member[]; admin: 
 
   return (
     <Card title="Custom roles">
-      <p className="mb-3 text-sm text-ink-muted">
-        A staff member given custom roles changes only what their roles allow, and still sees
-        every page. One with none works everywhere.
-      </p>
       {roles === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : roles.roles.length === 0 ? (
@@ -47,10 +45,10 @@ export function CustomRolesCard({ members, admin }: { members: Member[]; admin: 
           ))}
         </ul>
       )}
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{refused}</Notice>
       {admin && (
-        <form
+        <Form
           className="mt-4 flex flex-wrap items-end gap-3"
           onSubmit={async (event) => {
             event.preventDefault();
@@ -63,7 +61,7 @@ export function CustomRolesCard({ members, admin }: { members: Member[]; admin: 
           <Field label="New role" id="custom-role-name" required maxLength={100} value={name}
             onChange={(e) => setName(e.target.value)} />
           <Button type="submit">Make role</Button>
-        </form>
+        </Form>
       )}
     </Card>
   );
@@ -83,7 +81,7 @@ function RoleRow({ role, roles, members, admin, change }: {
         <span className="font-medium">{role.name}</span>
         <span className="text-ink-muted"> · {roleSummary(role, roles.areas)}</span>
       </p>
-      <fieldset className="flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-label={`What ${role.name} may change`}>
+      <fieldset className="flex flex-wrap gap-x-4 gap-y-2 text-sm" aria-label={`What ${role.name} may change`}>
         {roles.areas.map((choice) => {
           const allowed = role.areas.includes(choice.area);
           return (
@@ -100,7 +98,7 @@ function RoleRow({ role, roles, members, admin, change }: {
           );
         })}
       </fieldset>
-      <fieldset className="flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-label={`Who holds ${role.name}`}>
+      <fieldset className="flex flex-wrap gap-x-4 gap-y-2 text-sm" aria-label={`Who holds ${role.name}`}>
         {members.map((member) => {
           const held = holds(member.staff_id);
           return (

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { Budget } from "../budgets";
 import type { OwnerMoney } from "../payables";
+import type { Preview } from "../reports";
 import { BudgetsPage } from "./BudgetsPage";
 
 afterEach(() => {
@@ -16,92 +17,178 @@ const ME: Me = {
   pmc_name: "Synthetic PMC",
 };
 
-const owner = (n: number): OwnerMoney => ({
-  account: `a${n}`, owner_id: `o${n}`, owner: `Owner ${n}`, property: `Property ${n}`,
+const owner = (n: number, property = n): OwnerMoney => ({
+  account: `a${n}`, owner_id: `o${n}`, owner: `Owner ${n}`, property_id: `pr${property}`, property: `Property ${property}`,
   bank_account: "Operating", balance: "0.00", reserve: "0.00", unpaid_bills: "0.00",
   available: "0.00", has_agreement: true,
 });
 
-const budgetOf = (account: string, year: number): Budget => ({
-  account, owner_id: `o${account.slice(1)}`, owner: `Owner ${account.slice(1)}`,
-  property: `Property ${account.slice(1)}`, year,
+const budgetOf = (account: string, year: number, property = `Property ${account.slice(1)}`): Budget => ({
+  account, owner_id: `o${account.slice(1)}`, owner: `Owner ${account.slice(1)}`, property, year,
   lines: [
     { line: "rent", expense_account_id: null, label: "income: rent", months: Array(12).fill("100.00"), year: "1200.00" },
+    { line: "late fees", expense_account_id: null, label: "income: late fees", months: Array(12).fill("0.00"), year: "0.00" },
     { line: "expense account", expense_account_id: "e1", label: "expense: Repairs",
       months: [...Array(11).fill("0.00"), "50.00"], year: "50.00" },
-    { line: "late fees", expense_account_id: null, label: "income: late fees", months: Array(12).fill("0.00"), year: "0.00" },
   ],
 });
 
-function server(owners: OwnerMoney[] = [owner(1), owner(2)], refuse = "") {
+const VERSUS: Preview = {
+  title: "Budget vs actual",
+  columns: ["line", "property", "item", "budget", "actual", "actual_less_budget"],
+  rows: [
+    ["1", "Synthetic PMC", "PMC", "", "", ""],
+    ["2", "Property 1", "income: rent", "1200.00", "1500.00", "300.00"],
+    ["3", "Property 1", "total income", "1200.00", "1500.00", "300.00"],
+    ["4", "Property 1", "net income", "1150.00", "1490.00", "340.00"],
+    ["5", "Property 9", "income: rent", "1.00", "1.00", "0.00"],
+    ["6", "narrowed to Property 1", "", "", "", ""],
+  ],
+  total_rows: 6,
+};
+
+function server(owners: OwnerMoney[] = [owner(2), owner(1)], refuse = "") {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method === "POST") {
       return refuse
         ? new Response(JSON.stringify({ detail: refuse }), { status: 404 })
-        : new Response(JSON.stringify({ changed: 12 }), { status: 200 });
+        : new Response(JSON.stringify({ changed: 13 }), { status: 200 });
     }
     if (path === "/api/payables/owners") return new Response(JSON.stringify(owners), { status: 200 });
+    if (path.startsWith("/api/reports/")) return new Response(JSON.stringify(VERSUS), { status: 200 });
     const query = new URLSearchParams(path.split("?")[1]);
-    return new Response(JSON.stringify(budgetOf(query.get("account") ?? "", Number(query.get("year")))), { status: 200 });
+    const account = query.get("account") ?? "";
+    const at = owners.find((o) => o.account === account)?.property;
+    return new Response(JSON.stringify(budgetOf(account, Number(query.get("year")), at)), { status: 200 });
   });
   vi.stubGlobal("fetch", fetch);
   return fetch;
 }
 
+const cell = (name: string) => screen.getByLabelText(name) as HTMLInputElement;
+const posted = (fetch: ReturnType<typeof server>) =>
+  fetch.mock.calls.filter(([, i]) => i?.method === "POST").map(([p, i]) => [p, JSON.parse(String(i?.body))]);
+
 describe("BudgetsPage", () => {
-  it("shows an owner's property's budget for this year, line by line, and links it against actual", async () => {
+  it("shows the first property's year in one grid: each line by month, its total and the net income", async () => {
     vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-03-01T12:00:00Z") });
     const fetch = server();
     render(<BudgetsPage me={ME} />);
 
-    const rent = await screen.findByRole("row", { name: /^Income: rent/ });
-    expect((within(rent).getByLabelText("Income: rent, a year") as HTMLInputElement).value).toBe("1200.00");
-    expect(rent.textContent).toContain("$100.00 a month");
-    expect(screen.getByRole("row", { name: /^Expense: Repairs/ }).textContent).toContain("Varies by month");
-    expect(screen.getByRole("row", { name: /^Income: late fees/ }).textContent).toContain("Not budgeted");
+    await screen.findByRole("row", { name: "Income: rent" });
     expect(fetch.mock.calls.map(([path]) => path)).toContain("/api/budgets?account=a1&year=2026");
-    expect(screen.getByRole("link", { name: "Owner 1's budget against actual, 2026 (Excel)" }).getAttribute("href")).toBe(
+    expect(within(screen.getByLabelText("Property")).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Property 1", "Property 2",
+    ]);
+    // One owner at the property: no owner to choose.
+    expect(screen.queryByLabelText("Owner")).toBeNull();
+    const grid = screen.getByRole("table", { name: "Budget" });
+    expect(within(grid).getAllByRole("columnheader").map((h) => h.textContent)).toEqual([
+      "Line", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Total",
+    ]);
+    expect(cell("Income: rent, March").value).toBe("100.00");
+    expect(cell("Income: rent, total").value).toBe("1200.00");
+    expect(cell("Expense: Repairs, total").value).toBe("50.00");
+    const net = within(grid).getByRole("row", { name: "Net income" });
+    expect(within(net).getAllByRole("cell").map((c) => c.textContent).slice(-2)).toEqual(["$50.00", "$1,150.00"]);
+    expect(screen.getByRole("link", { name: "Export" }).getAttribute("href")).toBe(
       "/api/reports/trust_report_budget_vs_actual?arg=o1&arg=2026-01-01&arg=2026-12-31&format=xlsx",
     );
-
-    fireEvent.change(screen.getByLabelText("Owner and property"), { target: { value: "a2" } });
-    expect(await screen.findByRole("link", { name: "Owner 2's budget against actual, 2026 (Excel)" })).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Year"), { target: { value: "2027" } });
-    expect(await screen.findByRole("link", { name: "Owner 2's budget against actual, 2027 (Excel)" })).toBeTruthy();
   });
 
-  it("saves a line's year spread over its months", async () => {
+  it("saves every line at once, a total typed in spread over its months, and says how many months changed", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-03-01T12:00:00Z") });
     const fetch = server();
     render(<BudgetsPage me={ME} />);
-    const rent = await screen.findByRole("row", { name: /^Income: rent/ });
+    await screen.findByRole("row", { name: "Income: rent" });
 
-    fireEvent.change(within(rent).getByLabelText("Income: rent, a year"), { target: { value: "1000" } });
-    fireEvent.click(within(rent).getByRole("button", { name: "Save income: rent" }));
+    fireEvent.change(cell("Income: rent, March"), { target: { value: "1,250" } });
+    expect(cell("Income: rent, total").value).toBe("2350.00");
+    expect(screen.getByText("Unsaved changes")).toBeTruthy();
+    fireEvent.change(cell("Income: late fees, total"), { target: { value: "1000" } });
+    fireEvent.blur(cell("Income: late fees, total"));
+    expect(cell("Income: late fees, January").value).toBe("83.33");
+    expect(cell("Income: late fees, December").value).toBe("83.37");
+    // A total left as it was spreads nothing.
+    fireEvent.change(cell("Expense: Repairs, total"), { target: { value: "50.00" } });
+    fireEvent.keyDown(cell("Expense: Repairs, total"), { key: "Enter" });
+    expect(cell("Expense: Repairs, December").value).toBe("50.00");
 
-    expect(await screen.findByText(/^Income: rent: 12 months changed in \d{4}\.$/)).toBeTruthy();
-    const [, init] = fetch.mock.calls.find(([, i]) => i?.method === "POST") ?? [];
-    const body = JSON.parse(String(init?.body));
-    expect(body).toMatchObject({ account: "a1", line: "rent", expense_account_id: null });
-    expect(body.months).toEqual([...Array(11).fill("83.33"), "83.37"]);
+    fireEvent.click(screen.getByRole("button", { name: "Save budget" }));
+    expect(await screen.findByText("Saved Property 1's 2026 budget: 13 months changed.")).toBeTruthy();
+    const [[path, body]] = posted(fetch) as [[string, { account: string; year: number; lines: { line: string; months: string[] }[] }]];
+    expect(path).toBe("/api/budgets");
+    expect([body.account, body.year, body.lines.length]).toEqual(["a1", 2026, 3]);
+    expect(body.lines[0]!.months[2]).toBe("1250");
+    expect(body.lines[1]!.months[11]).toBe("83.37");
+    expect(body.lines[2]).toMatchObject({ line: "expense account", expense_account_id: "e1" });
+    // The grid starts again from what the server holds.
+    await vi.waitFor(() => expect(cell("Income: rent, March").value).toBe("100.00"));
   });
 
-  it("says what is wrong with an amount, or with the save", async () => {
-    server([owner(1)], "no such expense account");
+  it("names a month that isn't an amount instead of saving, and says why the server refused", async () => {
+    const fetch = server(undefined, "no such expense account");
     render(<BudgetsPage me={ME} />);
-    const repairs = await screen.findByRole("row", { name: /^Expense: Repairs/ });
+    await screen.findByRole("row", { name: "Income: rent" });
 
-    fireEvent.change(within(repairs).getByLabelText("Expense: Repairs, a year"), { target: { value: "lots" } });
-    fireEvent.click(within(repairs).getByRole("button", { name: "Save expense: repairs" }));
-    expect(repairs.textContent).toContain("Enter an amount, like 1200.00");
+    fireEvent.change(cell("Expense: Repairs, May"), { target: { value: "lots" } });
+    expect(cell("Expense: Repairs, May").getAttribute("aria-invalid")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Save budget" }));
+    expect(await screen.findByText("Expense: Repairs, May: enter an amount, like 1200.00.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([]);
 
-    fireEvent.change(within(repairs).getByLabelText("Expense: Repairs, a year"), { target: { value: "600" } });
-    fireEvent.click(within(repairs).getByRole("button", { name: "Save expense: repairs" }));
-    expect((await screen.findByRole("alert")).textContent).toBe("no such expense account");
+    fireEvent.change(cell("Expense: Repairs, May"), { target: { value: "5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save budget" }));
+    expect(await screen.findByText("no such expense account")).toBeTruthy();
   });
 
-  it("asks for an owner's property first", async () => {
+  it("picks another property and year, and an owner where a property has more than one", async () => {
+    const fetch = server([owner(1), owner(2), owner(3, 2)]);
+    render(<BudgetsPage me={ME} />);
+    await screen.findByRole("row", { name: "Income: rent" });
+
+    fireEvent.change(screen.getByLabelText("Property"), { target: { value: "pr2" } });
+    expect(within(screen.getByLabelText("Owner")).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Owner 2", "Owner 3",
+    ]);
+    fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "a3" } });
+    fireEvent.change(screen.getByLabelText("Year"), { target: { value: "2027" } });
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.map(([path]) => path)).toContain("/api/budgets?account=a3&year=2027"),
+    );
+    expect(fetch.mock.calls.map(([path]) => path)).toContain("/api/budgets?account=a2&year=2026");
+    // A year still being typed asks for nothing.
+    fireEvent.change(screen.getByLabelText("Year"), { target: { value: "20" } });
+    expect(fetch.mock.calls.map(([path]) => path)).not.toContain("/api/budgets?account=a3&year=20");
+  });
+
+  it("lays the property's lines against what happened, from the report narrowed to it", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-03-01T12:00:00Z") });
+    const fetch = server();
+    render(<BudgetsPage me={ME} />);
+    await screen.findByRole("row", { name: "Income: rent" });
+
+    fireEvent.click(screen.getByRole("tab", { name: "Budget vs actual" }));
+    const table = await screen.findByRole("table", { name: "Budget vs actual" });
+    expect(fetch.mock.calls.map(([path]) => path)).toContain(
+      "/api/reports/trust_report_budget_vs_actual?arg=o1&arg=2026-01-01&arg=2026-12-31&format=json&property_id=pr1",
+    );
+    expect(within(table).getAllByRole("row").slice(1).map((r) => r.getAttribute("aria-label"))).toEqual([
+      "Income: rent", "Total income", "Net income",
+    ]);
+    expect(within(within(table).getByRole("row", { name: "Income: rent" })).getAllByRole("cell").map((c) => c.textContent))
+      .toEqual(["Income: rent", "$1,200.00", "$1,500.00", "$300.00"]);
+    expect(screen.queryByRole("table", { name: "Budget" })).toBeNull();
+  });
+
+  it("says when no property has an owner, and when the owners can't be read", async () => {
     server([]);
     render(<BudgetsPage me={ME} />);
-    expect(await screen.findByText("No owner has a property account yet. Add one in Setup.")).toBeTruthy();
+    expect(await screen.findByText("No property has an owner yet")).toBeTruthy();
+    cleanup();
+
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));
+    render(<BudgetsPage me={ME} />);
+    expect((await screen.findAllByRole("alert"))[0]?.textContent).toBe("sign in first");
   });
 });

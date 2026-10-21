@@ -1,6 +1,6 @@
 // Staff's month-end as the API sends it (src/pms/api/reconcile.py), and how it reads.
 import type { Me } from "./api";
-import { day, money } from "./money";
+import { day, money, usDate } from "./money";
 
 export type StatementRow = {
   id: string;
@@ -36,6 +36,7 @@ export type BankBooks = {
   id: string;
   name: string;
   kind: "operating" | "security_deposit";
+  book_cash: string;
   closed_through: string | null;
   next_start: string | null;
   statements: StatementRow[];
@@ -50,7 +51,11 @@ export type OpenLine = {
   description: string;
   reference: string | null;
 };
-export type OpenTransfer = { id: string; on: string; amount: string; memo: string | null };
+// A transfer in a bank deposit names it and its day: its one bank line matches the whole deposit.
+export type OpenTransfer = {
+  id: string; on: string; amount: string; memo: string | null;
+  deposit_id?: string | null; deposited_on?: string | null;
+};
 // A check or deposit carried over from the old system that the bank had not cleared.
 export type OpenItem = {
   id: string;
@@ -125,11 +130,19 @@ export function formatOf(name: string): "csv" | "ofx" {
 
 export function lineLabel(line: OpenLine): string {
   const ref = line.reference ? ` (${line.reference})` : "";
-  return `${line.posted_on} ${line.description || "No description"}${ref}: ${money(line.amount)}`;
+  return `${usDate(line.posted_on)} ${line.description || "No description"}${ref}: ${money(line.amount)}`;
 }
 
 export function transferLabel(transfer: OpenTransfer): string {
-  return `${transfer.on} ${transfer.memo ?? "No memo"}: ${money(transfer.amount)}`;
+  const deposit = transfer.deposited_on ? ` · deposit of ${usDate(transfer.deposited_on)}` : "";
+  return `${usDate(transfer.on)} ${transfer.memo ?? "No memo"}: ${money(transfer.amount)}${deposit}`;
+}
+
+// Ticking a transfer in a bank deposit ticks (or unticks) the whole deposit with it.
+export function toggleTransfer(all: OpenTransfer[], chosen: string[], id: string): string[] {
+  const deposit = all.find((t) => t.id === id)?.deposit_id ?? null;
+  const ids = deposit === null ? [id] : all.filter((t) => t.deposit_id === deposit).map((t) => t.id);
+  return chosen.includes(id) ? chosen.filter((x) => !ids.includes(x)) : [...chosen, ...ids.filter((x) => !chosen.includes(x))];
 }
 
 // A period ends at midnight UTC after its last day; the day staff read is that last day.
@@ -139,7 +152,7 @@ export function lastDayOf(periodEnd: string): string {
 
 export function itemLabel(item: OpenItem): string {
   const ref = item.reference ? ` (${item.reference})` : "";
-  return `${item.issued_on} ${item.description}${ref}, from before the cutover: ${money(item.amount)}`;
+  return `${usDate(item.issued_on)} ${item.description}${ref}, from before the cutover: ${money(item.amount)}`;
 }
 
 // Who may approve a prepared period: anyone but its preparer, holding the approve role.

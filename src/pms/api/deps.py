@@ -19,6 +19,8 @@ MEDIA = {
     "csv": "text/csv; charset=utf-8",
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "pdf": "application/pdf",
+    # QuickBooks Desktop's import file: tab-separated Windows text.
+    "iif": "text/plain; charset=windows-1252",
 }
 
 
@@ -45,6 +47,8 @@ FEES_TOO_MUCH = re.compile(rf"^{NUMBER} of the company's fees is in \S+; {NUMBER
 FEES_KEY_USED = re.compile(
     rf"^request key \S+ already took {NUMBER} of the company's fees from \S+$"
 )
+# trust_take_owner_fee's (migration 0082) names the owner's account by its id.
+OWNER_FEE_KEY_USED = re.compile(rf"^request key \S+ already took a fee of {NUMBER} from \S+$")
 
 # trust_staff_roles' check (migration 0034) names the staff member by their id.
 LAST_ADMIN = re.compile(r"^staff member \S+ is the PMC's last admin$")
@@ -103,6 +107,9 @@ def refusal(error: psycopg.Error) -> str:
         return (
             f"this request already took {dollars(used[1])} of the company's fees: start a new one"
         )
+    taken = OWNER_FEE_KEY_USED.match(text)
+    if taken is not None:
+        return f"this request already took a fee of {dollars(taken[1])}: start a new one"
     return text
 
 
@@ -147,33 +154,49 @@ AREAS = {
     "leasing": "leasing",
     "maintenance": "maintenance",
     "people": "who can sign in",
+    "email": "email to tenants, owners and vendors",
 }
 # The paths that change each area. A staff request that changes anything under one of them
 # needs the area (tests/api/test_custom_roles.py checks every staff write is here or is said
 # not to be an area's).
 AREA_PATHS = (
     ("/api/rent/", "rent"),
+    ("/api/assistance/", "rent"),  # a housing authority's part of the rent
+    ("/api/utilities/", "rent"),  # utility bills charged to the leases
+    ("/api/bank-accounts/", "rent"),  # bank deposits of what came in
     ("/api/payables/bills", "bills"),
     ("/api/payables/recurring", "bills"),
+    ("/api/payables/shared-bills", "bills"),
     ("/api/payables/management-fees", "owners"),
     ("/api/payables/leasing-fees", "owners"),
+    ("/api/payables/owner-fees", "owners"),
     ("/api/payables/draws", "owners"),
     ("/api/payables/contributions", "owners"),
     ("/api/payables/company-fees", "owners"),
     ("/api/budgets", "budgets"),
     ("/api/journal", "journal"),
     ("/api/reconcile/", "month-end"),
+    ("/api/year-close", "month-end"),
     ("/api/switching/", "switching"),
     ("/api/setup/", "setup"),
+    ("/api/quickbooks/", "setup"),
+    ("/api/company", "setup"),
     ("/api/properties/", "setup"),
+    ("/api/property-groups", "setup"),
     ("/api/units/", "setup"),
-    ("/api/vendors/", "setup"),
-    ("/api/move-out/", "move-out"),
+    ("/api/tenants/", "setup"),
+    ("/api/owners/", "setup"),
+    ("/api/vendors", "setup"),
+    ("/api/move-out/", "move-out"),  # a tenant leaving a lease too
+    ("/api/leases/", "setup"),  # who lives there and guarantees it
     ("/api/inspections", "move-out"),
     ("/api/documents", "documents"),
+    ("/api/notes", "documents"),
     ("/api/leasing/", "leasing"),
     ("/api/maintenance/", "maintenance"),
+    ("/api/work-orders", "maintenance"),
     ("/api/invites", "people"),
+    ("/api/emails", "email"),
 )
 READS = ("GET", "HEAD", "OPTIONS")
 

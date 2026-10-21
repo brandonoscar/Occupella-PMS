@@ -537,6 +537,49 @@ class LedgerMachine(RuleBasedStateMachine):
             assert sorted(got) == sorted(mine)
         assert rows[-1] == ("total", None, None, total, total, None)
 
+    @precondition(lambda self: self.posted)
+    @rule(
+        data=st.data(),
+        role=st.sampled_from(["owner", "app", "ai"]),
+        before=st.integers(min_value=0, max_value=30),
+        after=st.integers(min_value=0, max_value=30),
+    )
+    def check_the_general_ledger_carries_over(self, data, role, before, after):
+        """Two periods back to back, split at a day something was posted: each account's
+        closing debits, credits and balance add up its opening balance and its entries, and
+        what an account closes the first period with, it opens the second with."""
+        split = data.draw(st.sampled_from([when for _, _, when in self.posted])).date()
+
+        def blocks(first, last):
+            found: dict[tuple[str, str], list[tuple]] = {}
+            for item, bank, account, debit, credit, balance in (
+                self.conns[role]
+                .execute(
+                    "SELECT item, bank, account, debit, credit, balance"
+                    " FROM trust_report_general_ledger(%s, %s, %s)"
+                    " WHERE item IN ('opening balance', 'entry', 'closing balance') ORDER BY line",
+                    (self.pmc_id, first, last),
+                )
+                .fetchall()
+            ):
+                found.setdefault((bank, account), []).append((item, debit, credit, balance))
+            return found
+
+        earlier = blocks(split - timedelta(days=before), split)
+        later = blocks(split + timedelta(days=1), split + timedelta(days=1 + after))
+        for (_, account), lines in [*earlier.items(), *later.items()]:
+            (_, _, _, opening), *entries, (item, debits, credits, closing) = lines
+            assert item == "closing balance"
+            assert debits == sum((dr for _, dr, _, _ in entries), Decimal(0))
+            assert credits == sum((cr for _, _, cr, _ in entries), Decimal(0))
+            moved = debits - credits if account == "book cash" else credits - debits
+            assert closing == opening + moved
+        closed = {key: lines[-1][3] for key, lines in earlier.items()}
+        opened = {key: lines[0][3] for key, lines in later.items()}
+        # An account the first period doesn't show held nothing; one the second doesn't, too.
+        assert all(closed.get(key, Decimal(0)) == balance for key, balance in opened.items())
+        assert all(opened[key] == balance for key, balance in closed.items() if balance != 0)
+
     @rule(
         role=st.sampled_from(["owner", "app", "ai"]),
         back=st.timedeltas(min_value=timedelta(days=-2), max_value=timedelta(days=120)),
@@ -587,6 +630,32 @@ class LedgerMachine(RuleBasedStateMachine):
             == rows[-1][4]
             == sum((r[3] for r in rows if r[0] == "bank total"), Decimal(0))
         )
+        # Each account's property (migration 0101): an owner's property account's, a tenant's
+        # accounts' their property, and no one property's for cash, vendors and the company.
+        held_for = {
+            f"{kind}: {holder}": prop
+            for kind, holder, prop in self.conns[role].execute(
+                "SELECT t.kind, coalesce(o.display_name || ' / ' || p.display_name,"
+                "  tn.display_name), coalesce(p.display_name, tp.display_name)"
+                " FROM trust_ledger_accounts AS t"
+                " LEFT JOIN trust_owners AS o ON o.id = t.owner_id"
+                " LEFT JOIN trust_properties AS p ON p.id = t.property_id"
+                " LEFT JOIN trust_tenants AS tn ON tn.id = t.tenant_id"
+                " LEFT JOIN trust_properties AS tp ON tp.id = tn.property_id"
+                " WHERE t.pmc_id = %s AND t.kind IN"
+                "  ('owner_property', 'prepaid_rent', 'tenant_deposit')",
+                (self.pmc_id,),
+            )
+        }
+        for item, _, account, prop in self.conns[role].execute(
+            "SELECT item, bank, account, property FROM trust_report_trial_balance(%s, %s)"
+            " WHERE item NOT IN ('PMC', 'as of')",
+            (self.pmc_id, as_of),
+        ):
+            if item == "account":
+                assert prop == held_for.get(account), (account, prop)
+            if item != "account" or account == "book cash":
+                assert prop is None
 
         register = (
             self.conns[role]

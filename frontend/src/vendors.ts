@@ -1,6 +1,8 @@
-// The company's vendors as the API sends them (src/pms/api/vendors.py): W-9 on file and each
-// coverage as trust_report_vendor_insurance has it on the day.
+// The company's vendors as the API sends them (src/pms/api/vendors.py): W-9 on file, each
+// coverage as trust_report_vendor_insurance has it on the day, and their profile (trade, 1099,
+// how they are paid; no tax ID).
 import type { BadgeTone } from "./components/Badge";
+import type { Contact } from "./directory";
 
 export type Policy = {
   coverage: string;
@@ -11,7 +13,30 @@ export type Policy = {
   limit_amount: string | null;
   standing: string; // current, expires today, expires in N days, expired
 };
-export type Vendor = { id: string; name: string; w9_on_file: boolean; insurance: Policy[] };
+export type PaymentMethod = "check" | "EFT";
+export type Profile = { trade: string | null; gets_1099: boolean; payment_method: PaymentMethod | null };
+export type Vendor = {
+  id: string;
+  name: string;
+  w9_on_file: boolean;
+  insurance: Policy[];
+  contact: Contact;
+  profile: Profile | null;
+  // Archived: off the list, its pickers and search, history kept (migration 0110).
+  archived: boolean;
+};
+// A row of the Vendors list; insurance is how it stands by the coverage that runs out first.
+export type VendorRow = {
+  id: string;
+  name: string;
+  trade: string | null;
+  phone: string | null;
+  email: string | null;
+  w9_on_file: boolean;
+  insurance: string;
+};
+
+export const PAYMENT: Record<PaymentMethod, string> = { check: "Check", EFT: "EFT" };
 
 export const COVERAGES = [
   "general liability",
@@ -24,9 +49,12 @@ export const COVERAGES = [
 export function standingTone(standing: string): BadgeTone {
   if (standing === "current") return "positive";
   if (standing === "expired") return "danger";
+  if (standing === "no insurance on file") return "neutral";
   return "caution";
 }
 
-export function vendorInsuranceHref(on: string, format: "pdf" | "xlsx" = "pdf"): string {
-  return `/api/reports/trust_report_vendor_insurance?${new URLSearchParams({ arg: on, format })}`;
+// "Current", "Expires in 12 days", "Expired", "None on file": a standing as a list reads it.
+export function standingWord(standing: string): string {
+  if (standing === "no insurance on file") return "None on file";
+  return standing.charAt(0).toUpperCase() + standing.slice(1);
 }

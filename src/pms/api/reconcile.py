@@ -99,6 +99,8 @@ class BankBooks(BaseModel):
     id: UUID
     name: str
     kind: str
+    # What the books say the account holds now: its cash, everything held in it.
+    book_cash: str
     # The last day an approved reconciliation closed, and the next period's first day (known
     # once the account was cut over, reconciled or given a statement).
     closed_through: date | None
@@ -147,9 +149,14 @@ def next_start(conn: psycopg.Connection[Any], bank: UUID) -> date | None:
 def books(session: Staff, conn: Conn) -> list[BankBooks]:
     """Each trust bank account: its statements, its approved reconciliations, where it stands."""
     found: list[BankBooks] = []
-    for bank, name, kind, closed in conn.execute(
-        "SELECT id, display_name, kind, (closed_through AT TIME ZONE 'UTC')::date - 1"
-        ' FROM trust_bank_accounts WHERE pmc_id = %s ORDER BY kind, display_name COLLATE "C", id',
+    for bank, name, kind, closed, cash in conn.execute(
+        "SELECT k.id, k.display_name, k.kind, (k.closed_through AT TIME ZONE 'UTC')::date - 1,"
+        # Cash is the side money leaves from, so the books' cash is its balance negated.
+        " (SELECT -coalesce(sum(l.balance), 0) FROM trust_ledger_accounts AS a"
+        "  JOIN pgledger_accounts AS l ON l.id = a.ledger_account_id"
+        "  WHERE a.bank_account_id = k.id AND a.kind = 'bank_cash')"
+        " FROM trust_bank_accounts AS k WHERE k.pmc_id = %s"
+        ' ORDER BY k.kind, k.display_name COLLATE "C", k.id',
         (session.pmc_id,),
     ).fetchall():
         found.append(
@@ -157,6 +164,7 @@ def books(session: Staff, conn: Conn) -> list[BankBooks]:
                 id=bank,
                 name=name,
                 kind=kind,
+                book_cash=cents(cash),
                 closed_through=closed,
                 next_start=next_start(conn, bank),
                 statements=[
@@ -348,6 +356,9 @@ class OpenTransfer(BaseModel):
     on: date
     amount: str  # the cash it moved: money in is positive
     memo: str | None
+    # The bank deposit it went in (src/pms/api/bank_deposits.py), and that deposit's day.
+    deposit_id: UUID | None = None
+    deposited_on: date | None = None
 
 
 class OpenItem(BaseModel):
@@ -398,12 +409,15 @@ ORDER BY l.posted_on, s.first_day, l.line_no
 """
 
 TRANSFERS = """
-SELECT tr.id, (tr.event_at AT TIME ZONE 'UTC')::date, -sum(e.amount), tr.metadata ->> 'memo'
+SELECT tr.id, (tr.event_at AT TIME ZONE 'UTC')::date, -sum(e.amount), tr.metadata ->> 'memo',
+       d.id, d.deposited_on
 FROM trust_ledger_accounts AS t
 JOIN pgledger_entries AS e ON e.account_id = t.ledger_account_id
 JOIN pgledger_transfers AS tr ON tr.id = e.transfer_id
+LEFT JOIN trust_bank_deposit_items AS di ON di.transfer_id = tr.id
+LEFT JOIN trust_bank_deposits AS d ON d.id = di.deposit_id
 WHERE t.bank_account_id = %(bank)s AND t.kind = 'bank_cash' AND {where}
-GROUP BY tr.id
+GROUP BY tr.id, d.id
 HAVING sum(e.amount) <> 0
 ORDER BY tr.event_at, tr.id
 """
@@ -422,8 +436,10 @@ def transfers(
     conn: psycopg.Connection[Any], bank: UUID, where: str, **more: Any
 ) -> list[OpenTransfer]:
     return [
-        OpenTransfer(id=i, on=o, amount=cents(a), memo=m)
-        for i, o, a, m in conn.execute(TRANSFERS.format(where=where), {"bank": bank, **more})
+        OpenTransfer(id=i, on=o, amount=cents(a), memo=m, deposit_id=d, deposited_on=d_on)
+        for i, o, a, m, d, d_on in conn.execute(
+            TRANSFERS.format(where=where), {"bank": bank, **more}
+        )
     ]
 
 
@@ -444,7 +460,7 @@ def items(conn: psycopg.Connection[Any], bank: UUID, where: str, **more: Any) ->
 
 def in_live_match(side: str) -> str:
     return (
-        "EXISTS (SELECT 1 FROM trust_bank_match_cutover_items AS mi WHERE mi.item_id = i.id"
+        "EXISTS (SELECT 1 FROM trust_bank_match_cutover_items AS mi WHERE mi.item_id = i.id"  # noqa: S608
         f" AND mi.side = '{side}' AND " + LIVE.format("mi") + ")"
     )
 
@@ -455,7 +471,7 @@ OPEN_ITEM = in_live_match("carried") + " AND NOT " + in_live_match("cleared")
 
 def opening(conn: psycopg.Connection[Any], bank: UUID) -> Opening | None:
     row = conn.execute(
-        "SELECT o.book_cash,"
+        "SELECT o.book_cash,"  # noqa: S608
         " (SELECT coalesce(sum(i.amount), 0) FROM trust_cutover_items AS i"
         "  WHERE i.bank_account_id = o.bank_account_id),"
         " EXISTS (SELECT 1 FROM trust_cutover_signoffs AS s"
@@ -480,12 +496,12 @@ def opening(conn: psycopg.Connection[Any], bank: UUID) -> Opening | None:
 
 
 UNMATCHED_LINE = (
-    "NOT EXISTS (SELECT 1 FROM trust_bank_match_lines AS ml WHERE ml.line_id = l.id AND "
+    "NOT EXISTS (SELECT 1 FROM trust_bank_match_lines AS ml WHERE ml.line_id = l.id AND "  # noqa: S608
     + LIVE.format("ml")
     + ")"
 )
 UNMATCHED_TRANSFER = (
-    "NOT EXISTS (SELECT 1 FROM trust_bank_match_transfers AS mt JOIN trust_bank_matches AS m"
+    "NOT EXISTS (SELECT 1 FROM trust_bank_match_transfers AS mt JOIN trust_bank_matches AS m"  # noqa: S608
     " ON m.id = mt.match_id WHERE mt.transfer_id = tr.id AND m.bank_account_id = %(bank)s AND "
     + LIVE.format("mt")
     + ")"
@@ -660,25 +676,47 @@ class Counted(BaseModel):
 @router.post("/{bank_account_id}/auto-match")
 def auto_match(session: Staff, conn: Conn, bank_account_id: UUID) -> Counted:
     """Matches each open line to the one open transfer of the same amount within a week of it,
-    when neither has another such partner. Anything less sure is left to staff."""
+    or to the one bank deposit whose open transfers come to it within a week of its day, when
+    neither has another such partner. Anything less sure is left to staff."""
     bank_of(conn, session.pmc_id, bank_account_id)
     lines = open_lines(conn, bank_account_id, UNMATCHED_LINE)
     moved = transfers(conn, bank_account_id, UNMATCHED_TRANSFER)
+    # A transfer in a deposit goes to the bank with it: the deposit is its candidate, once every
+    # transfer in it is still open; a deposit partly matched by hand is left to staff.
+    open_ids = {t.id for t in moved}
+    in_deposit: dict[UUID, list[str]] = {}
+    for deposit, transfer in conn.execute(
+        "SELECT i.deposit_id, i.transfer_id FROM trust_bank_deposit_items AS i"
+        " JOIN trust_bank_deposits AS d ON d.id = i.deposit_id"
+        " WHERE d.pmc_id = %s AND d.bank_account_id = %s ORDER BY i.transfer_id",
+        (session.pmc_id, bank_account_id),
+    ):
+        in_deposit.setdefault(deposit, []).append(transfer)
+    candidates: list[tuple[list[str], Decimal, date]] = [
+        ([t.id], Decimal(t.amount), t.on) for t in moved if t.deposit_id is None
+    ]
+    for t in moved:
+        if t.deposit_id is None or t.deposited_on is None:
+            continue
+        ids = in_deposit.pop(t.deposit_id, None)
+        if ids is not None and open_ids.issuperset(ids):
+            total = sum((Decimal(o.amount) for o in moved if o.id in ids), Decimal(0))
+            candidates.append((ids, total, t.deposited_on))
 
-    def near(line: OpenLine, transfer: OpenTransfer) -> bool:
+    def near(line: OpenLine, candidate: tuple[list[str], Decimal, date]) -> bool:
         return (
-            line.amount == transfer.amount
-            and abs((line.posted_on - transfer.on).days) <= MATCH_DAYS
+            Decimal(line.amount) == candidate[1]
+            and abs((line.posted_on - candidate[2]).days) <= MATCH_DAYS
         )
 
     matched = 0
     for line in lines:
-        partners = [t for t in moved if near(line, t)]
+        partners = [c for c in candidates if near(line, c)]
         if len(partners) != 1 or sum(near(other, partners[0]) for other in lines) != 1:
             continue
         try:
             with conn.transaction():  # a savepoint: a refusal leaves the others standing
-                match(conn, session, bank_account_id, [line.id], [partners[0].id])
+                match(conn, session, bank_account_id, [line.id], partners[0][0])
             matched += 1
         except psycopg.errors.CheckViolation:  # in a closed period
             continue

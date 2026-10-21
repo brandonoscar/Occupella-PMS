@@ -74,7 +74,7 @@ class Today(BaseModel):
     late_rent: list[LateLease]
     bills_due: list[payables.Bill]  # to pay (not paid or declined), due within a week or past
     unreconciled: list[Unreconciled]
-    applications: list[leasing.ApplicationOut]  # not decided
+    applications: list[leasing.ApplicationOut]  # new or being screened: not decided, nor withdrawn
     unsigned_offers: list[offers.OfferOut]  # sent to sign, not signed by everyone
     journal_waiting: list[journal.Entry]  # proposed, not yet posted or declined
     vendor_insurance: list[Lapsing]  # expired, or expiring within 30 days
@@ -84,6 +84,20 @@ class Today(BaseModel):
     signers: list[SignerNote]
     # Leases that require renters insurance with none current on file, or below the minimum.
     renters_insurance: list[Uninsured]
+
+
+# The leases named as the rent page names them: property, unit and every tenant on it.
+LATE = """
+SELECT l.id, p.display_name, u.display_name,
+       ARRAY(SELECT t.display_name FROM trust_lease_tenants AS lt
+             JOIN trust_tenants AS t ON t.id = lt.tenant_id
+             WHERE lt.lease_id = l.id ORDER BY t.display_name COLLATE "C", t.id)
+FROM trust_leases AS l
+JOIN trust_units AS u ON u.id = l.unit_id
+JOIN trust_properties AS p ON p.id = u.property_id
+WHERE l.pmc_id = %s AND l.id = ANY(%s)
+ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", l.starts_on, l.id
+"""
 
 
 def months_ended(start: date, on: date) -> list[str]:
@@ -100,20 +114,23 @@ def months_ended(start: date, on: date) -> list[str]:
 def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None) -> Today:
     """What needs someone on the day (today, UTC, by default)."""
     day = on or rent.today()
-    late = []
-    for lease in rent.leases(session, conn, day):
-        due = [c for c in lease.open_charges if c.kind == "rent" and c.due_on < day]
-        if due:
-            late.append(
-                LateLease(
-                    lease_id=lease.id,
-                    property=lease.property,
-                    unit=lease.unit,
-                    tenants=[t.name for t in lease.tenants],
-                    rent_past_due=rent.cents(sum((Decimal(c.open) for c in due), Decimal(0))),
-                    oldest_due_on=min(c.due_on for c in due),
-                )
-            )
+    # Rent due before the day and still open, by the rent page's own open charges: only these
+    # leases are read further, not every lease's whole rent page.
+    due: dict[UUID, list[tuple[date, Decimal]]] = {}
+    for lease, _, due_on, kind, _, _, left in rent.charges_open(conn, session.pmc_id):
+        if kind == "rent" and due_on < day:
+            due.setdefault(lease, []).append((due_on, Decimal(left)))
+    late = [
+        LateLease(
+            lease_id=lease,
+            property=prop,
+            unit=unit,
+            tenants=tenants,
+            rent_past_due=rent.cents(sum((left for _, left in due[lease]), Decimal(0))),
+            oldest_due_on=min(when for when, _ in due[lease]),
+        )
+        for lease, prop, unit, tenants in conn.execute(LATE, (session.pmc_id, list(due)))
+    ]
     unreconciled = []
     for bank in reconcile.books(session, conn):
         start = bank.closed_through + timedelta(days=1) if bank.closed_through else bank.next_start
@@ -132,14 +149,20 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
         on=day,
         late_rent=late,
         bills_due=[
-            b for b in payables.bills(session, conn, "open") if b.due_on <= day + BILLS_AHEAD
+            b
+            for b in payables.find_bills(conn, session.pmc_id, "open")[0]
+            if b.due_on <= day + BILLS_AHEAD
         ],
         unreconciled=unreconciled,
-        applications=leasing.applications(session, conn, "open"),
+        applications=[
+            a
+            for a in leasing.applications_of(conn, session.pmc_id, show="open")[0]
+            if a.status in ("new", "screening")
+        ],
         unsigned_offers=[
             o
-            for o in offers.offers(session, conn, "open")
-            if o.sent and any(s.signed_at is None for s in o.signers)
+            for o in offers.offers_of(conn, session.pmc_id, show="open")[0]
+            if o.status in ("sent", "partially signed")
         ],
         vendor_insurance=[
             Lapsing(

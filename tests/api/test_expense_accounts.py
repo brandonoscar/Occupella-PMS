@@ -11,6 +11,7 @@ import pytest
 from helpers import make_pmc, post
 from people import join_as_owner, join_as_staff, join_as_tenant
 
+from pms import nightly
 from pms.api.setup import SCHEDULE_E
 
 NOW = datetime.now(UTC)
@@ -74,7 +75,7 @@ def bill(client, pmc, reference="INV-1", amount="20.00", **more):
 
 
 def in_account(client, reference):
-    found = ok(client.get("/api/payables/bills?show=all"), 200)
+    found = ok(client.get("/api/payables/bills?show=all"), 200)["items"]
     return next(b["expense_account"] for b in found if b["reference"] == reference)
 
 
@@ -192,7 +193,7 @@ def test_only_the_pmcs_own_bills_and_expense_accounts(client, conn, staff, pmc):
     )
 
 
-def test_a_recurring_bills_account_goes_on_the_months_it_enters(client, staff, pmc):
+def test_a_recurring_bills_account_goes_on_the_months_it_enters(client, app_conn, staff, pmc):
     lawn = account(client, "Landscaping", 7)
     gardens = account(client, "Gardens", 7)
     recurring = ok(
@@ -214,7 +215,7 @@ def test_a_recurring_bills_account_goes_on_the_months_it_enters(client, staff, p
         ("LAWN", "Landscaping")
     ]
 
-    ok(send(client, "/api/payables/recurring/enter", on=TODAY), 200)
+    nightly.run_pmc(app_conn, pmc.pmc_id, TODAY, "http://pms.test")
     ok(
         send(
             client,

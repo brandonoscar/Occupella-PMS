@@ -1,12 +1,25 @@
 import { describe, expect, it } from "vitest";
-import { KINDS, kindLabel, sizeLabel, titleOf, toBase64, typeOf } from "./documents";
+import { ATTACHED, KINDS, kindLabel, sizeLabel, titleOf, toBase64, typeOf } from "./documents";
 
 describe("documents", () => {
   it("names each kind and what it is about", () => {
     expect(KINDS.map((k) => [k.kind, k.about])).toEqual([
       ["w9", "Vendor"], ["receipt", "Bill"], ["move_out_photo", "Lease"], ["owner_document", "Owner"],
+      ["work_order_photo", "Work order"], ["property_document", "Property"], ["unit_document", "Unit"],
+      ["tenant_document", "Tenant"], ["lease_document", "Lease"], ["vendor_document", "Vendor"],
+      ["request_photo", "Maintenance request"], ["listing_photo", "Unit"],
     ]);
+    // Upload offers each kind of record once, and each record's kinds are about it.
+    expect(ATTACHED.map((a) => a.about)).toEqual([
+      "Property", "Unit", "Lease", "Tenant", "Owner", "Vendor", "Work order", "Bill", "Maintenance request",
+    ]);
+    for (const attached of ATTACHED) {
+      expect(attached.kinds.every((k) => KINDS.find((x) => x.kind === k)?.about === attached.about)).toBe(true);
+    }
+    expect(KINDS.every((k) => ATTACHED.some((a) => a.kinds.includes(k.kind)))).toBe(true);
     expect(kindLabel("move_out_photo")).toBe("Move-out photo");
+    expect(kindLabel("work_order_photo")).toBe("Work order photo");
+    expect(kindLabel("listing_photo")).toBe("Listing photo");
   });
 
   it("sends only PDFs, JPEGs and PNGs", () => {

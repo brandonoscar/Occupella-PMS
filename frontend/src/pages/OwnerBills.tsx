@@ -5,7 +5,8 @@ import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Card } from "../components/Shell";
-import { money } from "../money";
+import { money, usDate } from "../money";
+import { Said } from "../components/Said";
 
 export type OwnerBill = {
   id: string;
@@ -17,6 +18,9 @@ export type OwnerBill = {
   amount: string;
   memo: string;
   approval_limit: string;
+  // The company's markup on it, at the percent the owner's agreement sets; null: none.
+  markup: string | null;
+  markup_percent: string | null;
   decision: "approved" | "declined" | null;
   decided_on: string | null;
   decided_by: string | null;
@@ -63,7 +67,7 @@ export function OwnerBills() {
       {(error || done) && (
         <div className="flex flex-col gap-1">
           <Notice tone="error">{error}</Notice>
-          <Notice tone="info">{done}</Notice>
+          <Said>{done}</Said>
         </div>
       )}
       {bills === null ? (
@@ -78,9 +82,15 @@ export function OwnerBills() {
                 {bill.vendor}, {bill.reference}: <span className="font-medium">{money(bill.amount)}</span>
               </p>
               <p className="text-sm text-ink-muted">
-                {bill.property}: {bill.memo}. Billed {bill.bill_date}, due {bill.due_on}. Over your
+                {bill.property}: {bill.memo}. Billed {usDate(bill.bill_date)}, due {usDate(bill.due_on)}. Over your
                 approval limit of {money(bill.approval_limit)}.
               </p>
+              {bill.markup !== null && (
+                <p className="text-sm text-ink-muted" data-testid="markup">
+                  Our markup of {bill.markup_percent}%, {money(bill.markup)}, as your management agreement
+                  sets, is taken with it.
+                </p>
+              )}
               <div className="mt-2 flex flex-wrap items-end gap-3">
                 <Button onClick={() => decide(bill, "approval")}>Approve</Button>
                 {declining === bill.id ? (
@@ -107,7 +117,7 @@ export function OwnerBills() {
             <li key={bill.id} className="flex flex-wrap items-center gap-2">
               <Badge tone={bill.decision === "approved" ? "positive" : "neutral"}>{bill.decision}</Badge>
               <span>
-                {bill.vendor}, {bill.reference} ({money(bill.amount)}) on {bill.decided_on} by {bill.decided_by}
+                {bill.vendor}, {bill.reference} ({money(bill.amount)}) on {usDate(bill.decided_on)} by {bill.decided_by}
                 {bill.reason ? `. ${bill.reason}` : ""}
               </span>
             </li>

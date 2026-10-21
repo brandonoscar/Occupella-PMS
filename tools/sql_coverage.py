@@ -11,9 +11,9 @@ that every test connection adds to one shared profile.
 Two halves:
   start() / write_raw()  run inside the test session (tests/conftest.py) and dump the raw
                          per-statement counts to JSON;
-  everything else        is pure: it turns that JSON into totals and a Cobertura XML report
-                         whose lines point into db/migrations/*.sql, so diff-cover can check
-                         the lines a PR changed.
+  everything else        is pure: it merges the JSON of the runs that split the suite, and
+                         turns it into totals and a Cobertura XML report whose lines point into
+                         db/migrations/*.sql, so diff-cover can check the lines a PR changed.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ FROM plpgsql_profiler_function_statements_tb(%s)
 ORDER BY stmtid
 """
 
-# Version 2.10 dropped the parent_note column that branch_count() needs.
+# Version 2.10 dropped the parent_note column that branch_hits() needs.
 EXTENSION_VERSION = "2.7"
 
 LOOPS = frozenset(
@@ -79,7 +79,7 @@ def start(conn: psycopg.Connection[Any], database: str) -> None:
     if version is None or str(version[0]) != EXTENSION_VERSION:
         raise RuntimeError(
             f"PL/pgSQL coverage needs plpgsql_check {EXTENSION_VERSION}.x (its profiler reports "
-            f"parent_note, which branch_count() reads); found {version}. "
+            f"parent_note, which branch_hits() reads); found {version}. "
             "See ci/postgres-coverage.Dockerfile."
         )
     conn.execute(
@@ -131,34 +131,71 @@ class FunctionCoverage:
     branches_hit: int
 
 
-def branch_count(statements: list[dict[str, Any]]) -> int:
-    """Branches the way plpgsql_check counts them: an IF has its THEN, each ELSIF and an ELSE
-    (implicit when not written); a CASE has each WHEN and an ELSE; a loop is one branch."""
-    total = 0
+def branch_hits(statements: list[dict[str, Any]]) -> list[int]:
+    """Each branch the way plpgsql_check 2.7 counts it, with the times it was taken.
+
+    Its profiler (src/profiler.c, the coverage walker) counts: an IF's THEN, each ELSIF and its
+    ELSE, written or not; a CASE's each WHEN and its ELSE, written or not; a loop's body; and
+    a block with an EXCEPTION clause, its body and each handler. A branch was taken as often as
+    its first statement ran (a statement's id is its place in the source, so the lowest id among
+    an arm's statements), and an IF's unwritten ELSE as often as the IF ran without taking any
+    other arm. Counted from the statements, so two runs' counts add up (merge())."""
+    arms: dict[tuple[int, str], dict[str, Any]] = {}
+    for stmt in statements:
+        key = (stmt["parent_stmtid"], stmt["parent_note"] or "")
+        if key not in arms or stmt["stmtid"] < arms[key]["stmtid"]:
+            arms[key] = stmt
+
+    def taken(stmt: dict[str, Any], note: str) -> int:
+        first = arms.get((stmt["stmtid"], note))
+        return 0 if first is None else int(first["exec_stmts"])
+
+    def numbered(stmt: dict[str, Any], prefix: str) -> int:
+        """How many arms `<prefix> 1`, `<prefix> 2`... there are (the last with a statement)."""
+        found = [
+            int(note.rsplit(" ", 1)[1])
+            for parent, note in arms
+            if parent == stmt["stmtid"] and note.startswith(prefix + " ")
+        ]
+        return max(found, default=0)
+
+    hits: list[int] = []
     for stmt in statements:
         name = stmt["stmtname"]
-        if name in ("IF", "CASE"):
-            notes = {
-                child["parent_note"]
-                for child in statements
-                if child["parent_stmtid"] == stmt["stmtid"]
-            }
-            arms = {note for note in notes if note and not note.startswith("else")}
-            total += max(len(arms), 1) + 1
+        if name == "IF":
+            taken_arms = [taken(stmt, "then body")]
+            taken_arms += [taken(stmt, f"elsif {n}") for n in range(1, numbered(stmt, "elsif") + 1)]
+            hits += taken_arms
+            if (stmt["stmtid"], "else body") in arms:
+                hits.append(taken(stmt, "else body"))
+            else:
+                hits.append(int(stmt["exec_stmts"]) - sum(taken_arms))
+        elif name == "CASE":
+            whens = max(numbered(stmt, "case when"), 1)
+            hits += [taken(stmt, f"case when {n}") for n in range(1, whens + 1)]
+            hits.append(taken(stmt, "case else"))
         elif name in LOOPS:
-            total += 1
-    return total
+            hits.append(taken(stmt, "loop body"))
+        elif name == "statement block":
+            handlers = numbered(stmt, "exception")
+            if handlers:
+                hits.append(taken(stmt, "body"))
+                hits += [taken(stmt, f"exception {n}") for n in range(1, handlers + 1)]
+    return hits
 
 
 def summarize(function: dict[str, Any]) -> FunctionCoverage:
+    """A function's totals. Where the profiler's own branch ratio is there (one run's raw
+    file), the branches counted from the statements must give exactly that ratio."""
     statements = function["statements"]
-    branches = branch_count(statements)
-    exact = function["branch_ratio"] * branches
-    branches_hit = round(exact)
-    if abs(exact - branches_hit) > 1e-6:
+    hits = branch_hits(statements)
+    branches = len(hits)
+    branches_hit = sum(1 for count in hits if count > 0)
+    ratio = function.get("branch_ratio")
+    if ratio is not None and abs(ratio * branches - branches_hit) > 1e-6:
         raise ValueError(
-            f"{function['name']}({function['args']}): branch ratio {function['branch_ratio']} "
-            f"does not fit {branches} branches; update branch_count()"
+            f"{function['name']}({function['args']}): plpgsql_check's branch ratio {ratio} is "
+            f"not {branches_hit} of {branches} branches; update branch_hits()"
         )
     return FunctionCoverage(
         name=function["name"],
@@ -168,6 +205,39 @@ def summarize(function: dict[str, Any]) -> FunctionCoverage:
         branches=branches,
         branches_hit=branches_hit,
     )
+
+
+SHAPE = ("parent_stmtid", "parent_note", "lineno", "stmtname")
+
+
+def merge(runs: list[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+    """The raw files of test runs that split the suite (the coverage job's shards), as one run.
+
+    Each run is checked first (summarize() against the profiler's own ratio). A function's
+    statements run as often as in all the runs together; its branch ratio is left out, since
+    its branches now come from the summed statements. A function is the same in every run that
+    has it: the same source and the same statements."""
+    merged: dict[tuple[str, str], dict[str, Any]] = {}
+    for run in runs:
+        for function in run:
+            summarize(function)
+            key = (function["name"], function["args"])
+            if key not in merged:
+                merged[key] = {
+                    **function,
+                    "branch_ratio": None,
+                    "statements": [dict(s) for s in function["statements"]],
+                }
+                continue
+            into = merged[key]
+            shape = [tuple(s[k] for k in ("stmtid", *SHAPE)) for s in function["statements"]]
+            if function["source"] != into["source"] or shape != [
+                tuple(s[k] for k in ("stmtid", *SHAPE)) for s in into["statements"]
+            ]:
+                raise ValueError(f"{key[0]}({key[1]}) differs between the runs")
+            for total, stmt in zip(into["statements"], function["statements"], strict=True):
+                total["exec_stmts"] += stmt["exec_stmts"]
+    return list(merged.values())
 
 
 def percent(hit: int, total: int) -> float:

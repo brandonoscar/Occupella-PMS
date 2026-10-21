@@ -12,10 +12,12 @@ import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import type { Journal, JournalEntry, JournalLine } from "../journal";
 import { accountLabel, entryTone, entryTotal, mayPost, whyNotPost } from "../journal";
-import { day, money } from "../money";
+import { day, money, usDate } from "../money";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 const MAX_LINES = 20;
 
@@ -44,7 +46,7 @@ export function JournalPage({ me }: { me: Me }) {
       <Card title="Entries">
         {done && (
           <div className="mb-2">
-            <Notice tone="info">{done}</Notice>
+            <Said>{done}</Said>
           </div>
         )}
         {journal === null ? (
@@ -83,7 +85,7 @@ function ProposeCard({ journal, refresh }: { journal: Journal; refresh: () => vo
   }
   return (
     <Card title="Propose an entry">
-      <form
+      <Form
         className="flex flex-col gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
@@ -138,8 +140,8 @@ function ProposeCard({ journal, refresh }: { journal: Journal; refresh: () => vo
           Each line moves money from one account to another. Money moves to another trust bank
           account only with its cash, in the same entry.
         </p>
-      </form>
-      <Notice tone="info">{said}</Notice>
+      </Form>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </Card>
   );
@@ -154,11 +156,11 @@ function EntryRow({ journal, entry, refresh, say }: {
   const { error, record } = useRecord(refresh, say);
   const why = whyNotPost(journal, entry);
   return (
-    <li className="flex flex-col gap-2 py-4" aria-label={`${entry.event_on} ${entry.memo}`}>
+    <li className="flex flex-col gap-2 py-4" aria-label={`${usDate(entry.event_on)} ${entry.memo}`}>
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <p>
           <span className="font-medium">{entry.memo}</span>
-          <span className="text-ink-muted"> · dated {entry.event_on} · proposed by {entry.proposed_by}</span>
+          <span className="text-ink-muted"> · dated {usDate(entry.event_on)} · proposed by {entry.proposed_by}</span>
         </p>
         <p className="flex items-center gap-3">
           <span className="font-medium">{money(entryTotal(entry))}</span>
@@ -217,7 +219,7 @@ function DeclineForm({ entry, record }: { entry: JournalEntry; record: Recorder 
     return <Button variant="secondary" onClick={() => setOpen(true)}>Decline</Button>;
   }
   return (
-    <form
+    <Form
       className="flex flex-wrap items-end gap-3"
       onSubmit={(event) => {
         event.preventDefault();
@@ -227,6 +229,6 @@ function DeclineForm({ entry, record }: { entry: JournalEntry; record: Recorder 
       <Field label="Why" id={`journal-why-${entry.id}`} required maxLength={1000} value={why}
         onChange={(e) => setWhy(e.target.value)} />
       <Button type="submit" variant="secondary">Decline entry</Button>
-    </form>
+    </Form>
   );
 }

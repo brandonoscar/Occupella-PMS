@@ -8,7 +8,7 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from helpers import add_agreement, make_pmc, post
+from helpers import add_agreement, add_tenant, balance, make_pmc, post
 from people import join_as_owner, join_as_staff, join_as_tenant
 
 from pms.api import switching
@@ -195,6 +195,93 @@ def test_a_file_that_cant_go_in_says_where_and_why_and_adds_nothing(
     ).fetchone() == (4,)  # Owner 1 and 2 of the fixture, A and B of the roster
 
 
+def contact_of(conn, column, name):
+    return conn.execute(
+        "SELECT k.email, k.phone, k.alternate_phone, k.address_line_1, k.address_line_2, k.city,"
+        f" k.state, k.postal_code, k.recorded_by IS NOT NULL FROM trust_contacts AS k"  # noqa: S608
+        f" JOIN trust_{column.removesuffix('_id')}s AS p ON p.id = k.{column}"
+        " WHERE p.display_name = %s ORDER BY k.created_at DESC, k.id DESC",
+        (name,),
+    ).fetchall()
+
+
+def test_owners_vendors_and_tenants_bring_their_contact_details(client, conn, staff, pmc):
+    """q127: the old system's emails, phones and mailing addresses come over with the names,
+    each named as the staff member who imported them; a row without any keeps what is on file."""
+    owners = ok(
+        imported(
+            client,
+            "owners",
+            "Name,Email,Phone,Other phone,Address,Address line 2,City,State,ZIP",
+            "Owner A,owner.a@example.com,555-555-0110,,"
+            "100 Example Street,Suite 1,Sampletown,ZZ,00000",
+            "Owner B,,,,,,,,",
+        )
+    )
+    ok(
+        imported(
+            client, "vendors", "Name,Email,Phone", "Vendor A,vendor.a@example.com,555-555-0111"
+        )
+    )
+    ok(imported(client, "properties", "Property,Owner", "Property A,Owner A"))
+    ok(
+        imported(
+            client, "tenants", "Property,Tenant,Email", "Property A,Tenant A,tenant.a@example.com"
+        )
+    )
+    again = ok(imported(client, "owners", "Name", "Owner A"))
+    same = ok(
+        imported(
+            client,
+            "owners",
+            "Name,Email,Phone,Address,Address line 2,City,State,ZIP",
+            "Owner A,owner.a@example.com,555-555-0110,"
+            "100 Example Street,Suite 1,Sampletown,ZZ,00000",
+        )
+    )
+
+    assert owners == {"added": 2, "kept": 0} and again == same == {"added": 0, "kept": 1}
+    assert contact_of(conn, "owner_id", "Owner A") == [
+        (
+            "owner.a@example.com",
+            "555-555-0110",
+            None,
+            "100 Example Street",
+            "Suite 1",
+            "Sampletown",
+            "ZZ",
+            "00000",
+            True,
+        )
+    ]
+    assert contact_of(conn, "owner_id", "Owner B") == []
+    assert contact_of(conn, "vendor_id", "Vendor A")[0][:2] == (
+        "vendor.a@example.com",
+        "555-555-0111",
+    )
+    assert contact_of(conn, "tenant_id", "Tenant A")[0][0] == "tenant.a@example.com"
+
+
+@pytest.mark.parametrize(
+    ("lines", "why"),
+    [
+        (["Name,Email", "Owner A,not an email"], "line 2: the email isn't one the PMS can keep"),
+        (["Name,Phone", "Owner A,call me"], "line 2: the phone isn't one the PMS can keep"),
+        (
+            ["Name,Address,City", "Owner A,100 Example Street,Sampletown"],
+            "line 2: a mailing address needs its street, city, state and ZIP code",
+        ),
+    ],
+)
+def test_bad_contact_details_say_their_line_and_bring_nothing(client, conn, staff, pmc, lines, why):
+    refused(imported(client, "owners", *lines), 422, why)
+
+    assert conn.execute(
+        "SELECT count(*) FROM trust_owners WHERE pmc_id = %s AND display_name = 'Owner A'",
+        (pmc.pmc_id,),
+    ).fetchone() == (0,)
+
+
 def test_a_lease_over_another_is_refused_with_its_line(client, staff, pmc):
     roster(client)
     ok(
@@ -297,7 +384,7 @@ def test_unpaid_bills_come_over_and_hold_back_draws(client, conn, staff, pmc):
     # Sent again, nothing is added twice.
     assert ok(imported(client, "bills", *lines)) == {"added": 0, "kept": 3}
 
-    bills = {b["reference"]: b for b in ok(client.get("/api/payables/bills"))}
+    bills = {b["reference"]: b for b in ok(client.get("/api/payables/bills"))["items"]}
     assert {
         r: (b["bill_date"], b["due_on"], b["amount"], b["status"]) for r, b in bills.items()
     } == {
@@ -315,12 +402,12 @@ def test_unpaid_bills_come_over_and_hold_back_draws(client, conn, staff, pmc):
     # A draw takes no more than what the bills leave.
     refused(
         client.post(
-            "/api/payables/draws",
+            "/api/payables/draws/batch",
             json={
                 "request_id": str(uuid.uuid4()),
-                "account": account,
-                "amount": "350.01",
                 "on": str(TODAY),
+                "method": "check",
+                "payouts": [{"account": account, "amount": "350.01"}],
             },
         ),
         409,
@@ -504,6 +591,31 @@ def test_deposits_open_in_the_security_deposit_account_only(client, staff, pmc):
         ),
         201,
     )
+
+
+def test_an_opening_deposit_is_the_tenants_security_deposit(client, conn, staff, pmc):
+    # Tenant 2 holds only a pet deposit account so far (migration 0092): the old system's
+    # deposit opens their security deposit beside it.
+    tenant = add_tenant(conn, pmc.pmc_id, pmc.owners[0].property_id, "Tenant 2")
+    pet = conn.execute(
+        "SELECT trust_open_deposit_account(%s, %s, %s, 'pet')",
+        (pmc.pmc_id, pmc.deposit_bank_id, tenant),
+    ).fetchone()[0]
+    deposit = csv("Kind,Property,Tenant,Amount", "deposit,Property 1,Tenant 2,1500.00")
+
+    ok(
+        open_balances(
+            client, pmc, content=deposit, book="1500.00", bank_account_id=pmc.deposit_bank_id
+        ),
+        201,
+    )
+
+    security = conn.execute(
+        "SELECT ledger_account_id FROM trust_ledger_accounts WHERE tenant_id = %s"
+        " AND kind = 'tenant_deposit' AND deposit_kind IS NULL",
+        (tenant,),
+    ).fetchone()[0]
+    assert (balance(conn, security), balance(conn, pet)) == (Decimal("1500.00"), 0)
 
 
 @pytest.mark.parametrize(

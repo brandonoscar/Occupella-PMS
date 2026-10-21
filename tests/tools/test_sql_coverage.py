@@ -1,4 +1,4 @@
-"""tools/sql_coverage.py: branch counting, line mapping and the Cobertura report."""
+"""tools/sql_coverage.py: branch counting, merging runs, line mapping and the Cobertura report."""
 
 from xml.etree import ElementTree
 
@@ -18,22 +18,50 @@ def stmt(stmtid, name, parent=None, note=None, lineno=1, hits=1):
     }
 
 
-def test_branch_count_follows_plpgsql_check():
+def test_branch_hits_follow_plpgsql_check():
     statements = [
-        stmt(0, "statement block"),
-        stmt(1, "IF", 0, "body"),  # IF with only THEN: then + implicit else
-        stmt(2, "RAISE", 1, "then body"),
-        stmt(3, "IF", 0, "body"),  # IF / ELSIF / ELSE: 3
-        stmt(4, "RETURN", 3, "then body"),
-        stmt(5, "RETURN", 3, "elsif body"),
-        stmt(6, "RETURN", 3, "else body"),
-        stmt(7, "CASE", 0, "body"),  # CASE with two WHENs: 2 + else
-        stmt(8, "RETURN", 7, "case when 1"),
-        stmt(9, "RETURN", 7, "case when 2"),
-        stmt(10, "FOREACH over array", 0, "body"),  # a loop is one branch
-        stmt(11, "IF", 0, "body"),  # IF whose arms never appear still counts 2
+        stmt(0, "statement block", hits=5),
+        stmt(1, "IF", 0, "body", hits=5),  # only THEN: then + the ELSE it doesn't write
+        stmt(2, "RAISE", 1, "then body", hits=2),
+        stmt(3, "IF", 0, "body", hits=3),  # IF / ELSIF / ELSE: 3
+        stmt(4, "RETURN", 3, "then body", hits=1),
+        stmt(5, "RETURN", 3, "elsif 1", hits=0),
+        stmt(6, "RETURN", 3, "else body", hits=2),
+        stmt(7, "CASE", 0, "body", hits=1),  # CASE with two WHENs: 2 + its ELSE, unwritten
+        stmt(8, "RETURN", 7, "case when 1", hits=1),
+        stmt(9, "RETURN", 7, "case when 2", hits=0),
+        stmt(10, "FOREACH over array", 0, "body", hits=1),  # a loop: its body, from its first
+        stmt(11, "assignment", 10, "loop body", hits=4),  # statement
+        stmt(12, "RETURN", 10, "loop body", hits=0),
+        stmt(13, "IF", 0, "body", hits=1),  # IF whose arms never appear still counts 2
+        stmt(14, "statement block", 0, "body", hits=2),  # a block with an EXCEPTION clause:
+        stmt(15, "SQL statement", 14, "body", hits=2),  # its body and each handler
+        stmt(16, "RAISE", 14, "exception 1", hits=1),
+        stmt(17, "RETURN", 14, "exception 2", hits=0),
+        stmt(18, "CASE", 0, "body", hits=1),  # a written ELSE is the CASE's last branch
+        stmt(19, "RETURN", 18, "case when 1", hits=0),
+        stmt(20, "RETURN", 18, "case else", hits=1),
     ]
-    assert sql_coverage.branch_count(statements) == 2 + 3 + 3 + 1 + 2
+    assert sql_coverage.branch_hits(statements) == [
+        *[2, 3],
+        *[1, 0, 2],
+        *[1, 0, 0],
+        *[4],
+        *[0, 1],
+        *[2, 1, 0],
+        *[0, 1],
+    ]
+
+
+def test_a_branch_is_taken_as_often_as_its_first_statement_runs():
+    # An arm's later statements can run less often than its first (after a RETURN, say).
+    statements = [
+        stmt(1, "IF", hits=4),
+        stmt(3, "RAISE", 1, "then body", hits=0),
+        stmt(2, "IF", 1, "then body", hits=3),
+        stmt(4, "RETURN", 2, "then body", hits=3),
+    ]
+    assert sql_coverage.branch_hits(statements) == [3, 1, 3, 0]
 
 
 def test_summarize_counts_statements_and_branches():
@@ -50,12 +78,59 @@ def test_summarize_counts_statements_and_branches():
     summary = sql_coverage.summarize(function)
     assert (summary.statements, summary.statements_hit) == (3, 2)
     assert (summary.branches, summary.branches_hit) == (2, 1)
+    # Without the profiler's ratio (a merged run), the statements alone decide.
+    assert sql_coverage.summarize({**function, "branch_ratio": None}) == summary
 
 
-def test_summarize_refuses_a_ratio_that_does_not_fit():
-    function = {"name": "f", "args": "", "branch_ratio": 0.3, "statements": [stmt(1, "IF")]}
-    with pytest.raises(ValueError, match="update branch_count"):
+@pytest.mark.parametrize("ratio", [0.3, 1.0])
+def test_summarize_refuses_a_ratio_the_statements_do_not_give(ratio):
+    function = {"name": "f", "args": "", "branch_ratio": ratio, "statements": [stmt(1, "IF")]}
+    with pytest.raises(ValueError, match="update branch_hits"):
         sql_coverage.summarize(function)
+
+
+def guarded(ran, raised, ratio):
+    """IF ... THEN RAISE; END IF; RETURN: the IF ran `ran` times and raised `raised` times."""
+    return {
+        "name": "guard",
+        "args": "p integer",
+        "source": "body",
+        "branch_ratio": ratio,
+        "statements": [
+            stmt(0, "statement block", lineno=1, hits=ran),
+            stmt(1, "IF", 0, "body", lineno=2, hits=ran),
+            stmt(2, "RAISE", 1, "then body", lineno=3, hits=raised),
+            stmt(3, "RETURN", 0, "body", lineno=4, hits=ran - raised),
+        ],
+    }
+
+
+def test_merge_adds_the_runs_up():
+    # One run only raised, the other never did: neither took both branches, together they did.
+    first, second = guarded(2, 2, 0.5), guarded(3, 0, 0.5)
+    other = {**guarded(1, 0, 0.5), "name": "only_in_one_run"}
+    merged = sql_coverage.merge([[first], [second, other]])
+
+    assert [f["name"] for f in merged] == ["guard", "only_in_one_run"]
+    assert [s["exec_stmts"] for s in merged[0]["statements"]] == [5, 5, 2, 3]
+    assert merged[0]["branch_ratio"] is None
+    summary = sql_coverage.summarize(merged[0])
+    assert (summary.statements_hit, summary.branches_hit, summary.branches) == (4, 2, 2)
+    # The runs themselves are left as they were.
+    assert [s["exec_stmts"] for s in first["statements"]] == [2, 2, 2, 0]
+
+
+def test_merge_checks_each_run_against_the_profiler():
+    with pytest.raises(ValueError, match="update branch_hits"):
+        sql_coverage.merge([[guarded(2, 2, 0.5)], [guarded(3, 0, 1.0)]])
+
+
+def test_merge_refuses_a_function_that_differs_between_runs():
+    moved = guarded(3, 0, 0.5)
+    moved["statements"][3]["lineno"] = 5
+    for other in ({**guarded(3, 0, 0.5), "source": "another body"}, moved):
+        with pytest.raises(ValueError, match=r"guard\(p integer\) differs between the runs"):
+            sql_coverage.merge([[guarded(2, 2, 0.5)], [other]])
 
 
 def test_percent_of_nothing_is_full():

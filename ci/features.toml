@@ -16,7 +16,7 @@
 
 [[feature]]
 id = "logins"
-statement = "Staff invite a staff member, owner or tenant by email; the invite sets a password (and for staff an authenticator); people sign in and out; a wrong email or password is refused without saying which; an admin disables a login for good, which signs it out."
+statement = "Staff invite a staff member (from the staff page), owner or tenant (from their own page) by email; the invite sets a password (and for staff an authenticator); people sign in and out; a wrong email or password is refused without saying which; Logins lists everyone's login by status, and an admin disables one for good from its row's menu, which signs it out."
 operations = [
   "POST /api/invites",
   "POST /api/invites/view",
@@ -50,13 +50,14 @@ statement = "Staff open the Dashboard: what tenants owe, open work orders, lease
 operations = ["GET /api/today", "GET /api/dashboard"]
 browser = [
   "features.spec.ts › staff charge this month's rent and its late fees, and the Dashboard shows the rent that is late",
-  "features.spec.ts › staff add a recurring bill, enter this month's once and stop it, and record the decline of an owner with no login",
-  "features.spec.ts › staff list a vacant unit on the public page; someone applies from it, staff approve, take it off the page and close the link",
+  "features.spec.ts › staff add a recurring bill and stop it, and record the decline of an owner with no login",
+  "features.spec.ts › staff list a vacant unit on the public page; someone applies from it, staff screen and approve it and record its withdrawal, take it off the page and close the link",
+  "portal.spec.ts › every page of the demo meets WCAG 2.2 AA as axe checks it: staff's, an owner's, a tenant's and the public ones",
 ]
 
 [[feature]]
 id = "setup"
-statement = "Staff set up the books: trust bank accounts, owners, properties and their owners, units, tenants, vendors, leases, management terms, late fee terms and NSF fee terms."
+statement = "Staff set up the books where each thing is used: trust bank accounts from Banking, owners from Owners, a property from Properties, and on a property's page its units, another owner, management terms (on the owner's page too), late fee terms and NSF fee terms, and on a unit's page a lease already in place with its tenants."
 operations = [
   "GET /api/setup",
   "POST /api/setup/bank-accounts",
@@ -65,16 +66,15 @@ operations = [
   "POST /api/setup/properties/{property_id}/owners",
   "POST /api/setup/units",
   "POST /api/setup/tenants",
-  "POST /api/setup/vendors",
   "POST /api/setup/leases",
   "POST /api/setup/agreements",
   "POST /api/setup/late-fees",
   "POST /api/setup/nsf-fees",
 ]
 browser = [
-  "portal.spec.ts › staff set up a property from nothing, lease a unit and see it on the rent roll",
+  "portal.spec.ts › staff set up a property from nothing where each thing lives, lease a unit and see it on the rent roll",
   "features.spec.ts › staff set management terms with a leasing fee, late fees, a bank account and a vendor, and a new lease takes its leasing fee",
-  "features.spec.ts › staff add a fee, a credit and a monthly charge to a lease, take a deposit and prepaid rent, and a bounce undoes a payment and charges the NSF fee",
+  "features.spec.ts › staff add a fee, a credit and a monthly charge to a lease, take a deposit and a pet deposit and prepaid rent, and a bounce undoes a payment and charges the NSF fee",
 ]
 
 [[feature]]
@@ -95,18 +95,87 @@ browser = [
 ]
 
 [[feature]]
+id = "property-groups"
+statement = "Staff group properties at Settings, Property groups (add a group, rename it, choose its properties; a group is never deleted), and narrow the properties, rent roll, tenants and owners lists to a group or one property from the picker at the top left, a choice that carries from page to page."
+operations = [
+  "GET /api/property-groups",
+  "POST /api/property-groups",
+  "POST /api/property-groups/{group_id}/name",
+  "POST /api/property-groups/{group_id}/properties",
+]
+browser = [
+  "features.spec.ts › staff group properties, and every list shows just the group's, the choice carried from page to page",
+]
+
+[[feature]]
+id = "people"
+statement = "Staff find a tenant or an owner a page at a time (a tenant with their balance and whether they can sign in to the portal) and open their page (a tenant's leases and the money held for them; an owner's property accounts); keep a tenant's, owner's or vendor's email, phones and mailing address, which the AI never reads; rename a tenant or owner, and archive one only while nothing is open on them, or bring them back; and find an owner by search."
+operations = [
+  "GET /api/tenants",
+  "GET /api/tenants/{tenant_id}",
+  "POST /api/tenants/{tenant_id}/name",
+  "POST /api/tenants/{tenant_id}/archive",
+  "POST /api/tenants/{tenant_id}/contact",
+  "GET /api/owners",
+  "POST /api/owners/{owner_id}/name",
+  "POST /api/owners/{owner_id}/archive",
+  "POST /api/owners/{owner_id}/contact",
+  "POST /api/vendors/{vendor_id}/contact",
+]
+browser = [
+  "features.spec.ts › staff find a tenant and an owner, keep their contact details and a vendor's, rename them, and archive only what has nothing open",
+]
+
+[[feature]]
+id = "notes"
+statement = "Staff write notes on a lease or a tenant from its Notes tab, kept for good with who wrote them and when, newest first; the AI never reads them."
+operations = ["GET /api/notes", "POST /api/notes"]
+browser = [
+  "features.spec.ts › staff find a property, rename it and a unit, archive a vacant unit but not a property with a lease, and search for a tenant",
+]
+
+[[feature]]
+id = "general-ledger"
+statement = "Staff read the general ledger on screen for any days: each account's prior balance, its entries with a running balance and its totals, a page of accounts at a time, found by account or bank, as trust_report_general_ledger has them; Banking opens each trust bank account with its book balance, on its register (each move of its cash with what it was, who paid or was paid, its memo, its property and the balance after it, a page at a time) and its balance breakdown (what it holds by kind, coming to its book cash, and each owner's money in it); Pay owners shows what each owner's account may pay out."
+operations = [
+  "GET /api/general-ledger",
+  "GET /api/bank-accounts/{bank_account_id}/register",
+  "GET /api/bank-accounts/{bank_account_id}/breakdown",
+]
+browser = [
+  "features.spec.ts › staff read each account's general ledger, open a trust bank account from Banking with its register and what it holds, and see what each owner may be paid",
+]
+
+[[feature]]
+id = "maintenance-pages"
+statement = "Staff list the work orders a page at a time, numbered, with their priority, status, due day and when they last changed (open, closed or all; of one status or vendor; of a property group or property), open one for a property or unit with its priority, what is wrong, the day it is due and whether the vendor may let themselves in, and on its page change those, assign a vendor (never one whose insurance ran out), schedule the visit, close it, keep its photos, create the vendor's bill naming it and see the tenants to call, its timeline, its bills and the request it answers; a vendor's page has their W-9, insurance, contact details, bills and work orders, and they are renamed there; Renewals lists the leases ending in the next 90 days with where each renewal stands."
+operations = [
+  "GET /api/work-orders",
+  "GET /api/work-orders/{work_order_id}",
+  "POST /api/work-orders",
+  "POST /api/work-orders/{work_order_id}/details",
+  "GET /api/vendors/{vendor_id}",
+  "POST /api/vendors/{vendor_id}/name",
+  "GET /api/leasing/renewals",
+]
+browser = [
+  "features.spec.ts › staff open a work order with its details, schedule its vendor (not one whose insurance ran out), bill it, find it on the vendor's page, rename the vendor, and see the leases to renew",
+]
+
+[[feature]]
 id = "rent-run"
-statement = "Staff charge every lease its rent and recurring charges for a due date, once, and the late fees of rent still open after its grace days, once, and see on the rent roll what each lease owes, a page at a time."
-operations = ["GET /api/leases", "POST /api/rent/charge-rent", "POST /api/rent/late-fees"]
+statement = "Rent, recurring charges and late fees post by themselves every night (pms.nightly); an admin runs them by hand from the rent roll's ⋯ menu (every lease's rent and recurring charges for a due date and the late fees of rent still open after its grace days, each once) and sees the latest runs. The rent roll lists every lease, current, to come, ended, owing or all, with its days left, rent, deposits held and balance, a page at a time, and Receive payment finds a lease by its tenant, unit or property and records a payment with how it came."
+operations = ["GET /api/leases", "POST /api/rent/run", "GET /api/rent/runs"]
 browser = [
   "features.spec.ts › staff charge this month's rent and its late fees, and the Dashboard shows the rent that is late",
 ]
 
 [[feature]]
 id = "rent-work"
-statement = "On a lease's own page, staff add a fee, a credit or a monthly charge to it and stop one; record a tenant's payment (what the lease owes to the owner, the rest prepaid rent), use prepaid rent, take a deposit, and record a bounce, which undoes the payment and charges the NSF fee."
+statement = "On a lease's own page (its balance due at the top, then Summary, Ledger, Tenants, Files and Notes), staff add a fee, a credit or a monthly charge to it and stop one; record a tenant's payment (what the lease owes to the owner, the rest prepaid rent), use prepaid rent, take a security, pet or key deposit (each held apart, the lease showing each kind; migration 0092), and record a bounce, which undoes the payment and charges the NSF fee; and read its ledger, each charge, payment and bounce with the balance after it."
 operations = [
   "GET /api/leases/{lease_id}",
+  "GET /api/leases/{lease_id}/ledger",
   "POST /api/rent/leases/{lease_id}/charges",
   "POST /api/rent/leases/{lease_id}/recurring-charges",
   "POST /api/rent/recurring-charges/{recurring_id}/stop",
@@ -116,7 +185,7 @@ operations = [
   "POST /api/rent/payments/{transfer_id}/bounce",
 ]
 browser = [
-  "features.spec.ts › staff add a fee, a credit and a monthly charge to a lease, take a deposit and prepaid rent, and a bounce undoes a payment and charges the NSF fee",
+  "features.spec.ts › staff add a fee, a credit and a monthly charge to a lease, take a deposit and a pet deposit and prepaid rent, and a bounce undoes a payment and charges the NSF fee",
   "portal.spec.ts › staff record a tenant's payment, the rest held as prepaid rent, and then its bounce",
 ]
 
@@ -128,6 +197,117 @@ operations = [
 ]
 browser = [
   "features.spec.ts › staff raise a month-to-month rent after a full month's notice, and the tenant sees it coming",
+  "features.spec.ts › staff move a tenant in mid-month on a year's lease and the rent run charges its days, a late fee stops at its cap, and the lease's own terms let its rent change mid-term",
+]
+
+[[feature]]
+id = "rent-due-day"
+statement = "Staff pick the day of the month a lease's rent is due (1 to 28), when they add a lease in place or from a month on from its page; the rent run charges it on that day, a charged month keeps its due date, and the tenant sees it in the portal."
+operations = [
+  "POST /api/rent/leases/{lease_id}/due-day",
+]
+browser = [
+  "features.spec.ts › staff pick the day of the month a lease's rent is due, the rent run charges it then, and the tenant sees it",
+]
+
+[[feature]]
+id = "owner-fees"
+statement = "A company turns on taking last month's management fees by itself from a day of the month (the nightly run takes each owner's once, leaving one who holds too little), staff set a flat management fee, and take an inspection, lease-up or other fee from an owner's account into the company's fee account, once per request."
+operations = [
+  "GET /api/payables/management-fees/automatic",
+  "POST /api/payables/management-fees/automatic",
+  "POST /api/payables/owner-fees",
+]
+browser = [
+  "features.spec.ts › a company has its management fees taken each month, staff set a flat fee and take an inspection fee from an owner",
+]
+
+[[feature]]
+id = "shared-bills"
+statement = "Staff share one vendor invoice across properties, a bill for each owner's share following every bill rule on its own, add the markup each owner's management terms set (taken with the bill's money into the company's fee account), and pay several bills at once."
+operations = [
+  "POST /api/payables/shared-bills",
+]
+browser = [
+  "features.spec.ts › staff share a roofer's invoice across two owners' properties with the markup Birch Flats' terms set, and pay both shares at once",
+]
+
+[[feature]]
+id = "ownership"
+statement = "Staff set a property's ownership from a day, each co-owner's percent together 100; from then each payment, prepaid rent used and deposit kept at move-out goes to its owners by their shares to the cent (the cent left over to the largest remainder), and a bill for it can be split between them by ownership, a bill for each share."
+operations = [
+  "POST /api/setup/properties/{property_id}/ownership",
+]
+browser = [
+  "features.spec.ts › staff set Birch Flats' ownership 60/40 between two owners; a payment and a bill split between them to the cent",
+]
+
+[[feature]]
+id = "housing-assistance"
+statement = "Staff keep the company's housing authorities and set a lease's housing assistance from the first of a month; as each month's rent is charged the authority's part becomes its own charge and the tenant owes the rest, so the tenant's late fees, deposit and balance are their part alone; staff charge or credit the authority by hand, and record its payment for many leases, each lease's part paying what it owes there oldest first into the owners' accounts, counted as rent collected."
+operations = [
+  "GET /api/assistance/authorities",
+  "POST /api/assistance/authorities",
+  "GET /api/assistance/authorities/{authority_id}",
+  "GET /api/assistance/leases/{lease_id}",
+  "POST /api/assistance/leases/{lease_id}/terms",
+  "POST /api/assistance/leases/{lease_id}/charges",
+  "POST /api/assistance/payments",
+]
+browser = [
+  "features.spec.ts › staff add a housing authority, set a lease's assistance, charge and credit the authority and record its payment",
+]
+
+[[feature]]
+id = "utility-billing"
+statement = "Staff set how a property bills each utility back (by unit, square feet, occupants or submeter, the owner keeping a share for the common areas), its units' square feet and which utilities each lease is billed for, preview a bill's shares and bill it back: each billed lease's share, rounded down to the cent, is a fee charged to it, and a vacant unit's days, a lease not billed and the common areas stay with the owner."
+operations = [
+  "GET /api/utilities/properties/{property_id}",
+  "POST /api/utilities/properties/{property_id}/plans",
+  "POST /api/utilities/units/{unit_id}/area",
+  "POST /api/utilities/leases/{lease_id}/billed",
+  "POST /api/utilities/preview",
+  "POST /api/utilities/bills",
+]
+browser = [
+  "features.spec.ts › staff bill last month's water back to Birch Flats' leases by unit, the owner keeping 10% and what isn't billed",
+]
+
+[[feature]]
+id = "emergencies"
+statement = "Staff say who is on call; a tenant files an emergency with a photo, whoever is on call is emailed, its work order opens urgent with the tenant's word on entry and the photo, and the tenant sees the visit's day and window once it is scheduled; each work order counts its days open."
+operations = [
+  "GET /api/maintenance/on-call",
+  "POST /api/maintenance/on-call",
+]
+browser = [
+  "features.spec.ts › staff go on call; a tenant files an emergency with a photo and staff see it through to a visit the tenant sees, day and window",
+]
+
+[[feature]]
+id = "recurring-work-orders"
+statement = "Staff add a job that comes back every few months at a property or unit; the ones already due open at once and the nightly run opens the rest on their days; staff stop one from a day, and charge a tenant a fee for a work order (a repair they caused) on a lease at its unit."
+operations = [
+  "GET /api/work-orders/recurring",
+  "POST /api/work-orders/recurring",
+  "POST /api/work-orders/recurring/{recurring_id}/end",
+]
+browser = [
+  "features.spec.ts › staff add a filter change every 3 months, the ones due open at once, stop it, and charge the tenant for a work order",
+]
+
+[[feature]]
+id = "vendor-links"
+statement = "Staff make a vendor a private link (shown once, replacing any older) and take it back; with only the link, the vendor sees the work orders assigned to them, schedules a visit with its window and says the work is done, and staff see those steps as the vendor's."
+operations = [
+  "GET /api/vendors/{vendor_id}/link",
+  "POST /api/vendors/{vendor_id}/link",
+  "POST /api/vendors/{vendor_id}/link/revoke",
+  "POST /api/vendor-link/work-orders",
+  "POST /api/vendor-link/work-orders/{work_order_id}/steps",
+]
+browser = [
+  "features.spec.ts › staff send a plumber their link; the plumber schedules the visit and says it is done; staff take the link back",
 ]
 
 [[feature]]
@@ -144,56 +324,59 @@ browser = [
 
 [[feature]]
 id = "bills"
-statement = "Staff enter a vendor's bill; one over the owner's limit emails the owner, who approves or declines it in their portal (or staff record their answer); staff set it aside from the owner's money and pay it; a declined bill is never paid."
+statement = "Staff list bills a page at a time (Unpaid, Paid, Declined; by property group, vendor and due day; each awaiting the owner, approved, set aside, overdue or paid) and record one in a side panel, maybe with its invoice; one over the owner's limit emails the owner, who approves or declines it in their portal (or staff record their answer); a bill's own page has its expense account lines, files, the email and its history, and sets it aside and pays it by check or EFT; Pay bills sets aside and pays several at once, all or none, showing each property's cash first; a declined bill is never paid."
 operations = [
   "GET /api/payables/bills",
+  "GET /api/payables/bills/{bill_id}",
   "POST /api/payables/bills",
+  "POST /api/payables/bills/pay",
   "POST /api/payables/bills/{bill_id}/approval",
   "POST /api/payables/bills/{bill_id}/decline",
   "POST /api/payables/bills/{bill_id}/set-aside",
   "POST /api/payables/bills/{bill_id}/pay",
-  "GET /api/payables/emails",
   "GET /api/owner/bills",
   "POST /api/owner/bills/{bill_id}/approval",
   "POST /api/owner/bills/{bill_id}/decline",
 ]
 browser = [
   "features.spec.ts › a bill over the owner's limit emails them; they decline one and approve another in the portal, and staff pay it",
-  "portal.spec.ts › staff enter a vendor's bill, record the owner's approval, set it aside and pay it, then draw the rest",
+  "portal.spec.ts › staff record a vendor's bill with its invoice, record the owner's approval, set it aside and pay it on its page, then draw the rest",
 ]
 
 [[feature]]
 id = "recurring-bills"
-statement = "Staff add a bill that comes every month, enter each month's once under its prefix and the month, and stop it from a day."
+statement = "Staff add a bill that comes every month on Bills' Recurring tab and stop it from a day; the nightly run enters each month's once under its prefix and the month (tests/test_nightly.py: the browser run has it off)."
 operations = [
   "GET /api/payables/recurring",
   "POST /api/payables/recurring",
-  "POST /api/payables/recurring/enter",
   "POST /api/payables/recurring/{recurring_id}/end",
 ]
 browser = [
-  "features.spec.ts › staff add a recurring bill, enter this month's once and stop it, and record the decline of an owner with no login",
+  "features.spec.ts › staff add a recurring bill and stop it, and record the decline of an owner with no login",
 ]
 
 [[feature]]
 id = "owners-money"
-statement = "Staff take each period's management fees once and a lease's leasing fee once, record owner contributions, and pay owners only what is available: the balance less the reserve and unpaid bills."
+statement = "Staff see on Management fees what each agreement's fee for a period would take (worked out and rolled back, moving nothing) and collect them once; take a lease's leasing fee once from its ⋯ menu; on an owner's page (Summary with their portal login and agreements' terms, Properties, Financials with their statement and Record contribution, Statements, Files) record their contributions; and on Pay owners pay several owners at once, each only what is available (the balance less the reserve and unpaid bills), all or none, recorded as sent by check or EFT."
 operations = [
-  "GET /api/payables/owners",
+  "GET /api/owners/{owner_id}",
+  "GET /api/owners/{owner_id}/statement",
+  "GET /api/owners/{owner_id}/statement/download",
+  "GET /api/payables/management-fees",
   "POST /api/payables/management-fees",
   "POST /api/payables/leasing-fees",
   "POST /api/payables/contributions",
-  "POST /api/payables/draws",
+  "POST /api/payables/draws/batch",
 ]
 browser = [
   "features.spec.ts › staff take the month's management fees once, find no leasing fee due, and pay owners only what is available",
   "features.spec.ts › staff set management terms with a leasing fee, late fees, a bank account and a vendor, and a new lease takes its leasing fee",
-  "portal.spec.ts › staff enter a vendor's bill, record the owner's approval, set it aside and pay it, then draw the rest",
+  "portal.spec.ts › staff record a vendor's bill with its invoice, record the owner's approval, set it aside and pay it on its page, then draw the rest",
 ]
 
 [[feature]]
 id = "company-fees"
-statement = "Staff see the company's earned fees still in each trust bank account, since when the oldest waited and the day to take them out by (25 days, the strictest state deadline found), on the owners page and on Today, and take them out to the company once per request, never more than is there."
+statement = "Staff see the company's earned fees still in each trust bank account, since when the oldest waited and the day to take them out by (25 days, the strictest state deadline found), on Banking and on Today, and take them out to the company from the account's ⋯ menu (Transfer company fees) once per request, never more than is there."
 operations = [
   "GET /api/payables/company-fees",
   "POST /api/payables/company-fees",
@@ -247,6 +430,7 @@ browser = [
   "portal.spec.ts › staff bring a roster in, open an account with its old balances and a check not cleared, sign off and match the opening",
   "features.spec.ts › staff carry over what the old system paid each vendor this year, and the year's vendor payments count it",
   "features.spec.ts › staff carry over the old system's unpaid bills, once, and draws hold them back",
+  "features.spec.ts › staff bring a property's units, tenants, lease and unpaid charges in from files, and open two new trust bank accounts with the owner's balance and the tenant's deposit",
 ]
 
 [[feature]]
@@ -265,9 +449,10 @@ browser = [
 
 [[feature]]
 id = "documents"
-statement = "Staff keep a vendor's W-9, a bill's receipt, a move-out photo or an owner's document (a PDF, JPEG or PNG that is what it says), download and remove one; an owner downloads their own documents."
+statement = "Staff list every file of the company a page at a time (by category and property group, each with the record it is attached to), and keep one on any record (a property, unit, lease, tenant, owner, vendor, work order or bill, in a category that record takes: a W-9, a receipt, a move-out photo, an owner's or any record's document; a PDF, JPEG or PNG that is what it says) from Files or the record's own page, download and remove one; an owner downloads their own documents."
 operations = [
   "GET /api/documents",
+  "GET /api/documents/files",
   "POST /api/documents",
   "GET /api/documents/{document_id}/file",
   "POST /api/documents/{document_id}/remove",
@@ -275,17 +460,17 @@ operations = [
   "GET /api/owner/documents/{document_id}/file",
 ]
 browser = [
-  "features.spec.ts › staff keep a vendor's W-9, a bill's receipt and a move-out photo, refuse a file that isn't what it says, and remove one",
+  "features.spec.ts › staff keep a vendor's W-9, a bill's receipt, a move-out photo and a property's document from Files, narrow the list, refuse a file that isn't what it says, and remove one",
   "portal.spec.ts › staff keep an owner's document and the owner downloads it from the portal",
 ]
 
 [[feature]]
 id = "reports"
-statement = "Staff download every report in CSV, Excel and PDF, and the whole ledger as a zip of CSV."
-operations = ["GET /api/reports/{name}", "GET /api/ledger.zip"]
+statement = "Staff open each report from Reports, grouped as Buildium groups them, see it on screen with its filters (a day, or days with presets; an owner; a year; a property group, a property or one owner's properties when its lines have one, the general ledger and trial balance by each account's property, the lines across all properties then left out), and export it in CSV, Excel and PDF with the same filters; the whole ledger downloads as a zip of CSV from Settings, Data export, and for an admin everything the company keeps: each record table as CSV, its documents, leases and signatures as files, and the ledger, never a credential or a token's hash."
+operations = ["GET /api/reports/{name}", "GET /api/ledger.zip", "GET /api/records.zip"]
 browser = [
-  "features.spec.ts › staff download every report the overview offers, and every staff report in each format",
-  "portal.spec.ts › staff set up a property from nothing, lease a unit and see it on the rent roll",
+  "features.spec.ts › staff open a report from Reports, see it on screen narrowed to one property, export it in each format, take an owner's report over last year, download the whole ledger, and every staff report in each format",
+  "portal.spec.ts › staff set up a property from nothing where each thing lives, lease a unit and see it on the rent roll",
 ]
 
 [[feature]]
@@ -302,6 +487,7 @@ browser = [
   "features.spec.ts › an owner reads last month's statement and their year-end package, and downloads each",
   "portal.spec.ts › an owner joins from the invite, reads their statement and signs back in",
   "portal.spec.ts › the demo opens on last month waiting for its manager, who approves it and sees on the Dashboard what else waits; its owner reads three properties",
+  "phone.spec.ts › an owner reads their properties and statement on a phone",
 ]
 
 [[feature]]
@@ -317,6 +503,7 @@ browser = [
   "features.spec.ts › a tenant sees their lease, what comes each month and two months of charges and payments, and downloads them",
   "portal.spec.ts › a tenant joins, sees what is due and asks for a repair",
   "features.spec.ts › a lease ended mid-month keeps only its days of the month's rent, and its deposit goes back less what it owes",
+  "phone.spec.ts › a tenant reads their lease and what they owe, and files a repair request on a phone",
 ]
 
 [[feature]]
@@ -337,62 +524,119 @@ browser = [
 
 [[feature]]
 id = "applications"
-statement = "Staff open an application link for a unit and close it; an applicant applies through it and follows its status; staff screen the application through the partner and decide, a decline with its adverse action notice."
+statement = "Staff open an application link for a unit and close it; an applicant applies through it and follows its status; on Applicants (Open, Rejected, Withdrawn, All, by property group) staff open an application's page, screen it through the partner and approve or reject it, a rejection with its adverse action notice, or record that the applicants withdrew it, after which it takes nothing more."
 operations = [
-  "GET /api/leasing/units",
-  "GET /api/leasing/links",
   "POST /api/leasing/links",
   "POST /api/leasing/links/{link_id}/close",
   "POST /api/apply/view",
   "POST /api/apply",
   "POST /api/application/status",
   "GET /api/leasing/applications",
+  "GET /api/leasing/applications/{application_id}",
+  "POST /api/leasing/applications/{application_id}/withdraw",
   "POST /api/leasing/applications/{application_id}/screen",
   "POST /api/leasing/applications/{application_id}/decide",
   "GET /api/leasing/applications/{application_id}/notice",
 ]
 browser = [
   "portal.spec.ts › an applicant applies; staff screen, decline with a notice, and the applicant sees it",
-  "features.spec.ts › staff list a vacant unit on the public page; someone applies from it, staff approve, take it off the page and close the link",
+  "features.spec.ts › staff list a vacant unit on the public page; someone applies from it, staff screen and approve it and record its withdrawal, take it off the page and close the link",
 ]
 
 [[feature]]
 id = "listings"
-statement = "Staff list an open application link on the company's public vacancy page, where anyone sees it and applies, and take it off."
+statement = "On Listings staff see each unit coming free within 90 days (or with an open link), when and at what rent, and list it on the company's public vacancy page (opening its link if it has none), where anyone sees it and applies, and unlist it."
 operations = [
+  "GET /api/leasing/vacancies",
   "POST /api/leasing/links/{link_id}/listing",
   "POST /api/leasing/listings/{listing_id}/remove",
   "GET /api/listings/{pmc_id}",
 ]
 browser = [
-  "features.spec.ts › staff list a vacant unit on the public page; someone applies from it, staff approve, take it off the page and close the link",
+  "features.spec.ts › staff list a vacant unit on the public page; someone applies from it, staff screen and approve it and record its withdrawal, take it off the page and close the link",
+]
+
+[[feature]]
+id = "listing-photos"
+statement = "On Listings staff see how many days each listing has been up and keep each unit's photos (JPEG or PNG, twelve at most), which the public vacancy page shows, oldest first, while the unit is listed; a removed photo leaves it."
+operations = [
+  "GET /api/leasing/units/{unit_id}/photos",
+  "GET /api/listings/{pmc_id}/photos/{photo_id}",
+]
+browser = [
+  "features.spec.ts › staff add photos to a listed unit, which its public listing shows; a removed one leaves it",
+]
+
+[[feature]]
+id = "leads"
+statement = "On Leasing, Leads (Open, Closed, All, by property group) staff add a prospect who asked about renting (a name, an email or a phone, what they asked about, the source); on the lead's page they schedule showings of a unit, record how each went, and close the lead once, applied or lost."
+operations = [
+  "GET /api/leasing/leads",
+  "POST /api/leasing/leads",
+  "GET /api/leasing/leads/{lead_id}",
+  "POST /api/leasing/leads/{lead_id}/showings",
+  "POST /api/leasing/showings/{showing_id}/outcome",
+  "POST /api/leasing/leads/{lead_id}/close",
+]
+browser = [
+  "features.spec.ts › staff add a lead who asked about a unit, show it to them, record how it went and close the lead when they apply",
+]
+
+[[feature]]
+id = "screening-criteria"
+statement = "In Company setup staff set the screening criteria every applicant is held to (the income, as times the rent, approved and approved on conditions) and the same criteria in words, which the apply page shows; the partner screens by them, a decision against the latest screening's recommendation says why, and a declined applicant reads the adverse action notice on their status page."
+operations = [
+  "GET /api/leasing/screening-criteria",
+  "POST /api/leasing/screening-criteria",
+]
+browser = [
+  "features.spec.ts › staff set the screening criteria; an applicant reads them, is screened by them and declined against the recommendation, and reads the notice",
 ]
 
 [[feature]]
 id = "lease-offers"
-statement = "Staff offer a lease for an approved application or a renewal of a lease, with the company's own PDF; signers sign on the partner's page (a tenant signs a renewal from the portal); once everyone has signed it becomes the lease."
+statement = "On Draft leases (Waiting for signatures, Leases made, Void, All, by property group) staff draft a lease for an approved applicant or a renewal of a lease, with the company's own PDF, the security deposit it asks and its monthly fees and credits, kept as a draft or sent at once; on its page they send it, void it, or activate it once everyone has signed (a tenant signs a renewal from the portal), its monthly charges becoming the lease's."
 operations = [
   "GET /api/leasing/leases",
   "POST /api/leasing/applications/{application_id}/offer",
   "POST /api/leasing/leases/{lease_id}/renewal",
   "GET /api/leasing/offers",
+  "GET /api/leasing/offers/{offer_id}",
+  "POST /api/leasing/offers/{offer_id}/send",
+  "POST /api/leasing/offers/{offer_id}/void",
   "GET /api/leasing/offers/{offer_id}/document",
-  "GET /api/leasing/offers/{offer_id}/links",
-  "POST /api/leasing/offers/{offer_id}/signatures",
   "POST /api/leasing/offers/{offer_id}/complete",
   "GET /api/tenant/renewals",
   "GET /api/tenant/renewals/{offer_id}/document",
   "POST /api/tenant/renewals/{offer_id}/signing-link",
-  "POST /api/fake-esign/view",
-  "POST /api/fake-esign/sign",
 ]
 browser = [
-  "portal.spec.ts › staff offer a lease and a renewal; the signers sign on the partner's page; both become leases",
+  "portal.spec.ts › staff draft a lease with a deposit and a monthly charge and send it, void a renewal, send another; the signers sign on the PMS's own page; both become leases",
+]
+
+[[feature]]
+id = "lease-signing"
+statement = "A signer signs on the PMS's own page through their link (ADR 0008): they read the consumer disclosures and agree to sign electronically or ask for paper, open the lease, type their name and maybe draw their signature, then keep the lease and its signing certificate; staff see how far each signer got, make new links and download the certificate; a tenant downloads their lease as signed, its certificate and the lease documents staff keep on its Files tab (q120)."
+operations = [
+  "GET /api/tenant/leases/{lease_id}/signed-lease",
+  "GET /api/tenant/leases/{lease_id}/signing-certificate",
+  "GET /api/tenant/leases/{lease_id}/documents/{document_id}",
+  "POST /api/signing/view",
+  "POST /api/signing/consent",
+  "POST /api/signing/paper",
+  "POST /api/signing/document",
+  "POST /api/signing/sign",
+  "POST /api/signing/certificate",
+  "POST /api/leasing/offers/{offer_id}/links",
+  "GET /api/leasing/offers/{offer_id}/certificate",
+]
+browser = [
+  "portal.spec.ts › staff draft a lease with a deposit and a monthly charge and send it, void a renewal, send another; the signers sign on the PMS's own page; both become leases",
 ]
 
 [[feature]]
 id = "expense-accounts"
-statement = "Staff add expense accounts, each on its Schedule E line, and put bills and recurring bills in them (a bill's latest account is its account; a recurring bill's goes on each month it enters); an owner reads and downloads the year's income statement, by property and Schedule E line, and staff download any owner's."
+statement = "Staff add expense accounts, each on its Schedule E line, and put bills and recurring bills in them, a bill maybe split across several by lines that come to it (a bill's latest account or split is its own; a recurring bill's goes on each month it enters); an owner reads and downloads the year's income statement, by property and Schedule E line, and staff download any owner's."
 operations = [
   "POST /api/setup/expense-accounts",
   "POST /api/payables/bills/{bill_id}/expense-account",
@@ -419,13 +663,14 @@ browser = [
 
 [[feature]]
 id = "budgets"
-statement = "Staff budget each owner's property for a year on the income statement's own lines (each income class, the management and leasing fees, each expense account, bills in none), a year spread over its months to the cent; a line's latest row is its budget and an unchanged month writes nothing. The owner's budget against what happened downloads like every report."
+statement = "Staff budget a property's year (each owner's share apart) in one grid on the income statement's own lines (each income class, the management and leasing fees, each expense account, bills in none), month by month with a line's total spread over its months to the cent, and save every line at once, all or none; a line's latest row is its budget and an unchanged month writes nothing. The Budget vs actual view lays the lines beside what happened, and the owner's budget against actual exports like every report."
 operations = [
   "GET /api/budgets",
   "POST /api/budgets",
+  "GET /api/payables/owners",
 ]
 browser = [
-  "features.spec.ts › staff budget an owner's property for the year, line by line, and download it against what happened",
+  "features.spec.ts › staff budget a property's year in one grid, save it at once, see it against what happened and export it",
 ]
 
 [[feature]]
@@ -443,13 +688,15 @@ browser = [
 
 [[feature]]
 id = "vendor-insurance"
-statement = "Staff record each vendor's insurance policies (a renewal is a new policy) and see, for every vendor, the W-9 on file and each coverage as it stands today: current, expiring within 30 days, or expired; Today lists what is not current, and the vendor insurance report downloads like every report."
+statement = "Staff list the vendors a page at a time with their trade, phone, email, W-9 on file or missing and how their insurance stands; add a vendor with their trade, whether they get a 1099, how they are paid and how to reach them (no tax ID is kept), and change those on their page; record each vendor's insurance policies there (a renewal is a new policy), each coverage as it stands today: current, expiring within 30 days, or expired; Today lists what is not current, and the vendor insurance report downloads from Reports like every report."
 operations = [
   "GET /api/vendors",
+  "POST /api/vendors",
+  "POST /api/vendors/{vendor_id}/profile",
   "POST /api/vendors/{vendor_id}/insurance",
 ]
 browser = [
-  "features.spec.ts › staff record a vendor's insurance, see it running out on Today, and record the renewal",
+  "features.spec.ts › staff add a vendor with their trade, 1099 and how they are paid, record a vendor's insurance on their page, see it running out on Today, and record the renewal",
 ]
 
 [[feature]]
@@ -461,4 +708,200 @@ operations = [
 ]
 browser = [
   "features.spec.ts › staff record a lease's move-in and move-out inspections room by room, and download them side by side",
+]
+
+[[feature]]
+id = "company"
+statement = "Staff keep the company's name, mailing address and logo (a PNG or JPEG), and the late fee and NSF fee terms each property added from then on starts with, from its first day; a property already there keeps its own. Owners and tenants see their manager's name, mailing address and logo in the portal."
+operations = [
+  "GET /api/company",
+  "POST /api/company",
+  "POST /api/company/logo",
+  "POST /api/company/logo/remove",
+  "GET /api/company/logo",
+  "GET /api/company/card",
+]
+browser = [
+  "features.spec.ts › staff keep the company's name, address, logo and the fees new properties start with; a property added then starts with them, and owners and tenants see their manager",
+]
+
+[[feature]]
+id = "email"
+statement = "Staff email a tenant, an owner or a vendor from their page's Email tab, and every tenant living at a property from its page; each email is signed with the staff member's name and the company's and kept on the person's Email tab with whether it went (an invite, a password reset or a bill waiting for an owner's approval too). An owner or a tenant resets a forgotten password from sign-in by an emailed link, never kept in the outbox; the answer never says whether the email has a login (docs/adr/0007-email.md)."
+operations = [
+  "GET /api/emails",
+  "POST /api/emails",
+  "POST /api/emails/property",
+  "GET /api/password-reset",
+  "POST /api/password-reset",
+]
+browser = [
+  "features.spec.ts › staff email a tenant from their page and every tenant of a property, an owner resets a forgotten password by email, and each email shows on the person's Email tab",
+]
+
+[[feature]]
+id = "automatic-email"
+statement = "Staff turn on, in Company setup, the emails the PMS writes by itself while the server sends email: rent reminders some days before the first, a notice when a late fee is charged, each owner's statement for last month from a day of the month, a vendor's work order when assigned or scheduled, and each applicant's adverse action notice. Each is written once, in the run or the change that causes it, and kept on the person's Email tab with whether it went (docs/adr/0007-email.md)."
+operations = [
+  "GET /api/emails/settings",
+  "POST /api/emails/settings",
+]
+browser = [
+  "features.spec.ts › staff turn on the emails the PMS writes by itself, and a run of rent sends each owner last month's statement onto their Email tab",
+]
+
+[[feature]]
+id = "rent-in"
+statement = "Staff put a lease on a payment hold when an eviction is filed (a payment is then refused unless they accept it past the hold, naming who did) and release it from a day; take a cashier's check; print a receipt for each payment, which the tenant downloads in the portal too; and take payments to the bank together as a deposit with its slip, whose one bank line matches all of it at month-end (the founder's review, q019 to q032)."
+operations = [
+  "POST /api/rent/leases/{lease_id}/holds",
+  "POST /api/rent/holds/{hold_id}/release",
+  "GET /api/rent/payments/{transfer_id}/receipt",
+  "GET /api/tenant/payments/{transfer_id}/receipt",
+  "GET /api/bank-accounts/{bank_account_id}/undeposited",
+  "GET /api/bank-accounts/{bank_account_id}/deposits",
+  "POST /api/bank-accounts/{bank_account_id}/deposits",
+  "GET /api/bank-accounts/deposits/{deposit_id}/slip",
+]
+browser = [
+  "features.spec.ts › staff put a lease on a payment hold, accept a cashier's check past it and release it, print receipts, take payments to the bank together and print the slip; the tenant downloads their receipt",
+]
+
+[[feature]]
+id = "waive"
+statement = "Staff waive a charge (a late fee, an NSF fee, any fee or rent), all of it or part, with why, from the lease page: a credit linked to it that comes off that charge first, never past what is left of it, shown on the ledger (the founder's review, q019; migration 0079)."
+operations = [
+  "POST /api/rent/charges/{charge_id}/waive",
+]
+browser = [
+  "features.spec.ts › staff waive a late fee from the lease page: it comes off that fee, and the ledger shows the waiver",
+]
+
+[[feature]]
+id = "lease-people"
+statement = "Staff take one tenant off a lease others stay on (their deposit moving to a tenant who stays, or staying under their name until move-out), keep the lease's other occupants, pets and assistance animals, vehicles and guarantors, end any lease from its page, and charge a property's lease-break fee when a lease ends before its end date (the founder's review, q003, q007, q011, q012; migration 0080)."
+operations = [
+  "POST /api/move-out/{lease_id}/departures",
+  "GET /api/move-out/{lease_id}/break-fee",
+  "POST /api/setup/lease-break-fees",
+  "GET /api/leases/{lease_id}/household",
+  "POST /api/leases/{lease_id}/occupants",
+  "POST /api/leases/{lease_id}/pets",
+  "POST /api/leases/{lease_id}/vehicles",
+  "POST /api/leases/{lease_id}/guarantors",
+  "POST /api/leases/{lease_id}/{kind}/{item_id}/remove",
+]
+browser = [
+  "features.spec.ts › staff take one tenant off a lease, keep who else lives there and who guarantees it, and break the lease with its fee",
+]
+
+[[feature]]
+id = "lease-transfers"
+statement = "Staff move a lease's tenants to another unit, maybe another owner's property (migration 0091): the lease ends the day before, a lease opens there for them, their deposits stay held for it as they agreed in writing, their prepaid rent first pays what the old lease owes, and what it still owes stays its owner's, paid first by the new lease's payments and kept first from the deposits at move-out (the founder's review, q010, q042)."
+operations = [
+  "POST /api/move-out/{lease_id}/transfer",
+]
+browser = [
+  "features.spec.ts › staff move a tenant to another owner's unit with their deposit; the new lease's payment pays the old owner first",
+]
+
+[[feature]]
+id = "calendar"
+statement = "A staff member (from Settings, Your calendar, maybe for one property group) or a tenant (from the portal) makes a link of their own that a calendar app subscribes to, with no login: staff see move-ins, leases ending, visits, work orders due, showings, bills due, rent changes, insurance running out and the day to take the company's fees out of trust; a tenant their rent due days, repair visits and their lease's last day. A new link takes the old one back, and a link taken back, or whose person's login is disabled, stops."
+operations = [
+  "GET /api/calendar/{token}.ics",
+  "GET /api/calendar/mine",
+  "POST /api/calendar/mine",
+  "POST /api/calendar/mine/revoke",
+  "GET /api/tenant/calendar",
+  "POST /api/tenant/calendar",
+  "POST /api/tenant/calendar/revoke",
+]
+browser = [
+  "features.spec.ts › staff and a tenant each subscribe their calendar app to a link of their own; a new link takes the old one back",
+]
+
+[[feature]]
+id = "own-contact"
+statement = "A tenant reads and changes their own email, phones and mailing address in the portal (a mailing address whole or not there); the company writes to that email from then on, their sign-in email stays, and staff see on the tenant's page the new details and that the tenant changed them, and when."
+operations = ["GET /api/tenant/contact", "POST /api/tenant/contact"]
+browser = [
+  "features.spec.ts › a tenant changes their own phone and email in the portal, and staff see the new ones and that the tenant changed them",
+]
+
+[[feature]]
+id = "charge-types"
+statement = "Staff add the company's own charge types (a name once whatever its case, none of the income statement's own lines) in Settings, Chart of accounts, and give a fee one on Enter charge or a monthly charge (never a credit); the owner's income statement counts what was collected on each type on a line of its own, after the other income, and the budget beside it counts that line as income."
+operations = ["GET /api/setup/charge-types", "POST /api/setup/charge-types"]
+browser = [
+  "features.spec.ts › staff add charge types and give a lease's fee and monthly charge one; the owner's income statement counts the type on its own line",
+]
+
+[[feature]]
+id = "quickbooks"
+statement = "Staff see each ledger account's name in QuickBooks (the PMS's, until they give it their own; a colon nests a subaccount) and set it in Settings, QuickBooks, and download the trust ledger's transfers over days as general journal entries, each debiting the account the money left and crediting the one it went to, for QuickBooks Desktop (IIF) and QuickBooks Online (CSV)."
+operations = [
+  "GET /api/quickbooks/accounts",
+  "POST /api/quickbooks/accounts/{ledger_account_id}",
+  "GET /api/quickbooks/journal",
+]
+browser = [
+  "features.spec.ts › staff name the operating trust account's cash for QuickBooks and download two months of journal entries for QuickBooks Desktop and Online",
+]
+
+[[feature]]
+id = "tenant-at-two-properties"
+statement = "Staff make a tenant who rents at another property too a tenant there (the same name and contact details, linked to their first record), or say a tenant there is the same person; each record keeps its own leases and money, the person signs in once, and the portal shows and acts on their leases at every property (migration 0105, the founder's review q009)."
+operations = [
+  "POST /api/tenants/{tenant_id}/elsewhere",
+  "POST /api/tenants/{tenant_id}/same-person",
+]
+browser = [
+  "features.spec.ts › staff make a tenant a tenant at a second property and lease them a unit there; they sign in once, see both homes and ask for a repair at the new one",
+]
+
+[[feature]]
+id = "year-close"
+statement = "Staff see last year's close on Banking: each trust bank account it touched with how far its month-end is approved, and the journal entries dated in it still waiting; once every one is approved through December 31 a staff member who holds approve closes the year, after a question, for good; from then on nothing is charged or billed with a day in it or before, and a charge dated there is refused in words (migration 0106, the founder's review q116)."
+operations = ["GET /api/year-close", "POST /api/year-close"]
+browser = [
+  "features.spec.ts › staff approve last December in each trust bank account, close the year, and a charge dated in it is refused in words",
+]
+
+[[feature]]
+id = "history-before-the-switch"
+statement = "Staff bring the old system's past lines in at Settings, Import as history, a file of tenants', owners' or vendors' at a time (a tenant who left before the switch is added to hold theirs; the same file again adds nothing), and read each person's lines newest first under Before the switch on their page: a tenant's Leases tab, an owner's Statements tab, a vendor's Bills tab. History is never posted (migration 0107, the founder's review q129)."
+operations = ["GET /api/history"]
+browser = [
+  "features.spec.ts › staff bring the old system's tenant, owner and vendor history in once, and read it under Before the switch on each page",
+]
+
+[[feature]]
+id = "assistance-compliance"
+statement = "Staff keep an assisted lease in compliance on its page: the household's income certifications (move-in, annual, interim; due again a year on, an interim one keeping the due day before it) and the home's inspections for its housing authority (passed, due again two years on; failed, with the day to pass a reinspection by), each saying where it stands today, and the Housing assistance compliance report lists every lease with assistance in force on a day that way, never printing income (migration 0108, the founder's review q143)."
+operations = [
+  "POST /api/assistance/leases/{lease_id}/certifications",
+  "POST /api/assistance/leases/{lease_id}/inspections",
+]
+browser = [
+  "features.spec.ts › staff record an assisted household's annual certification and a failed inspection, and the compliance report says where each stands",
+]
+
+[[feature]]
+id = "property-addresses"
+statement = "Staff keep a property's street address on its page (whole: street, maybe a building or unit, city, a state's USPS code and ZIP code; the same again writes nothing), find it on a map with the server's geocoder (PMS_GEOCODER: the Census Bureau's, or the fake one for development and CI), sending the property's address alone, and open OpenStreetMap at the point; the Properties list shows each address and finds a property by it, as the search bar does; a new address is found again (migration 0109)."
+operations = [
+  "POST /api/properties/{property_id}/address",
+  "POST /api/properties/{property_id}/locate",
+]
+browser = [
+  "features.spec.ts › staff add Cedar House's street address, find it on a map, find it by its street, and a new address is found again",
+]
+
+[[feature]]
+id = "vendor-archive"
+statement = "Staff archive a vendor with nothing open with them, after a question: they leave the Vendors list (Status, Archived lists them), the work order and bill pickers and search, and keep their history; a vendor with a bill not paid, money set aside, a work order last assigned to them still open or a recurring bill or job running stays, the refusal saying why; staff bring one back (migration 0110, the founder's review q131)."
+operations = ["POST /api/vendors/{vendor_id}/archive"]
+browser = [
+  "features.spec.ts › staff archive a vendor with nothing open, who leaves the list, the work order picker and search, keep one with a bill not paid, and bring the first back",
 ]

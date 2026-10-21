@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ApiError, api } from "./api";
+import { ApiError, api, saveFile } from "./api";
 
 function answer(status: number, body: unknown) {
   return vi.fn().mockResolvedValue(
@@ -41,6 +41,16 @@ describe("api", () => {
     });
   });
 
+  it("says a rule of the PMS's own in its words", async () => {
+    vi.stubGlobal("fetch", answer(422, {
+      detail: [{ loc: ["body"], msg: "Value error, a mailing address needs its street, city, state and ZIP code" }],
+    }));
+
+    await expect(api.post("/api/tenant/contact")).rejects.toMatchObject({
+      detail: "a mailing address needs its street, city, state and ZIP code",
+    });
+  });
+
   it("names the status when the answer has no reason", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("oops", { status: 502 })));
 
@@ -51,5 +61,45 @@ describe("api", () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
 
     await expect(api.post("/api/sign-out")).resolves.toBeUndefined();
+  });
+
+  it("saves a file a change answers with, under the name given", async () => {
+    const fetch = vi.fn().mockResolvedValue(new Response("%PDF-1.4", { status: 200 }));
+    vi.stubGlobal("fetch", fetch);
+    const made = vi.fn(() => "blob:lease");
+    vi.stubGlobal("URL", { createObjectURL: made, revokeObjectURL: vi.fn() });
+    const clicked: string[] = [];
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (this: HTMLAnchorElement) {
+      clicked.push(`${this.download} ${this.getAttribute("href")}`);
+    });
+
+    await saveFile("/api/signing/document", { token: "t" }, "lease.pdf");
+
+    expect(fetch).toHaveBeenCalledWith("/api/signing/document", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: '{"token":"t"}',
+    });
+    expect(clicked).toEqual(["lease.pdf blob:lease"]);
+    expect(document.querySelector("a[download]")).toBeNull();
+    click.mockRestore();
+  });
+
+  it("refuses to save a file the server refused, with its reason", async () => {
+    vi.stubGlobal("fetch", answer(409, { detail: "agree to sign electronically first, or ask for paper" }));
+
+    await expect(saveFile("/api/signing/document", { token: "t" }, "lease.pdf")).rejects.toMatchObject({
+      status: 409,
+      detail: "agree to sign electronically first, or ask for paper",
+    });
+  });
+
+  it("names the status when a refused file has no reason", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("oops", { status: 500 })));
+
+    await expect(saveFile("/api/signing/certificate", {}, "c.pdf")).rejects.toMatchObject({
+      detail: "the server answered 500",
+    });
   });
 });

@@ -6,7 +6,9 @@ check fails when:
   - a named test doesn't exist (found by parsing the test file, never by text search);
   - an entry has neither tests nor a pending issue, or the link isn't an issue in this repo;
   - with --check-issues: a pending issue is closed (the work is done, so the test must exist);
-  - with --base: an entry that existed on the base branch is gone, or lost its tests.
+  - with --base: an entry that existed on the base branch is gone, or lost its tests. An entry
+    goes only when a founder's decision replaced what it guarded: a `[[retired]]` row names it,
+    the decision record (docs/adr/) and the entry with tests that replaced it.
 
 usage: python -m tools.check_registry [--check-issues] [--base origin/main]
 """
@@ -31,6 +33,7 @@ FILE = "ci/registry.toml"
 SECTIONS = ("invariant", "report", "selfhost")
 ISSUE = re.compile(r"^https://github\.com/brandonoscar/Occupella-PMS/issues/(\d+)$")
 API = "https://api.github.com/repos/brandonoscar/Occupella-PMS/issues/{number}"
+ADR = re.compile(r"^docs/adr/\d{4}-[a-z0-9-]+\.md$")
 
 
 def node_exists(node_id: str, root: Path) -> bool:
@@ -69,7 +72,20 @@ def entries(registry: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 def check(registry: dict[str, Any], root: Path) -> list[str]:
     problems = []
-    for key, entry in entries(registry).items():
+    present = entries(registry)
+    for row in registry.get("retired", []):
+        key, decision, replaced_by = row.get("id"), row.get("decision"), row.get("replaced_by")
+        if key in present:
+            problems.append(f"retired {key} is still an entry.")
+        if not decision or not ADR.match(decision) or not (root / decision).is_file():
+            problems.append(
+                f"retired {key}: decision must be a record in docs/adr/, got {decision!r}."
+            )
+        if not present.get(replaced_by or "", {}).get("tests"):
+            problems.append(
+                f"retired {key}: replaced_by must be an entry with tests, got {replaced_by!r}."
+            )
+    for key, entry in present.items():
         tests = entry.get("tests", [])
         pending = entry.get("pending")
         if not entry.get("statement"):
@@ -115,9 +131,11 @@ def check_issues(
 def compare(base: dict[str, Any], head: dict[str, Any]) -> list[str]:
     problems = []
     new = entries(head)
+    retired = {row.get("id") for row in head.get("retired", [])}
     for key, entry in entries(base).items():
         if key not in new:
-            problems.append(f"{key} was removed from {FILE}.")
+            if key not in retired:
+                problems.append(f"{key} was removed from {FILE}.")
         elif set(entry.get("tests", [])) - set(new[key].get("tests", [])):
             lost = sorted(set(entry.get("tests", [])) - set(new[key].get("tests", [])))
             problems.append(f"{key} lost tests {lost}.")

@@ -1,0 +1,8 @@
+line	item	property	unit	tenants	authority	certified	recertify_by	recertification	inspected	inspect_by	inspection
+1	PMC	Golden PMC	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+2	as of	2026-06-15; leases with housing assistance in force	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL	NULL
+3	assisted lease	Property 1	Unit 1	Tenant 1	Golden Housing Authority	annual 01/01/2026	2027-01-01	current	passed 12/10/2025	2027-12-10	current
+4	assisted lease	Property 1	Unit 2	Tenant 2, Tenant 3	Golden Housing Authority	annual 09/01/2025	2026-09-01	due within 120 days	failed 06/01/2026	2026-07-01	failed, reinspection due
+5	assisted lease	Property 2	Unit 1	Tenant 4	Golden Housing Authority	interim 11/01/2025	2026-03-01	overdue	passed 03/01/2024	2026-03-01	overdue
+6	assisted lease	Property 2	Unit 2	Tenant 5	Golden Housing Authority	NULL	NULL	none on file	NULL	NULL	none on file
+7	total	NULL	NULL	NULL	NULL	NULL	NULL	2 to certify now, 1 within 120 days	NULL	NULL	2 to inspect now, 1 within 120 days or failed

@@ -1,331 +1,461 @@
+import { Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Button, LinkButton } from "../components/Button";
+import { ContactCard } from "../components/ContactCard";
+import { EmptyState } from "../components/EmptyState";
 import { Field } from "../components/Field";
+import { Form } from "../components/Form";
+import { ListBar } from "../components/ListBar";
 import { Notice } from "../components/Notice";
+import { Pager } from "../components/Pager";
+import { RecordActions } from "../components/RecordActions";
+import { Said } from "../components/Said";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
-import { day, money } from "../money";
-import { Badge } from "../components/Badge";
-import type { CompanyFees, Fee, OwnerMoney } from "../payables";
-import {
-  companyFeesDue,
-  companyFeesLabel,
-  feeLine,
-  heldLabel,
-  incomeStatementHref,
-  lastMonthPeriod,
-} from "../payables";
+import { SidePanel } from "../components/SidePanel";
+import { StatementView } from "../components/StatementView";
+import { Tabs } from "../components/Tabs";
+import { Wide } from "../components/Wide";
+import type { Agreement, Owner, OwnerRow } from "../directory";
+import { day, money, usDate } from "../money";
+import type { OwnerFeeKind, OwnerMoney } from "../payables";
+import { OWNER_FEE_KINDS, incomeStatementHref, ownerFeeSummary } from "../payables";
 import { requestId } from "../rent";
-import type { Portfolio } from "../setup";
+import type { Paged } from "../rentals";
+import { navigate } from "../router";
+import { scopeParams, useScope } from "../scope";
+import type { StatementData } from "../statement";
+import { group } from "../statement";
+import { EmailsCard } from "../components/EmailsCard";
+import { FilesCard } from "./FilesCard";
+import { PortalCard } from "./PortalCard";
+import { TermsPanel } from "./SetupPanels";
+import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
+import { HistoryCard } from "./HistoryCard";
 
-// Staff's work on owners' money: what each owner's property account holds and may pay out,
-// owner draws and contributions as the bank recorded them, the management and leasing fees the
-// agreements take, and those fees taken out of trust to the company. The PMS sends no money
-// itself.
+const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
+
+function detail(failed: unknown): string {
+  return failed instanceof ApiError ? failed.detail : String(failed);
+}
+
+// Rentals → Owners (ADR 0006): each owner once, a page at a time, with their properties and what
+// their accounts hold, keep back and may pay out, the row opening their page. Pay owners pays
+// them; Add owner adds one. Management fees, the company's fees and leasing fees are where they
+// are used: Accounting, Banking and the lease.
 export function OwnersPage({ me }: { me: Me }) {
-  const [owners, setOwners] = useState<OwnerMoney[] | null>(null);
-  const [companyFees, setCompanyFees] = useState<CompanyFees[] | null>(null);
-  const [books, setBooks] = useState<Portfolio | null>(null);
+  const [page, setPage] = useState<Paged<OwnerRow> | null>(null);
+  const [scope, setScope] = useScope();
+  const [archived, setArchived] = useState(false);
+  const [number, setNumber] = useState(1);
   const [error, setError] = useState("");
-  const failed = (why: unknown) => setError(why instanceof ApiError ? why.detail : String(why));
+  const [adding, setAdding] = useState(false);
 
-  function refresh() {
-    api.get<OwnerMoney[]>("/api/payables/owners").then(setOwners).catch(failed);
-    api.get<CompanyFees[]>("/api/payables/company-fees").then(setCompanyFees).catch(failed);
-  }
-  useEffect(refresh, []);
   useEffect(() => {
-    api.get<Portfolio>("/api/setup").then(setBooks).catch(failed);
-  }, []);
+    const query = new URLSearchParams({ page: String(number), archived: String(archived), ...scopeParams(scope) });
+    api.get<Paged<OwnerRow>>(`/api/owners?${query}`).then(setPage).catch((why) => setError(detail(why)));
+  }, [scope, archived, number]);
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Owners" />
-      <Card title="Owners' money">
-        {owners === null ? (
-          <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
-        ) : owners.length === 0 ? (
-          <Notice tone="info">No owner has a property account yet. Add one in Setup.</Notice>
-        ) : (
-          <ul className="flex flex-col divide-y divide-line">
-            {owners.map((owner) => (
-              <OwnerRow key={owner.account} owner={owner} refresh={refresh} />
-            ))}
-          </ul>
-        )}
-      </Card>
-      <FeesCard refresh={refresh} />
-      {companyFees !== null && <CompanyFeesCard fees={companyFees} refresh={refresh} />}
-      {books && <LeasingFeeCard books={books} refresh={refresh} />}
+      <PageHeader title="Owners" actions={
+        <div className="flex flex-wrap items-center gap-2">
+          <LinkButton href="/owner-draws">Pay owners</LinkButton>
+          <Button variant="secondary" onClick={() => setAdding(true)}>Add owner</Button>
+        </div>
+      } />
+      <ListBar scope={scope} onScope={(next) => { setScope(next); setNumber(1); }}
+        archived={archived} onArchived={(next) => { setArchived(next); setNumber(1); }} />
+      <Notice tone="error">{error}</Notice>
+      {page === null ? (
+        !error && <Notice tone="info">Loading</Notice>
+      ) : page.items.length === 0 ? (
+        <EmptyState icon={Users} title={archived ? "No archived owners." : "No owners found."} />
+      ) : (
+        <>
+          <Wide>
+            <table className="w-full text-base">
+              <thead>
+                <tr>
+                  <th className="text-left">Owner</th>
+                  <th className="text-left">Properties</th>
+                  <th className="text-right">Cash held</th>
+                  <th className="text-right">Reserve</th>
+                  <th className="text-right">Available</th>
+                  <th className="text-left">Email</th>
+                  <th className="text-left">Phone</th>
+                </tr>
+              </thead>
+              <tbody>
+                {page.items.map((row) => (
+                  <tr key={row.id} aria-label={row.name} className="cursor-pointer hover:bg-raised"
+                    onClick={() => navigate(`/owners/${row.id}`)}>
+                    <td onClick={(event) => event.stopPropagation()}>
+                      <GoLink href={`/owners/${row.id}`} className={LINK}>{row.name}</GoLink>
+                    </td>
+                    <td className="text-ink-muted">{row.properties.join(", ")}</td>
+                    <td className="text-right">{money(row.held)}</td>
+                    <td className="text-right">{money(row.reserve)}</td>
+                    <td className="text-right font-medium">{money(row.available)}</td>
+                    <td className="text-ink-muted">{row.email}</td>
+                    <td className="text-ink-muted">{row.phone}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Wide>
+          <Pager page={page} onPage={setNumber} />
+        </>
+      )}
+      {adding && (
+        <SidePanel title="Add owner" onClose={() => setAdding(false)}>
+          <AddOwner />
+        </SidePanel>
+      )}
     </Shell>
   );
 }
 
-function OwnerRow({ owner, refresh }: { owner: OwnerMoney; refresh: () => void }) {
-  const { said, error, record } = useRecord(refresh);
+// Add owner: their name; the owner's page then takes their contact details and properties.
+function AddOwner() {
+  const [name, setName] = useState("");
+  const [error, setError] = useState("");
   return (
-    <li className="flex flex-col gap-2 py-4" aria-label={`${owner.owner}, ${owner.property}`}>
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <p>
-          <span className="font-medium">{owner.owner}, {owner.property}</span>
-          <span className="text-ink-muted"> · {owner.bank_account}</span>
-        </p>
-        <p data-testid="available">
-          <span className="font-medium">{money(owner.available)}</span>{" "}
-          <span className="text-ink-muted">available</span>
-        </p>
-      </div>
-      <p className="text-sm text-ink-subtle">{heldLabel(owner)}</p>
-      {!owner.has_agreement && (
-        <p className="text-sm text-ink-subtle">
-          No management agreement: no reserve is kept and no fee is taken.
-        </p>
-      )}
-      <div>
-        <LinkButton href={incomeStatementHref(owner.owner_id, day(new Date()))}>
-          {owner.owner}'s income statement this year (PDF)
-        </LinkButton>
-      </div>
-      <details>
-        <summary>
-          Record for {owner.owner}, {owner.property}
-        </summary>
-        <div className="mt-3 flex flex-col gap-4">
-          <DrawForm owner={owner} record={record} />
-          <ContributionForm owner={owner} record={record} />
-        </div>
-      </details>
-      <Notice tone="info">{said}</Notice>
+    <Form className="flex flex-col gap-3" onSubmit={async (event) => {
+      event.preventDefault();
+      setError("");
+      try {
+        const made = await api.post<{ id: string }>("/api/setup/owners", { name });
+        navigate(`/owners/${made.id}`);
+      } catch (failed) {
+        setError(detail(failed));
+      }
+    }}>
+      <Field label="Name" id="new-owner" required maxLength={100} value={name}
+        onChange={(event) => setName(event.target.value)} />
+      <div><Button type="submit">Add owner</Button></div>
       <Notice tone="error">{error}</Notice>
-    </li>
+    </Form>
   );
 }
 
-function DrawForm({ owner, record }: { owner: OwnerMoney; record: Recorder }) {
-  const [id, setId] = useState(requestId);
-  const [amount, setAmount] = useState("");
-  const [on, setOn] = useState(day(new Date()));
+type OwnerTab = "summary" | "properties" | "financials" | "statements" | "email" | "files";
+const OWNER_TABS: { value: OwnerTab; label: string }[] = [
+  { value: "summary", label: "Summary" },
+  { value: "properties", label: "Properties" },
+  { value: "financials", label: "Financials" },
+  { value: "statements", label: "Statements" },
+  { value: "email", label: "Email" },
+  { value: "files", label: "Files" },
+];
+
+// An owner (ADR 0006): Summary (contact details, portal login, the agreements' terms), Properties
+// (what each account holds, keeps back and may pay out), Financials (their statement, and a
+// contribution recorded), Statements (each month's, and the year's income statement) and Files.
+export function OwnerPage({ me, id }: { me: Me; id: string }) {
+  const [owner, setOwner] = useState<Owner | null>(null);
+  const [said, setSaid] = useState("");
+  const [error, setError] = useState("");
+  const [tab, setTab] = useState<OwnerTab>("summary");
+
+  function refresh() {
+    api.get<Owner>(`/api/owners/${id}`).then(setOwner).catch((why) => setError(detail(why)));
+  }
+  useEffect(refresh, [id]);
+
+  if (owner === null) {
+    return (
+      <Shell me={me} nav={STAFF_NAV}>
+        <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
+      </Shell>
+    );
+  }
   return (
-    <form
-      className="flex flex-wrap items-end gap-3"
-      onSubmit={async (event) => {
-        event.preventDefault();
-        const body = { request_id: id, account: owner.account, amount: amount || null, on };
-        const said = (taken: { amount: string }) => `${money(taken.amount)} paid out to ${owner.owner}.`;
-        if (await record("/api/payables/draws", body, said)) {
-          setId(requestId());
-          setAmount("");
-        }
-      }}
-    >
-      <Field label="Draw amount (leave empty for all available)" id={`draw-${owner.account}`}
-        inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
-      <Field label="Paid out on" id={`draw-on-${owner.account}`} type="date" required value={on}
-        onChange={(e) => setOn(e.target.value)} />
-      <Button type="submit">Record draw</Button>
-    </form>
+    <Shell me={me} nav={STAFF_NAV}>
+      <PageHeader title={owner.name} actions={
+        <RecordActions path={`/api/owners/${id}`} name={owner.name} archived={owner.archived}
+          onChange={(done) => { setSaid(done); refresh(); }} />
+      } />
+      <Said>{said}</Said>
+      <div>
+        <Tabs label="Owner" tabs={OWNER_TABS} value={tab} onChange={setTab} />
+        {tab === "summary" && <OwnerSummary owner={owner} refresh={refresh} />}
+        {tab === "properties" && <OwnerProperties accounts={owner.accounts} />}
+        {tab === "financials" && <OwnerFinancials owner={owner} refresh={refresh} />}
+        {tab === "statements" && (
+          <div className="flex flex-col gap-6">
+            <OwnerStatements owner={owner} />
+            <HistoryCard about="owner" id={id} />
+          </div>
+        )}
+        {tab === "files" && <FilesCard kind="owner_document" aboutId={id} name={owner.name} />}
+        {tab === "email" && <EmailsCard about="owner" aboutId={id} name={owner.name} emailOn={me.email_on} />}
+      </div>
+    </Shell>
   );
 }
 
-function ContributionForm({ owner, record }: { owner: OwnerMoney; record: Recorder }) {
+function OwnerSummary({ owner, refresh }: { owner: Owner; refresh: () => void }) {
+  const [setting, setSetting] = useState(false);
+  const [said, setSaid] = useState("");
+  const property = (account: string) => owner.accounts.find((a) => a.account === account)?.property ?? account;
+  return (
+    <div className="flex flex-col gap-6">
+      <ContactCard path={`/api/owners/${owner.id}`} contact={owner.contact} refresh={refresh} name={owner.name} />
+      <PortalCard kind="owner" personId={owner.id} name={owner.name} portal={owner.portal}
+        loginEmail={owner.login_email} email={owner.contact.email} refresh={refresh} />
+      <Card title="Management agreements">
+        {owner.agreements.length === 0 ? (
+          <p className="text-sm text-ink-subtle">None: no reserve is kept and no fee is taken.</p>
+        ) : (
+          <ul className="flex flex-col gap-2 text-base" aria-label="Management agreements">
+            {owner.agreements.map((terms) => (
+              <li key={terms.account}>
+                <span className="font-medium">{property(terms.account)}</span>: {agreementLine(terms)}
+              </li>
+            ))}
+          </ul>
+        )}
+        {owner.accounts.length > 0 && (
+          <div className="mt-3"><Button variant="secondary" onClick={() => setSetting(true)}>Set terms</Button></div>
+        )}
+      </Card>
+      <Said>{said}</Said>
+      {setting && (
+        <TermsPanel panel={{ say: setSaid, refresh, close: () => setSetting(false) }}
+          accounts={owner.accounts.map((a) => ({ account: a.account, label: `${owner.name}, ${a.property}` }))} />
+      )}
+    </div>
+  );
+}
+
+// An agreement's terms in a line: "8% of rent collected, at least $25.00, plus $10.00; leasing
+// fee 50%; reserve $100.00; the owner approves bills over $500.00; from 01/01/2026".
+export function agreementLine(terms: Agreement): string {
+  const fee = [`${terms.fee_percent}% of rent collected`];
+  if (Number(terms.minimum_fee) > 0) fee.push(`at least ${money(terms.minimum_fee)}`);
+  if (Number(terms.flat_fee) > 0) fee.push(`plus ${money(terms.flat_fee)}`);
+  return [
+    fee.join(", "),
+    `leasing fee ${terms.leasing_fee_percent}%`,
+    `reserve ${money(terms.reserve)}`,
+    ...(Number(terms.bill_markup_percent) > 0 ? [`${terms.bill_markup_percent}% markup on bills`] : []),
+    `the owner approves bills over ${money(terms.approval_limit)}`,
+    `from ${usDate(terms.starts_on)}`,
+  ].join("; ");
+}
+
+function OwnerProperties({ accounts }: { accounts: OwnerMoney[] }) {
+  if (accounts.length === 0) {
+    return <EmptyState icon={Users} title="No property account yet." body="Open one from a property's page, Add owner." />;
+  }
+  return (
+    <Wide>
+      <table className="w-full text-base" aria-label="Properties">
+        <thead>
+          <tr>
+            <th className="text-left">Property</th>
+            <th className="text-left">Trust account</th>
+            <th className="text-right">Cash held</th>
+            <th className="text-right">Reserve</th>
+            <th className="text-right">Unpaid bills</th>
+            <th className="text-right">Available</th>
+          </tr>
+        </thead>
+        <tbody>
+          {accounts.map((account) => (
+            <tr key={account.account} aria-label={account.property}>
+              <td><GoLink href={`/properties/${account.property_id}`} className={LINK}>{account.property}</GoLink></td>
+              <td className="text-ink-muted">{account.bank_account}</td>
+              <td className="text-right">{money(account.balance)}</td>
+              <td className="text-right">{money(account.reserve)}</td>
+              <td className="text-right">{money(account.unpaid_bills)}</td>
+              <td className="text-right font-medium">{money(account.available)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Wide>
+  );
+}
+
+// Financials: the owner's statement over days (this year to today, at first), and in side panels
+// Record contribution, money the owner put in, and Take a fee (an inspection, a lease-up, another;
+// migration 0082), from the owner's account into the company's fee account.
+function OwnerFinancials({ owner, refresh }: { owner: Owner; refresh: () => void }) {
+  const today = day(new Date());
+  const [start, setStart] = useState(`${today.slice(0, 4)}-01-01`);
+  const [end, setEnd] = useState(today);
+  const [statement, setStatement] = useState<StatementData | null>(null);
+  const [error, setError] = useState("");
+  const [adding, setAdding] = useState<"contribution" | "fee" | null>(null);
+  const [runs, setRuns] = useState(0);
+  const { said, error: refused, record } = useRecord(() => { setRuns((n) => n + 1); refresh(); });
+
+  useEffect(() => {
+    setError("");
+    const query = new URLSearchParams({ start, end });
+    api.get<StatementData>(`/api/owners/${owner.id}/statement?${query}`)
+      .then(setStatement)
+      .catch((why) => { setStatement(null); setError(detail(why)); });
+  }, [owner.id, start, end, runs]);
+
+  const recordThenClose: Recorder = async (path, body, done) => {
+    const recorded = await record(path, body, done);
+    if (recorded) setAdding(null);
+    return recorded;
+  };
+  const download = (format: string) =>
+    `/api/owners/${owner.id}/statement/download?${new URLSearchParams({ start, end, format })}`;
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <Field label="From" id="owner-start" type="date" required value={start}
+            onChange={(event) => setStart(event.target.value)} />
+          <Field label="To" id="owner-end" type="date" required value={end}
+            onChange={(event) => setEnd(event.target.value)} />
+          <LinkButton href={download("pdf")}>PDF</LinkButton>
+          <LinkButton href={download("csv")}>CSV</LinkButton>
+        </div>
+        {owner.accounts.length > 0 && (
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => setAdding("contribution")}>Record contribution</Button>
+            <Button variant="secondary" onClick={() => setAdding("fee")}>Take a fee</Button>
+          </div>
+        )}
+      </div>
+      <Said>{said}</Said>
+      {!adding && <Notice tone="error">{refused}</Notice>}
+      <Notice tone="error">{error}</Notice>
+      {statement && <StatementView grouped={group(statement)} />}
+      {adding === "contribution" && (
+        <SidePanel title="Record contribution" onClose={() => setAdding(null)}>
+          <ContributionForm owner={owner} record={recordThenClose} />
+          <Notice tone="error">{refused}</Notice>
+        </SidePanel>
+      )}
+      {adding === "fee" && (
+        <SidePanel title="Take a fee" onClose={() => setAdding(null)}>
+          <OwnerFeeForm owner={owner} record={recordThenClose} />
+          <Notice tone="error">{refused}</Notice>
+        </SidePanel>
+      )}
+    </div>
+  );
+}
+
+function ContributionForm({ owner, record }: { owner: Owner; record: Recorder }) {
   const [id, setId] = useState(requestId);
+  const [account, setAccount] = useState(owner.accounts[0]?.account ?? "");
   const [amount, setAmount] = useState("");
   const [on, setOn] = useState(day(new Date()));
   const [memo, setMemo] = useState("");
   return (
-    <form
-      className="flex flex-wrap items-end gap-3"
+    <Form
+      className="flex flex-col gap-3"
       onSubmit={async (event) => {
         event.preventDefault();
-        const body = { request_id: id, account: owner.account, amount, on, memo: memo || null };
-        if (await record("/api/payables/contributions", body,
-          () => `${money(amount)} from ${owner.owner} recorded.`)) {
+        const body = { request_id: id, account, amount, on, memo: memo || null };
+        if (await record("/api/payables/contributions", body, () => `${money(amount)} from ${owner.name} recorded.`)) {
           setId(requestId());
           setAmount("");
           setMemo("");
         }
       }}
     >
-      <Field label="Contribution received" id={`contribution-${owner.account}`} inputMode="decimal"
-        required value={amount} onChange={(e) => setAmount(e.target.value)} />
-      <Field label="Contribution received on" id={`contribution-on-${owner.account}`} type="date"
-        required value={on} onChange={(e) => setOn(e.target.value)} />
-      <Field label="For" id={`contribution-memo-${owner.account}`} maxLength={200} value={memo}
-        onChange={(e) => setMemo(e.target.value)} />
-      <Button type="submit" variant="secondary">Record contribution</Button>
-    </form>
+      <Select label="Into" id="contribution-account" value={account} onChange={(event) => setAccount(event.target.value)}>
+        {owner.accounts.map((a) => <option key={a.account} value={a.account}>{a.property}</option>)}
+      </Select>
+      <Field label="Contribution received" id="contribution-amount" inputMode="decimal" required value={amount}
+        onChange={(event) => setAmount(event.target.value)} />
+      <Field label="Received on" id="contribution-on" type="date" required value={on}
+        onChange={(event) => setOn(event.target.value)} />
+      <Field label="For" id="contribution-memo" maxLength={200} value={memo}
+        onChange={(event) => setMemo(event.target.value)} />
+      <div><Button type="submit">Record contribution</Button></div>
+    </Form>
   );
 }
 
-function FeesCard({ refresh }: { refresh: () => void }) {
-  const { error, record } = useRecord(refresh);
-  const month = lastMonthPeriod(new Date());
-  const [start, setStart] = useState(month.start);
-  const [end, setEnd] = useState(month.end);
-  const [on, setOn] = useState(day(new Date()));
-  const [fees, setFees] = useState<Fee[] | null>(null);
-  return (
-    <Card title="Management fees">
-      <p className="mb-4 text-sm text-ink-muted">
-        Each agreement's fee for the period, from the rent and recurring fees collected in it, once
-        per period.
-      </p>
-      <form
-        className="flex flex-wrap items-end gap-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          setFees(null);
-          record<Fee[]>("/api/payables/management-fees",
-            { period_start: start, period_end: end, on },
-            (taken) => {
-              setFees(taken);
-              return "";
-            });
-        }}
-      >
-        <Field label="Period from" id="fee-start" type="date" required value={start}
-          onChange={(e) => setStart(e.target.value)} />
-        <Field label="Up to (not including)" id="fee-end" type="date" required value={end}
-          onChange={(e) => setEnd(e.target.value)} />
-        <Field label="Taken on" id="fee-on" type="date" required value={on}
-          onChange={(e) => setOn(e.target.value)} />
-        <Button type="submit" variant="secondary">Take fees</Button>
-      </form>
-      {fees !== null && (
-        <ul className="mt-4 flex flex-col gap-1 text-sm" aria-label="Fees taken">
-          {fees.length === 0 ? (
-            <li>No agreement was in force in that period.</li>
-          ) : (
-            fees.map((fee) => <li key={fee.account}>{feeLine(fee)}</li>)
-          )}
-        </ul>
-      )}
-      <Notice tone="error">{error}</Notice>
-    </Card>
-  );
-}
-
-// The company's earned fees still in each operating trust bank account, and taking them out to
-// the company's own account. Left in trust they mix the company's money with its clients'.
-function CompanyFeesCard({ fees, refresh }: { fees: CompanyFees[]; refresh: () => void }) {
-  const today = day(new Date());
-  return (
-    <Card title="Company fees in trust">
-      <p className="mb-4 text-sm text-ink-muted">
-        Fees the company has earned are its own money: take them out of trust, by 25 days after
-        the oldest came in, so they don't mix with the money held for owners and tenants.
-      </p>
-      {fees.length === 0 ? (
-        <Notice tone="info">No operating trust bank account yet. Add one in Setup.</Notice>
-      ) : (
-        <ul className="flex flex-col divide-y divide-line">
-          {fees.map((held) => (
-            <CompanyFeesRow key={held.bank_account_id} fees={held} today={today} refresh={refresh} />
-          ))}
-        </ul>
-      )}
-    </Card>
-  );
-}
-
-function CompanyFeesRow({ fees, today, refresh }: { fees: CompanyFees; today: string; refresh: () => void }) {
-  const { said, error, record } = useRecord(refresh);
+// A fee from the owner besides the management and leasing fees (q051): it moves from their
+// account into the company's fee account, inside trust, once per request id; staff who hold
+// disburse take it, and the owner's statement shows it with what it was for.
+function OwnerFeeForm({ owner, record }: { owner: Owner; record: Recorder }) {
   const [id, setId] = useState(requestId);
+  const [account, setAccount] = useState(owner.accounts[0]?.account ?? "");
+  const [kind, setKind] = useState<OwnerFeeKind>("inspection");
   const [amount, setAmount] = useState("");
-  const [on, setOn] = useState(today);
-  const due = companyFeesDue(fees, today);
-  return (
-    <li className="flex flex-col gap-2 py-4" aria-label={fees.bank_account}>
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <p className="font-medium">{fees.bank_account}</p>
-        {due && <Badge tone={due.late ? "danger" : "caution"}>{due.word}</Badge>}
-      </div>
-      <p className="text-sm text-ink-subtle" data-testid="company-fees">{companyFeesLabel(fees)}</p>
-      {fees.since !== null && (
-        <form
-          className="flex flex-wrap items-end gap-3"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            const body = { request_id: id, bank_account_id: fees.bank_account_id, amount: amount || null, on };
-            const taken = (out: { amount: string }) => `${money(out.amount)} of the company's fees taken out.`;
-            if (await record("/api/payables/company-fees", body, taken)) {
-              setId(requestId());
-              setAmount("");
-            }
-          }}
-        >
-          <Field label="Amount (leave empty for all)" id={`company-fees-${fees.bank_account_id}`}
-            inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} />
-          <Field label="Paid out on" id={`company-fees-on-${fees.bank_account_id}`} type="date"
-            required value={on} onChange={(e) => setOn(e.target.value)} />
-          <Button type="submit">Take out company fees</Button>
-        </form>
-      )}
-      <Notice tone="info">{said}</Notice>
-      <Notice tone="error">{error}</Notice>
-    </li>
-  );
-}
-
-// What taking a lease's leasing fee did. An agreement that takes no leasing fee charges none:
-// the lease's one leasing fee is then $0.00, not a fee to take later.
-export function leasingFeeSaid(amount: string): string {
-  return Number(amount) > 0
-    ? `A leasing fee of ${money(amount)} is taken.`
-    : "No leasing fee: the owner's agreement in force takes none, so none is due for this lease.";
-}
-
-function LeasingFeeCard({ books, refresh }: { books: Portfolio; refresh: () => void }) {
-  const { said, error, record } = useRecord(refresh);
-  const leases = books.properties.flatMap((p) =>
-    p.units.flatMap((u) =>
-      u.leases.map((l) => ({ id: l.id, property: p.id, label: `${p.name}, ${u.name} from ${l.starts_on}` })),
-    ),
-  );
-  const [lease, setLease] = useState(leases[0]?.id ?? "");
-  const property = leases.find((l) => l.id === lease)?.property;
-  const accounts = books.accounts.filter((a) => a.property_id === property);
-  const [account, setAccount] = useState("");
-  const chosen = accounts.some((a) => a.account === account) ? account : (accounts[0]?.account ?? "");
+  const [memo, setMemo] = useState("");
   const [on, setOn] = useState(day(new Date()));
-  if (leases.length === 0) return null;
+  const property = owner.accounts.find((a) => a.account === account)?.property ?? "";
   return (
-    <Card title="Leasing fee">
-      <form
-        className="flex flex-wrap items-end gap-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          record<{ amount: string }>("/api/payables/leasing-fees",
-            { lease_id: lease, account: chosen, on },
-            (taken) => leasingFeeSaid(taken.amount));
-        }}
-      >
-        <Select label="Lease" id="leasing-lease" value={lease} onChange={(e) => setLease(e.target.value)}>
-          {leases.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.label}
-            </option>
-          ))}
-        </Select>
-        <Select label="From owner" id="leasing-account" value={chosen}
-          onChange={(e) => setAccount(e.target.value)}>
-          {accounts.map((a) => (
-            <option key={a.account} value={a.account}>
-              {a.owner}
-            </option>
-          ))}
-        </Select>
-        <Field label="Taken on" id="leasing-on" type="date" required value={on}
-          onChange={(e) => setOn(e.target.value)} />
-        <Button type="submit" variant="secondary">Take leasing fee</Button>
-      </form>
-      <Notice tone="info">{said}</Notice>
-      <Notice tone="error">{error}</Notice>
-    </Card>
+    <Form
+      className="flex flex-col gap-3"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        const body = { request_id: id, account, kind, amount, memo, on };
+        if (await record("/api/payables/owner-fees", body, () => ownerFeeSummary(kind, amount, property))) {
+          setId(requestId());
+          setAmount("");
+          setMemo("");
+        }
+      }}
+    >
+      <Select label="From" id="owner-fee-account" value={account} onChange={(event) => setAccount(event.target.value)}>
+        {owner.accounts.map((a) => <option key={a.account} value={a.account}>{a.property}</option>)}
+      </Select>
+      <Select label="Fee" id="owner-fee-kind" value={kind} onChange={(event) => setKind(event.target.value as OwnerFeeKind)}>
+        {OWNER_FEE_KINDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </Select>
+      <Field label="Amount" id="owner-fee-amount" inputMode="decimal" required value={amount}
+        onChange={(event) => setAmount(event.target.value)} />
+      <Field label="What it is for" id="owner-fee-memo" required maxLength={200} value={memo}
+        onChange={(event) => setMemo(event.target.value)} />
+      <Field label="Taken on" id="owner-fee-on" type="date" required value={on}
+        onChange={(event) => setOn(event.target.value)} />
+      <p className="text-sm text-ink-muted">
+        It moves from the owner's account to the company's fee account, inside trust, and shows on their statement.
+      </p>
+      <div><Button type="submit">Take fee</Button></div>
+    </Form>
+  );
+}
+
+// The last twelve months, newest first, each from its first day to its last (UTC).
+export function lastTwelveMonths(today: Date): { label: string; start: string; end: string }[] {
+  const months = [];
+  for (let back = 1; back <= 12; back++) {
+    const first = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - back, 1));
+    const last = new Date(Date.UTC(first.getUTCFullYear(), first.getUTCMonth() + 1, 0));
+    const label = first.toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+    months.push({ label, start: day(first), end: day(last) });
+  }
+  return months;
+}
+
+function OwnerStatements({ owner }: { owner: Owner }) {
+  const today = new Date();
+  return (
+    <div className="flex flex-col gap-4">
+      <ul className="flex flex-col gap-1 text-base" aria-label="Monthly statements">
+        {lastTwelveMonths(today).map((month) => (
+          <li key={month.start}>
+            <a className={LINK} href={`/api/owners/${owner.id}/statement/download?${new URLSearchParams({ start: month.start, end: month.end, format: "pdf" })}`}>
+              {month.label} statement (PDF)
+            </a>
+          </li>
+        ))}
+      </ul>
+      <div>
+        <LinkButton href={incomeStatementHref(owner.id, day(today))}>Income statement this year (PDF)</LinkButton>
+      </div>
+    </div>
   );
 }

@@ -10,7 +10,7 @@ from pms.api.deps import AREAS as APP_AREAS
 
 AREAS = [
     "rent", "bills", "owners", "budgets", "journal", "month-end", "switching", "setup",
-    "move-out", "documents", "leasing", "maintenance", "people",
+    "move-out", "documents", "leasing", "maintenance", "people", "email",
 ]  # fmt: skip
 
 

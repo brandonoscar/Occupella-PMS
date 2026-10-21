@@ -94,6 +94,7 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
             "starts_on": "2026-01-01",
             "ends_on": None,
             "monthly_rent": "1500.00",
+            "rent_due_day": 1,
             "rent_changes": [],
             "tenants": ["Tenant 1", "Tenant 2"],
             "balance_due": "1500.00",
@@ -119,6 +120,10 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
                 "standing": "none on file",
                 "below_minimum": False,
             },
+            # Only payments staff record are listed, with receipts; this one was posted directly.
+            "payments": [],
+            # No lease signed through the PMS and no lease documents kept.
+            "files": [],
         },
         {
             "lease_id": str(home.old_lease),
@@ -127,6 +132,7 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
             "starts_on": "2025-01-01",
             "ends_on": "2025-12-31",
             "monthly_rent": "1400.00",
+            "rent_due_day": 1,
             "rent_changes": [],
             "tenants": ["Tenant 1"],
             "balance_due": "0.00",
@@ -135,6 +141,8 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
             "coming_due": [],
             "deposit_returned": False,
             "renters_insurance": None,  # not in effect
+            "payments": [],
+            "files": [],
         },
     ]
 
@@ -345,15 +353,21 @@ def test_a_tenant_files_a_request_and_their_co_tenant_sees_it(
         "filed_by",
         "summary",
         "entry_allowed",
+        "emergency",
         "submitted_at",
         "status",
         "status_at",
+        "visit_on",
+        "visit_window",
+        "photos",
     }
-    assert (request["filed_by"], request["summary"], request["status"]) == (
-        "Tenant 1",
-        "Tap drips",
-        "received",
-    )
+    assert (
+        request["filed_by"],
+        request["summary"],
+        request["status"],
+        request["emergency"],
+        request["photos"],
+    ) == ("Tenant 1", "Tap drips", "received", False, 0)
     assert other_client.get("/api/tenant/requests").json() == [request]
 
 

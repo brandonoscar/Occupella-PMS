@@ -1,5 +1,5 @@
 // The PMC's books as staff set them up (src/pms/api/setup.py), and how they read.
-import { money } from "./money";
+import { money, usDate } from "./money";
 
 export type BankKind = "operating" | "security_deposit";
 export type Named = { id: string; name: string };
@@ -16,6 +16,8 @@ export type Agreement = {
   leasing_fee_percent: string;
   reserve: string;
   approval_limit: string;
+  // The percent of a bill the company may add as its markup; "0": none.
+  bill_markup_percent: string;
 };
 export type OwnerAccount = {
   account: string;
@@ -25,6 +27,8 @@ export type OwnerAccount = {
   property: string;
   bank_account: string;
   agreement: Agreement | null;
+  // The owner's percent in the property's ownership shares in force today; null without one.
+  ownership_percent: string | null;
 };
 export type Lease = {
   id: string;
@@ -43,6 +47,9 @@ export type LateFees = {
 };
 // A property's NSF fee, charged when the bank returns a tenant's payment; "0.00" charges none.
 export type NsfFee = { starts_on: string; fee: string };
+// A property's lease-break fee terms: a flat fee and months of rent, for leases starting from
+// the day (POST /api/setup/lease-break-fees).
+export type LeaseBreakFee = { starts_on: string; flat_fee: string; rent_months: string };
 export type Property = Named & { units: Unit[]; late_fees: LateFees | null; nsf_fee: NsfFee | null };
 export type Tenant = Named & { property_id: string; property: string };
 // An account bills go in, on the line of Schedule E (Form 1040) its expenses are reported on.
@@ -89,6 +96,7 @@ export function agreementSummary(terms: Agreement): string {
     parts.push(`${terms.leasing_fee_percent}% of a new lease's monthly rent`);
   }
   if (positive(terms.reserve)) parts.push(`keeps ${money(terms.reserve)} in reserve`);
+  if (positive(terms.bill_markup_percent)) parts.push(`${terms.bill_markup_percent}% markup on bills`);
   parts.push(
     positive(terms.approval_limit)
       ? `owner approves bills over ${money(terms.approval_limit)}`
@@ -115,7 +123,18 @@ export function nsfFeeSummary(terms: NsfFee | null): string {
   return terms && positive(terms.fee) ? `NSF fee ${money(terms.fee)}` : "No NSF fee";
 }
 
+// Lease-break fee terms in a line: "Lease-break fee $250.00 and 1.5 months' rent", or none.
+export function leaseBreakFeeSummary(terms: LeaseBreakFee | null): string {
+  if (terms === null) return "No lease-break fee";
+  const months = Number(terms.rent_months);
+  const parts = [
+    positive(terms.flat_fee) ? money(terms.flat_fee) : "",
+    months > 0 ? `${terms.rent_months} ${months === 1 ? "month's" : "months'"} rent` : "",
+  ].filter(Boolean);
+  return parts.length ? `Lease-break fee ${parts.join(" and ")}` : "No lease-break fee";
+}
+
 export function leaseSummary(lease: Lease): string {
-  const term = lease.ends_on ? `${lease.starts_on} to ${lease.ends_on}` : `from ${lease.starts_on}, month to month`;
+  const term = `${usDate(lease.starts_on)} – ${lease.ends_on ? usDate(lease.ends_on) : "Month to month"}`;
   return `${lease.tenants.join(", ")}: ${term}, ${money(lease.monthly_rent)} a month`;
 }

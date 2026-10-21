@@ -79,6 +79,60 @@ def test_a_property_shows_its_owners_money_and_each_units_lease(client, conn, st
     assert units["Unit 3"]["lease"] is None
 
 
+def test_a_property_shows_the_terms_in_force_today(client, conn, staff, pmc):
+    owner = pmc.owners[0]
+    bare = ok(client.get(f"/api/properties/{owner.property_id}"))
+    assert (bare["late_fees"], bare["nsf_fee"], bare["owners"][0]["agreement"]) == (
+        None,
+        None,
+        None,
+    )
+
+    for path, body in (
+        (
+            "agreements",
+            {
+                "account": owner.account,
+                "starts_on": str(TODAY - 9 * DAY),
+                "fee_percent": "8",
+                "reserve": "200.00",
+            },
+        ),
+        (
+            "agreements",
+            {"account": owner.account, "starts_on": str(TODAY + 5 * DAY), "fee_percent": "9"},
+        ),
+        (
+            "late-fees",
+            {
+                "property_id": str(owner.property_id),
+                "starts_on": str(TODAY),
+                "grace_days": 3,
+                "flat_fee": "25.00",
+            },
+        ),
+        (
+            "nsf-fees",
+            {"property_id": str(owner.property_id), "starts_on": str(TODAY - DAY), "fee": "35.00"},
+        ),
+    ):
+        ok(client.post(f"/api/setup/{path}", json=body), 201)
+
+    found = ok(client.get(f"/api/properties/{owner.property_id}"))
+    terms = found["owners"][0]["agreement"]
+    assert (terms["starts_on"], terms["fee_percent"], terms["reserve"]) == (
+        str(TODAY - 9 * DAY),
+        "8",
+        "200.00",
+    )
+    assert (found["late_fees"]["grace_days"], found["late_fees"]["flat_fee"]) == (3, "25.00")
+    assert found["late_fees"]["maximum"] is None
+    assert found["nsf_fee"] == {"starts_on": str(TODAY - DAY), "fee": "35.00"}
+    # Another property's terms are its own.
+    other = ok(client.get(f"/api/properties/{pmc.owners[1].property_id}"))
+    assert (other["late_fees"], other["nsf_fee"]) == (None, None)
+
+
 def test_a_unit_shows_every_lease_it_has_had_newest_first(client, conn, staff, pmc):
     prop = pmc.owners[0].property_id
     unit, old = lease_at(conn, pmc, prop, "Unit 1", "Tenant A", TODAY - 400 * DAY)
@@ -114,7 +168,7 @@ def test_the_rent_roll_shows_leases_in_effect_those_that_owe_or_all(client, conn
     owing = ok(client.get("/api/leases", params={"show": "owing"}))["items"]
     assert [(r["id"], r["owed"]) for r in owing] == [(str(ended), "75.00")]
     assert ok(client.get("/api/leases", params={"show": "all"}))["total"] == 3
-    one = ok(client.get("/api/leases", params={"property_id": str(second)}))["items"]
+    one = ok(client.get("/api/leases", params={"property": str(second)}))["items"]
     assert [r["id"] for r in one] == [str(b)]
     by_tenant = ok(client.get("/api/leases", params={"q": "tenant a"}))["items"]
     assert [r["id"] for r in by_tenant] == [str(a)]
@@ -188,12 +242,28 @@ def test_staff_archive_and_bring_back_a_unit_and_a_property_only_when_nothing_is
     assert len(ok(client.get("/api/properties"))["items"]) == 2
 
 
-def test_search_finds_properties_units_and_tenants_with_the_page_each_opens(
+def test_search_finds_properties_units_tenants_and_owners_with_the_page_each_opens(
     client, conn, staff, pmc
 ):
     prop = pmc.owners[0].property_id
-    unit, lease = lease_at(conn, pmc, prop, "Maple 1", "Jordan Maple", TODAY - 30 * DAY)
+    unit, _ = lease_at(conn, pmc, prop, "Maple 1", "Jordan Maple", TODAY - 30 * DAY)
+    (tenant,) = conn.execute(
+        "SELECT id FROM trust_tenants WHERE display_name = 'Jordan Maple'"
+    ).fetchone()
     conn.execute("UPDATE trust_properties SET display_name = 'Maple Court' WHERE id = %s", (prop,))
+    conn.execute(
+        "UPDATE trust_owners SET display_name = 'Maple Holdings' WHERE id = %s",
+        (pmc.owners[0].owner_id,),
+    )
+    # An archived owner is found no more.
+    conn.execute(
+        "UPDATE trust_owners SET display_name = 'Maple Gone' WHERE id = %s",
+        (pmc.owners[1].owner_id,),
+    )
+    conn.execute(
+        "INSERT INTO trust_archivals (pmc_id, owner_id, archived) VALUES (%s, %s, true)",
+        (pmc.pmc_id, pmc.owners[1].owner_id),
+    )
     theirs = make_pmc(conn)
     add_unit(conn, theirs.pmc_id, theirs.owners[0].property_id, "Maple 9")
 
@@ -202,7 +272,8 @@ def test_search_finds_properties_units_and_tenants_with_the_page_each_opens(
     assert [(f["kind"], f["label"], f["detail"], f["href"]) for f in found] == [
         ("property", "Maple Court", "", f"/properties/{prop}"),
         ("unit", "Maple 1", "Maple Court", f"/units/{unit}"),
-        ("tenant", "Jordan Maple", "Maple 1, Maple Court", f"/leases/{lease}"),
+        ("tenant", "Jordan Maple", "Maple 1, Maple Court", f"/tenants/{tenant}"),
+        ("owner", "Maple Holdings", "", f"/owners/{pmc.owners[0].owner_id}"),
     ]
 
 
@@ -261,7 +332,7 @@ def test_only_staff_see_or_change_rentals(client, conn, app_conn, pmc, caller):
         ("get", "/api/properties?per_page=201", None),
         ("get", "/api/properties?page=0", None),
         ("get", "/api/leases?show=late", None),
-        ("get", "/api/leases?property_id=not-an-id", None),
+        ("get", "/api/leases?property=not-an-id", None),
         ("get", "/api/search?q=a", None),
         ("get", "/api/search", None),
         ("get", "/api/properties/not-an-id", None),

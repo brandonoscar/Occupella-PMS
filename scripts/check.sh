@@ -77,8 +77,10 @@ schema_has_not_drifted() {
 }
 
 coverage_gates() {
+  coverage combine -q --keep coverage/lint.coverage coverage/tests-1.coverage \
+    coverage/tests-2.coverage || return 1
   coverage xml -q -o coverage/python.xml || return 1
-  python -m tools.coverage_gate --sql-raw coverage/sql-raw.json \
+  python -m tools.coverage_gate --sql-raw coverage/sql-raw-1.json coverage/sql-raw-2.json \
     --python-xml coverage/python.xml --sql-xml-out coverage/sql.xml || return 1
   diff-cover coverage/python.xml coverage/sql.xml --compare-branch="$base" \
     --fail-under="$(python -m tools.coverage_gate --print coverage.changed_lines_min)"
@@ -94,6 +96,7 @@ step "lint" ruff check .
 step "format" ruff format --check .
 step "typecheck" mypy
 step "synthetic data" python -m tools.check_synthetic_data
+step "workflows (zizmor)" zizmor --offline --min-severity medium .github/workflows
 if command -v shellcheck >/dev/null; then
   step "shell scripts" shellcheck scripts/*.sh
 else
@@ -115,11 +118,16 @@ step "schema drift" schema_has_not_drifted
 step "upgrade a database that holds money" python -m tools.check_upgrade --base "$base"
 # coverage.yml, ledger-invariants.yml, golden.yml and the ci job's tests
 if server_has preloaded; then
-  # As in coverage.yml: the lint runs under coverage, then every test adds to it.
+  # As in coverage.yml: the lint runs under coverage, then the suite in its two shards (one
+  # after the other here), each with its own coverage data, and the gates add them up.
   rm -rf .coverage coverage
-  step "PL/pgSQL lint" coverage run -m tools.sql_lint
-  step "every test, with coverage" env PMS_SQL_COVERAGE_OUT=coverage/sql-raw.json \
-    coverage run -a -m pytest -q -p no:cacheprovider
+  mkdir -p coverage
+  step "PL/pgSQL lint" env COVERAGE_FILE=coverage/lint.coverage coverage run -m tools.sql_lint
+  for shard in 1 2; do
+    step "tests, shard $shard of 2, with coverage" env PMS_TEST_SHARD="$shard/2" \
+      PMS_SQL_COVERAGE_OUT="coverage/sql-raw-$shard.json" \
+      COVERAGE_FILE="coverage/tests-$shard.coverage" coverage run -m pytest -q -p no:cacheprovider
+  done
   step "coverage gates" coverage_gates
 else
   if server_has available; then
@@ -130,14 +138,28 @@ else
   step "every test" pytest -q -p no:cacheprovider
   skip "coverage gates" "needs plpgsql_check in shared_preload_libraries; CI's coverage job runs them"
 fi
-# e2e.yml: the portal's typecheck, unit tests and build (the browser tests need a running
-# API and a seeded database; frontend/playwright.config.ts says how to run them by hand)
+# ci.yml's email job: each kind of email sent to Mailpit and read back (tests/test_email_mailpit.py)
+if command -v "${MAILPIT:-mailpit}" >/dev/null; then
+  step "email through Mailpit" pytest -q -p no:cacheprovider -m mailpit
+else
+  skip "email through Mailpit" "mailpit is not installed (go install github.com/axllent/mailpit@v1.31.6); CI's email job runs it"
+fi
+# ledger-invariants.yml, nightly: 16 staff on one company's books at once for five minutes; here
+# 8 for 15 seconds, on a database of its own
+step "many staff at once (a short soak)" env PYTHONPATH=src python -m tools.contention --workers 8 --seconds 15
+# ledger-invariants.yml, nightly: ten staff timed on a 1,000-unit company for five minutes; here
+# three on 100 units for 15 seconds, against the same ceilings
+step "speed (a short run)" env PYTHONPATH=src python -m tools.speed --units 100 --staff 3 \
+  --months 2 --seconds 15
+# e2e.yml: the portal's typecheck, lint (oxlint, knip), unit tests and build (the browser tests
+# need a running API and a seeded database; frontend/playwright.config.ts says how to run them
+# by hand)
 portal() {
   (cd frontend && npm ci --no-audit --no-fund --silent && npm run --silent typecheck \
-    && npm test --silent && npm run --silent build)
+    && npm run --silent lint && npm run --silent knip && npm test --silent && npm run --silent build)
 }
 if command -v npm >/dev/null; then
-  step "portal: typecheck, unit tests, build" portal
+  step "portal: typecheck, lint, unit tests, build" portal
 else
   skip "portal" "npm is not installed; CI's e2e job runs it"
 fi

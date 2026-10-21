@@ -1,136 +1,79 @@
-"""E-signing a lease offer through a partner, behind one interface.
+"""E-signing a lease offer on the PMS's own signing page (ADR 0008, migration 0097).
 
-The founder picks the real partner at deploy time; its keys and terms come then (ADR 0002).
-Until then the only partner is FakeESign. It keeps its envelopes in the server process's memory
-(shared by every app in the process, gone when it restarts, and not shared between worker
-processes: run one) and its signing page is part of the portal (/esign#<token>), shown only
-while the fake is on. A signer "signs" there by typing their name; nothing about it
-is a real signature, and it says so.
-
-PMS_ESIGN_PARTNER picks the partner (pms.api.Settings): "fake", or unset for none, and then no
-offer can be sent for signing.
+An offer sent to sign here has its signature request from PARTNER. Each signer signs through a
+link of their own (/sign#<token>), the token kept only as its SHA-256: staff get one per signer
+when they send the offer or ask for links again, and a tenant gets their own from the portal. A
+link works for 30 days while the offer is neither void nor a lease and its signer hasn't signed
+(trust_signing_link_open). Through it the signer reads the consumer disclosures and agrees to
+sign electronically (ESIGN, 15 U.S.C. 7001(c)), opens the lease, and signs it: their name typed,
+maybe their signature drawn, on the lease's SHA-256. The database checks each step; this module
+makes the links and words the disclosures.
 """
 
 from __future__ import annotations
 
 import hashlib
 import secrets
-import threading
-import uuid
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any
+from uuid import UUID
+
+import psycopg
+
+# trust_signature_requests.partner of an offer sent to sign here.
+PARTNER = "PMS e-sign"
+# How long a link works after it is made (trust_signing_link_open says the same).
+LINK_DAYS = 30
 
 
-@dataclass(frozen=True)
-class Signer:
-    position: int
-    name: str
-    email: str
+def reference(offer: UUID) -> str:
+    """The signature request's reference of an offer sent to sign here."""
+    return f"pms-esign-{offer}"
 
 
-class Partner(Protocol):
-    name: str
-
-    def send(self, title: str, document: bytes, signers: tuple[Signer, ...]) -> str:
-        """Sends a document for signing; the answer is the partner's reference for it."""
-        ...
-
-    def signing_link(self, reference: str, position: int) -> str:
-        """Where the signer at `position` signs."""
-        ...
-
-    def signed(self, reference: str) -> dict[int, datetime]:
-        """Who has signed so far, by position, and when."""
-        ...
+def token_digest(token: str) -> bytes:
+    return hashlib.sha256(token.encode()).digest()
 
 
-class NotSigned(Exception):
-    """The fake partner refused a signature: wrong link, or not the signer's name."""
+def new_link(
+    conn: psycopg.Connection[Any], pmc_id: UUID, offer: UUID, position: int, public_url: str
+) -> str:
+    """A new link for the signer at `position`, in the caller's transaction. Links made before
+    keep working until they run out."""
+    token = secrets.token_urlsafe(32)
+    conn.execute(
+        "INSERT INTO trust_signing_links (pmc_id, offer_id, position, token_sha256)"
+        " VALUES (%s, %s, %s, %s)",
+        (pmc_id, offer, position, token_digest(token)),
+    )
+    return f"{public_url.rstrip('/')}/sign#{token}"
 
 
-@dataclass
-class _Envelope:
-    title: str
-    sha256: str
-    signers: dict[int, Signer]
-    tokens: dict[int, str]
-    signed: dict[int, datetime] = field(default_factory=dict)
+def disclosure(company: str, address: str | None, email: str | None) -> str:
+    """What a signer reads and agrees to before signing electronically: the consumer disclosures
+    of ESIGN, 15 U.S.C. 7001(c)(1)(B) and (C), for this lease alone, naming how to reach the
+    company (its mailing address and the address replies to its emails go to, if on file)."""
+    reach = " or ".join(f"at {where}" for where in (email, address) if where)
+    write = f"write to {company} {reach}" if reach else f"contact {company}"
+    return "\n\n".join(
+        (
+            f"{company} asks you to receive and sign this lease electronically. Please read"
+            " this before you agree.",
+            "Paper instead. You may have this lease on paper and sign it on paper instead, at no"
+            f' charge. To ask, choose "I\'d rather sign on paper" on this page, or {write}.',
+            "What you agree to. Your agreement covers this lease only: reading it, signing it"
+            " and its signing certificate, here.",
+            "Taking it back. You may withdraw your agreement at any time before you sign, the"
+            f' same way ("I\'d rather sign on paper", or {write}). Then this link signs nothing'
+            f" and {company} gives you the lease on paper. Withdrawing doesn't undo a lease you"
+            f" have signed. If your email address changes, tell {company}.",
+            f"A paper copy. After you sign, you may ask {company} for a paper copy of the signed"
+            " lease, at no charge.",
+            "What you need. A device with a current web browser that opens PDF files, and a way"
+            " to save or print a PDF to keep your copy.",
+            "By agreeing, you confirm you can read this page and open PDF files on this device.",
+        )
+    )
 
 
-class FakeESign:
-    """A stand-in partner for development and tests (see the module's docstring)."""
-
-    name = "Fake e-sign partner"
-    # One store for the process, as a partner's own service would be one place.
-    _envelopes: dict[str, _Envelope] = {}
-    _tokens: dict[str, tuple[str, int]] = {}
-    _lock = threading.Lock()
-
-    def __init__(self, public_url: str) -> None:
-        self.public_url = public_url.rstrip("/")
-
-    def send(self, title: str, document: bytes, signers: tuple[Signer, ...]) -> str:
-        reference = f"fake-esign-{uuid.uuid4().hex}"
-        tokens = {s.position: secrets.token_urlsafe(32) for s in signers}
-        with self._lock:
-            self._envelopes[reference] = _Envelope(
-                title=title,
-                sha256=hashlib.sha256(document).hexdigest(),
-                signers={s.position: s for s in signers},
-                tokens=tokens,
-            )
-            for position, token in tokens.items():
-                self._tokens[token] = (reference, position)
-        return reference
-
-    def signing_link(self, reference: str, position: int) -> str:
-        with self._lock:
-            token = self._envelopes[reference].tokens[position]
-        return f"{self.public_url}/esign#{token}"
-
-    def signed(self, reference: str) -> dict[int, datetime]:
-        with self._lock:
-            envelope = self._envelopes.get(reference)
-            return dict(envelope.signed) if envelope else {}
-
-    # --- the fake's own signing page (src/pms/api/fake_esign.py) ---------------------------
-
-    def view(self, token: str) -> tuple[str, str, str, bool]:
-        """(document title, signer's name, document SHA-256, signed already?) for a link."""
-        with self._lock:
-            reference, position = self._found(token)
-            envelope = self._envelopes[reference]
-            return (
-                envelope.title,
-                envelope.signers[position].name,
-                envelope.sha256,
-                position in envelope.signed,
-            )
-
-    def sign(self, token: str, typed_name: str) -> None:
-        with self._lock:
-            reference, position = self._found(token)
-            envelope = self._envelopes[reference]
-            if typed_name.strip().casefold() != envelope.signers[position].name.casefold():
-                raise NotSigned("type your name as it is on the lease")
-            envelope.signed.setdefault(position, datetime.now(UTC))
-
-    def _found(self, token: str) -> tuple[str, int]:
-        if token not in self._tokens:
-            raise NotSigned("this signing link is not one of ours")
-        return self._tokens[token]
-
-
-class NoPartner(Exception):
-    """An e-sign partner was named that doesn't exist."""
-
-
-def partner_named(name: str, public_url: str) -> Partner | None:
-    """The partner called `name` ("fake"), or None for an empty name: no partner."""
-    chosen = name.strip()
-    if not chosen:
-        return None
-    if chosen != "fake":
-        raise NoPartner(f"no e-sign partner called {chosen!r}; known: fake")
-    return FakeESign(public_url)
+def disclosure_digest(text: str) -> str:
+    return hashlib.sha256(text.encode()).hexdigest()

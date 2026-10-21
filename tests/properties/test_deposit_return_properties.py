@@ -4,7 +4,9 @@ Hypothesis makes a lease of one to three tenants with deposits of any size, char
 and credits) due over its months, some partly paid, and returns the deposits after it ended. A
 model works out what the lease owed; the database must agree:
   - what is kept is what the lease owed, or every deposit if that was less, and it went into the
-    owner's account matched to the charges oldest first, each charge paid in full before the next;
+    owner's account matched to what is open of the rent first, then of the other charges, each
+    oldest first and paid in full before the next, the lease's credits coming off the rent
+    first too (migration 0093);
   - what goes back is the rest, to the tenants whose deposits it was, kept from in name order;
   - every deposit is emptied, every trust bank account still ties out, and the lease owes what it
     owed less what was kept;
@@ -74,7 +76,8 @@ def check(conn, app, deposits, charges):
     lease = open_lease(conn, pmc.pmc_id, unit, JAN_1, JUN_30, "1000.00", tenants)
 
     owed = Decimal(0)
-    unpaid = []  # (due_on, id, still open), as the database orders them
+    credits = Decimal(0)
+    bills = []  # (not rent, due_on, id, left unpaid)
     rent_days = set()
     for n, (kind, amount, days, percent) in enumerate(charges):
         due = JAN_1 + timedelta(days=days)
@@ -85,6 +88,7 @@ def check(conn, app, deposits, charges):
         made = charge(conn, pmc.pmc_id, lease, due, amount, kind, f"Charge {n}")
         if kind == "credit":
             owed -= amount
+            credits += amount
             continue
         paid = (amount * percent / 100).quantize(Decimal("0.01"))
         if paid:
@@ -93,8 +97,7 @@ def check(conn, app, deposits, charges):
             )
             apply_payment(conn, pmc.pmc_id, made, moved, paid)
         owed += amount - paid
-        if amount > paid:
-            unpaid.append((due, n, made, amount - paid))
+        bills.append((kind != "rent", due, made, amount - paid))
     owed = max(owed, Decimal(0))
     held = sum(deposits, Decimal(0))
     kept = min(owed, held)
@@ -129,22 +132,29 @@ def check(conn, app, deposits, charges):
         take = min(left, amount)
         left -= take
         assert returned_to.get(n, Decimal(0)) == amount - take
-    # Kept for the charges oldest first, each in full before the next.
+    # Kept for the rent first, then the other charges, each oldest first and in full before the
+    # next, of what is open of each once the credits came off them in the same order.
     paid_of = {}
     for _, made, amount in lines:
         if made is not None:
             paid_of[made] = paid_of.get(made, Decimal(0)) + amount
+    charged = dict(
+        conn.execute(
+            "SELECT id, created_at FROM trust_charges WHERE lease_id = %s", (lease,)
+        ).fetchall()
+    )
+    # The order money pays them: rent first, then by due date, when charged and id.
+    bills.sort(key=lambda b: (b[0], b[1], charged[b[2]], b[2]))
+    still, left = {}, credits
+    for _, _, made, unpaid in bills:
+        still[made] = unpaid - min(unpaid, left)
+        left -= unpaid - still[made]
     rest = kept
-    order = conn.execute(
-        "SELECT id FROM trust_charges WHERE lease_id = %s AND kind <> 'credit'"
-        " ORDER BY due_on, created_at, id",
-        (lease,),
-    ).fetchall()
-    still = {made: open_amount for _, _, made, open_amount in unpaid}
-    for (made,) in order:
-        due_part = min(rest, still.get(made, Decimal(0)))
+    for _, _, made, _ in bills:
+        due_part = min(rest, still[made])
         assert paid_of.get(made, Decimal(0)) == due_part
         rest -= due_part
+    event("kept for a fee" if any(paid_of.get(b[2]) for b in bills if b[0]) else "no fee kept for")
 
     # The same request again: nothing more.
     assert return_deposit(app, pmc.pmc_id, lease, "move-out", MOVE_OUT) == back

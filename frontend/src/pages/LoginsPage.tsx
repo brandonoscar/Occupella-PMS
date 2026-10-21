@@ -1,45 +1,33 @@
+import { KeyRound } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
-import type { BadgeTone } from "../components/Badge";
 import { Badge } from "../components/Badge";
-import { Button } from "../components/Button";
+import { EmptyState } from "../components/EmptyState";
 import { Notice } from "../components/Notice";
+import { RowMenu } from "../components/RowMenu";
+import { Said } from "../components/Said";
 import { PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
+import type { Person } from "../logins";
+import { LOGIN, ROLE, personHref } from "../logins";
+import type { Portal } from "../rentals";
+import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
+import { useRecord } from "./useRecord";
 
-type Person = {
-  kind: "staff" | "owner" | "tenant";
-  person_id: string;
-  name: string;
-  email: string | null;
-  login_id: string | null;
-  status: "no login" | "invited" | "active" | "disabled";
-};
+const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
+const FILTER = "h-9 rounded-sm border border-line-strong bg-canvas px-2 text-sm text-ink";
+const STATUSES: Portal[] = ["active", "invited", "no login", "disabled"];
 
-type Link = { login_id: string; url: string; expires_at: string };
-
-// A login's state as a badge: signed in is fine, an invite out is news, none yet is neutral.
-export const LOGIN: Record<Person["status"], { label: string; tone: BadgeTone }> = {
-  "no login": { label: "No login", tone: "neutral" },
-  invited: { label: "Invited", tone: "info" },
-  active: { label: "Active", tone: "positive" },
-  disabled: { label: "Disabled", tone: "caution" },
-};
-const ROLE: Record<Person["kind"], string> = { staff: "Staff", owner: "Owner", tenant: "Tenant" };
-
-// Settings → Logins: staff invite the PMC's owners and tenants (and each other). Each invite link
-// is shown once, to copy and send yourself: the PMS sends no invite email. A login is disabled
-// for good (no new invite brings it back), so Disable asks before it does anything.
+// Settings → Logins (ADR 0006, step 12): everyone who may sign in and their login's state, by
+// status. Invites are on each person's own page (an owner's, a tenant's, the staff page); here a
+// login is only disabled, for good (no new invite brings it back), from its row's menu.
 export function LoginsPage({ me }: { me: Me }) {
   const [people, setPeople] = useState<Person[] | null>(null);
-  const [emails, setEmails] = useState<Record<string, string>>({});
-  const [links, setLinks] = useState<Record<string, string>>({});
+  const [status, setStatus] = useState<Portal | "">("");
   const [error, setError] = useState("");
-  const [done, setDone] = useState("");
-  // The person whose login staff asked to disable, waiting for them to say yes.
-  const [disabling, setDisabling] = useState<string | null>(null);
+  const { said, error: refused, record } = useRecord(refresh);
 
   function refresh() {
     api
@@ -48,105 +36,50 @@ export function LoginsPage({ me }: { me: Me }) {
       .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
   }
   useEffect(refresh, []);
-
-  async function disable(person: Person) {
-    setError("");
-    setDone("");
-    try {
-      await api.post(`/api/logins/${person.login_id}/disable`);
-      setDisabling(null);
-      setDone(`${person.name}'s login is disabled; they are signed out.`);
-      refresh();
-    } catch (failed) {
-      setError(failed instanceof ApiError ? failed.detail : String(failed));
-    }
-  }
-
-  async function invite(person: Person) {
-    setError("");
-    setDone("");
-    try {
-      const link = await api.post<Link>("/api/invites", {
-        kind: person.kind,
-        person_id: person.person_id,
-        email: person.email ?? emails[person.person_id] ?? "",
-      });
-      setLinks({ ...links, [person.person_id]: link.url });
-      refresh();
-    } catch (failed) {
-      setError(failed instanceof ApiError ? failed.detail : String(failed));
-    }
-  }
+  const shown = (people ?? []).filter((p) => !status || p.status === status);
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title="Logins" />
-      <Notice tone="error">{error}</Notice>
-      <Notice tone="info">{done}</Notice>
+      <div className="flex flex-wrap items-center gap-3">
+        <select aria-label="Status" value={status} onChange={(e) => setStatus(e.target.value as Portal | "")} className={FILTER}>
+          <option value="">Every status</option>
+          {STATUSES.map((s) => <option key={s} value={s}>{LOGIN[s].label}</option>)}
+        </select>
+      </div>
+      <Said>{said}</Said>
+      <Notice tone="error">{refused || error}</Notice>
       {people === null ? (
-        <Notice tone="info">Loading</Notice>
+        !error && <Notice tone="info">Loading</Notice>
+      ) : shown.length === 0 ? (
+        <EmptyState icon={KeyRound} title="No logins here" />
       ) : (
         <Wide>
-          <table className="w-full text-base">
+          <table className="w-full text-base" aria-label="Logins">
             <thead>
               <tr>
                 <th className="text-left">Name</th>
                 <th className="text-left">Role</th>
                 <th className="text-left">Email</th>
                 <th className="text-left">Login</th>
-                <th />
+                <th><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody>
-              {people.map((person) => (
-                <tr key={person.person_id}>
-                  <td>{person.name}</td>
+              {shown.map((person) => (
+                <tr key={`${person.kind} ${person.person_id}`} aria-label={person.name}>
+                  <td><GoLink href={personHref(person)} className={LINK}>{person.name}</GoLink></td>
                   <td className="text-ink-muted">{ROLE[person.kind]}</td>
-                  <td>
-                    {person.email ?? (
-                      <input
-                        aria-label={`Email for ${person.name}`}
-                        type="email"
-                        placeholder="Email to invite"
-                        className="h-8 w-56 rounded-sm border border-line-strong bg-sunken px-2 text-sm placeholder:text-ink-faint"
-                        value={emails[person.person_id] ?? ""}
-                        onChange={(e) => setEmails({ ...emails, [person.person_id]: e.target.value })}
-                      />
-                    )}
-                  </td>
-                  <td>
-                    <Badge tone={LOGIN[person.status].tone}>{LOGIN[person.status].label}</Badge>
-                  </td>
+                  <td className="break-all text-ink-muted">{person.email ?? ""}</td>
+                  <td><Badge tone={LOGIN[person.status].tone}>{LOGIN[person.status].label}</Badge></td>
                   <td className="text-right">
-                    {person.person_id !== me.person_id && person.status !== "disabled" && (
-                      <span className="inline-flex gap-2">
-                        <Button variant="secondary" size="sm" onClick={() => invite(person)}>
-                          {person.status === "no login" ? "Invite" : "New invite"}
-                        </Button>
-                        {person.login_id && disabling !== person.person_id && (
-                          <Button variant="ghost" size="sm" onClick={() => setDisabling(person.person_id)}>
-                            Disable
-                          </Button>
-                        )}
-                      </span>
-                    )}
-                    {disabling === person.person_id && (
-                      <div className="mt-2 flex flex-wrap items-center justify-end gap-2 text-left">
-                        <span className="text-sm text-ink-muted">
-                          {person.name} can't sign in again, and is signed out now.
-                        </span>
-                        <Button variant="secondary" size="sm" onClick={() => disable(person)}>
-                          Disable login
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => setDisabling(null)}>
-                          Cancel
-                        </Button>
-                      </div>
-                    )}
-                    {links[person.person_id] && (
-                      <p className="mt-2 ml-auto max-w-xs text-left font-mono text-xs break-all text-ink-muted">
-                        {links[person.person_id]}
-                      </p>
+                    {person.login_id && person.status !== "disabled" && person.person_id !== me.person_id && (
+                      <RowMenu label={person.name} actions={[{
+                        label: "Disable", danger: true,
+                        confirm: `Disable ${person.name}'s login? They are signed out now and can't sign in again.`,
+                        onSelect: () => record(`/api/logins/${person.login_id}/disable`, {},
+                          () => `${person.name}'s login is disabled; they are signed out.`),
+                      }]} />
                     )}
                   </td>
                 </tr>

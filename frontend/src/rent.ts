@@ -1,5 +1,5 @@
 // Staff's rent work as the API sends it (src/pms/api/rent.py), and how it reads.
-import { day, money } from "./money";
+import { day, money, sumMoney, usDate } from "./money";
 
 export type OpenCharge = {
   id: string;
@@ -14,9 +14,42 @@ export type Paid = {
   received_on: string;
   amount: string;
   reference: string | null;
+  method: PaymentMethod | null;
   bounced: boolean;
 };
-export type LeaseTenant = { id: string; name: string; prepaid: string; deposit: string };
+// How a payment came; recorded as said, nothing sent (ADR 0006).
+export type PaymentMethod = "check" | "cashier's check" | "money order" | "EFT" | "cash";
+export const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
+  { value: "check", label: "Check" },
+  { value: "cashier's check", label: "Cashier's check" },
+  { value: "money order", label: "Money order" },
+  { value: "EFT", label: "EFT" },
+  { value: "cash", label: "Cash" },
+];
+export function methodLabel(method: PaymentMethod): string {
+  return PAYMENT_METHODS.find((m) => m.value === method)?.label ?? method;
+}
+// A deposit's kind (migration 0092): each held apart, the security deposit first.
+export type DepositKind = "security" | "pet" | "key";
+export const DEPOSIT_KINDS: { value: DepositKind; label: string }[] = [
+  { value: "security", label: "Security deposit" },
+  { value: "pet", label: "Pet deposit" },
+  { value: "key", label: "Key deposit" },
+];
+export type Held = { kind: DepositKind; amount: string };
+// deposit is everything held for the tenant; deposits the same by kind, only kinds holding some.
+export type LeaseTenant = { id: string; name: string; prepaid: string; deposit: string; deposits: Held[] };
+
+// What the tenants' deposits are, by kind, when any is not a security deposit:
+// "Security deposit $1,000.00 · Pet deposit $300.00"; nothing when all are.
+export function depositKindsLine(tenants: LeaseTenant[]): string {
+  const held = DEPOSIT_KINDS.map((k) => ({
+    ...k,
+    amount: sumMoney(tenants.flatMap((t) => t.deposits.filter((d) => d.kind === k.value).map((d) => d.amount))),
+  })).filter((k) => Number(k.amount) !== 0);
+  if (held.every((k) => k.value === "security")) return "";
+  return held.map((k) => `${k.label} ${money(k.amount)}`).join(" · ");
+}
 // A fee the lease owes every month besides its rent, or a credit it gets every month. ends_on is
 // the first due date it is no longer charged for.
 export type RecurringCharge = {
@@ -26,6 +59,7 @@ export type RecurringCharge = {
   amount: string;
   starts_on: string;
   ends_on: string | null;
+  charge_type: string | null; // the company's type of fee it is
 };
 export type RentChange = {
   id: string;
@@ -35,6 +69,8 @@ export type RentChange = {
   served_by: "in person" | "mail" | "posted" | "email" | "other";
   lease_terms: string | null;
 };
+// The day of the month a lease's rent is due, from the first of a month on (migration 0081).
+export type DueDay = { id: string; starts_on: string; due_day: number };
 // A lease's renters insurance on the day: what the lease asks, and the policy that counts.
 export type RentersInsurance = {
   required: boolean;
@@ -47,6 +83,9 @@ export type RentersInsurance = {
   standing: string;
   below_minimum: boolean;
 };
+// The other lease of a move (migration 0091): where a lease's tenants moved from, or to, and the
+// first day of the new lease.
+export type Move = { lease_id: string; property: string; unit: string; moved_on: string };
 export type RentLease = {
   id: string;
   property: string;
@@ -56,20 +95,35 @@ export type RentLease = {
   // The rent in force on the day; every change recorded, past and to come, in rent_changes.
   monthly_rent: string;
   rent_changes: RentChange[];
+  // The day of the month rent is due this month (1 unless the lease picked another); every
+  // change, past and to come, in due_days.
+  rent_due_day: number;
+  due_days: DueDay[];
   tenants: LeaseTenant[];
+  // Where its payments go: its property's owners' accounts, each with their percent when the
+  // property's ownership shares split them (migration 0094); otherwise staff choose one.
+  owners: LeaseOwner[];
   owed: string;
+  // What the leases its tenants moved from still owe their owners: a payment here pays it first.
+  carried: string;
+  moved_from: Move | null;
+  moved_to: Move | null;
   on_hold: boolean;
   open_charges: OpenCharge[];
   payments: Paid[];
   recurring: RecurringCharge[];
   renters_insurance: RentersInsurance | null;
 };
+export type LeaseOwner = { account: string; owner: string; percent: string | null };
 export type Payment = { transfers: string[]; to_owner: string; to_prepaid: string };
 // A payment the bank returned: nsf_fee is the NSF fee the lease was charged for it, if the
 // property's terms charge one.
 export type Bounce = { transfers: string[]; nsf_fee: string | null };
-// What the rent run charged: leases their rent, and recurring charges.
-export type RentRun = { charged: number; recurring: number };
+// What a rent run charged: leases their rent, recurring charges and late fees.
+// A run by hand also says how many emails it wrote (rent reminders, late notices, statements).
+export type RentRun = { rents: number; recurring: number; late_fees: number; emails?: number };
+// A run as recorded: the nightly run (by null) or an admin's by hand.
+export type RentRunLine = RentRun & { at: string; due_on: string; late_fees_as_of: string; by: string | null };
 
 // A fresh id for one thing staff record: sent again (a double click, a retry), it records
 // nothing new.
@@ -92,38 +146,23 @@ export function paymentSummary(payment: Payment): string {
   return parts.join("; ") + ".";
 }
 
-// A lease's balance in words: what it owes, or what is owed back to it.
-export function owedLabel(owed: string): string {
-  const value = Number(owed);
-  if (value > 0) return `Owes ${money(owed)}`;
-  if (value < 0) return `In credit ${money(String(-value))}`;
-  return "Paid up";
-}
-
-// The badge a lease's balance wears: owing is a caution, paid up is fine, in credit is news.
-export function owedTone(owed: string): "caution" | "positive" | "info" {
-  const value = Number(owed);
-  if (value > 0) return "caution";
-  if (value < 0) return "info";
-  return "positive";
-}
-
 export function chargeLabel(charge: OpenCharge): string {
   const what = charge.memo ?? (charge.kind === "rent" ? "Rent" : "Fee");
   const part = charge.open === charge.amount ? "" : ` of ${money(charge.amount)}`;
-  return `${charge.due_on} ${what}: ${money(charge.open)} open${part}`;
+  return `${usDate(charge.due_on)} ${what}: ${money(charge.open)} open${part}`;
 }
 
 export function recurringLabel(recurring: RecurringCharge): string {
   const amount = recurring.kind === "credit" ? `credit of ${money(recurring.amount)}` : money(recurring.amount);
-  const stops = recurring.ends_on ? `, stops ${recurring.ends_on}` : "";
-  return `${recurring.memo}: ${amount} a month from ${recurring.starts_on}${stops}`;
+  const stops = recurring.ends_on ? `, stops ${usDate(recurring.ends_on)}` : "";
+  const typed = recurring.charge_type ? ` (${recurring.charge_type})` : "";
+  return `${recurring.memo}${typed}: ${amount} a month from ${usDate(recurring.starts_on)}${stops}`;
 }
 
 export function rentRunSummary(run: RentRun): string {
-  const rents = `${run.charged} rent${run.charged === 1 ? "" : "s"}`;
-  const recurring = `${run.recurring} recurring charge${run.recurring === 1 ? "" : "s"}`;
-  return `${rents} and ${recurring} charged.`;
+  const count = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
+  const charged = `${count(run.rents, "rent")}, ${count(run.recurring, "recurring charge")} and ${count(run.late_fees, "late fee")} charged.`;
+  return run.emails ? `${charged} ${count(run.emails, "email")} written.` : charged;
 }
 
 const SERVED: Record<RentChange["served_by"], string> = {
@@ -138,9 +177,32 @@ const SERVED: Record<RentChange["served_by"], string> = {
 export function rentChangeLine(change: RentChange): string {
   const terms = change.lease_terms ? `; ${change.lease_terms}` : "";
   return (
-    `From ${change.effective_on}: ${money(change.monthly_rent)} a month ` +
-    `(notice ${SERVED[change.served_by]} on ${change.notice_given_on}${terms})`
+    `From ${usDate(change.effective_on)}: ${money(change.monthly_rent)} a month ` +
+    `(notice ${SERVED[change.served_by]} on ${usDate(change.notice_given_on)}${terms})`
   );
+}
+
+// "1st", "2nd", "3rd", "4th", "11th", "21st": a day of the month as people say it.
+export function ordinal(n: number): string {
+  const teen = n % 100 >= 11 && n % 100 <= 13;
+  const suffix = teen ? "th" : ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[n % 10] ?? "th";
+  return `${n}${suffix}`;
+}
+
+// "Due on the 10th" (or "the 1st"): when the lease's rent is due each month.
+export function dueDayLabel(day: number): string {
+  return `Due on the ${ordinal(day)}`;
+}
+
+// "From 11/01/2026: due on the 10th of each month".
+export function dueDayLine(change: DueDay): string {
+  return `From ${usDate(change.starts_on)}: due on the ${ordinal(change.due_day)} of each month`;
+}
+
+// The first of next month: the earliest a new due day usually starts (this month's rent is
+// charged already, or will be by its day).
+export function nextMonthFirst(today: Date): string {
+  return day(new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() + 1, 1)));
 }
 
 // The first month a rent change may start with written notice given today: notice of a full
@@ -158,7 +220,7 @@ export function insuranceLine(insurance: RentersInsurance): string {
     : "Renters insurance not required";
   if (insurance.policy_number === null) return `${asks}: none on file`;
   const limit = insurance.liability_limit ? `, ${money(insurance.liability_limit)} of liability` : "";
-  return `${asks}: ${insurance.carrier} ${insurance.policy_number} through ${insurance.expires_on}${limit}`;
+  return `${asks}: ${insurance.carrier} ${insurance.policy_number} through ${usDate(insurance.expires_on)}${limit}`;
 }
 
 // The badge for it: a policy below what the lease asks, or not current where it is required.
@@ -170,4 +232,33 @@ export function insuranceBadge(insurance: RentersInsurance): { word: string; ton
     word: insurance.standing,
     tone: insurance.standing === "expired" || insurance.standing === "none on file" ? "danger" : "caution",
   };
+}
+
+// A payment hold (an eviction filed): from its first day a payment to the lease is refused unless
+// staff accept it past the hold; a release ends it from a day.
+export type Hold = {
+  id: string;
+  starts_on: string;
+  reason: string;
+  ends_on: string | null;
+  released_by: string | null;
+  allowed: number;
+  in_force: boolean;
+};
+export function holdLine(hold: Hold): string {
+  const since = `Since ${usDate(hold.starts_on)}: ${hold.reason}`;
+  const ended = hold.ends_on === null ? "" : `, released from ${usDate(hold.ends_on)}${hold.released_by ? ` by ${hold.released_by}` : ""}`;
+  const allowed = hold.allowed === 0 ? "" : `; ${hold.allowed} payment${hold.allowed === 1 ? "" : "s"} accepted past it`;
+  return `${since}${ended}${allowed}`;
+}
+
+// What a payment on the lease pays: its own balance and what the leases its tenants moved from
+// still owe.
+export function balanceDue(lease: RentLease): string {
+  return sumMoney([lease.owed, lease.carried]);
+}
+
+// "Birch Flats · Unit A": the other home of a move.
+export function moveHome(move: Move): string {
+  return `${move.property} · ${move.unit}`;
 }

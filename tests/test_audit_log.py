@@ -378,7 +378,7 @@ def test_the_report_reads_the_same_in_any_time_zone_and_for_every_role(
 
 def never_read_rows(conn, pmc):
     """Write rows the AI may never read: an owner's login and invite, and a rental application
-    with its link, applicant and screening."""
+    with its link, applicant and screening, and an owner's contact details."""
     staff = add_staff(conn, pmc.pmc_id)
     accounts.create_invite(
         conn, pmc.pmc_id, "owner", pmc.owners[0].owner_id, "owner.audit@example.com", None
@@ -388,6 +388,10 @@ def never_read_rows(conn, pmc):
         conn, pmc.pmc_id, open_application_link(conn, pmc.pmc_id, unit, staff)
     )
     record_screening(conn, pmc.pmc_id, application, staff)
+    conn.execute(
+        "INSERT INTO trust_contacts (pmc_id, owner_id, email) VALUES (%s, %s, %s)",
+        (pmc.pmc_id, pmc.owners[0].owner_id, "owner.contact@example.com"),
+    )
 
 
 def tables_logged(connection, pmc):
@@ -411,6 +415,7 @@ def test_the_ai_reads_no_audit_row_of_a_table_it_may_not_read(conn, app_conn, ai
     }
 
     assert {"trust_logins", "trust_invites", "trust_applicants", "trust_screenings"} <= logged
+    assert "trust_contacts" in logged
     assert tables_logged(ai_conn, pmc) == readable == logged - AI_NEVER_READS
     assert {"trust_pmcs", "trust_properties", "trust_units"} <= readable
     assert tables_logged(app_conn, pmc) == logged
@@ -430,7 +435,7 @@ def test_the_ai_audit_report_leaves_out_what_it_may_not_read(conn, app_conn, ai_
     staffs = {line[6] for line in staff_lines}
     ais = [line for line in report(ai_conn, pmc) if line[1] == "change"]
 
-    assert {"owner.audit@example.com"} <= emails
+    assert {"owner.audit@example.com", "owner.contact@example.com"} <= emails
     assert any(email.startswith("applicant1.") for email in emails)
     assert {"applicants", "screenings", "logins", "invites"} <= staffs
     assert not {line[6] for line in ais} & {"applicants", "screenings", "logins", "invites"}

@@ -38,6 +38,43 @@ def test_the_fake_partner_answers_from_income_against_rent(income, recommendatio
     assert "synthetic" in result.agency
 
 
+def test_the_fake_partner_applies_the_companys_criteria():
+    """Migration 0089 (q085): approved from approve_multiple times the rent, on conditions from
+    conditional_multiple times, declined below; each reason names the multiple it missed."""
+    criteria = screening.Criteria(Decimal("1.5"), Decimal("1"))
+    fake = screening.FakeScreening()
+
+    answers = [
+        fake.screen(application(income, "1000.00"), criteria)
+        for income in ("1500.00", "1499.99", "1000.00", "999.99")
+    ]
+
+    assert [(a.recommendation, a.reasons) for a in answers] == [
+        ("approve", ()),
+        ("conditional", ("Household income is less than 1.5 times the rent",)),
+        ("conditional", ("Household income is less than 1.5 times the rent",)),
+        ("decline", ("Household income is less than the rent",)),
+    ]
+    assert screening.Criteria(Decimal(3), Decimal(2)) == screening.DEFAULT
+
+
+@pytest.mark.parametrize(
+    ("multiple", "words"),
+    [
+        ("1", "the rent"),
+        ("1.00", "the rent"),
+        ("2", "twice the rent"),
+        ("3.00", "three times the rent"),
+        ("10", "ten times the rent"),
+        ("2.5", "2.5 times the rent"),
+        ("2.50", "2.5 times the rent"),
+        ("0.75", "0.75 times the rent"),
+    ],
+)
+def test_a_reason_says_the_multiple_in_words(multiple, words):
+    assert screening.times(Decimal(multiple)) == words
+
+
 def test_each_fake_screening_has_its_own_reference():
     fake = screening.FakeScreening()
 

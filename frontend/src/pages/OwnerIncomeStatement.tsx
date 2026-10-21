@@ -9,6 +9,7 @@ import { groupIncomeStatement } from "../incomeStatement";
 import { money } from "../money";
 import type { YearEndData } from "../yearEnd";
 import { lastYear } from "../yearEnd";
+import { Form } from "../components/Form";
 
 const AMOUNT = "text-right";
 
@@ -57,7 +58,7 @@ export function OwnerIncomeStatement() {
 
   return (
     <Card title="Income statement">
-      <form
+      <Form
         className="mb-6 flex flex-wrap items-end gap-4"
         onSubmit={(event) => {
           event.preventDefault();
@@ -72,7 +73,7 @@ export function OwnerIncomeStatement() {
           <LinkButton href={download("csv")}>CSV</LinkButton>
           <LinkButton href={download("xlsx")}>Excel</LinkButton>
         </div>
-      </form>
+      </Form>
       <Notice tone="error">{error}</Notice>
       {shown && (
         <div className="flex flex-col gap-6">

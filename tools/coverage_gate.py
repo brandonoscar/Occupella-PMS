@@ -9,8 +9,11 @@ Checks, all read from ci/thresholds.toml:
 Also writes the PL/pgSQL Cobertura report that diff-cover reads for the changed-lines check.
 
 usage:
-  python -m tools.coverage_gate --sql-raw coverage/sql-raw.json \
+  python -m tools.coverage_gate --sql-raw coverage/sql-raw.json [more runs' raw files] \
       --python-xml coverage/python.xml --sql-xml-out coverage/sql.xml [--summary FILE]
+
+Several --sql-raw files are the runs that split the suite (the coverage job's shards); their
+counts add up (sql_coverage.merge).
   python -m tools.coverage_gate --print coverage.changed_lines_min
 """
 
@@ -151,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Coverage gate")
     parser.add_argument("--thresholds", type=Path, default=THRESHOLDS)
     parser.add_argument("--print", dest="print_key")
-    parser.add_argument("--sql-raw", type=Path)
+    parser.add_argument("--sql-raw", type=Path, nargs="+")
     parser.add_argument("--python-xml", type=Path)
     parser.add_argument("--sql-xml-out", type=Path)
     parser.add_argument("--migrations", type=Path, default=ROOT / "db/migrations")
@@ -165,7 +168,7 @@ def main(argv: list[str] | None = None) -> int:
     if not (args.sql_raw and args.python_xml and args.sql_xml_out):
         parser.error("--sql-raw, --python-xml and --sql-xml-out are required")
 
-    functions = json.loads(args.sql_raw.read_text())
+    functions = sql_coverage.merge([json.loads(path.read_text()) for path in args.sql_raw])
     files = sql_coverage.read_migrations(args.migrations, ROOT)
     args.sql_xml_out.parent.mkdir(parents=True, exist_ok=True)
     args.sql_xml_out.write_text(sql_coverage.cobertura(functions, files))

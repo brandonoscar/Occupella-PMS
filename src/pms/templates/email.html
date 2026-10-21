@@ -1,0 +1,62 @@
+{#- The HTML part of every email (src/pms/email_html.py). Mail programs drop a page's styles, so
+    each style sits on its element, and the layout is tables. Colours, sizes and fonts are the
+    portal's tokens (frontend/src/styles/globals.css); test_email_html.py checks each one. -#}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light">
+<title>{{ subject }}</title>
+</head>
+<body style="margin:0;padding:0;background-color:#f4f8fd;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f8fd;">
+<tr>
+<td align="center" style="padding:24px 16px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;background-color:#ffffff;border:1px solid #e4edf7;border-radius:8px;">
+<tr>
+<td style="padding:20px 24px;border-bottom:1px solid #e4edf7;font-family:Fraunces,Georgia,'Times New Roman',serif;font-size:20px;line-height:28px;color:#0e1620;">{{ company }}</td>
+</tr>
+<tr>
+<td style="padding:24px 24px 8px;font-family:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:16px;line-height:24px;color:#0e1620;">
+{% for block in blocks %}
+{% if block.href %}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 12px;">
+<tr>
+<td style="border-radius:6px;background-color:#1957a0;"><a href="{{ block.href }}" style="display:inline-block;padding:12px 20px;font-size:16px;line-height:20px;font-weight:600;color:#ffffff;text-decoration:none;border-radius:6px;">{{ block.label }}</a></td>
+</tr>
+</table>
+<p style="margin:0 0 16px;font-size:13px;line-height:20px;color:#55606e;">Or copy this link into your browser:<br><a href="{{ block.href }}" style="color:#1957a0;word-break:break-all;">{{ block.href }}</a></p>
+{% elif block.figures %}
+<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 16px;">
+{% for label, amount in block.figures %}
+<tr>
+<td style="padding:2px 24px 2px 0;color:#3e4854;">{{ label }}</td>
+<td align="right" style="padding:2px 0;font-variant-numeric:tabular-nums;">{{ amount }}</td>
+</tr>
+{% endfor %}
+</table>
+{% else %}
+<p style="margin:0 0 16px;">
+{%- for line in block.lines -%}
+{%- if not loop.first %}<br>{% endif -%}
+{%- for span in line -%}
+{%- if span.href %}<a href="{{ span.href }}" style="color:#1957a0;">{{ span.text }}</a>{% else %}{{ span.text }}{% endif -%}
+{%- endfor -%}
+{%- endfor -%}
+</p>
+{% endif %}
+{% endfor %}
+</td>
+</tr>
+</table>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:600px;">
+<tr>
+<td style="padding:16px 24px;font-family:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;font-size:12px;line-height:18px;color:#6b7481;">{{ company }}{% for line in address %}<br>{{ line }}{% endfor %}</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+</body>
+</html>

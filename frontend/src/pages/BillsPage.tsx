@@ -1,373 +1,284 @@
+import { Receipt, Repeat } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
-import { Button } from "../components/Button";
+import { Button, LinkButton } from "../components/Button";
+import { EmptyState } from "../components/EmptyState";
 import { Field } from "../components/Field";
+import { Form } from "../components/Form";
+import { ListBar } from "../components/ListBar";
 import { Notice } from "../components/Notice";
+import { Pager } from "../components/Pager";
+import type { RowAction } from "../components/RowMenu";
+import { RowMenu } from "../components/RowMenu";
+import { Said } from "../components/Said";
 import { Select } from "../components/Select";
-import { Card, PageHeader, Shell } from "../components/Shell";
-import { day, money } from "../money";
-import type { Bill, OutboxEmail, Recurring } from "../payables";
-import { emailNote, nextStep, recurringLabel, statusTone } from "../payables";
-import type { ExpenseAccount, Portfolio } from "../setup";
+import { PageHeader, Shell } from "../components/Shell";
+import { SidePanel } from "../components/SidePanel";
+import { Tabs } from "../components/Tabs";
+import { Wide } from "../components/Wide";
+import { day, money, usDate } from "../money";
+import type { Bill, Recurring } from "../payables";
+import { billBadge } from "../payables";
+import type { Paged } from "../rentals";
+import { navigate } from "../router";
+import { scopeParams, useScope } from "../scope";
+import type { Portfolio } from "../setup";
 import { expenseAccountLabel } from "../setup";
+import { ApprovalForm, DeclineForm, PayForm, RecordBillForm, SetAsideForm } from "./BillForms";
+import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
 
-type Show = "open" | "all";
+type Show = "open" | "paid" | "declined" | "recurring";
+const TABS: { value: Show; label: string }[] = [
+  { value: "open", label: "Unpaid" },
+  { value: "paid", label: "Paid" },
+  { value: "recurring", label: "Recurring" },
+  { value: "declined", label: "Declined" },
+];
+const NONE: Record<Exclude<Show, "recurring">, string> = {
+  open: "Nothing left to pay.",
+  paid: "No bill is paid yet.",
+  declined: "No bill was declined.",
+};
 
-// Staff's vendor bills: enter one against an owner's property account, record the owner's
-// approval (or decline) when it is over their limit, unless the owner decided in their portal,
-// set it aside from the owner's money and record that the trust bank account paid it. Recurring bills are entered each month. The PMS records what
-// the bank did; it sends no payment itself.
+// A side panel open on the page: Record bill, a bill's next step, or a recurring bill's.
+type Panel =
+  | { kind: "record" }
+  | { kind: "approve" | "decline" | "set-aside" | "pay"; bill: Bill }
+  | { kind: "add-recurring" }
+  | { kind: "stop" | "recurring-account"; recurring: Recurring };
+
+const TITLES: Record<Panel["kind"], string> = {
+  record: "Record bill",
+  approve: "Record approval",
+  decline: "Record decline",
+  "set-aside": "Set aside",
+  pay: "Pay",
+  "add-recurring": "Add recurring bill",
+  stop: "Stop recurring bill",
+  "recurring-account": "Expense account",
+};
+
+// Accounting → Bills (ADR 0006, Buildium's): Unpaid, Paid, Recurring and Declined, narrowed by
+// property group, vendor and the day they are due by, a page at a time; the row opens the bill.
+// Record bill and each bill's next step open a side panel; Pay bills pays several at once. Each
+// month's recurring bills are entered by the nightly run. The PMS records what the bank did; it
+// sends no payment itself.
 export function BillsPage({ me }: { me: Me }) {
   const [show, setShow] = useState<Show>("open");
-  const [bills, setBills] = useState<Bill[] | null>(null);
-  const [recurring, setRecurring] = useState<Recurring[]>([]);
-  const [outbox, setOutbox] = useState<OutboxEmail[]>([]);
+  const [scope, setScope] = useScope();
+  const [vendor, setVendor] = useState("");
+  const [dueBy, setDueBy] = useState("");
+  const [number, setNumber] = useState(1);
+  const [page, setPage] = useState<Paged<Bill> | null>(null);
+  const [recurring, setRecurring] = useState<Recurring[] | null>(null);
   const [books, setBooks] = useState<Portfolio | null>(null);
   const [error, setError] = useState("");
-  // What a bill's step did: said here, as the step may take the bill off the list.
-  const [done, setDone] = useState("");
+  const [panel, setPanel] = useState<Panel | null>(null);
+  const [runs, setRuns] = useState(0);
+  const { said, error: refused, record } = useRecord(() => setRuns((n) => n + 1));
   const failed = (why: unknown) => setError(why instanceof ApiError ? why.detail : String(why));
 
-  function refresh() {
-    api.get<Bill[]>(`/api/payables/bills?show=${show}`).then(setBills).catch(failed);
-    api.get<Recurring[]>("/api/payables/recurring").then(setRecurring).catch(failed);
-    api.get<OutboxEmail[]>("/api/payables/emails").then(setOutbox).catch(failed);
-  }
-  useEffect(refresh, [show]);
+  useEffect(() => {
+    setError("");
+    if (show === "recurring") {
+      api.get<Recurring[]>("/api/payables/recurring").then(setRecurring).catch(failed);
+      return;
+    }
+    const query = new URLSearchParams({ show, page: String(number), ...scopeParams(scope) });
+    if (vendor) query.set("vendor", vendor);
+    if (dueBy) query.set("due_by", dueBy);
+    api.get<Paged<Bill>>(`/api/payables/bills?${query}`).then(setPage).catch(failed);
+  }, [show, scope, vendor, dueBy, number, runs]);
   useEffect(() => {
     api.get<Portfolio>("/api/setup").then(setBooks).catch(failed);
   }, []);
 
+  // A form in the side panel closes once what it recorded is recorded.
+  const recordThenClose: Recorder = async (path, body, done) => {
+    const recorded = await record(path, body, done);
+    if (recorded) setPanel(null);
+    return recorded;
+  };
+  const restart = <T,>(set: (value: T) => void) => (value: T) => { set(value); setNumber(1); };
+
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Bills" />
-      {books && <EnterBillCard books={books} refresh={refresh} />}
-      <Card title="Vendor bills">
-        <div className="mb-4 max-w-48">
-          <Select label="Show" id="bills-show" value={show}
-            onChange={(e) => setShow(e.target.value as Show)}>
-            <option value="open">Still to pay</option>
-            <option value="all">All bills</option>
-          </Select>
+      <PageHeader title="Bills" actions={
+        <div className="flex flex-wrap items-center gap-2">
+          <LinkButton href="/pay-bills">Pay bills</LinkButton>
+          <Button variant="secondary" onClick={() => setPanel({ kind: "record" })}>Record bill</Button>
         </div>
-        {done && (
-          <div className="mb-2">
-            <Notice tone="info">{done}</Notice>
-          </div>
-        )}
-        {bills === null ? (
+      } />
+      <ListBar scope={scope} onScope={restart(setScope)}>
+        <select aria-label="Vendor" value={vendor} onChange={(e) => restart(setVendor)(e.target.value)}
+          className="h-9 rounded-sm border border-line-strong bg-canvas px-2 text-sm text-ink">
+          <option value="">All vendors</option>
+          {books?.vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
+        </select>
+        <label className="flex items-center gap-2 text-sm text-ink-muted">
+          Due by
+          <input type="date" aria-label="Due by" value={dueBy} onChange={(e) => restart(setDueBy)(e.target.value)}
+            className="h-9 rounded-sm border border-line-strong bg-canvas px-2 text-sm text-ink" />
+        </label>
+      </ListBar>
+      <div>
+        <Tabs label="Bills" tabs={TABS} value={show} onChange={restart(setShow)} />
+        <Said>{said}</Said>
+        {panel === null && <Notice tone="error">{refused}</Notice>}
+        {show === "recurring" ? (
+          <RecurringTab recurring={recurring} error={error} books={books} onPanel={setPanel} />
+        ) : page === null ? (
           <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
-        ) : bills.length === 0 ? (
-          <Notice tone="info">{show === "open" ? "Nothing left to pay: every bill is paid or declined." : "No bills yet."}</Notice>
+        ) : page.items.length === 0 ? (
+          <EmptyState icon={Receipt} title={NONE[show]} />
         ) : (
-          <ul className="flex flex-col divide-y divide-line">
-            {bills.map((bill) => (
-              <BillRow key={bill.id} bill={bill} books={books} refresh={refresh} say={setDone} />
-            ))}
-          </ul>
+          <>
+            <BillsTable bills={page.items} onPanel={setPanel} />
+            <Pager page={page} onPage={setNumber} />
+          </>
         )}
-      </Card>
-      {books && <RecurringCard books={books} recurring={recurring} refresh={refresh} />}
-      <OutboxCard emails={outbox} />
+      </div>
+      {panel !== null && (
+        <SidePanel title={TITLES[panel.kind]} onClose={() => setPanel(null)}>
+          {"bill" in panel && <p className="text-base text-ink">{panel.bill.vendor} {panel.bill.reference}, {money(panel.bill.amount)}</p>}
+          {panel.kind === "record" && (books ? <RecordBillForm books={books} record={recordThenClose} /> : <Notice tone="info">Loading</Notice>)}
+          {panel.kind === "approve" && <ApprovalForm bill={panel.bill} record={recordThenClose} />}
+          {panel.kind === "decline" && <DeclineForm bill={panel.bill} record={recordThenClose} />}
+          {panel.kind === "set-aside" && <SetAsideForm bill={panel.bill} record={recordThenClose} />}
+          {panel.kind === "pay" && <PayForm bill={panel.bill} record={recordThenClose} />}
+          {panel.kind === "add-recurring" && books && <NewRecurringForm books={books} record={recordThenClose} />}
+          {panel.kind === "stop" && <StopForm recurring={panel.recurring} record={recordThenClose} />}
+          {panel.kind === "recurring-account" && books && (
+            <RecurringAccountForm recurring={panel.recurring} books={books} record={recordThenClose} />
+          )}
+          <Notice tone="error">{refused}</Notice>
+        </SidePanel>
+      )}
     </Shell>
   );
 }
 
-function EnterBillCard({ books, refresh }: { books: Portfolio; refresh: () => void }) {
-  const { said, error, record } = useRecord(refresh);
-  const [vendor, setVendor] = useState(books.vendors[0]?.id ?? "");
-  const [account, setAccount] = useState(books.accounts[0]?.account ?? "");
-  const [reference, setReference] = useState("");
-  const [dated, setDated] = useState(day(new Date()));
-  const [due, setDue] = useState(day(new Date()));
-  const [amount, setAmount] = useState("");
-  const [memo, setMemo] = useState("");
-  const [expense, setExpense] = useState("");
-  if (books.vendors.length === 0 || books.accounts.length === 0) {
-    return (
-      <Card title="Enter a bill">
-        <Notice tone="info">Add a vendor and a property with an owner in Setup first.</Notice>
-      </Card>
-    );
+// A bill's next steps, in its row's ⋯ menu.
+function stepsOf(bill: Bill, onPanel: (panel: Panel) => void): RowAction[] {
+  if (bill.status === "needs approval") {
+    return [
+      { label: "Record approval", onSelect: () => onPanel({ kind: "approve", bill }) },
+      { label: "Record decline", onSelect: () => onPanel({ kind: "decline", bill }) },
+    ];
   }
+  if (bill.status === "to set aside") return [{ label: "Set aside", onSelect: () => onPanel({ kind: "set-aside", bill }) }];
+  if (bill.status === "set aside") return [{ label: "Pay", onSelect: () => onPanel({ kind: "pay", bill }) }];
+  return [];
+}
+
+function BillsTable({ bills, onPanel }: { bills: Bill[]; onPanel: (panel: Panel) => void }) {
   return (
-    <Card title="Enter a bill">
-      <form
-        className="flex flex-wrap items-end gap-3"
-        onSubmit={async (event) => {
-          event.preventDefault();
-          const body = {
-            vendor_id: vendor, account, reference, bill_date: dated, due_on: due, amount, memo,
-            ...(expense ? { expense_account_id: expense } : {}),
-          };
-          if (await record("/api/payables/bills", body, () => `Bill ${reference} entered.`)) {
-            // The vendor and owner stay for the next bill; what it is for is each bill's own.
-            setReference("");
-            setAmount("");
-            setMemo("");
-            setExpense("");
-          }
-        }}
-      >
-        <Select label="Vendor" id="bill-vendor" value={vendor} onChange={(e) => setVendor(e.target.value)}>
-          {books.vendors.map((v) => (
-            <option key={v.id} value={v.id}>
-              {v.name}
-            </option>
-          ))}
-        </Select>
-        <Select label="Owner and property" id="bill-account" value={account}
-          onChange={(e) => setAccount(e.target.value)}>
-          {books.accounts.map((a) => (
-            <option key={a.account} value={a.account}>
-              {a.owner}, {a.property}
-            </option>
-          ))}
-        </Select>
-        <Field label="Vendor's reference" id="bill-reference" required maxLength={200}
-          value={reference} onChange={(e) => setReference(e.target.value)} />
-        <Field label="Bill date" id="bill-date" type="date" required value={dated}
-          onChange={(e) => setDated(e.target.value)} />
-        <Field label="Due on" id="bill-due" type="date" required value={due}
-          onChange={(e) => setDue(e.target.value)} />
-        <Field label="Amount" id="bill-amount" inputMode="decimal" required value={amount}
-          onChange={(e) => setAmount(e.target.value)} />
-        <Field label="What for" id="bill-memo" required maxLength={200} value={memo}
-          onChange={(e) => setMemo(e.target.value)} />
-        <ExpenseAccountSelect books={books} id="bill-expense" value={expense} onChange={setExpense} />
-        <Button type="submit">Enter bill</Button>
-      </form>
-      <Notice tone="info">{said}</Notice>
-      <Notice tone="error">{error}</Notice>
-    </Card>
+    <Wide>
+      <table className="w-full text-base">
+        <thead>
+          <tr>
+            <th className="text-left">Due</th>
+            <th className="text-left">Vendor</th>
+            <th className="text-left">Property</th>
+            <th className="text-left">Memo</th>
+            <th className="text-left">Ref #</th>
+            <th className="text-right">Amount</th>
+            <th className="text-left">Status</th>
+            <th><span className="sr-only">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody>
+          {bills.map((bill) => {
+            const badge = billBadge(bill);
+            const steps = stepsOf(bill, onPanel);
+            return (
+              <tr key={bill.id} aria-label={`${bill.vendor} ${bill.reference}`} className="cursor-pointer hover:bg-raised"
+                onClick={() => navigate(`/bills/${bill.id}`)}>
+                <td className="whitespace-nowrap">{usDate(bill.due_on)}</td>
+                <td>{bill.vendor}</td>
+                <td>{bill.property}</td>
+                <td className="text-ink-muted">{bill.memo}</td>
+                <td><GoLink href={`/bills/${bill.id}`} className="font-medium text-iris hover:text-iris-hover hover:underline">{bill.reference}</GoLink></td>
+                <td className="text-right">{money(bill.amount)}</td>
+                <td><Badge tone={badge.tone} data-testid="status">{badge.word}</Badge></td>
+                <td className="text-right" onClick={(event) => event.stopPropagation()}>
+                  {steps.length > 0 && <RowMenu label={`${bill.vendor} ${bill.reference}`} actions={steps} />}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </Wide>
   );
 }
 
-function BillRow({ bill, books, refresh, say }: {
-  bill: Bill;
+// Recurring: each bill that comes every month, entered each month by the nightly run under its
+// prefix and the month; Add recurring bill, and Stop or a new expense account in its ⋯ menu.
+function RecurringTab({ recurring, error, books, onPanel }: {
+  recurring: Recurring[] | null;
+  error: string;
   books: Portfolio | null;
-  refresh: () => void;
-  say: (said: string) => void;
+  onPanel: (panel: Panel) => void;
 }) {
-  const { error, record } = useRecord(refresh, say);
-  const step = nextStep(bill.status);
-  const accounts = books?.expense_accounts ?? [];
   return (
-    <li className="flex flex-col gap-2 py-4" aria-label={`${bill.vendor} ${bill.reference}`}>
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <p>
-          <span className="font-medium">{bill.vendor} {bill.reference}</span>
-          <span className="text-ink-muted">
-            {" "}· {bill.owner}, {bill.property} · {bill.memo} · dated {bill.bill_date}, due {bill.due_on}
-          </span>
-        </p>
-        <p className="flex items-center gap-3">
-          <span className="font-medium">{money(bill.amount)}</span>
-          <Badge tone={statusTone(bill.status)} data-testid="status">{bill.status}</Badge>
-        </p>
-      </div>
-      {bill.approved_by && (
-        <p className="text-sm text-ink-subtle">Approved by {bill.approved_by}.</p>
+    <div className="flex flex-col gap-4">
+      {books && books.vendors.length > 0 && books.accounts.length > 0 && (
+        <div><Button variant="secondary" onClick={() => onPanel({ kind: "add-recurring" })}>Add recurring bill</Button></div>
       )}
-      {emailNote(bill) && <p className="text-sm text-ink-subtle">{emailNote(bill)}</p>}
-      {bill.declined_by && (
-        <p className="text-sm text-ink-subtle">
-          Declined by {bill.declined_by}: {bill.decline_reason}. It is never paid from the owner's money.
-        </p>
-      )}
-      {/* A declined bill is never paid: it is no expense of the owner's. */}
-      {books && accounts.length > 0 && bill.status !== "declined" && (
-        <MoveToAccount books={books} what={bill.reference} current={bill.expense_account}
-          onMove={(chosen) =>
-            record(`/api/payables/bills/${bill.id}/expense-account`, { expense_account_id: chosen.id },
-              () => `${bill.reference} is in ${chosen.name}.`)} />
-      )}
-      {step === "Record approval" ? (
-        <>
-          <ApprovalForm bill={bill} record={record} />
-          <DeclineForm bill={bill} record={record} />
-        </>
-      ) : step ? (
-        <StepForm bill={bill} step={step} record={record} />
-      ) : null}
-      <Notice tone="error">{error}</Notice>
-    </li>
-  );
-}
-
-function ApprovalForm({ bill, record }: { bill: Bill; record: Recorder }) {
-  const [on, setOn] = useState(day(new Date()));
-  const [by, setBy] = useState("");
-  return (
-    <form
-      className="flex flex-wrap items-end gap-3"
-      onSubmit={(event) => {
-        event.preventDefault();
-        record(`/api/payables/bills/${bill.id}/approval`, { approved_on: on, approved_by: by },
-          () => `The owner's approval of ${bill.reference} is recorded.`);
-      }}
-    >
-      <p className="w-full text-sm text-ink-muted">
-        Over the owner's approval limit of {money(bill.approval_limit)}.
-      </p>
-      <Field label="Approved by" id={`approved-by-${bill.id}`} required maxLength={200} value={by}
-        onChange={(e) => setBy(e.target.value)} />
-      <Field label="Approved on" id={`approved-on-${bill.id}`} type="date" required value={on}
-        onChange={(e) => setOn(e.target.value)} />
-      <Button type="submit" variant="secondary">Record approval</Button>
-    </form>
-  );
-}
-
-// The owner's decline as they gave it to staff (by phone, say), behind a button: most owners
-// approve, many in their portal.
-function DeclineForm({ bill, record }: { bill: Bill; record: Recorder }) {
-  const [open, setOpen] = useState(false);
-  const [on, setOn] = useState(day(new Date()));
-  const [by, setBy] = useState("");
-  const [why, setWhy] = useState("");
-  if (!open) {
-    return (
-      <div>
-        <Button variant="secondary" onClick={() => setOpen(true)}>Record a decline instead</Button>
-      </div>
-    );
-  }
-  return (
-    <form
-      className="flex flex-wrap items-end gap-3"
-      onSubmit={(event) => {
-        event.preventDefault();
-        record(`/api/payables/bills/${bill.id}/decline`,
-          { declined_on: on, declined_by: by, reason: why },
-          () => `The owner's decline of ${bill.reference} is recorded.`);
-      }}
-    >
-      <Field label="Declined by" id={`declined-by-${bill.id}`} required maxLength={200} value={by}
-        onChange={(e) => setBy(e.target.value)} />
-      <Field label="Declined on" id={`declined-on-${bill.id}`} type="date" required value={on}
-        onChange={(e) => setOn(e.target.value)} />
-      <Field label="Why" id={`declined-why-${bill.id}`} required maxLength={1000} value={why}
-        onChange={(e) => setWhy(e.target.value)} />
-      <Button type="submit" variant="secondary">Record decline</Button>
-    </form>
-  );
-}
-
-function StepForm({ bill, step, record }: { bill: Bill; step: string; record: Recorder }) {
-  const [on, setOn] = useState(day(new Date()));
-  const path = step === "Pay" ? "pay" : "set-aside";
-  const done = step === "Pay"
-    ? `${bill.reference} is paid.`
-    : `${money(bill.amount)} is set aside for ${bill.reference}.`;
-  return (
-    <form
-      className="flex flex-wrap items-end gap-3"
-      onSubmit={(event) => {
-        event.preventDefault();
-        record(`/api/payables/bills/${bill.id}/${path}`, { on }, () => done);
-      }}
-    >
-      <Field label={step === "Pay" ? "Paid on" : "Set aside on"} id={`${path}-on-${bill.id}`}
-        type="date" required value={on} onChange={(e) => setOn(e.target.value)} />
-      <Button type="submit" variant="secondary">{step}</Button>
-    </form>
-  );
-}
-
-function RecurringCard({
-  books,
-  recurring,
-  refresh,
-}: {
-  books: Portfolio;
-  recurring: Recurring[];
-  refresh: () => void;
-}) {
-  const { said, error, record } = useRecord(refresh);
-  const [through, setThrough] = useState(day(new Date()));
-  return (
-    <Card title="Recurring bills">
-      {recurring.length === 0 ? (
-        <Notice tone="info">No recurring bills yet.</Notice>
+      {recurring === null ? (
+        <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
+      ) : recurring.length === 0 ? (
+        <EmptyState icon={Repeat} title="No recurring bills yet." />
       ) : (
-        <ul className="flex flex-col gap-2">
-          {recurring.map((bill) => (
-            <RecurringLine key={bill.id} bill={bill} books={books} record={record} />
-          ))}
-        </ul>
+        <Wide>
+          <table className="w-full text-base">
+            <thead>
+              <tr>
+                <th className="text-left">Vendor</th>
+                <th className="text-left">Owner and property</th>
+                <th className="text-left">Ref # prefix</th>
+                <th className="text-right">Amount</th>
+                <th className="text-left">Day</th>
+                <th className="text-left">From</th>
+                <th className="text-left">Until</th>
+                <th className="text-left">Expense account</th>
+                <th><span className="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {recurring.map((r) => {
+                const actions: RowAction[] = [];
+                if (books && books.expense_accounts.length > 0) {
+                  actions.push({ label: "Change expense account", onSelect: () => onPanel({ kind: "recurring-account", recurring: r }) });
+                }
+                if (r.ends_on === null) actions.push({ label: "Stop it", onSelect: () => onPanel({ kind: "stop", recurring: r }) });
+                return (
+                  <tr key={r.id} aria-label={`${r.vendor} ${r.reference_prefix}`}>
+                    <td>{r.vendor}</td>
+                    <td>{r.owner}, {r.property}</td>
+                    <td>{r.reference_prefix}</td>
+                    <td className="text-right">{money(r.amount)}</td>
+                    <td>{r.day_of_month}</td>
+                    <td className="whitespace-nowrap">{usDate(r.starts_on)}</td>
+                    <td className="whitespace-nowrap">{r.ends_on ? usDate(r.ends_on) : ""}</td>
+                    <td className="text-ink-muted">{r.expense_account ?? ""}</td>
+                    <td className="text-right">
+                      {actions.length > 0 && <RowMenu label={`${r.vendor} ${r.reference_prefix}`} actions={actions} />}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </Wide>
       )}
-      <form
-        className="mt-2 flex items-end gap-3"
-        onSubmit={(event) => {
-          event.preventDefault();
-          record<{ entered: number }>("/api/payables/recurring/enter", { on: through },
-            (done) => `${done.entered} bill${done.entered === 1 ? "" : "s"} entered.`);
-        }}
-      >
-        <Field label="Enter bills due through" id="recurring-through" type="date" required
-          value={through} onChange={(e) => setThrough(e.target.value)} />
-        <Button type="submit" variant="secondary">Enter recurring bills</Button>
-      </form>
-      {books.vendors.length > 0 && books.accounts.length > 0 && (
-        <details className="mt-2">
-          <summary>Add a recurring bill</summary>
-          <div className="mt-3">
-            <NewRecurringForm books={books} record={record} />
-          </div>
-        </details>
-      )}
-      <Notice tone="info">{said}</Notice>
-      <Notice tone="error">{error}</Notice>
-    </Card>
-  );
-}
-
-// A recurring bill; stopping it asks for its last day first.
-function RecurringLine({ bill, books, record }: { bill: Recurring; books: Portfolio; record: Recorder }) {
-  const [asking, setAsking] = useState(false);
-  const [on, setOn] = useState(day(new Date()));
-  return (
-    <li className="flex min-h-8 flex-wrap items-center gap-3 text-sm"
-      aria-label={`${bill.vendor} ${bill.reference_prefix}`}>
-      <span>{recurringLabel(bill)}</span>
-      {bill.ends_on === null &&
-        (asking ? (
-          <form
-            className="flex items-center gap-2"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              const done = await record(`/api/payables/recurring/${bill.id}/end`, { ends_on: on },
-                () => `${bill.reference_prefix} stops after ${on}.`);
-              if (done) setAsking(false);
-            }}
-          >
-            <input type="date" aria-label={`Last day, ${bill.reference_prefix}`} value={on}
-              onChange={(e) => setOn(e.target.value)} required
-              className="h-8 rounded-sm border border-line-strong bg-sunken px-2 text-sm text-ink" />
-            <Button type="submit" variant="secondary" size="sm">Stop it</Button>
-            <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(false)}>
-              Cancel
-            </Button>
-          </form>
-        ) : (
-          <Button type="button" variant="ghost" size="sm" onClick={() => setAsking(true)}>
-            Stop
-          </Button>
-        ))}
-      {books.expense_accounts.length > 0 && (
-        <MoveToAccount books={books} what={bill.reference_prefix} current={bill.expense_account}
-          onMove={(chosen) =>
-            record(`/api/payables/recurring/${bill.id}/expense-account`,
-              { expense_account_id: chosen.id },
-              () => `${bill.reference_prefix} is entered in ${chosen.name} from now on.`)} />
-      )}
-    </li>
+    </div>
   );
 }
 
@@ -381,133 +292,78 @@ function NewRecurringForm({ books, record }: { books: Portfolio; record: Recorde
   const [starts, setStarts] = useState(day(new Date()));
   const [expense, setExpense] = useState("");
   return (
-    <form
-      className="flex flex-wrap items-end gap-3"
-      onSubmit={async (event) => {
-        event.preventDefault();
-        const body = {
-          vendor_id: vendor, account, reference_prefix: prefix, amount, memo,
-          day_of_month: Number(dayOfMonth), starts_on: starts,
-          ...(expense ? { expense_account_id: expense } : {}),
-        };
-        if (await record("/api/payables/recurring", body, () => `${prefix} is entered each month.`)) {
-          setPrefix("");
-          setAmount("");
-          setMemo("");
-        }
-      }}
-    >
-      <Select label="Recurring vendor" id="recurring-vendor" value={vendor}
-        onChange={(e) => setVendor(e.target.value)}>
-        {books.vendors.map((v) => (
-          <option key={v.id} value={v.id}>
-            {v.name}
-          </option>
-        ))}
+    <Form className="flex flex-col gap-3" onSubmit={(event) => {
+      event.preventDefault();
+      const body = {
+        vendor_id: vendor, account, reference_prefix: prefix, amount, memo,
+        day_of_month: Number(dayOfMonth), starts_on: starts,
+        ...(expense ? { expense_account_id: expense } : {}),
+      };
+      void record("/api/payables/recurring", body, () => `${prefix} is entered each month.`);
+    }}>
+      <Select label="Vendor" id="recurring-vendor" value={vendor} onChange={(e) => setVendor(e.target.value)}>
+        {books.vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}
       </Select>
-      <Select label="For owner and property" id="recurring-account" value={account}
-        onChange={(e) => setAccount(e.target.value)}>
-        {books.accounts.map((a) => (
-          <option key={a.account} value={a.account}>
-            {a.owner}, {a.property}
-          </option>
-        ))}
+      <Select label="Owner and property" id="recurring-account" value={account} onChange={(e) => setAccount(e.target.value)}>
+        {books.accounts.map((a) => <option key={a.account} value={a.account}>{a.owner}, {a.property}</option>)}
       </Select>
-      <Field label="Reference prefix" id="recurring-prefix" required maxLength={100} value={prefix}
+      <Field label="Ref # prefix" id="recurring-prefix" required maxLength={100} value={prefix}
         onChange={(e) => setPrefix(e.target.value)} />
-      <Field label="Monthly amount" id="recurring-amount" inputMode="decimal" required
-        value={amount} onChange={(e) => setAmount(e.target.value)} />
-      <Field label="For" id="recurring-memo" required maxLength={200} value={memo}
-        onChange={(e) => setMemo(e.target.value)} />
-      <Field label="Day of the month" id="recurring-day" type="number" min={1} max={28} required
-        value={dayOfMonth} onChange={(e) => setDayOfMonth(e.target.value)} />
-      <Field label="First day" id="recurring-starts" type="date" required value={starts}
-        onChange={(e) => setStarts(e.target.value)} />
-      <ExpenseAccountSelect books={books} id="recurring-expense" label="Recurring expense account"
-        value={expense} onChange={setExpense} />
-      <Button type="submit" variant="secondary">Add recurring bill</Button>
-    </form>
-  );
-}
-
-// The emails the PMS wrote to owners, newest first, and whether each went (ADR 0004).
-function OutboxCard({ emails }: { emails: OutboxEmail[] }) {
-  return (
-    <Card title="Emails to owners">
-      {emails.length === 0 ? (
-        <Notice tone="info">No emails yet.</Notice>
-      ) : (
-        <ul className="flex flex-col gap-1 text-sm" aria-label="Emails to owners">
-          {emails.map((e) => (
-            <li key={e.id}>
-              {e.written_at.slice(0, 10)} to {e.to}: {e.subject}.{" "}
-              <span className="text-ink-muted">
-                {e.status === "sent" ? "Sent." : e.status === "waiting" ? "Waiting to be sent." : "Not sent"}
-                {e.status !== "sent" && e.error ? ` (${e.error})` : ""}
-                {e.status === "failed" ? "." : ""}
-              </span>
-            </li>
+      <Field label="Monthly amount" id="recurring-amount" inputMode="decimal" required value={amount}
+        onChange={(e) => setAmount(e.target.value)} />
+      <Field label="Memo" id="recurring-memo" required maxLength={200} value={memo} onChange={(e) => setMemo(e.target.value)} />
+      <Field label="Day of the month" id="recurring-day" type="number" min={1} max={28} required value={dayOfMonth}
+        onChange={(e) => setDayOfMonth(e.target.value)} />
+      <Field label="First day" id="recurring-starts" type="date" required value={starts} onChange={(e) => setStarts(e.target.value)} />
+      {books.expense_accounts.length > 0 && (
+        <Select label="Expense account" id="recurring-expense" value={expense} onChange={(e) => setExpense(e.target.value)}>
+          <option value="">None yet</option>
+          {books.expense_accounts.map((a) => (
+            <option key={a.id} value={a.id}>{expenseAccountLabel(a, books.schedule_e_lines)}</option>
           ))}
-        </ul>
+        </Select>
       )}
-    </Card>
+      <div><Button type="submit">Add recurring bill</Button></div>
+    </Form>
   );
 }
 
-// The expense account a new bill goes in; none is a choice, and the bill can be put in one later.
-function ExpenseAccountSelect({ books, id, label = "Expense account", value, onChange }: {
-  books: Portfolio;
-  id: string;
-  label?: string;
-  value: string;
-  onChange: (id: string) => void;
-}) {
-  if (books.expense_accounts.length === 0) return null;
+// Stops a recurring bill after its last day; months before it stay entered.
+function StopForm({ recurring, record }: { recurring: Recurring; record: Recorder }) {
+  const [on, setOn] = useState(day(new Date()));
   return (
-    <Select label={label} id={id} value={value} onChange={(e) => onChange(e.target.value)}>
-      <option value="">None yet</option>
-      {books.expense_accounts.map((a) => (
-        <option key={a.id} value={a.id}>
-          {expenseAccountLabel(a, books.schedule_e_lines)}
-        </option>
-      ))}
-    </Select>
+    <Form className="flex flex-col gap-3" onSubmit={(event) => {
+      event.preventDefault();
+      void record(`/api/payables/recurring/${recurring.id}/end`, { ends_on: on },
+        () => `${recurring.reference_prefix} stops after ${usDate(on)}.`);
+    }}>
+      <p className="text-base text-ink">{recurring.vendor}, {recurring.reference_prefix}</p>
+      <Field label="Last day" id={`recurring-end-${recurring.id}`} type="date" required value={on}
+        onChange={(e) => setOn(e.target.value)} />
+      <div><Button type="submit" variant="danger">Stop it</Button></div>
+    </Form>
   );
 }
 
-// The account a bill (or recurring bill) is in, and a quiet way to put it in another.
-function MoveToAccount({ books, what, current, onMove }: {
-  books: Portfolio;
-  what: string;
-  current: string | null;
-  onMove: (chosen: ExpenseAccount) => void;
-}) {
-  const [chosen, setChosen] = useState("");
-  const account = books.expense_accounts.find((a) => a.id === chosen);
+// The expense account each month's bill is entered in from now on; months entered keep theirs.
+function RecurringAccountForm({ recurring, books, record }: { recurring: Recurring; books: Portfolio; record: Recorder }) {
+  const [chosen, setChosen] = useState(recurring.expense_account_id ?? "");
+  const name = books.expense_accounts.find((a) => a.id === chosen)?.name ?? "";
   return (
-    <form
-      className="flex flex-wrap items-center gap-2 text-sm"
-      onSubmit={(event) => {
-        event.preventDefault();
-        if (account) onMove(account);
-      }}
-    >
-      <span className="text-ink-muted" data-testid="expense-account">
-        {current ? `In ${current}.` : "In no expense account yet."}
-      </span>
-      <select aria-label={`Expense account, ${what}`} value={chosen}
-        onChange={(e) => setChosen(e.target.value)}
-        className="h-8 rounded-sm border border-line-strong bg-sunken px-2 text-sm text-ink">
-        <option value="">{current ? "Move to" : "Put in"}</option>
+    <Form className="flex flex-col gap-3" onSubmit={(event) => {
+      event.preventDefault();
+      void record(`/api/payables/recurring/${recurring.id}/expense-account`, { expense_account_id: chosen },
+        () => `${recurring.reference_prefix} is entered in ${name} from now on.`);
+    }}>
+      <p className="text-base text-ink">{recurring.vendor}, {recurring.reference_prefix}</p>
+      <Select label="Expense account" id={`recurring-expense-${recurring.id}`} required value={chosen}
+        onChange={(e) => setChosen(e.target.value)}>
+        <option value="">Choose an account</option>
         {books.expense_accounts.map((a) => (
-          <option key={a.id} value={a.id}>
-            {a.name}
-          </option>
+          <option key={a.id} value={a.id}>{expenseAccountLabel(a, books.schedule_e_lines)}</option>
         ))}
-      </select>
-      <Button type="submit" variant="ghost" size="sm" disabled={!account}>
-        {current ? "Move" : "Put in"}
-      </Button>
-    </form>
+      </Select>
+      <div><Button type="submit">Save</Button></div>
+    </Form>
   );
 }

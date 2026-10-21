@@ -7,11 +7,11 @@ import {
 } from "./today";
 
 const BILL: Bill = {
-  id: "b1", vendor: "Vendor A", reference: "INV-1", account: "a1", owner: "Owner A",
-  property: "Property 1", bill_date: "2026-10-01", due_on: "2026-10-16", amount: "1200.00",
+  id: "b1", vendor_id: "v1", vendor: "Vendor A", reference: "INV-1", account: "a1", owner: "Owner A",
+  property_id: "pr1", property: "Property 1", split: false, overdue: false, bill_date: "2026-10-01", due_on: "2026-10-16", amount: "1200.00",
   memo: "Repair", work_order_id: null, expense_account_id: null, expense_account: null,
   approval_limit: "500.00", approved_by: null,
-  declined_by: null, decline_reason: null, owner_email: null, status: "needs approval",
+  declined_by: null, decline_reason: null, owner_email: null, status: "needs approval", markup: null, markup_percent: null, shared_bill_id: null,
 };
 
 describe("today", () => {
@@ -30,10 +30,10 @@ describe("today", () => {
       rent_past_due: "1500.00", oldest_due_on: "2026-10-03",
     };
     expect(lateLine(lease, "2026-10-13")).toBe(
-      "Unit 1, Property 1 (Tenant A, Tenant B): $1,500.00 of rent past due since 2026-10-03 (10 days)",
+      "Unit 1, Property 1 (Tenant A, Tenant B): $1,500.00 of rent past due since 10/03/2026 (10 days)",
     );
     expect(lateLine({ ...lease, tenants: [], oldest_due_on: "2026-10-12" }, "2026-10-13")).toBe(
-      "Unit 1, Property 1: $1,500.00 of rent past due since 2026-10-12 (1 day)",
+      "Unit 1, Property 1: $1,500.00 of rent past due since 10/12/2026 (1 day)",
     );
   });
   it("reads a bill by when it is due", () => {
@@ -54,29 +54,30 @@ describe("today", () => {
     };
     expect(monthEndLine(account)).toBe("Operating trust: August 2026, September 2026 not reconciled");
     expect(monthEndLine({ ...account, months: [], waiting_for_approval: "2026-09-30" })).toBe(
-      "Operating trust: prepared through 2026-09-30, waiting for approval",
+      "Operating trust: prepared through 09/30/2026, waiting for approval",
     );
   });
   it("reads an application and an offer", () => {
     const application = {
-      id: "a1", property: "Property 1", unit: "Unit 2", monthly_rent: "1500.00",
+      id: "a1", property_id: "p1", property: "Property 1", unit_id: "u2", unit: "Unit 2", monthly_rent: "1500.00",
       move_in_on: "2026-11-01", monthly_income: "4500.00", submitted_at: "2026-10-12T15:00:00Z",
       applicants: [{ name: "Applicant 1", email: "a1@example.com" }, { name: "Applicant 2", email: "a2@example.com" }],
-      screenings: [], decision: null,
-    } as Application;
-    expect(applicationLine(application)).toBe("Unit 2, Property 1: Applicant 1, Applicant 2, applied 2026-10-12");
+      screenings: [], decision: null, status: "new", withdrawal: null, lease_id: null,
+    } satisfies Application;
+    expect(applicationLine(application)).toBe("Unit 2, Property 1: Applicant 1, Applicant 2, applied 10/12/2026");
     const offer = {
-      id: "o1", kind: "renewal", application_id: null, renews_lease_id: "l1", property: "Property 1",
-      unit: "Unit 1", starts_on: "2026-11-01", ends_on: null, monthly_rent: "1550.00",
-      document_title: "Renewal", offered_at: "2026-10-01T00:00:00Z", sent: true, lease_id: null,
+      id: "o1", kind: "renewal", application_id: null, renews_lease_id: "l1", property_id: "p1",
+      property: "Property 1", unit_id: "u1", unit: "Unit 1", starts_on: "2026-11-01", ends_on: null,
+      monthly_rent: "1550.00", security_deposit: null, recurring_charges: [], status: "partially signed",
+      void: null, document_title: "Renewal", offered_at: "2026-10-01T00:00:00Z", sent: true, lease_id: null,
       signers: [
-        { position: 1, name: "Tenant A", email: "a@example.com", signed_at: "2026-10-02T00:00:00Z" },
-        { position: 2, name: "Tenant B", email: "b@example.com", signed_at: null },
+        { position: 1, name: "Tenant A", email: "a@example.com", role: "tenant", signed_at: "2026-10-02T00:00:00Z", progress: "signed" },
+        { position: 2, name: "Tenant B", email: "b@example.com", role: "tenant", signed_at: null, progress: "waiting" },
       ],
-    } as Offer;
-    expect(offerLine(offer)).toBe("Renewal of Unit 1, Property 1 from 2026-11-01: 1 of 2 signed");
+    } satisfies Offer;
+    expect(offerLine(offer)).toBe("Renewal of Unit 1, Property 1 from 11/01/2026: 1 of 2 signed");
     expect(offerLine({ ...offer, kind: "new lease" })).toBe(
-      "New lease of Unit 1, Property 1 from 2026-11-01: 1 of 2 signed",
+      "New lease of Unit 1, Property 1 from 11/01/2026: 1 of 2 signed",
     );
   });
 
@@ -91,7 +92,7 @@ describe("today", () => {
       status: "waiting" as const, decided_by: null, decided_at: null, reason: null,
     };
     expect(journalLine(entry)).toBe(
-      "Rent deposited to the wrong property: $25.00, dated 2026-10-10, proposed by Bookkeeper 1",
+      "Rent deposited to the wrong property: $25.00, dated 10/10/2026, proposed by Bookkeeper 1",
     );
   });
 
@@ -99,6 +100,6 @@ describe("today", () => {
     expect(insuranceLine({
       vendor_id: "v1", vendor: "Vendor 1", coverage: "general liability", expires_on: "2026-07-15",
       standing: "expires in 15 days",
-    })).toBe("Vendor 1, general liability: expires in 15 days (2026-07-15)");
+    })).toBe("Vendor 1, general liability: expires in 15 days (07/15/2026)");
   });
 });

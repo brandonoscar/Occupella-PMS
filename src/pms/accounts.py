@@ -3,8 +3,9 @@
 Staff invite a person (one of the PMC's staff, owners or tenants) by email. The invite is a
 link carrying a random token; only its SHA-256 is stored, it expires after INVITE_DAYS, and it
 is accepted once. Accepting sets the password, so a new invite is also how staff reset a
-forgotten one. Staff also enroll an authenticator app (TOTP) before their invite is used up,
-and every staff sign-in needs its code; a code works once.
+forgotten one; an owner or a tenant may ask for one by email themselves (request_reset,
+docs/adr/0007-email.md). Staff also enroll an authenticator app (TOTP) before their invite is
+used up, and every staff sign-in needs its code; a code works once.
 
 Passwords are hashed with argon2id. A sign-in that fails for any reason (no such login, wrong
 password, disabled, locked) gets the same answer, after the same work, so it doesn't tell an
@@ -39,12 +40,14 @@ MAX_FAILURES = 10
 LOCK_MINUTES = 15
 MIN_PASSWORD = 12
 MAX_PASSWORD = 1024
+# Password resets an owner or a tenant may ask for in an hour (docs/adr/0007-email.md).
+RESETS_PER_HOUR = 3
 # Each kind of person's queries, written out in full: no part of a query comes from a request.
 KINDS = {
     kind: {
-        "person": f"SELECT display_name FROM {table} WHERE pmc_id = %s AND id = %s",
-        "login": f"SELECT id, email FROM trust_logins WHERE pmc_id = %s AND {kind}_id = %s",
-        "new login": f"INSERT INTO trust_logins (pmc_id, kind, {kind}_id, email)"
+        "person": f"SELECT display_name FROM {table} WHERE pmc_id = %s AND id = %s",  # noqa: S608
+        "login": f"SELECT id, email FROM trust_logins WHERE pmc_id = %s AND {kind}_id = %s",  # noqa: S608
+        "new login": f"INSERT INTO trust_logins (pmc_id, kind, {kind}_id, email)"  # noqa: S608
         f" VALUES (%s, '{kind}', %s, %s) RETURNING id",
     }
     for kind, table in (
@@ -114,6 +117,16 @@ class Invite:
 
 
 @dataclass(frozen=True)
+class Reset:
+    """A password reset to email: whose login, at which address, and its invite."""
+
+    kind: str
+    person_id: UUID
+    email: str
+    invite: Invite
+
+
+@dataclass(frozen=True)
 class InviteView:
     kind: str
     email: str
@@ -174,7 +187,12 @@ def create_invite(
         )
         if clash is not None:
             raise Conflict(f"{email} already signs in to this PMC as someone else")
-        login_id = _one(conn, queries["new login"], (pmc_id, person_id, email))[0]
+        try:
+            with conn.transaction():
+                login_id = _one(conn, queries["new login"], (pmc_id, person_id, email))[0]
+        except psycopg.errors.CheckViolation as refused:
+            # A tenant's record at another property signs in as their first (migration 0105).
+            raise Conflict(str(refused).splitlines()[0].removeprefix("trust: ")) from None
     elif login[1] != email:
         raise Conflict(f"this {kind} signs in as {login[1]}")
     else:
@@ -189,11 +207,39 @@ def create_invite(
     return Invite(login_id, token, expires_at)
 
 
+def request_reset(conn: psycopg.Connection[Any], pmc_id: UUID, email: str) -> Reset | None:
+    """A new invite, to set a new password, for an owner's or a tenant's login with this email
+    that can sign in and asked fewer than RESETS_PER_HOUR times in the last hour; None
+    otherwise. The caller answers the same either way, so it doesn't tell who has a login. A
+    staff member resets through an admin's new invite instead: an emailed link must not get past
+    their authenticator. Accepting it sets the new password, so until then the old one works."""
+    found = _one(
+        conn,
+        "SELECT kind, coalesce(owner_id, tenant_id) FROM trust_logins"
+        " WHERE pmc_id = %s AND email = %s AND disabled_at IS NULL"
+        " AND kind IN ('owner', 'tenant')",
+        (pmc_id, normalize_email(email)),
+    )
+    if found is None:
+        return None
+    kind, person_id = found
+    asked = _one(
+        conn,
+        "SELECT count(*) FROM trust_emails WHERE pmc_id = %s AND kind = 'password_reset'"
+        " AND coalesce(owner_id, tenant_id) = %s AND created_at > now() - interval '1 hour'",
+        (pmc_id, person_id),
+    )[0]
+    if asked >= RESETS_PER_HOUR:
+        return None
+    invite = create_invite(conn, pmc_id, kind, person_id, email, None)
+    return Reset(kind, person_id, normalize_email(email), invite)
+
+
 def _open_invite(conn: psycopg.Connection[Any], token: str, lock: bool) -> Any:
     """The invite's row if it can still be used: not accepted, not expired, login enabled."""
     row = _one(
         conn,
-        "SELECT i.id, i.pmc_id, l.id, l.kind, l.email, i.expires_at"
+        "SELECT i.id, i.pmc_id, l.id, l.kind, l.email, i.expires_at"  # noqa: S608
         " FROM trust_invites AS i JOIN trust_logins AS l ON l.id = i.login_id"
         " WHERE i.token_hash = %s AND i.accepted_at IS NULL AND i.expires_at > now()"
         " AND l.disabled_at IS NULL" + (" FOR UPDATE OF i" if lock else ""),

@@ -6,8 +6,10 @@ import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import type { Condition, Inspection, NewRoom } from "../inspections";
 import { CONDITIONS, ROOMS, inspectionReportHref, inspectionSummary, itemsToSend } from "../inspections";
-import { day } from "../money";
+import { day, usDate } from "../money";
 import { useRecord } from "./useRecord";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 const fresh = (): NewRoom[] => ROOMS.map((room) => ({ room, condition: "good", note: "" }));
 
@@ -61,7 +63,7 @@ export function InspectionsPanel({ leaseId, label }: { leaseId: string; label: s
           ))}
         </ul>
       )}
-      <form
+      <Form
         className="flex flex-col gap-3"
         onSubmit={async (event) => {
           event.preventDefault();
@@ -69,7 +71,7 @@ export function InspectionsPanel({ leaseId, label }: { leaseId: string; label: s
             lease_id: leaseId, kind, inspected_on: on, items: itemsToSend(rooms),
             ...(notes.trim() ? { notes: notes.trim() } : {}),
           };
-          if (await record("/api/inspections", body, () => `The ${kind} inspection of ${on} is recorded.`)) {
+          if (await record("/api/inspections", body, () => `The ${kind} inspection of ${usDate(on)} is recorded.`)) {
             setNotes("");
             setRooms(fresh());
           }
@@ -107,8 +109,8 @@ export function InspectionsPanel({ leaseId, label }: { leaseId: string; label: s
           </Button>
           <Button type="submit">Record inspection</Button>
         </div>
-      </form>
-      <Notice tone="info">{said}</Notice>
+      </Form>
+      <Said>{said}</Said>
       <Notice tone="error">{refused}</Notice>
     </section>
   );

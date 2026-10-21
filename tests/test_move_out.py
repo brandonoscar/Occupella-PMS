@@ -104,17 +104,18 @@ def test_a_deposit_pays_what_the_lease_owes_and_the_rest_goes_back(conn, app_con
 
     back = return_deposit(app_conn, pmc.pmc_id, lease, "move-out-1", at(JUL_5))
 
-    # Owed: 1000 + 320 - 100 = 1220 kept for the owner; 280 back to the tenant.
+    # Owed: 1000 + 320 - 100 = 1220 kept for the owner; 280 back to the tenant. The credit
+    # comes off the rent first (migration 0093): 900.00 of June's rent, then the damage.
     assert back == Decimal("280.00")
     assert returned(conn, lease) == (Decimal("1500.00"), Decimal("1220.00"), Decimal("280.00"))
     assert lines(conn, lease) == [
-        (1, "Tenant 1", "June rent", Decimal("1000.00")),
-        (2, "Tenant 1", "Damage: broken window", Decimal("220.00")),
+        (1, "Tenant 1", "June rent", Decimal("900.00")),
+        (2, "Tenant 1", "Damage: broken window", Decimal("320.00")),
         (3, "Tenant 1", None, Decimal("280.00")),
     ]
     assert open_amounts(conn, lease) == [
-        ("June rent", Decimal("0.00")),
-        ("Damage: broken window", Decimal("100.00")),
+        ("June rent", Decimal("100.00")),
+        ("Damage: broken window", Decimal("0.00")),
     ]
     assert balance(conn, pmc.tenant_deposit) == 0
     assert balance(conn, owner) == Decimal("1220.00")

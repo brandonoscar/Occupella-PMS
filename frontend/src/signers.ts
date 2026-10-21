@@ -1,7 +1,7 @@
 // Who may pay money out of each trust bank account, as the API sends it (src/pms/api/signers.py),
 // and how it reads.
 import type { BadgeTone } from "./components/Badge";
-import { money } from "./money";
+import { money, usDate } from "./money";
 
 export type Signer = {
   staff_id: string;
@@ -27,8 +27,8 @@ export function signerLine(signer: Signer): string {
   const how =
     signer.license_number !== null
       ? `license ${signer.license_number}`
-      : `bonded for ${money(signer.bond_amount)} through ${signer.bond_expires_on}`;
-  return `${who}: ${how}, authorized ${signer.authorized_on}`;
+      : `bonded for ${money(signer.bond_amount)} through ${usDate(signer.bond_expires_on)}`;
+  return `${who}: ${how}, authorized ${usDate(signer.authorized_on)}`;
 }
 
 export function standingTone(standing: string): BadgeTone {

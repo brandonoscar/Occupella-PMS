@@ -1,13 +1,15 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
-import type { RentLease } from "../rent";
-import type { Paged, RentRollRow } from "../rentals";
-import { LeaseRow, RentPage } from "./RentPage";
+import type { RentRunLine } from "../rent";
+import type { LeaseDetail, Paged, RentRollRow } from "../rentals";
+import { RentPage } from "./RentPage";
 
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  window.history.pushState(null, "", "/");
+  window.localStorage.clear();
 });
 
 const ME: Me = {
@@ -17,50 +19,39 @@ const ME: Me = {
   person_id: "s1",
   pmc_id: "p1",
   pmc_name: "Synthetic PMC",
+  roles: ["approve"],
 };
-
-const LEASE: RentLease = {
-  id: "l1",
-  property: "Property 1",
-  unit: "Unit 1",
-  starts_on: "2026-01-01",
-  ends_on: null,
-  monthly_rent: "1500.00",
-  rent_changes: [],
-  renters_insurance: null,
-  tenants: [
-    { id: "t1", name: "Tenant 1", prepaid: "50.00", deposit: "1500.00" },
-    { id: "t2", name: "Tenant 2", prepaid: "0.00", deposit: "0.00" },
-  ],
-  owed: "1550.00",
-  on_hold: false,
-  open_charges: [
-    { id: "c1", due_on: "2026-10-01", kind: "rent", memo: "Rent due 2026-10-01", amount: "1500.00", open: "1500.00" },
-    { id: "c2", due_on: "2026-10-06", kind: "fee", memo: "Late fee", amount: "50.00", open: "50.00" },
-  ],
-  payments: [
-    { transfer_id: "tr1", received_on: "2026-09-01", amount: "1500.00", reference: "Check 101", bounced: false },
-    { transfer_id: "tr0", received_on: "2026-08-01", amount: "1500.00", reference: null, bounced: true },
-  ],
-  recurring: [
-    { id: "r1", kind: "fee", memo: "Pet rent", amount: "35.00", starts_on: "2026-01-01", ends_on: null },
-    { id: "r2", kind: "credit", memo: "Concession", amount: "100.00", starts_on: "2026-02-01", ends_on: "2026-12-01" },
-  ],
-};
+const ADMIN: Me = { ...ME, roles: ["admin", "approve", "disburse"] };
 
 const ROW: RentRollRow = {
   id: "l1",
   property: { id: "p1", name: "Property 1" },
   unit: { id: "u1", name: "Unit 1" },
   tenants: ["Tenant 1", "Tenant 2"],
+  people: [{ id: "t1", name: "Tenant 1" }, { id: "t2", name: "Tenant 2" }],
   starts_on: "2026-01-01",
-  ends_on: null,
+  ends_on: "2026-12-31",
+  status: "current",
+  days_left: 76,
   monthly_rent: "1500.00",
+  deposit: "1500.00",
   owed: "1550.00",
 };
 const ROLL: Paged<RentRollRow> = { items: [ROW], total: 1, page: 1, per_page: 50 };
+const LEASE = {
+  id: "l1",
+  property: "Property 1",
+  unit: "Unit 1",
+  tenants: [{ id: "t1", name: "Tenant 1", prepaid: "0.00", deposit: "1500.00", deposits: [{ kind: "security", amount: "1500.00" }] }],
+  owners: [{ account: "a1", owner: "Owner 1", percent: null }],
+  owed: "1550.00",
+} as LeaseDetail;
+const RUNS: RentRunLine[] = [
+  { at: "2026-10-16T06:00:00Z", due_on: "2026-10-01", late_fees_as_of: "2026-10-16", rents: 6, recurring: 1, late_fees: 0, by: null },
+];
 
-// The API: the rent roll on GET; each POST answers with `answers[path]` (or 201 {}), or 409.
+// The API: GETs answer `answers[path]` (the rent roll by default); each POST answers with
+// `answers[path]` (or 201 {}), or 409 for a path in `refuse`.
 function server(answers: Record<string, unknown> = {}, refuse: Record<string, string> = {}) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method !== "POST") {
@@ -78,292 +69,161 @@ const posted = (fetch: ReturnType<typeof server>) =>
     .filter(([, init]) => init?.method === "POST")
     .map(([path, init]) => [path, JSON.parse(String(init?.body))]);
 
-// A lease's rent work, as its page shows it.
-function leaseRow(lease: RentLease = LEASE, refresh = () => {}) {
-  render(<ul><LeaseRow lease={lease} refresh={refresh} /></ul>);
-  return screen.getByRole("listitem", { name: "Property 1, Unit 1" });
-}
-
-describe("LeaseRow", () => {
-  it("shows what each lease owes, its tenants, open charges and payments", async () => {
-    server();
-    const lease = leaseRow();
-    expect(within(lease).getByTestId("owed").textContent).toBe("Owes $1,550.00");
-    expect(lease.textContent).toContain("Tenant 1: prepaid $50.00, deposit $1,500.00");
-    expect(lease.textContent).toContain("2026-10-06 Late fee: $50.00 open");
-    // The payments as rows: the day with its reference under it, the amount, and a badge on the one
-    // that bounced.
-    const payments = within(lease).getAllByRole("row").slice(1);
-    expect(payments.map((r) => within(r).getAllByRole("cell").map((c) => c.textContent))).toEqual([
-      ["2026-09-01Check 101", "$1,500.00", "It bounced"],
-      ["2026-08-01", "$1,500.00", "Bounced"],
-    ]);
-    expect(within(payments[0]!).getByText("Check 101").className).toContain("text-ink-muted");
-    expect(within(lease).getByTestId("owed").getAttribute("data-tone")).toBe("caution");
-    expect(within(payments[1]!).getByText("Bounced").closest("[data-tone]")?.getAttribute("data-tone")).toBe("danger");
-    expect(within(lease).getAllByRole("button", { name: "It bounced" })).toHaveLength(1);
-    expect(screen.queryByText(/payment hold/)).toBeNull();
-  });
-  it("records a payment once per request, and says where it went", async () => {
-    const fetch = server({
-      "/api/rent/leases/l1/payments": { transfers: ["a", "b"], to_owner: "1550.00", to_prepaid: "50.00" },
-    });
-    const lease = leaseRow();
-
-    fireEvent.change(within(lease).getByLabelText("Payment received"), { target: { value: "1600.00" } });
-    fireEvent.change(within(lease).getByLabelText("Received on"), { target: { value: "2026-10-02" } });
-    fireEvent.change(within(lease).getByLabelText("Check or reference"), { target: { value: "Check 102" } });
-    fireEvent.click(within(lease).getByRole("button", { name: "Record payment" }));
-
-    expect(
-      await within(lease).findByText("$1,550.00 paid what is owed; $50.00 held as prepaid rent."),
-    ).toBeTruthy();
-    const [path, body] = posted(fetch)[0] as [string, Record<string, unknown>];
-    expect(path).toBe("/api/rent/leases/l1/payments");
-    expect(body).toMatchObject({ amount: "1600.00", received_on: "2026-10-02", reference: "Check 102" });
-    expect(body.request_id).toMatch(/^[0-9a-f-]{36}$/);
-
-    // The next payment is a new request.
-    fireEvent.change(within(lease).getByLabelText("Payment received"), { target: { value: "10.00" } });
-    fireEvent.click(within(lease).getByRole("button", { name: "Record payment" }));
-    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(2));
-    const second = posted(fetch)[1]?.[1] as Record<string, unknown>;
-    expect(second.request_id).not.toBe(body.request_id);
-    expect(second.reference).toBe(null);
-  });
-
-  it("uses prepaid rent, adds a credit, records a deposit and a bounce", async () => {
-    const fetch = server({
-      "/api/rent/leases/l1/use-prepaid": { transfers: ["p"], to_owner: "50.00", to_prepaid: "0.00" },
-      "/api/rent/payments/tr1/bounce": { transfers: ["r"], nsf_fee: "35.00" },
-    });
-    const lease = leaseRow();
-
-    fireEvent.click(within(lease).getByRole("button", { name: "Use prepaid rent" }));
-    expect(await within(lease).findByText("$50.00 paid what is owed.")).toBeTruthy();
-    fireEvent.change(within(lease).getByLabelText("Add a"), { target: { value: "credit" } });
-    fireEvent.change(within(lease).getByLabelText("Amount"), { target: { value: "25.00" } });
-    fireEvent.change(within(lease).getByLabelText("What for"), { target: { value: "Leak repair" } });
-    fireEvent.click(within(lease).getByRole("button", { name: "Add" }));
-    expect(await within(lease).findByText("Credit of $25.00 added.")).toBeTruthy();
-    fireEvent.change(within(lease).getByLabelText("Deposit from"), { target: { value: "t2" } });
-    fireEvent.change(within(lease).getByLabelText("Deposit received"), { target: { value: "500.00" } });
-    fireEvent.click(within(lease).getByRole("button", { name: "Record deposit" }));
-    expect(await within(lease).findByText("Deposit of $500.00 held.")).toBeTruthy();
-    // A bounce asks for the day it came back before anything is recorded; Cancel records nothing.
-    expect(within(lease).queryByLabelText("Bounced on, 2026-09-01 payment")).toBeNull();
-    fireEvent.click(within(lease).getByRole("button", { name: "It bounced" }));
-    fireEvent.click(within(lease).getByRole("button", { name: "Cancel" }));
-    expect(within(lease).queryByLabelText("Bounced on, 2026-09-01 payment")).toBeNull();
-    fireEvent.click(within(lease).getByRole("button", { name: "It bounced" }));
-    fireEvent.change(within(lease).getByLabelText("Bounced on, 2026-09-01 payment"), {
-      target: { value: "2026-09-05" },
-    });
-    fireEvent.click(within(lease).getByRole("button", { name: "Record the bounce" }));
-    expect(
-      await within(lease).findByText("The $1,500.00 payment bounced and is undone; a $35.00 NSF fee is charged."),
-    ).toBeTruthy();
-
-    const calls = posted(fetch);
-    expect(calls.map(([path]) => path)).toEqual([
-      "/api/rent/leases/l1/use-prepaid",
-      "/api/rent/leases/l1/charges",
-      "/api/rent/deposits",
-      "/api/rent/payments/tr1/bounce",
-    ]);
-    expect(calls[1]?.[1]).toMatchObject({ kind: "credit", amount: "25.00", memo: "Leak repair" });
-    expect(calls[2]?.[1]).toMatchObject({ tenant_id: "t2", amount: "500.00" });
-    expect(calls[3]?.[1]).toEqual({ on: "2026-09-05" });
-  });
-
-  it("shows a lease's recurring charges, adds one and stops one", async () => {
-    const fetch = server();
-    const lease = leaseRow();
-
-    expect(lease.textContent).toContain("Pet rent: $35.00 a month from 2026-01-01");
-    expect(lease.textContent).toContain(
-      "Concession: credit of $100.00 a month from 2026-02-01, stops 2026-12-01",
-    );
-    // Only one still to stop.
-    expect(within(lease).getAllByRole("button", { name: "Stop" })).toHaveLength(1);
-    // Stopping asks for the day it stops first.
-    expect(within(lease).queryByLabelText("Stops on, Pet rent")).toBeNull();
-    fireEvent.click(within(lease).getByRole("button", { name: "Stop" }));
-    fireEvent.change(within(lease).getByLabelText("Stops on, Pet rent"), {
-      target: { value: "2026-11-01" },
-    });
-    fireEvent.click(within(lease).getByRole("button", { name: "Stop it" }));
-    expect(await within(lease).findByText("Pet rent stops 2026-11-01.")).toBeTruthy();
-
-    fireEvent.change(within(lease).getByLabelText("Every month, a"), { target: { value: "fee" } });
-    fireEvent.change(within(lease).getByLabelText("Monthly amount"), { target: { value: "50.00" } });
-    fireEvent.change(within(lease).getByLabelText("First due on"), { target: { value: "2026-11-01" } });
-    fireEvent.change(within(lease).getByLabelText("Monthly, for"), { target: { value: "Parking" } });
-    fireEvent.click(within(lease).getByRole("button", { name: "Add every month" }));
-    expect(await within(lease).findByText("Parking of $50.00 added every month.")).toBeTruthy();
-
-    expect(posted(fetch)).toEqual([
-      ["/api/rent/recurring-charges/r1/stop", { ends_on: "2026-11-01" }],
-      [
-        "/api/rent/leases/l1/recurring-charges",
-        { kind: "fee", amount: "50.00", memo: "Parking", starts_on: "2026-11-01" },
-      ],
-    ]);
-  });
-
-  it("shows a lease's rent changes and records one after a full month's notice", async () => {
-    const changed: RentLease = {
-      ...LEASE,
-      rent_changes: [{
-        id: "rc1", effective_on: "2026-12-01", monthly_rent: "1575.00", notice_given_on: "2026-10-15",
-        served_by: "mail", lease_terms: null,
-      }],
-    };
-    const fetch = server({ "/api/rent/leases/l1/rent-changes": { id: "rc2" } });
-    const lease = leaseRow(changed);
-
-    expect(within(lease).getByRole("list", { name: "Rent changes, Unit 1" }).textContent).toBe(
-      "From 2026-12-01: $1,575.00 a month (notice by mail on 2026-10-15)",
-    );
-    // A month-to-month lease names no lease term.
-    expect(within(lease).queryByLabelText("The lease term that allows it")).toBeNull();
-    fireEvent.change(within(lease).getByLabelText("New monthly rent"), { target: { value: "1600.00" } });
-    fireEvent.change(within(lease).getByLabelText("From (the first of a month)"), { target: { value: "2027-01-01" } });
-    fireEvent.change(within(lease).getByLabelText("Written notice given on"), { target: { value: "2026-11-01" } });
-    fireEvent.change(within(lease).getByLabelText("Served"), { target: { value: "in person" } });
-    fireEvent.click(within(lease).getByRole("button", { name: "Change rent" }));
-    expect(await within(lease).findByText("Rent of $1,600.00 a month from 2027-01-01 recorded.")).toBeTruthy();
-
-    expect(posted(fetch)).toEqual([
-      [
-        "/api/rent/leases/l1/rent-changes",
-        {
-          effective_on: "2027-01-01", monthly_rent: "1600.00", notice_given_on: "2026-11-01",
-          served_by: "in person", lease_terms: null,
-        },
-      ],
-    ]);
-  });
-
-  it("shows a lease's renters insurance, sets its terms and records a policy", async () => {
-    const insured: RentLease = {
-      ...LEASE,
-      renters_insurance: {
-        required: true, minimum_liability: "100000.00", carrier: null, policy_number: null,
-        expires_on: null, liability_limit: null, standing: "none on file", below_minimum: false,
-      },
-    };
-    const fetch = server();
-    const lease = leaseRow(insured);
-
-    const line = within(lease).getByTestId("renters-insurance");
-    expect(line.textContent).toBe(
-      "Renters insurance required (at least $100,000.00 of liability): none on filenone on file",
-    );
-    fireEvent.change(within(lease).getByLabelText("Least liability coverage (optional)"), {
-      target: { value: "200000.00" },
-    });
-    fireEvent.change(within(lease).getByLabelText("Asked from"), { target: { value: "2026-11-01" } });
-    fireEvent.click(within(lease).getByRole("button", { name: "Set insurance terms" }));
-    expect(await within(lease).findByText("Renters insurance is required from 2026-11-01.")).toBeTruthy();
-
-    fireEvent.change(within(lease).getByLabelText("Insurer"), { target: { value: "Carrier A" } });
-    fireEvent.change(within(lease).getByLabelText("Policy number"), { target: { value: "RI-1" } });
-    fireEvent.change(within(lease).getByLabelText("Policy starts"), { target: { value: "2026-11-01" } });
-    fireEvent.change(within(lease).getByLabelText("Policy runs out"), { target: { value: "2027-10-31" } });
-    fireEvent.click(within(lease).getByLabelText("The landlord is named an interested party"));
-    fireEvent.click(within(lease).getByRole("button", { name: "Record policy" }));
-    expect(await within(lease).findByText("Policy RI-1 from Carrier A recorded.")).toBeTruthy();
-
-    expect(posted(fetch)).toEqual([
-      ["/api/rent/leases/l1/renters-insurance-terms", { required: true, minimum_liability: "200000.00", starts_on: "2026-11-01" }],
-      [
-        "/api/rent/leases/l1/renters-insurance",
-        {
-          carrier: "Carrier A", policy_number: "RI-1", starts_on: "2026-11-01", expires_on: "2027-10-31",
-          liability_limit: null, landlord_interested_party: true,
-        },
-      ],
-    ]);
-  });
-
-  it("asks a lease with an end date for the term that allows a rent change", async () => {
-    const lease = leaseRow({ ...LEASE, ends_on: "2026-12-31" });
-
-    expect(within(lease).getByLabelText("The lease term that allows it")).toBeTruthy();
-  });
-
-  it("shows a refusal on the lease, and a hold", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async (path: string) =>
-        new Response(JSON.stringify({ detail: `lease is on a payment hold (${path})` }), { status: 409 }),
-      ),
-    );
-    const lease = leaseRow({ ...LEASE, on_hold: true, payments: [], open_charges: [] });
-
-    expect(within(lease).getByText(/On a payment hold/)).toBeTruthy();
-    fireEvent.change(within(lease).getByLabelText("Payment received"), { target: { value: "10.00" } });
-    fireEvent.click(within(lease).getByRole("button", { name: "Record payment" }));
-
-    expect(
-      await within(lease).findByText("lease is on a payment hold (/api/rent/leases/l1/payments)"),
-    ).toBeTruthy();
-  });
-});
-
 describe("RentPage", () => {
   async function roll() {
     return screen.findByRole("row", { name: "Property 1, Unit 1" });
   }
 
-  it("lists the leases a page at a time, each linking to its own page", async () => {
+  it("lists the leases a page at a time with their days left, rent, deposit and balance", async () => {
     const fetch = server({
       "/api/leases?page=1&show=current": { ...ROLL, total: 51 },
+      "/api/property-groups": { groups: [], properties: [{ id: "p1", name: "Property 1" }] },
     });
     render(<RentPage me={ME} />);
 
     const row = await roll();
     expect(within(row).getAllByRole("cell").map((c) => c.textContent)).toEqual([
-      "Property 1", "Unit 1", "Tenant 1, Tenant 2", "$1,500.00", "From 2026-01-01, month to month", "Owes $1,550.00",
+      "Property 1", "Unit 1", "Tenant 1, Tenant 2", "01/01/2026", "12/31/2026", "76",
+      "$1,500.00", "$1,500.00", "$1,550.00",
     ]);
     expect(within(row).getByRole("link", { name: "Unit 1" }).getAttribute("href")).toBe("/leases/l1");
-    expect(within(row).getByTestId("owed").getAttribute("data-tone")).toBe("caution");
+    expect(within(row).getByTestId("balance").className).toContain("text-danger");
     const pages = screen.getByRole("navigation", { name: "Pages" });
     expect(pages.textContent).toContain("1–1 of 51");
 
-    // The next page, a search and the owing leases each ask again, from the first page.
+    // The next page, one property and each status ask again, from the first page.
     fireEvent.click(within(pages).getByRole("button", { name: "Next" }));
     await vi.waitFor(() => expect(fetch.mock.calls.at(-1)?.[0]).toBe("/api/leases?page=2&show=current"));
-    fireEvent.change(screen.getByLabelText("Find a tenant, unit or property"), { target: { value: " Tenant 2 " } });
+    const picker = screen.getByRole("combobox", { name: "Properties shown" });
+    await within(picker).findByRole("option", { name: "Property 1" });
+    fireEvent.change(picker, { target: { value: "property:p1" } });
     await vi.waitFor(() =>
-      expect(fetch.mock.calls.at(-1)?.[0]).toBe("/api/leases?page=1&show=current&q=Tenant+2"),
+      expect(fetch.mock.calls.at(-1)?.[0]).toBe("/api/leases?page=1&show=current&property=p1"),
     );
-    fireEvent.change(screen.getByLabelText("Show"), { target: { value: "owing" } });
-    await vi.waitFor(() =>
-      expect(fetch.mock.calls.at(-1)?.[0]).toBe("/api/leases?page=1&show=owing&q=Tenant+2"),
-    );
+    for (const [label, show] of [["Future", "future"], ["Past", "past"], ["Owing", "owing"]]) {
+      fireEvent.change(screen.getByLabelText("Status"), {
+        target: { value: within(screen.getByLabelText("Status")).getByRole("option", { name: label }).getAttribute("value") },
+      });
+      await vi.waitFor(() =>
+        expect(fetch.mock.calls.at(-1)?.[0]).toBe(`/api/leases?page=1&show=${show}&property=p1`),
+      );
+    }
   });
 
-  it("runs the rent and late fees and says how many were charged", async () => {
+  it("opens the lease from anywhere on its row, and a tenant from their name", async () => {
+    server();
+    render(<RentPage me={ME} />);
+    const row = await roll();
+
+    fireEvent.click(within(row).getByRole("link", { name: "Tenant 2" }));
+    expect(window.location.pathname).toBe("/tenants/t2");
+    fireEvent.click(within(row).getAllByRole("cell")[0]!);
+    expect(window.location.pathname).toBe("/leases/l1");
+  });
+
+  it("shows a lease with no end as month to month, with no days left, and paid up in plain ink", async () => {
+    server({ "/api/leases?page=1&show=current": { ...ROLL, items: [{ ...ROW, ends_on: null, days_left: null, owed: "0.00" }] } });
+    render(<RentPage me={ME} />);
+    const row = await roll();
+
+    expect(within(row).getAllByRole("cell").map((c) => c.textContent).slice(4, 6)).toEqual(["Month to month", ""]);
+    expect(within(row).getByTestId("balance").className).not.toContain("text-danger");
+  });
+
+  it("receives a payment to a lease found by its tenant, unit or property", async () => {
     const fetch = server({
-      "/api/rent/charge-rent": { charged: 3, recurring: 1 },
-      "/api/rent/late-fees": { charged: 1 },
+      "/api/leases?q=te&show=all&per_page=10": ROLL,
+      "/api/leases/l1": LEASE,
+      "/api/rent/leases/l1/payments": { transfers: ["tr1"], to_owner: "1550.00", to_prepaid: "0.00" },
     });
     render(<RentPage me={ME} />);
     await roll();
 
-    fireEvent.change(screen.getByLabelText("Rent due on"), { target: { value: "2026-11-01" } });
-    fireEvent.click(screen.getByRole("button", { name: "Charge rent" }));
-    expect(await screen.findByText("3 rents and 1 recurring charge charged.")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Late fees as of"), { target: { value: "2026-11-06" } });
-    fireEvent.click(screen.getByRole("button", { name: "Assess late fees" }));
-    expect(await screen.findByText("1 late fee charged.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Receive payment" }));
+    const panel = screen.getByRole("dialog", { name: "Receive payment" });
+    fireEvent.change(within(panel).getByLabelText("Lease"), { target: { value: "t" } });
+    expect(within(panel).queryByRole("list", { name: "Leases found" })).toBeNull();  // two letters first
+    fireEvent.change(within(panel).getByLabelText("Lease"), { target: { value: "te" } });
+    const found = await within(panel).findByRole("list", { name: "Leases found" });
+    fireEvent.click(within(found).getByRole("button", { name: "Property 1 · Unit 1 · Tenant 1, Tenant 2" }));
+    expect(await within(panel).findByText("Balance due $1,550.00")).toBeTruthy();
+    fireEvent.change(within(panel).getByLabelText("Payment received"), { target: { value: "1550.00" } });
+    fireEvent.change(within(panel).getByLabelText("Method"), { target: { value: "money order" } });
+    fireEvent.change(within(panel).getByLabelText("Check or reference"), { target: { value: "MO 12" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Record payment" }));
 
-    expect(posted(fetch)).toEqual([
-      ["/api/rent/charge-rent", { on: "2026-11-01" }],
-      ["/api/rent/late-fees", { on: "2026-11-06" }],
-    ]);
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(posted(fetch)).toEqual([[
+      "/api/rent/leases/l1/payments",
+      expect.objectContaining({ amount: "1550.00", method: "money order", reference: "MO 12" }),
+    ]]);
+  });
+
+  it("goes back to the search for another lease, and says when one can't be read", async () => {
+    server({ "/api/leases?q=unit&show=all&per_page=10": ROLL, "/api/leases/l1": LEASE });
+    render(<RentPage me={ME} />);
+    await roll();
+    fireEvent.click(screen.getByRole("button", { name: "Receive payment" }));
+    const panel = screen.getByRole("dialog", { name: "Receive payment" });
+    fireEvent.change(within(panel).getByLabelText("Lease"), { target: { value: "unit" } });
+    fireEvent.click(await within(panel).findByRole("button", { name: /^Property 1 · Unit 1/ }));
+    fireEvent.click(await within(panel).findByRole("button", { name: "Another lease" }));
+    expect(within(panel).getByLabelText("Lease")).toBeTruthy();
+    cleanup();
+
+    vi.stubGlobal("fetch", vi.fn(async (path: string) =>
+      path.startsWith("/api/leases?q=")
+        ? new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })
+        : new Response(JSON.stringify(ROLL), { status: 200 })));
+    render(<RentPage me={ME} />);
+    await roll();
+    fireEvent.click(screen.getByRole("button", { name: "Receive payment" }));
+    fireEvent.change(screen.getByLabelText("Lease"), { target: { value: "unit" } });
+    expect((await screen.findByRole("alert")).textContent).toBe("sign in first");
+  });
+
+  it("lets an admin run rent now, saying what it charged, beside the latest runs", async () => {
+    const fetch = server({ "/api/rent/runs": RUNS, "/api/rent/run": { rents: 3, recurring: 1, late_fees: 2 } });
+    render(<RentPage me={ADMIN} />);
+    await roll();
+
+    fireEvent.click(screen.getByRole("button", { name: "Actions for the rent roll" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Run rent now" }));
+    const panel = screen.getByRole("dialog", { name: "Run rent now" });
+    expect((await within(panel).findByRole("list", { name: "Latest rent runs" })).textContent).toBe(
+      "10/16/2026 nightly: 6 rents, 1 recurring charge and 0 late fees charged.",
+    );
+    fireEvent.change(within(panel).getByLabelText("Rent due on"), { target: { value: "2026-09-01" } });
+    fireEvent.change(within(panel).getByLabelText("Late fees as of"), { target: { value: "2026-10-16" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Run rent now" }));
+
+    expect(await screen.findByText("3 rents, 1 recurring charge and 2 late fees charged.")).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(posted(fetch)).toEqual([["/api/rent/run", { due_on: "2026-09-01", late_fees_as_of: "2026-10-16" }]]);
+  });
+
+  it("keeps Run rent now from staff who aren't admins", async () => {
+    server();
+    render(<RentPage me={ME} />);
+    await roll();
+    expect(screen.queryByRole("button", { name: "Actions for the rent roll" })).toBeNull();
+  });
+
+  it("shows why a run was refused, in its panel, once", async () => {
+    server({ "/api/rent/runs": [] }, { "/api/rent/run": "late fees are assessed as of today or an earlier day" });
+    render(<RentPage me={ADMIN} />);
+    await roll();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for the rent roll" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Run rent now" }));
+    const panel = screen.getByRole("dialog", { name: "Run rent now" });
+
+    fireEvent.click(within(panel).getByRole("button", { name: "Run rent now" }));
+
+    expect((await within(panel).findByRole("alert")).textContent).toBe(
+      "late fees are assessed as of today or an earlier day",
+    );
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+    expect(within(panel).queryByRole("list", { name: "Latest rent runs" })).toBeNull();
   });
 
   it("says when no lease is listed, and when the leases can't be read", async () => {
@@ -378,17 +238,5 @@ describe("RentPage", () => {
     );
     render(<RentPage me={ME} />);
     expect((await screen.findAllByRole("alert"))[0]?.textContent).toBe("sign in first");
-  });
-
-  it("shows why a run was refused", async () => {
-    server({}, { "/api/rent/late-fees": "late fees are assessed as of today or an earlier day" });
-    render(<RentPage me={ME} />);
-    await roll();
-
-    fireEvent.click(screen.getByRole("button", { name: "Assess late fees" }));
-
-    expect((await screen.findByRole("alert")).textContent).toBe(
-      "late fees are assessed as of today or an earlier day",
-    );
   });
 });

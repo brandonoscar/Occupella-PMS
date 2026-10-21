@@ -39,6 +39,7 @@ TABLES = {
     "trust_leases": {"SELECT"},  # written only by trust_open_lease and trust_end_lease
     "trust_lease_tenants": {"SELECT"},  # written only by trust_open_lease
     "trust_charges": {"SELECT", "INSERT"},
+    "trust_charge_waivers": {"SELECT", "INSERT"},
     "trust_charge_payments": {"SELECT"},  # written only by trust_apply_payment
     "trust_payment_reversals": {"SELECT"},  # written only by trust_reverse_payment
     "trust_management_agreements": {"SELECT", "INSERT"},
@@ -51,9 +52,11 @@ TABLES = {
     "trust_bill_declines": {"SELECT", "INSERT"},
     "trust_emails": {"SELECT", "INSERT"},
     "trust_email_deliveries": {"SELECT", "INSERT"},
+    "trust_email_settings": {"SELECT", "INSERT"},
     "trust_bill_payments": {"SELECT"},  # written only by trust_set_aside_bill, trust_pay_bill
     "trust_work_orders": {"SELECT", "INSERT"},
     "trust_work_order_steps": {"SELECT", "INSERT"},
+    "trust_work_order_details": {"SELECT", "INSERT"},
     "trust_late_fee_policies": {"SELECT", "INSERT"},
     "trust_late_fees": {"SELECT"},  # written only by trust_assess_late_fees
     "trust_nsf_fee_policies": {"SELECT", "INSERT"},
@@ -86,8 +89,15 @@ TABLES = {
     # Expense accounts (migration 0052): staff add accounts and put bills in them; a bill's
     # latest row is its account, so a correction is an insert too. The ids order the rows.
     "trust_expense_accounts": {"SELECT", "INSERT"},
+    "trust_charge_types": {"SELECT", "INSERT"},
+    # QuickBooks names (migration 0102): staff name a ledger account for QuickBooks; the latest
+    # row holds, so a change is an insert. The ids order the rows.
+    "trust_quickbooks_accounts": {"SELECT", "INSERT"},
+    "trust_quickbooks_accounts_id_seq": set(),
     "trust_bill_expense_accounts": {"SELECT", "INSERT"},
     "trust_bill_expense_accounts_id_seq": set(),
+    "trust_bill_splits": {"SELECT", "INSERT"},
+    "trust_bill_splits_id_seq": set(),
     "trust_recurring_bill_expense_accounts": {"SELECT", "INSERT"},
     "trust_recurring_bill_expense_accounts_id_seq": set(),
     # Journal entries (migration 0053): written only by their three functions, so a posting is
@@ -109,11 +119,24 @@ TABLES = {
     # Vendor insurance and inspections (migration 0058): staff record them; a renewal or a
     # redone inspection is a new row.
     "trust_vendor_insurance": {"SELECT", "INSERT"},
+    "trust_vendor_profiles": {"SELECT", "INSERT"},
     "trust_account_signers": {"SELECT", "INSERT"},
     "trust_rent_changes": {"SELECT", "INSERT"},
     "trust_renters_insurance_terms": {"SELECT", "INSERT"},
     "trust_renters_insurance": {"SELECT", "INSERT"},
     "trust_archivals": {"SELECT", "INSERT"},
+    "trust_contacts": {"SELECT", "INSERT"},
+    "trust_company_profiles": {"SELECT", "INSERT"},
+    # Property groups (migration 0065): a group is renamed (UPDATE of display_name only), a
+    # property joins or leaves it by an insert.
+    "trust_property_groups": {"SELECT", "INSERT"},
+    "trust_property_group_members": {"SELECT", "INSERT"},
+    # Notes (migration 0066): written once each; a correction is a new note.
+    "trust_notes": {"SELECT", "INSERT"},
+    # Rent runs (migration 0067): recorded by trust_run_rent, which runs with the app's grants.
+    "trust_rent_runs": {"SELECT", "INSERT"},
+    # How a payout was sent (migration 0068): recorded once each, never changed.
+    "trust_payout_methods": {"SELECT", "INSERT"},
     "trust_inspections": {"SELECT", "INSERT"},
     "trust_inspection_items": {"SELECT", "INSERT"},
     "trust_listing_removals": {"SELECT", "INSERT"},
@@ -123,6 +146,9 @@ TABLES = {
     "trust_screenings": {"SELECT", "INSERT"},
     "trust_application_decisions": {"SELECT", "INSERT"},
     "trust_adverse_actions": {"SELECT", "INSERT"},
+    "trust_application_withdrawals": {"SELECT", "INSERT"},
+    "trust_lease_offer_charges": {"SELECT", "INSERT"},
+    "trust_lease_offer_voids": {"SELECT", "INSERT"},
     # Lease offers: staff offer and send them, the partner's signatures are recorded.
     "trust_lease_offers": {"SELECT", "INSERT"},
     "trust_lease_offer_signers": {"SELECT", "INSERT"},
@@ -135,6 +161,8 @@ TABLES = {
     "trust_bank_matches": {"SELECT"},
     "trust_bank_match_lines": {"SELECT"},
     "trust_bank_match_transfers": {"SELECT"},
+    "trust_bank_deposits": {"SELECT", "INSERT"},
+    "trust_bank_deposit_items": {"SELECT", "INSERT"},
     "trust_bank_unmatches": {"SELECT"},
     # The switching tool: items carried over and the sign-off; their matches by function only.
     "trust_cutover_items": {"SELECT", "INSERT"},
@@ -151,6 +179,78 @@ TABLES = {
     "trust_documents": {"SELECT", "INSERT"},
     "trust_document_files": {"SELECT", "INSERT"},
     "trust_document_removals": {"SELECT", "INSERT"},
+    # A tenant leaving a lease: written only by trust_remove_lease_tenant. Who else lives there,
+    # guarantors and lease-break fee terms: staff add them with inserts; a removal is a row.
+    "trust_lease_departures": {"SELECT"},
+    # A lease's tenants moving to another unit: written only by trust_transfer_lease (0091).
+    "trust_lease_transfers": {"SELECT"},
+    "trust_lease_occupants": {"SELECT", "INSERT"},
+    "trust_lease_pets": {"SELECT", "INSERT"},
+    "trust_lease_vehicles": {"SELECT", "INSERT"},
+    "trust_lease_guarantors": {"SELECT", "INSERT"},
+    "trust_lease_household_removals": {"SELECT", "INSERT"},
+    "trust_lease_break_fees": {"SELECT", "INSERT"},
+    # A lease's rent due day from a month: staff record it with an insert (migration 0081).
+    "trust_rent_due_days": {"SELECT", "INSERT"},
+    "trust_management_fee_settings": {"SELECT", "INSERT"},
+    "trust_owner_fees": {"SELECT"},  # written only by trust_take_owner_fee
+    # One invoice shared across properties: staff enter it and its parts with inserts, and a
+    # markup on a bill too; the markup taken is written only by trust_set_aside_bill
+    # (migration 0083).
+    "trust_shared_bills": {"SELECT", "INSERT"},
+    "trust_shared_bill_parts": {"SELECT", "INSERT"},
+    "trust_bill_markups": {"SELECT", "INSERT"},
+    "trust_bill_markup_fees": {"SELECT"},
+    # A property's ownership shares from a day: staff record them and their lines with inserts
+    # (migration 0094).
+    "trust_ownership_shares": {"SELECT", "INSERT"},
+    "trust_ownership_share_lines": {"SELECT", "INSERT"},
+    # Housing authorities, a lease's assistance from a month, and what an authority owes: staff
+    # add them with inserts, and the rent run splits each month's part with one (migration 0095).
+    # An authority's payments are written only by trust_apply_assistance_payment.
+    "trust_housing_authorities": {"SELECT", "INSERT"},
+    "trust_rent_assistance": {"SELECT", "INSERT"},
+    "trust_assistance_charges": {"SELECT", "INSERT"},
+    "trust_assistance_payments": {"SELECT"},
+    # Utility billing (migration 0096): staff record units' square feet, a property's plans and
+    # which utilities a lease is billed for; bills and their shares are written only by
+    # trust_bill_back_utility, with the lease charges they make.
+    "trust_unit_areas": {"SELECT", "INSERT"},
+    "trust_utility_plans": {"SELECT", "INSERT"},
+    "trust_lease_utilities": {"SELECT", "INSERT"},
+    "trust_utility_bills": {"SELECT"},
+    "trust_utility_shares": {"SELECT"},
+    "trust_on_call_staff": {"SELECT", "INSERT"},
+    "trust_recurring_work_orders": {"SELECT", "INSERT"},
+    "trust_recurring_work_order_ends": {"SELECT", "INSERT"},
+    "trust_vendor_links": {"SELECT", "INSERT"},
+    "trust_vendor_link_revocations": {"SELECT", "INSERT"},
+    # E-signing on the PMS's own page (migration 0097): a signer's links, what they did through
+    # one and their signature's evidence, each written by the app as it happens.
+    "trust_signing_links": {"SELECT", "INSERT"},
+    "trust_signing_events": {"SELECT", "INSERT"},
+    "trust_signature_evidence": {"SELECT", "INSERT"},
+    # Calendar feeds (migration 0098): a person's link, kept as its SHA-256, and taking it back.
+    "trust_calendar_feeds": {"SELECT", "INSERT"},
+    "trust_calendar_feed_revocations": {"SELECT", "INSERT"},
+    "trust_leads": {"SELECT", "INSERT"},
+    "trust_screening_criteria": {"SELECT", "INSERT"},
+    "trust_lead_closings": {"SELECT", "INSERT"},
+    "trust_showings": {"SELECT", "INSERT"},
+    "trust_showing_outcomes": {"SELECT", "INSERT"},
+    # A tenant's records at other properties, the same person (migration 0105).
+    "trust_tenant_links": {"SELECT", "INSERT"},
+    # Years closed (migration 0106): written only by trust_close_year.
+    "trust_year_closes": {"SELECT"},
+    # The old system's past transactions (migration 0107), never posted.
+    "trust_history_files": {"SELECT", "INSERT"},
+    "trust_history_lines": {"SELECT", "INSERT"},
+    # A housing-assistance household's certifications and the home's inspections (migration 0108).
+    "trust_income_certifications": {"SELECT", "INSERT"},
+    "trust_assistance_inspections": {"SELECT", "INSERT"},
+    # A property's street address and where it is (migration 0109); the AI reads both.
+    "trust_property_addresses": {"SELECT", "INSERT"},
+    "trust_property_locations": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -172,6 +272,13 @@ COLUMN_UPDATES = {
 # their credentials, and rental applicants with their consumer report results, are no business
 # of the role behind Occupella's key.
 AI_NEVER_READS = {
+    "trust_screening_criteria",
+    "trust_leads",
+    "trust_lead_closings",
+    "trust_showings",
+    "trust_showing_outcomes",
+    "trust_vendor_links",
+    "trust_vendor_link_revocations",
     "trust_logins",
     "trust_invites",
     "trust_sessions",
@@ -183,16 +290,41 @@ AI_NEVER_READS = {
     "trust_screenings",
     "trust_application_decisions",
     "trust_adverse_actions",
+    "trust_application_withdrawals",
     "trust_lease_offers",
+    "trust_lease_offer_charges",
+    "trust_lease_offer_voids",
     "trust_lease_offer_signers",
     "trust_signature_requests",
     "trust_signatures",
     "trust_lease_offer_completions",
+    # Signers' links, consents with the address and browser they came from, and signatures.
+    "trust_signing_links",
+    "trust_signing_events",
+    "trust_signature_evidence",
+    # Calendar links: whoever holds one reads a person's calendar without a login.
+    "trust_calendar_feeds",
+    "trust_calendar_feed_revocations",
     # A document's bytes (a W-9 carries a tax ID): the AI may know it exists, never read it.
     "trust_document_files",
     # Emails to owners and their deliveries: people's addresses (ADR 0004).
     "trust_emails",
     "trust_email_deliveries",
+    # Tenants', owners' and vendors' emails, phones and mailing addresses (ADR 0005).
+    "trust_contacts",
+    # What staff write about people and their homes (ADR 0006).
+    "trust_notes",
+    # The company's mailing address, with the fee terms new properties start with (ADR 0006).
+    "trust_company_profiles",
+    # Who else lives in a home, their pets (an assistance animal speaks to a disability) and
+    # vehicles, and the lease's guarantors with their contact details (migration 0080).
+    "trust_lease_occupants",
+    "trust_lease_pets",
+    "trust_lease_vehicles",
+    "trust_lease_guarantors",
+    "trust_lease_household_removals",
+    # A housing-assistance household's income and size, as private as an application's.
+    "trust_income_certifications",
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
 RENAMEABLE = [
@@ -204,12 +336,14 @@ RENAMEABLE = [
     "trust_vendors",
     "trust_units",
     "trust_staff",
+    "trust_property_groups",
 ]
 
 # Who may call each function, besides the role that owns it.
 FUNCTIONS = {
     # The write paths: the app role and nobody else.
     "trust_open_ledger_account(uuid,uuid,text,uuid,uuid,uuid)": {"trust_app"},
+    "trust_open_deposit_account(uuid,uuid,uuid,text)": {"trust_app"},
     "trust_post_transfers(uuid,text,transfer_request[],timestamptz,jsonb)": {"trust_app"},
     "trust_open_vendor_account(uuid,uuid,uuid)": {"trust_app"},
     "trust_open_lease(uuid,uuid,date,date,numeric,uuid[])": {"trust_app"},
@@ -220,30 +354,68 @@ FUNCTIONS = {
     "trust_post_leasing_fee(uuid,uuid,text,timestamptz)": {"trust_app"},
     "trust_draw_owner(uuid,text,text,numeric,timestamptz)": {"trust_app"},
     "trust_withdraw_pmc_fees(uuid,uuid,text,numeric,timestamptz)": {"trust_app"},
+    "trust_take_owner_fee(uuid,text,text,numeric,text,text,timestamptz)": {"trust_app"},
+    "trust_take_monthly_management_fees(uuid,date)": {"trust_app"},
     "trust_set_aside_bill(uuid,uuid,timestamptz)": {"trust_app"},
     "trust_pay_bill(uuid,uuid,timestamptz)": {"trust_app"},
     "trust_charge_rent_due(uuid,date)": {"trust_app"},
     "trust_rent_for_month(date,date,numeric,date)": {"trust_app"},
     "trust_rent_on(uuid,date)": {"trust_app"},
+    "trust_tenant_records(uuid,uuid)": {"trust_app"},
+    "trust_closed_until(uuid)": {"trust_app"},
     "trust_open_charges(uuid,uuid,timestamptz)": {"trust_app"},
+    # Where a charge comes in the order money pays them: rent first (migration 0093).
+    "trust_pay_rank(trust_charges)": {"trust_app"},
+    # A property's ownership shares in force on a day, and an amount split by them (0094).
+    "trust_ownership_on(uuid,date)": {"trust_app"},
+    "trust_split_by_ownership(uuid,date,numeric)": {"trust_app"},
+    # A lease's housing assistance on a day, the authority's part of rent, what is open of one of
+    # its charges, and the match of its payment to one (migration 0095).
+    "trust_assistance_on(uuid,date)": {"trust_app"},
+    "trust_assistance_part(numeric,numeric,numeric)": {"trust_app"},
+    "trust_assistance_open(uuid)": {"trust_app"},
+    "trust_apply_assistance_payment(uuid,uuid,text,numeric)": {"trust_app"},
+    # Whether a signing link still signs (migration 0097).
+    "trust_signing_link_open(uuid)": {"trust_app"},
+    # Utility billing (migration 0096): what holds on a day, a bill's shares (a preview writes
+    # nothing) and billing it back.
+    "trust_unit_area(uuid)": {"trust_app"},
+    "trust_utility_plan_on(uuid,text,date)": {"trust_app"},
+    "trust_lease_billed(uuid,text,date)": {"trust_app"},
+    "trust_lease_people(uuid,date)": {"trust_app"},
+    "trust_utility_weights(uuid,uuid,text,date,date,text,jsonb)": {"trust_app"},
+    "trust_utility_allocation(uuid,uuid,text,date,date,numeric,numeric,jsonb)": {"trust_app"},
+    "trust_bill_back_utility(uuid,uuid,text,date,date,numeric,date,text,numeric,jsonb,uuid)": {
+        "trust_app"
+    },
     "trust_charge_recurring_due(uuid,date)": {"trust_app"},
+    "trust_charge_rent_on_due_days(uuid,date,date)": {"trust_app"},
+    "trust_charge_recurring_on_due_days(uuid,date,date)": {"trust_app"},
+    "trust_rent_due_day(uuid,date)": {"trust_app"},
+    "trust_rent_due_on(uuid,date)": {"trust_app"},
     "trust_assess_late_fees(uuid,date)": {"trust_app"},
     "trust_charge_nsf_fee(uuid,text)": {"trust_app"},
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)": {"trust_app"},
     "trust_record_owner_contribution(uuid,text,text,numeric,timestamptz,text)": {"trust_app"},
     "trust_complete_lease_offer(uuid,uuid,uuid)": {"trust_app"},
     "trust_enter_recurring_bills(uuid,date)": {"trust_app"},
+    "trust_open_recurring_work_orders(uuid,date)": {"trust_app"},
     "trust_match_bank_lines(uuid,uuid,uuid[],text[],uuid[],uuid)": {"trust_app"},
     "trust_match_cutover_opening(uuid,uuid,uuid,uuid)": {"trust_app"},
     "trust_unmatch_bank_lines(uuid,uuid,uuid)": {"trust_app"},
     "trust_prepare_bank_reconciliation(uuid,uuid,date)": {"trust_app"},
     "trust_approve_bank_reconciliation(uuid,uuid)": {"trust_app"},
     "trust_return_deposit(uuid,uuid,text,text,timestamptz)": {"trust_app"},
+    "trust_remove_lease_tenant(uuid,uuid,uuid,date,uuid)": {"trust_app"},
+    "trust_transfer_lease(uuid,uuid,uuid,date,date,numeric,text,date)": {"trust_app"},
+    "trust_close_year(uuid,integer)": {"trust_app"},
     "trust_propose_journal_entry(uuid,date,text,transfer_request[])": {"trust_app"},
     "trust_post_journal_entry(uuid,uuid)": {"trust_app"},
     "trust_decline_journal_entry(uuid,uuid,text)": {"trust_app"},
     # What a lease owes, as the deposit's return counts it: the move-out page reads it.
     "trust_lease_owed(uuid)": {"trust_app"},
+    # The leases a lease's tenants moved from: the rent and move-out pages read them.
+    "trust_lease_moved_from(uuid)": {"trust_app"},
     # The app approves only month-end preparations, which another staff member made: this one
     # is the owner's, called by trust_approve_bank_reconciliation.
     "trust_approve_reconciliation(uuid,uuid,timestamptz,timestamptz,numeric,text,text)": set(),
@@ -274,6 +446,32 @@ FUNCTIONS = {
     # Checks a payment hold as the owner, to take its lease's lock: no role calls it on its own.
     "trust_check_payment_hold()": set(),
     "trust_check_bill_decision()": set(),
+    "trust_check_bank_deposit_item()": set(),  # a trigger's: no one calls it
+    "trust_check_charge_waiver()": set(),
+    "trust_check_rent_due_day()": set(),
+    "trust_check_bill_reference()": set(),  # a trigger's: no one calls it
+    "trust_check_shared_bill()": set(),
+    "trust_check_ownership_share_line()": set(),
+    "trust_check_ownership_shares()": set(),
+    "trust_check_rent_assistance()": set(),
+    "trust_split_rent_assistance()": set(),
+    "trust_check_assistance_charge()": set(),
+    "trust_check_tenant_payment_transfer()": set(),
+    "trust_check_work_order_charge()": set(),
+    "trust_check_vendor_link_step()": set(),
+    "trust_check_signing_link()": set(),
+    "trust_check_signing_event()": set(),
+    "trust_check_signature_evidence()": set(),
+    "trust_record_evidenced_signature()": set(),
+    "trust_check_signature_evidenced()": set(),
+    "trust_check_lead_open()": set(),
+    "trust_check_tenant_link()": set(),
+    "trust_check_tenant_login()": set(),
+    "trust_refuse_closed_year()": set(),
+    "trust_check_history_line()": set(),
+    "trust_check_assistance_record()": set(),
+    "trust_check_decision_override()": set(),
+    "trust_fill_bill_markup()": set(),
     # Reports read trust records, so only the app and the AI; they run with the caller's own
     # read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app", "trust_ai_agent"},
@@ -291,18 +489,27 @@ FUNCTIONS = {
     "trust_report_general_ledger(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_audit_log(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_lease_expirations(uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_assistance_compliance(uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_due_standing(date,date)": {"trust_app"},
+    "trust_inspection_standing(text,date,date)": {"trust_app"},
+    "trust_property_address(uuid)": {"trust_app"},
+    "trust_property_location(uuid)": {"trust_app"},
     "trust_report_vendor_payments(uuid,integer)": {"trust_app", "trust_ai_agent"},
     "trust_report_bank_reconciliation(uuid,uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_cutover(uuid,uuid)": {"trust_app", "trust_ai_agent"},
     "trust_report_deposit_return(uuid,uuid)": {"trust_app", "trust_ai_agent"},
     "trust_report_owner_year_end(uuid,uuid,integer)": {"trust_app", "trust_ai_agent"},
     "trust_report_income_statement(uuid,uuid,date,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_income_statement_accrual(uuid,uuid,date,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_owner_balance_sheet(uuid,uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_balance_sheet(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_budget_vs_actual(uuid,uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_vendor_insurance(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_trust_account_signers(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_renters_insurance(uuid,date)": {"trust_app", "trust_ai_agent"},
-    "trust_is_archived(uuid,uuid)": {"trust_app"},
+    "trust_is_archived(uuid,uuid,uuid,uuid,uuid)": {"trust_app"},
+    "trust_group_properties(uuid)": {"trust_app"},
+    "trust_run_rent(uuid,date,date)": {"trust_app"},
     "trust_report_inspection(uuid,uuid)": {"trust_app", "trust_ai_agent"},
     "trust_report_cash_flow(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_vacancy(uuid,date)": {"trust_app", "trust_ai_agent"},
@@ -341,6 +548,7 @@ FUNCTIONS = {
     "trust_check_bill_account()": {"PUBLIC"},
     "trust_check_work_order()": {"PUBLIC"},
     "trust_check_work_order_step()": {"PUBLIC"},
+    "trust_check_work_order_step_vendor()": {"PUBLIC"},
     "trust_check_hold_release()": {"PUBLIC"},
     "trust_check_hold_allowance()": {"PUBLIC"},
     "trust_check_recurring_bill()": {"PUBLIC"},
@@ -366,6 +574,8 @@ FUNCTIONS = {
     "trust_name_custom_role_changer()": {"PUBLIC"},
     "trust_name_recorder()": {"PUBLIC"},
     "trust_check_archival()": {"PUBLIC"},
+    "trust_check_group_member()": {"PUBLIC"},
+    "trust_check_payout_method()": {"PUBLIC"},
     "trust_check_document_has_file()": {"PUBLIC"},
     "trust_check_recurring_charge_amount()": {"PUBLIC"},
     "trust_check_signer_change()": {"PUBLIC"},
@@ -375,22 +585,34 @@ FUNCTIONS = {
     "trust_check_draw_signer()": {"PUBLIC"},
     "trust_check_journal_signer()": {"PUBLIC"},
     "trust_check_rent_change()": {"PUBLIC"},
+    "trust_check_bill_split()": {"PUBLIC"},
+    "trust_check_application_withdrawal()": {"PUBLIC"},
+    "trust_check_application_not_withdrawn()": {"PUBLIC"},
+    "trust_check_completion_not_withdrawn()": {"PUBLIC"},
+    "trust_check_lease_offer_charge()": {"PUBLIC"},
+    "trust_check_lease_offer_void()": {"PUBLIC"},
+    "trust_check_lease_offer_not_void()": {"PUBLIC"},
+    "trust_open_lease_offer_charges()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.
 SECURITY_DEFINER = {
     "trust_open_ledger_account(uuid,uuid,text,uuid,uuid,uuid)",
+    "trust_open_deposit_account(uuid,uuid,uuid,text)",
     "trust_post_transfers(uuid,text,transfer_request[],timestamptz,jsonb)",
     "trust_open_vendor_account(uuid,uuid,uuid)",
     "trust_approve_reconciliation(uuid,uuid,timestamptz,timestamptz,numeric,text,text)",
     "trust_open_lease(uuid,uuid,date,date,numeric,uuid[])",
     "trust_end_lease(uuid,uuid,date)",
     "trust_apply_payment(uuid,uuid,text,numeric)",
+    "trust_apply_assistance_payment(uuid,uuid,text,numeric)",  # an authority's payment (0095)
+    "trust_bill_back_utility(uuid,uuid,text,date,date,numeric,date,text,numeric,jsonb,uuid)",
     "trust_reverse_payment(uuid,uuid,text,text,numeric)",
     "trust_post_management_fee(uuid,text,date,date,timestamptz)",
     "trust_post_leasing_fee(uuid,uuid,text,timestamptz)",
     "trust_draw_owner(uuid,text,text,numeric,timestamptz)",
     "trust_withdraw_pmc_fees(uuid,uuid,text,numeric,timestamptz)",
+    "trust_take_owner_fee(uuid,text,text,numeric,text,text,timestamptz)",
     "trust_set_aside_bill(uuid,uuid,timestamptz)",
     "trust_pay_bill(uuid,uuid,timestamptz)",
     "trust_assess_late_fees(uuid,date)",
@@ -404,15 +626,30 @@ SECURITY_DEFINER = {
     "trust_prepare_bank_reconciliation(uuid,uuid,date)",
     "trust_approve_bank_reconciliation(uuid,uuid)",
     "trust_return_deposit(uuid,uuid,text,text,timestamptz)",
+    "trust_remove_lease_tenant(uuid,uuid,uuid,date,uuid)",
+    "trust_transfer_lease(uuid,uuid,uuid,date,date,numeric,text,date)",
+    "trust_close_year(uuid,integer)",
     "trust_propose_journal_entry(uuid,date,text,transfer_request[])",
     "trust_post_journal_entry(uuid,uuid)",
     "trust_decline_journal_entry(uuid,uuid,text)",
     "trust_audit()",  # writes the audit log, which no other role may write
     "trust_check_payment_hold()",  # locks the hold's lease, which the app can't
     "trust_check_bill_decision()",  # locks the bill's owner account, which the app can't
+    "trust_check_charge_waiver()",  # locks the waived charge, which the app can't
+    # Takes a lock on the vendor's reference, and sees a vendor's bills and shared invoices
+    # whatever the caller reads.
+    "trust_check_bill_reference()",
+    "trust_check_shared_bill()",  # checks a shared invoice's parts at commit, as the owner
+    "trust_check_ownership_share_line()",  # a share's account is the property's owner's
+    "trust_check_ownership_shares()",  # a property's shares come to 100 at commit
+    "trust_check_assistance_charge()",  # locks the authority's charge, which the app can't
+    "trust_fill_bill_markup()",  # locks the bill's owner account, which the app can't
     # Reads lease offers for the AI role, which never reads them, and returns only each lease's
     # renewal status (founder decision, 2026-10-13).
     "trust_report_lease_expirations(uuid,date)",
+    # Reads households' certifications for the AI role, which never reads them, and returns only
+    # days and where each stands, never income or household size (migration 0108).
+    "trust_report_assistance_compliance(uuid,date)",
 }
 
 

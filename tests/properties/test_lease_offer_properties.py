@@ -1,21 +1,34 @@
-"""Property-based tests for lease offers and completing them (migration 20261011000031).
+"""Property-based tests for lease offers and completing them (migration 20261011000031), with
+drafts' monthly charges and voids (migration 20261016000071) and signing on the PMS's own page
+(migration 20261020000097, ADR 0008).
 
 Hypothesis approves applications for one unit, offers them leases (and renewals of the leases
-those became) with random terms, sends and signs offers, and completes them, in random order. A
-Python model predicts every step: which leases the unit has, from and to when, with whose names;
-the database must accept exactly what the model accepts and refuse the rest, writing nothing.
+those became) with random terms, adds monthly charges to offers, sends (through a partner or to
+sign here), makes signers' links, agrees, opens, asks for paper and signs through them, signs and
+voids offers, and completes them, in random order. A Python model predicts every step: which
+leases the unit has, from and to when, with whose names and which recurring charges; the database
+must accept exactly what the model accepts and refuse the rest, writing nothing.
 
 Invariants checked after every step (ci/registry.toml maps them to this test):
   - the unit's leases are the model's, and never overlap;
   - an offer became a lease only once everyone signed, and an application or a lease took at
     most one completed offer;
   - a new lease's tenants are its offer's signers; a renewal keeps the tenants of the lease it
-    renews, which ends the day before the renewal starts.
+    renews, which ends the day before the renewal starts;
+  - an offer's charges are written only before it is sent, and the lease it becomes owes exactly
+    them as recurring charges from its first day; a void offer is never sent, signed or made a
+    lease, and an offer is voided only before it is a lease (migration 20261016000071);
+  - an offer sent to sign here is signed only through its signer's own link, once the signer
+    agreed to sign electronically and then opened the lease, never after asking for paper through
+    it, with their name as it is on the offer and the SHA-256 of the lease sent; a link is made
+    and used only while its offer is neither void nor a lease and its signer hasn't signed
+    (migration 20261020000097).
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
 
 from datetime import date, timedelta
+from uuid import uuid4
 
 import psycopg
 import pytest
@@ -34,11 +47,14 @@ from helpers import (
 from hypothesis import strategies as st
 from hypothesis.stateful import (
     RuleBasedStateMachine,
+    initialize,
     invariant,
     precondition,
     rule,
     run_state_machine_as_test,
 )
+
+from pms.leasing import esign
 
 BASE = date(2027, 1, 1)
 STARTS = st.integers(min_value=0, max_value=36).map(
@@ -52,7 +68,184 @@ def overlaps(a_start, a_end, b_start, b_end):
     return a_start <= (b_end or far) and b_start <= (a_end or far)
 
 
-class LeaseOfferMachine(RuleBasedStateMachine):
+class SigningOnThePage:
+    """Signing an offer sent to sign here (migration 20261020000097): its signers' links, what
+    they do through them, and their signatures, against the model kept in self.offers (each
+    with "signers", "signed" and "here"), self.voided, self.completed and self.links."""
+
+    def send_here(self, offer):
+        self.conn.execute(
+            "INSERT INTO trust_signature_requests (pmc_id, offer_id, partner, partner_reference,"
+            " sent_by) VALUES (%s, %s, %s, %s, %s)",
+            (self.pmc_id, offer, esign.PARTNER, esign.reference(offer), self.staff),
+        )
+
+    def link_signs(self, link):
+        """trust_signing_link_open, as the model sees it (a link here is never 30 days old)."""
+        offer, position = self.links[link]["offer"], self.links[link]["position"]
+        return (
+            offer not in self.voided
+            and offer not in self.completed
+            and position not in self.offers[offer]["signed"]
+        )
+
+    def new_link(self, offer, position):
+        return self.conn.execute(
+            "INSERT INTO trust_signing_links (pmc_id, offer_id, position, token_sha256)"
+            " VALUES (%s, %s, %s, %s) RETURNING id",
+            (self.pmc_id, offer, position, esign.token_digest(str(uuid4()))),
+        ).fetchone()[0]
+
+    @precondition(lambda self: any(v["here"] for v in self.offers.values()))
+    @rule(data=st.data())
+    def make_another_link(self, data):
+        offer = data.draw(st.sampled_from([o for o, v in self.offers.items() if v["here"]]))
+        model = self.offers[offer]
+        position = data.draw(st.integers(1, len(model["signers"])))
+
+        def make():
+            return self.new_link(offer, position)
+
+        if offer in self.voided:
+            message = "was voided"
+        elif offer in self.completed:
+            message = "a lease already"
+        elif position in model["signed"]:
+            message = "signed already"
+        else:
+            self.links[make()] = {"offer": offer, "position": position, "events": set()}
+            return
+        with pytest.raises(psycopg.errors.CheckViolation, match=message), self.conn.transaction():
+            make()
+
+    @precondition(lambda self: self.links)
+    @rule(data=st.data(), kind=st.sampled_from(["consented", "opened", "paper"]))
+    def act_through_a_link(self, data, kind):
+        """Agree to sign electronically, open the lease, or ask to sign on paper."""
+        self.act(data.draw(st.sampled_from(list(self.links))), kind)
+
+    def act(self, link, kind):
+        events = self.links[link]["events"]
+
+        def act():
+            self.conn.execute(
+                "INSERT INTO trust_signing_events (link_id, kind, pmc_id, disclosure, ip,"
+                " user_agent) VALUES (%s, %s, %s, %s, '192.0.2.10', 'A browser')",
+                (link, kind, self.pmc_id, "The disclosures." if kind == "consented" else None),
+            )
+
+        if not self.link_signs(link):
+            refusal = (psycopg.errors.CheckViolation, "no longer signs")
+        elif kind != "paper" and "paper" in events:
+            refusal = (psycopg.errors.CheckViolation, "on paper")
+        elif kind == "opened" and "consented" not in events:
+            refusal = (psycopg.errors.CheckViolation, "before opening")
+        elif kind in events:
+            refusal = (psycopg.errors.UniqueViolation, None)
+        else:
+            act()
+            events.add(kind)
+            return
+        error, message = refusal
+        with pytest.raises(error, match=message), self.conn.transaction():
+            act()
+
+    @precondition(lambda self: self.links)
+    @rule(
+        data=st.data(),
+        # What the signer does through the link first: most read, agree and open, as the page
+        # leads them; some skip a step, go out of order or ask for paper.
+        first=st.sampled_from(
+            [
+                ("consented", "opened"),
+                ("consented", "opened"),
+                ("consented", "opened"),
+                (),
+                ("consented",),
+                ("opened",),
+                ("opened", "consented"),
+                ("consented", "paper"),
+                ("consented", "opened", "paper"),
+            ]
+        ),
+        name=st.sampled_from(["as is", "case and spaces", "another"]),
+        lease=st.sampled_from(["sent", "sent", "another"]),
+    )
+    def sign_through_a_link(self, data, first, name, lease):
+        link = data.draw(st.sampled_from(list(self.links)))
+        for kind in first:
+            self.act(link, kind)
+        offer, position = self.links[link]["offer"], self.links[link]["position"]
+        events = self.links[link]["events"]
+        signer = self.offers[offer]["signers"][position - 1]
+        typed = {"as is": signer, "case and spaces": f"  {signer.upper()} "}.get(name, "Nobody")
+
+        def sign():
+            self.conn.execute(
+                "INSERT INTO trust_signature_evidence (pmc_id, offer_id, position, link_id,"
+                " typed_name, document_sha256, ip, user_agent)"
+                " SELECT %s, o.id, %s, %s, %s,"
+                "  CASE WHEN %s THEN sha256(o.document)"
+                "  ELSE sha256(convert_to('Another lease', 'UTF8')) END,"
+                "  '192.0.2.10', 'A browser'"
+                " FROM trust_lease_offers AS o WHERE o.id = %s",
+                (self.pmc_id, position, link, typed, lease == "sent", offer),
+            )
+
+        if not self.link_signs(link):
+            message = "no longer signs"
+        elif "paper" in events:
+            message = "on paper"
+        elif not {"consented", "opened"} <= events:
+            message = "opens the lease first"
+        elif name == "another":
+            message = "type your name"
+        elif lease == "another":
+            message = "not the lease sent"
+        else:
+            sign()
+            self.offers[offer]["signed"].add(position)
+            return
+        with pytest.raises(psycopg.errors.CheckViolation, match=message), self.conn.transaction():
+            sign()
+
+    @invariant()
+    def a_signature_here_is_the_signers_own_through_a_link_they_agreed_and_opened(self):
+        here = [o for o, v in self.offers.items() if v["here"]]
+        rows = self.conn.execute(
+            "SELECT g.offer_id, g.position, e.typed_name,"
+            " e.document_sha256 = sha256(o.document), l.offer_id = g.offer_id"
+            " AND l.position = g.position,"
+            " (SELECT array_agg(v.kind ORDER BY v.created_at) FROM trust_signing_events AS v"
+            "  WHERE v.link_id = l.id AND v.created_at <= e.signed_at)"
+            " FROM trust_signatures AS g"
+            " JOIN trust_lease_offers AS o ON o.id = g.offer_id"
+            " LEFT JOIN trust_signature_evidence AS e"
+            "  ON e.offer_id = g.offer_id AND e.position = g.position"
+            " LEFT JOIN trust_signing_links AS l ON l.id = e.link_id"
+            " WHERE g.offer_id = ANY(%s)",
+            (here,),
+        ).fetchall()
+        assert {(o, p) for o, p, *_ in rows} == {
+            (o, p) for o in here for p in self.offers[o]["signed"]
+        }
+        for offer, position, typed, same_lease, own_link, done in rows:
+            signer = self.offers[offer]["signers"][position - 1]
+            assert typed is not None and typed.strip().lower() == signer.lower()
+            assert same_lease and own_link
+            assert done == ["consented", "opened"]
+        made = self.conn.execute(
+            "SELECT l.id, l.offer_id, l.position, coalesce((SELECT array_agg(v.kind)"
+            "  FROM trust_signing_events AS v WHERE v.link_id = l.id), '{}')"
+            " FROM trust_signing_links AS l WHERE l.pmc_id = %s",
+            (self.pmc_id,),
+        ).fetchall()
+        assert {
+            link: {"offer": o, "position": p, "events": set(kinds)} for link, o, p, kinds in made
+        } == self.links
+
+
+class LeaseOfferMachine(SigningOnThePage, RuleBasedStateMachine):
     def __init__(self, conn):
         super().__init__()
         self.conn = conn
@@ -67,6 +260,8 @@ class LeaseOfferMachine(RuleBasedStateMachine):
         self.offers: dict = {}
         self.leases: dict = {}  # lease -> [starts, ends, tenant names]
         self.completed: dict = {}  # offer -> lease
+        self.voided: set = set()
+        self.links: dict = {}  # link -> {"offer", "position", "events": kinds done through it}
 
     # --- applications and offers ---------------------------------------------------------
 
@@ -100,7 +295,9 @@ class LeaseOfferMachine(RuleBasedStateMachine):
             "ends": ends,
             "signers": [name for name, _ in signers],
             "sent": False,
+            "here": False,  # sent to sign on the PMS's own page
             "signed": set(),
+            "charges": [],  # (kind, amount, memo), in position order
         }
 
     @precondition(lambda self: self.applications)
@@ -127,12 +324,76 @@ class LeaseOfferMachine(RuleBasedStateMachine):
         with self.conn.transaction():
             self.make_offer(starts, length, signers, renews=lease)
 
+    @precondition(lambda self: self.offers)
+    @rule(
+        data=st.data(),
+        kind=st.sampled_from(["fee", "credit"]),
+        cents=st.integers(min_value=1, max_value=50_000),
+    )
+    def add_a_charge(self, data, kind, cents):
+        """A monthly fee or credit on the offer: only while it is a draft (not sent)."""
+        offer = data.draw(st.sampled_from(list(self.offers)))
+        model = self.offers[offer]
+        amount = f"{cents // 100}.{cents % 100:02d}"
+        position = len(model["charges"]) + 1
+        if position > 10:
+            return
+        charge = (
+            "INSERT INTO trust_lease_offer_charges (offer_id, position, pmc_id, kind, amount,"
+            " memo) VALUES (%s, %s, %s, %s, %s, %s)"
+        )
+        memo = f"Charge {position}"
+        if model["sent"]:
+            refused = pytest.raises(psycopg.errors.CheckViolation, match="before it is sent")
+            with refused, self.conn.transaction():
+                self.conn.execute(charge, (offer, position, self.pmc_id, kind, amount, memo))
+            return
+        self.conn.execute(charge, (offer, position, self.pmc_id, kind, amount, memo))
+        model["charges"].append((kind, amount, memo))
+
     @precondition(lambda self: any(not o["sent"] for o in self.offers.values()))
-    @rule(data=st.data())
-    def send(self, data):
+    @rule(data=st.data(), here=st.booleans())
+    def send(self, data, here):
         offer = data.draw(st.sampled_from([o for o, v in self.offers.items() if not v["sent"]]))
-        send_offer(self.conn, self.pmc_id, offer, self.staff)
-        self.offers[offer]["sent"] = True
+        sending = (
+            self.send_here
+            if here
+            else (lambda o: send_offer(self.conn, self.pmc_id, o, self.staff))
+        )
+        if offer in self.voided:
+            refused = pytest.raises(psycopg.errors.CheckViolation, match="was voided")
+            with refused, self.conn.transaction():
+                sending(offer)
+            return
+        sending(offer)
+        self.offers[offer].update(sent=True, here=here)
+        if here:  # as staff do, a link for each signer
+            for position in range(1, len(self.offers[offer]["signers"]) + 1):
+                self.links[self.new_link(offer, position)] = {
+                    "offer": offer,
+                    "position": position,
+                    "events": set(),
+                }
+
+    @precondition(lambda self: self.offers)
+    @rule(data=st.data())
+    def void(self, data):
+        """Once, and only before the offer is a lease."""
+        offer = data.draw(st.sampled_from(list(self.offers)))
+        voiding = (
+            "INSERT INTO trust_lease_offer_voids (offer_id, pmc_id, reason) VALUES (%s, %s, %s)"
+        )
+        if offer in self.completed or offer in self.voided:
+            refusal = (
+                psycopg.errors.CheckViolation
+                if offer in self.completed
+                else psycopg.errors.UniqueViolation
+            )
+            with pytest.raises(refusal), self.conn.transaction():
+                self.conn.execute(voiding, (offer, self.pmc_id, "Terms changed"))
+            return
+        self.conn.execute(voiding, (offer, self.pmc_id, "Terms changed"))
+        self.voided.add(offer)
 
     @precondition(
         lambda self: any(
@@ -152,6 +413,13 @@ class LeaseOfferMachine(RuleBasedStateMachine):
         )
         model = self.offers[offer]
         position = min(set(range(1, len(model["signers"]) + 1)) - model["signed"])
+        if offer in self.voided or model["here"]:
+            # An offer sent to sign here takes a signature only through its signer's link.
+            message = "was voided" if offer in self.voided else "through the signer's link"
+            refused = pytest.raises(psycopg.errors.CheckViolation, match=message)
+            with refused, self.conn.transaction():
+                sign_offer(self.conn, self.pmc_id, offer, position)
+            return
         sign_offer(self.conn, self.pmc_id, offer, position)
         model["signed"].add(position)
 
@@ -169,6 +437,13 @@ class LeaseOfferMachine(RuleBasedStateMachine):
 
         if offer in self.completed:
             assert attempt() == self.completed[offer]
+            return
+        if offer in self.voided:
+            # Whatever the database finds first (a missing signature, an overlap, the void),
+            # a void offer is made no lease, and nothing is written.
+            refusals = (psycopg.errors.CheckViolation, psycopg.errors.ExclusionViolation)
+            with pytest.raises(refusals):
+                attempt()
             return
         target = model["application"] or model["renews"]
         taken = any(
@@ -214,6 +489,43 @@ class LeaseOfferMachine(RuleBasedStateMachine):
             assert not overlaps(s1, e1, s2, e2)
 
     @invariant()
+    def each_lease_owes_its_offers_charges_and_no_void_offer_moved_on(self):
+        for offer, lease in self.completed.items():
+            rows = self.conn.execute(
+                # One statement writes them all, so they share their time: compared in any order.
+                "SELECT kind, amount::text, memo, starts_on FROM trust_recurring_charges"
+                " WHERE lease_id = %s",
+                (lease,),
+            ).fetchall()
+            model = self.offers[offer]
+            assert sorted(rows) == sorted(
+                (k, a, m, model["starts"]) for k, a, m in model["charges"]
+            )
+        (moved,) = self.conn.execute(
+            "SELECT count(*) FROM trust_lease_offer_voids AS v WHERE v.pmc_id = %s AND ("
+            " EXISTS (SELECT 1 FROM trust_lease_offer_completions AS c"
+            "  WHERE c.offer_id = v.offer_id)"
+            " OR EXISTS (SELECT 1 FROM trust_signature_requests AS r WHERE r.offer_id = v.offer_id"
+            "  AND r.sent_at > v.recorded_at)"
+            " OR EXISTS (SELECT 1 FROM trust_signatures AS g WHERE g.offer_id = v.offer_id"
+            "  AND g.recorded_at > v.recorded_at))",
+            (self.pmc_id,),
+        ).fetchone()
+        assert moved == 0
+        voided = self.conn.execute(
+            "SELECT offer_id FROM trust_lease_offer_voids WHERE pmc_id = %s", (self.pmc_id,)
+        ).fetchall()
+        assert {v for (v,) in voided} == self.voided
+        # A charge refused once the offer was sent wrote nothing: each offer has the model's.
+        for offer, model in self.offers.items():
+            rows = self.conn.execute(
+                "SELECT kind, amount::text, memo FROM trust_lease_offer_charges"
+                " WHERE offer_id = %s ORDER BY position",
+                (offer,),
+            ).fetchall()
+            assert rows == model["charges"]
+
+    @invariant()
     def completions_are_the_models_and_follow_every_signature(self):
         rows = self.conn.execute(
             "SELECT c.offer_id, c.lease_id,"
@@ -229,3 +541,87 @@ class LeaseOfferMachine(RuleBasedStateMachine):
 def test_lease_offer_invariants_hold_under_random_offers_signatures_and_completions(database_url):
     with psycopg.connect(database_url, autocommit=True) as conn:
         run_state_machine_as_test(lambda: LeaseOfferMachine(conn))
+
+
+class SigningMachine(SigningOnThePage, RuleBasedStateMachine):
+    """One offer sent to sign here, its signers' links worked at random: agreeing, opening,
+    asking for paper and signing in any order, with their name or another and the lease sent or
+    another, more links, and a void or the lease made of it."""
+
+    def __init__(self, conn):
+        super().__init__()
+        self.conn = conn
+        pmc = make_pmc(conn)
+        self.pmc_id = pmc.pmc_id
+        self.unit = add_unit(conn, self.pmc_id, pmc.owners[0].property_id, "Unit 1")
+        self.staff = add_staff(conn, self.pmc_id)
+        link = open_application_link(conn, self.pmc_id, self.unit, self.staff)
+        self.application = submit_application(
+            conn, self.pmc_id, link, applicants=[("Applicant 1", None)]
+        )
+        record_decision(conn, self.pmc_id, self.application, self.staff, "approved")
+        self.offers: dict = {}
+        self.voided: set = set()
+        self.completed: dict = {}
+        self.links: dict = {}
+
+    @initialize(people=st.integers(1, 3))
+    def send_an_offer_to_sign_here(self, people):
+        signers = tuple((f"Signer {k}", f"signer{k}@example.com") for k in range(1, people + 1))
+        self.offer = offer_lease(
+            self.conn,
+            self.pmc_id,
+            self.unit,
+            self.staff,
+            BASE,
+            None,
+            application_id=self.application,
+            signers=signers,
+        )
+        self.send_here(self.offer)
+        self.offers[self.offer] = {
+            "signers": [name for name, _ in signers],
+            "signed": set(),
+            "here": True,
+        }
+        for position in range(1, people + 1):
+            self.links[self.new_link(self.offer, position)] = {
+                "offer": self.offer,
+                "position": position,
+                "events": set(),
+            }
+
+    @rule()
+    def void(self):
+        voiding = (
+            "INSERT INTO trust_lease_offer_voids (offer_id, pmc_id, reason) VALUES (%s, %s, %s)"
+        )
+        if self.completed or self.voided:
+            refusal = (
+                psycopg.errors.CheckViolation if self.completed else psycopg.errors.UniqueViolation
+            )
+            with pytest.raises(refusal), self.conn.transaction():
+                self.conn.execute(voiding, (self.offer, self.pmc_id, "Terms changed"))
+            return
+        self.conn.execute(voiding, (self.offer, self.pmc_id, "Terms changed"))
+        self.voided.add(self.offer)
+
+    @rule()
+    def complete(self):
+        def attempt():
+            with self.conn.transaction():
+                return complete_offer(self.conn, self.pmc_id, self.offer, self.staff)
+
+        model = self.offers[self.offer]
+        if self.completed:
+            assert attempt() == self.completed[self.offer]
+        elif self.voided or len(model["signed"]) < len(model["signers"]):
+            with pytest.raises(psycopg.errors.CheckViolation):
+                attempt()
+        else:
+            self.completed[self.offer] = attempt()
+
+
+def test_signing_on_the_page_holds_under_random_steps_through_the_links(database_url):
+    with psycopg.connect(database_url, autocommit=True) as conn:
+        run_state_machine_as_test(lambda: SigningMachine(conn))

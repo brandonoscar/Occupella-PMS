@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Button } from "../components/Button";
@@ -6,6 +6,7 @@ import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
 import { Wordmark } from "../components/Shell";
 import { navigate } from "../router";
+import { Form } from "../components/Form";
 
 export const PMC_KEY = "pms.pmc";
 
@@ -22,6 +23,12 @@ export function SignInPage() {
   const [needsCode, setNeedsCode] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // Whether this server emails a link for a forgotten password (ADR 0007).
+  const [canReset, setCanReset] = useState(false);
+  useEffect(() => {
+    api.get<{ available: boolean }>("/api/password-reset").then((found) => setCanReset(found.available))
+      .catch(() => setCanReset(false));
+  }, []);
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
@@ -51,7 +58,7 @@ export function SignInPage() {
       <Wordmark />
       <h1 className="font-display text-lg font-semibold">Sign in</h1>
       {pmcId ? (
-        <form className="flex flex-col gap-4" onSubmit={submit}>
+        <Form className="flex flex-col gap-4" onSubmit={submit}>
           <Field label="Email" id="email" type="email" autoComplete="username" value={email}
             onChange={(e) => setEmail(e.target.value)} required />
           <Field label="Password" id="password" type="password" autoComplete="current-password"
@@ -65,7 +72,10 @@ export function SignInPage() {
           <Button type="submit" disabled={busy}>
             Sign in
           </Button>
-        </form>
+          {canReset && (
+            <a href={`/forgot-password?pmc=${pmcId}`} className="text-sm text-iris underline hover:text-iris-hover">Forgot your password?</a>
+          )}
+        </Form>
       ) : (
         <Notice tone="info">
           Open the sign-in link your property manager sent you, or the invite link to set your

@@ -18,6 +18,8 @@ import {
 } from "../switching";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
+import { Said } from "../components/Said";
+import { Form } from "../components/Form";
 
 // The switching tool: a PMC moving from another system brings its roster in from CSV files,
 // opens each trust bank account with the balances it held there, lists the checks and deposits
@@ -74,11 +76,7 @@ function RosterCard() {
   const columns = ROSTER.find((r) => r.kind === kind)?.columns;
   return (
     <Card title="Bring the roster in">
-      <p className="mb-4 text-sm text-ink-muted">
-        One CSV file at a time, in this order. Names are matched exactly, so a file sent again adds
-        nothing twice.
-      </p>
-      <form
+      <Form
         className="flex flex-wrap items-end gap-3"
         onSubmit={(event) => {
           event.preventDefault();
@@ -94,9 +92,9 @@ function RosterCard() {
         </Select>
         <FileField id="roster-file" label="CSV file" onRead={setContent} />
         <Button type="submit" disabled={content === null}>Import</Button>
-      </form>
+      </Form>
       <p className="mt-3 text-sm text-ink-subtle">Columns: {columns}.</p>
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </Card>
   );
@@ -108,11 +106,7 @@ function VendorPaymentsCard() {
   const [content, setContent] = useState<string | null>(null);
   return (
     <Card title="Vendor payments before the cutover">
-      <p className="mb-4 text-sm text-ink-muted">
-        What the old system paid each vendor in the cutover&apos;s year, so the year&apos;s vendor
-        payments (for 1099s) count it. A January 1 cutover carries over the whole year before.
-      </p>
-      <form
+      <Form
         className="flex flex-wrap items-end gap-3"
         onSubmit={(event) => {
           event.preventDefault();
@@ -124,9 +118,9 @@ function VendorPaymentsCard() {
           onChange={(e) => setCutover(e.target.value)} />
         <FileField id="vendor-payments-file" label="Vendor payments (CSV)" onRead={setContent} />
         <Button type="submit" variant="secondary" disabled={content === null}>Carry over</Button>
-      </form>
+      </Form>
       <p className="mt-3 text-sm text-ink-subtle">Columns: {VENDOR_PAYMENT_COLUMNS}.</p>
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </Card>
   );
@@ -145,7 +139,7 @@ function CutoverCard({ cutover, refresh }: { cutover: Cutover; refresh: () => vo
       {cutover.opened_on === null && !cutover.can_open ? (
         <Notice tone="info">This account has postings or a reconciliation already; it can't open with balances.</Notice>
       ) : cutover.opened_on === null ? (
-        <form
+        <Form
           className="flex flex-wrap items-end gap-3"
           onSubmit={(event) => {
             event.preventDefault();
@@ -161,7 +155,7 @@ function CutoverCard({ cutover, refresh }: { cutover: Cutover; refresh: () => vo
           <FileField id={`balances-${bank}`} label="Opening balances (CSV)" onRead={setBalances} />
           <Button type="submit" disabled={balances === null}>Open with balances</Button>
           <p className="w-full text-sm text-ink-subtle">Columns: {BALANCE_COLUMNS}.</p>
-        </form>
+        </Form>
       ) : (
         <>
           <dl className="grid grid-cols-[1fr_auto] gap-x-6 gap-y-1 text-sm" aria-label={`Tie-out, ${cutover.name}`}>
@@ -177,7 +171,7 @@ function CutoverCard({ cutover, refresh }: { cutover: Cutover; refresh: () => vo
           </dl>
           <div className="mt-4 flex flex-wrap items-end gap-3">
             {!cutover.signed_off && (
-              <form
+              <Form
                 className="flex flex-wrap items-end gap-3"
                 onSubmit={(event) => {
                   event.preventDefault();
@@ -189,7 +183,7 @@ function CutoverCard({ cutover, refresh }: { cutover: Cutover; refresh: () => vo
               >
                 <FileField id={`items-${bank}`} label="Checks and deposits not cleared (CSV)" onRead={setItems} />
                 <Button type="submit" variant="secondary" disabled={items === null}>Add items</Button>
-              </form>
+              </Form>
             )}
             {!cutover.signed_off && (
               <Button onClick={() => record("/api/switching/sign-off", { bank_account_id: bank },
@@ -208,7 +202,7 @@ function CutoverCard({ cutover, refresh }: { cutover: Cutover; refresh: () => vo
           )}
         </>
       )}
-      <Notice tone="info">{said}</Notice>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
     </Card>
   );

@@ -48,7 +48,7 @@ class Member(BaseModel):
 @router.get("")
 def members(session: Staff, conn: Conn) -> list[Member]:
     rows = conn.execute(
-        "SELECT s.id, s.display_name, (" + HOLDS.format(staff="s.id") + ")"
+        "SELECT s.id, s.display_name, (" + HOLDS.format(staff="s.id") + ")"  # noqa: S608
         ' FROM trust_staff AS s WHERE s.pmc_id = %(pmc)s ORDER BY s.display_name COLLATE "C", s.id',
         {"roles": list(ROLES), "pmc": session.pmc_id},
     ).fetchall()

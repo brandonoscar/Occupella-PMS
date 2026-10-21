@@ -11,7 +11,8 @@ import { term } from "../offers";
 import { leave } from "../router";
 
 // The renewals the PMC has offered on a tenant's leases. The tenant reads the lease and signs it
-// on the e-sign partner's page; the PMC makes it the lease once everyone on it has signed.
+// on the PMS's signing page (ADR 0008) through a new link of their own; the PMC makes it the lease
+// once everyone on it has signed.
 // Nothing shows when there is no renewal.
 export function RenewalsCard({ me }: { me: Me }) {
   const [renewals, setRenewals] = useState<Offer[]>([]);

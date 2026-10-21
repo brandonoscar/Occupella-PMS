@@ -228,6 +228,9 @@ WRITES = {
         (pmc.pmc_id, pmc.pmc_id),
     ),
     "run the rent": lambda c, pmc, *_: charge_rent_due(c, pmc.pmc_id, FEB.date()),
+    "run rent and late fees, recorded": lambda c, pmc, *_: c.execute(
+        "SELECT trust_run_rent(%s, %s, %s)", (pmc.pmc_id, FEB.date(), FEB.date())
+    ),
     "record late fee terms": lambda c, pmc, *_: add_late_fee_policy(
         c, pmc.pmc_id, pmc.owners[0].property_id, FEB.date(), 5, "50"
     ),

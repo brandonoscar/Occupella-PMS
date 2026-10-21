@@ -2,7 +2,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { BankBooks, Worksheet } from "../reconcile";
-import { ReconcilePage } from "./ReconcilePage";
+import { BankingPage, ReconcilePage } from "./ReconcilePage";
 
 afterEach(() => {
   cleanup();
@@ -23,6 +23,7 @@ const BANKS: BankBooks[] = [
     id: "b1",
     name: "Operating trust account",
     kind: "operating",
+    book_cash: "4075.00",
     closed_through: "2025-12-31",
     next_start: "2026-01-01",
     statements: [
@@ -41,7 +42,7 @@ const BANKS: BankBooks[] = [
     prepared: null,
   },
   {
-    id: "b2", name: "Deposit trust account", kind: "security_deposit", closed_through: null,
+    id: "b2", name: "Deposit trust account", kind: "security_deposit", book_cash: "0.00", closed_through: null,
     next_start: null, statements: [], reconciliations: [], prepared: null,
   },
 ];
@@ -91,6 +92,15 @@ const TIED: Worksheet = {
   rows: SHEET.rows.map((r) => (r.line === 9 ? { ...r, amount: "0.00" } : r)).filter((r) => r.line <= 9),
 };
 
+const NO_MOVES = { items: [], total: 0, page: 1, per_page: 50 };
+const BREAKDOWN = { book_cash: "4075.00", held: [{ kind: "owner_property", label: "Owners' money", amount: "4075.00" }], owners: [] };
+
+// Opens one of the account's tabs.
+const open = async (tab: string) => fireEvent.click(await screen.findByRole("tab", { name: tab }));
+
+// Banking's Year close card (YearCloseCard.test.tsx tests it): last year closed already.
+const NOTHING_TO_CLOSE = { closed: [], closed_until: null, next: null };
+
 function server(
   sheet: Worksheet = SHEET,
   answers: Record<string, unknown> = {},
@@ -99,7 +109,12 @@ function server(
 ) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method !== "POST") {
-      const body = path === "/api/reconcile" ? banks : path.startsWith("/api/reconcile/b2") ? { ...sheet, through: null, rows: [], open_lines: [], open_transfers: [], matches: [] } : sheet;
+      const body = path === "/api/reconcile" ? banks
+        : path === "/api/payables/company-fees" ? (answers[path] ?? [])
+        : path === "/api/year-close" ? (answers[path] ?? NOTHING_TO_CLOSE)
+        : path.startsWith("/api/bank-accounts/") && path.includes("/register") ? (answers.register ?? NO_MOVES)
+        : path.startsWith("/api/bank-accounts/") ? (answers.breakdown ?? BREAKDOWN)
+        : path.startsWith("/api/reconcile/b2") ? { ...sheet, through: null, rows: [], open_lines: [], open_transfers: [], matches: [] } : sheet;
       return new Response(JSON.stringify(body), { status: 200 });
     }
     if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
@@ -124,22 +139,36 @@ const cells = (table: HTMLElement) =>
 describe("ReconcilePage", () => {
   it("shows the statements, the figures, the items and the approved periods", async () => {
     server();
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
 
+    // Nothing waits for approval: it opens on the register.
+    expect((await screen.findByRole("tab", { name: "Transactions" })).getAttribute("aria-selected")).toBe("true");
+    expect(await screen.findByText("No money moved in these days.")).toBeTruthy();
+    await open("Statements");
     const statements = await screen.findByRole("table", { name: "Statements" });
-    expect(cells(statements)).toEqual([["2026-01-01 to 2026-01-31", "$0.00", "$4,075.00", "5", "CSV"]]);
+    expect(cells(statements)).toEqual([["01/01/2026 to 01/31/2026", "$0.00", "$4,075.00", "5", "CSV"]]);
+    await open("Reconciliations");
     const shown = screen.getByRole("table", { name: "Figures" });
     expect(shown.textContent).toContain("bank balance (statements)$4,075.00");
     // Off by the difference, until the books lack no line.
     expect(screen.getByText("Off by $65.00").closest("[data-tone]")?.getAttribute("data-tone")).toBe("caution");
     expect(cells(screen.getByRole("table", { name: "Reconciling items" }))).toEqual([
-      ["bank line not in the books", "2026-01-28 Service fee", "-$15.00"],
+      ["bank line not in the books", "2026-01-28 Service fee", "($15.00)"],
     ]);
     expect(cells(screen.getByRole("table", { name: "Approved" }))).toEqual([
-      ["2025-12-01 to 2025-12-31", "$0.00", "$0.00", "Staff 1"],
+      ["12/01/2025 to 12/31/2025", "$0.00", "$0.00", "Staff 1", "PDF"],
     ]);
-    expect(screen.getByText(/Closed through 2025-12-31/)).toBeTruthy();
-    const prepare = screen.getByRole("button", { name: "Prepare through 2026-01-31" });
+    // Each approved period's three-way report, and the reconciliation on screen, download.
+    const threeWay = screen.getByRole("link", { name: "Three-way reconciliation, 12/01/2025 to 12/31/2025, PDF" });
+    expect(threeWay.getAttribute("href")).toMatch(/^\/api\/reports\/trust_report_three_way_reconciliation\?arg=[^&]+&format=pdf$/);
+    const downloads = within(screen.getByRole("group", { name: "Download the reconciliation" })).getAllByRole("link");
+    expect(downloads.map((link) => [link.textContent, link.getAttribute("href")?.replace(/arg=[^&]+&arg=/, "arg=…&arg=")])).toEqual([
+      ["PDF", "/api/reports/trust_report_bank_reconciliation?arg=…&arg=2026-01-31&format=pdf"],
+      ["CSV", "/api/reports/trust_report_bank_reconciliation?arg=…&arg=2026-01-31&format=csv"],
+      ["Excel", "/api/reports/trust_report_bank_reconciliation?arg=…&arg=2026-01-31&format=xlsx"],
+    ]);
+    expect(screen.getByText(/Closed through 12\/31\/2025/)).toBeTruthy();
+    const prepare = screen.getByRole("button", { name: "Prepare through 01/31/2026" });
     expect((prepare as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByRole("button", { name: /^Approve/ })).toBeNull();
     expect(screen.getByText("Lines the books lack come to $65.00: record them and match them first.")).toBeTruthy();
@@ -147,7 +176,8 @@ describe("ReconcilePage", () => {
 
   it("imports a statement file with its days and balances", async () => {
     const fetch = server(SHEET, { "/api/reconcile/statements": { lines: 2, first_day: "2026-02-01", last_day: "2026-02-28" } });
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
+    await open("Statements");
     await screen.findByRole("table", { name: "Statements" });
     const importing = screen.getByRole("button", { name: "Import statement" }) as HTMLButtonElement;
     expect(importing.disabled).toBe(true);
@@ -160,7 +190,7 @@ describe("ReconcilePage", () => {
     fireEvent.change(screen.getByLabelText("Closing balance"), { target: { value: "4070.00" } });
     fireEvent.click(importing);
 
-    expect(await screen.findByText("Imported 2 lines, 2026-02-01 to 2026-02-28.")).toBeTruthy();
+    expect(await screen.findByText("Imported 2 lines, 02/01/2026 to 02/28/2026.")).toBeTruthy();
     expect(posted(fetch)).toEqual([
       [
         "/api/reconcile/statements",
@@ -175,15 +205,15 @@ describe("ReconcilePage", () => {
 
   it("matches the lines and transfers picked once they come to the same", async () => {
     const fetch = server(SHEET, { "/api/reconcile/b1/auto-match": { matched: 1 } });
-    render(<ReconcilePage me={ME} />);
-    await screen.findByRole("table", { name: "Statements" });
+    render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
     const matching = screen.getByRole("button", { name: "Match these" }) as HTMLButtonElement;
 
-    fireEvent.click(screen.getByLabelText("2026-01-05 Deposit (D1): $2,750.00"));
-    fireEvent.click(screen.getByLabelText("2026-01-03 Rent, Property 1: $1,500.00"));
+    fireEvent.click(screen.getByLabelText("01/05/2026 Deposit (D1): $2,750.00"));
+    fireEvent.click(screen.getByLabelText("01/03/2026 Rent, Property 1: $1,500.00"));
     expect(screen.getByTestId("picked").textContent).toBe("Lines $2,750.00 · Transfers $1,500.00");
     expect(matching.disabled).toBe(true);
-    fireEvent.click(screen.getByLabelText("2026-01-04 Rent, Property 2: $1,250.00"));
+    fireEvent.click(screen.getByLabelText("01/04/2026 Rent, Property 2: $1,250.00"));
     expect(matching.disabled).toBe(false);
     fireEvent.click(matching);
     expect(await screen.findByText("Matched.")).toBeTruthy();
@@ -204,81 +234,107 @@ describe("ReconcilePage", () => {
 
   it("prepares a period whose books lack no line, and shows a refusal", async () => {
     const fetch = server(TIED, {}, {});
-    render(<ReconcilePage me={ME} />);
-    const prepare = await screen.findByRole("button", { name: "Prepare through 2026-01-31" });
+    render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
+    const prepare = await screen.findByRole("button", { name: "Prepare through 01/31/2026" });
     expect(screen.queryByText(/Lines the books lack/)).toBeNull();
     expect(screen.getByText("Ties out").closest("[data-tone]")?.getAttribute("data-tone")).toBe("positive");
 
     fireEvent.click(prepare);
 
     expect(
-      await screen.findByText("Prepared through 2026-01-31; another staff member who may approve approves it."),
+      await screen.findByText("Prepared through 01/31/2026; another staff member who may approve approves it."),
     ).toBeTruthy();
     expect(posted(fetch)).toEqual([["/api/reconcile/b1/prepare", { through: "2026-01-31" }]]);
     cleanup();
 
     server(TIED, {}, { "/api/reconcile/b1/prepare": "the next period starts on 2026-02-01" });
-    render(<ReconcilePage me={ME} />);
-    fireEvent.click(await screen.findByRole("button", { name: "Prepare through 2026-01-31" }));
+    render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
+    fireEvent.click(await screen.findByRole("button", { name: "Prepare through 01/31/2026" }));
     expect(await screen.findByText("the next period starts on 2026-02-01")).toBeTruthy();
   });
 
   it("approves a period another staff member prepared, if this one may", async () => {
     const fetch = server(TIED, {}, {}, PREPARED);
-    render(<ReconcilePage me={{ ...ME, roles: ["approve"] }} />);
+    render(<ReconcilePage me={{ ...ME, roles: ["approve"] }} id="b1" />);
+    // A month waiting for approval opens on Reconciliations.
     const prepared = await screen.findByLabelText("Prepared");
-    expect(prepared.textContent).toContain("Prepared through 2026-01-31 by Staff 2: bank $4,075.00, books $4,075.00.");
-    fireEvent.click(screen.getByRole("button", { name: "Approve through 2026-01-31" }));
+    expect(screen.getByRole("tab", { name: "Reconciliations" }).getAttribute("aria-selected")).toBe("true");
+    expect(prepared.textContent).toContain("Prepared through 01/31/2026 by Staff 2: bank $4,075.00, books $4,075.00.");
+    fireEvent.click(screen.getByRole("button", { name: "Approve through 01/31/2026" }));
 
-    expect(await screen.findByText("Approved through 2026-01-31; the account is closed through it.")).toBeTruthy();
+    expect(await screen.findByText("Approved through 01/31/2026; the account is closed through it.")).toBeTruthy();
     expect(posted(fetch)).toEqual([["/api/reconcile/b1/approve", { preparation_id: "pr1" }]]);
     cleanup();
 
     server(TIED, {}, {}, PREPARED);
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
     expect((await screen.findByLabelText("Prepared")).textContent).toContain("A staff member who may approve approves it.");
     expect(screen.queryByRole("button", { name: /^Approve/ })).toBeNull();
     cleanup();
 
     server(TIED, {}, {}, PREPARED);
-    render(<ReconcilePage me={{ ...ME, person_id: "s2", roles: ["approve"] }} />);
+    render(<ReconcilePage me={{ ...ME, person_id: "s2", roles: ["approve"] }} id="b1" />);
     expect((await screen.findByLabelText("Prepared")).textContent).toContain(
       "Another staff member who may approve approves it.",
     );
-    expect(screen.getByRole("button", { name: "Prepare through 2026-01-31" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Prepare through 01/31/2026" })).toBeTruthy();
   });
 
-  it("reads the worksheet at another day, and another account", async () => {
+  it("stays on Reconciliations once the month it opened on is approved", async () => {
+    let banks: BankBooks[] = PREPARED;
+    vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
+      if (init?.method === "POST") {
+        // Approved: the month no longer waits, and the account is closed through it.
+        banks = [{ ...BANKS[0]!, closed_through: "2026-01-31" }, BANKS[1]!];
+        return new Response("{}", { status: 201 });
+      }
+      const read = path === "/api/reconcile" ? banks : path.startsWith("/api/bank-accounts/") ? NO_MOVES : TIED;
+      return new Response(JSON.stringify(read), { status: 200 });
+    }));
+    render(<ReconcilePage me={{ ...ME, roles: ["approve"] }} id="b1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Approve through 01/31/2026" }));
+
+    expect(await screen.findByText("Approved through 01/31/2026; the account is closed through it.")).toBeTruthy();
+    expect(screen.getByRole("tab", { name: "Reconciliations" }).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("table", { name: "Approved" })).toBeTruthy();
+  });
+
+  it("reads the worksheet at another day, and an account with nothing yet", async () => {
     const fetch = server();
-    render(<ReconcilePage me={ME} />);
-    await screen.findByRole("table", { name: "Statements" });
+    render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Operating trust account");
+    expect(screen.getByTestId("book-cash").textContent).toBe("Book balance $4,075.00");
+    expect(within(screen.getByRole("main")).getByRole("link", { name: "Banking" }).getAttribute("href")).toBe("/banking");
 
     fireEvent.change(screen.getByLabelText("At the end of"), { target: { value: "2026-01-15" } });
     await vi.waitFor(() =>
       expect(fetch.mock.calls.map(([path]) => path)).toContain("/api/reconcile/b1?through=2026-01-15"),
     );
-    // Choosing the account already shown keeps its worksheet.
-    fireEvent.change(screen.getByLabelText("Trust bank account"), { target: { value: "b1" } });
-    expect(await screen.findByLabelText("Figures")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Trust bank account"), { target: { value: "b2" } });
+    cleanup();
+    render(<ReconcilePage me={ME} id="b2" />);
 
+    await open("Statements");
     expect(await screen.findByText("No statement yet. The first one sets where the bank record starts.")).toBeTruthy();
+    await open("Reconciliations");
     expect(screen.getByText("Import a statement to see the reconciliation.")).toBeTruthy();
     expect(screen.getAllByText("None.")).toHaveLength(2);
     expect(screen.getByText("None yet.")).toBeTruthy();
   });
 
-  it("says when there is no trust bank account, and when the page can't be read", async () => {
+  it("says when there is no such trust bank account, and when the page can't be read", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("[]", { status: 200 })));
-    render(<ReconcilePage me={ME} />);
-    expect(await screen.findByText("Add a trust bank account in Setup first.")).toBeTruthy();
+    render(<ReconcilePage me={ME} id="b1" />);
+    expect((await screen.findByRole("alert")).textContent).toBe("no such trust bank account");
     cleanup();
 
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })),
     );
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
     expect((await screen.findAllByRole("alert"))[0]?.textContent).toBe("sign in first");
   });
 
@@ -297,16 +353,17 @@ describe("ReconcilePage", () => {
       matches: [{ ...SHEET.matches[0]!, items: [{ id: "i0", issued_on: "2025-12-29", amount: "-10.00", description: "Old check", reference: null }] }],
     };
     const fetch = server(migrated);
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
 
     expect(await screen.findByText(/the first statement's balance brought forward should be \$1,200.00/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Match the opening" }));
     expect(await screen.findByText("The opening is matched.")).toBeTruthy();
-    expect(screen.getByRole("table", { name: "Matches" }).textContent).toContain("2025-12-29 Old check, from before the cutover: -$10.00");
+    expect(screen.getByRole("table", { name: "Matches" }).textContent).toContain("12/29/2025 Old check, from before the cutover: ($10.00)");
 
-    fireEvent.click(screen.getByLabelText("2026-01-09 Check 1041 (1041): -$200.00"));
-    fireEvent.click(screen.getByLabelText("2025-12-30 Check to Vendor 1 (1041), from before the cutover: -$200.00"));
-    expect(screen.getByTestId("picked").textContent).toBe("Lines -$200.00 · Transfers -$200.00");
+    fireEvent.click(screen.getByLabelText("01/09/2026 Check 1041 (1041): ($200.00)"));
+    fireEvent.click(screen.getByLabelText("12/30/2025 Check to Vendor 1 (1041), from before the cutover: ($200.00)"));
+    expect(screen.getByTestId("picked").textContent).toBe("Lines ($200.00) · Transfers ($200.00)");
     fireEvent.click(screen.getByRole("button", { name: "Match these" }));
     expect(await screen.findByText("Matched.")).toBeTruthy();
 
@@ -329,10 +386,12 @@ describe("ReconcilePage", () => {
         sheet = { ...sheet, open_lines: [], opening: { ...opening, matched: true } };
         return new Response(JSON.stringify({ id: "m1" }), { status: 201 });
       }
-      return new Response(JSON.stringify(path === "/api/reconcile" ? BANKS : sheet), { status: 200 });
+      const read = path === "/api/reconcile" ? BANKS : path.startsWith("/api/bank-accounts/") ? NO_MOVES : sheet;
+      return new Response(JSON.stringify(read), { status: 200 });
     });
     vi.stubGlobal("fetch", fetch);
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
 
     fireEvent.click(await screen.findByRole("button", { name: "Match the opening" }));
     // The refresh brings the matched opening; the confirmation stays, the form goes.
@@ -344,19 +403,173 @@ describe("ReconcilePage", () => {
   it("says what the opening needs before it can be matched", async () => {
     const opening = { book_cash: "1000.00", carried: "0.00", brought_forward: "1000.00", signed_off: false, matched: false };
     server({ ...SHEET, opening });
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
     expect(await screen.findByText("Sign off the cutover at Switching first.")).toBeTruthy();
     cleanup();
 
     server({ ...SHEET, opening: { ...opening, signed_off: true } });
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
     expect(await screen.findByText("No open bank line comes to $1,000.00.")).toBeTruthy();
     cleanup();
 
     // Matched, the card says so for good, with nothing left to do.
     server({ ...SHEET, opening: { ...opening, signed_off: true, matched: true } });
-    render(<ReconcilePage me={ME} />);
+    render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
     expect(await screen.findByText("The opening is matched.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Match the opening" })).toBeNull();
+  });
+});
+
+describe("BankingPage", () => {
+  it("lists each trust bank account with its book balance, how far it is reconciled and what waits", async () => {
+    server(SHEET, {}, {}, [{ ...BANKS[0]!, prepared: PREPARED[0]!.prepared }, BANKS[1]!]);
+    render(<BankingPage me={ME} />);
+
+    const operating = await screen.findByRole("row", { name: "Operating trust account" });
+    expect(within(operating).getAllByRole("cell").map((c) => c.textContent)).toEqual([
+      "Operating trust account", "Operating", "$4,075.00", "12/31/2025", "Waiting for approval", "", "",
+    ]);
+    expect(within(operating).getByRole("link").getAttribute("href")).toBe("/bank-accounts/b1");
+    expect(within(screen.getByRole("row", { name: "Deposit trust account" })).getAllByRole("cell").map((c) => c.textContent)).toEqual([
+      "Deposit trust account", "Security deposits", "$0.00", "Not yet", "", "", "",
+    ]);
+  });
+
+  it("shows the company's fees held in an operating account and transfers them out after asking", async () => {
+    const fees = [{ bank_account_id: "b1", bank_account: "Operating trust account", held: "150.00",
+      since: "2000-01-01", days_held: 40, take_by: "2000-01-26" }];
+    const fetch = server(SHEET, { "/api/payables/company-fees": fees }, {}, BANKS);
+    render(<BankingPage me={ME} />);
+
+    const operating = await screen.findByRole("row", { name: "Operating trust account" });
+    await vi.waitFor(() => expect(within(operating).getAllByRole("cell")[5]?.textContent).toBe("$150.00take out: past 01/26/2000"));
+    fireEvent.click(within(operating).getByRole("button", { name: "Actions for Operating trust account" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Transfer company fees" }));
+    const panel = screen.getByRole("dialog", { name: "Transfer company fees" });
+    expect(within(panel).getByTestId("company-fees").textContent).toBe(
+      "$150.00 of the company's fees, the oldest since 01/01/2000 (40 days)",
+    );
+    fireEvent.change(within(panel).getByLabelText("Amount (leave empty for all)"), { target: { value: "100.00" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Take out company fees" }));
+    const confirm = screen.getByRole("alertdialog");
+    expect(confirm.textContent).toContain("Take $100.00 of the company's fees out of Operating trust account on");
+    fireEvent.click(within(confirm).getByRole("button", { name: "Confirm" }));
+
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(posted(fetch)).toEqual([["/api/payables/company-fees", expect.objectContaining({ bank_account_id: "b1", amount: "100.00" })]]);
+  });
+
+  it("shows a panel opened while the page reloads after a transfer what the reload brings", async () => {
+    const before = [{ bank_account_id: "b1", bank_account: "Operating trust account", held: "150.00",
+      since: "2000-01-01", days_held: 40, take_by: "2000-01-26" }];
+    const after = [{ ...before[0]!, held: "0.00", since: null, days_held: null, take_by: null }];
+    // The second read of the fees waits until the test lets it through.
+    const gate: { open?: () => void } = {};
+    let reads = 0;
+    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+    vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
+      if (init?.method === "POST") return json({ amount: "150.00" }, 201);
+      if (path === "/api/payables/company-fees") {
+        reads += 1;
+        if (reads > 1) await new Promise<void>((resolve) => { gate.open = resolve; });
+        return json(reads > 1 ? after : before);
+      }
+      return json(path === "/api/reconcile" ? BANKS : path === "/api/year-close" ? NOTHING_TO_CLOSE : {});
+    }));
+    render(<BankingPage me={ME} />);
+    const operating = await screen.findByRole("row", { name: "Operating trust account" });
+    const openPanel = async () => {
+      fireEvent.click(await within(operating).findByRole("button", { name: "Actions for Operating trust account" }));
+      fireEvent.click(screen.getByRole("menuitem", { name: "Transfer company fees" }));
+      return screen.getByRole("dialog", { name: "Transfer company fees" });
+    };
+    fireEvent.click(within(await openPanel()).getByRole("button", { name: "Take out company fees" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Confirm" }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+
+    // Opened again before the reload lands: what it knew, then what the reload says.
+    await vi.waitFor(() => expect(gate.open).toBeDefined());
+    const panel = await openPanel();
+    expect(within(panel).getByTestId("company-fees").textContent).toBe(
+      "$150.00 of the company's fees, the oldest since 01/01/2000 (40 days)",
+    );
+    gate.open!();
+    await vi.waitFor(() =>
+      expect(within(panel).getByTestId("company-fees").textContent).toBe("None of the company's fees is held here."),
+    );
+    expect(within(panel).queryByRole("button", { name: "Take out company fees" })).toBeNull();
+  });
+
+  it("keeps a refused transfer's panel open with why", async () => {
+    const fees = [{ bank_account_id: "b1", bank_account: "Operating trust account", held: "150.00",
+      since: "2000-01-01", days_held: 40, take_by: "2000-01-26" }];
+    server(SHEET, { "/api/payables/company-fees": fees },
+      { "/api/payables/company-fees": "only $150.00 of the company's fees is in this trust bank account" }, BANKS);
+    render(<BankingPage me={ME} />);
+    const operating = await screen.findByRole("row", { name: "Operating trust account" });
+    fireEvent.click(await within(operating).findByRole("button", { name: "Actions for Operating trust account" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Transfer company fees" }));
+    const panel = screen.getByRole("dialog", { name: "Transfer company fees" });
+    fireEvent.click(within(panel).getByRole("button", { name: "Take out company fees" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Confirm" }));
+
+    expect((await within(panel).findByRole("alert")).textContent).toBe(
+      "only $150.00 of the company's fees is in this trust bank account",
+    );
+    expect(screen.getAllByRole("alert")).toHaveLength(1);
+  });
+
+  it("offers no transfer where none of the company's fees was ever held", async () => {
+    const fees = [
+      { bank_account_id: "b1", bank_account: "Operating trust account", held: "0.00", since: null, days_held: null, take_by: null },
+    ];
+    server(SHEET, { "/api/payables/company-fees": fees }, {}, BANKS);
+    render(<BankingPage me={ME} />);
+    const operating = await screen.findByRole("row", { name: "Operating trust account" });
+    fireEvent.click(await within(operating).findByRole("button", { name: "Actions for Operating trust account" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Transfer company fees" }));
+    const panel = screen.getByRole("dialog", { name: "Transfer company fees" });
+    expect(within(panel).getByTestId("company-fees").textContent).toBe("None of the company's fees is held here.");
+    expect(within(panel).queryByRole("button", { name: "Take out company fees" })).toBeNull();
+    fireEvent.click(within(panel).getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("adds a trust bank account of either kind and opens its page", async () => {
+    const fetch = server(SHEET, { "/api/setup/bank-accounts": { id: "b9" } });
+    render(<BankingPage me={ME} />);
+    await screen.findByRole("row", { name: "Operating trust account" });
+    fireEvent.click(screen.getByRole("button", { name: "Add bank account" }));
+    const panel = screen.getByRole("dialog", { name: "Add bank account" });
+    fireEvent.change(within(panel).getByLabelText("Holds"), { target: { value: "security_deposit" } });
+    fireEvent.change(within(panel).getByLabelText("Bank account name"), { target: { value: "Second deposit trust" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Add bank account" }));
+
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/bank-accounts/b9"));
+    expect(posted(fetch)).toEqual([["/api/setup/bank-accounts", { kind: "security_deposit", name: "Second deposit trust" }]]);
+    window.history.pushState(null, "", "/");
+  });
+
+  it("keeps the panel open with why a bank account was refused", async () => {
+    server(SHEET, {}, { "/api/setup/bank-accounts": "sign in first" });
+    render(<BankingPage me={ME} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Add bank account" }));
+    const panel = screen.getByRole("dialog", { name: "Add bank account" });
+    fireEvent.change(within(panel).getByLabelText("Bank account name"), { target: { value: "Operating trust account" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Add bank account" }));
+    expect((await within(panel).findByRole("alert")).textContent).toBe("sign in first");
+  });
+
+  it("says when there is no trust bank account, and when they can't be read", async () => {
+    server(SHEET, {}, {}, []);
+    render(<BankingPage me={ME} />);
+    expect((await screen.findByTestId("empty-state")).textContent).toContain("No trust bank account yet.");
+    cleanup();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));
+    render(<BankingPage me={ME} />);
+    expect((await screen.findByRole("alert")).textContent).toBe("sign in first");
   });
 });

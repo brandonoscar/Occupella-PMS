@@ -59,7 +59,8 @@ def build(client):
     )
     books.unit = made(post(client, "units", property_id=books.property, name="Unit 1"))
     books.tenant = made(post(client, "tenants", property_id=books.property, name="Tenant A"))
-    books.vendor = made(post(client, "vendors", name="Vendor A"))
+    # A vendor comes from Vendors (src/pms/api/vendors.py).
+    books.vendor = made(client.post("/api/vendors", json={"name": "Vendor A"}))
     (books.account,) = [a["account"] for a in client.get("/api/setup").json()["accounts"]]
     return books
 
@@ -142,6 +143,7 @@ def test_staff_set_up_a_pmc_from_nothing(client, conn, staff, blank):
         "leasing_fee_percent": "0",
         "reserve": "250.00",
         "approval_limit": "500.00",
+        "bill_markup_percent": "0",
     }
     # Each bank account has its cash, the operating one the PMC's fees, and the owner account
     # sits in the operating one.
@@ -399,7 +401,6 @@ ENDPOINTS = [
     ("get", "/api/setup"),
     ("post", "/api/setup/bank-accounts"),
     ("post", "/api/setup/owners"),
-    ("post", "/api/setup/vendors"),
     ("post", "/api/setup/properties"),
     ("post", "/api/setup/properties/00000000-0000-0000-0000-000000000000/owners"),
     ("post", "/api/setup/units"),
@@ -431,7 +432,6 @@ def test_only_staff_set_up_the_books(client, conn, app_conn, pmc, caller, method
         ("bank-accounts", {"kind": "operating", "name": "  "}),
         ("owners", {"name": ""}),
         ("owners", {"name": "N" * 201}),
-        ("vendors", {}),
         ("units", {"property_id": "not-a-uuid", "name": "U"}),
         ("agreements", {"account": "a", "starts_on": "2026-10-12", "fee_percent": "100.01"}),
         ("agreements", {"account": "a", "starts_on": "2026-10-12", "reserve": "-1"}),

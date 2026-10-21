@@ -1,13 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { Offer } from "./offers";
-import { base64Of, dayAfter, isPdf, offerStatus, parseSigners, signersText, term } from "./offers";
+import { base64Of, dayAfter, isPdf, offerBadge, parseSigners, sentLine, signedCount, signersText, term } from "./offers";
 
 const OFFER: Offer = {
   id: "o1",
   kind: "new lease",
   application_id: "a1",
   renews_lease_id: null,
+  property_id: "p1",
   property: "Property 1",
+  unit_id: "u1",
   unit: "Unit 1",
   starts_on: "2027-01-01",
   ends_on: null,
@@ -16,23 +18,41 @@ const OFFER: Offer = {
   offered_at: "2026-10-11T18:00:00Z",
   sent: true,
   signers: [
-    { position: 1, name: "A", email: "a@example.com", signed_at: "2026-10-11T19:00:00Z" },
-    { position: 2, name: "B", email: "b@example.com", signed_at: null },
+    { position: 1, name: "A", email: "a@example.com", role: "tenant", signed_at: "2026-10-11T19:00:00Z", progress: "signed" },
+    { position: 2, name: "B", email: "b@example.com", role: "tenant", signed_at: null, progress: "waiting" },
   ],
   lease_id: null,
+  security_deposit: null,
+  recurring_charges: [],
+  status: "partially signed",
+  void: null,
 };
 
-describe("offerStatus", () => {
-  it("counts who has signed", () => {
-    expect(offerStatus(OFFER)).toBe("Signed by 1 of 2.");
-  });
-  it("says when everyone has signed, when it isn't sent, and when it is a lease", () => {
-    const signed = OFFER.signers.map((s) => ({ ...s, signed_at: "2026-10-11T20:00:00Z" }));
-    expect(offerStatus({ ...OFFER, signers: signed })).toBe(
-      "Signed by everyone: it can be made the lease.",
+describe("sentLine", () => {
+  it("says whom Send went to and whom the PMS emailed their link", () => {
+    expect(sentLine({ offer: OFFER, links: [] })).toBe("Sent to 2 signers.");
+    expect(sentLine({ offer: OFFER, links: [], emailed: [] })).toBe("Sent to 2 signers.");
+    expect(sentLine({ offer: OFFER, links: [], emailed: ["a@example.com", "b@example.com"] })).toBe(
+      "Sent to 2 signers. Each was emailed their link: a@example.com, b@example.com.",
     );
-    expect(offerStatus({ ...OFFER, sent: false })).toBe("Not sent for signing.");
-    expect(offerStatus({ ...OFFER, lease_id: "l1" })).toBe("It is the lease now.");
+    expect(sentLine({ offer: { ...OFFER, signers: OFFER.signers.slice(0, 1) }, links: [] })).toBe("Sent to 1 signer.");
+  });
+});
+
+describe("offerBadge and signedCount", () => {
+  it("counts who has signed", () => {
+    expect(signedCount(OFFER)).toBe("1 of 2 signed");
+  });
+  it("reads each status in a badge", () => {
+    const all = ["draft", "sent", "partially signed", "signed", "leased", "void"] as const;
+    expect(all.map((status) => offerBadge(status))).toEqual([
+      { word: "Draft", tone: "neutral" },
+      { word: "Sent", tone: "info" },
+      { word: "Partially signed", tone: "caution" },
+      { word: "Signed", tone: "positive" },
+      { word: "Lease active", tone: "positive" },
+      { word: "Void", tone: "danger" },
+    ]);
   });
 });
 
@@ -73,8 +93,8 @@ describe("signersText", () => {
 
 describe("term and dayAfter", () => {
   it("reads a lease's term", () => {
-    expect(term("2027-01-01", "2027-06-30")).toBe("2027-01-01 to 2027-06-30");
-    expect(term("2027-01-01", null)).toBe("2027-01-01 to month to month");
+    expect(term("2027-01-01", "2027-06-30")).toBe("01/01/2027 – 06/30/2027");
+    expect(term("2027-01-01", null)).toBe("01/01/2027 – Month to month");
   });
   it("finds the next day across a month and a year", () => {
     expect(dayAfter("2027-06-30")).toBe("2027-07-01");

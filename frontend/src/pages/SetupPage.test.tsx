@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
-import type { Portfolio } from "../setup";
+import type { Company } from "../company";
 import { SetupPage } from "./SetupPage";
 
 afterEach(() => {
@@ -10,295 +10,156 @@ afterEach(() => {
 });
 
 const ME: Me = {
-  kind: "staff",
-  email: "staff@example.com",
-  name: "Staff 1",
-  person_id: "s1",
-  pmc_id: "p1",
-  pmc_name: "Synthetic PMC",
+  kind: "staff", email: "staff@example.com", name: "Staff 1", person_id: "s1", pmc_id: "p1", pmc_name: "Synthetic PMC",
+};
+const ADDRESS = {
+  address_line_1: "100 Example Street", address_line_2: "Suite 2", city: "Sampletown", state: "ZZ", postal_code: "00000",
+};
+const BARE: Company = { name: "Synthetic PMC", address: null, late_fees: null, nsf_fee: null, reply_to: null, logo: null };
+const FULL: Company = {
+  name: "Synthetic PMC", address: ADDRESS,
+  late_fees: { grace_days: 5, flat_fee: "50.00", percent: "0", maximum: null }, nsf_fee: "35.00",
+  reply_to: "office@example.com",
+  logo: { id: "d1", content_type: "image/png", uploaded_at: "2026-10-17T00:00:00Z" },
 };
 
-const BOOKS: Portfolio = {
-  bank_accounts: [
-    { id: "b2", name: "Deposit trust", kind: "security_deposit", opened_at: null, closed_through: null },
-    { id: "b1", name: "Operating trust", kind: "operating", opened_at: null, closed_through: null },
-  ],
-  owners: [{ id: "o1", name: "Owner A" }],
-  properties: [
-    {
-      id: "p1",
-      name: "Property A",
-      units: [
-        {
-          id: "u1",
-          name: "Unit 1",
-          leases: [
-            { id: "l1", starts_on: "2026-10-01", ends_on: null, monthly_rent: "1500.00", tenants: ["Tenant A"] },
-          ],
-        },
-        { id: "u2", name: "Unit 2", leases: [] },
-      ],
-      late_fees: { starts_on: "2026-10-01", grace_days: 5, flat_fee: "50.00", percent: "0", maximum: null },
-      nsf_fee: { starts_on: "2026-10-01", fee: "35.00" },
-    },
-    {
-      id: "p2",
-      name: "Property B",
-      units: [{ id: "u3", name: "Unit 9", leases: [] }],
-      late_fees: null,
-      nsf_fee: null,
-    },
-  ],
-  accounts: [
-    {
-      account: "acct-1",
-      owner_id: "o1",
-      owner: "Owner A",
-      property_id: "p1",
-      property: "Property A",
-      bank_account: "Operating trust",
-      agreement: {
-        starts_on: "2026-10-01",
-        fee_percent: "8",
-        minimum_fee: "0",
-        flat_fee: "0",
-        leasing_fee_percent: "0",
-        reserve: "250.00",
-        approval_limit: "500.00",
-      },
-    },
-  ],
-  tenants: [
-    { id: "t1", name: "Tenant A", property_id: "p1", property: "Property A" },
-    { id: "t2", name: "Tenant B", property_id: "p1", property: "Property A" },
-  ],
-  vendors: [{ id: "v1", name: "Vendor A" }],
-  expense_accounts: [{ id: "e1", name: "Landscaping", schedule_e_line: 7 }],
-  schedule_e_lines: [
-    { line: 7, label: "Cleaning and maintenance" },
-    { line: 14, label: "Repairs" },
-    { line: 17, label: "Utilities" },
-  ],
-};
-
-// The API: the books on GET; a POST is added, or refused with `refuse[path]`.
-function server(refuse: Record<string, string> = {}) {
-  const fetch = vi.fn(async (path: string, init?: RequestInit) => {
-    if (init?.method !== "POST") return new Response(JSON.stringify(BOOKS), { status: 200 });
-    const detail = refuse[path];
-    return detail
-      ? new Response(JSON.stringify({ detail }), { status: 409 })
-      : new Response(JSON.stringify({ id: "new" }), { status: 201 });
+function server(company: Company, refuse = "") {
+  const fetch = vi.fn(async (_path: string, init?: RequestInit) => {
+    if (init?.method === "POST") {
+      if (refuse) return new Response(JSON.stringify({ detail: refuse }), { status: 422 });
+      return new Response(JSON.stringify(company), { status: 200 });
+    }
+    return new Response(JSON.stringify(company), { status: 200 });
   });
   vi.stubGlobal("fetch", fetch);
   return fetch;
 }
-
 const posted = (fetch: ReturnType<typeof server>) =>
-  fetch.mock.calls
-    .filter(([, init]) => init?.method === "POST")
-    .map(([path, init]) => [path, JSON.parse(String(init?.body))]);
-
-const type = (label: string | RegExp, value: string, within_: HTMLElement = document.body) =>
-  fireEvent.change(within(within_).getByLabelText(label), { target: { value } });
-
-async function card(title: string) {
-  return (await screen.findByRole("heading", { name: title })).closest("section") as HTMLElement;
-}
+  fetch.mock.calls.filter(([, i]) => i?.method === "POST").map(([p, i]) => [p, JSON.parse(String(i?.body))]);
+const panel = () => screen.getByRole("dialog");
+const type = (label: string, value: string) => fireEvent.change(within(panel()).getByLabelText(label), { target: { value } });
 
 describe("SetupPage", () => {
-  it("shows the books as set up", async () => {
+  it("shows the company's name, address, logo and the fees new properties start with, as one of Settings' pages", async () => {
     window.history.replaceState(null, "", "/settings/setup");
-    server();
+    server(FULL);
     render(<SetupPage me={ME} />);
 
-    const banks = await card("Trust bank accounts");
-    expect(banks.textContent).toContain("Operating trust (Operating)");
-    expect(banks.textContent).toContain("Deposit trust (Security deposit)");
-    const property = screen.getByRole("listitem", { name: "Property A" });
-    expect(property.textContent).toContain(
-      "Owned by Owner A. After 5 days' grace: $50.00. NSF fee $35.00.",
-    );
-    expect(property.textContent).toContain(
-      "Unit 1: Tenant A: from 2026-10-01, month to month, $1,500.00 a month",
-    );
-    expect(property.textContent).toContain("Unit 2: vacant");
-    expect((await card("Management terms")).textContent).toContain(
-      "Owner A, Property A: 8% of rent and recurring fees collected; keeps $250.00 in reserve;" +
-        " owner approves bills over $500.00 (from 2026-10-01)",
-    );
-    expect((await card("Tenants and leases in place")).textContent).toContain("Tenant B (Property A)");
-    // Company setup is one of Settings' pages.
+    const company = await screen.findByLabelText("Company");
+    expect(company.textContent).toBe("Synthetic PMC100 Example StreetSuite 2Sampletown, ZZ 00000");
+    expect(screen.getByRole("img", { name: "Synthetic PMC logo" }).getAttribute("src")).toBe("/api/company/logo?v=d1");
+    expect(screen.getByTestId("default-late-fees").textContent).toBe("After 5 days' grace: $50.00");
+    expect(screen.getByTestId("default-nsf-fee").textContent).toBe("NSF fee $35.00");
+    expect(screen.getByTestId("reply-to").textContent).toBe("Replies to its emails go to office@example.com.");
     expect(screen.getByRole("link", { name: "Settings" }).getAttribute("aria-current")).toBe("page");
-    expect(screen.getByRole("link", { name: "Dashboard" }).getAttribute("aria-current")).toBe(null);
   });
 
-  it("lists the expense accounts on their Schedule E lines and adds one", async () => {
-    const fetch = server();
+  it("says what is not set yet", async () => {
+    server(BARE);
     render(<SetupPage me={ME} />);
-
-    const accounts = await card("Expense accounts");
-    expect(accounts.textContent).toContain("Landscaping (Schedule E line 7: Cleaning and maintenance)");
-    type("Expense account", "Water", accounts);
-    type("Schedule E line", "17", accounts);
-    expect(within(accounts).getByRole("option", { name: "17: Utilities" })).toBeTruthy();
-    fireEvent.click(within(accounts).getByRole("button", { name: "Add expense account" }));
-
-    await vi.waitFor(() =>
-      expect(posted(fetch)).toEqual([["/api/setup/expense-accounts", { name: "Water", schedule_e_line: 17 }]]),
-    );
-    await vi.waitFor(() => expect((within(accounts).getByLabelText("Expense account") as HTMLInputElement).value).toBe(""));
+    expect(await screen.findByText("No mailing address yet")).toBeTruthy();
+    expect(screen.getByText("No logo yet")).toBeTruthy();
+    expect(screen.getByTestId("default-late-fees").textContent).toBe("No late fee terms");
+    expect(screen.getByTestId("default-nsf-fee").textContent).toBe("No NSF fee");
+    expect(screen.getByTestId("reply-to").textContent).toBe("Replies to its emails go to the server's From address.");
+    expect(screen.queryByRole("button", { name: "Remove logo" })).toBeNull();
   });
 
-  it("adds a bank account, an owner and a vendor, and clears the name", async () => {
-    const fetch = server();
+  it("renames the company and keeps its address in a side panel, the rest as it stands", async () => {
+    const fetch = server(FULL);
     render(<SetupPage me={ME} />);
-
-    const banks = await card("Trust bank accounts");
-    fireEvent.change(within(banks).getByLabelText("Kind"), { target: { value: "security_deposit" } });
-    type("Bank account name", "Second deposit trust", banks);
-    fireEvent.click(within(banks).getByRole("button", { name: "Add bank account" }));
-    type("Owner's name", "Owner B");
-    fireEvent.click(within(screen.getByRole("region", { name: "Owners" })).getByRole("button", { name: "Add" }));
-    type("Vendor's name", "Vendor B");
-    fireEvent.click(within(screen.getByRole("region", { name: "Vendors" })).getByRole("button", { name: "Add" }));
-
-    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(3));
-    expect(posted(fetch)).toEqual([
-      ["/api/setup/bank-accounts", { kind: "security_deposit", name: "Second deposit trust" }],
-      ["/api/setup/owners", { name: "Owner B" }],
-      ["/api/setup/vendors", { name: "Vendor B" }],
-    ]);
-    await vi.waitFor(() =>
-      expect((screen.getByLabelText("Owner's name") as HTMLInputElement).value).toBe(""),
-    );
+    fireEvent.click(await screen.findByRole("button", { name: "Edit company" }));
+    type("Company name", "Synthetic PMC 2");
+    type("Suite or floor (optional)", " ");
+    fireEvent.click(within(panel()).getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Saved Synthetic PMC 2.")).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(posted(fetch)).toEqual([["/api/company", {
+      name: "Synthetic PMC 2", address: { ...ADDRESS, address_line_2: null },
+      late_fees: FULL.late_fees, nsf_fee: "35.00", reply_to: "office@example.com",
+    }]]);
   });
 
-  it("adds a property in the only operating account, and to a property its unit, owner, late fees and NSF fee", async () => {
-    const fetch = server();
+  it("sets where replies to the company's emails go, or clears it", async () => {
+    const fetch = server(BARE);
     render(<SetupPage me={ME} />);
-
-    const properties = await card("Properties");
-    type("Property name", "Property B", properties);
-    fireEvent.change(within(properties).getByLabelText("Owner", { selector: "#property-owner" }), {
-      target: { value: "o1" },
-    });
-    fireEvent.click(within(properties).getByRole("button", { name: "Add property" }));
-    const row = screen.getByRole("listitem", { name: "Property A" });
-    type("Unit name", "Unit 3", row);
-    fireEvent.click(within(row).getByRole("button", { name: "Add unit" }));
-    fireEvent.change(within(row).getByLabelText("Owner"), { target: { value: "o1" } });
-    fireEvent.click(within(row).getByRole("button", { name: "Add owner" }));
-    type("Late fees from", "2026-11-01", row);
-    type("Grace days", "3", row);
-    type("Percent of unpaid", "5", row);
-    fireEvent.click(within(row).getByRole("button", { name: "Set late fees" }));
-    type("NSF fee from", "2026-11-01", row);
-    type("NSF fee", "35.00", row);
-    fireEvent.click(within(row).getByRole("button", { name: "Set NSF fee" }));
-
-    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(5));
-    expect(posted(fetch)).toEqual([
-      ["/api/setup/properties", { name: "Property B", owner_id: "o1", bank_account_id: "b1" }],
-      ["/api/setup/units", { property_id: "p1", name: "Unit 3" }],
-      ["/api/setup/properties/p1/owners", { owner_id: "o1", bank_account_id: "b1" }],
-      [
-        "/api/setup/late-fees",
-        { property_id: "p1", starts_on: "2026-11-01", grace_days: 3, flat_fee: "0", percent: "5", maximum: null },
-      ],
-      ["/api/setup/nsf-fees", { property_id: "p1", starts_on: "2026-11-01", fee: "35.00" }],
-    ]);
-  });
-
-  it("sets management terms, with what is left empty as zero", async () => {
-    const fetch = server();
-    render(<SetupPage me={ME} />);
-
-    const terms = await card("Management terms");
-    fireEvent.change(within(terms).getByLabelText("For"), { target: { value: "acct-1" } });
-    type("In force from", "2027-01-01", terms);
-    type("Fee, percent of rent and recurring fees collected", "9", terms);
-    type("Owner approves bills over", "750.00", terms);
-    fireEvent.click(within(terms).getByRole("button", { name: "Set terms" }));
-
+    fireEvent.click(await screen.findByRole("button", { name: "Edit company" }));
+    type("Replies to the company's emails go to (optional)", " leasing@example.com ");
+    fireEvent.click(within(panel()).getByRole("button", { name: "Save" }));
     await vi.waitFor(() => expect(posted(fetch)).toHaveLength(1));
-    expect(posted(fetch)[0]).toEqual([
-      "/api/setup/agreements",
-      {
-        account: "acct-1",
-        starts_on: "2027-01-01",
-        fee_percent: "9",
-        minimum_fee: "0",
-        flat_fee: "0",
-        leasing_fee_percent: "0",
-        reserve: "0",
-        approval_limit: "750.00",
-      },
-    ]);
+    expect(posted(fetch)[0]?.[1]).toMatchObject({ reply_to: "leasing@example.com" });
+    cleanup();
+
+    const again = server(FULL);
+    render(<SetupPage me={ME} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit company" }));
+    type("Replies to the company's emails go to (optional)", "");
+    fireEvent.click(within(panel()).getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(posted(again)).toHaveLength(1));
+    expect(posted(again)[0]?.[1]).toMatchObject({ reply_to: null });
   });
 
-  it("adds a tenant, and a lease of a unit for its property's tenants", async () => {
-    const fetch = server();
+  it("clears the address when every part of it is emptied", async () => {
+    const fetch = server(FULL);
     render(<SetupPage me={ME} />);
-
-    const leases = await card("Tenants and leases in place");
-    fireEvent.change(within(leases).getByLabelText("Tenant of"), { target: { value: "p1" } });
-    type("Tenant's name", "Tenant C", leases);
-    fireEvent.click(within(leases).getByRole("button", { name: "Add tenant" }));
-    const addLease = within(leases).getByRole("button", { name: "Add lease" }) as HTMLButtonElement;
-    expect(addLease.disabled).toBe(true);
-    fireEvent.change(within(leases).getByLabelText("Unit"), { target: { value: "u2" } });
-    type("Starts", "2026-11-01", leases);
-    type("Rent a month", "1250.00", leases);
-    fireEvent.click(within(leases).getByLabelText("Tenant B"));
-    fireEvent.click(within(leases).getByLabelText("Tenant A"));
-    fireEvent.click(within(leases).getByLabelText("Tenant A"));
-    fireEvent.click(addLease);
-
-    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(2));
-    expect(posted(fetch)).toEqual([
-      ["/api/setup/tenants", { property_id: "p1", name: "Tenant C" }],
-      [
-        "/api/setup/leases",
-        { unit_id: "u2", starts_on: "2026-11-01", ends_on: null, monthly_rent: "1250.00", tenant_ids: ["t2"] },
-      ],
-    ]);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit company" }));
+    for (const label of ["Street address", "Suite or floor (optional)", "City", "State", "ZIP code"]) type(label, "");
+    fireEvent.click(within(panel()).getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(1));
+    expect(posted(fetch)[0]?.[1]).toMatchObject({ address: null });
   });
 
-  it("says when a unit's property has no tenants yet", async () => {
-    server();
+  it("sets the fees new properties start with, or none", async () => {
+    const fetch = server(BARE);
     render(<SetupPage me={ME} />);
-    const leases = await card("Tenants and leases in place");
+    fireEvent.click(await screen.findByRole("button", { name: "Set default fees" }));
+    fireEvent.click(within(panel()).getByLabelText("Charge late fees"));
+    type("Grace days", "3");
+    type("Flat fee", "25.00");
+    type("NSF fee (empty for none)", "35.00");
+    fireEvent.click(within(panel()).getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("Saved the fees new properties start with.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/company", {
+      name: "Synthetic PMC", address: null,
+      late_fees: { grace_days: 3, flat_fee: "25.00", percent: "0", maximum: null }, nsf_fee: "35.00", reply_to: null,
+    }]]);
+    cleanup();
 
-    fireEvent.change(within(leases).getByLabelText("Unit"), { target: { value: "u3" } });
-
-    expect(within(leases).getByText("Add the tenants of Property B first.")).toBeTruthy();
-    expect(within(leases).queryByLabelText("Tenant A")).toBeNull();
-    expect(screen.getByRole("listitem", { name: "Property B" }).textContent).toContain(
-      "Owned by nobody yet. No late fee terms. No NSF fee.",
-    );
+    const again = server(FULL);
+    render(<SetupPage me={ME} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Set default fees" }));
+    fireEvent.click(within(panel()).getByLabelText("Charge late fees"));
+    expect(within(panel()).queryByLabelText("Grace days")).toBeNull();
+    type("NSF fee (empty for none)", "");
+    fireEvent.click(within(panel()).getByRole("button", { name: "Save" }));
+    await vi.waitFor(() => expect(posted(again)).toHaveLength(1));
+    expect(posted(again)[0]?.[1]).toMatchObject({ late_fees: null, nsf_fee: null });
   });
 
-  it("shows a refusal in the card that asked", async () => {
-    server({ "/api/setup/owners": "no such owner" });
+  it("uploads a logo, refuses a file that isn't an image, removes it, and says why a save was refused", async () => {
+    const fetch = server(FULL);
     render(<SetupPage me={ME} />);
+    const input = (await screen.findByLabelText("Replace the logo")) as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [new File(["%PDF-1.4"], "logo.pdf", { type: "application/pdf" })] } });
+    expect(await screen.findByText("A logo is a PNG or a JPEG.")).toBeTruthy();
+    fireEvent.change(input, { target: { files: [new File(["\x89PNG\r\n\x1a\n"], "logo.png", { type: "image/png" })] } });
+    expect(await screen.findByText("The logo is saved.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Remove logo" }));
+    expect(await screen.findByText("The logo is removed.")).toBeTruthy();
+    expect(posted(fetch).map(([path]) => path)).toEqual(["/api/company/logo", "/api/company/logo/remove"]);
+    expect(posted(fetch)[0]?.[1]).toMatchObject({ content_type: "image/png" });
+    cleanup();
 
-    type("Owner's name", "Owner B", await card("Owners and vendors"));
-    fireEvent.click(within(screen.getByRole("region", { name: "Owners" })).getByRole("button", { name: "Add" }));
-
-    expect((await within(await card("Owners and vendors")).findByRole("alert")).textContent).toBe(
-      "no such owner",
-    );
-    expect((screen.getByLabelText("Owner's name") as HTMLInputElement).value).toBe("Owner B");
+    server(FULL, "the company name is too long");
+    render(<SetupPage me={ME} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Edit company" }));
+    fireEvent.click(within(panel()).getByRole("button", { name: "Save" }));
+    expect((await within(panel()).findByRole("alert")).textContent).toBe("the company name is too long");
   });
 
-  it("says when the books can't be read", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })),
-    );
+  it("says when the company can't be read", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));
     render(<SetupPage me={ME} />);
-
     expect((await screen.findByRole("alert")).textContent).toBe("sign in first");
   });
 });

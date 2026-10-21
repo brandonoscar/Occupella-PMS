@@ -1,105 +1,133 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
-import type { Library } from "../documents";
+import type { FileRow, Library } from "../documents";
+import type { Paged } from "../rentals";
 import { DocumentsPage } from "./DocumentsPage";
 
+beforeEach(() => {
+  window.localStorage.clear();
+  window.history.replaceState(null, "", "/files");
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
 });
 
-const ME: Me = { kind: "staff", email: "staff@example.com", name: "Staff 1", person_id: "s1", pmc_id: "p1", pmc_name: "Synthetic PMC" };
+const ME: Me = {
+  kind: "staff", email: "staff@example.com", name: "Staff 1", person_id: "s1", pmc_id: "p1",
+  pmc_name: "Synthetic PMC",
+};
 
+const ROW: FileRow = {
+  id: "d1", kind: "property_document", about_id: "p1", about: "Property 1", about_path: "/properties/p1",
+  title: "Deed", content_type: "application/pdf", size: 2048, uploaded_by: "Staff 1", uploaded_at: "2026-10-02T15:00:00Z",
+};
+const PAGE: Paged<FileRow> = { items: [ROW], total: 1, page: 1, per_page: 50 };
+const NONE = {
+  w9: [], receipt: [], move_out_photo: [], owner_document: [], work_order_photo: [], property_document: [],
+  unit_document: [], tenant_document: [], lease_document: [], vendor_document: [], request_photo: [], listing_photo: [],
+};
 const LIBRARY: Library = {
-  documents: [
-    {
-      id: "d1", kind: "w9", about_id: "v1", about: "Vendor 1", title: "W-9 2026", content_type: "application/pdf",
-      size: 2048, uploaded_by: "Staff 1", uploaded_at: "2026-10-01T10:00:00Z",
-    },
-  ],
+  documents: [],
   subjects: {
+    ...NONE,
+    property_document: [{ id: "p1", label: "Property 1" }, { id: "p2", label: "Property 2" }],
+    vendor_document: [{ id: "v1", label: "Vendor 1" }],
     w9: [{ id: "v1", label: "Vendor 1" }],
-    receipt: [],
-    move_out_photo: [{ id: "l1", label: "Property 1 / Unit 1: Tenant 1" }],
-    owner_document: [{ id: "o1", label: "Owner 1" }, { id: "o2", label: "Owner 2" }],
   },
 };
 
-function server(refuse: Record<string, string> = {}, library: Library = LIBRARY) {
+function server(answers: Record<string, unknown> = {}, refuse = "") {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
-    if (init?.method !== "POST") return new Response(JSON.stringify(library), { status: 200 });
-    if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
-    if (path.endsWith("/remove")) return new Response(null, { status: 204 });
-    return new Response(JSON.stringify({ id: "d2" }), { status: 201 });
+    if (init?.method === "POST") {
+      if (refuse) return new Response(JSON.stringify({ detail: refuse }), { status: 422 });
+      if (path.endsWith("/remove")) return new Response(null, { status: 204 });
+      return new Response(JSON.stringify({ id: "d9" }), { status: 201 });
+    }
+    const body =
+      path in answers ? answers[path]
+      : path.startsWith("/api/documents/files") ? PAGE
+      : path === "/api/documents" ? LIBRARY
+      : path === "/api/property-groups" ? { groups: [{ id: "g1", name: "North", properties: [] }], properties: [] }
+      : { detail: "not found" };
+    return new Response(JSON.stringify(body), { status: "detail" in (body as object) ? 401 : 200 });
   });
   vi.stubGlobal("fetch", fetch);
   return fetch;
 }
 
+const asked = (fetch: ReturnType<typeof server>) => fetch.mock.calls.filter(([, i]) => i?.method !== "POST").map(([p]) => p);
 const posted = (fetch: ReturnType<typeof server>) =>
-  fetch.mock.calls
-    .filter(([, init]) => init?.method === "POST")
-    .map(([path, init]) => [path, JSON.parse(String(init?.body))]);
-
-const pdf = (name: string, size?: number) => {
-  const file = new File(["%PDF-1.4"], name, { type: "application/pdf" });
-  if (size !== undefined) Object.defineProperty(file, "size", { value: size });
-  return file;
-};
+  fetch.mock.calls.filter(([, init]) => init?.method === "POST").map(([path, init]) => [path, init?.body ? JSON.parse(String(init.body)) : null]);
 
 describe("DocumentsPage", () => {
-  it("keeps a file as a document about what staff choose, titled after it", async () => {
-    const fetch = server();
+  it("lists every file with what it is attached to, its category, day and who uploaded it", async () => {
+    server();
     render(<DocumentsPage me={ME} />);
-    fireEvent.change(await screen.findByLabelText("Kind"), { target: { value: "owner_document" } });
-    fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "o2" } });
-    fireEvent.change(screen.getByLabelText("File"), { target: { files: [pdf("Owner 2 agreement.pdf")] } });
-    await vi.waitFor(() => expect((screen.getByLabelText("Title") as HTMLInputElement).value).toBe("Owner 2 agreement"));
-    fireEvent.click(screen.getByRole("button", { name: "Keep it" }));
 
-    expect(await screen.findByText("Kept Owner 2 agreement.")).toBeTruthy();
-    expect(posted(fetch)).toEqual([
-      ["/api/documents", {
-        kind: "owner_document", about_id: "o2", title: "Owner 2 agreement",
-        content_type: "application/pdf", content_base64: "JVBERi0xLjQ=",
-      }],
+    const row = await screen.findByRole("row", { name: "Deed" });
+    expect(within(row).getAllByRole("cell").map((c) => c.textContent).slice(0, 5)).toEqual([
+      "Deed2 KB", "Property 1", "Property document", "10/02/2026", "Staff 1",
     ]);
+    expect(within(row).getByRole("link", { name: "Deed" }).getAttribute("href")).toBe("/api/documents/d1/file");
+    expect(within(row).getByRole("link", { name: "Property 1" }).getAttribute("href")).toBe("/properties/p1");
   });
 
-  it("lists documents to download and removes one", async () => {
+  it("narrows by category and property group, from the first page", async () => {
     const fetch = server();
     render(<DocumentsPage me={ME} />);
-    const listed = await screen.findByLabelText("Documents");
-    expect(listed.textContent).toContain("W-9, Vendor 1, 2 KB, by Staff 1 on 2026-10-01");
-    expect(screen.getByRole("link", { name: "W-9 2026" }).getAttribute("href")).toBe("/api/documents/d1/file");
-    fireEvent.click(screen.getByRole("button", { name: "Remove W-9 2026" }));
-    expect(await screen.findByText("Removed W-9 2026.")).toBeTruthy();
+    await screen.findByRole("row", { name: "Deed" });
+
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "w9" } });
+    await vi.waitFor(() => expect(asked(fetch)).toContain("/api/documents/files?page=1&kind=w9"));
+    await screen.findByRole("option", { name: "North" });
+    fireEvent.change(screen.getByLabelText("Properties shown"), { target: { value: "group:g1" } });
+    await vi.waitFor(() => expect(asked(fetch)).toContain("/api/documents/files?page=1&group=g1&kind=w9"));
+  });
+
+  it("removes a file from its row's menu, once confirmed", async () => {
+    const fetch = server();
+    render(<DocumentsPage me={ME} />);
+    await screen.findByRole("row", { name: "Deed" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Deed" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Remove" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Remove" }));
+    expect(await screen.findByText("Removed Deed.")).toBeTruthy();
     expect(posted(fetch)).toEqual([["/api/documents/d1/remove", {}]]);
   });
 
-  it("refuses a file a document can't be, says when there is nothing to keep one for, and shows a refusal", async () => {
-    server({ "/api/documents": "nothing of this PMC for the document to be about" });
+  it("uploads a file attached to a record, in its category, from a side panel", async () => {
+    const fetch = server();
     render(<DocumentsPage me={ME} />);
-    const keep = (await screen.findByRole("button", { name: "Keep it" })) as HTMLButtonElement;
-    fireEvent.change(screen.getByLabelText("File"), { target: { files: [new File(["<html>"], "page.html", { type: "text/html" })] } });
-    expect(await screen.findByText("A document is a PDF, a JPEG or a PNG.")).toBeTruthy();
-    expect(keep.disabled).toBe(true);
-    fireEvent.change(screen.getByLabelText("File"), { target: { files: [pdf("big.pdf", 6 * 1024 * 1024)] } });
-    expect(await screen.findByText("A document is at most 5 MB.")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("File"), { target: { files: [pdf("W-9.pdf")] } });
-    await vi.waitFor(() => expect(keep.disabled).toBe(false));
-    fireEvent.click(keep);
-    expect(await screen.findByText("nothing of this PMC for the document to be about")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "receipt" } });
-    expect(screen.getByText("Nothing to keep a Receipt for yet.")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("File"), { target: { files: [] } });
-    await vi.waitFor(() => expect(keep.disabled).toBe(true));
-    cleanup();
+    await screen.findByRole("row", { name: "Deed" });
 
-    server({}, { ...LIBRARY, documents: [] });
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
+    const panel = screen.getByRole("dialog", { name: "Upload" });
+    const file = new File(["%PDF-1.4"], "contract.pdf", { type: "application/pdf" });
+    fireEvent.change(await within(panel).findByLabelText("File"), { target: { files: [file] } });
+    await vi.waitFor(() => expect((within(panel).getByLabelText("Name") as HTMLInputElement).value).toBe("contract"));
+    fireEvent.change(within(panel).getByLabelText("Attached to"), { target: { value: "Vendor" } });
+    // A vendor takes their documents and their W-9s.
+    expect(within(within(panel).getByLabelText("Category")).getAllByRole("option").map((o) => o.textContent)).toEqual([
+      "Vendor document", "W-9",
+    ]);
+    expect((within(panel).getByLabelText("Vendor") as HTMLSelectElement).value).toBe("v1");
+    fireEvent.click(within(panel).getByRole("button", { name: "Upload" }));
+    expect(await screen.findByText("Uploaded contract.")).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    expect(posted(fetch)[0]?.[1]).toMatchObject({ kind: "vendor_document", about_id: "v1", title: "contract" });
+  });
+
+  it("says when there is nothing to attach a file to, why one was refused, and when none can be read", async () => {
+    server({ "/api/documents": { documents: [], subjects: NONE } }, "the file isn't a PDF");
     render(<DocumentsPage me={ME} />);
-    expect(await screen.findByText("No document yet.")).toBeTruthy();
+    await screen.findByRole("row", { name: "Deed" });
+    fireEvent.click(screen.getByRole("button", { name: "Upload" }));
+    const panel = screen.getByRole("dialog", { name: "Upload" });
+    expect(await within(panel).findByText("No property to attach a file to yet.")).toBeTruthy();
     cleanup();
 
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));

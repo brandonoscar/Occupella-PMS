@@ -1,0 +1,14 @@
+line	item	detail	amount
+1	PMC	Golden PMC	NULL
+2	property and unit	Property 2 / Unit 7	NULL
+3	tenants	Tenant A	NULL
+4	lease	2026-04-01 to 2026-06-30	NULL
+5	moved from	Property 1 / Unit 1, 2026-01-01 to 2026-03-31	NULL
+6	deposit held	Tenant A	2500.00
+7	kept for	2026-03-01 rent: March rent (Property 1 / Unit 1)	1000.00
+8	kept for	2026-06-01 rent: June rent	1100.00
+9	deposits held, total	NULL	2500.00
+10	kept, total	NULL	2100.00
+11	returned to	Tenant A	400.00
+12	returned, total	NULL	400.00
+13	returned on	2026-07-05 (UTC), by Manager 1	NULL

@@ -86,6 +86,8 @@ class Agreement(BaseModel):
     leasing_fee_percent: str
     reserve: str
     approval_limit: str
+    # The percent of a bill the company may add as its markup (migration 0083); 0: none.
+    bill_markup_percent: str = "0"
 
 
 class OwnerAccount(BaseModel):
@@ -99,6 +101,9 @@ class OwnerAccount(BaseModel):
     bank_account: str
     # The agreement in force today, if any.
     agreement: Agreement | None
+    # The owner's percent of the property in its ownership shares in force today (migration
+    # 0094); None when the property has none, or the owner has no share in them.
+    ownership_percent: str | None = None
 
 
 class Lease(BaseModel):
@@ -125,6 +130,13 @@ class LateFees(BaseModel):
 class NsfFee(BaseModel):
     starts_on: date
     fee: str
+
+
+class LeaseBreakFee(BaseModel):
+    starts_on: date
+    flat_fee: str
+    # Months of the rent in force on the lease's new last day, to the cent.
+    rent_months: str
 
 
 class Property(Named):
@@ -267,7 +279,9 @@ def portfolio(session: Staff, conn: Conn) -> Portfolio:
                 leasing_fee_percent=exports.text(leasing),
                 reserve=exports.text(reserve),
                 approval_limit=exports.text(limit),
+                bill_markup_percent=exports.text(markup),
             ),
+            ownership_percent=money(share),
         )
         for (
             account,
@@ -283,10 +297,14 @@ def portfolio(session: Staff, conn: Conn) -> Portfolio:
             leasing,
             reserve,
             limit,
+            markup,
+            share,
         ) in conn.execute(
             "SELECT a.ledger_account_id, o.id, o.display_name, p.id, p.display_name,"
             " b.display_name, m.starts_on, m.fee_percent, m.minimum_fee, m.flat_fee,"
-            " m.leasing_fee_percent, m.reserve, m.approval_limit"
+            " m.leasing_fee_percent, m.reserve, m.approval_limit, m.bill_markup_percent,"
+            " (SELECT s.percent FROM trust_ownership_on(p.id, (now() AT TIME ZONE 'UTC')::date)"
+            "  AS s WHERE s.ledger_account_id = a.ledger_account_id)"
             " FROM trust_ledger_accounts AS a"
             " JOIN trust_owners AS o ON o.id = a.owner_id"
             " JOIN trust_properties AS p ON p.id = a.property_id"
@@ -315,7 +333,16 @@ def portfolio(session: Staff, conn: Conn) -> Portfolio:
         properties=properties,
         accounts=accounts,
         tenants=tenants,
-        vendors=named(conn, "trust_vendors", pmc),
+        # Vendors not archived: an archived one takes no new bill (migration 0110).
+        vendors=[
+            Named(id=i, name=n)
+            for i, n in conn.execute(
+                "SELECT id, display_name FROM trust_vendors WHERE pmc_id = %s"
+                " AND NOT trust_is_archived(NULL, NULL, NULL, NULL, id)"
+                ' ORDER BY display_name COLLATE "C", id',
+                (pmc,),
+            ).fetchall()
+        ],
         expense_accounts=[
             ExpenseAccount(id=i, name=n, schedule_e_line=line)
             for i, n, line in conn.execute(
@@ -396,17 +423,6 @@ def add_owner(session: Staff, conn: Conn, new: NewName) -> Created:
     )
 
 
-@router.post("/vendors", status_code=201)
-def add_vendor(session: Staff, conn: Conn, new: NewName) -> Created:
-    return Created(
-        id=insert(
-            conn,
-            "INSERT INTO trust_vendors (pmc_id, display_name) VALUES (%s, %s) RETURNING id",
-            (session.pmc_id, new.name),
-        )
-    )
-
-
 class NewExpenseAccount(BaseModel):
     name: Name
     schedule_e_line: Annotated[int, Field(ge=5, le=19)]
@@ -423,6 +439,43 @@ def add_expense_account(session: Staff, conn: Conn, new: NewExpenseAccount) -> C
                 "INSERT INTO trust_expense_accounts (pmc_id, name, schedule_e_line)"
                 " VALUES (%s, %s, %s) RETURNING id",
                 (session.pmc_id, new.name, new.schedule_e_line),
+            )
+        )
+
+
+# The income statement's own income lines: a charge type takes none of their names.
+INCOME_LINES = ("rent", "recurring charges", "late fees", "nsf fees", "other charges")
+
+
+@router.get("/charge-types")
+def charge_types(session: Staff, conn: Conn) -> list[Named]:
+    """The company's own kinds of fee (migration 0100), each on its own income statement line."""
+    return [
+        Named(id=i, name=n)
+        for i, n in conn.execute(
+            "SELECT id, name FROM trust_charge_types WHERE pmc_id = %s"
+            ' ORDER BY name COLLATE "C", id',
+            (session.pmc_id,),
+        ).fetchall()
+    ]
+
+
+class NewChargeType(BaseModel):
+    name: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
+
+
+@router.post("/charge-types", status_code=201)
+def add_charge_type(session: Staff, conn: Conn, new: NewChargeType) -> Created:
+    """A kind of fee the company charges (Application fee, Key replacement, Pet rent), which the
+    owners' income statements count on a line of its own."""
+    if new.name.lower() in INCOME_LINES:
+        raise HTTPException(422, f"{new.name} is a line of the income statement already")
+    with refusals("the company has a charge type of that name already"):
+        return Created(
+            id=insert(
+                conn,
+                "INSERT INTO trust_charge_types (pmc_id, name) VALUES (%s, %s) RETURNING id",
+                (session.pmc_id, new.name),
             )
         )
 
@@ -450,14 +503,42 @@ def open_owner_account(
 
 @router.post("/properties", status_code=201)
 def add_property(session: Staff, conn: Conn, new: NewProperty) -> Created:
-    """A property and its first owner's account for it, in an operating trust bank account."""
+    """A property and its first owner's account for it, in an operating trust bank account, with
+    the company's default late fee and NSF fee terms from today."""
     prop = insert(
         conn,
         "INSERT INTO trust_properties (pmc_id, display_name) VALUES (%s, %s) RETURNING id",
         (session.pmc_id, new.name),
     )
     open_owner_account(conn, session.pmc_id, new.owner_id, prop, new.bank_account_id)
+    with_default_fees(conn, session.pmc_id, prop)
     return Created(id=prop)
+
+
+def with_default_fees(conn: psycopg.Connection[Any], pmc_id: UUID, prop: UUID) -> None:
+    """A new property's late fee and NSF fee terms from its first day (today, UTC): the
+    company's defaults as they stand (src/pms/api/company.py), if it has any."""
+    defaults = conn.execute(
+        "SELECT late_grace_days, late_flat_fee, late_percent, late_maximum, nsf_fee"
+        " FROM trust_company_profiles WHERE pmc_id = %s ORDER BY created_at DESC, id DESC LIMIT 1",
+        (pmc_id,),
+    ).fetchone()
+    if defaults is None:
+        return
+    grace, flat, percent, maximum, nsf = defaults
+    if grace is not None:
+        conn.execute(
+            "INSERT INTO trust_late_fee_policies (pmc_id, property_id, starts_on, grace_days,"
+            " flat_fee, percent, maximum)"
+            " VALUES (%s, %s, (now() AT TIME ZONE 'UTC')::date, %s, %s, %s, %s)",
+            (pmc_id, prop, grace, flat, percent, maximum),
+        )
+    if nsf is not None:
+        conn.execute(
+            "INSERT INTO trust_nsf_fee_policies (pmc_id, property_id, starts_on, fee)"
+            " VALUES (%s, %s, (now() AT TIME ZONE 'UTC')::date, %s)",
+            (pmc_id, prop, nsf),
+        )
 
 
 class NewOwnerAccount(BaseModel):
@@ -474,6 +555,55 @@ def add_property_owner(
     return Created(
         id=open_owner_account(conn, session.pmc_id, new.owner_id, property_id, new.bank_account_id)
     )
+
+
+# --- ownership shares (migration 0094) ------------------------------------------------------
+
+Share = Annotated[Decimal, Field(gt=0, le=100, max_digits=7, decimal_places=4)]
+
+
+class OwnerShare(BaseModel):
+    account: Annotated[str, Field(min_length=1, max_length=100)]
+    percent: Share
+
+
+class NewOwnership(BaseModel):
+    starts_on: date
+    # Each owner's percent, by their owner's property account at the property: together 100.
+    shares: Annotated[list[OwnerShare], Field(min_length=1, max_length=20)]
+
+
+@router.post("/properties/{property_id}/ownership", status_code=201)
+def set_ownership(session: Staff, conn: Conn, property_id: UUID, new: NewOwnership) -> Created:
+    """A property's ownership from a day (q044): each owner's percent of it, by their owner's
+    property account there, together 100. From that day its payments, prepaid rent used,
+    deposits kept and the bills split by ownership go to its owners by these shares."""
+    found(conn, "property", session.pmc_id, property_id)
+    accounts = [share.account for share in new.shares]
+    if len(set(accounts)) != len(accounts):
+        raise HTTPException(422, "each owner's account is in the shares once")
+    total = sum((share.percent for share in new.shares), Decimal(0))
+    if total != 100:
+        raise HTTPException(422, f"the shares come to {exports.text(total)}%, not 100%")
+    try:
+        with conn.transaction():  # a savepoint: the check at commit runs here too
+            made = insert(
+                conn,
+                "INSERT INTO trust_ownership_shares (pmc_id, property_id, starts_on)"
+                " VALUES (%s, %s, %s) RETURNING id",
+                (session.pmc_id, property_id, new.starts_on),
+            )
+            for share in new.shares:
+                conn.execute(
+                    "INSERT INTO trust_ownership_share_lines"
+                    " (share_id, ledger_account_id, pmc_id, percent) VALUES (%s, %s, %s, %s)",
+                    (made, share.account, session.pmc_id, share.percent.normalize()),
+                )
+            conn.execute("SET CONSTRAINTS trust_ownership_shares_whole IMMEDIATE")
+    except (psycopg.errors.CheckViolation, psycopg.errors.ForeignKeyViolation) as refused:
+        # an account not at the property, or not in the one trust bank account
+        raise HTTPException(422, refusal(refused)) from None
+    return Created(id=made)
 
 
 class NewUnit(BaseModel):
@@ -517,6 +647,7 @@ class NewAgreement(BaseModel):
     leasing_fee_percent: Percent = Decimal(0)
     reserve: Money = Decimal(0)
     approval_limit: Money = Decimal(0)
+    bill_markup_percent: Percent = Decimal(0)
 
 
 @router.post("/agreements", status_code=201)
@@ -536,7 +667,8 @@ def add_agreement(session: Staff, conn: Conn, new: NewAgreement) -> Created:
                 conn,
                 "INSERT INTO trust_management_agreements (pmc_id, ledger_account_id, starts_on,"
                 " fee_percent, minimum_fee, flat_fee, leasing_fee_percent, reserve,"
-                " approval_limit) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                " approval_limit, bill_markup_percent)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING id",
                 (
                     session.pmc_id,
                     new.account,
@@ -547,6 +679,7 @@ def add_agreement(session: Staff, conn: Conn, new: NewAgreement) -> Created:
                     new.leasing_fee_percent,
                     new.reserve,
                     new.approval_limit,
+                    new.bill_markup_percent,
                 ),
             )
         )
@@ -606,12 +739,39 @@ def add_nsf_fee(session: Staff, conn: Conn, new: NewNsfFee) -> Created:
         )
 
 
+class NewLeaseBreakFee(BaseModel):
+    property_id: UUID
+    starts_on: date
+    flat_fee: Money = Decimal(0)
+    rent_months: Annotated[Decimal, Field(ge=0, le=12, decimal_places=2)] = Decimal(0)
+
+
+@router.post("/lease-break-fees", status_code=201)
+def add_lease_break_fee(session: Staff, conn: Conn, new: NewLeaseBreakFee) -> Created:
+    """A property's lease-break fee terms from a day: a flat fee and months of rent. A lease
+    breaks under the terms in force on its first day, and only when staff charge it as it ends
+    early; both 0 charge none for leases starting from that day."""
+    found(conn, "property", session.pmc_id, new.property_id)
+    with refusals("this property has lease-break fee terms starting that day already"):
+        return Created(
+            id=insert(
+                conn,
+                "INSERT INTO trust_lease_break_fees"
+                " (pmc_id, property_id, starts_on, flat_fee, rent_months)"
+                " VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                (session.pmc_id, new.property_id, new.starts_on, new.flat_fee, new.rent_months),
+            )
+        )
+
+
 class NewLease(BaseModel):
     unit_id: UUID
     starts_on: date
     ends_on: date | None = None
     monthly_rent: Rent
     tenant_ids: list[UUID] = Field(min_length=1, max_length=6)
+    # The day of the month its rent is due, from its first month (migration 0081).
+    rent_due_day: Annotated[int, Field(ge=1, le=28)] = 1
 
 
 @router.post("/leases", status_code=201)
@@ -637,4 +797,10 @@ def add_lease(session: Staff, conn: Conn, new: NewLease) -> Created:
         raise HTTPException(409, refusal(refused)) from None
     except psycopg.errors.InvalidParameterValue as refused:  # a tenant of another property
         raise HTTPException(422, refusal(refused)) from None
+    if new.rent_due_day != 1:
+        conn.execute(
+            "INSERT INTO trust_rent_due_days (pmc_id, lease_id, starts_on, due_day)"
+            " VALUES (%s, %s, %s, %s)",
+            (session.pmc_id, lease, new.starts_on.replace(day=1), new.rent_due_day),
+        )
     return Created(id=lease)

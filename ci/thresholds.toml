@@ -1,5 +1,6 @@
 # Every number in this file is a floor. A PR may raise one, never lower one:
 # tools/check_thresholds.py compares this file with the base branch and fails on any decrease.
+# A key ending in _max is a ceiling instead: a PR may lower it, never raise it.
 # A money function may leave [coverage.money] only when it no longer exists in db/schema.sql.
 
 [coverage]
@@ -67,6 +68,10 @@ sql_branches = 99.8
 [mutation]
 # Share of valid SQL mutants of the money functions that the tests kill (mutation.yml, nightly).
 baseline_score = 100.0
+# Share of Python mutants (pyproject.toml [tool.mutmut]) a test catches, one no test reaches
+# counting as not caught (tools/python_mutation.py). Measured 2026-10-19: 972 of 1,587 (61.2%)
+# with the first, narrower test selection; the nightly run says when to raise it.
+python_baseline_score = 61.0
 # Mutants that can't change behavior, so no test can kill them. Each needs a reason.
 equivalent = [
   # Postgres grants PUBLIC no table privileges by default: revoking them again is a no-op.
@@ -110,3 +115,21 @@ equivalent = [
 pr_examples = 200
 nightly_examples = 3000
 steps_per_example = 40
+
+[fuzz]
+# Generated requests per API operation (Schemathesis, tests/api/test_api_fuzz.py), on top of
+# the schema's own boundary cases: every PR, and nightly (HYPOTHESIS_PROFILE=nightly).
+pr_examples = 3
+nightly_examples = 100
+
+[email]
+# Mailpit's HTML check of the HTML part of an email (tests/test_email_mailpit.py): the share,
+# in percent, of what it uses that mail programs support (caniemail.com's data, in Mailpit).
+html_check_supported_min = 90.0
+
+[speed]
+# The nightly speed test (tools/speed.py): ten staff at once on a 1,000-unit company, pausing
+# about a second between pages. Each is a ceiling on a 95th percentile in milliseconds: a PR may
+# lower one, never raise one. Measured 2026-10-21 (4 cores): pages at most 728 ms, PDFs 1,539 ms.
+page_p95_ms_max = 1000
+download_p95_ms_max = 10000

@@ -54,6 +54,24 @@ def test_lowered_number_fails(tmp_path):
     assert problems == ["coverage.changed_lines_min was lowered from 90.0 to 80.0."]
 
 
+def test_a_ceiling_may_be_lowered_never_raised(tmp_path):
+    schema(tmp_path, ["kept", "gone"])
+    base = {**BASE, "speed": {"page_p95_ms_max": 1000}}
+    lowered = {**head(), "speed": {"page_p95_ms_max": 800}}
+    raised = {**head(), "speed": {"page_p95_ms_max": 1500}}
+
+    assert check_thresholds.compare(base, lowered, tmp_path) == []
+    assert check_thresholds.compare(base, raised, tmp_path) == [
+        "speed.page_p95_ms_max was raised from 1000 to 1500."
+    ]
+    assert (
+        "lowered"
+        in check_thresholds.compare(
+            base, {**head(), "speed": {"page_p95_ms_max": "fast"}}, tmp_path
+        )[0]
+    )
+
+
 def test_number_replaced_by_text_fails(tmp_path):
     schema(tmp_path, ["kept", "gone"])
     problems = check_thresholds.compare(BASE, head(properties__pr_examples="many"), tmp_path)

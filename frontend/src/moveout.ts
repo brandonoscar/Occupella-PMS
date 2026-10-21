@@ -1,8 +1,13 @@
 // Staff's move-outs as the API sends them (src/pms/api/moveout.py), and how they read.
 import { fromCents, toCents } from "./reconcile";
+import { usDate } from "./money";
 
-export type OpenCharge = { id: string; due_on: string; kind: "rent" | "fee"; memo: string | null; open: string };
-export type OwnerAccount = { id: string; owner: string };
+// home: the home of a lease the tenants moved from ("Birch Flats, Unit A"); null for the lease's own.
+export type OpenCharge = {
+  id: string; due_on: string; kind: "rent" | "fee"; memo: string | null; open: string; home?: string | null;
+};
+// percent: their share when the property's ownership shares split what is kept (migration 0094).
+export type OwnerAccount = { id: string; owner: string; percent: string | null };
 export type Settled = { held: string; kept: string; returned: string; returned_on: string };
 export type MoveOut = {
   lease_id: string;
@@ -12,6 +17,8 @@ export type MoveOut = {
   starts_on: string;
   ends_on: string | null;
   owed: string;
+  // What the leases its tenants moved from still owe (migration 0091): the deposits pay it first.
+  carried: string;
   held: string;
   open_charges: OpenCharge[];
   owner_accounts: OwnerAccount[];
@@ -21,7 +28,7 @@ export type MoveOut = {
 // What returning the deposits now would keep for what the lease owes, and give back.
 export function preview(lease: MoveOut): { kept: string; returned: string } {
   const held = toCents(lease.held);
-  const kept = Math.min(toCents(lease.owed), held);
+  const kept = Math.min(toCents(lease.owed) + toCents(lease.carried), held);
   return { kept: fromCents(kept), returned: fromCents(held - kept) };
 }
 
@@ -30,7 +37,7 @@ export function leaseLabel(lease: MoveOut): string {
 }
 
 export function chargeLabel(charge: OpenCharge): string {
-  return `${charge.due_on} ${charge.kind}${charge.memo ? `: ${charge.memo}` : ""}`;
+  return `${usDate(charge.due_on)} ${charge.kind}${charge.memo ? `: ${charge.memo}` : ""}`;
 }
 
 // The lease ended before `today` (YYYY-MM-DD, UTC), so its deposit may go back.
@@ -46,6 +53,6 @@ export function moveOutStatus(
 ): { label: string; tone: "positive" | "caution" | "info" | "neutral" } {
   if (lease.settled) return { label: "Deposit returned", tone: "positive" };
   if (hasEnded(lease, today)) return { label: "Ended, deposit to return", tone: "caution" };
-  if (lease.ends_on !== null) return { label: `Ends ${lease.ends_on}`, tone: "info" };
+  if (lease.ends_on !== null) return { label: `Ends ${usDate(lease.ends_on)}`, tone: "info" };
   return { label: "In effect", tone: "neutral" };
 }

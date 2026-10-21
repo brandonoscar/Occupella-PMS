@@ -4,7 +4,10 @@ import { Button } from "../components/Button";
 import { Notice } from "../components/Notice";
 import { Card } from "../components/Shell";
 import type { StaffRequest } from "../maintenance";
-import { isOpen, statusLabel, when } from "../maintenance";
+import { isOpen, photosLabel, statusLabel, visitLabel, when } from "../maintenance";
+import { Badge } from "../components/Badge";
+import { GoLink } from "./NeedsAttention";
+import { Said } from "../components/Said";
 
 type Vendor = { id: string; name: string };
 
@@ -16,6 +19,7 @@ export function MaintenanceCard() {
   const [chosen, setChosen] = useState<Record<string, string>>({});
   const [showClosed, setShowClosed] = useState(false);
   const [error, setError] = useState("");
+  const [said, setSaid] = useState("");
 
   function show(failed: unknown) {
     setError(failed instanceof ApiError ? failed.detail : String(failed));
@@ -33,10 +37,13 @@ export function MaintenanceCard() {
     api.get<Vendor[]>("/api/maintenance/vendors").then(setVendors).catch(show);
   }, []);
 
-  async function act(work: () => Promise<unknown>) {
+  // Runs one write and says what it did (`done`), or shows why it was refused.
+  async function act(work: () => Promise<unknown>, done: string) {
     setError("");
+    setSaid("");
     try {
       await work();
+      setSaid(done);
       refresh();
     } catch (failed) {
       show(failed);
@@ -44,9 +51,9 @@ export function MaintenanceCard() {
   }
 
   const openOrder = (request: StaffRequest) =>
-    act(() => api.post(`/api/maintenance/requests/${request.id}/work-order`));
+    act(() => api.post(`/api/maintenance/requests/${request.id}/work-order`), `Work order opened for "${request.summary}".`);
   const step = (request: StaffRequest, body: Record<string, string>) =>
-    act(() => api.post(`/api/maintenance/work-orders/${request.work_order_id}/steps`, body));
+    act(() => api.post(`/api/maintenance/work-orders/${request.work_order_id}/steps`, body), `"${request.summary}" updated.`);
 
   return (
     <Card title="Maintenance requests">
@@ -61,6 +68,7 @@ export function MaintenanceCard() {
         />
         Show done and closed requests too
       </label>
+      <Said>{said}</Said>
       <Notice tone="error">{error}</Notice>
       {requests === null ? (
         <Notice tone="info">Loading</Notice>
@@ -69,17 +77,25 @@ export function MaintenanceCard() {
       ) : (
         <ul className="flex flex-col divide-y divide-line">
           {requests.map((request) => (
-            <li key={request.id} className="flex flex-col gap-2 py-3" aria-label={request.summary}>
-              <p>{request.summary}</p>
+            <li key={request.id} id={`request-${request.id}`} className="flex flex-col gap-2 py-3" aria-label={request.summary}>
+              <p className="flex flex-wrap items-center gap-2">
+                {request.summary}
+                {request.emergency && <Badge tone="danger">Emergency</Badge>}
+              </p>
               <p className="text-sm text-ink-subtle">
                 {request.property}, {request.unit}. From {request.filed_by},{" "}
                 {when(request.submitted_at)}.{" "}
                 {request.entry_allowed ? "May enter while they're out." : "Arrange a time to enter."}
+                {photosLabel(request.photos) && ` ${photosLabel(request.photos)}, on its work order.`}
               </p>
               <p className="text-sm text-ink-muted">
                 {statusLabel(request.status)}
                 {request.vendor && ` (${request.vendor})`}
+                {visitLabel(request) && `. ${visitLabel(request)}`}
               </p>
+              {request.work_order_id && (
+                <div><GoLink href={`/work-orders/${request.work_order_id}`}>Open its work order</GoLink></div>
+              )}
               {request.status === "received" && (
                 <div>
                   <Button variant="secondary" onClick={() => openOrder(request)}>
