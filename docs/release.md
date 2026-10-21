@@ -88,6 +88,7 @@ repository turns it on; these are the settings.
 | Branch name pattern | `main` |
 | Require a pull request before merging | on |
 | Require approvals | off: the repo has one maintainer, and GitHub doesn't let an author approve their own PR. Turn it on (1) once a second person reviews |
+| Require review from Code Owners | off for now: `.github/CODEOWNERS` names who owns the checks, golden files and migrations, but this needs approvals (above) |
 | Require status checks to pass before merging | on |
 | Require branches to be up to date before merging | on (recommended): a PR's checks then ran against `main` as it is, its migrations after every one already merged. The cost: after each merge, every open PR merges `main` in and runs its checks again (some 30 minutes) |
 | Required status checks | `ci`, `email (Mailpit)`, `migrations`, `properties`, `golden`, `coverage`, `codeql`, `deps-and-secrets`, `licenses`, `e2e / e2e` |
@@ -106,7 +107,8 @@ The clicks:
 2. **Add classic branch protection rule**. (A ruleset, **Add branch ruleset**, holds the same
    settings under other names; the classic rule is shown here.)
 3. **Branch name pattern**: `main`.
-4. Tick **Require a pull request before merging**. Under it, untick **Require approvals**.
+4. Tick **Require a pull request before merging**. Under it, untick **Require approvals** and
+   leave **Require review from Code Owners** unticked.
 5. Tick **Require status checks to pass before merging**, and under it **Require branches to be
    up to date before merging**. In the search box, add each check from the table, one at a time:
    `ci`, `email (Mailpit)`, `migrations`, `properties`, `golden`, `coverage`, `codeql`,
