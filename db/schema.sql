@@ -1862,6 +1862,43 @@ $$;
 
 
 --
+-- Name: trust_check_assistance_record(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_assistance_record() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_lease trust_leases;
+    v_day date := coalesce(
+        (to_jsonb(NEW) ->> 'effective_on')::date, (to_jsonb(NEW) ->> 'inspected_on')::date
+    );
+BEGIN
+    SELECT l.* INTO v_lease FROM trust_leases AS l
+    WHERE l.pmc_id = NEW.pmc_id AND l.id = NEW.lease_id;
+    IF NOT EXISTS (SELECT 1 FROM trust_rent_assistance AS a WHERE a.lease_id = NEW.lease_id) THEN
+        RAISE EXCEPTION 'trust: this lease has no housing assistance on file: record its terms first'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF v_day < v_lease.starts_on OR v_day > v_lease.ends_on THEN
+        RAISE EXCEPTION 'trust: % is outside the lease, % to %', to_char(v_day, 'MM/DD/YYYY'),
+            to_char(v_lease.starts_on, 'MM/DD/YYYY'),
+            coalesce(to_char(v_lease.ends_on, 'MM/DD/YYYY'), 'month to month')
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF TG_TABLE_NAME = 'trust_assistance_inspections'
+       AND v_day > (now() AT TIME ZONE 'UTC')::date THEN
+        RAISE EXCEPTION 'trust: an inspection is recorded once it happened, not before %',
+            to_char(v_day, 'MM/DD/YYYY')
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_bank_deposit_item(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4086,6 +4123,21 @@ $$;
 
 
 --
+-- Name: trust_due_standing(date, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_due_standing(p_due date, p_as_of date) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT CASE WHEN p_due IS NULL THEN 'none on file'
+                WHEN p_as_of > p_due THEN 'overdue'
+                WHEN p_due - p_as_of <= 120 THEN 'due within 120 days'
+                ELSE 'current' END
+$$;
+
+
+--
 -- Name: trust_end_lease(uuid, uuid, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4347,6 +4399,20 @@ CREATE FUNCTION public.trust_group_properties(p_group_id uuid) RETURNS SETOF uui
         ORDER BY m.property_id, m.created_at DESC, m.id DESC
     ) AS latest
     WHERE latest.member
+$$;
+
+
+--
+-- Name: trust_inspection_standing(text, date, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_inspection_standing(p_result text, p_due date, p_as_of date) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT CASE WHEN p_result = 'failed' AND p_as_of > p_due THEN 'failed, reinspection overdue'
+                WHEN p_result = 'failed' THEN 'failed, reinspection due'
+                ELSE trust_due_standing(p_due, p_as_of) END
 $$;
 
 
@@ -6379,6 +6445,106 @@ CREATE FUNCTION public.trust_rent_on(p_lease_id uuid, p_day date) RETURNS numeri
         ORDER BY c.effective_on DESC
         LIMIT 1
     ), (SELECT l.monthly_rent FROM trust_leases AS l WHERE l.id = p_lease_id))
+$$;
+
+
+--
+-- Name: trust_report_assistance_compliance(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_assistance_compliance(p_pmc_id uuid, p_as_of date) RETURNS TABLE(line integer, item text, property text, unit text, tenants text, authority text, certified text, recertify_by date, recertification text, inspected text, inspect_by date, inspection text)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+#variable_conflict use_column
+BEGIN
+    IF p_as_of IS NULL THEN
+        RAISE EXCEPTION 'trust: housing assistance compliance is as of a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF NOT EXISTS (SELECT pmc.pmc_id FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id) THEN
+        RAISE EXCEPTION 'trust: no PMC %', p_pmc_id USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    RETURN QUERY
+    WITH assisted AS (
+        SELECT l.id AS lease_id, p.display_name AS property, u.display_name AS unit,
+               ha.name AS authority,
+               (SELECT string_agg(t.display_name, ', ' ORDER BY t.display_name COLLATE "C", t.id)
+                FROM trust_lease_tenants AS lt JOIN trust_tenants AS t ON t.id = lt.tenant_id
+                WHERE lt.lease_id = l.id) AS tenants
+        FROM trust_leases AS l
+        JOIN trust_units AS u ON u.id = l.unit_id
+        JOIN trust_properties AS p ON p.id = u.property_id
+        CROSS JOIN LATERAL trust_assistance_on(l.id, p_as_of) AS a
+        JOIN trust_housing_authorities AS ha ON ha.id = a.housing_authority_id
+        WHERE l.pmc_id = p_pmc_id AND a.amount > 0
+          AND l.starts_on <= p_as_of AND (l.ends_on IS NULL OR p_as_of <= l.ends_on)
+    ),
+    standing AS (
+        SELECT s.*, c.kind AS cert_kind, c.effective_on, c.next_due_on,
+               i.inspected_on, i.result, i.due_on AS inspect_due
+        FROM assisted AS s
+        LEFT JOIN LATERAL (
+            SELECT c.kind, c.effective_on, c.next_due_on
+            FROM trust_income_certifications AS c
+            WHERE c.lease_id = s.lease_id AND c.effective_on <= p_as_of
+            ORDER BY c.effective_on DESC, c.created_at DESC, c.id DESC
+            LIMIT 1
+        ) AS c ON true
+        LEFT JOIN LATERAL (
+            SELECT i.inspected_on, i.result, i.due_on
+            FROM trust_assistance_inspections AS i
+            WHERE i.lease_id = s.lease_id AND i.inspected_on <= p_as_of
+            ORDER BY i.inspected_on DESC, i.created_at DESC, i.id DESC
+            LIMIT 1
+        ) AS i ON true
+    ),
+    worded AS (
+        SELECT s.*,
+               trust_due_standing(s.next_due_on, p_as_of) AS recert_word,
+               trust_inspection_standing(s.result, s.inspect_due, p_as_of) AS inspect_word
+        FROM standing AS s
+    ),
+    ordered AS (
+        SELECT row_number() OVER (
+                   ORDER BY w.property COLLATE "C", w.unit COLLATE "C", w.tenants COLLATE "C",
+                            w.lease_id
+               ) AS n,
+               w.*
+        FROM worded AS w
+    )
+    SELECT 1, 'PMC'::text, pmc.display_name, NULL::text, NULL::text, NULL::text, NULL::text,
+           NULL::date, NULL::text, NULL::text, NULL::date, NULL::text
+    FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
+    UNION ALL
+    SELECT 2, 'as of',
+           to_char(p_as_of, 'YYYY-MM-DD') || '; leases with housing assistance in force',
+           NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
+    UNION ALL
+    SELECT (2 + o.n)::integer, 'assisted lease', o.property, o.unit, o.tenants, o.authority,
+           CASE WHEN o.effective_on IS NULL THEN NULL
+                ELSE o.cert_kind || ' ' || to_char(o.effective_on, 'MM/DD/YYYY') END,
+           o.next_due_on, o.recert_word,
+           CASE WHEN o.inspected_on IS NULL THEN NULL
+                ELSE o.result || ' ' || to_char(o.inspected_on, 'MM/DD/YYYY') END,
+           o.inspect_due, o.inspect_word
+    FROM ordered AS o
+    UNION ALL
+    SELECT (3 + count(*))::integer, 'total', NULL, NULL, NULL, NULL, NULL, NULL,
+           count(*) FILTER (WHERE w.recert_word IN ('overdue', 'none on file'))
+               || ' to certify now, '
+               || count(*) FILTER (WHERE w.recert_word = 'due within 120 days')
+               || ' within 120 days',
+           NULL, NULL,
+           count(*) FILTER (WHERE w.inspect_word IN ('overdue', 'none on file',
+                                                      'failed, reinspection overdue'))
+               || ' to inspect now, '
+               || count(*) FILTER (WHERE w.inspect_word IN ('due within 120 days',
+                                                           'failed, reinspection due'))
+               || ' within 120 days or failed'
+    FROM worded AS w
+    ORDER BY 1;
+END;
 $$;
 
 
@@ -12003,6 +12169,25 @@ CREATE TABLE public.trust_assistance_charges (
 
 
 --
+-- Name: trust_assistance_inspections; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_assistance_inspections (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    housing_authority_id uuid NOT NULL,
+    inspected_on date NOT NULL,
+    result text NOT NULL,
+    due_on date NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_assistance_inspections_check CHECK ((due_on > inspected_on)),
+    CONSTRAINT trust_assistance_inspections_result_check CHECK ((result = ANY (ARRAY['passed'::text, 'failed'::text])))
+);
+
+
+--
 -- Name: trust_assistance_payments; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -12817,6 +13002,28 @@ CREATE TABLE public.trust_idempotency_keys (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_idempotency_keys_idempotency_key_check CHECK (((idempotency_key <> ''::text) AND (length(idempotency_key) <= 200))),
     CONSTRAINT trust_idempotency_keys_transfer_ids_check CHECK ((cardinality(transfer_ids) > 0))
+);
+
+
+--
+-- Name: trust_income_certifications; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_income_certifications (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    kind text NOT NULL,
+    effective_on date NOT NULL,
+    household_size integer NOT NULL,
+    annual_income numeric NOT NULL,
+    next_due_on date NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_income_certifications_annual_income_check CHECK (((annual_income >= (0)::numeric) AND (annual_income = round(annual_income, 2)) AND (annual_income < (100000000)::numeric))),
+    CONSTRAINT trust_income_certifications_check CHECK ((next_due_on > effective_on)),
+    CONSTRAINT trust_income_certifications_household_size_check CHECK (((household_size >= 1) AND (household_size <= 30))),
+    CONSTRAINT trust_income_certifications_kind_check CHECK ((kind = ANY (ARRAY['move-in'::text, 'annual'::text, 'interim'::text])))
 );
 
 
@@ -14794,6 +15001,22 @@ ALTER TABLE ONLY public.trust_assistance_charges
 
 
 --
+-- Name: trust_assistance_inspections trust_assistance_inspections_lease_id_inspected_on_result_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_inspections
+    ADD CONSTRAINT trust_assistance_inspections_lease_id_inspected_on_result_key UNIQUE (lease_id, inspected_on, result);
+
+
+--
+-- Name: trust_assistance_inspections trust_assistance_inspections_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_inspections
+    ADD CONSTRAINT trust_assistance_inspections_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_assistance_payments trust_assistance_payments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15532,6 +15755,22 @@ ALTER TABLE ONLY public.trust_housing_authorities
 
 ALTER TABLE ONLY public.trust_idempotency_keys
     ADD CONSTRAINT trust_idempotency_keys_pkey PRIMARY KEY (pmc_id, idempotency_key);
+
+
+--
+-- Name: trust_income_certifications trust_income_certifications_lease_id_effective_on_kind_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_income_certifications
+    ADD CONSTRAINT trust_income_certifications_lease_id_effective_on_kind_key UNIQUE (lease_id, effective_on, kind);
+
+
+--
+-- Name: trust_income_certifications trust_income_certifications_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_income_certifications
+    ADD CONSTRAINT trust_income_certifications_pkey PRIMARY KEY (id);
 
 
 --
@@ -17178,6 +17417,27 @@ CREATE INDEX trust_assistance_charges_recorded_by ON public.trust_assistance_cha
 
 
 --
+-- Name: trust_assistance_inspections_authority; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_assistance_inspections_authority ON public.trust_assistance_inspections USING btree (pmc_id, housing_authority_id);
+
+
+--
+-- Name: trust_assistance_inspections_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_assistance_inspections_lease ON public.trust_assistance_inspections USING btree (pmc_id, lease_id, inspected_on);
+
+
+--
+-- Name: trust_assistance_inspections_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_assistance_inspections_recorded_by ON public.trust_assistance_inspections USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_assistance_payments_charge; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -17644,6 +17904,20 @@ CREATE UNIQUE INDEX trust_housing_authorities_name ON public.trust_housing_autho
 --
 
 CREATE INDEX trust_housing_authorities_recorded_by ON public.trust_housing_authorities USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_income_certifications_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_income_certifications_lease ON public.trust_income_certifications USING btree (pmc_id, lease_id, effective_on);
+
+
+--
+-- Name: trust_income_certifications_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_income_certifications_recorded_by ON public.trust_income_certifications USING btree (pmc_id, recorded_by);
 
 
 --
@@ -18830,6 +19104,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_assistance_inspections trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_assistance_inspections FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_assistance_payments trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -19142,6 +19423,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_idempotency_keys FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_income_certifications trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_income_certifications FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -19971,6 +20259,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_assi
 
 
 --
+-- Name: trust_assistance_inspections trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_assistance_inspections FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_assistance_payments trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20255,6 +20550,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_hist
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_housing_authorities FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_income_certifications trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_income_certifications FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -21126,6 +21428,20 @@ CREATE TRIGGER trust_charge_waiver_fits BEFORE INSERT ON public.trust_charge_wai
 
 
 --
+-- Name: trust_assistance_inspections trust_check_assistance_record; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_assistance_record BEFORE INSERT ON public.trust_assistance_inspections FOR EACH ROW EXECUTE FUNCTION public.trust_check_assistance_record();
+
+
+--
+-- Name: trust_income_certifications trust_check_assistance_record; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_assistance_record BEFORE INSERT ON public.trust_income_certifications FOR EACH ROW EXECUTE FUNCTION public.trust_check_assistance_record();
+
+
+--
 -- Name: trust_history_lines trust_check_history_line; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -21448,6 +21764,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_assistance_charge
 
 
 --
+-- Name: trust_assistance_inspections trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_assistance_inspections FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_bank_deposits trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -21529,6 +21852,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_history_files FOR
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_housing_authorities FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_income_certifications trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_income_certifications FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -22345,6 +22675,38 @@ ALTER TABLE ONLY public.trust_assistance_charges
 
 ALTER TABLE ONLY public.trust_assistance_charges
     ADD CONSTRAINT trust_assistance_charges_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_assistance_inspections trust_assistance_inspections_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_inspections
+    ADD CONSTRAINT trust_assistance_inspections_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_assistance_inspections trust_assistance_inspections_pmc_id_housing_authority_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_inspections
+    ADD CONSTRAINT trust_assistance_inspections_pmc_id_housing_authority_id_fkey FOREIGN KEY (pmc_id, housing_authority_id) REFERENCES public.trust_housing_authorities(pmc_id, id);
+
+
+--
+-- Name: trust_assistance_inspections trust_assistance_inspections_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_inspections
+    ADD CONSTRAINT trust_assistance_inspections_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_assistance_inspections trust_assistance_inspections_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_inspections
+    ADD CONSTRAINT trust_assistance_inspections_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -23569,6 +23931,30 @@ ALTER TABLE ONLY public.trust_housing_authorities
 
 ALTER TABLE ONLY public.trust_idempotency_keys
     ADD CONSTRAINT trust_idempotency_keys_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_income_certifications trust_income_certifications_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_income_certifications
+    ADD CONSTRAINT trust_income_certifications_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_income_certifications trust_income_certifications_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_income_certifications
+    ADD CONSTRAINT trust_income_certifications_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_income_certifications trust_income_certifications_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_income_certifications
+    ADD CONSTRAINT trust_income_certifications_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -26309,4 +26695,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261021000104'),
     ('20261021000105'),
     ('20261021000106'),
-    ('20261021000107');
+    ('20261021000107'),
+    ('20261021000108');

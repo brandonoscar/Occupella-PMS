@@ -22,11 +22,21 @@ from helpers import (
 )
 from people import join_as_owner, join_as_staff, tenant_of
 
+from pms.api.assistance import a_year_after
+
 TODAY = datetime.now(UTC).date()
 FIRST = TODAY.replace(day=1)
 STARTED = (FIRST - timedelta(days=40)).replace(day=1)
 NEXT = (FIRST + timedelta(days=32)).replace(day=1)
 HA = "Synthetic Housing Authority"
+NONE_ON_FILE = {
+    "recertify_by": None,
+    "recertification": "none on file",
+    "inspect_by": None,
+    "inspection": "none on file",
+    "certifications": [],
+    "inspections": [],
+}
 
 
 @pytest.fixture
@@ -156,6 +166,7 @@ def test_a_leases_assistance_splits_its_rent_and_its_page_shows_it(client, conn,
         "terms": [],
         "charges": [],
         "owed": "0.00",
+        "compliance": NONE_ON_FILE,
     }
 
     made = ok(terms(client, lease, authority, "800.00", contract="HAP-0001"))["id"]
@@ -470,6 +481,186 @@ def test_a_payment_names_each_lease_once_and_an_authority_of_the_company(
     refused(answer, status, said)
 
 
+# --- keeping the lease in compliance (migration 0108, q143) -----------------------------------
+
+
+def certify(client, lease, kind="annual", effective_on=STARTED, **more):
+    return post(
+        client,
+        f"/api/assistance/leases/{lease}/certifications",
+        kind=kind,
+        effective_on=effective_on,
+        household_size=more.pop("household_size", 3),
+        annual_income=more.pop("annual_income", "18000.00"),
+        **more,
+    )
+
+
+def inspect(client, lease, result="passed", inspected_on=TODAY, **more):
+    return post(
+        client,
+        f"/api/assistance/leases/{lease}/inspections",
+        result=result,
+        inspected_on=inspected_on,
+        **more,
+    )
+
+
+@pytest.fixture
+def assisted(client, staff, lease):
+    """The lease, its housing authority assisting it from its first day."""
+    authority = add_authority(client)
+    ok(terms(client, lease, authority, starts_on=STARTED))
+    return authority
+
+
+def test_the_lease_page_keeps_certifications_and_inspections_and_says_where_they_stand(
+    client, lease, assisted
+):
+    assert page_of(client, lease)["compliance"] == NONE_ON_FILE
+
+    made = ok(certify(client, lease, "move-in"))["id"]
+    seen = ok(inspect(client, lease))["id"]
+
+    assert page_of(client, lease)["compliance"] == {
+        # A year on and two years on, unless given (24 CFR 982.516(a), 982.405(a)).
+        "recertify_by": a_year_after(STARTED).isoformat(),
+        "recertification": "current",
+        "inspect_by": a_year_after(TODAY, 2).isoformat(),
+        "inspection": "current",
+        "certifications": [
+            {
+                "id": made,
+                "kind": "move-in",
+                "effective_on": STARTED.isoformat(),
+                "household_size": 3,
+                "annual_income": "18000.00",
+                "next_due_on": a_year_after(STARTED).isoformat(),
+                "recorded_by": "Staff 1",
+            }
+        ],
+        "inspections": [
+            {
+                "id": seen,
+                "authority_id": assisted,
+                "authority": HA,
+                "inspected_on": TODAY.isoformat(),
+                "result": "passed",
+                "due_on": a_year_after(TODAY, 2).isoformat(),
+                "recorded_by": "Staff 1",
+            }
+        ],
+    }
+
+
+def test_an_interim_certification_keeps_the_due_day_and_one_due_soon_says_so(
+    client, lease, assisted
+):
+    refused(certify(client, lease, "interim"), 422, "follows a move-in or annual one")
+    due = TODAY + timedelta(days=30)
+    ok(certify(client, lease, "move-in", next_due_on=due))
+    ok(certify(client, lease, "interim", effective_on=TODAY, annual_income="9000.00"))
+
+    compliance = page_of(client, lease)["compliance"]
+
+    assert [(c["kind"], c["next_due_on"]) for c in compliance["certifications"]] == [
+        ("interim", due.isoformat()),
+        ("move-in", due.isoformat()),
+    ]
+    assert (compliance["recertify_by"], compliance["recertification"]) == (
+        due.isoformat(),
+        "due within 120 days",
+    )
+
+
+def test_a_failed_inspection_gives_its_reinspection_day_and_falls_overdue_after_it(
+    client, lease, assisted
+):
+    refused(inspect(client, lease, "failed"), 422, "the day to pass a reinspection by")
+    by = STARTED + timedelta(days=14)
+    ok(inspect(client, lease, "failed", inspected_on=STARTED, due_on=by))
+
+    compliance = page_of(client, lease)["compliance"]
+
+    assert (compliance["inspect_by"], compliance["inspection"]) == (
+        by.isoformat(),
+        "failed, reinspection overdue",
+    )
+    # Inspected for the authority assisting the lease that day, unless staff name another.
+    assert compliance["inspections"][0]["authority_id"] == assisted
+
+
+def test_a_move_in_inspection_before_the_assistance_starts_is_for_its_authority(
+    client, staff, lease
+):
+    add_authority(client)
+    starting = add_authority(client, "Demo County Housing")
+    ok(terms(client, lease, starting, starts_on=NEXT))
+
+    ok(inspect(client, lease))
+    ok(certify(client, lease, "move-in", effective_on=TODAY))
+
+    compliance = page_of(client, lease)["compliance"]
+    assert compliance["inspections"][0]["authority"] == "Demo County Housing"
+    assert (compliance["recertification"], compliance["inspection"]) == ("current", "current")
+
+
+@pytest.mark.parametrize(
+    ("change", "status", "said"),
+    [
+        ("certified before the lease", 409, "is outside the lease"),
+        ("due before it took effect", 422, "is due after this one"),
+        ("no household", 422, None),
+        ("negative income", 422, None),
+        ("unknown kind", 422, None),
+        ("the same certification twice", 409, "on file already"),
+        ("inspected tomorrow", 422, "once it happened"),
+        ("inspection due before it", 422, "is due after this one"),
+        ("the same inspection twice", 409, "on file already"),
+        ("an authority of another company", 404, "no such housing authority"),
+    ],
+)
+def test_certifications_and_inspections_refuse_bad_input(
+    client, lease, assisted, change, status, said
+):
+    before = (STARTED - timedelta(days=1)).isoformat()
+    if change == "the same certification twice":
+        ok(certify(client, lease))
+    if change == "the same inspection twice":
+        ok(inspect(client, lease))
+    answer = {
+        "certified before the lease": lambda: certify(client, lease, effective_on=before),
+        "due before it took effect": lambda: certify(client, lease, next_due_on=STARTED),
+        "no household": lambda: certify(client, lease, household_size=0),
+        "negative income": lambda: certify(client, lease, annual_income="-1.00"),
+        "unknown kind": lambda: certify(client, lease, kind="biennial"),
+        "the same certification twice": lambda: certify(client, lease),
+        "inspected tomorrow": lambda: inspect(client, lease, inspected_on=TODAY + timedelta(1)),
+        "inspection due before it": lambda: inspect(client, lease, due_on=TODAY),
+        "the same inspection twice": lambda: inspect(client, lease),
+        "an authority of another company": lambda: inspect(
+            client, lease, housing_authority_id=uuid.uuid4()
+        ),
+    }[change]()
+
+    refused(answer, status, said)
+    if change.startswith("the same"):
+        compliance = page_of(client, lease)["compliance"]
+        assert len(compliance["certifications"]) + len(compliance["inspections"]) == 1
+
+
+def test_records_are_of_a_lease_with_assistance_on_file_of_the_company(client, conn, staff, lease):
+    authority = add_authority(client)
+    elsewhere = lease_at(conn, make_pmc(conn))
+
+    refused(certify(client, lease), 409, "no housing assistance on file")
+    refused(inspect(client, lease), 422, "no housing authority assists the lease that day")
+    refused(inspect(client, lease, housing_authority_id=authority), 409, "no housing assistance")
+    refused(certify(client, elsewhere), 404)
+    refused(inspect(client, elsewhere), 404)
+    assert page_of(client, lease)["compliance"] == NONE_ON_FILE
+
+
 # --- who may ------------------------------------------------------------------------------------
 
 
@@ -477,10 +668,15 @@ def test_housing_assistance_takes_staff(client, other_client, app_conn, pmc, lea
     assert client.get("/api/assistance/authorities").status_code == 401
     assert post(client, "/api/assistance/authorities", name=HA).status_code == 401
 
+    assert certify(client, lease).status_code == 401
+    assert inspect(client, lease).status_code == 401
+
     join_as_owner(other_client, app_conn, pmc)
     assert other_client.get("/api/assistance/authorities").status_code == 403
     assert other_client.get(f"/api/assistance/leases/{lease}").status_code == 403
     assert post(other_client, "/api/assistance/authorities", name=HA).status_code == 403
+    assert certify(other_client, lease).status_code == 403
+    assert inspect(other_client, lease).status_code == 403
 
 
 def test_a_custom_role_without_rent_sees_assistance_and_changes_none(
@@ -499,4 +695,6 @@ def test_a_custom_role_without_rent_sees_assistance_and_changes_none(
         403,
         "your roles don't let you change",
     )
+    refused(certify(other_client, lease), 403, "your roles don't let you change")
+    refused(inspect(other_client, lease), 403, "your roles don't let you change")
     assert ok(other_client.get(f"/api/assistance/leases/{lease}"), 200)["terms"] == []

@@ -12,6 +12,10 @@ describe("reports", () => {
       "General ledger", "Security deposits",
     ]);
     expect(reportSpec("vendor_payments")?.label).toBe("1099 summary");
+    expect(REPORTS.filter((r) => r.group === "Compliance").map((r) => r.label)).toEqual([
+      "Trust account signers", "Housing assistance compliance", "Audit log",
+    ]);
+    expect(reportSpec("assistance_compliance")?.byProperty).toBe(true);
     expect(reportSpec("nope")).toBeUndefined();
   });
 

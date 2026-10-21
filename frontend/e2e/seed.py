@@ -517,6 +517,7 @@ FEATURES = (
     "quickbooks",
     "two-homes",
     "history",
+    "assistance-compliance",
 )
 
 

@@ -444,6 +444,21 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`/housing-authorities`, `src/pms/api/assistance.py`, area rent) records its payment for many
   leases at once; the lease's Summary shows the split. No payment hold or bounce applies to it.
   The AI role reads all four tables.
+- Assisted lease compliance (migration 0108, the founder's review q143, `docs/law.md`): the
+  household's income certifications (`trust_income_certifications`: move-in, annual or interim,
+  the day it takes effect, household size, annual income, the day the next annual one is due) and
+  the home's inspections for its authority (`trust_assistance_inspections`: passed with the day
+  the next is due, failed with the day to pass a reinspection by, never dated after it is
+  recorded), each of a lease with assistance on file and within it, once per day and kind or
+  result, append-only, naming who. The lease's housing assistance card records them (`POST
+  /api/assistance/leases/<id>/certifications`, `/inspections`, area rent: a year on and two years
+  on unless given, an interim one keeping the due day before it) and says where each stands today
+  (`trust_due_standing`, `trust_inspection_standing`). `trust_report_assistance_compliance` lists
+  each lease with assistance in force on a day with its latest of each: current, due within 120
+  days, overdue, none on file, failed (reinspection due or overdue), and the counts to do. It runs
+  as the owner and prints days and words, never income or household size, so the AI runs it but
+  never reads a certification (`AI_NEVER_READS`); it reads the inspections. The PMS files nothing
+  with HUD and checks no income limit.
 - Utility billing (migration 0096, the founder's review q021, `docs/law.md`): a property's plan
   for each utility from a day (`trust_utility_plans`: by unit, square feet, occupants or submeter,
   and the owner's percent for the common areas; 'none' stops it), units' square feet

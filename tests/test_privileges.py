@@ -245,6 +245,9 @@ TABLES = {
     # The old system's past transactions (migration 0107), never posted.
     "trust_history_files": {"SELECT", "INSERT"},
     "trust_history_lines": {"SELECT", "INSERT"},
+    # A housing-assistance household's certifications and the home's inspections (migration 0108).
+    "trust_income_certifications": {"SELECT", "INSERT"},
+    "trust_assistance_inspections": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -317,6 +320,8 @@ AI_NEVER_READS = {
     "trust_lease_vehicles",
     "trust_lease_guarantors",
     "trust_lease_household_removals",
+    # A housing-assistance household's income and size, as private as an application's.
+    "trust_income_certifications",
 }
 PRIVILEGES = ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"]
 RENAMEABLE = [
@@ -461,6 +466,7 @@ FUNCTIONS = {
     "trust_check_tenant_login()": set(),
     "trust_refuse_closed_year()": set(),
     "trust_check_history_line()": set(),
+    "trust_check_assistance_record()": set(),
     "trust_check_decision_override()": set(),
     "trust_fill_bill_markup()": set(),
     # Reports read trust records, so only the app and the AI; they run with the caller's own
@@ -480,6 +486,9 @@ FUNCTIONS = {
     "trust_report_general_ledger(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_audit_log(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_lease_expirations(uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_assistance_compliance(uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_due_standing(date,date)": {"trust_app"},
+    "trust_inspection_standing(text,date,date)": {"trust_app"},
     "trust_report_vendor_payments(uuid,integer)": {"trust_app", "trust_ai_agent"},
     "trust_report_bank_reconciliation(uuid,uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_cutover(uuid,uuid)": {"trust_app", "trust_ai_agent"},
@@ -633,6 +642,9 @@ SECURITY_DEFINER = {
     # Reads lease offers for the AI role, which never reads them, and returns only each lease's
     # renewal status (founder decision, 2026-10-13).
     "trust_report_lease_expirations(uuid,date)",
+    # Reads households' certifications for the AI role, which never reads them, and returns only
+    # days and where each stands, never income or household size (migration 0108).
+    "trust_report_assistance_compliance(uuid,date)",
 }
 
 

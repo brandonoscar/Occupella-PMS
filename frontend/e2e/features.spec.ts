@@ -2902,6 +2902,72 @@ test("staff add a housing authority, set a lease's assistance, charge and credit
   ]);
 });
 
+test("staff record an assisted household's annual certification and a failed inspection, and the compliance report says where each stands", async ({
+  page,
+}) => {
+  const people = seed.features["assistance-compliance"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Housing authorities");
+  await page.getByRole("button", { name: "Add housing authority" }).click();
+  const add = page.getByRole("dialog", { name: "Add housing authority" });
+  await add.getByLabel("Housing authority's name").fill("Demo Housing Authority");
+  await add.getByRole("button", { name: "Add housing authority" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Demo Housing Authority" })).toBeVisible();
+
+  // Assistance from next month; nothing to certify or inspect for until it is on file.
+  await openLease(page, "Birch Flats, Unit A");
+  const card = part(page, "Housing assistance");
+  await expect(card.getByRole("button", { name: "Record certification" })).toHaveCount(0);
+  await card.getByRole("button", { name: "Set housing assistance" }).click();
+  const terms = page.getByRole("dialog", { name: "Set housing assistance" });
+  const from = await terms.getByLabel("From (the first of a month)").inputValue();
+  await terms.getByLabel("The authority pays each month").fill("800.00");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await terms.getByRole("button", { name: "Save assistance" }).click();
+  await expect(page.getByText(`The housing authority pays $800.00 a month from ${us(from)}.`)).toBeVisible();
+  await expect(card.getByTestId("recertification")).toHaveText("none on fileNo income certification on file");
+
+  // This year's certification, due again a year on.
+  await card.getByRole("button", { name: "Record certification" }).click();
+  const certification = page.getByRole("dialog", { name: "Record an income certification" });
+  await certification.getByLabel("Kind").selectOption("annual");
+  await certification.getByLabel("Takes effect").fill(today());
+  await certification.getByLabel("People in the household").fill("3");
+  await certification.getByLabel("Annual income").fill("24000.00");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await certification.getByRole("button", { name: "Record certification" }).click();
+  await expect(page.getByText(`Annual certification from ${us(today())} recorded.`)).toBeVisible();
+  const due = `${Number(today().slice(0, 4)) + 1}${today().slice(4)}`.replace(/-02-29$/, "-02-28");
+  await expect(card.getByTestId("recertification")).toHaveText(`currentRecertify by ${us(due)}`);
+
+  // Today's inspection failed; the home must pass a reinspection within 45 days.
+  await card.getByRole("button", { name: "Record inspection" }).click();
+  const inspection = page.getByRole("dialog", { name: "Record an inspection" });
+  await inspection.getByLabel("Inspected on").fill(today());
+  await inspection.getByLabel("Result").selectOption("failed");
+  await inspection.getByLabel("Must pass a reinspection by").fill(daysFromToday(45));
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await inspection.getByRole("button", { name: "Record inspection" }).click();
+  await expect(page.getByText(`Inspection on ${us(today())} recorded: failed.`)).toBeVisible();
+  await expect(card.getByTestId("inspection")).toHaveText(`failed, reinspection dueInspect by ${us(daysFromToday(45))}`);
+  await expect(card.getByRole("table", { name: "Inspections" })).toContainText("Demo Housing Authority");
+
+  // The report, as of the first day of the assistance: days and words, never the household's income.
+  await section(page, "Reports");
+  await page.getByRole("list", { name: "Compliance" }).getByRole("link", { name: "Housing assistance compliance" }).click();
+  await page.getByLabel("As of").fill(from);
+  const report = page.getByRole("table", { name: "Housing assistance compliance" });
+  const row = report.getByRole("row").filter({ hasText: "Unit A" });
+  await expect(row).toContainText(`annual ${us(today())}`);
+  await expect(row).toContainText("failed, reinspection due");
+  await expect(report).toContainText("0 to certify now, 0 within 120 days");
+  await expect(report).not.toContainText("24,000");
+  const href = (await page.getByRole("link", { name: "CSV", exact: true }).getAttribute("href")) ?? "";
+  const csv = await (await page.request.get(href)).text();
+  expect(csv).toContain(`${due},current,failed ${us(today())},${daysFromToday(45)},"failed, reinspection due"`);
+  expect(csv).not.toContain("24000");
+});
+
 test("staff bill last month's water back to Birch Flats' leases by unit, the owner keeping 10% and what isn't billed", async ({
   page,
 }) => {

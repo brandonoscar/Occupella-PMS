@@ -9,6 +9,12 @@ The tenant's side is unchanged (src/pms/api/rent.py): their rent is their part a
 payments, late fees, deposit and balance never reach the authority's part, which the family is
 not responsible for (24 CFR 982.310(b)). The PMS records what the authority paid; it sends and
 asks for nothing.
+
+Since migration 0108 (the founder's review q143) a lease's page also keeps it in compliance: the
+household's income certifications (at move-in, every year, 24 CFR 982.516(a), and interim ones
+between) and the home's inspections for its authority (at least every two years, 24 CFR
+982.405(a)), each saying where it stands today as trust_report_assistance_compliance words it. The
+PMS files nothing with HUD and checks no income or rent limit.
 """
 
 from __future__ import annotations
@@ -188,6 +194,114 @@ def charges_of(
     ]
 
 
+CertificationKind = Literal["move-in", "annual", "interim"]
+InspectionResult = Literal["passed", "failed"]
+
+
+class Certification(BaseModel):
+    id: UUID
+    kind: CertificationKind
+    effective_on: date
+    household_size: int
+    annual_income: str
+    # The day the next annual certification is due.
+    next_due_on: date
+    recorded_by: str | None
+
+
+class Inspection(BaseModel):
+    id: UUID
+    authority_id: UUID
+    authority: str
+    inspected_on: date
+    result: InspectionResult
+    # Passed: the next inspection is due by it. Failed: the home must pass a reinspection by it.
+    due_on: date
+    recorded_by: str | None
+
+
+class Compliance(BaseModel):
+    # The latest certification and inspection in effect today and where each stands, in the
+    # compliance report's words: current, due within 120 days, overdue, none on file, and for an
+    # inspection failed, reinspection due or overdue.
+    recertify_by: date | None
+    recertification: str
+    inspect_by: date | None
+    inspection: str
+    # Every one recorded, the latest first.
+    certifications: list[Certification]
+    inspections: list[Inspection]
+
+
+CERTIFICATIONS = """
+SELECT c.id, c.kind, c.effective_on, c.household_size, c.annual_income, c.next_due_on,
+       s.display_name
+FROM trust_income_certifications AS c
+LEFT JOIN trust_staff AS s ON s.id = c.recorded_by
+WHERE c.pmc_id = %s AND c.lease_id = %s
+ORDER BY c.effective_on DESC, c.created_at DESC, c.id DESC
+"""
+
+INSPECTIONS = """
+SELECT i.id, i.housing_authority_id, h.name, i.inspected_on, i.result, i.due_on, s.display_name
+FROM trust_assistance_inspections AS i
+JOIN trust_housing_authorities AS h ON h.id = i.housing_authority_id
+LEFT JOIN trust_staff AS s ON s.id = i.recorded_by
+WHERE i.pmc_id = %s AND i.lease_id = %s
+ORDER BY i.inspected_on DESC, i.created_at DESC, i.id DESC
+"""
+
+
+def compliance_of(conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID) -> Compliance:
+    certifications = [
+        Certification(
+            id=i,
+            kind=kind,
+            effective_on=effective,
+            household_size=size,
+            annual_income=rent.cents(income),
+            next_due_on=due,
+            recorded_by=by,
+        )
+        for i, kind, effective, size, income, due, by in conn.execute(
+            CERTIFICATIONS, (pmc_id, lease_id)
+        ).fetchall()
+    ]
+    inspections = [
+        Inspection(
+            id=i,
+            authority_id=authority,
+            authority=name,
+            inspected_on=inspected,
+            result=result,
+            due_on=due,
+            recorded_by=by,
+        )
+        for i, authority, name, inspected, result, due, by in conn.execute(
+            INSPECTIONS, (pmc_id, lease_id)
+        ).fetchall()
+    ]
+    day = rent.today()
+    # Each list is the latest first, so the first one in effect today holds, as in the report.
+    certified = next((c for c in certifications if c.effective_on <= day), None)
+    inspected = next((i for i in inspections if i.inspected_on <= day), None)
+    recertify_by = certified.next_due_on if certified else None
+    inspect_by = inspected.due_on if inspected else None
+    row = conn.execute(
+        "SELECT trust_due_standing(%s, %s), trust_inspection_standing(%s, %s, %s)",
+        (recertify_by, day, inspected.result if inspected else None, inspect_by, day),
+    ).fetchone()
+    assert row is not None
+    return Compliance(
+        recertify_by=recertify_by,
+        recertification=row[0],
+        inspect_by=inspect_by,
+        inspection=row[1],
+        certifications=certifications,
+        inspections=inspections,
+    )
+
+
 class LeaseAssistance(BaseModel):
     # The assistance in force today (none when ended or never recorded), and the rent then.
     in_force: Terms | None
@@ -198,6 +312,8 @@ class LeaseAssistance(BaseModel):
     # What the authorities owe for the lease, oldest first, and all of it.
     charges: list[AuthorityCharge]
     owed: str
+    # The household's certifications and the home's inspections.
+    compliance: Compliance
 
 
 @router.get("/leases/{lease_id}")
@@ -239,6 +355,7 @@ def lease_assistance(session: Staff, conn: Conn, lease_id: UUID) -> LeaseAssista
         terms=terms,
         charges=charges,
         owed=rent.cents(sum((Decimal(c.open) for c in charges), ZERO)),
+        compliance=compliance_of(conn, session.pmc_id, lease_id),
     )
 
 
@@ -330,6 +447,139 @@ def add_charge(session: Staff, conn: Conn, lease_id: UUID, new: NewAuthorityChar
                     new.charge_id,
                 ),
             ).fetchone()
+    except psycopg.errors.CheckViolation as refused:
+        raise HTTPException(409, refusal(refused)) from None
+    assert made is not None
+    return Created(id=made[0])
+
+
+# --- keeping the lease in compliance ----------------------------------------------------------
+
+
+def a_year_after(day: date, years: int = 1) -> date:
+    """The same day `years` on (February 28 for a February 29)."""
+    try:
+        return day.replace(year=day.year + years)
+    except ValueError:
+        return day.replace(year=day.year + years, day=28)
+
+
+class NewCertification(BaseModel):
+    kind: CertificationKind
+    effective_on: date
+    household_size: Annotated[int, Field(ge=1, le=30)]
+    annual_income: Annotated[Decimal, Field(ge=0, lt=Decimal("100000000"), decimal_places=2)]
+    # The day the next annual one is due: unless given, a year after a move-in or annual one
+    # takes effect, and an interim one keeps the due day of the one before it.
+    next_due_on: date | None = None
+
+
+@router.post("/leases/{lease_id}/certifications", status_code=201)
+def certify(session: Staff, conn: Conn, lease_id: UUID, new: NewCertification) -> Created:
+    """A certification of the household's income and size: at move-in, the annual one (at least
+    once a year, 24 CFR 982.516(a)) or an interim one between, from the day it takes effect."""
+    rent.lease_of(conn, session.pmc_id, lease_id)
+    due = new.next_due_on
+    if due is None and new.kind != "interim":
+        due = a_year_after(new.effective_on)
+    elif due is None:
+        row = conn.execute(
+            "SELECT next_due_on FROM trust_income_certifications"
+            " WHERE pmc_id = %s AND lease_id = %s AND effective_on <= %s"
+            " ORDER BY effective_on DESC, created_at DESC, id DESC LIMIT 1",
+            (session.pmc_id, lease_id, new.effective_on),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(
+                422, "an interim certification follows a move-in or annual one: give its due day"
+            )
+        due = row[0]
+    if due <= new.effective_on:
+        raise HTTPException(422, "the next annual certification is due after this one")
+    try:
+        with conn.transaction():
+            made = conn.execute(
+                "INSERT INTO trust_income_certifications (pmc_id, lease_id, kind, effective_on,"
+                " household_size, annual_income, next_due_on)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+                (
+                    session.pmc_id,
+                    lease_id,
+                    new.kind,
+                    new.effective_on,
+                    new.household_size,
+                    new.annual_income,
+                    due,
+                ),
+            ).fetchone()
+    except psycopg.errors.UniqueViolation:
+        raise HTTPException(
+            409, f"an {new.kind} certification from that day is on file already"
+        ) from None
+    except psycopg.errors.CheckViolation as refused:
+        raise HTTPException(409, refusal(refused)) from None
+    assert made is not None
+    return Created(id=made[0])
+
+
+class NewInspection(BaseModel):
+    inspected_on: date
+    result: InspectionResult
+    # Passed: the next is due by it, two years on unless given (24 CFR 982.405(a)). Failed: the
+    # day the authority gave for the home to pass a reinspection by.
+    due_on: date | None = None
+    # Unless given, the authority assisting the lease on the day, else the next to (a move-in
+    # inspection comes before the assistance starts).
+    housing_authority_id: UUID | None = None
+
+
+@router.post("/leases/{lease_id}/inspections", status_code=201)
+def inspect(session: Staff, conn: Conn, lease_id: UUID, new: NewInspection) -> Created:
+    """The home's inspection for its housing authority, once it happened: passed, with the day
+    the next is due, or failed, with the day it must pass a reinspection by."""
+    rent.lease_of(conn, session.pmc_id, lease_id)
+    if new.inspected_on > rent.today():
+        raise HTTPException(422, "an inspection is recorded once it happened")
+    authority = new.housing_authority_id
+    if authority is None:
+        row = conn.execute(
+            "SELECT housing_authority_id FROM ("
+            "  SELECT a.housing_authority_id, a.amount, a.starts_on"
+            "  FROM trust_assistance_on(%(lease)s, %(day)s) AS a"
+            "  UNION ALL"
+            "  SELECT a.housing_authority_id, a.amount, a.starts_on FROM trust_rent_assistance AS a"
+            "  WHERE a.lease_id = %(lease)s AND a.starts_on > %(day)s"
+            ") AS a WHERE a.amount > 0 ORDER BY a.starts_on LIMIT 1",
+            {"lease": lease_id, "day": new.inspected_on},
+        ).fetchone()
+        if row is None:
+            raise HTTPException(
+                422,
+                "no housing authority assists the lease that day or later:"
+                " name the one that inspected",
+            )
+        authority = row[0]
+    else:
+        authority_named(conn, session.pmc_id, authority)
+    due = new.due_on
+    if due is None and new.result == "failed":
+        raise HTTPException(422, "a failed inspection gives the day to pass a reinspection by")
+    if due is None:
+        due = a_year_after(new.inspected_on, 2)
+    if due <= new.inspected_on:
+        raise HTTPException(422, "the next inspection is due after this one")
+    try:
+        with conn.transaction():
+            made = conn.execute(
+                "INSERT INTO trust_assistance_inspections (pmc_id, lease_id,"
+                " housing_authority_id, inspected_on, result, due_on)"
+                " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                (session.pmc_id, lease_id, authority, new.inspected_on, new.result, due),
+            ).fetchone()
+    except psycopg.errors.UniqueViolation:
+        raise HTTPException(
+            409, f"an inspection {new.result} that day is on file already"
+        ) from None
     except psycopg.errors.CheckViolation as refused:
         raise HTTPException(409, refusal(refused)) from None
     assert made is not None

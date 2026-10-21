@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { AssistanceTerms, Authority, AuthorityCharge, LeaseAssistance } from "../assistance";
+import type { AssistanceTerms, Authority, AuthorityCharge, Compliance, LeaseAssistance } from "../assistance";
 import { AssistanceCard } from "./AssistanceCard";
 
 afterEach(() => {
@@ -17,8 +17,21 @@ const TERMS: AssistanceTerms = {
   id: "t1", authority_id: "h1", authority: "Synthetic Housing Authority", starts_on: "2026-10-01", amount: "800.00",
   contract: "HAP-0001", recorded_by: "Staff 1",
 };
+const COMPLIANCE: Compliance = {
+  recertify_by: "2026-11-30", recertification: "due within 120 days", inspect_by: "2026-10-15",
+  inspection: "failed, reinspection overdue",
+  certifications: [{
+    id: "r1", kind: "move-in", effective_on: "2025-11-30", household_size: 3, annual_income: "18000.00",
+    next_due_on: "2026-11-30", recorded_by: "Staff 1",
+  }],
+  inspections: [{
+    id: "i1", authority_id: "h1", authority: "Synthetic Housing Authority", inspected_on: "2026-10-01", result: "failed",
+    due_on: "2026-10-15", recorded_by: "Staff 1",
+  }],
+};
 const ASSISTED: LeaseAssistance = {
   in_force: TERMS, monthly_rent: "1000.00", tenant_part: "200.00", terms: [TERMS], charges: [CHARGE], owed: "450.00",
+  compliance: COMPLIANCE,
 };
 
 function server(assistance: LeaseAssistance = ASSISTED, authorities: Authority[] = AUTHORITIES, refuse = "") {
@@ -124,11 +137,71 @@ describe("AssistanceCard", () => {
     ]);
   });
 
+  it("says where the certification and inspection stand and lists each one", async () => {
+    server();
+    render(<AssistanceCard leaseId="l1" unit="Unit 1" />);
+
+    expect((await screen.findByTestId("recertification")).textContent).toBe("due within 120 daysRecertify by 11/30/2026");
+    expect(screen.getByTestId("inspection").textContent).toBe("failed, reinspection overdueInspect by 10/15/2026");
+    const rows = (name: string) => within(screen.getByRole("table", { name })).getAllByRole("row").slice(1)
+      .map((r) => within(r).getAllByRole("cell").map((c) => c.textContent));
+    expect(rows("Income certifications")).toEqual([["11/30/2025", "Move-in", "3", "$18,000.00", "11/30/2026"]]);
+    expect(rows("Inspections")).toEqual([["10/01/2026", "failed", "10/15/2026", "Synthetic Housing Authority"]]);
+  });
+
+  it("records a certification, its due day left to the PMS unless given", async () => {
+    const fetch = server();
+    render(<AssistanceCard leaseId="l1" unit="Unit 1" />);
+    await screen.findByTestId("recertification");
+
+    const form = open("Record certification");
+    fireEvent.change(within(form).getByLabelText("Kind"), { target: { value: "interim" } });
+    fireEvent.change(within(form).getByLabelText("Takes effect"), { target: { value: "2026-10-01" } });
+    fireEvent.change(within(form).getByLabelText("People in the household"), { target: { value: "4" } });
+    fireEvent.change(within(form).getByLabelText("Annual income"), { target: { value: "12000.00" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Record certification" }));
+
+    expect(await screen.findByText("Interim certification from 10/01/2026 recorded.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([[
+      "/api/assistance/leases/l1/certifications",
+      { kind: "interim", effective_on: "2026-10-01", household_size: 4, annual_income: "12000.00", next_due_on: null },
+    ]]);
+  });
+
+  it("records an inspection: passed, its next due day optional; failed, a reinspection day required", async () => {
+    const fetch = server();
+    render(<AssistanceCard leaseId="l1" unit="Unit 1" />);
+    await screen.findByTestId("inspection");
+
+    let form = open("Record inspection");
+    fireEvent.change(within(form).getByLabelText("Inspected on"), { target: { value: "2026-10-12" } });
+    expect((within(form).getByLabelText("Next inspection due (optional)") as HTMLInputElement).required).toBe(false);
+    fireEvent.click(within(form).getByRole("button", { name: "Record inspection" }));
+    expect(await screen.findByText("Inspection on 10/12/2026 recorded: passed.")).toBeTruthy();
+
+    form = open("Record inspection");
+    fireEvent.change(within(form).getByLabelText("Inspected on"), { target: { value: "2026-10-12" } });
+    fireEvent.change(within(form).getByLabelText("Result"), { target: { value: "failed" } });
+    const by = within(form).getByLabelText("Must pass a reinspection by") as HTMLInputElement;
+    expect(by.required).toBe(true);
+    fireEvent.change(by, { target: { value: "2026-11-12" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Record inspection" }));
+    expect(await screen.findByText("Inspection on 10/12/2026 recorded: failed.")).toBeTruthy();
+
+    expect(posted(fetch)).toEqual([
+      ["/api/assistance/leases/l1/inspections", { inspected_on: "2026-10-12", result: "passed", due_on: null }],
+      ["/api/assistance/leases/l1/inspections", { inspected_on: "2026-10-12", result: "failed", due_on: "2026-11-12" }],
+    ]);
+  });
+
   it("asks for a housing authority first, and shows a refusal in the panel", async () => {
     server({ ...ASSISTED, in_force: null, terms: [], charges: [], owed: "0.00" }, []);
     render(<AssistanceCard leaseId="l1" unit="Unit 1" />);
     expect((await screen.findByTestId("assistance-split")).textContent).toBe("The tenant pays all of the $1,000.00 rent.");
     expect(screen.queryByTestId("authority-owes")).toBeNull();
+    // No assistance on file: nothing to certify or inspect for.
+    expect(screen.queryByTestId("recertification")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Record certification" })).toBeNull();
 
     const form = open("Set housing assistance");
     expect(within(form).getByText("Add the housing authority first, under Rentals, Housing authorities.")).toBeTruthy();

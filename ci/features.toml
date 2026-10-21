@@ -873,3 +873,14 @@ operations = ["GET /api/history"]
 browser = [
   "features.spec.ts › staff bring the old system's tenant, owner and vendor history in once, and read it under Before the switch on each page",
 ]
+
+[[feature]]
+id = "assistance-compliance"
+statement = "Staff keep an assisted lease in compliance on its page: the household's income certifications (move-in, annual, interim; due again a year on, an interim one keeping the due day before it) and the home's inspections for its housing authority (passed, due again two years on; failed, with the day to pass a reinspection by), each saying where it stands today, and the Housing assistance compliance report lists every lease with assistance in force on a day that way, never printing income (migration 0108, the founder's review q143)."
+operations = [
+  "POST /api/assistance/leases/{lease_id}/certifications",
+  "POST /api/assistance/leases/{lease_id}/inspections",
+]
+browser = [
+  "features.spec.ts › staff record an assisted household's annual certification and a failed inspection, and the compliance report says where each stands",
+]
