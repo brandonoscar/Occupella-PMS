@@ -279,6 +279,7 @@ GRANT EXECUTE ON FUNCTION trust_report_income_statement_all_owners(uuid, date, d
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 
+-- squawk-ignore ban-drop-function
 DROP FUNCTION trust_report_income_statement_all_owners(uuid, date, date);
 
 CREATE OR REPLACE FUNCTION trust_report_income_statement(

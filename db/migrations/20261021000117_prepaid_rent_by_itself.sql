@@ -43,4 +43,5 @@ GRANT SELECT ON trust_prepaid_rent_settings TO trust_ai_agent;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 
+-- squawk-ignore ban-drop-table
 DROP TABLE trust_prepaid_rent_settings;

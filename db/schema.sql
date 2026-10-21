@@ -5756,7 +5756,7 @@ DECLARE
     v_share record;
     v_shared boolean;
     v_collected numeric;
-    v_whole_collected numeric := 0;
+    v_whole_collected numeric := 0.00;
     v_whole numeric;
     v_fee numeric;
     v_memo text;
