@@ -463,8 +463,19 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   tenant's charges or an authority's, never both) to its charges; the management fee, income
   statement and year-end count it as rent. Rentals, Housing authorities
   (`/housing-authorities`, `src/pms/api/assistance.py`, area rent) records its payment for many
-  leases at once; the lease's Summary shows the split. No payment hold or bounce applies to it.
-  The AI role reads all four tables.
+  leases at once; the lease's Summary shows the split. The AI role reads all four tables. Since
+  migration 0116 (the rest of q034): an authority's late payment fee from a day
+  (`trust_authority_late_fees`: grace days, a flat fee, 0 none; append-only, naming who; Set late
+  fee on its page) is charged on the authority by `trust_assess_authority_late_fees` (the nightly
+  run and Run rent now) to each rent part still open at the end of its last grace day, once
+  (`source` 'late fee', `late_for_id`), never the tenant; the management fee doesn't count it as
+  rent and the income statements count it as a late fee. A payment the bank returned is undone
+  (`POST /api/assistance/payments/<transfer>/bounce`, the payment's ⋯ menu): its money moves back
+  to cash and `trust_reverse_assistance_payment` reverses each match
+  (`trust_assistance_payment_reversals`), so the charges are owed again and every report counts it
+  back out. `trust_apply_assistance_payment` refuses a payment dated in a lease's payment hold
+  unless the transfer was allowed on it, as a tenant's is; Record payment's Accept this payment
+  past the payment hold allows it, naming who.
 - Assisted lease compliance (migration 0108, the founder's review q143, `docs/law.md`): the
   household's income certifications (`trust_income_certifications`: move-in, annual or interim,
   the day it takes effect, household size, annual income, the day the next annual one is due) and

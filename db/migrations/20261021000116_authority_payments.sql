@@ -3,7 +3,7 @@
 -- its part of the rent; docs/law.md):
 --
 --   trust_authority_late_fees           an authority's late payment fee, as its HAP contract
---                                       provides (24 CFR 982.451(a)(5)): grace days and a flat
+--                                       provides (24 CFR 982.451(b)(4)): grace days and a flat
 --                                       fee, from a day; 0 charges none from then. Append-only,
 --                                       naming who recorded it.
 --   trust_assess_authority_late_fees    charges an authority's part of a rent still open at the

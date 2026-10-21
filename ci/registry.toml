@@ -1303,7 +1303,7 @@ tests = [
 
 [[invariant]]
 id = "housing-assistance-splits-the-rent"
-statement = "A lease's housing assistance from a month splits each month's rent as it is charged: the authority's part (its share of the month's rent to the cent, prorated as the rent, never more than it) is the authority's charge and the tenant is charged the rest, so the two come to the month's rent through every lease end set, moved or cleared; the tenant's late fees, deposit kept and balance count the tenant's part alone; an authority's payment pays its charges oldest first into the owners' accounts, never more than it owes, and counts as rent collected; a transfer pays a tenant's charges or an authority's, never both; every trust bank account ties out (migration 0095)."
+statement = "A lease's housing assistance from a month splits each month's rent as it is charged: the authority's part (its share of the month's rent to the cent, prorated as the rent, never more than it) is the authority's charge and the tenant is charged the rest, so the two come to the month's rent through every lease end set, moved or cleared; the tenant's late fees, deposit kept and balance count the tenant's part alone; an authority's payment pays its charges oldest first into the owners' accounts, never more than it owes, and counts as rent collected; a transfer pays a tenant's charges or an authority's, never both; every trust bank account ties out (migration 0095). Since migration 0116 (q034): a payment the bank returned moves its money back out of the owner's account and opens each charge it paid by what it paid of it, the tenant's side untouched; each part of a rent still open at the end of its last grace day gets one late fee on the authority, once, never the tenant, and a late fee paid is a late fee, not rent, on the income statements and for the management fee; an authority's payment dated in a lease's payment hold is refused unless allowed."
 tests = [
   "tests/properties/test_assistance_properties.py::test_the_rent_splits_between_tenant_and_authority_to_the_cent",
   "tests/test_housing_assistance.py::test_rent_charged_in_an_assisted_month_splits_between_tenant_and_authority",
@@ -1313,6 +1313,10 @@ tests = [
   "tests/test_housing_assistance.py::test_a_transfer_pays_a_tenants_charges_or_an_authoritys_never_both",
   "tests/test_housing_assistance.py::test_a_lease_end_moves_both_parts_to_its_days",
   "tests/test_housing_assistance.py::test_the_authoritys_rent_counts_as_rent_collected",
+  "tests/test_housing_assistance.py::test_an_authoritys_part_still_open_after_its_grace_is_charged_a_late_fee_once",
+  "tests/test_housing_assistance.py::test_an_authority_payment_that_bounced_is_owed_again_and_counts_back_out",
+  "tests/test_housing_assistance.py::test_an_authority_payment_in_a_payment_hold_is_refused_unless_allowed",
+  "tests/test_housing_assistance.py::test_an_authoritys_late_fee_paid_is_a_late_fee_not_rent",
   "tests/test_housing_assistance.py::test_a_renewal_keeps_the_assistance_and_splits_its_part_month",
   "tests/api/test_assistance_api.py::test_an_authority_pays_for_several_leases_into_each_propertys_owner",
   "tests/api/test_assistance_api.py::test_an_authority_pays_no_more_than_it_owes_and_all_or_none",

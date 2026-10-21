@@ -1125,6 +1125,8 @@ class RentRun(BaseModel):
 class RentRunDone(RentRun):
     # Rent reminders, late notices and owner statements written (src/pms/notices.py).
     emails: int
+    # Housing authorities' parts of rents charged their late payment fee (migration 0116).
+    authority_late_fees: int = 0
 
 
 class RentRunLine(RentRun):
@@ -1154,13 +1156,21 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
         "SELECT rents, recurring, late_fees FROM trust_rent_runs WHERE id = %s", (made[0],)
     ).fetchone()
     assert row is not None
+    authority = conn.execute(
+        "SELECT trust_assess_authority_late_fees(%s, %s)", (session.pmc_id, run.late_fees_as_of)
+    ).fetchone()
+    assert authority is not None
     written = (
         notices.write_scheduled(conn, session.pmc_id, today(), outbox.PUBLIC_URL.get())
         if outbox.SENDING.get()
         else notices.Written()
     )
     return RentRunDone(
-        rents=row[0], recurring=row[1], late_fees=row[2], emails=sum(vars(written).values())
+        rents=row[0],
+        recurring=row[1],
+        late_fees=row[2],
+        emails=sum(vars(written).values()),
+        authority_late_fees=authority[0],
     )
 
 

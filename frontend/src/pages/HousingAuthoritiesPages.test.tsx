@@ -31,13 +31,19 @@ const PAGE: AuthorityPage = {
         id: "c1", lease_id: "l1", authority_id: "h1", due_on: "2026-10-01", memo: "Rent due 2026-10-01", source: "rent",
         charged: "800.00", adjusted: "0.00", paid: "0.00", open: "800.00",
       }],
+      hold_since: null, hold_reason: null,
     },
     {
       lease_id: "l2", home: "Tenant 2, Birch Flats Unit B", monthly: "400.50", contract: null, owed: "400.50",
-      open_charges: [],
+      open_charges: [], hold_since: null, hold_reason: null,
     },
-    { lease_id: "l3", home: "Tenant 3, Birch Flats Unit C", monthly: null, contract: null, owed: "0.00", open_charges: [] },
+    {
+      lease_id: "l3", home: "Tenant 3, Birch Flats Unit C", monthly: null, contract: null, owed: "0.00", open_charges: [],
+      hold_since: null, hold_reason: null,
+    },
   ],
+  late_fee: null,
+  payments: [],
 };
 
 function server(answers: Record<string, unknown> = {}, refuse = "") {
@@ -159,6 +165,72 @@ describe("HousingAuthorityPage", () => {
     await screen.findByRole("heading", { level: 1, name: "Synthetic Housing Authority" });
     fireEvent.click(screen.getByRole("button", { name: "Record payment" }));
     expect(screen.getByText("The authority owes nothing on its leases.")).toBeTruthy();
+  });
+
+  it("sets the authority's late payment fee in a side panel and says it (q034)", async () => {
+    const fetch = server({ "/api/assistance/authorities/h1": PAGE });
+    render(<HousingAuthorityPage me={ME} id="h1" />);
+    await screen.findByRole("heading", { level: 1, name: "Synthetic Housing Authority" });
+    expect(screen.getByTestId("authority-late-fee").textContent).toBe("No late payment fee.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Set late fee" }));
+    const form = screen.getByRole("dialog", { name: "Set late fee" });
+    fireEvent.change(within(form).getByLabelText("In force from"), { target: { value: "2026-10-01" } });
+    fireEvent.change(within(form).getByLabelText("Grace days"), { target: { value: "10" } });
+    fireEvent.change(within(form).getByLabelText("Late payment fee"), { target: { value: "25.00" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Set late fee" }));
+
+    expect(await screen.findByText("Late payment fee of $25.00 from 10/01/2026.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/assistance/authorities/h1/late-fees", {
+      starts_on: "2026-10-01", grace_days: 10, flat_fee: "25.00",
+    }]]);
+
+    cleanup();
+    server({ "/api/assistance/authorities/h1": {
+      ...PAGE, late_fee: { starts_on: "2026-10-01", grace_days: 1, flat_fee: "25.00" },
+    } });
+    render(<HousingAuthorityPage me={ME} id="h1" />);
+    await screen.findByRole("heading", { level: 1, name: "Synthetic Housing Authority" });
+    expect(screen.getByTestId("authority-late-fee").textContent).toBe(
+      "A late payment fee of $25.00 when its part of a rent is still open 1 day after it was due (from 10/01/2026).",
+    );
+  });
+
+  it("lists its payments; It bounced is confirmed with the amount, and a bounced one says so", async () => {
+    const payments = [
+      { transfer_id: "t1", received_on: "2026-10-03", amount: "800.00", reference: "HAP 7", method: "EFT" as const, bounced_on: null },
+      { transfer_id: "t0", received_on: "2026-09-03", amount: "400.50", reference: null, method: null, bounced_on: "2026-09-09" },
+    ];
+    const fetch = server({ "/api/assistance/authorities/h1": { ...PAGE, payments } });
+    render(<HousingAuthorityPage me={ME} id="h1" />);
+    const table = await screen.findByRole("table", { name: "Payments" });
+    expect(within(table).getByRole("row", { name: "09/03/2026 payment of $400.50" }).textContent).toContain("Bounced 09/09/2026");
+
+    fireEvent.click(within(table).getByRole("button", { name: "Actions for 10/03/2026 payment of $800.00" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "It bounced" }));
+    const asking = screen.getByRole("alertdialog");
+    expect(asking.textContent).toContain("Mark the $800.00 payment bounced today?");
+    fireEvent.click(within(asking).getByRole("button", { name: "It bounced" }));
+
+    expect(await screen.findByText("The $800.00 payment bounced; the authority owes it again.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/assistance/payments/t1/bounce", { on: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/) }]]);
+  });
+
+  it("marks a lease on a payment hold and takes a payment past it only when asked", async () => {
+    const held = { ...PAGE, leases: [{ ...PAGE.leases[0]!, hold_since: "2026-10-02", hold_reason: "Eviction filed" }] };
+    const fetch = server({ "/api/assistance/authorities/h1": held });
+    render(<HousingAuthorityPage me={ME} id="h1" />);
+    const row = await screen.findByRole("row", { name: "Tenant 1, Birch Flats Unit A" });
+    expect(row.textContent).toContain("On a payment hold since 10/02/2026: Eviction filed");
+
+    fireEvent.click(screen.getByRole("button", { name: "Record payment" }));
+    const form = screen.getByRole("dialog", { name: "Record payment" });
+    fireEvent.click(within(form).getByRole("button", { name: "Fill in what it owes" }));
+    fireEvent.click(within(form).getByLabelText("Accept this payment past the payment hold"));
+    fireEvent.click(within(form).getByRole("button", { name: "Record payment" }));
+
+    await screen.findByText("$800.00 from Synthetic Housing Authority recorded.");
+    expect(posted(fetch)[0]![1]).toMatchObject({ past_hold: true });
   });
 
   it("says when it has no leases yet, or didn't load", async () => {

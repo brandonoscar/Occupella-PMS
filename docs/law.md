@@ -420,8 +420,30 @@ force is NOT VERIFIED.
 - The HAP contract itself and the agency's rent reasonableness review: the PMS keeps the amount
   staff enter and the contract's number, nothing more. The agency's inspections and the
   household's certifications are recorded since migration 0108 (below).
-- A late HAP payment's fee, and an authority's payment that bounces: neither is built; staff
-  charge the authority by hand, and a returned authority payment is corrected by a journal entry.
+- Whether its HAP contract provides a late payment fee and how much: staff set the fee and grace
+  days the contract says (since migration 0116, below).
+
+### An authority's late fee, a returned payment and a payment hold (migration 0116)
+
+**The rule.** 24 CFR 982.451(b)(4) (above): the agency pays the HAP promptly, and the HAP contract
+may provide a penalty for a late payment, the agency's to pay, never the family's; the agency
+isn't obligated to pay it when HUD finds the delay beyond the agency's control. (Full text NOT
+VERIFIED, as above.) A payment hold (an eviction filed, migration 0025) is about whether accepting
+rent waives the eviction, which state law decides; no state's rule is built in.
+
+**What the PMS does.**
+- Staff set an authority's late payment fee from a day: grace days and a flat fee, as its HAP
+  contract says (0 charges none). The nightly run and Run rent now charge it to each part of a
+  rent the authority still owes at the end of its last grace day (UTC), once, on the authority.
+  The tenant is never charged it. A late fee paid is a late fee on the income statements, not
+  rent for the management fee.
+- A payment of the authority's that the bank returned is marked bounced from its ⋯ menu: its
+  money moves back out of the owners' accounts, and what it paid of each charge is owed again.
+- A lease on a payment hold takes the authority's payment only when staff accept it past the
+  hold, as a tenant's, naming who did.
+
+**Left to the company.** Whether its contract provides a late fee and collecting it from the
+agency; whether accepting a payment during an eviction is right in its state.
 - Payment holds (an eviction filed) hold the tenant's payments only; an authority's payment is
   not held.
 

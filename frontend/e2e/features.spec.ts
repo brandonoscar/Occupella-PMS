@@ -3057,7 +3057,7 @@ test("staff set Birch Flats' ownership 60/40 between two owners; a payment and a
   await expect(page.getByRole("row", { name: "Demo Owner B, Birch Flats", exact: true })).toContainText("$10.00");
 });
 
-test("staff add a housing authority, set a lease's assistance, charge and credit the authority and record its payment", async ({
+test("staff add a housing authority, set a lease's assistance, charge and credit the authority and record its payment; its late fee, a bounce, and a payment past a hold", async ({
   page,
 }) => {
   const people = seed.features["housing-assistance"]!;
@@ -3126,6 +3126,49 @@ test("staff add a housing authority, set a lease's assistance, charge and credit
   await expect(part(page, "Housing assistance").getByRole("row", { name: /^This month's part/ }).getByRole("cell")).toHaveText([
     us(firstOfThisMonth()), "This month's part", "$750.00", "$750.00", "$0.00", /.*/,
   ]);
+
+  // Its late payment fee, as its HAP contract provides (q034): charged on the authority, never
+  // the tenant, by the run once its part is still open after the grace days.
+  await section(page, "Housing authorities");
+  await page.getByRole("row", { name: "Demo Housing Authority" }).click();
+  await page.getByRole("button", { name: "Set late fee" }).click();
+  const fee = page.getByRole("dialog", { name: "Set late fee" });
+  await fee.getByLabel("In force from").fill(firstOfThisMonth());
+  await fee.getByLabel("Grace days").fill("5");
+  await fee.getByLabel("Late payment fee").fill("25.00");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await fee.getByRole("button", { name: "Set late fee" }).click();
+  await expect(page.getByTestId("authority-late-fee")).toHaveText(
+    `A late payment fee of $25.00 when its part of a rent is still open 5 days after it was due (from ${us(firstOfThisMonth())}).`,
+  );
+
+  // The bank returns its payment: the money moves back and the authority owes it again.
+  const payments = page.getByRole("table", { name: "Payments" });
+  await payments.getByRole("button", { name: /^Actions for .* payment of \$750\.00$/ }).click();
+  await page.getByRole("menuitem", { name: "It bounced" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "It bounced" }).click();
+  await expect(page.getByText("The $750.00 payment bounced; the authority owes it again.")).toBeVisible();
+  await expect(page.getByTestId("authority-owed")).toHaveText("Owes $750.00 in all.");
+  await expect(payments).toContainText("Bounced");
+
+  // An eviction filed on the lease: the authority's payment is taken only past the hold.
+  await openLease(page, "Birch Flats, Unit A");
+  const hold = await leasePanel(page, "Place payment hold");
+  await hold.getByLabel("Hold payments from").fill(firstOfThisMonth());
+  await hold.getByRole("button", { name: "Place hold" }).click();
+  await expect(page.getByText(`On a payment hold since ${us(firstOfThisMonth())}.`)).toBeVisible();
+  await section(page, "Housing authorities");
+  await page.getByRole("row", { name: "Demo Housing Authority" }).click();
+  await expect(page.getByRole("table", { name: "Leases" })).toContainText(
+    `On a payment hold since ${us(firstOfThisMonth())}`,
+  );
+  await page.getByRole("button", { name: "Record payment" }).click();
+  const past = page.getByRole("dialog", { name: "Record payment" });
+  await past.getByRole("button", { name: "Fill in what it owes" }).click();
+  await past.getByLabel("Accept this payment past the payment hold").check();
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await past.getByRole("button", { name: "Record payment" }).click();
+  await expect(page.getByTestId("authority-owed")).toHaveText("Owes $0.00 in all.");
 });
 
 test("staff record an assisted household's annual certification and a failed inspection, and the compliance report says where each stands", async ({
