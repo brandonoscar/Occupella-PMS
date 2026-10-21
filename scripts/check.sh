@@ -147,6 +147,10 @@ fi
 # ledger-invariants.yml, nightly: 16 staff on one company's books at once for five minutes; here
 # 8 for 15 seconds, on a database of its own
 step "many staff at once (a short soak)" env PYTHONPATH=src python -m tools.contention --workers 8 --seconds 15
+# ledger-invariants.yml, nightly: ten staff timed on a 1,000-unit company for five minutes; here
+# three on 100 units for 15 seconds, against the same ceilings
+step "speed (a short run)" env PYTHONPATH=src python -m tools.speed --units 100 --staff 3 \
+  --months 2 --seconds 15
 # e2e.yml: the portal's typecheck, lint (oxlint, knip), unit tests and build (the browser tests
 # need a running API and a seeded database; frontend/playwright.config.ts says how to run them
 # by hand)

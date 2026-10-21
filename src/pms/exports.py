@@ -39,7 +39,6 @@ from typing import Any
 
 import psycopg
 from fpdf import FPDF
-from fpdf.fonts import FontFace
 from openpyxl import Workbook
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
 from openpyxl.styles import Font
@@ -198,21 +197,84 @@ def to_pdf(table: Table, generated: datetime) -> bytes:
     stamp = generated.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
     pdf.cell(0, 12, f"Generated {stamp}", new_x="LMARGIN", new_y="NEXT")
     pdf.ln(4)
-    pdf.set_font("Helvetica", size=7)
-    with pdf.table(
-        col_widths=_widths(table),
-        headings_style=FontFace(emphasis="BOLD"),
-        line_height=9,
-        text_align="LEFT",
-    ) as grid:
-        heading = grid.row()
-        for column in table.columns:
-            heading.cell(_latin1(column))
-        for row in table.rows:
-            line = grid.row()
-            for value in row:
-                line.cell(_latin1(text(value)))
+    shares = _widths(table)
+    widths = [pdf.epw * share / sum(shares) for share in shares]
+    pdf.set_font("Helvetica", style="B", size=PDF_SIZE)
+    heading = [
+        _wrap(pdf, _latin1(column), width - 2 * PDF_PAD)
+        for column, width in zip(table.columns, widths, strict=True)
+    ]
+    _pdf_row(pdf, heading, widths)
+    pdf.set_font("Helvetica", size=PDF_SIZE)
+    for row in table.rows:
+        cells = [
+            _wrap(pdf, _latin1(text(value)), width - 2 * PDF_PAD)
+            for value, width in zip(row, widths, strict=True)
+        ]
+        if pdf.get_y() + _pdf_height(cells) > pdf.page_break_trigger:
+            pdf.add_page()
+            pdf.set_font("Helvetica", style="B", size=PDF_SIZE)
+            _pdf_row(pdf, heading, widths)
+            pdf.set_font("Helvetica", size=PDF_SIZE)
+        _pdf_row(pdf, cells, widths)
     return bytes(pdf.output())
+
+
+# A table's text: its size and line height, and the room left around it in each cell (points).
+PDF_SIZE = 7
+PDF_LINE = 9
+PDF_PAD = 2
+
+
+def _pdf_height(cells: list[list[str]]) -> float:
+    return max(len(lines) for lines in cells) * PDF_LINE + PDF_PAD
+
+
+def _pdf_row(pdf: FPDF, cells: list[list[str]], widths: list[float]) -> None:
+    """One row of the table in the current font, each cell boxed with its lines of text. Drawn
+    directly rather than through fpdf's tables, which took 17 s for a month's general ledger of
+    a 1,000-unit company (tools/speed.py)."""
+    height = _pdf_height(cells)
+    x, y = pdf.l_margin, pdf.get_y()
+    for lines, width in zip(cells, widths, strict=True):
+        pdf.rect(x, y, width, height)
+        for n, line in enumerate(lines):
+            pdf.text(x + PDF_PAD, y + PDF_PAD + n * PDF_LINE + PDF_SIZE, line)
+        x += width
+    pdf.set_y(y + height)
+
+
+def _wrap(pdf: FPDF, value: str, width: float) -> list[str]:
+    """A cell's text in lines no wider than `width` points in the current font: broken at
+    spaces where it can and inside a word where it must, its own line breaks kept."""
+    font, size = pdf.current_font, pdf.font_size_pt
+    assert font is not None  # to_pdf sets the font before any text
+
+    def wide(words: str) -> float:
+        # The font's own widths: fpdf's get_string_width copies its text fragments each call.
+        return font.get_text_width(words, size, None)[1]
+
+    space = wide(" ")
+    lines = []
+    for paragraph in value.split("\n"):
+        line, room = "", 0.0
+        for word in paragraph.split(" "):
+            needs = wide(word)
+            if not line and needs <= width or line and room + space + needs <= width:
+                line, room = (f"{line} {word}", room + space + needs) if line else (word, needs)
+                continue
+            if line:
+                lines.append(line)
+            while needs > width:
+                fits = 1
+                while fits < len(word) and wide(word[: fits + 1]) <= width:
+                    fits += 1
+                lines.append(word[:fits])
+                word = word[fits:]
+                needs = wide(word)
+            line, room = word, needs
+        lines.append(line)
+    return lines
 
 
 def _latin1(value: str) -> str:

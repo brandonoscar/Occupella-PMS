@@ -236,6 +236,20 @@ def test_the_pdf_prints_latin1_and_marks_the_rest():
     assert "Page 1 of 1" in text
 
 
+def test_a_cells_text_wraps_at_spaces_and_inside_a_word_only_when_it_must():
+    pdf = exports.FPDF(unit="pt")
+    pdf.set_font("Helvetica", size=exports.PDF_SIZE)
+    narrow = pdf.get_string_width("posting 300 x")
+
+    assert exports._wrap(pdf, "posting 300 rent", narrow) == ["posting 300", "rent"]
+    assert exports._wrap(pdf, "first\nsecond", narrow) == ["first", "second"]
+    assert exports._wrap(pdf, "", narrow) == [""]
+    long = exports._wrap(pdf, "a " + "x" * 40 + " b", narrow)
+    assert long[0] == "a" and long[-1].endswith("b") and "".join(long[1:-1]).startswith("xxx")
+    assert all(pdf.get_string_width(line) <= narrow for line in long)
+    assert "".join(long).replace(" ", "") == "a" + "x" * 40 + "b"
+
+
 def test_a_long_report_repeats_its_header_on_every_page():
     table = exports.Table(
         "long", ("line", "description"), tuple((n, f"posting {n}") for n in range(1, 301))

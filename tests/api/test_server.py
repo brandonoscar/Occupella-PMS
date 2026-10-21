@@ -41,3 +41,13 @@ def test_by_default_cookies_are_secure_and_the_server_listens_locally(monkeypatc
     settings = served["app"].state.settings
     assert (served["host"], served["port"]) == ("127.0.0.1", 8000)
     assert settings.cookie_secure and settings.public_url == "http://localhost:8000"
+
+
+def test_each_pooled_connection_acts_as_the_app_with_the_planners_jit_off(client):
+    # JIT compiling cost more than it saved on the app's queries: on a 1,000-unit company the
+    # trial balance took 1.2 s with it and 0.18 s without (tools/speed.py).
+    with client.app.state.pool.connection() as conn:
+        assert conn.execute("SELECT current_user, current_setting('jit')").fetchone() == (
+            "trust_app",
+            "off",
+        )

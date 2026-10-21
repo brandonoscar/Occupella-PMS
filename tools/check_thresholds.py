@@ -1,6 +1,8 @@
-"""Fail when a PR weakens a check: lowers a number in ci/thresholds.toml or drops an entry.
+"""Fail when a PR weakens a check: lowers a floor in ci/thresholds.toml, raises a ceiling or
+drops an entry.
 
-Every number in ci/thresholds.toml is a floor, so a PR may raise it, never lower it. A key may
+Every number in ci/thresholds.toml is a floor, so a PR may raise it, never lower it, except a key
+ending in `_max`: a ceiling (a speed test's time), which a PR may lower, never raise. A key may
 not disappear. A list may lose an item only when the thing it names is gone: a money function
 no longer in db/schema.sql, or a Python path no longer in the repo.
 
@@ -54,7 +56,11 @@ def compare(base: dict[str, Any], head: dict[str, Any], root: Path) -> list[str]
             for item in before:
                 if item not in after and not removable(key, item, root):
                     problems.append(f"{key} lost {item!r}, which still exists.")
-        elif not isinstance(after, int | float) or after < before:
+        elif not isinstance(after, int | float):
+            problems.append(f"{key} was lowered from {before} to {after}.")
+        elif key.endswith("_max") and after > before:
+            problems.append(f"{key} was raised from {before} to {after}.")
+        elif not key.endswith("_max") and after < before:
             problems.append(f"{key} was lowered from {before} to {after}.")
     return problems
 

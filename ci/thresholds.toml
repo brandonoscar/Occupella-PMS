@@ -1,5 +1,6 @@
 # Every number in this file is a floor. A PR may raise one, never lower one:
 # tools/check_thresholds.py compares this file with the base branch and fails on any decrease.
+# A key ending in _max is a ceiling instead: a PR may lower it, never raise it.
 # A money function may leave [coverage.money] only when it no longer exists in db/schema.sql.
 
 [coverage]
@@ -125,3 +126,10 @@ nightly_examples = 100
 # Mailpit's HTML check of the HTML part of an email (tests/test_email_mailpit.py): the share,
 # in percent, of what it uses that mail programs support (caniemail.com's data, in Mailpit).
 html_check_supported_min = 90.0
+
+[speed]
+# The nightly speed test (tools/speed.py): ten staff at once on a 1,000-unit company, pausing
+# about a second between pages. Each is a ceiling on a 95th percentile in milliseconds: a PR may
+# lower one, never raise one. Measured 2026-10-21 (4 cores): pages at most 728 ms, PDFs 1,539 ms.
+page_p95_ms_max = 1000
+download_p95_ms_max = 10000

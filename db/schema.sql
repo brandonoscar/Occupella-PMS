@@ -7274,6 +7274,11 @@ BEGIN
         JOIN accounts AS c ON c.id = x.other
         WHERE x.event_at >= v_start
     ),
+    -- Each account's debits and credits over the days, added up once: a closing balance used
+    -- to add up the whole period's postings again for each account.
+    totals AS (
+        SELECT p.account, sum(p.dr) AS dr, sum(p.cr) AS cr FROM postings AS p GROUP BY p.account
+    ),
     lines AS (
         -- (section, bank, bank id, cash first, account, account id, step, event_at, version)
         -- orders the report; names sort by byte (COLLATE "C"), the same on every server.
@@ -7302,13 +7307,10 @@ BEGIN
         UNION ALL
         SELECT 1, s.bank_name, s.bank_account_id, CASE s.kind WHEN 'bank_cash' THEN 0 ELSE 1 END,
                s.account_name, s.id, 2, NULL, NULL, 'closing balance', s.account_name, NULL,
-               coalesce((SELECT sum(p.dr) FROM postings AS p WHERE p.account = s.id), 0),
-               coalesce((SELECT sum(p.cr) FROM postings AS p WHERE p.account = s.id), 0),
-               s.opening + s.sign * coalesce((
-                   SELECT sum(p.cr) - sum(p.dr) FROM postings AS p WHERE p.account = s.id
-               ), 0),
+               coalesce(t.dr, 0), coalesce(t.cr, 0), s.opening + s.sign * coalesce(t.cr - t.dr, 0),
                s.property_name
         FROM shown AS s
+        LEFT JOIN totals AS t ON t.account = s.id
         UNION ALL
         SELECT 2, NULL, NULL, 0, NULL, NULL, 0, NULL, NULL, 'total', NULL, NULL,
                coalesce((SELECT sum(p.dr) FROM postings AS p), 0),
@@ -25088,4 +25090,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261020000099'),
     ('20261020000100'),
     ('20261020000101'),
-    ('20261020000102');
+    ('20261020000102'),
+    ('20261021000103');

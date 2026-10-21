@@ -79,8 +79,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   under the caller's role) into CSV, Excel or PDF, and a PMC's ledger into a zip of CSV.
   Text a spreadsheet would run as a formula is never a formula.
 - The API (`src/pms/api`, `python -m pms.api`, FastAPI) runs every request in one transaction
-  as `trust_app`, committed before the answer is sent; a staff member's request names them to
-  the audit log. Every endpoint gets tests in `tests/api/` for success, a caller who isn't
+  as `trust_app` (the planner's JIT off: it cost more than it saved), committed before the answer
+  is sent; a staff member's request names them to the audit log. How fast it answers ten staff
+  at once on a 1,000-unit company is timed nightly (`tools/speed.py`, `[speed]` ceilings). Every endpoint gets tests in `tests/api/` for success, a caller who isn't
   allowed and bad input. A report's PMC always comes from the session (every report takes
   `p_pmc_id` first; a test pins it). Changes must be JSON from the app's own origin (a browser's
   Sec-Fetch-Site of another site refuses one whatever its Origin), the session cookie is HttpOnly
