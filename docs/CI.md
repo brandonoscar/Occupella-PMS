@@ -197,6 +197,27 @@ trust bank account that doesn't tie out, an account other than a bank's cash bel
 timing tests pair two transactions; this is the many-way mix. Measured locally: 8,681
 operations in 60 s, none failed, books right. Run it with `python -m tools.contention`.
 
+Nightly too, the speed test (`tools/speed.py`, the founder's review q148) times the API as staff
+use it: it builds a 1,000-unit company with a year of books (the demo's books and properties of
+20 units, every unit leased, its deposit held, each month's rent charged and paid but a tenth of
+this month's, all through the API's own route functions, synthetic), serves it as
+`python -m pms.api` does (one process, its ten database connections shared by everyone), and
+signs ten staff members in over HTTP with password and authenticator. For five minutes each
+opens every page once, then at random what staff open most: the Dashboard, what needs attention,
+properties, a property, the rent roll, a lease and its ledger, tenants, a search, the general
+ledger, a report on screen, a payment recorded, and now and then a report as a PDF. An answer
+that isn't 2xx fails the job, and so does a 95th percentile over its ceiling in
+`ci/thresholds.toml` (`[speed]`: a key ending in `_max` is a ceiling, which a PR may lower and
+never raise). Each staff member pauses between pages as a person reading them would (between
+none and two seconds; `--pause 0` sends the next as soon as the last is answered). Measured
+locally (4 cores, 2026-10-21), five minutes: 2,654 answers, every page's 95th percentile 728 ms
+or less (what needs attention the slowest) and PDFs' 1,539 ms; with no pause at all, 8,079
+answers, and the general ledger page (1,343 ms) and what needs attention (2,310 ms) went over.
+Before this test's fixes (the planner's JIT off on the API's connections, the general ledger's
+closing balances added up once, PDFs drawn without fpdf's tables, what needs attention reading
+only open charges), the same company with no pause gave 318 answers in two minutes, what needs
+attention 15.8 s and a PDF 113 s. Run it with `python -m tools.speed`.
+
 **golden.yml** (PRs and main): every report function (`trust_report_*`) must have a golden case
 under `tests/golden/cases/`. Each case builds a fixed synthetic fixture and must produce exactly
 its checked-in `.expected.txt`. A PR that changes an expected file fails until a maintainer adds
@@ -409,6 +430,7 @@ One command for every PR check that can run locally, in CI's order:
   coverage.yml's two shards, one after the other);
 - the email tests through Mailpit, if `mailpit` is installed (or `$MAILPIT` names it);
 - a short soak of the nightly many-staff run (8 workers for 15 seconds, about 20 s);
+- a short run of the nightly speed test (3 staff on 100 units for 15 seconds, about 30 s);
 - gitleaks, if installed.
 
 It ends with a summary. A check it couldn't run is listed as NOT RUN, never as passed: CodeQL and

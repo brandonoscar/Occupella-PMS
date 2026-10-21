@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { OpenUnit } from "../leasing";
@@ -178,9 +178,12 @@ describe("RentalListingsPage", () => {
       ["/api/documents", { kind: "listing_photo", about_id: "u2", title: "Living room", content_type: "image/png", content_base64: "iVBORw==" }],
       ["/api/documents/d2/remove", {}],
     ]);
-    // Each change reads the photos and the list again.
-    expect(fetch.mock.calls.filter(([path]) => path === "/api/leasing/units/u2/photos").length).toBe(3);
-    expect(fetch.mock.calls.filter(([path]) => path.startsWith("/api/leasing/vacancies?")).length).toBe(3);
+    // Each change reads the photos and the list again; the last reads start after "Removed Porch."
+    // shows, so wait for them.
+    await waitFor(() => {
+      expect(fetch.mock.calls.filter(([path]) => path === "/api/leasing/units/u2/photos").length).toBe(3);
+      expect(fetch.mock.calls.filter(([path]) => path.startsWith("/api/leasing/vacancies?")).length).toBe(3);
+    });
   });
 
   it("says how many days a listing has been up", () => {

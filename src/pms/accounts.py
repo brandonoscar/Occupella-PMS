@@ -187,7 +187,12 @@ def create_invite(
         )
         if clash is not None:
             raise Conflict(f"{email} already signs in to this PMC as someone else")
-        login_id = _one(conn, queries["new login"], (pmc_id, person_id, email))[0]
+        try:
+            with conn.transaction():
+                login_id = _one(conn, queries["new login"], (pmc_id, person_id, email))[0]
+        except psycopg.errors.CheckViolation as refused:
+            # A tenant's record at another property signs in as their first (migration 0105).
+            raise Conflict(str(refused).splitlines()[0].removeprefix("trust: ")) from None
     elif login[1] != email:
         raise Conflict(f"this {kind} signs in as {login[1]}")
     else:

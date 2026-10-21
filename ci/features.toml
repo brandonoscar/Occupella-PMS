@@ -847,3 +847,29 @@ browser = [
   "features.spec.ts › staff name the operating trust account's cash for QuickBooks and download two months of journal entries for QuickBooks Desktop and Online",
 ]
 
+[[feature]]
+id = "tenant-at-two-properties"
+statement = "Staff make a tenant who rents at another property too a tenant there (the same name and contact details, linked to their first record), or say a tenant there is the same person; each record keeps its own leases and money, the person signs in once, and the portal shows and acts on their leases at every property (migration 0105, the founder's review q009)."
+operations = [
+  "POST /api/tenants/{tenant_id}/elsewhere",
+  "POST /api/tenants/{tenant_id}/same-person",
+]
+browser = [
+  "features.spec.ts › staff make a tenant a tenant at a second property and lease them a unit there; they sign in once, see both homes and ask for a repair at the new one",
+]
+
+[[feature]]
+id = "year-close"
+statement = "Staff see last year's close on Banking: each trust bank account it touched with how far its month-end is approved, and the journal entries dated in it still waiting; once every one is approved through December 31 a staff member who holds approve closes the year, after a question, for good; from then on nothing is charged or billed with a day in it or before, and a charge dated there is refused in words (migration 0106, the founder's review q116)."
+operations = ["GET /api/year-close", "POST /api/year-close"]
+browser = [
+  "features.spec.ts › staff approve last December in each trust bank account, close the year, and a charge dated in it is refused in words",
+]
+
+[[feature]]
+id = "history-before-the-switch"
+statement = "Staff bring the old system's past lines in at Settings, Import as history, a file of tenants', owners' or vendors' at a time (a tenant who left before the switch is added to hold theirs; the same file again adds nothing), and read each person's lines newest first under Before the switch on their page: a tenant's Leases tab, an owner's Statements tab, a vendor's Bills tab. History is never posted (migration 0107, the founder's review q129)."
+operations = ["GET /api/history"]
+browser = [
+  "features.spec.ts › staff bring the old system's tenant, owner and vendor history in once, and read it under Before the switch on each page",
+]

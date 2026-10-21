@@ -1453,12 +1453,29 @@ test("staff open a report from Reports, see it on screen narrowed to one propert
 
   // An owner's income statement over last year.
   await section(page, "Reports");
-  await page.getByRole("list", { name: "Financial" }).getByRole("link", { name: "Income statement" }).click();
+  await page.getByRole("list", { name: "Financial" }).getByRole("link", { name: "Income statement", exact: true }).click();
   await page.getByRole("combobox", { name: "Owner" }).selectOption({ label: "Demo Owner B" });
   await page.getByRole("combobox", { name: "Days" }).selectOption({ label: "Last year" });
   const year = new Date().getUTCFullYear() - 1;
   await expect(page.getByLabel("From")).toHaveValue(`${year}-01-01`);
   await expect(page.getByRole("table", { name: "Income statement" })).toContainText("net income");
+  await downloads(page, "PDF", PDF);
+
+  // The same owner on the accrual basis (q115): what was charged and billed this month, and
+  // their balance sheet today, its equity what they hold, are owed and owe.
+  await section(page, "Reports");
+  await page.getByRole("list", { name: "Financial" }).getByRole("link", { name: "Income statement, accrual basis" }).click();
+  await page.getByRole("combobox", { name: "Owner" }).selectOption({ label: "Demo Owner B" });
+  const accrual = page.getByRole("table", { name: "Income statement, accrual basis" });
+  await expect(accrual).toContainText("accrual basis");
+  await expect(accrual).toContainText("income: rent");
+  await downloads(page, "Excel", XLSX);
+  await section(page, "Reports");
+  await page.getByRole("list", { name: "Owners" }).getByRole("link", { name: "Owner balance sheet" }).click();
+  await page.getByRole("combobox", { name: "Owner" }).selectOption({ label: "Demo Owner B" });
+  const sheet = page.getByRole("table", { name: "Owner balance sheet" });
+  await expect(sheet).toContainText("Aspen Row");
+  await expect(sheet).toContainText("owner's equity");
   await downloads(page, "PDF", PDF);
 
   // The whole ledger, under Settings, and everything the company keeps (q132; the manager is an
@@ -3430,6 +3447,161 @@ test("a tenant changes their own phone and email in the portal, and staff see th
   await expect(theirs).toContainText("drew.new@example.com");
   await expect(theirs).toContainText(`Drew Sample changed these in the portal on ${us(today())}.`);
   await staff.close();
+});
+
+test("staff make a tenant a tenant at a second property and lease them a unit there; they sign in once, see both homes and ask for a repair at the new one", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["two-homes"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Tenants");
+  await page.getByRole("row", { name: /^Taylor Demo/ }).getByRole("link", { name: "Taylor Demo" }).click();
+  const others = part(page, "Other properties");
+  await expect(others).toContainText("Renting at another property too?");
+  await others.getByRole("button", { name: "Rent at another property" }).click();
+  const elsewhere = page.getByRole("dialog", { name: "Rent at another property" });
+  await elsewhere.getByLabel("Property").selectOption({ label: "Aspen Row" });
+  await elsewhere.getByRole("button", { name: "Make them a tenant there" }).click();
+  await expect(page.getByText("Taylor Demo is a tenant at Aspen Row too: put them on the lease there.")).toBeVisible();
+  // Their record at Aspen Row: they sign in as their first, at Cedar House.
+  await expect(page.getByRole("link", { name: "Aspen Row", exact: true })).toBeVisible();
+  await expect(part(page, "Portal")).toContainText("signs in once, as their record at Cedar House");
+  await expect(part(page, "Other properties").getByRole("link", { name: "Tenant at Cedar House" })).toBeVisible();
+
+  // Aspen Row's vacant Unit 2, leased to them from today.
+  await section(page, "Properties");
+  await page.getByRole("link", { name: "Aspen Row", exact: true }).click();
+  await page.getByRole("row", { name: /^Unit 2/ }).getByRole("link", { name: "Unit 2", exact: true }).click();
+  await page.getByRole("button", { name: "Add lease in place" }).click();
+  const lease = page.getByRole("dialog", { name: "Add lease" });
+  await lease.getByLabel("Taylor Demo").check();
+  await lease.getByLabel("Starts").fill(today());
+  await lease.getByLabel("Rent a month").fill("1240.00");
+  await lease.getByRole("button", { name: "Add lease" }).click();
+  await expect(page.getByRole("row", { name: /Taylor Demo/ })).toContainText(`${us(today())} – Month to month`);
+
+  // Drew Sample at Aspen Row isn't Taylor: and anyone who signs in is linked to nobody.
+  await section(page, "Tenants");
+  await page.getByRole("row", { name: /^Drew Sample/ }).getByRole("link", { name: "Drew Sample" }).click();
+  await part(page, "Other properties").getByRole("button", { name: "Same person as…" }).click();
+  const same = page.getByRole("dialog", { name: "Same person as…" });
+  await same.getByLabel("Name, email or phone").fill("Taylor");
+  await same.getByRole("button", { name: "Find" }).click();
+  await same.getByRole("button", { name: /^Same person: Taylor Demo, .*Cedar House/ }).click();
+  await expect(same.getByRole("alert")).toContainText("Drew Sample signs in to the portal: link Taylor Demo to them instead");
+
+  // Taylor signs in once and has both homes; a repair asked for at Aspen Row is theirs there.
+  const tenant = await browser.newPage();
+  await joinPortal(tenant, people.taylor);
+  const picker = tenant.getByRole("combobox", { name: /^Lease/ });
+  await picker.selectOption({ label: `Aspen Row, Unit 2, from ${us(today())}` });
+  await expect(part(tenant, "Your lease")).toContainText("Aspen Row, Unit 2");
+  await tenant.getByLabel("What needs fixing?").fill("The porch light flickers");
+  await tenant.getByRole("button", { name: "Send request" }).click();
+  await expect(part(tenant, "Maintenance requests").getByRole("listitem").filter({ hasText: "The porch light flickers" }))
+    .toContainText("Received");
+  // Newest first: the lease at Aspen Row, then the one at Cedar House.
+  await picker.selectOption({ index: 1 });
+  await expect(part(tenant, "Your lease")).toContainText("Cedar House, House");
+  await tenant.close();
+});
+
+test("staff approve last December in each trust bank account, close the year, and a charge dated in it is refused in words", async ({
+  page,
+}) => {
+  const people = seed.features["year-close"]!;
+  const year = new Date().getUTCFullYear() - 1;
+  const december = `12/31/${year}`;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Banking");
+  const card = part(page, "Year close");
+  const ready = card.getByRole("table", { name: `Ready to close ${year}` });
+  await expect(ready.getByRole("row", { name: "Demo operating trust account" })).toContainText("Approve December");
+  await expect(card.getByRole("button", { name: `Close ${year}` })).toBeDisabled();
+
+  // The bookkeeper prepared December in each account; the manager approves both.
+  for (const account of ["Demo operating trust account", "Demo security deposit account"]) {
+    await ready.getByRole("link", { name: account }).click();
+    await page.getByRole("button", { name: `Approve through ${december}` }).click();
+    await expect(page.getByText(`Approved through ${december}; the account is closed through it.`)).toBeVisible();
+    await section(page, "Banking");
+  }
+  for (const account of ["Demo operating trust account", "Demo security deposit account"]) {
+    await expect(ready.getByRole("row", { name: account })).toContainText(`${december}Ready`);
+  }
+  await card.getByRole("button", { name: `Close ${year}` }).click();
+  const asked = page.getByRole("alertdialog");
+  await expect(asked).toContainText("can't be reopened");
+  await asked.getByRole("button", { name: `Close ${year}` }).click();
+  await expect(card.getByTestId("closed-until")).toHaveText(
+    `Closed through ${december}: nothing dated then or before is charged or billed.`,
+  );
+  await expect(card.getByRole("list", { name: "Years closed" })).toContainText(`${year}, closed on ${us(today())} by Demo Manager`);
+
+  // A fee dated in the closed year is refused, saying why; dated today it is added.
+  const lease = await openLease(page, "Birch Flats, Unit A");
+  const charge = await leasePanel(page, "Enter charge");
+  await charge.getByLabel("Add a").selectOption("fee");
+  await charge.getByLabel("Amount", { exact: true }).fill("25.00");
+  await charge.getByLabel("Due on").fill(`${year}-12-20`);
+  await charge.getByLabel("What for").fill("Key replacement");
+  await charge.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(page.getByText(
+    `${year} is closed: a charge dated 12/20/${year} can't be added; date it 01/01/${year + 1} or later`,
+  ).first()).toBeVisible();
+  await charge.getByLabel("Due on").fill(today());
+  await charge.getByRole("button", { name: "Add", exact: true }).click();
+  await expect(lease).toContainText("Fee of $25.00 added.");
+});
+
+test("staff bring the old system's tenant, owner and vendor history in once, and read it under Before the switch on each page", async ({
+  page,
+}) => {
+  const people = seed.features["history"]!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "Import from another PMS");
+  const roster = part(page, "Bring the roster in");
+  const bring = async (label: string, name: string, csv: string, said: string) => {
+    await roster.getByRole("combobox", { name: "File of" }).selectOption({ label });
+    await roster.getByLabel("CSV file").setInputFiles({ name, mimeType: "text/csv", buffer: Buffer.from(csv) });
+    await roster.getByRole("button", { name: "Import" }).click();
+    await expect(roster).toContainText(said);
+  };
+  const tenants =
+    "Property,Tenant,Unit,Date,Type,Description,Amount,Reference\n" +
+    "Cedar House,Taylor Demo,House,2024-05-01,Charge,May rent,2100.00,\n" +
+    "Cedar House,Taylor Demo,House,2024-05-03,Payment,Check 1201,-2100.00,1201\n" +
+    "Elm Court,Robin Former,Unit 1,2023-12-01,Charge,December rent,1300.00,\n";
+  await bring("Tenants' history before the switch", "tenants.csv", tenants, "3 added.");
+  // Sent again: nothing twice.
+  await bring("Tenants' history before the switch", "tenants.csv", tenants, "0 added; 3 already here.");
+  await bring("Owners' history before the switch", "owners.csv",
+    "Owner,Property,Date,Type,Description,Amount\nDemo Owner A,Cedar House,2024-05-31,Owner draw,May draw,-1850.00\n",
+    "1 added.");
+  await bring("Vendors' history before the switch", "vendors.csv",
+    "Vendor,Date,Type,Description,Amount,Reference\nDemo Plumbing Co,2024-04-12,Payment,Water heater,640.00,CHK-88\n",
+    "1 added.");
+
+  // Taylor's lines, newest first, on their Leases tab.
+  await section(page, "Tenants");
+  await page.getByRole("row", { name: /^Taylor Demo/ }).getByRole("link", { name: "Taylor Demo" }).click();
+  await page.getByRole("tab", { name: "Leases" }).click();
+  const before = page.getByRole("table", { name: "Before the switch" });
+  await expect(before.getByRole("row")).toHaveText([
+    "DateUnitTypeDescriptionReferenceAmount",
+    "05/03/2024HousePaymentCheck 12011201($2,100.00)",
+    "05/01/2024HouseChargeMay rent$2,100.00",
+  ]);
+  // The owner's under Statements, the vendor's under Bills.
+  await section(page, "Owners");
+  await page.getByRole("row", { name: /^Demo Owner A/ }).getByRole("link", { name: "Demo Owner A" }).click();
+  await page.getByRole("tab", { name: "Statements" }).click();
+  await expect(page.getByRole("table", { name: "Before the switch" })).toContainText("Cedar HouseOwner drawMay draw");
+  await section(page, "Vendors");
+  await page.getByRole("link", { name: "Demo Plumbing Co", exact: true }).first().click();
+  await page.getByRole("tab", { name: "Bills" }).click();
+  await expect(page.getByRole("table", { name: "Before the switch" })).toContainText("04/12/2024PaymentWater heaterCHK-88$640.00");
 });
 
 test("staff add charge types and give a lease's fee and monthly charge one; the owner's income statement counts the type on its own line", async ({

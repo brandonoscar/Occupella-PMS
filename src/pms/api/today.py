@@ -86,6 +86,20 @@ class Today(BaseModel):
     renters_insurance: list[Uninsured]
 
 
+# The leases named as the rent page names them: property, unit and every tenant on it.
+LATE = """
+SELECT l.id, p.display_name, u.display_name,
+       ARRAY(SELECT t.display_name FROM trust_lease_tenants AS lt
+             JOIN trust_tenants AS t ON t.id = lt.tenant_id
+             WHERE lt.lease_id = l.id ORDER BY t.display_name COLLATE "C", t.id)
+FROM trust_leases AS l
+JOIN trust_units AS u ON u.id = l.unit_id
+JOIN trust_properties AS p ON p.id = u.property_id
+WHERE l.pmc_id = %s AND l.id = ANY(%s)
+ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", l.starts_on, l.id
+"""
+
+
 def months_ended(start: date, on: date) -> list[str]:
     """Each calendar month from start's through the last one ended before on's month."""
     found = []
@@ -100,20 +114,23 @@ def months_ended(start: date, on: date) -> list[str]:
 def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None) -> Today:
     """What needs someone on the day (today, UTC, by default)."""
     day = on or rent.today()
-    late = []
-    for lease in rent.leases(session, conn, day):
-        due = [c for c in lease.open_charges if c.kind == "rent" and c.due_on < day]
-        if due:
-            late.append(
-                LateLease(
-                    lease_id=lease.id,
-                    property=lease.property,
-                    unit=lease.unit,
-                    tenants=[t.name for t in lease.tenants],
-                    rent_past_due=rent.cents(sum((Decimal(c.open) for c in due), Decimal(0))),
-                    oldest_due_on=min(c.due_on for c in due),
-                )
-            )
+    # Rent due before the day and still open, by the rent page's own open charges: only these
+    # leases are read further, not every lease's whole rent page.
+    due: dict[UUID, list[tuple[date, Decimal]]] = {}
+    for lease, _, due_on, kind, _, _, left in rent.charges_open(conn, session.pmc_id):
+        if kind == "rent" and due_on < day:
+            due.setdefault(lease, []).append((due_on, Decimal(left)))
+    late = [
+        LateLease(
+            lease_id=lease,
+            property=prop,
+            unit=unit,
+            tenants=tenants,
+            rent_past_due=rent.cents(sum((left for _, left in due[lease]), Decimal(0))),
+            oldest_due_on=min(when for when, _ in due[lease]),
+        )
+        for lease, prop, unit, tenants in conn.execute(LATE, (session.pmc_id, list(due)))
+    ]
     unreconciled = []
     for bank in reconcile.books(session, conn):
         start = bank.closed_through + timedelta(days=1) if bank.closed_through else bank.next_start

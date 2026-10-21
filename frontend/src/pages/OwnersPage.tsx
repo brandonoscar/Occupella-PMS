@@ -36,6 +36,7 @@ import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
+import { HistoryCard } from "./HistoryCard";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
@@ -186,7 +187,12 @@ export function OwnerPage({ me, id }: { me: Me; id: string }) {
         {tab === "summary" && <OwnerSummary owner={owner} refresh={refresh} />}
         {tab === "properties" && <OwnerProperties accounts={owner.accounts} />}
         {tab === "financials" && <OwnerFinancials owner={owner} refresh={refresh} />}
-        {tab === "statements" && <OwnerStatements owner={owner} />}
+        {tab === "statements" && (
+          <div className="flex flex-col gap-6">
+            <OwnerStatements owner={owner} />
+            <HistoryCard about="owner" id={id} />
+          </div>
+        )}
         {tab === "files" && <FilesCard kind="owner_document" aboutId={id} name={owner.name} />}
         {tab === "email" && <EmailsCard about="owner" aboutId={id} name={owner.name} emailOn={me.email_on} />}
       </div>

@@ -98,6 +98,9 @@ const BREAKDOWN = { book_cash: "4075.00", held: [{ kind: "owner_property", label
 // Opens one of the account's tabs.
 const open = async (tab: string) => fireEvent.click(await screen.findByRole("tab", { name: tab }));
 
+// Banking's Year close card (YearCloseCard.test.tsx tests it): last year closed already.
+const NOTHING_TO_CLOSE = { closed: [], closed_until: null, next: null };
+
 function server(
   sheet: Worksheet = SHEET,
   answers: Record<string, unknown> = {},
@@ -108,6 +111,7 @@ function server(
     if (init?.method !== "POST") {
       const body = path === "/api/reconcile" ? banks
         : path === "/api/payables/company-fees" ? (answers[path] ?? [])
+        : path === "/api/year-close" ? (answers[path] ?? NOTHING_TO_CLOSE)
         : path.startsWith("/api/bank-accounts/") && path.includes("/register") ? (answers.register ?? NO_MOVES)
         : path.startsWith("/api/bank-accounts/") ? (answers.breakdown ?? BREAKDOWN)
         : path.startsWith("/api/reconcile/b2") ? { ...sheet, through: null, rows: [], open_lines: [], open_transfers: [], matches: [] } : sheet;
@@ -473,7 +477,7 @@ describe("BankingPage", () => {
         if (reads > 1) await new Promise<void>((resolve) => { gate.open = resolve; });
         return json(reads > 1 ? after : before);
       }
-      return json(path === "/api/reconcile" ? BANKS : {});
+      return json(path === "/api/reconcile" ? BANKS : path === "/api/year-close" ? NOTHING_TO_CLOSE : {});
     }));
     render(<BankingPage me={ME} />);
     const operating = await screen.findByRole("row", { name: "Operating trust account" });

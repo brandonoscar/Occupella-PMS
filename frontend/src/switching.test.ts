@@ -5,10 +5,14 @@ describe("switching", () => {
   it("lists the roster files in the order they go in", () => {
     expect(ROSTER.map((r) => r.kind)).toEqual([
       "owners", "vendors", "properties", "units", "tenants", "leases", "charges", "bills",
+      "tenant history", "owner history", "vendor history",
     ]);
     // Unpaid bills come over with their old dates, and say what to do with one set aside there.
-    expect(ROSTER.at(-1)?.columns).toContain("Approved by and Approved on");
-    expect(ROSTER.at(-1)?.columns).toContain("carry its money over on the owner's line");
+    const bills = ROSTER.find((r) => r.kind === "bills");
+    expect(bills?.columns).toContain("Approved by and Approved on");
+    expect(bills?.columns).toContain("carry its money over on the owner's line");
+    // History comes as the old system printed it.
+    expect(ROSTER.at(-3)?.columns).toContain("Amount (as the old system printed it)");
   });
 
   it("says what a file added and kept", () => {

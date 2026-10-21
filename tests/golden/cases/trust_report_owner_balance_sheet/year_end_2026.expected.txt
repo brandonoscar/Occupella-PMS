@@ -1,0 +1,19 @@
+line	property	item	amount
+1	Golden PMC	PMC	NULL
+2	Owner 1	owner	NULL
+3	2026-12-31, end of day UTC, accrual basis	as of	NULL
+4	Property 1	cash held in trust	580.00
+5	Property 1	owed by tenants	1400.00
+6	Property 1	owed by housing authorities	0.00
+7	Property 1	bills not yet set aside	-120.00
+8	Property 1	owner's equity	1860.00
+9	Property 2	cash held in trust	871.50
+10	Property 2	owed by tenants	1235.00
+11	Property 2	owed by housing authorities	0.00
+12	Property 2	bills not yet set aside	0.00
+13	Property 2	owner's equity	2106.50
+14	NULL	all properties: cash held in trust	1451.50
+15	NULL	all properties: owed by tenants	2635.00
+16	NULL	all properties: owed by housing authorities	0.00
+17	NULL	all properties: bills not yet set aside	-120.00
+18	NULL	all properties: owner's equity	3966.50

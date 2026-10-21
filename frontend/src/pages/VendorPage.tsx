@@ -27,6 +27,7 @@ import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
 import type { ProfileDraft } from "./VendorsPage";
 import { ProfileFields, profileBody } from "./VendorsPage";
+import { HistoryCard } from "./HistoryCard";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
@@ -172,6 +173,7 @@ export function VendorPage({ me, id }: { me: Me; id: string }) {
           )}
         </Card>
       )}
+      {tab === "bills" && <HistoryCard about="vendor" id={id} />}
       {tab === "work-orders" && <VendorLinkCard vendorId={id} name={vendor.name} />}
       {tab === "work-orders" && (
         <Card title="Work orders">

@@ -57,6 +57,7 @@ const TENANT: Tenant = {
   leases: [LINE, { ...LINE, id: "l0", starts_on: "2025-01-01", ends_on: "2025-12-31", owed: "0.00", status: "ended" }],
   portal: "invited",
   login_email: "tenant1.login@example.com",
+  same_person: [],
 };
 
 // The API: `answers[path]` on GET; a POST answers 204, or 409/422 with `refuse[path]`.

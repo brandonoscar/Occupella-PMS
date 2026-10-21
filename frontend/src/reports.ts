@@ -26,6 +26,8 @@ const DAYS: Arg[] = ["from", "to"];
 export const REPORTS: ReportSpec[] = [
   { name: "balance_sheet", label: "Balance sheet", group: "Financial", args: AS_OF, byProperty: false },
   { name: "income_statement", label: "Income statement", group: "Financial", args: ["owner", "from", "to"], byProperty: false },
+  // The same counting what was charged and billed in the days, not what moved (q115).
+  { name: "income_statement_accrual", label: "Income statement, accrual basis", group: "Financial", args: ["owner", "from", "to"], byProperty: false },
   { name: "cash_flow", label: "Cash flow", group: "Financial", args: DAYS, byProperty: false },
   { name: "trial_balance", label: "Trial balance", group: "Financial", args: AS_OF, byProperty: true },
   { name: "general_ledger", label: "General ledger", group: "Financial", args: DAYS, byProperty: true },
@@ -40,6 +42,7 @@ export const REPORTS: ReportSpec[] = [
   { name: "owner_directory", label: "Owner directory", group: "Owners", args: AS_OF, byProperty: true },
   { name: "owner_balances", label: "Owner balances", group: "Owners", args: AS_OF, byProperty: true },
   { name: "owner_year_end", label: "Owner year-end", group: "Owners", args: ["owner", "year"], byProperty: false },
+  { name: "owner_balance_sheet", label: "Owner balance sheet", group: "Owners", args: ["owner", "asOf"], byProperty: false },
   { name: "budget_vs_actual", label: "Budget vs actual", group: "Owners", args: ["owner", "from", "to"], byProperty: false },
   { name: "vendor_directory", label: "Vendor directory", group: "Vendors", args: AS_OF, byProperty: false },
   { name: "vendor_insurance", label: "Vendor insurance", group: "Vendors", args: AS_OF, byProperty: false },

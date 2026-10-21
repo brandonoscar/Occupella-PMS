@@ -3,7 +3,9 @@ opens each trust bank account with the balances it held there, lists the checks 
 bank had not cleared at the cutover, and signs off the tie-out (trust_report_cutover). What the
 old system paid each vendor in the cutover's year comes over too, for the year's 1099s, and the
 vendors' bills it had not paid yet, which hold back owner draws from the first day. The owners,
-vendors and tenants files may carry their contact details too.
+vendors and tenants files may carry their contact details too. The years before the cutover may
+come too, as history (migration 0107): each tenant's, owner's and vendor's past lines as the old
+system printed them, kept beside the ledger and never posted.
 
 Each file goes in whole or not at all, and names are matched exactly within the PMC, so sending
 a file again adds nothing twice. Records go in through the same inserts and write paths staff use
@@ -14,6 +16,7 @@ the old system's book cash. Nothing here moves money beyond posting those openin
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -234,7 +237,19 @@ class Names:
 
 # --- importing the roster ----------------------------------------------------------------------
 
-Kind = Literal["owners", "vendors", "properties", "units", "tenants", "leases", "charges", "bills"]
+Kind = Literal[
+    "owners",
+    "vendors",
+    "properties",
+    "units",
+    "tenants",
+    "leases",
+    "charges",
+    "bills",
+    "tenant history",
+    "owner history",
+    "vendor history",
+]
 NEEDS: dict[str, tuple[str, ...]] = {
     "owners": ("name",),
     "vendors": ("name",),
@@ -244,7 +259,12 @@ NEEDS: dict[str, tuple[str, ...]] = {
     "leases": ("property", "unit", "tenants", "starts on", "monthly rent"),
     "charges": ("property", "unit", "due on", "amount"),
     "bills": ("vendor", "owner", "property", "reference", "bill date", "due on", "amount", "memo"),
+    "tenant history": ("property", "tenant", "date", "type", "description", "amount"),
+    "owner history": ("owner", "property", "date", "type", "description", "amount"),
+    "vendor history": ("vendor", "date", "type", "description", "amount"),
 }
+# History files (migration 0107): whose lines each holds.
+HISTORY = {"tenant history": "tenant", "owner history": "owner", "vendor history": "vendor"}
 
 
 # The contact columns an owners, vendors or tenants file may have, each optional, and the
@@ -480,14 +500,95 @@ class Counted(BaseModel):
 
 @router.post("/import")
 def import_file(session: Staff, conn: Conn, new: Import) -> Counted:
-    """Brings one kind of record in from a CSV file, whole: what is there already is kept."""
+    """Brings one kind of record in from a CSV file, whole: what is there already is kept. A
+    history file's lines are counted, and the same file again keeps them all."""
     names = Names(conn, session.pmc_id)
     try:
+        if new.kind in HISTORY:
+            return import_history(
+                names, HISTORY[new.kind], new.content, rows(new.content, NEEDS[new.kind])
+            )
         for row in rows(new.content, NEEDS[new.kind]):
             import_row(names, new.kind, row)
     except Bad as bad:
         raise HTTPException(422, str(bad)) from None
     return Counted(added=names.added, kept=names.kept)
+
+
+def history_party(names: Names, who: str, row: Row) -> tuple[str, Any]:
+    """The column and the record a history line is about: a tenant at a property (added if the
+    roster has none, as one who left before the switch), an owner's account for a property, or a
+    vendor (added if the roster has none)."""
+    if who == "tenant":
+        prop = names.property(row.get("property"), row.line)
+        return "tenant_id", names.tenant(prop, row.get("tenant"), add=True)
+    if who == "vendor":
+        return "vendor_id", names.vendor(row.get("vendor"), add=True)
+    prop = names.property(row.get("property"), row.line)
+    owner = names.owner(row.get("owner"), line=row.line)
+    bank = names.bank(row.get("bank account", required=False), "operating", row.line)
+    account = one(
+        names.conn,
+        "SELECT ledger_account_id FROM trust_ledger_accounts WHERE owner_id = %s"
+        " AND property_id = %s AND bank_account_id = %s",
+        (owner, prop, bank),
+    )
+    if account is None:
+        raise Bad(
+            f"line {row.line}: that owner has no account for that property; import the"
+            " properties first"
+        )
+    return "owner_account", account
+
+
+def import_history(names: Names, who: str, content: str, found: list[Row]) -> Counted:
+    """A file of the old system's past lines, whole: never posted, kept as history under each
+    person (migration 0107). The same file again adds nothing."""
+    conn, pmc = names.conn, names.pmc
+    digest = hashlib.sha256(content.encode()).digest()
+    if one(
+        conn,
+        "SELECT 1 FROM trust_history_files WHERE pmc_id = %s AND file_sha256 = %s",
+        (pmc, digest),
+    ):
+        return Counted(added=0, kept=len(found))
+    file_id = one(
+        conn,
+        "INSERT INTO trust_history_files (pmc_id, kind, file_sha256, line_count)"
+        " VALUES (%s, %s, %s, %s) RETURNING id",
+        (pmc, who, digest, len(found)),
+    )
+    for row in found:
+        column, party = history_party(names, who, row)
+        kind = row.get("type")
+        if len(kind) > 50:
+            raise Bad(f"line {row.line}: the type is longer than 50 characters")
+        reference = row.get("reference", required=False) or None
+        if reference is not None and len(reference) > 100:
+            raise Bad(f"line {row.line}: the reference is longer than 100 characters")
+        unit = (row.get("unit", required=False) or None) if who == "tenant" else None
+        try:
+            with conn.transaction():
+                conn.execute(
+                    f"INSERT INTO trust_history_lines (pmc_id, file_id, line_no, {column},"  # noqa: S608
+                    " posted_on, kind, description, amount, reference, unit)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        pmc,
+                        file_id,
+                        row.line,
+                        party,
+                        row.day("date"),
+                        kind,
+                        row.get("description"),
+                        row.money("amount"),
+                        reference,
+                        unit,
+                    ),
+                )
+        except psycopg.errors.CheckViolation as refused:  # a day to come
+            raise Bad(refusal(refused)) from None
+    return Counted(added=len(found), kept=0)
 
 
 # --- opening balances ----------------------------------------------------------------------------

@@ -223,7 +223,8 @@ WITH mine AS (
     JOIN trust_leases AS l ON l.id = lt.lease_id
     JOIN trust_units AS u ON u.id = l.unit_id
     JOIN trust_properties AS p ON p.id = u.property_id
-    WHERE lt.pmc_id = %(pmc)s AND lt.tenant_id = %(tenant)s
+    WHERE lt.pmc_id = %(pmc)s
+      AND lt.tenant_id IN (SELECT trust_tenant_records(%(pmc)s, %(tenant)s))
       AND NOT EXISTS (
           SELECT 1 FROM trust_lease_departures AS d
           WHERE d.lease_id = l.id AND d.tenant_id = lt.tenant_id AND d.left_on < %(from)s

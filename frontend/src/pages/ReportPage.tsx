@@ -62,10 +62,19 @@ function Report({ me, spec }: { me: Me; spec: ReportSpec }) {
     setPreview(null);
     setError("");
     if (!previewHref) return;
+    // An answer for filters picked before these may come back after theirs: it is dropped.
+    let current = true;
     api
       .get<Preview>(previewHref)
-      .then(setPreview)
-      .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
+      .then((answer) => {
+        if (current) setPreview(answer);
+      })
+      .catch((failed) => {
+        if (current) setError(failed instanceof ApiError ? failed.detail : String(failed));
+      });
+    return () => {
+      current = false;
+    };
   }, [previewHref]);
 
   const change = (part: Partial<Filters>) => setFilters({ ...filters, ...part });

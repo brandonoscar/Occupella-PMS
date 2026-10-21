@@ -61,6 +61,7 @@ from pms.api import (
     emails,
     general_ledger,
     groups,
+    history,
     household,
     inspections,
     journal,
@@ -96,6 +97,7 @@ from pms.api import (
     vendor_links,
     vendors,
     work_orders,
+    year_close,
 )
 from pms.api.deps import COOKIE, Conn, Current, Staff, download, refusal
 from pms.leasing import screening
@@ -231,6 +233,10 @@ class Enroll(BaseModel):
 def create_app(settings: Settings) -> FastAPI:
     def configure(conn: psycopg.Connection[Any]) -> None:
         conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(settings.db_role)))
+        # The planner's JIT compiling costs more than it saves on the app's queries: on a
+        # 1,000-unit company it made the trial balance take 1.2 s instead of 0.18 s, and the
+        # general ledger 2.1 s instead of 0.5 s (tools/speed.py).
+        conn.execute("SET jit = off")
         conn.commit()
 
     pool = ConnectionPool(
@@ -532,6 +538,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(renewals.router)
     app.include_router(payables.router)
     app.include_router(reconcile.router)
+    app.include_router(year_close.router)
     app.include_router(banking.router)
     app.include_router(bank_deposits.router)
     app.include_router(journal.router)
@@ -540,6 +547,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(vendors.router)
     app.include_router(inspections.router)
     app.include_router(switching.router)
+    app.include_router(history.router)
     app.include_router(staff.router)
     app.include_router(signers.router)
     app.include_router(moveout.router)

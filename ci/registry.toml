@@ -784,6 +784,28 @@ tests = [
 ]
 
 [[report]]
+id = "income-statement-accrual"
+statement = "An owner's income statement over days (UTC) on the accrual basis (the founder's review q115): the cash basis statement's lines, but income is what was charged in the days to the leases at the owner's properties (a credit as less; a lease end's adjustment or a waiver as what it changes; a credit on its own as rent) and a housing authority's part of the rent as rent, each at the owner's share of a property owned in shares on its due day; bills count on their dates with any markup, never once the owner declined them by the period's end; fees as taken. Compared to a checked-in golden file and to the rent roll model."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_accrual_reports.py::test_a_property_owned_in_shares_counts_each_owners_share_of_what_was_charged",
+  "tests/test_accrual_reports.py::test_a_housing_authoritys_part_is_rent_charged_and_owed_until_it_pays",
+  "tests/test_accrual_reports.py::test_a_waiver_and_a_lease_ends_credit_come_off_what_they_change",
+  "tests/test_accrual_reports.py::test_bills_count_on_their_date_with_their_markup_and_never_once_declined",
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+]
+
+[[report]]
+id = "owner-balance-sheet"
+statement = "An owner's balance sheet at a day's end (UTC), accrual basis: per property account and across them, the money it holds in trust, what tenants owe it of what was due by then (as the delinquency report counts it) and what housing authorities owe, the bills dated by then not yet set aside (with any markup, never a declined one), and the owner's equity, the first three less the fourth. Compared to a checked-in golden file and to the rent roll model."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/test_accrual_reports.py::test_a_housing_authoritys_part_is_rent_charged_and_owed_until_it_pays",
+  "tests/test_accrual_reports.py::test_bills_count_on_their_date_with_their_markup_and_never_once_declined",
+  "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
+]
+
+[[report]]
 id = "income-statement"
 statement = "An owner's income statement over days (UTC), cash basis: per property and across them, what was collected from tenants (matched payments less what bounced back) by what it paid (rent, recurring charges, late fees, NSF fees, other charges; a lease end's adjustment is what it adjusts), each of the company's charge types on a line of its own after them once money was collected on it (a fee's own type, or its recurring charge's; migration 0100), the management fees (Schedule E line 11) and leasing fees (line 8), the bills set aside by their latest expense account and those in none, total expenses and net income; then the same by Schedule E line. Compared to a checked-in golden file."
 tests = [
@@ -1293,3 +1315,44 @@ tests = [
   "tests/api/test_calendar.py::test_two_links_made_at_once_leave_one_standing",
   "tests/api/test_calendar.py::test_a_feed_stops_once_its_persons_login_is_disabled",
 ]
+
+[[invariant]]
+id = "a-tenant-is-one-record-a-property"
+statement = "Someone renting at two properties at once is a record at each, linked to their first (migration 0105): a record joins a person only while it is linked to nothing, is no one's first, signs in to nothing, and sits at a property where the person has no record yet; only a record linked to nothing takes a portal login, once; trust_tenant_records gives every record its person's records; links are append-only, name who made them, move no money and wait for a login of the same record (and it for them); each record keeps its own leases and money."
+tests = [
+  "tests/properties/test_tenant_record_properties.py::test_a_person_is_one_record_a_property_and_signs_in_once_as_their_first",
+  "tests/test_tenant_records.py::test_a_tenant_renting_at_another_property_is_a_record_there_linked_to_their_first",
+  "tests/test_tenant_records.py::test_a_record_links_to_the_persons_first_and_a_first_record_links_to_nobody",
+  "tests/test_tenant_records.py::test_the_person_has_one_record_a_property",
+  "tests/test_tenant_records.py::test_the_person_signs_in_through_their_first_record_only",
+  "tests/test_tenant_records.py::test_a_login_waits_for_a_link_of_its_record_and_then_is_refused",
+  "tests/test_tenant_records.py::test_a_link_waits_for_a_login_of_its_record_and_then_is_refused",
+  "tests/api/test_tenant_records_api.py::test_the_tenant_acts_on_the_other_propertys_lease_as_their_record_there",
+]
+
+[[invariant]]
+id = "a-closed-year-takes-nothing-dated-in-it"
+statement = "A year closes once (the same call again returns the same close), after it has ended, by a named staff member who holds approve, when every trust bank account it touched is approved through its December 31, at least one is, no journal entry dated in it or before waits for a decision and no later year is closed (migration 0106). From then on no charge, housing authority's charge or bill dated in it or before is added, by anyone; one in flight waits for the close and is then refused. Closes are append-only and move no money."
+tests = [
+  "tests/properties/test_year_close_properties.py::test_a_closed_year_takes_no_charge_or_bill_and_closes_only_when_approved",
+  "tests/test_year_close.py::test_a_year_closes_once_every_account_it_touched_is_approved_through_its_last_day",
+  "tests/test_year_close.py::test_an_account_opened_after_the_year_holds_nothing_back_but_one_in_it_does",
+  "tests/test_year_close.py::test_after_a_close_nothing_is_charged_or_billed_in_the_closed_year",
+  "tests/test_year_close.py::test_journal_entries_waiting_in_the_year_hold_the_close_until_decided",
+  "tests/test_year_close.py::test_only_a_named_staff_member_who_holds_approve_closes_a_year",
+  "tests/test_year_close.py::test_a_later_close_closes_every_year_before_and_nothing_reopens",
+  "tests/test_year_close.py::test_a_charge_dated_in_the_year_waits_for_a_close_under_way_and_then_is_refused",
+]
+
+[[invariant]]
+id = "history-is-never-posted"
+statement = "The old system's past lines come in as history (migration 0107): a file of tenants', owners' or vendors' lines goes in once by its SHA-256 (the same file again adds nothing), whole or not at all; each line is one person's of its file's kind (an owner's line an owner's property account of the PMC), never dated after it came in, append-only; nothing in it moves money, charges a lease or changes a balance or report."
+tests = [
+  "tests/properties/test_history_properties.py::test_history_holds_each_files_lines_once_under_their_person_and_moves_nothing",
+  "tests/test_history.py::test_each_line_is_of_its_files_kind_of_person",
+  "tests/test_history.py::test_nothing_is_dated_after_it_came_in",
+  "tests/test_history.py::test_a_file_comes_in_once_and_history_is_never_rewritten_nor_posted",
+  "tests/test_history.py::test_a_line_is_of_its_own_company",
+  "tests/api/test_history_api.py::test_staff_bring_each_persons_history_in_once_and_read_it_newest_first",
+]
+

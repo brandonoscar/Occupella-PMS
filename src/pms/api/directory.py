@@ -285,6 +285,15 @@ class TenantLease(LeaseLine):
     property: Ref
 
 
+class OtherRecord(BaseModel):
+    """The same person's record at another property (migration 0105)."""
+
+    id: UUID
+    property: Ref
+    # Their first record: the one they sign in with.
+    first: bool
+
+
 class Tenant(BaseModel):
     id: UUID
     name: str
@@ -300,6 +309,19 @@ class Tenant(BaseModel):
     # Whether they can sign in to the portal, and their login's email.
     portal: Portal
     login_email: str | None
+    # Renting at other properties too: their records there, each with its own leases and money.
+    same_person: list[OtherRecord]
+
+
+# The person's records but the one asked about (%(pmc)s, %(tenant)s), by property.
+SAME_PERSON = """
+SELECT t.id, p.id, p.display_name,
+       NOT EXISTS (SELECT 1 FROM trust_tenant_links AS k WHERE k.tenant_id = t.id)
+FROM trust_tenants AS t JOIN trust_properties AS p ON p.id = t.property_id
+WHERE t.pmc_id = %(pmc)s AND t.id <> %(tenant)s
+  AND t.id IN (SELECT trust_tenant_records(%(pmc)s, %(tenant)s))
+ORDER BY p.display_name COLLATE "C", t.id
+"""
 
 
 @router.get("/tenants/{tenant_id}")
@@ -358,7 +380,79 @@ def tenant_page(session: Staff, conn: Conn, tenant_id: UUID) -> Tenant:
         leases=leases,
         portal=portal,
         login_email=login_email,
+        same_person=[
+            OtherRecord(id=record, property=Ref(id=place, name=named), first=first)
+            for record, place, named, first in conn.execute(
+                SAME_PERSON, {"pmc": session.pmc_id, "tenant": tenant_id}
+            ).fetchall()
+        ],
     )
+
+
+class Elsewhere(BaseModel):
+    property_id: UUID
+
+
+class Created(BaseModel):
+    id: UUID
+
+
+class SamePerson(BaseModel):
+    # A record of theirs at another property.
+    tenant_id: UUID
+
+
+def first_record(conn: psycopg.Connection[Any], pmc: UUID, tenant_id: UUID) -> UUID:
+    """The person's first record: the one a record is linked to, else the record itself."""
+    row = conn.execute(
+        "SELECT same_as FROM trust_tenant_links WHERE pmc_id = %s AND tenant_id = %s",
+        (pmc, tenant_id),
+    ).fetchone()
+    return tenant_id if row is None else UUID(str(row[0]))
+
+
+def link(conn: psycopg.Connection[Any], pmc: UUID, tenant_id: UUID, same_as: UUID) -> None:
+    try:
+        with conn.transaction():
+            conn.execute(
+                "INSERT INTO trust_tenant_links (pmc_id, tenant_id, same_as) VALUES (%s, %s, %s)",
+                (pmc, tenant_id, same_as),
+            )
+    except psycopg.errors.CheckViolation as refused:
+        raise HTTPException(409, refusal(refused)) from None
+
+
+@router.post("/tenants/{tenant_id}/elsewhere", status_code=201)
+def rent_elsewhere(session: Staff, conn: Conn, tenant_id: UUID, body: Elsewhere) -> Created:
+    """A record for the tenant at another property where they rent too (migration 0105, q009):
+    the same name and contact details, linked to their first record, to put on the lease there.
+    What they hold at each property stays its record's own; they sign in once, as their first."""
+    found(conn, "trust_tenants", session.pmc_id, tenant_id, "tenant")
+    found(conn, "trust_properties", session.pmc_id, body.property_id, "property")
+    row = conn.execute(
+        "WITH new AS (INSERT INTO trust_tenants (pmc_id, property_id, display_name)"
+        " SELECT pmc_id, %s, display_name FROM trust_tenants WHERE id = %s RETURNING id)"
+        " SELECT id FROM new",
+        (body.property_id, tenant_id),
+    ).fetchone()
+    assert row is not None
+    record = UUID(str(row[0]))
+    link(conn, session.pmc_id, record, first_record(conn, session.pmc_id, tenant_id))
+    record_contact(
+        conn, session.pmc_id, "tenant_id", record, contact_of(conn, "tenant_id", tenant_id)
+    )
+    return Created(id=record)
+
+
+@router.post("/tenants/{tenant_id}/same-person", status_code=204)
+def same_person(session: Staff, conn: Conn, tenant_id: UUID, body: SamePerson) -> None:
+    """Records that this tenant is the same person as a tenant at another property (an applicant
+    who already rents from the company, say): it joins their first record, who signs in for both."""
+    found(conn, "trust_tenants", session.pmc_id, tenant_id, "tenant")
+    found(conn, "trust_tenants", session.pmc_id, body.tenant_id, "tenant")
+    if body.tenant_id == tenant_id:
+        raise HTTPException(422, "pick the same person's record at another property")
+    link(conn, session.pmc_id, tenant_id, first_record(conn, session.pmc_id, body.tenant_id))
 
 
 @router.post("/tenants/{tenant_id}/name", status_code=204)

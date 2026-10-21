@@ -80,20 +80,27 @@ def address(conn: psycopg.Connection[Any], pmc_id: UUID, kind: Kind, person_id: 
     if kind == "vendor":
         return None
     login = conn.execute(
-        f"SELECT email FROM trust_logins WHERE pmc_id = %s AND {column} = %s"  # noqa: S608
+        f"SELECT email FROM trust_logins WHERE pmc_id = %(pmc)s AND {signs_in_as(kind)}"  # noqa: S608
         " AND disabled_at IS NULL",
-        (pmc_id, person_id),
+        {"pmc": pmc_id, "person": person_id},
     ).fetchone()
     return None if login is None else str(login[0])
 
 
+def signs_in_as(kind: Kind) -> str:
+    """Whose login is a person's: an owner's own; a tenant's, their first record's, which a
+    record at another property linked to it signs in through (migration 0105)."""
+    if kind == "tenant":
+        return "tenant_id IN (SELECT trust_tenant_records(%(pmc)s, %(person)s))"
+    return f"{email.PEOPLE[kind][1]} = %(person)s"
+
+
 def can_sign_in(conn: psycopg.Connection[Any], pmc_id: UUID, kind: Kind, person_id: UUID) -> bool:
-    column = email.PEOPLE[kind][1]
     return (
         conn.execute(
-            f"SELECT 1 FROM trust_logins WHERE pmc_id = %s AND {column} = %s"  # noqa: S608
+            f"SELECT 1 FROM trust_logins WHERE pmc_id = %(pmc)s AND {signs_in_as(kind)}"  # noqa: S608
             " AND disabled_at IS NULL",
-            (pmc_id, person_id),
+            {"pmc": pmc_id, "person": person_id},
         ).fetchone()
         is not None
     )

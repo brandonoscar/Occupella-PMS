@@ -157,9 +157,9 @@ def tenant_receipt(session: Tenant, conn: Conn, transfer_id: str) -> Response:
         raise HTTPException(404, "no such payment of yours") from None
     if (
         conn.execute(
-            "SELECT 1 FROM trust_lease_tenants"
-            " WHERE pmc_id = %s AND lease_id = %s AND tenant_id = %s",
-            (session.pmc_id, receipt.lease_id, session.person_id),
+            "SELECT 1 FROM trust_lease_tenants WHERE pmc_id = %s AND lease_id = %s"
+            " AND tenant_id IN (SELECT trust_tenant_records(%s, %s))",
+            (session.pmc_id, receipt.lease_id, session.pmc_id, session.person_id),
         ).fetchone()
         is None
     ):

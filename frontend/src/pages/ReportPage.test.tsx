@@ -109,6 +109,35 @@ describe("ReportPage", () => {
     );
   });
 
+  it("shows the report for what is picked now, even when an earlier answer comes back last", async () => {
+    window.history.replaceState(null, "", "/reports/income_statement");
+    let releaseFirst = () => {};
+    const first = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const of = (who: string): Preview => ({ ...ROLL, rows: [["1", "owner", who, "", ""]], total_rows: 1 });
+    const fetch = vi.fn(async (path: string) => {
+      if (path === "/api/setup") return new Response(JSON.stringify(BOOKS));
+      if (path.includes("arg=o1&")) {
+        await first; // Owner 1's answer is slow: it comes back after Owner 2's
+        return new Response(JSON.stringify(of("Owner 1")));
+      }
+      return new Response(JSON.stringify(of("Owner 2")));
+    });
+    vi.stubGlobal("fetch", fetch);
+    render(<ReportPage me={ME} name="income_statement" />);
+
+    await vi.waitFor(() => expect(asked(fetch).some((path) => path.includes("arg=o1&"))).toBe(true));
+    fireEvent.change(screen.getByLabelText("Owner"), { target: { value: "o2" } });
+    expect((await screen.findByRole("table", { name: "Income statement" })).textContent).toContain("Owner 2");
+    releaseFirst();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    const shown = screen.getByRole("table", { name: "Income statement" }).textContent;
+    expect(shown).toContain("Owner 2");
+    expect(shown).not.toContain("Owner 1");
+  });
+
   it("asks for what is missing, says how many lines are left out, and says why it was refused", async () => {
     window.history.replaceState(null, "", "/reports/vendor_payments");
     server({

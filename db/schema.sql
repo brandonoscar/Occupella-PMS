@@ -2523,6 +2523,45 @@ $$;
 
 
 --
+-- Name: trust_check_history_line(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_history_line() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_kind text;
+BEGIN
+    SELECT f.kind INTO v_kind FROM trust_history_files AS f
+    WHERE f.pmc_id = NEW.pmc_id AND f.id = NEW.file_id;
+    IF v_kind IS DISTINCT FROM (CASE WHEN NEW.tenant_id IS NOT NULL THEN 'tenant'
+                                     WHEN NEW.owner_account IS NOT NULL THEN 'owner'
+                                     ELSE 'vendor' END) THEN
+        RAISE EXCEPTION 'trust: line % of a file of % history is not a %''s', NEW.line_no,
+            v_kind, v_kind
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.owner_account IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM trust_ledger_accounts AS a
+        WHERE a.ledger_account_id = NEW.owner_account AND a.pmc_id = NEW.pmc_id
+          AND a.kind = 'owner_property'
+    ) THEN
+        RAISE EXCEPTION 'trust: % is not an owner''s property account of PMC %',
+            NEW.owner_account, NEW.pmc_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.posted_on > (now() AT TIME ZONE 'UTC')::date THEN
+        RAISE EXCEPTION 'trust: line % is dated %, which has not come yet', NEW.line_no,
+            to_char(NEW.posted_on, 'MM/DD/YYYY')
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_hold_allowance(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3404,6 +3443,93 @@ $$;
 
 
 --
+-- Name: trust_check_tenant_link(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_tenant_link() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_joining record;
+    v_first record;
+    v_where text;
+BEGIN
+    PERFORM 1 FROM trust_tenants AS t
+    WHERE t.pmc_id = NEW.pmc_id AND t.id IN (NEW.tenant_id, NEW.same_as)
+    ORDER BY t.id
+    FOR NO KEY UPDATE;
+    SELECT t.display_name, t.property_id INTO v_joining
+    FROM trust_tenants AS t WHERE t.pmc_id = NEW.pmc_id AND t.id = NEW.tenant_id;
+    SELECT t.display_name, t.property_id INTO v_first
+    FROM trust_tenants AS t WHERE t.pmc_id = NEW.pmc_id AND t.id = NEW.same_as;
+
+    IF EXISTS (SELECT 1 FROM trust_tenant_links AS k WHERE k.tenant_id = NEW.tenant_id) THEN
+        RAISE EXCEPTION 'trust: % is linked to their first record already', v_joining.display_name
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (SELECT 1 FROM trust_tenant_links AS k WHERE k.tenant_id = NEW.same_as) THEN
+        RAISE EXCEPTION 'trust: % is linked to another record already: link to their first',
+            v_first.display_name
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (SELECT 1 FROM trust_tenant_links AS k WHERE k.same_as = NEW.tenant_id) THEN
+        RAISE EXCEPTION 'trust: % has records at other properties linked to them: link % to them instead',
+            v_joining.display_name, v_first.display_name
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (
+        SELECT 1 FROM trust_logins AS g
+        WHERE g.pmc_id = NEW.pmc_id AND g.tenant_id = NEW.tenant_id AND g.disabled_at IS NULL
+    ) THEN
+        RAISE EXCEPTION 'trust: % signs in to the portal: link % to them instead',
+            v_joining.display_name, v_first.display_name
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT p.display_name INTO v_where
+    FROM trust_tenants AS t
+    JOIN trust_properties AS p ON p.id = t.property_id
+    WHERE t.property_id = v_joining.property_id
+      AND t.id IN (SELECT trust_tenant_records(NEW.pmc_id, NEW.same_as));
+    IF FOUND THEN
+        RAISE EXCEPTION 'trust: % is a tenant at % already: one record a property',
+            v_first.display_name, v_where
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_tenant_login(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_tenant_login() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_first text;
+BEGIN
+    PERFORM 1 FROM trust_tenants AS t
+    WHERE t.pmc_id = NEW.pmc_id AND t.id = NEW.tenant_id
+    FOR SHARE;
+    SELECT f.display_name INTO v_first
+    FROM trust_tenant_links AS k
+    JOIN trust_tenants AS f ON f.id = k.same_as
+    WHERE k.pmc_id = NEW.pmc_id AND k.tenant_id = NEW.tenant_id;
+    IF FOUND THEN
+        RAISE EXCEPTION 'trust: this tenant signs in as % at their first property: invite them there',
+            v_first
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_tenant_payment_transfer(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3619,6 +3745,111 @@ BEGIN
     END IF;
     RETURN NEW;
 END;
+$$;
+
+
+--
+-- Name: trust_close_year(uuid, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_close_year(p_pmc_id uuid, p_year integer) RETURNS uuid
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_staff uuid := nullif(current_setting('trust.staff_id', true), '')::uuid;
+    v_end timestamptz;
+    v_done uuid;
+    v_later integer;
+    v_open text;
+    v_waiting bigint;
+BEGIN
+    IF v_staff IS NULL THEN
+        RAISE EXCEPTION 'trust: name the staff member who closes the year'
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    PERFORM trust_require_role(p_pmc_id, v_staff, 'approve', 'close a year');
+    IF p_year IS NULL OR p_year NOT BETWEEN 2000 AND 2999 THEN
+        RAISE EXCEPTION 'trust: % is not a year to close', p_year
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_end := make_timestamptz(p_year + 1, 1, 1, 0, 0, 0, 'UTC');
+    IF v_end > now() THEN
+        RAISE EXCEPTION 'trust: % has not ended yet', p_year
+            USING ERRCODE = 'invalid_parameter_value',
+                  HINT = 'Close a year once its last day has passed (UTC).';
+    END IF;
+
+    -- Charges and bills dated before this year started wait for this (they hold the PMC FOR
+    -- SHARE), and a close waits for them. The PMC is there: its staff member holds approve.
+    PERFORM 1 FROM trust_pmcs AS p WHERE p.pmc_id = p_pmc_id FOR NO KEY UPDATE;
+
+    SELECT c.id INTO v_done FROM trust_year_closes AS c
+    WHERE c.pmc_id = p_pmc_id AND c.year = p_year;
+    IF FOUND THEN
+        RETURN v_done;
+    END IF;
+    SELECT max(c.year) INTO v_later FROM trust_year_closes AS c
+    WHERE c.pmc_id = p_pmc_id AND c.year > p_year;
+    IF v_later IS NOT NULL THEN
+        RAISE EXCEPTION 'trust: % is closed already, and with it every year before', v_later
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    -- Every trust bank account the year touched (a posting dated in it or before, or a cutover
+    -- before its end) is approved through its last day.
+    SELECT string_agg(b.display_name, ', ' ORDER BY b.display_name COLLATE "C", b.id) INTO v_open
+    FROM trust_bank_accounts AS b
+    WHERE b.pmc_id = p_pmc_id
+      AND (b.closed_through IS NULL OR b.closed_through < v_end)
+      AND (b.opened_at < v_end OR EXISTS (
+          SELECT 1 FROM trust_ledger_accounts AS t
+          JOIN pgledger_entries AS e ON e.account_id = t.ledger_account_id
+          JOIN pgledger_transfers AS tr ON tr.id = e.transfer_id
+          WHERE t.bank_account_id = b.id AND tr.event_at < v_end
+      ));
+    IF v_open IS NOT NULL THEN
+        RAISE EXCEPTION 'trust: approve month-end through % first: %',
+            to_char(make_date(p_year, 12, 31), 'MM/DD/YYYY'), v_open
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM trust_bank_accounts AS b
+        WHERE b.pmc_id = p_pmc_id AND b.closed_through >= v_end
+    ) THEN
+        RAISE EXCEPTION 'trust: no trust bank account was reconciled through %: there is no % to close',
+            to_char(make_date(p_year, 12, 31), 'MM/DD/YYYY'), p_year
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    SELECT count(*) INTO v_waiting
+    FROM trust_journal_entries AS j
+    WHERE j.pmc_id = p_pmc_id AND j.event_on < make_date(p_year + 1, 1, 1)
+      AND NOT EXISTS (SELECT 1 FROM trust_journal_entry_decisions AS d WHERE d.entry_id = j.id);
+    IF v_waiting > 0 THEN
+        RAISE EXCEPTION 'trust: % journal entr% dated in % or before wait% for a decision: post or decline them first',
+            v_waiting, CASE WHEN v_waiting = 1 THEN 'y' ELSE 'ies' END, p_year,
+            CASE WHEN v_waiting = 1 THEN 's' ELSE '' END
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    INSERT INTO trust_year_closes (pmc_id, year, closed_by)
+    VALUES (p_pmc_id, p_year, v_staff)
+    RETURNING id INTO v_done;
+    RETURN v_done;
+END;
+$$;
+
+
+--
+-- Name: trust_closed_until(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_closed_until(p_pmc_id uuid) RETURNS date
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT make_date(max(c.year), 12, 31) FROM trust_year_closes AS c WHERE c.pmc_id = p_pmc_id
 $$;
 
 
@@ -5744,6 +5975,35 @@ $$;
 
 
 --
+-- Name: trust_refuse_closed_year(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_refuse_closed_year() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_day date := (to_jsonb(NEW) ->> TG_ARGV[0])::date;
+    v_until date;
+BEGIN
+    -- The year under way is never closed: only a day before it can be.
+    IF v_day IS NULL OR v_day >= date_trunc('year', now() AT TIME ZONE 'UTC')::date THEN
+        RETURN NEW;
+    END IF;
+    PERFORM 1 FROM trust_pmcs AS p WHERE p.pmc_id = NEW.pmc_id FOR SHARE;
+    v_until := trust_closed_until(NEW.pmc_id);
+    IF v_day <= v_until THEN
+        RAISE EXCEPTION 'trust: % is closed: a % dated % can''t be added; date it % or later',
+            extract(year FROM v_until), TG_ARGV[1], to_char(v_day, 'MM/DD/YYYY'),
+            to_char(v_until + 1, 'MM/DD/YYYY')
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_refuse_ledger_rewrite(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7274,6 +7534,11 @@ BEGIN
         JOIN accounts AS c ON c.id = x.other
         WHERE x.event_at >= v_start
     ),
+    -- Each account's debits and credits over the days, added up once: a closing balance used
+    -- to add up the whole period's postings again for each account.
+    totals AS (
+        SELECT p.account, sum(p.dr) AS dr, sum(p.cr) AS cr FROM postings AS p GROUP BY p.account
+    ),
     lines AS (
         -- (section, bank, bank id, cash first, account, account id, step, event_at, version)
         -- orders the report; names sort by byte (COLLATE "C"), the same on every server.
@@ -7302,13 +7567,10 @@ BEGIN
         UNION ALL
         SELECT 1, s.bank_name, s.bank_account_id, CASE s.kind WHEN 'bank_cash' THEN 0 ELSE 1 END,
                s.account_name, s.id, 2, NULL, NULL, 'closing balance', s.account_name, NULL,
-               coalesce((SELECT sum(p.dr) FROM postings AS p WHERE p.account = s.id), 0),
-               coalesce((SELECT sum(p.cr) FROM postings AS p WHERE p.account = s.id), 0),
-               s.opening + s.sign * coalesce((
-                   SELECT sum(p.cr) - sum(p.dr) FROM postings AS p WHERE p.account = s.id
-               ), 0),
+               coalesce(t.dr, 0), coalesce(t.cr, 0), s.opening + s.sign * coalesce(t.cr - t.dr, 0),
                s.property_name
         FROM shown AS s
+        LEFT JOIN totals AS t ON t.account = s.id
         UNION ALL
         SELECT 2, NULL, NULL, 0, NULL, NULL, 0, NULL, NULL, 'total', NULL, NULL,
                coalesce((SELECT sum(p.dr) FROM postings AS p), 0),
@@ -7581,6 +7843,280 @@ $$;
 
 
 --
+-- Name: trust_report_income_statement_accrual(uuid, uuid, date, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_income_statement_accrual(p_pmc_id uuid, p_owner_id uuid, p_from date, p_through date) RETURNS TABLE(line integer, property text, item text, schedule_e integer, amount numeric)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+#variable_conflict use_column
+DECLARE
+    v_start timestamptz;
+    v_end timestamptz;
+BEGIN
+    IF p_from IS NULL OR p_through IS NULL OR p_through < p_from THEN
+        RAISE EXCEPTION 'trust: an income statement runs from a day through a day no earlier, not % to %',
+            p_from, p_through
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF NOT EXISTS (
+        SELECT o.id FROM trust_owners AS o WHERE o.id = p_owner_id AND o.pmc_id = p_pmc_id
+    ) THEN
+        RAISE EXCEPTION 'trust: no owner % in PMC %', p_owner_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_start := p_from::timestamp AT TIME ZONE 'UTC';
+    v_end := (p_through + 1)::timestamp AT TIME ZONE 'UTC';
+
+    RETURN QUERY
+    WITH schedule_e (n, label) AS (
+        VALUES (3, 'Rents received'), (5, 'Advertising'), (6, 'Auto and travel'),
+               (7, 'Cleaning and maintenance'), (8, 'Commissions'), (9, 'Insurance'),
+               (10, 'Legal and other professional fees'), (11, 'Management fees'),
+               (12, 'Mortgage interest paid to banks, etc.'), (13, 'Other interest'),
+               (14, 'Repairs'), (15, 'Supplies'), (16, 'Taxes'), (17, 'Utilities'),
+               (18, 'Depreciation expense or depletion'), (19, 'Other')
+    ),
+    incomes (part, label) AS (
+        VALUES (1, 'income: rent'), (2, 'income: recurring charges'), (3, 'income: late fees'),
+               (4, 'income: NSF fees'), (5, 'income: other charges')
+    ),
+    accounts AS (
+        SELECT t.ledger_account_id AS account, pr.display_name AS name, t.property_id
+        FROM trust_ledger_accounts AS t
+        JOIN trust_properties AS pr ON pr.id = t.property_id
+        WHERE t.pmc_id = p_pmc_id AND t.owner_id = p_owner_id AND t.kind = 'owner_property'
+    ),
+    -- What each charge is: rent, a recurring charge (pet rent, parking), a late fee, an NSF
+    -- fee, or another charge, and the company's own type of it if it has one (its own, or its
+    -- recurring charge's), as the cash statement has it. A lease end's adjustment of a rent or
+    -- recurring charge (migration 0051), and a waiver (migration 0079), are what they change. A
+    -- credit given on its own comes off rent, as credits come off a lease's rent first
+    -- (migration 0093).
+    classes AS (
+        SELECT c.id,
+               coalesce(o.charge_type_id, c.charge_type_id, rc.charge_type_id) AS charge_type,
+               CASE
+                   WHEN coalesce(o.kind, c.kind) = 'rent' THEN 1
+                   WHEN coalesce(o.recurring_charge_id, c.recurring_charge_id) IS NOT NULL THEN 2
+                   WHEN lf.fee_charge_id IS NOT NULL THEN 3
+                   WHEN nf.fee_charge_id IS NOT NULL THEN 4
+                   WHEN coalesce(o.kind, c.kind) = 'credit' THEN 1
+                   ELSE 5
+               END AS part
+        FROM trust_charges AS c
+        LEFT JOIN trust_lease_end_adjustments AS adj ON adj.adjustment_charge_id = c.id
+        LEFT JOIN trust_charge_waivers AS w ON w.credit_charge_id = c.id
+        LEFT JOIN trust_charges AS o ON o.id = coalesce(adj.charge_id, w.waived_charge_id)
+        LEFT JOIN trust_late_fees AS lf ON lf.fee_charge_id = coalesce(o.id, c.id)
+        LEFT JOIN trust_nsf_fees AS nf ON nf.fee_charge_id = coalesce(o.id, c.id)
+        LEFT JOIN trust_recurring_charges AS rc
+            ON rc.id = coalesce(o.recurring_charge_id, c.recurring_charge_id)
+        WHERE c.pmc_id = p_pmc_id
+    ),
+    -- Each account's share of its property on a day: the account's percent of the ownership in
+    -- force (migration 0090), all of it when the property has none.
+    -- Charged in the days (accrual basis): each charge due in them of a lease at the account's
+    -- property (a credit as less), and the housing authority's part of the rent and its
+    -- adjustments (migration 0095) as rent, each at the account's share on its due day, to the
+    -- cent.
+    owed AS (
+        SELECT l.id AS lease, u.property_id, c.id AS charge, NULL::integer AS part, c.due_on,
+               CASE c.kind WHEN 'credit' THEN -c.amount ELSE c.amount END AS amount
+        FROM trust_charges AS c
+        JOIN trust_leases AS l ON l.id = c.lease_id
+        JOIN trust_units AS u ON u.id = l.unit_id
+        WHERE c.pmc_id = p_pmc_id AND c.due_on BETWEEN p_from AND p_through
+        UNION ALL
+        SELECT l.id, u.property_id, NULL, 1, ac.due_on,
+               CASE ac.kind WHEN 'credit' THEN -ac.amount ELSE ac.amount END
+        FROM trust_assistance_charges AS ac
+        JOIN trust_leases AS l ON l.id = ac.lease_id
+        JOIN trust_units AS u ON u.id = l.unit_id
+        WHERE ac.pmc_id = p_pmc_id AND ac.due_on BETWEEN p_from AND p_through
+    ),
+    charged AS (
+        SELECT a.account, coalesce(x.part, k.part) AS part, k.charge_type,
+               round(x.amount * CASE
+                   WHEN EXISTS (SELECT 1 FROM trust_ownership_shares AS sh
+                                WHERE sh.property_id = a.property_id AND sh.starts_on <= x.due_on)
+                   THEN coalesce((
+                       SELECT sl.percent FROM trust_ownership_share_lines AS sl
+                       WHERE sl.ledger_account_id = a.account AND sl.share_id = (
+                           SELECT sh.id FROM trust_ownership_shares AS sh
+                           WHERE sh.property_id = a.property_id AND sh.starts_on <= x.due_on
+                           ORDER BY sh.starts_on DESC, sh.created_at DESC, sh.id DESC LIMIT 1
+                       )
+                   ), 0) / 100
+                   ELSE 1
+               END, 2) AS amount
+        FROM owed AS x
+        JOIN accounts AS a ON a.property_id = x.property_id
+        LEFT JOIN classes AS k ON k.id = x.charge
+    ),
+    -- The owner's bills dated in the days, but those the owner declined by their end
+    -- (migration 0041): one is never paid.
+    entered AS (
+        SELECT b.id, b.ledger_account_id AS account, b.amount
+        FROM trust_bills AS b
+        JOIN accounts AS a ON a.account = b.ledger_account_id
+        WHERE b.pmc_id = p_pmc_id AND b.bill_date BETWEEN p_from AND p_through
+          AND NOT EXISTS (SELECT 1 FROM trust_bill_declines AS d
+                          WHERE d.bill_id = b.id AND d.declined_on <= p_through)
+    ),
+    fees AS (
+        SELECT f.ledger_account_id AS account, 0 AS ord, tr.amount
+        FROM trust_management_fees AS f
+        JOIN pgledger_transfers AS tr ON tr.id = f.transfer_id
+        WHERE f.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
+        UNION ALL
+        SELECT f.ledger_account_id, 1, tr.amount
+        FROM trust_leasing_fees AS f
+        JOIN pgledger_transfers AS tr ON tr.id = f.transfer_id
+        WHERE f.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
+        UNION ALL
+        -- A fee staff took from the owner (migration 0082): a lease-up fee with the leasing
+        -- fees, an inspection or other fee with the management fees.
+        SELECT f.ledger_account_id, CASE f.kind WHEN 'lease_up' THEN 1 ELSE 0 END, tr.amount
+        FROM trust_owner_fees AS f
+        JOIN pgledger_transfers AS tr ON tr.id = f.transfer_id
+        WHERE f.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
+        UNION ALL
+        -- A bill's markup (migration 0083), with the management fees, with its bill.
+        SELECT b.account, 0, m.amount
+        FROM trust_bill_markups AS m
+        JOIN entered AS b ON b.id = m.bill_id
+    ),
+    -- Each bill's expense account: its latest row.
+    categorized AS (
+        SELECT DISTINCT ON (x.bill_id) x.id, x.bill_id, x.expense_account_id
+        FROM trust_bill_expense_accounts AS x
+        WHERE x.pmc_id = p_pmc_id
+        ORDER BY x.bill_id, x.id DESC
+    ),
+    -- Bills dated in the days (accrual basis): a split bill (migration 0069) by its lines,
+    -- each in its expense account, which come to the bill.
+    spent AS (
+        SELECT b.account,
+               coalesce(sp.expense_account_id, cz.expense_account_id) AS expense,
+               coalesce(sp.amount, b.amount) AS amount
+        FROM entered AS b
+        LEFT JOIN categorized AS cz ON cz.bill_id = b.id
+        LEFT JOIN trust_bill_splits AS sp ON sp.categorized_id = cz.id
+    ),
+    -- Each account's lines: (group, order within it, item, Schedule E line, amount). Groups:
+    -- 1 income, 3 expenses. Income and the fees show even when nothing moved; each of the
+    -- company's charge types has a line of its own after them once money was collected on it,
+    -- and isn't counted again in the line it would be in without one.
+    items AS (
+        SELECT a.account, 1 AS grp, i.part AS ord, i.label AS item, 3 AS sched,
+               coalesce((SELECT sum(c.amount) FROM charged AS c
+                         WHERE c.account = a.account AND c.part = i.part
+                           AND c.charge_type IS NULL), 0) AS total
+        FROM accounts AS a
+        CROSS JOIN incomes AS i
+        UNION ALL
+        SELECT c.account, 1, 6, 'income: ' || ct.name, 3, sum(c.amount)
+        FROM charged AS c
+        JOIN accounts AS a ON a.account = c.account
+        JOIN trust_charge_types AS ct ON ct.id = c.charge_type
+        GROUP BY c.account, ct.id, ct.name
+        UNION ALL
+        SELECT a.account, 3, f.ord,
+               CASE f.ord WHEN 0 THEN 'expense: management fees' ELSE 'expense: leasing fees' END,
+               CASE f.ord WHEN 0 THEN 11 ELSE 8 END,
+               coalesce((SELECT sum(x.amount) FROM fees AS x
+                         WHERE x.account = a.account AND x.ord = f.ord), 0)
+        FROM accounts AS a
+        CROSS JOIN (VALUES (0), (1)) AS f (ord)
+        UNION ALL
+        SELECT s.account, 3, coalesce(ea.schedule_e_line, 99),
+               CASE WHEN ea.id IS NULL THEN 'expense: bills not in an expense account'
+                    ELSE 'expense: ' || ea.name END,
+               ea.schedule_e_line,
+               sum(s.amount)
+        FROM spent AS s
+        JOIN accounts AS a ON a.account = s.account
+        LEFT JOIN trust_expense_accounts AS ea ON ea.id = s.expense
+        GROUP BY s.account, ea.id, ea.name, ea.schedule_e_line
+    ),
+    sums AS (
+        SELECT i.account,
+               coalesce(sum(i.total) FILTER (WHERE i.grp = 1), 0) AS income,
+               coalesce(sum(i.total) FILTER (WHERE i.grp = 3), 0) AS expenses
+        FROM items AS i
+        GROUP BY i.account
+    ),
+    -- The same by Schedule E line (group 6): rents received, and each expense line with money
+    -- on it; bills in no expense account are on no line until they are given one.
+    schedule AS (
+        SELECT i.account, 6 AS grp, i.sched AS ord,
+               'Schedule E line ' || i.sched || ': ' || e.label AS item, i.sched,
+               sum(i.total) AS total
+        FROM items AS i
+        JOIN schedule_e AS e ON e.n = i.sched
+        GROUP BY i.account, i.sched, e.label
+        HAVING i.sched = 3 OR sum(i.total) <> 0
+        UNION ALL
+        SELECT i.account, 6, 99, 'Schedule E: on no line, bills not in an expense account',
+               NULL::integer, sum(i.total)
+        FROM items AS i
+        WHERE i.grp = 3 AND i.sched IS NULL
+        GROUP BY i.account
+    ),
+    rows AS (
+        SELECT i.account, i.grp, i.ord, i.item, i.sched, i.total FROM items AS i
+        UNION ALL
+        SELECT s.account, 2, 0, 'total income', NULL::integer, s.income FROM sums AS s
+        UNION ALL
+        SELECT s.account, 4, 0, 'total expenses', NULL::integer, s.expenses FROM sums AS s
+        UNION ALL
+        SELECT s.account, 5, 0, 'net income', NULL::integer, s.income - s.expenses
+        FROM sums AS s
+        UNION ALL
+        SELECT h.account, h.grp, h.ord, h.item, h.sched, h.total FROM schedule AS h
+    ),
+    lines AS (
+        -- (section, property, account, group, order, item) orders the statement; names sort
+        -- by byte (COLLATE "C"), the same on every server.
+        SELECT 0 AS section, NULL::text AS name, NULL::text AS account, 0 AS grp, 1 AS ord,
+               'PMC' AS item, pmc.display_name AS label, NULL::integer AS sched,
+               NULL::numeric AS total
+        FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
+        UNION ALL
+        SELECT 0, NULL, NULL, 0, 2, 'owner', o.display_name, NULL, NULL
+        FROM trust_owners AS o WHERE o.id = p_owner_id
+        UNION ALL
+        SELECT 0, NULL, NULL, 0, 3, 'period',
+               p_from::text || ' to ' || p_through::text || ' UTC, accrual basis', NULL, NULL
+        UNION ALL
+        SELECT 1, a.name, r.account, r.grp, r.ord, r.item, a.name, r.sched, r.total
+        FROM rows AS r
+        JOIN accounts AS a ON a.account = r.account
+        UNION ALL
+        SELECT 2, NULL, NULL, r.grp, r.ord, 'all properties: ' || r.item, NULL, r.sched,
+               sum(r.total)
+        FROM rows AS r
+        GROUP BY r.grp, r.ord, r.item, r.sched
+    )
+    SELECT row_number() OVER (
+               ORDER BY l.section, l.name COLLATE "C", l.account COLLATE "C", l.grp, l.ord,
+                        l.item COLLATE "C"
+           )::integer,
+           -- The PMC's, owner's and period's names sit in the property column of the first
+           -- lines.
+           l.label,
+           l.item,
+           l.sched,
+           round(l.total, 2)
+    FROM lines AS l
+    ORDER BY 1;
+END;
+$$;
+
+
+--
 -- Name: trust_report_inspection(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7785,6 +8321,259 @@ BEGIN
            (SELECT g.label FROM spans AS g WHERE g.grp = l.grp),
            l.rent,
            l.status
+    FROM lines AS l
+    ORDER BY 1;
+END;
+$$;
+
+
+--
+-- Name: trust_report_owner_balance_sheet(uuid, uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_owner_balance_sheet(p_pmc_id uuid, p_owner_id uuid, p_as_of date) RETURNS TABLE(line integer, property text, item text, amount numeric)
+    LANGUAGE plpgsql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+#variable_conflict use_column
+DECLARE
+    v_cutoff timestamptz;
+BEGIN
+    IF p_as_of IS NULL THEN
+        RAISE EXCEPTION 'trust: an owner''s balance sheet is as of a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF NOT EXISTS (
+        SELECT o.id FROM trust_owners AS o WHERE o.id = p_owner_id AND o.pmc_id = p_pmc_id
+    ) THEN
+        RAISE EXCEPTION 'trust: no owner % in PMC %', p_owner_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    v_cutoff := (p_as_of + 1)::timestamp AT TIME ZONE 'UTC';
+
+    RETURN QUERY
+    WITH accounts AS (
+        SELECT t.ledger_account_id AS account, pr.display_name AS name, t.property_id
+        FROM trust_ledger_accounts AS t
+        JOIN trust_properties AS pr ON pr.id = t.property_id
+        WHERE t.pmc_id = p_pmc_id AND t.owner_id = p_owner_id AND t.kind = 'owner_property'
+    ),
+    -- What each account holds in trust at the day's end.
+    cash AS (
+        SELECT a.account,
+               coalesce((SELECT sum(e.amount)
+                         FROM pgledger_entries AS e
+                         JOIN pgledger_transfers AS tr ON tr.id = e.transfer_id
+                         WHERE e.account_id = a.account AND tr.event_at < v_cutoff), 0) AS amount
+        FROM accounts AS a
+    ),
+    -- Owed at the day's end of what was due by it: by tenants, what is still owed of each charge
+    -- as the delinquency report counts it (written out as it is there, since the AI role calls
+    -- no function but the reports), and by housing authorities, what is open of their part of
+    -- the rent and its adjustments (migration 0095).
+    paid AS (
+        -- What of each charge was paid by the end of the day, net of bounces by then.
+        SELECT c.id,
+               coalesce((
+                   SELECT sum(cp.amount)
+                   FROM trust_charge_payments AS cp
+                   JOIN pgledger_transfers AS tr ON tr.id = cp.transfer_id
+                   WHERE cp.charge_id = c.id AND tr.event_at < v_cutoff
+               ), 0) - coalesce((
+                   SELECT sum(r.amount)
+                   FROM trust_payment_reversals AS r
+                   JOIN pgledger_transfers AS tr ON tr.id = r.reversal_id
+                   WHERE r.charge_id = c.id AND tr.event_at < v_cutoff
+               ), 0) AS amount
+        FROM trust_charges AS c
+        WHERE c.pmc_id = p_pmc_id
+    ),
+    waived AS (
+        -- What waivers due by the day take off the charge each one names (migration 0079).
+        SELECT w.waived_charge_id AS id, sum(k.amount) AS amount
+        FROM trust_charge_waivers AS w
+        JOIN trust_charges AS k ON k.id = w.credit_charge_id
+        WHERE w.pmc_id = p_pmc_id AND k.due_on <= p_as_of
+        GROUP BY w.waived_charge_id
+    ),
+    settled AS (
+        -- Each charge less what was paid of it and what its own waivers take (up to what was
+        -- left), and what of its waivers it could not take.
+        -- Each charge's place, as trust_pay_rank gives it (written out here: the AI role runs
+        -- this report and calls no function but the reports).
+        SELECT c.id, c.lease_id, c.due_on, c.kind, c.created_at,
+               CASE
+                   WHEN c.kind = 'rent' THEN 0
+                   WHEN c.kind = 'fee' AND (
+                       c.recurring_charge_id IS NOT NULL
+                       OR EXISTS (
+                           SELECT 1 FROM trust_lease_end_adjustments AS x
+                           JOIN trust_charges AS o ON o.id = x.charge_id
+                           WHERE x.adjustment_charge_id = c.id
+                             AND (o.kind = 'rent' OR o.recurring_charge_id IS NOT NULL)
+                       )
+                   ) THEN 1
+                   ELSE 2
+               END AS pay_rank,
+               c.amount - p.amount
+               - least(greatest(c.amount - p.amount, 0), coalesce(w.amount, 0)) AS left_owing,
+               coalesce(w.amount, 0)
+               - least(greatest(c.amount - p.amount, 0), coalesce(w.amount, 0)) AS spare
+        FROM trust_charges AS c
+        JOIN paid AS p ON p.id = c.id
+        LEFT JOIN waived AS w ON w.id = c.id
+        WHERE c.pmc_id = p_pmc_id AND c.kind <> 'credit'
+    ),
+    open_charges AS (
+        -- Each charge due by the day with what is left of it, rent first (migration 0093).
+        SELECT s.lease_id, s.due_on, s.left_owing,
+               sum(s.left_owing) OVER (
+                   PARTITION BY s.lease_id
+                   ORDER BY s.pay_rank = 2, s.due_on, s.pay_rank, s.created_at, s.id
+                   ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+               ) AS owing_before
+        FROM settled AS s
+        WHERE s.due_on <= p_as_of
+    ),
+    offsets AS (
+        -- Per lease, what comes off the oldest charges: credits due by the day that waive
+        -- nothing, what a waiver could not take off its own charge, and payments by then toward
+        -- charges not yet due.
+        SELECT c.lease_id,
+               sum(CASE WHEN c.kind = 'credit' AND c.due_on <= p_as_of
+                         AND NOT EXISTS (SELECT 1 FROM trust_charge_waivers AS w
+                                         WHERE w.credit_charge_id = c.id)
+                        THEN c.amount ELSE 0 END)
+               + sum(CASE WHEN c.kind <> 'credit' AND c.due_on > p_as_of THEN p.amount ELSE 0 END)
+               + coalesce(sum(s.spare), 0)
+                   AS amount
+        FROM trust_charges AS c
+        JOIN paid AS p ON p.id = c.id
+        LEFT JOIN settled AS s ON s.id = c.id
+        WHERE c.pmc_id = p_pmc_id
+        GROUP BY c.lease_id
+    ),
+    aged AS (
+        -- What is still owed of each charge once the offsets are used up on the ones before it.
+        SELECT o.lease_id, o.due_on,
+               o.left_owing - least(
+                   o.left_owing,
+                   greatest(coalesce(f.amount, 0) - coalesce(o.owing_before, 0), 0)
+               ) AS owed
+        FROM open_charges AS o
+        LEFT JOIN offsets AS f ON f.lease_id = o.lease_id
+    ),
+
+    owed AS (
+        SELECT u.property_id, g.due_on, g.owed AS amount, 1 AS ord
+        FROM aged AS g
+        JOIN trust_leases AS l ON l.id = g.lease_id
+        JOIN trust_units AS u ON u.id = l.unit_id
+        WHERE u.property_id IN (SELECT a.property_id FROM accounts AS a)
+        UNION ALL
+        SELECT u.property_id, ac.due_on,
+               ac.amount
+               + coalesce((SELECT sum(CASE x.kind WHEN 'credit' THEN -x.amount ELSE x.amount END)
+                           FROM trust_assistance_charges AS x
+                           WHERE x.adjusts_id = ac.id AND x.due_on <= p_as_of), 0)
+               - coalesce((SELECT sum(p.amount)
+                           FROM trust_assistance_payments AS p
+                           JOIN pgledger_transfers AS tr ON tr.id = p.transfer_id
+                           WHERE p.assistance_charge_id = ac.id AND tr.event_at < v_cutoff), 0),
+               2
+        FROM trust_assistance_charges AS ac
+        JOIN trust_leases AS l ON l.id = ac.lease_id
+        JOIN trust_units AS u ON u.id = l.unit_id
+        WHERE ac.pmc_id = p_pmc_id AND ac.kind = 'charge' AND ac.adjusts_id IS NULL
+          AND ac.due_on <= p_as_of
+          AND u.property_id IN (SELECT a.property_id FROM accounts AS a)
+    ),
+    -- Each account's part of what is owed: its share of its property on the due day
+    -- (migration 0090; all of it when the property has no shares), to the cent.
+    receivable AS (
+        SELECT a.account, x.ord,
+               round(x.amount * CASE
+                   WHEN EXISTS (SELECT 1 FROM trust_ownership_shares AS sh
+                                WHERE sh.property_id = a.property_id AND sh.starts_on <= x.due_on)
+                   THEN coalesce((
+                       SELECT sl.percent FROM trust_ownership_share_lines AS sl
+                       WHERE sl.ledger_account_id = a.account AND sl.share_id = (
+                           SELECT sh.id FROM trust_ownership_shares AS sh
+                           WHERE sh.property_id = a.property_id AND sh.starts_on <= x.due_on
+                           ORDER BY sh.starts_on DESC, sh.created_at DESC, sh.id DESC LIMIT 1
+                       )
+                   ), 0) / 100
+                   ELSE 1
+               END, 2) AS amount
+        FROM owed AS x
+        JOIN accounts AS a ON a.property_id = x.property_id
+        WHERE x.amount > 0
+    ),
+    -- The account's bills dated by the day and not yet set aside by its end, with any markup
+    -- added to them (migration 0083), but those the owner declined by then (migration 0041).
+    payable AS (
+        SELECT b.ledger_account_id AS account,
+               b.amount + coalesce((SELECT m.amount FROM trust_bill_markups AS m
+                                    WHERE m.bill_id = b.id), 0) AS amount
+        FROM trust_bills AS b
+        JOIN accounts AS a ON a.account = b.ledger_account_id
+        WHERE b.pmc_id = p_pmc_id AND b.bill_date <= p_as_of
+          AND NOT EXISTS (SELECT 1 FROM trust_bill_declines AS d
+                          WHERE d.bill_id = b.id AND d.declined_on <= p_as_of)
+          AND NOT EXISTS (SELECT 1 FROM trust_bill_payments AS bp
+                          JOIN pgledger_transfers AS tr ON tr.id = bp.transfer_id
+                          WHERE bp.bill_id = b.id AND bp.step = 'set_aside'
+                            AND tr.event_at < v_cutoff)
+    ),
+    -- Each account's lines, in order: what it holds, what is owed to it, what it owes, and
+    -- what is the owner's.
+    items AS (
+        SELECT c.account, 1 AS ord, 'cash held in trust' AS item, c.amount AS total FROM cash AS c
+        UNION ALL
+        SELECT a.account, 1 + k.ord, k.item,
+               coalesce((SELECT sum(r.amount) FROM receivable AS r
+                         WHERE r.account = a.account AND r.ord = k.ord), 0)
+        FROM accounts AS a
+        CROSS JOIN (VALUES (1, 'owed by tenants'), (2, 'owed by housing authorities'))
+            AS k (ord, item)
+        UNION ALL
+        SELECT a.account, 4, 'bills not yet set aside',
+               -coalesce((SELECT sum(p.amount) FROM payable AS p WHERE p.account = a.account), 0)
+        FROM accounts AS a
+    ),
+    rows AS (
+        SELECT i.account, i.ord, i.item, i.total FROM items AS i
+        UNION ALL
+        SELECT i.account, 5, 'owner''s equity', sum(i.total) FROM items AS i GROUP BY i.account
+    ),
+    lines AS (
+        -- (section, property, account, order) orders the sheet; names sort by byte
+        -- (COLLATE "C"), the same on every server.
+        SELECT 0 AS section, NULL::text AS name, NULL::text AS account, 1 AS ord, 'PMC' AS item,
+               pmc.display_name AS label, NULL::numeric AS total
+        FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
+        UNION ALL
+        SELECT 0, NULL, NULL, 2, 'owner', o.display_name, NULL
+        FROM trust_owners AS o WHERE o.id = p_owner_id
+        UNION ALL
+        SELECT 0, NULL, NULL, 3, 'as of',
+               p_as_of::text || ', end of day UTC, accrual basis', NULL
+        UNION ALL
+        SELECT 1, a.name, r.account, r.ord, r.item, a.name, r.total
+        FROM rows AS r
+        JOIN accounts AS a ON a.account = r.account
+        UNION ALL
+        SELECT 2, NULL, NULL, r.ord, 'all properties: ' || r.item, NULL, sum(r.total)
+        FROM rows AS r
+        GROUP BY r.ord, r.item
+    )
+    SELECT row_number() OVER (
+               ORDER BY l.section, l.name COLLATE "C", l.account COLLATE "C", l.ord
+           )::integer,
+           -- The PMC's, owner's and day's names sit in the property column of the first lines.
+           l.label,
+           l.item,
+           round(l.total, 2)
     FROM lines AS l
     ORDER BY 1;
 END;
@@ -10429,6 +11218,29 @@ $$;
 
 
 --
+-- Name: trust_tenant_records(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_tenant_records(p_pmc_id uuid, p_tenant_id uuid) RETURNS SETOF uuid
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    WITH person AS (
+        SELECT coalesce(
+            (SELECT k.same_as FROM trust_tenant_links AS k
+             WHERE k.pmc_id = p_pmc_id AND k.tenant_id = p_tenant_id),
+            p_tenant_id
+        ) AS id
+    )
+    SELECT t.id FROM trust_tenants AS t, person
+    WHERE t.pmc_id = p_pmc_id AND t.id = person.id
+    UNION
+    SELECT k.tenant_id FROM trust_tenant_links AS k, person
+    WHERE k.pmc_id = p_pmc_id AND k.same_as = person.id
+$$;
+
+
+--
 -- Name: trust_transfer_lease(uuid, uuid, uuid, date, date, numeric, text, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -11929,6 +12741,53 @@ CREATE TABLE public.trust_expense_accounts (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_expense_accounts_name_check CHECK (((name ~ '\S'::text) AND (length(name) <= 200))),
     CONSTRAINT trust_expense_accounts_schedule_e_line_check CHECK (((schedule_e_line >= 5) AND (schedule_e_line <= 19)))
+);
+
+
+--
+-- Name: trust_history_files; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_history_files (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    kind text NOT NULL,
+    file_sha256 bytea NOT NULL,
+    line_count integer NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_history_files_file_sha256_check CHECK ((length(file_sha256) = 32)),
+    CONSTRAINT trust_history_files_kind_check CHECK ((kind = ANY (ARRAY['tenant'::text, 'owner'::text, 'vendor'::text]))),
+    CONSTRAINT trust_history_files_line_count_check CHECK ((line_count > 0))
+);
+
+
+--
+-- Name: trust_history_lines; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_history_lines (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    file_id uuid NOT NULL,
+    line_no integer NOT NULL,
+    tenant_id uuid,
+    owner_account text,
+    vendor_id uuid,
+    posted_on date NOT NULL,
+    kind text NOT NULL,
+    description text NOT NULL,
+    amount numeric NOT NULL,
+    reference text,
+    unit text,
+    CONSTRAINT trust_history_lines_amount_check CHECK (((amount = round(amount, 2)) AND (abs(amount) < (1000000000)::numeric))),
+    CONSTRAINT trust_history_lines_check CHECK ((num_nonnulls(tenant_id, owner_account, vendor_id) = 1)),
+    CONSTRAINT trust_history_lines_check1 CHECK (((unit IS NULL) OR (tenant_id IS NOT NULL))),
+    CONSTRAINT trust_history_lines_description_check CHECK (((description ~ '\S'::text) AND (length(description) <= 200))),
+    CONSTRAINT trust_history_lines_kind_check CHECK (((kind ~ '\S'::text) AND (length(kind) <= 50))),
+    CONSTRAINT trust_history_lines_line_no_check CHECK ((line_no > 0)),
+    CONSTRAINT trust_history_lines_reference_check CHECK (((reference ~ '\S'::text) AND (length(reference) <= 100))),
+    CONSTRAINT trust_history_lines_unit_check CHECK (((unit ~ '\S'::text) AND (length(unit) <= 200)))
 );
 
 
@@ -13470,6 +14329,20 @@ CREATE TABLE public.trust_staff_roles (
 
 
 --
+-- Name: trust_tenant_links; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_tenant_links (
+    tenant_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    same_as uuid NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_tenant_links_check CHECK ((tenant_id <> same_as))
+);
+
+
+--
 -- Name: trust_tenants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -13719,6 +14592,20 @@ CREATE TABLE public.trust_work_orders (
     recurring_work_order_id uuid,
     recurring_on date,
     CONSTRAINT trust_work_orders_summary_check CHECK ((summary <> ''::text))
+);
+
+
+--
+-- Name: trust_year_closes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_year_closes (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    year integer NOT NULL,
+    closed_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_year_closes_year_check CHECK (((year >= 2000) AND (year <= 2999)))
 );
 
 
@@ -14581,6 +15468,46 @@ ALTER TABLE ONLY public.trust_expense_accounts
 
 ALTER TABLE ONLY public.trust_expense_accounts
     ADD CONSTRAINT trust_expense_accounts_pmc_id_name_key UNIQUE (pmc_id, name);
+
+
+--
+-- Name: trust_history_files trust_history_files_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_files
+    ADD CONSTRAINT trust_history_files_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_history_files trust_history_files_pmc_id_file_sha256_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_files
+    ADD CONSTRAINT trust_history_files_pmc_id_file_sha256_key UNIQUE (pmc_id, file_sha256);
+
+
+--
+-- Name: trust_history_files trust_history_files_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_files
+    ADD CONSTRAINT trust_history_files_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_history_lines trust_history_lines_file_id_line_no_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_lines
+    ADD CONSTRAINT trust_history_lines_file_id_line_no_key UNIQUE (file_id, line_no);
+
+
+--
+-- Name: trust_history_lines trust_history_lines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_lines
+    ADD CONSTRAINT trust_history_lines_pkey PRIMARY KEY (id);
 
 
 --
@@ -15848,6 +16775,14 @@ ALTER TABLE ONLY public.trust_staff_roles
 
 
 --
+-- Name: trust_tenant_links trust_tenant_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_links
+    ADD CONSTRAINT trust_tenant_links_pkey PRIMARY KEY (tenant_id);
+
+
+--
 -- Name: trust_tenants trust_tenants_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16077,6 +17012,22 @@ ALTER TABLE ONLY public.trust_work_orders
 
 ALTER TABLE public.trust_work_orders
     ADD CONSTRAINT trust_work_orders_recurring_check CHECK (((recurring_work_order_id IS NULL) = (recurring_on IS NULL))) NOT VALID;
+
+
+--
+-- Name: trust_year_closes trust_year_closes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_year_closes
+    ADD CONSTRAINT trust_year_closes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_year_closes trust_year_closes_pmc_id_year_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_year_closes
+    ADD CONSTRAINT trust_year_closes_pmc_id_year_key UNIQUE (pmc_id, year);
 
 
 --
@@ -16651,6 +17602,34 @@ CREATE INDEX trust_emails_tenant_id ON public.trust_emails USING btree (tenant_i
 --
 
 CREATE INDEX trust_emails_vendor_id ON public.trust_emails USING btree (vendor_id) WHERE (vendor_id IS NOT NULL);
+
+
+--
+-- Name: trust_history_files_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_history_files_recorded_by ON public.trust_history_files USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_history_lines_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_history_lines_owner ON public.trust_history_lines USING btree (owner_account, posted_on);
+
+
+--
+-- Name: trust_history_lines_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_history_lines_tenant ON public.trust_history_lines USING btree (pmc_id, tenant_id, posted_on);
+
+
+--
+-- Name: trust_history_lines_vendor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_history_lines_vendor ON public.trust_history_lines USING btree (pmc_id, vendor_id, posted_on);
 
 
 --
@@ -17529,6 +18508,20 @@ CREATE INDEX trust_staff_roles_pmc_id ON public.trust_staff_roles USING btree (p
 
 
 --
+-- Name: trust_tenant_links_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_tenant_links_recorded_by ON public.trust_tenant_links USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_tenant_links_same_as; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_tenant_links_same_as ON public.trust_tenant_links USING btree (pmc_id, same_as);
+
+
+--
 -- Name: trust_unit_areas_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -17680,6 +18673,13 @@ CREATE UNIQUE INDEX trust_work_orders_one_per_recurring_day ON public.trust_work
 --
 
 CREATE INDEX trust_work_orders_property_id ON public.trust_work_orders USING btree (property_id);
+
+
+--
+-- Name: trust_year_closes_closed_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_year_closes_closed_by ON public.trust_year_closes USING btree (pmc_id, closed_by);
 
 
 --
@@ -18114,6 +19114,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_expense_accounts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_history_files trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_history_files FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_history_lines trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_history_lines FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -18691,6 +19705,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_tenant_links trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_tenant_links FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_unit_areas trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -18772,6 +19793,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_work_orders FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_year_closes trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_year_closes FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -19206,6 +20234,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_emai
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_expense_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_history_files trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_history_files FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_history_lines trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_history_lines FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -19839,6 +20881,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_staf
 
 
 --
+-- Name: trust_tenant_links trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_tenant_links FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_tenants trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -19941,6 +20990,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_work
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_work_orders FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_year_closes trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_year_closes FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -20070,6 +21126,13 @@ CREATE TRIGGER trust_charge_waiver_fits BEFORE INSERT ON public.trust_charge_wai
 
 
 --
+-- Name: trust_history_lines trust_check_history_line; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_history_line BEFORE INSERT ON public.trust_history_lines FOR EACH ROW EXECUTE FUNCTION public.trust_check_history_line();
+
+
+--
 -- Name: trust_payment_hold_allowances trust_check_hold_allowance; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20098,6 +21161,20 @@ CREATE TRIGGER trust_check_recurring_bill BEFORE INSERT ON public.trust_recurrin
 
 
 --
+-- Name: trust_tenant_links trust_check_tenant_link; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_tenant_link BEFORE INSERT ON public.trust_tenant_links FOR EACH ROW EXECUTE FUNCTION public.trust_check_tenant_link();
+
+
+--
+-- Name: trust_logins trust_check_tenant_login; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_tenant_login BEFORE INSERT ON public.trust_logins FOR EACH ROW WHEN ((new.tenant_id IS NOT NULL)) EXECUTE FUNCTION public.trust_check_tenant_login();
+
+
+--
 -- Name: pgledger_transfers trust_closed_period; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20109,6 +21186,27 @@ CREATE TRIGGER trust_closed_period BEFORE INSERT ON public.pgledger_transfers FO
 --
 
 CREATE TRIGGER trust_closed_through BEFORE INSERT OR UPDATE OF closed_through ON public.trust_bank_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_moving_closed_through();
+
+
+--
+-- Name: trust_assistance_charges trust_closed_year; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_closed_year BEFORE INSERT ON public.trust_assistance_charges FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_closed_year('due_on', 'housing authority''s charge');
+
+
+--
+-- Name: trust_bills trust_closed_year; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_closed_year BEFORE INSERT ON public.trust_bills FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_closed_year('bill_date', 'bill');
+
+
+--
+-- Name: trust_charges trust_closed_year; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_closed_year BEFORE INSERT ON public.trust_charges FOR EACH ROW EXECUTE FUNCTION public.trust_refuse_closed_year('due_on', 'charge');
 
 
 --
@@ -20420,6 +21518,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_email_settings FO
 
 
 --
+-- Name: trust_history_files trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_history_files FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_housing_authorities trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20662,6 +21767,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_showings FOR EACH
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_signing_links FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_tenant_links trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_tenant_links FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -22377,6 +23489,62 @@ ALTER TABLE ONLY public.trust_emails
 
 ALTER TABLE ONLY public.trust_expense_accounts
     ADD CONSTRAINT trust_expense_accounts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_history_files trust_history_files_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_files
+    ADD CONSTRAINT trust_history_files_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_history_files trust_history_files_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_files
+    ADD CONSTRAINT trust_history_files_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_history_lines trust_history_lines_owner_account_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_lines
+    ADD CONSTRAINT trust_history_lines_owner_account_fkey FOREIGN KEY (owner_account) REFERENCES public.trust_ledger_accounts(ledger_account_id);
+
+
+--
+-- Name: trust_history_lines trust_history_lines_pmc_id_file_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_lines
+    ADD CONSTRAINT trust_history_lines_pmc_id_file_id_fkey FOREIGN KEY (pmc_id, file_id) REFERENCES public.trust_history_files(pmc_id, id);
+
+
+--
+-- Name: trust_history_lines trust_history_lines_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_lines
+    ADD CONSTRAINT trust_history_lines_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_history_lines trust_history_lines_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_lines
+    ADD CONSTRAINT trust_history_lines_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
+
+
+--
+-- Name: trust_history_lines trust_history_lines_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_lines
+    ADD CONSTRAINT trust_history_lines_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
 
 
 --
@@ -24612,6 +25780,38 @@ ALTER TABLE ONLY public.trust_staff_roles
 
 
 --
+-- Name: trust_tenant_links trust_tenant_links_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_links
+    ADD CONSTRAINT trust_tenant_links_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_tenant_links trust_tenant_links_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_links
+    ADD CONSTRAINT trust_tenant_links_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_tenant_links trust_tenant_links_pmc_id_same_as_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_links
+    ADD CONSTRAINT trust_tenant_links_pmc_id_same_as_fkey FOREIGN KEY (pmc_id, same_as) REFERENCES public.trust_tenants(pmc_id, id);
+
+
+--
+-- Name: trust_tenant_links trust_tenant_links_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tenant_links
+    ADD CONSTRAINT trust_tenant_links_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
+
+
+--
 -- Name: trust_tenants trust_tenants_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -24956,6 +26156,22 @@ ALTER TABLE ONLY public.trust_work_orders
 
 
 --
+-- Name: trust_year_closes trust_year_closes_pmc_id_closed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_year_closes
+    ADD CONSTRAINT trust_year_closes_pmc_id_closed_by_fkey FOREIGN KEY (pmc_id, closed_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_year_closes trust_year_closes_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_year_closes
+    ADD CONSTRAINT trust_year_closes_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
 -- Name: trust_audit_log; Type: ROW SECURITY; Schema: public; Owner: -
 --
 
@@ -25088,4 +26304,9 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261020000099'),
     ('20261020000100'),
     ('20261020000101'),
-    ('20261020000102');
+    ('20261020000102'),
+    ('20261021000103'),
+    ('20261021000104'),
+    ('20261021000105'),
+    ('20261021000106'),
+    ('20261021000107');

@@ -19,7 +19,7 @@ import json
 import os
 import secrets
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 import psycopg
@@ -451,6 +451,11 @@ def main() -> None:
             },
         }
         seeded["features"] = {name: feature_pmc(app, tag, name) for name in FEATURES}
+        # Year close: books as of this year's first day, so last year's November is approved and
+        # its December waits for approval in each trust bank account, whatever the day today.
+        seeded["features"]["year-close"] = feature_pmc(
+            app, tag, "year-close", today=date(datetime.now(UTC).year, 1, 1)
+        )
     print(json.dumps(seeded))
 
 
@@ -510,13 +515,18 @@ FEATURES = (
     "charge-types",
     "phone",
     "quickbooks",
+    "two-homes",
+    "history",
 )
 
 
-def feature_pmc(app: psycopg.Connection[Any], tag: str, name: str) -> dict[str, Any]:
-    """A demo PMC's books and invites (with their emails) for its people: the manager (admin,
-    approve, disburse), the bookkeeper (no role), both owners and two tenants."""
-    made = demo.books(app)
+def feature_pmc(
+    app: psycopg.Connection[Any], tag: str, name: str, today: date | None = None
+) -> dict[str, Any]:
+    """A demo PMC's books (as of today, or another day) and invites (with their emails) for its
+    people: the manager (admin, approve, disburse), the bookkeeper (no role), both owners and two
+    tenants."""
+    made = demo.books(app, today)
     people = {
         "manager": ("staff", made.manager),
         "bookkeeper": ("staff", made.bookkeeper),

@@ -79,8 +79,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   under the caller's role) into CSV, Excel or PDF, and a PMC's ledger into a zip of CSV.
   Text a spreadsheet would run as a formula is never a formula.
 - The API (`src/pms/api`, `python -m pms.api`, FastAPI) runs every request in one transaction
-  as `trust_app`, committed before the answer is sent; a staff member's request names them to
-  the audit log. Every endpoint gets tests in `tests/api/` for success, a caller who isn't
+  as `trust_app` (the planner's JIT off: it cost more than it saved), committed before the answer
+  is sent; a staff member's request names them to the audit log. How fast it answers ten staff
+  at once on a 1,000-unit company is timed nightly (`tools/speed.py`, `[speed]` ceilings). Every endpoint gets tests in `tests/api/` for success, a caller who isn't
   allowed and bad input. A report's PMC always comes from the session (every report takes
   `p_pmc_id` first; a test pins it). Changes must be JSON from the app's own origin (a browser's
   Sec-Fetch-Site of another site refuses one whatever its Origin), the session cookie is HttpOnly
@@ -329,8 +330,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `trust_complete_lease_offer`, `trust_match_bank_lines`, `trust_unmatch_bank_lines`,
   `trust_prepare_bank_reconciliation`, `trust_approve_bank_reconciliation`,
   `trust_match_cutover_opening`, `trust_return_deposit`, `trust_transfer_lease`, `trust_open_deposit_account`, `trust_propose_journal_entry`,
-  `trust_post_journal_entry`, `trust_decline_journal_entry`, `trust_apply_assistance_payment` and
-  `trust_bill_back_utility`, which run as the table owner (`trust_charge_rent_due`, `trust_enter_recurring_bills` and
+  `trust_post_journal_entry`, `trust_decline_journal_entry`, `trust_apply_assistance_payment`,
+  `trust_bill_back_utility` and `trust_close_year`, which run as the table owner (`trust_charge_rent_due`, `trust_enter_recurring_bills` and
   `trust_run_rent` run with the app's own grants). It can't call pgledger's posting functions: every posting it makes goes through
   `trust_post_transfers`, which takes an idempotency key, unique per PMC, so it is safe to
   retry: the same key returns the original transfers, and a different posting under it is
@@ -677,6 +678,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   checked by a trigger; append-only, naming who recorded it. A deposit moves no money; it has a
   slip (PDF), and at month-end auto-match pairs its one bank line with all of it (and ticking one
   of its transfers ticks the deposit).
+- History before the switch (migration 0107, the founder's review q129): the old system's past
+  lines come over at Settings, Import as history, a CSV file of tenants', owners' or vendors' at a
+  time (`trust_history_files`, once per SHA-256, and `trust_history_lines`: each one person's, of
+  the file's kind, never dated after it came in; append-only). A tenant who left before the switch
+  is added to hold theirs. History is never posted: it moves no money, charges nothing and is in
+  no report or balance; the books still start at the cutover. Staff read it newest first under
+  Before the switch on a tenant's Leases tab, an owner's Statements tab and a vendor's Bills tab
+  (`GET /api/history`, `src/pms/api/history.py`). The AI role reads it as it reads the ledger.
 - Switching (migration 0033): after a trust bank account's opening balances, the checks and
   deposits the bank had not cleared at the cutover are carried over (`trust_cutover_items`, the
   cash each moved in the old books, issued by the cutover) until a staff member signs off the
@@ -817,6 +826,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   collected on each type on a line of its own after the other income (a rent run's charge under
   its recurring charge's type), and the budget beside it counts that line as income. Owners read and download a year's in the portal (`/api/owner/income-statement`);
   staff download any owner's from the owners page.
+- Accrual basis (migration 0104, the founder's review q115): `trust_report_income_statement_accrual`
+  is the income statement's lines counting what was charged in the days (a credit as less, a lease
+  end's adjustment or a waiver as what it changes, a credit on its own as rent, a housing
+  authority's part as rent) and bills on their dates with any markup, never declined ones, each at
+  the owner's share on the day; `trust_report_owner_balance_sheet` holds each property account's
+  money in trust at a day's end, what tenants (as the delinquency report counts it) and housing
+  authorities owe it, the bills not yet set aside, and the owner's equity. Both on Reports, read
+  only, and the AI runs them.
 - Journal entries (migration 0053): a correction between a PMC's ledger accounts that no other
   write path makes. A staff member proposes one (`trust_propose_journal_entry`: a day, what it
   corrects, 1 to 20 lines of whole cents between accounts of the PMC); another who holds approve
@@ -888,6 +905,25 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   lease shows each kind (`tenants[].deposits`), the register and the return's statement name it,
   a leaving tenant's deposits move to the staying tenant's of the same kind, and
   `trust_return_deposit` keeps from each tenant's security deposit first, then key, then pet.
+- Closing a year (migration 0106, the founder's review q116, the founder's call on 10/21: lock it
+  all): `trust_close_year` closes a year that has ended, once (the same call again returns it), by
+  a named staff member who holds approve, when every trust bank account the year touched is
+  approved through its December 31 (at least one is), no journal entry dated in it or before waits
+  and no later year is closed (`trust_year_closes`, append-only, naming who). From then on no
+  charge, housing authority's charge or bill is dated in it or before (`trust_refuse_closed_year`,
+  which takes the PMC FOR SHARE for a day before this year, as a close takes it FOR NO KEY UPDATE),
+  so a late fix is dated in the open year; nothing reopens a year. Staff close it from Banking,
+  Year close (`src/pms/api/year_close.py`, area month-end), which lists each account's month-end.
+- A tenant at two properties (migration 0105, the founder's review q009): a tenant is a record at
+  one property, holding its own deposits and prepaid rent. Someone renting at another property too
+  gets a record there linked to their first (`trust_tenant_links`: append-only, naming who; a
+  record joins a person only while linked to nothing, nobody's first, signing in to nothing, and at
+  a property where the person has no record), made from the tenant's page, Other properties
+  (`POST /api/tenants/<id>/elsewhere`, the same name and contact details; or `/same-person` for a
+  record there already). Money and leases stay each record's own. Only a record linked to nothing
+  takes a portal login; `trust_tenant_records` gives a person's records, and the tenant portal,
+  receipts, calendar, renewals and emails read every one of them (a request or a policy filed
+  under a lease is the record on it). The AI role reads the links.
 - Vendor insurance and inspections (migration 0058): a vendor's policies
   (`trust_vendor_insurance`: coverage, carrier, number, the days it runs, a limit; a renewal is
   a new policy), and a lease's move-in and move-out inspections (`trust_inspections`, their
