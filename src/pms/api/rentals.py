@@ -15,11 +15,11 @@ from typing import Annotated, Any, Generic, Literal, TypeVar
 from uuid import UUID
 
 import psycopg
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, StringConstraints
 
 from pms import exports
-from pms.api import rent, scope, setup
+from pms.api import addresses, rent, scope, setup
 from pms.api.deps import Conn, Staff, refusal
 from pms.api.setup import Name
 
@@ -58,6 +58,8 @@ class Ref(BaseModel):
 class PropertyRow(BaseModel):
     id: UUID
     name: str
+    # Its street address on one line, if it has one (migration 0109).
+    address: str | None
     owners: list[str]
     units: int
     occupied: int
@@ -70,8 +72,11 @@ EXISTS (SELECT 1 FROM trust_leases AS l WHERE l.unit_id = u.id AND l.starts_on <
         AND (l.ends_on IS NULL OR %(day)s <= l.ends_on))
 """
 
+# A property's (p) street address on one line, or NULL.
+ADDRESS = f"(SELECT {addresses.ONE_LINE} FROM trust_property_address(p.id) AS a)"  # noqa: S608
+
 PROPERTIES = f"""
-SELECT p.id, p.display_name,
+SELECT p.id, p.display_name, {ADDRESS},
        array(SELECT o.display_name FROM trust_ledger_accounts AS a
              JOIN trust_owners AS o ON o.id = a.owner_id
              WHERE a.property_id = p.id AND a.kind = 'owner_property'
@@ -84,7 +89,7 @@ SELECT p.id, p.display_name,
        count(*) OVER ()
 FROM trust_properties AS p
 WHERE p.pmc_id = %(pmc)s AND trust_is_archived(p.id, NULL) = %(archived)s
-  AND (%(like)s::text IS NULL OR p.display_name ILIKE %(like)s)
+  AND (%(like)s::text IS NULL OR p.display_name ILIKE %(like)s OR {ADDRESS} ILIKE %(like)s)
   AND {scope.within("p.id")}
 ORDER BY p.display_name COLLATE "C", p.id
 LIMIT %(per_page)s OFFSET %(offset)s
@@ -102,8 +107,9 @@ def properties(
     page: Page = 1,
     per_page: PerPage = 50,
 ) -> Paged[PropertyRow]:
-    """The company's properties a page at a time, by name: their owners, units and how many
-    are occupied today. Archived ones only when asked; maybe of a group or just one."""
+    """The company's properties a page at a time, by name: their addresses, owners, units and
+    how many are occupied today. Searched by name or address; archived ones only when asked;
+    maybe of a group or just one."""
     rows = conn.execute(
         PROPERTIES,
         {
@@ -118,8 +124,8 @@ def properties(
     ).fetchall()
     return Paged(
         items=[
-            PropertyRow(id=i, name=n, owners=o, units=u, occupied=occ, archived=a)
-            for i, n, o, u, occ, a, _ in rows
+            PropertyRow(id=i, name=n, address=at, owners=o, units=u, occupied=occ, archived=a)
+            for i, n, at, o, u, occ, a, _ in rows
         ],
         total=rows[0][-1] if rows else 0,
         page=page,
@@ -179,6 +185,11 @@ class Property(BaseModel):
     id: UUID
     name: str
     archived: bool
+    # Its street address now, and where that address is on a map once found (migration 0109);
+    # whether this server has a geocoder to find it with.
+    address: addresses.PropertyAddress | None
+    location: addresses.Location | None
+    can_locate: bool
     owners: list[OwnerAccount]
     # Its ownership shares, the latest first: the one from the latest day not after today holds
     # now, any from a later day hold from then.
@@ -243,9 +254,10 @@ def lease_lines(
 
 
 @router.get("/properties/{property_id}")
-def property_page(session: Staff, conn: Conn, property_id: UUID) -> Property:
-    """A property: its owners' accounts, what each holds and its management terms, its units,
-    each with the lease in effect today (or the next to start), and its late and NSF fee terms."""
+def property_page(request: Request, session: Staff, conn: Conn, property_id: UUID) -> Property:
+    """A property: its address, its owners' accounts, what each holds and its management terms,
+    its units, each with the lease in effect today (or the next to start), and its late and NSF
+    fee terms."""
     day = rent.today()
     row = conn.execute(
         "SELECT p.display_name, trust_is_archived(p.id, NULL) FROM trust_properties AS p"
@@ -367,6 +379,9 @@ def property_page(session: Staff, conn: Conn, property_id: UUID) -> Property:
         id=property_id,
         name=row[0],
         archived=row[1],
+        address=addresses.address_of(conn, property_id),
+        location=addresses.location_of(conn, property_id),
+        can_locate=request.app.state.geocoder is not None,
         owners=owners,
         ownership=list(ownership.values()),
         units=units,
@@ -824,9 +839,14 @@ def contact(column: str, key: str) -> str:
 SEARCH = "".join(
     (
         """
-(SELECT 'property', p.id, p.display_name, '', '/properties/' || p.id
+(SELECT 'property', p.id, p.display_name, coalesce(""",
+        ADDRESS,
+        """, ''), '/properties/' || p.id
  FROM trust_properties AS p
- WHERE p.pmc_id = %(pmc)s AND p.display_name ILIKE %(like)s AND NOT trust_is_archived(p.id, NULL)
+ WHERE p.pmc_id = %(pmc)s AND (p.display_name ILIKE %(like)s OR """,
+        ADDRESS,
+        """ ILIKE %(like)s)
+   AND NOT trust_is_archived(p.id, NULL)
  ORDER BY p.display_name COLLATE "C", p.id LIMIT 10)
 UNION ALL
 (SELECT 'unit', u.id, u.display_name, p.display_name, '/units/' || u.id
@@ -871,6 +891,7 @@ UNION ALL
  WHERE v.pmc_id = %(pmc)s AND (v.display_name ILIKE %(like)s OR f.trade ILIKE %(like)s OR """,
         CONTACT_MATCHES,
         """)
+   AND NOT trust_is_archived(NULL, NULL, NULL, NULL, v.id)
  ORDER BY v.display_name COLLATE "C", v.id LIMIT 10)
 UNION ALL
 (SELECT 'bill', b.id, v.display_name || ' ' || b.reference,
@@ -937,8 +958,9 @@ def digits(q: str) -> str | None:
 @router.get("/search")
 def search(session: Staff, conn: Conn, q: Annotated[SearchWords, Query()]) -> list[Found]:
     """Up to 10 of each kind that hold the words, each with the page it opens: properties, units,
-    tenants and owners not archived (a tenant's says their latest unit), and vendors, by name or
-    by the email, phone or street on file; bills by reference or memo; work orders by what they
+    tenants, owners and vendors not archived (a property's says its address and is found by it
+    too; a tenant's says their latest unit; vendors by name or trade, or by the email, phone or
+    street on file); bills by reference or memo; work orders by what they
     are for; applicants and leads by name or email (a lead by phone too); and files by title,
     opening the page of what they are about."""
     return [

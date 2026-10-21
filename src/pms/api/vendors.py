@@ -22,9 +22,9 @@ from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from pms import exports
 from pms.api.deps import Conn, Staff
-from pms.api.directory import Contact, contacts_of, record_contact
+from pms.api.directory import Contact, archive, contacts_of, found, record_contact
 from pms.api.rent import cents, today
-from pms.api.rentals import Page, Paged, PerPage, Rename
+from pms.api.rentals import Archiving, Page, Paged, PerPage, Rename
 from pms.api.setup import Name
 from pms.api.work_orders import assigned_to
 
@@ -75,6 +75,8 @@ class VendorOut(BaseModel):
     contact: Contact = Contact()
     # Their latest profile; None until one is recorded.
     profile: Profile | None = None
+    # Archived: off the list, its pickers and search, history kept (migration 0110).
+    archived: bool = False
 
     @property
     def standing(self) -> str:
@@ -133,6 +135,12 @@ def coverage(conn: psycopg.Connection[Any], pmc_id: UUID, on: date) -> list[Vend
         vendors[vendor].contact = details
     for vendor, profile in profiles_of(conn, pmc_id).items():
         vendors[vendor].profile = profile
+    for (vendor,) in conn.execute(
+        "SELECT id FROM trust_vendors WHERE pmc_id = %s"
+        " AND trust_is_archived(NULL, NULL, NULL, NULL, id)",
+        (pmc_id,),
+    ).fetchall():
+        vendors[vendor].archived = True
     return list(vendors.values())
 
 
@@ -156,11 +164,13 @@ def vendors(
     session: Staff,
     conn: Conn,
     on: Annotated[date | None, Query()] = None,
+    archived: bool = False,
     page: Page = 1,
     per_page: PerPage = 50,
 ) -> Paged[VendorRow]:
     """The company's vendors a page at a time, by name: trade, phone, email, W-9 on file and
-    how their insurance stands on the day (today, UTC, by default)."""
+    how their insurance stands on the day (today, UTC, by default). Archived ones only when
+    asked."""
     every = [
         VendorRow(
             id=v.id,
@@ -172,6 +182,7 @@ def vendors(
             insurance=v.standing,
         )
         for v in coverage(conn, session.pmc_id, on or today())
+        if v.archived == archived
     ]
     start = (page - 1) * per_page
     return Paged(
@@ -352,6 +363,15 @@ def vendor_page(session: Staff, conn: Conn, vendor_id: UUID) -> VendorPage:
     return VendorPage(
         **found.model_dump(), insurance_standing=found.standing, bills=bills, work_orders=orders
     )
+
+
+@router.post("/{vendor_id}/archive", status_code=204)
+def archive_vendor(session: Staff, conn: Conn, vendor_id: UUID, body: Archiving) -> None:
+    """Archives a vendor (refused while a bill of theirs is unpaid, money is set aside for them,
+    a work order last assigned to them is open, or a recurring bill or job of theirs runs) or
+    brings them back."""
+    found(conn, "trust_vendors", session.pmc_id, vendor_id, "vendor")
+    archive(conn, session.pmc_id, "vendor_id", vendor_id, body.archived)
 
 
 @router.post("/{vendor_id}/name", status_code=204)

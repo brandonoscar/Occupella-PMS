@@ -6,7 +6,7 @@ profile changed."""
 from datetime import date, timedelta
 
 import pytest
-from helpers import add_document, make_pmc
+from helpers import add_document, enter_bill, make_pmc
 from people import join_as_owner, join_as_staff
 
 TODAY = date.today()
@@ -263,3 +263,72 @@ def test_bad_vendor_input_is_refused(client, conn, pmc, staff, path, body):
     assert conn.execute(
         "SELECT count(*) FROM trust_vendors WHERE pmc_id = %s", (pmc.pmc_id,)
     ).fetchone() == (1,)
+
+
+# --- archiving (migration 0110; the founder's review q131) -------------------------------------
+
+
+def archive(client, vendor, archived=True):
+    return client.post(f"/api/vendors/{vendor}/archive", json={"archived": archived})
+
+
+def test_staff_archive_a_vendor_who_leaves_the_list_pickers_and_search_and_bring_them_back(
+    client, conn, pmc, staff
+):
+    vendor = pmc.vendor_id
+    other = ok(client.post("/api/vendors", json={"name": "Vendor 2"}), 201)["id"]
+
+    ok(archive(client, vendor), 204)
+
+    assert [v["name"] for v in ok(client.get("/api/vendors"))["items"]] == ["Vendor 2"]
+    archived = ok(client.get("/api/vendors", params={"archived": True}))["items"]
+    assert [v["id"] for v in archived] == [str(vendor)]
+    assert ok(client.get(f"/api/vendors/{vendor}"))["archived"] is True
+    assert ok(client.get(f"/api/vendors/{other}"))["archived"] is False
+    # Neither a work order nor a new bill offers them; search leaves them out.
+    assert [v["name"] for v in ok(client.get("/api/maintenance/vendors"))] == ["Vendor 2"]
+    assert [v["name"] for v in ok(client.get("/api/setup"))["vendors"]] == ["Vendor 2"]
+    assert [f["label"] for f in ok(client.get("/api/search", params={"q": "Vendor"}))] == [
+        "Vendor 2"
+    ]
+    refused(archive(client, vendor), 409, "it is archived already")
+
+    ok(archive(client, vendor, archived=False), 204)
+    assert [v["name"] for v in ok(client.get("/api/vendors"))["items"]] == ["Vendor 1", "Vendor 2"]
+    assert conn.execute(
+        "SELECT count(*) FROM trust_archivals WHERE vendor_id = %s AND recorded_by = %s",
+        (vendor, staff.person_id),
+    ).fetchone() == (2,)
+
+
+def test_a_vendor_with_a_bill_not_paid_stays_and_says_why(client, conn, pmc, staff):
+    enter_bill(conn, pmc.pmc_id, pmc.vendor_id, pmc.owners[0].account, "INV-1", TODAY, TODAY, "50")
+
+    refused(
+        archive(client, pmc.vendor_id),
+        409,
+        "Vendor 1 has a bill not paid; pay or decline it before archiving",
+    )
+    assert ok(client.get(f"/api/vendors/{pmc.vendor_id}"))["archived"] is False
+
+
+def test_archiving_a_vendor_takes_staff_of_the_company_whose_roles_allow_setup(
+    client, other_client, conn, app_conn, pmc
+):
+    refused(archive(client, pmc.vendor_id), 401)
+    join_as_owner(other_client, app_conn, pmc)
+    refused(archive(other_client, pmc.vendor_id), 403)
+
+    join_as_staff(client, conn, app_conn, pmc)
+    refused(archive(client, make_pmc(conn).vendor_id), 404, "no such vendor")
+    refused(client.post(f"/api/vendors/{pmc.vendor_id}/archive", json={}), 422)
+    clerk = join_as_staff(other_client, conn, app_conn, pmc, name="Clerk 1", roles=[])
+    role = ok(client.post("/api/custom-roles", json={"name": "Bills", "areas": ["bills"]}), 201)
+    ok(
+        client.post(
+            f"/api/custom-roles/{role['id']}/staff",
+            json={"staff_id": str(clerk.person_id), "granted": True},
+        ),
+        204,
+    )
+    refused(archive(other_client, pmc.vendor_id), 403, "your roles don't let you change")

@@ -417,12 +417,52 @@ force is NOT VERIFIED.
   income statement and the year-end package (1099 rents).
 
 **Left to the company.**
-- The HAP contract itself, the agency's inspections and its rent reasonableness review: the PMS
-  keeps the amount staff enter and the contract's number, nothing more.
+- The HAP contract itself and the agency's rent reasonableness review: the PMS keeps the amount
+  staff enter and the contract's number, nothing more. The agency's inspections and the
+  household's certifications are recorded since migration 0108 (below).
 - A late HAP payment's fee, and an authority's payment that bounces: neither is built; staff
   charge the authority by hand, and a returned authority payment is corrected by a journal entry.
 - Payment holds (an eviction filed) hold the tenant's payments only; an authority's payment is
   not held.
+
+## Keeping an assisted lease in compliance (migration 0108)
+
+**The rule.** An assisted household's income and size are reexamined at least once a year, and
+the home is inspected against the program's standards, both on a schedule the owner or manager
+has to keep up with. It is federal law, the same in every state.
+
+- 24 CFR 982.516(a): the agency reexamines family income and composition at least annually
+  (with interim reexaminations when they change).
+- 24 CFR 982.405(a): the agency inspects the unit at least biennially during the assisted
+  tenancy (HQS; NSPIRE-V replaces HQS, which agencies adopt by a compliance date HUD has extended,
+  read as February 1, 2027).
+- HUD Handbook 4350.3, chapter 7 (project-based assistance): the owner recertifies each household
+  every year and gives it a first reminder 120 days before the recertification is due, then
+  reminders at 90 and 60 days.
+
+Read in search excerpts of the eCFR, HUD's notices and the Handbook; their full text as now in
+force is NOT VERIFIED.
+
+**What the PMS does.**
+- Staff record, on the lease's housing assistance card, each income certification (move-in,
+  annual or interim: the day it takes effect, the household's size and annual income, and the
+  day the next annual one is due, a year on unless given; an interim one keeps the due day of
+  the one before) and each inspection for the authority (passed, the next due two years on unless
+  given; failed, with the day the home must pass a reinspection by), only for a lease with
+  assistance on file and within its days, an inspection only once it happened. Append-only,
+  naming who recorded it.
+- The card and the Housing assistance compliance report say where each stands on a day:
+  current, due within 120 days (the Handbook's first reminder), overdue, none on file, or a failed
+  inspection's reinspection due or overdue; the report counts what to certify and inspect now and
+  within 120 days.
+- A household's income is as private as an application's: the AI never reads a certification,
+  and the report prints days and words, never income or household size.
+
+**Left to the company.**
+- The reexamination and the inspection themselves, the reminder letters, HUD's forms (50058,
+  50059) and TRACS: the PMS files and sends nothing, and checks no income limit, rent limit or
+  inspection standard.
+- An agency that inspects every year, or a stricter schedule: staff give the due day.
 
 ## Utility billing: RUBS and submeters (migration 0096)
 

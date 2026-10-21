@@ -795,6 +795,39 @@ tests = [
   "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
 ]
 
+[[invariant]]
+id = "a-property-is-where-its-latest-address-was-found"
+statement = "A property's address (migration 0109) is its latest saved, whole, with a state's USPS code and a ZIP code, and the same address again writes nothing; where it is on a map is the latest location found for that very address, so a new address has none until it is found; a geocoder that finds nothing or fails keeps nothing; addresses and locations are of their own company's property and never rewritten. Only a property's address goes to the geocoder."
+tests = [
+  "tests/properties/test_property_address_properties.py::test_a_property_is_where_its_latest_address_was_last_found",
+  "tests/test_property_addresses.py::test_the_latest_address_holds_and_its_own_location_with_it",
+  "tests/test_property_addresses.py::test_an_address_and_its_location_are_of_one_company",
+  "tests/test_property_addresses.py::test_addresses_are_never_rewritten_and_the_ai_reads_them",
+  "tests/test_geocoding.py::test_the_census_geocoder_sends_the_street_address_alone_and_reads_its_match",
+  "tests/api/test_property_addresses_api.py::test_a_geocoder_that_fails_is_said_in_words_and_keeps_nothing",
+]
+
+[[invariant]]
+id = "a-vendor-is-archived-only-with-nothing-open"
+statement = "A vendor is archived (migration 0110), like a property, unit, tenant or owner, by a row of trust_archivals naming who, the latest holding: refused while a bill of theirs is neither paid nor declined, money is set aside for them, a work order last assigned to them is still open, or a recurring bill or job of theirs runs through today; never archived or brought back twice in a row; brought back at any time. An archival is of one record of its own company."
+tests = [
+  "tests/properties/test_vendor_archival_properties.py::test_a_vendor_is_archived_exactly_while_nothing_is_open_with_them",
+  "tests/test_vendor_archivals.py::test_a_vendor_stays_while_a_bill_of_theirs_is_not_paid",
+  "tests/test_vendor_archivals.py::test_a_vendor_stays_while_a_work_order_last_assigned_to_them_is_open",
+  "tests/test_vendor_archivals.py::test_a_vendors_archival_is_of_one_record_of_the_pmc_and_names_who_made_it",
+]
+
+[[report]]
+id = "assistance-compliance"
+statement = "Each lease with housing assistance in force on a day (an amount above 0 from the latest terms by then): its latest income certification and inspection in effect by that day (the later recorded on one day), the day each is due and where it stands: current, due within 120 days (HUD Handbook 4350.3's first notice), overdue or none on file, and a failed inspection's reinspection due or overdue; then how many to certify and inspect now and within 120 days. Never income or household size. Compared to a checked-in golden file and to a model."
+tests = [
+  "tests/golden/test_golden.py::test_every_golden_case_matches",
+  "tests/properties/test_assistance_compliance_properties.py::test_the_compliance_report_says_where_each_assisted_lease_stands_on_any_day",
+  "tests/test_assistance_compliance.py::test_each_assisted_lease_says_where_its_certification_and_inspection_stand",
+  "tests/test_assistance_compliance.py::test_the_latest_by_its_day_holds_and_one_to_come_counts_once_it_takes_effect",
+  "tests/test_assistance_compliance.py::test_a_lease_without_assistance_in_force_is_left_out",
+]
+
 [[report]]
 id = "owner-balance-sheet"
 statement = "An owner's balance sheet at a day's end (UTC), accrual basis: per property account and across them, the money it holds in trust, what tenants owe it of what was due by then (as the delinquency report counts it) and what housing authorities owe, the bills dated by then not yet set aside (with any markup, never a declined one), and the owner's equity, the first three less the fourth. Compared to a checked-in golden file and to the rent roll model."
@@ -1354,5 +1387,14 @@ tests = [
   "tests/test_history.py::test_a_file_comes_in_once_and_history_is_never_rewritten_nor_posted",
   "tests/test_history.py::test_a_line_is_of_its_own_company",
   "tests/api/test_history_api.py::test_staff_bring_each_persons_history_in_once_and_read_it_newest_first",
+]
+
+[[invariant]]
+id = "assistance-records-of-an-assisted-lease"
+statement = "An income certification or an inspection (migration 0108) is of a lease of the PMC with housing assistance on file, dated within the lease, an inspection never after the day it is recorded, its due day after its own day, once per lease, day and kind or result; append-only, naming who recorded it. The AI role never reads a certification."
+tests = [
+  "tests/test_assistance_compliance.py::test_records_are_of_an_assisted_lease_within_its_days",
+  "tests/test_assistance_compliance.py::test_records_are_never_rewritten_and_the_ai_reads_no_income",
+  "tests/api/test_assistance_api.py::test_records_are_of_a_lease_with_assistance_on_file_of_the_company",
 ]
 

@@ -10,6 +10,8 @@ export type Ref = { id: string; name: string };
 export type PropertyRow = {
   id: string;
   name: string;
+  // Its street address on one line, if it has one.
+  address: string | null;
   owners: string[];
   units: number;
   occupied: number;
@@ -43,10 +45,37 @@ export type OwnerAccount = {
 // A property's ownership from a day: each owner's percent of it, together 100.
 export type Share = { account: string; owner: string; percent: string };
 export type Ownership = { id: string; starts_on: string; recorded_by: string | null; shares: Share[] };
+// A property's street address (migration 0109), and where it is on a map once found.
+export type PropertyAddress = {
+  line_1: string;
+  line_2: string | null;
+  city: string;
+  state: string;
+  zip: string;
+  one_line: string;
+  recorded_by: string | null;
+  recorded_at: string;
+};
+export type Location = {
+  // Degrees, as text to six places.
+  latitude: string;
+  longitude: string;
+  // The address as the geocoder matched it.
+  matched: string;
+  geocoder: string;
+  // OpenStreetMap at the point.
+  map_url: string;
+  found_at: string;
+};
+
 export type Property = {
   id: string;
   name: string;
   archived: boolean;
+  address: PropertyAddress | null;
+  location: Location | null;
+  // Whether this server has a geocoder to find the address with.
+  can_locate: boolean;
   owners: OwnerAccount[];
   // Its ownership shares, the latest first.
   ownership: Ownership[];

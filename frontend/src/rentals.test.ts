@@ -18,7 +18,7 @@ describe("pages", () => {
 
 describe("properties and units", () => {
   const row = (units: number, occupied: number): PropertyRow => ({
-    id: "p1", name: "Property 1", owners: [], units, occupied, archived: false,
+    id: "p1", name: "Property 1", address: null, owners: [], units, occupied, archived: false,
   });
   it("reads a property's occupancy", () => {
     expect([occupancy(row(5, 4)), occupancy(row(2, 0)), occupancy(row(0, 0))]).toEqual([

@@ -1,3 +1,4 @@
+import type { BadgeTone } from "./components/Badge";
 import { money, sumMoney, usDate } from "./money";
 
 // A housing authority's part of a lease's rent (migration 0095, the founder's review q034;
@@ -32,6 +33,39 @@ export type AuthorityCharge = {
   open: string;
 };
 
+export type Certification = {
+  id: string;
+  kind: "move-in" | "annual" | "interim";
+  effective_on: string;
+  household_size: number;
+  annual_income: string;
+  // The day the next annual certification is due.
+  next_due_on: string;
+  recorded_by: string | null;
+};
+
+export type Inspection = {
+  id: string;
+  authority_id: string;
+  authority: string;
+  inspected_on: string;
+  result: "passed" | "failed";
+  // Passed: the next is due by it. Failed: the home must pass a reinspection by it.
+  due_on: string;
+  recorded_by: string | null;
+};
+
+// Keeping the lease in compliance (migration 0108, the founder's review q143): where the latest
+// certification and inspection in effect today stand, in the compliance report's words.
+export type Compliance = {
+  recertify_by: string | null;
+  recertification: string;
+  inspect_by: string | null;
+  inspection: string;
+  certifications: Certification[];
+  inspections: Inspection[];
+};
+
 export type LeaseAssistance = {
   in_force: AssistanceTerms | null;
   monthly_rent: string;
@@ -39,7 +73,22 @@ export type LeaseAssistance = {
   terms: AssistanceTerms[];
   charges: AuthorityCharge[];
   owed: string;
+  compliance: Compliance;
 };
+
+// A standing's badge: current is fine, due soon or a reinspection waiting is caution, nothing on
+// file asks for one, and overdue is late.
+export function complianceTone(standing: string): BadgeTone {
+  if (standing === "current") return "positive";
+  if (standing === "overdue" || standing === "failed, reinspection overdue") return "danger";
+  return "caution";
+}
+
+// "Recertify by 07/01/2027", or what to do when none is on file.
+export function dueLine(what: "Recertify" | "Inspect", by: string | null): string {
+  if (by === null) return what === "Recertify" ? "No income certification on file" : "No inspection on file";
+  return `${what} by ${usDate(by)}`;
+}
 
 export type AssistedLease = {
   lease_id: string;

@@ -20,7 +20,7 @@ const NO_CONTACT = {
 };
 
 const VENDOR: VendorPageData = {
-  id: "v1", name: "Vendor 1", w9_on_file: true, contact: { ...NO_CONTACT, phone: "555-555-0100" },
+  id: "v1", name: "Vendor 1", w9_on_file: true, archived: false, contact: { ...NO_CONTACT, phone: "555-555-0100" },
   profile: { trade: "Plumbing", gets_1099: true, payment_method: "EFT" },
   insurance: [
     { coverage: "general liability", carrier: "Carrier A", policy_number: "GL-1", starts_on: "2026-01-01",
@@ -158,6 +158,28 @@ describe("VendorPage", () => {
 
     expect(await screen.findByText("Renamed Vendor One.")).toBeTruthy();
     expect(posted(fetch)).toEqual([["/api/vendors/v1/name", { name: "Vendor One" }]]);
+  });
+
+  it("archives them from the ⋯ menu once asked, and brings an archived one back", async () => {
+    let fetch = server();
+    render(<VendorPage me={ME} id="v1" />);
+    await screen.findByRole("heading", { level: 1 });
+
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Vendor 1" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Archive" }));
+    expect(screen.getByRole("alertdialog", { name: "Archive Vendor 1? It leaves the lists; its history stays." })).toBeTruthy();
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Archive" }));
+    await vi.waitFor(() => expect(posted(fetch)).toEqual([["/api/vendors/v1/archive", { archived: true }]]));
+    cleanup();
+
+    fetch = server({ ...VENDOR, archived: true });
+    render(<VendorPage me={ME} id="v1" />);
+    await screen.findByRole("heading", { level: 1 });
+    expect(screen.getByText("Archived")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for Vendor 1" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Bring back" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Bring back" }));
+    await vi.waitFor(() => expect(posted(fetch)).toEqual([["/api/vendors/v1/archive", { archived: false }]]));
   });
 
   it("says when they have nothing on file yet, and when there is no such vendor", async () => {

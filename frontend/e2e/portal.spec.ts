@@ -796,6 +796,13 @@ test("the demo opens on last month waiting for its manager, who approves it and 
     name: `${us(iso(first))} to ${us(iso(last))} $2,379.20 $1,729.20 Demo Manager`,
   });
   await expect(approved).toBeVisible();
+  // Its three-way reconciliation (bank, books and owners' ledgers on one page) downloads from the row.
+  const threeWay = approved.getByRole("link", {
+    name: `Three-way reconciliation, ${us(iso(first))} to ${us(iso(last))}, PDF`,
+  });
+  const pdf = await page.request.get((await threeWay.getAttribute("href")) ?? "");
+  expect(pdf.status()).toBe(200);
+  expect((await pdf.body()).subarray(0, 5).toString()).toBe("%PDF-");
 
   // Today lists the rest that waits: the bookkeeper's journal entry, the roofer's insurance
   // running out, last month's fees still in trust (the month before last's were taken out),
