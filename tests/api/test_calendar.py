@@ -259,6 +259,28 @@ def test_a_tenants_feed_shows_their_rent_due_days_their_visits_and_their_leases_
     assert not any("Property 2" in s for s in seen)
 
 
+def test_a_tenant_sees_whether_their_link_stands_and_takes_it_back(
+    other_client, client, conn, app_conn, world, pmc
+):
+    join_as(other_client, app_conn, pmc.pmc_id, "tenant", world.tenant)
+    assert other_client.get("/api/tenant/calendar").json() == {"made_at": None, "group_id": None}
+
+    url = other_client.post("/api/tenant/calendar", json={}).json()["url"]
+    standing = other_client.get("/api/tenant/calendar").json()
+    taken = other_client.post("/api/tenant/calendar/revoke", json={})
+    gone = client.get(url.removeprefix("http://testserver"))
+    again = other_client.post("/api/tenant/calendar/revoke", json={})
+
+    assert standing["made_at"] is not None and standing["group_id"] is None
+    assert taken.status_code == 204
+    assert gone.status_code == 404
+    assert (again.status_code, again.json()["detail"]) == (
+        409,
+        "you have no calendar link to take back",
+    )
+    assert other_client.get("/api/tenant/calendar").json() == {"made_at": None, "group_id": None}
+
+
 def test_a_new_link_takes_back_the_old_and_a_link_taken_back_stops(
     client, other_client, world, staff
 ):
