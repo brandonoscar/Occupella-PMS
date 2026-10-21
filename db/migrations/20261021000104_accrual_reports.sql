@@ -557,5 +557,8 @@ TO trust_app, trust_ai_agent;
 SET LOCAL lock_timeout = '5s';
 SET LOCAL statement_timeout = '60s';
 
+-- Rolling back takes away the reports this migration added.
+-- squawk-ignore ban-drop-function
 DROP FUNCTION trust_report_owner_balance_sheet(uuid, uuid, date);
+-- squawk-ignore ban-drop-function
 DROP FUNCTION trust_report_income_statement_accrual(uuid, uuid, date, date);

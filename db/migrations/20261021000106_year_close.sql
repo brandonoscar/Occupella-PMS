@@ -25,6 +25,8 @@ SET LOCAL statement_timeout = '60s';
 CREATE TABLE trust_year_closes (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     pmc_id uuid NOT NULL REFERENCES trust_pmcs (pmc_id),
+    -- A calendar year, as extract(year ...) gives it.
+    -- squawk-ignore prefer-bigint-over-int
     year integer NOT NULL CHECK (year BETWEEN 2000 AND 2999),
     closed_by uuid NOT NULL,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -53,7 +55,7 @@ DECLARE
     v_done uuid;
     v_later integer;
     v_open text;
-    v_waiting integer;
+    v_waiting bigint;
 BEGIN
     IF v_staff IS NULL THEN
         RAISE EXCEPTION 'trust: name the staff member who closes the year'
@@ -72,12 +74,8 @@ BEGIN
     END IF;
 
     -- Charges and bills dated before this year started wait for this (they hold the PMC FOR
-    -- SHARE), and a close waits for them.
+    -- SHARE), and a close waits for them. The PMC is there: its staff member holds approve.
     PERFORM 1 FROM trust_pmcs AS p WHERE p.pmc_id = p_pmc_id FOR NO KEY UPDATE;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'trust: no PMC %', p_pmc_id
-            USING ERRCODE = 'invalid_parameter_value';
-    END IF;
 
     SELECT c.id INTO v_done FROM trust_year_closes AS c
     WHERE c.pmc_id = p_pmc_id AND c.year = p_year;

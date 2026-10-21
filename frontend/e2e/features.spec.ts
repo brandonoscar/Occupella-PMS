@@ -1453,7 +1453,7 @@ test("staff open a report from Reports, see it on screen narrowed to one propert
 
   // An owner's income statement over last year.
   await section(page, "Reports");
-  await page.getByRole("list", { name: "Financial" }).getByRole("link", { name: "Income statement" }).click();
+  await page.getByRole("list", { name: "Financial" }).getByRole("link", { name: "Income statement", exact: true }).click();
   await page.getByRole("combobox", { name: "Owner" }).selectOption({ label: "Demo Owner B" });
   await page.getByRole("combobox", { name: "Days" }).selectOption({ label: "Last year" });
   const year = new Date().getUTCFullYear() - 1;

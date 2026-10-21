@@ -25,6 +25,8 @@ CREATE TABLE trust_history_files (
     pmc_id uuid NOT NULL REFERENCES trust_pmcs (pmc_id),
     kind text NOT NULL CHECK (kind IN ('tenant', 'owner', 'vendor')),
     file_sha256 bytea NOT NULL CHECK (length(file_sha256) = 32),
+    -- A CSV file's lines, far below an integer's reach.
+    -- squawk-ignore prefer-bigint-over-int
     line_count integer NOT NULL CHECK (line_count > 0),
     recorded_by uuid,
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
@@ -38,6 +40,7 @@ CREATE TABLE trust_history_lines (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     pmc_id uuid NOT NULL REFERENCES trust_pmcs (pmc_id),
     file_id uuid NOT NULL,
+    -- squawk-ignore prefer-bigint-over-int
     line_no integer NOT NULL CHECK (line_no > 0),
     tenant_id uuid,
     owner_account text REFERENCES trust_ledger_accounts (ledger_account_id),

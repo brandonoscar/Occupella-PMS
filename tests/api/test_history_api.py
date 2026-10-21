@@ -127,6 +127,12 @@ def test_history_comes_a_page_at_a_time(client, conn, pmc, staff):
             "line 2: the type is longer than 50 characters",
         ),
         (
+            "vendor history",
+            "Vendor,Date,Type,Description,Amount,Reference\n"
+            "Vendor 1,2025-01-01,Check,X,1.00," + "R" * 101 + "\n",
+            "line 2: the reference is longer than 100 characters",
+        ),
+        (
             "tenant history",
             "Property,Tenant,Date,Type,Description,Amount\n"
             "Property 9,Tenant 1,2025-01-01,Rent,X,1\n",

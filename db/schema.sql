@@ -3762,7 +3762,7 @@ DECLARE
     v_done uuid;
     v_later integer;
     v_open text;
-    v_waiting integer;
+    v_waiting bigint;
 BEGIN
     IF v_staff IS NULL THEN
         RAISE EXCEPTION 'trust: name the staff member who closes the year'
@@ -3781,12 +3781,8 @@ BEGIN
     END IF;
 
     -- Charges and bills dated before this year started wait for this (they hold the PMC FOR
-    -- SHARE), and a close waits for them.
+    -- SHARE), and a close waits for them. The PMC is there: its staff member holds approve.
     PERFORM 1 FROM trust_pmcs AS p WHERE p.pmc_id = p_pmc_id FOR NO KEY UPDATE;
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'trust: no PMC %', p_pmc_id
-            USING ERRCODE = 'invalid_parameter_value';
-    END IF;
 
     SELECT c.id INTO v_done FROM trust_year_closes AS c
     WHERE c.pmc_id = p_pmc_id AND c.year = p_year;
