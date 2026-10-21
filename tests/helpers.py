@@ -1279,6 +1279,30 @@ def authority_charges(connection, lease_id) -> list[tuple]:
     ).fetchall()
 
 
+def add_authority_late_fee(connection, pmc_id, authority_id, starts_on, grace_days, flat_fee):
+    """An authority's late payment fee from a day (migration 0116): grace days, a flat fee."""
+    return _one(
+        connection,
+        "INSERT INTO trust_authority_late_fees"
+        " (pmc_id, housing_authority_id, starts_on, grace_days, flat_fee)"
+        " VALUES (%s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, authority_id, starts_on, grace_days, Decimal(flat_fee)),
+    )
+
+
+def assess_authority_late_fees(connection, pmc_id, as_of) -> int:
+    return _one(connection, "SELECT trust_assess_authority_late_fees(%s, %s)", (pmc_id, as_of))
+
+
+def reverse_assistance_payment(connection, pmc_id, charge_id, transfer_id, reversal_id, amount):
+    """What of an authority's payment of a charge the bank returned (migration 0116)."""
+    return _one(
+        connection,
+        "SELECT trust_reverse_assistance_payment(%s, %s, %s, %s, %s)",
+        (pmc_id, charge_id, transfer_id, reversal_id, Decimal(amount)),
+    )
+
+
 def apply_assistance_payment(connection, pmc_id, charge_id, transfer_id, amount) -> Decimal:
     return _one(
         connection,

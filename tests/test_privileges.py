@@ -212,6 +212,10 @@ TABLES = {
     "trust_rent_assistance": {"SELECT", "INSERT"},
     "trust_assistance_charges": {"SELECT", "INSERT"},
     "trust_assistance_payments": {"SELECT"},
+    # An authority's late fee terms, inserted by staff; its returned payments, written only by
+    # trust_reverse_assistance_payment (migration 0116).
+    "trust_authority_late_fees": {"SELECT", "INSERT"},
+    "trust_assistance_payment_reversals": {"SELECT"},
     # Utility billing (migration 0096): staff record units' square feet, a property's plans and
     # which utilities a lease is billed for; bills and their shares are written only by
     # trust_bill_back_utility, with the lease charges they make.
@@ -375,6 +379,9 @@ FUNCTIONS = {
     "trust_assistance_part(numeric,numeric,numeric)": {"trust_app"},
     "trust_assistance_open(uuid)": {"trust_app"},
     "trust_apply_assistance_payment(uuid,uuid,text,numeric)": {"trust_app"},
+    "trust_reverse_assistance_payment(uuid,uuid,text,text,numeric)": {"trust_app"},
+    "trust_assistance_open_at(uuid,timestamptz)": {"trust_app"},
+    "trust_assess_authority_late_fees(uuid,date)": {"trust_app"},
     # Whether a signing link still signs (migration 0097).
     "trust_signing_link_open(uuid)": {"trust_app"},
     # Utility billing (migration 0096): what holds on a day, a bill's shares (a preview writes
@@ -608,6 +615,7 @@ SECURITY_DEFINER = {
     "trust_end_lease(uuid,uuid,date)",
     "trust_apply_payment(uuid,uuid,text,numeric)",
     "trust_apply_assistance_payment(uuid,uuid,text,numeric)",  # an authority's payment (0095)
+    "trust_reverse_assistance_payment(uuid,uuid,text,text,numeric)",  # and its bounce (0116)
     "trust_bill_back_utility(uuid,uuid,text,date,date,numeric,date,text,numeric,jsonb,uuid)",
     "trust_reverse_payment(uuid,uuid,text,text,numeric)",
     "trust_post_management_fee(uuid,text,date,date,timestamptz)",

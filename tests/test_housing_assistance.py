@@ -14,12 +14,15 @@ from helpers import (
     acting_as,
     add_agreement,
     add_authority,
+    add_authority_late_fee,
     add_late_fee_policy,
     add_staff,
     add_tenant,
     add_unit,
+    allow_payment,
     apply_assistance_payment,
     apply_payment,
+    assess_authority_late_fees,
     assess_late_fees,
     assist,
     authority_charges,
@@ -28,11 +31,13 @@ from helpers import (
     charge_rent_due,
     complete_offer,
     end_lease,
+    hold_payments,
     make_pmc,
     offer_lease,
     open_lease,
     post_management_fee,
     return_deposit,
+    reverse_assistance_payment,
     send_offer,
     sign_offer,
     transfer_batch,
@@ -580,6 +585,213 @@ def test_the_authoritys_rent_counts_as_rent_collected(conn, app_conn, pmc, autho
         (pmc.pmc_id, owner),
     ).fetchall()
     assert ("collected from tenants", Decimal("1000.00")) in year_end
+
+
+# --- late fees on the authority, returned payments, holds (migration 0116, q034) --------------
+
+
+def test_an_authoritys_part_still_open_after_its_grace_is_charged_a_late_fee_once(
+    conn, app_conn, pmc, authority
+):
+    lease = lease_of(conn, pmc)
+    assist(conn, pmc.pmc_id, lease, authority, OCT_1, "800.00")
+    add_authority_late_fee(conn, pmc.pmc_id, authority, SEP_1, 5, "25.00")
+    charge_rent_due(conn, pmc.pmc_id, OCT_1)
+    tenants = [row[:2] for row in tenant_rent(conn, lease)]
+
+    # Its last grace day is October 6: still within it as of the 6th, late as of the 7th.
+    assert assess_authority_late_fees(app_conn, pmc.pmc_id, date(2026, 10, 6)) == 0
+    assert assess_authority_late_fees(app_conn, pmc.pmc_id, date(2026, 10, 7)) == 1
+    assert assess_authority_late_fees(app_conn, pmc.pmc_id, date(2026, 10, 20)) == 0
+    assert authority_charges(conn, lease) == [
+        (OCT_1, "charge", Decimal("800.00"), "rent"),
+        (date(2026, 10, 7), "charge", Decimal("25.00"), "late fee"),
+    ]
+    assert conn.execute(
+        "SELECT memo, late_for_id FROM trust_assistance_charges WHERE source = 'late fee'"
+        " AND lease_id = %s",
+        (lease,),
+    ).fetchone() == ("Late payment fee, rent due 2026-10-01", base_charge(conn, lease))
+    # The tenant is charged nothing for it.
+    assert [row[:2] for row in tenant_rent(conn, lease)] == tenants
+    assert assess_late_fees(conn, pmc.pmc_id, date(2026, 10, 20)) == 0
+
+
+def test_an_authority_that_paid_by_the_end_of_its_grace_is_not_late(conn, app_conn, pmc, authority):
+    lease = lease_of(conn, pmc)
+    assist(conn, pmc.pmc_id, lease, authority, OCT_1, "800.00")
+    add_authority_late_fee(conn, pmc.pmc_id, authority, SEP_1, 5, "25.00")
+    charge_rent_due(conn, pmc.pmc_id, OCT_1)
+    (paid,) = transfer_batch(
+        conn, [(pmc.operating_cash, pmc.owners[0].account, "800.00")], at(date(2026, 10, 6), 23)
+    )
+    apply_assistance_payment(app_conn, pmc.pmc_id, base_charge(conn, lease), paid, "800.00")
+
+    assert assess_authority_late_fees(app_conn, pmc.pmc_id, date(2026, 10, 31)) == 0
+
+
+def test_terms_of_0_charge_no_late_fee_and_terms_are_the_authoritys_on_the_due_date(
+    conn, app_conn, pmc, authority
+):
+    lease = lease_of(conn, pmc)
+    assist(conn, pmc.pmc_id, lease, authority, OCT_1, "800.00")
+    add_authority_late_fee(conn, pmc.pmc_id, authority, SEP_1, 5, "25.00")
+    add_authority_late_fee(conn, pmc.pmc_id, authority, OCT_1, 5, "0")
+    charge_rent_due(conn, pmc.pmc_id, OCT_1)
+
+    assert assess_authority_late_fees(app_conn, pmc.pmc_id, date(2026, 10, 31)) == 0
+    with pytest.raises(psycopg.errors.CheckViolation):
+        add_authority_late_fee(conn, pmc.pmc_id, authority, NOV_1, 61, "5.00")
+
+
+def test_a_late_fee_is_on_a_rents_part_of_the_same_lease_and_authority(conn, pmc, authority):
+    lease = lease_of(conn, pmc)
+    assist(conn, pmc.pmc_id, lease, authority, OCT_1, "800.00")
+    charge_rent_due(conn, pmc.pmc_id, OCT_1)
+    other = add_authority(conn, pmc.pmc_id, "Another Synthetic Authority")
+    with pytest.raises(psycopg.errors.CheckViolation, match="a late fee is on"):
+        conn.execute(
+            "INSERT INTO trust_assistance_charges (pmc_id, lease_id, housing_authority_id,"
+            " due_on, kind, amount, memo, source, late_for_id)"
+            " VALUES (%s, %s, %s, %s, 'charge', 5, 'Late', 'late fee', %s)",
+            (pmc.pmc_id, lease, other, OCT_15, base_charge(conn, lease)),
+        )
+    with pytest.raises(psycopg.errors.CheckViolation, match="late_fee_check"):
+        conn.execute(
+            "INSERT INTO trust_assistance_charges (pmc_id, lease_id, housing_authority_id,"
+            " due_on, kind, amount, memo, source)"
+            " VALUES (%s, %s, %s, %s, 'charge', 5, 'Late', 'late fee')",
+            (pmc.pmc_id, lease, authority, OCT_15),
+        )
+
+
+def test_an_authority_payment_that_bounced_is_owed_again_and_counts_back_out(
+    conn, app_conn, pmc, authority
+):
+    lease = lease_of(conn, pmc)
+    account = pmc.owners[0].account
+    add_agreement(conn, pmc.pmc_id, account, SEP_1, fee_percent="10")
+    assist(conn, pmc.pmc_id, lease, authority, OCT_1, "800.00")
+    charge_rent_due(conn, pmc.pmc_id, OCT_1)
+    owed = base_charge(conn, lease)
+    (paid,) = transfer_batch(conn, [(pmc.operating_cash, account, "800.00")], at(date(2026, 10, 3)))
+    apply_assistance_payment(app_conn, pmc.pmc_id, owed, paid, "800.00")
+    (back,) = transfer_batch(conn, [(account, pmc.operating_cash, "800.00")], at(date(2026, 10, 9)))
+
+    assert reverse_assistance_payment(app_conn, pmc.pmc_id, owed, paid, back, "800.00") == 800
+    assert reverse_assistance_payment(app_conn, pmc.pmc_id, owed, paid, back, "800.00") == 800
+    assert open_of(conn, owed) == Decimal("800.00")
+    with pytest.raises(psycopg.errors.UniqueViolation, match="already reverses"):
+        reverse_assistance_payment(app_conn, pmc.pmc_id, owed, paid, back, "0.01")
+    # No more of the payment than it paid comes back.
+    _, again = transfer_batch(
+        conn,
+        [(pmc.operating_cash, account, "1.00"), (account, pmc.operating_cash, "1.00")],
+        at(date(2026, 10, 10)),
+    )
+    with pytest.raises(psycopg.errors.CheckViolation, match="too much"):
+        reverse_assistance_payment(app_conn, pmc.pmc_id, owed, paid, again, "0.01")
+    # Nothing of October's rent stays collected: the management fee and the statement say so.
+    assert post_management_fee(
+        conn, pmc.pmc_id, account, OCT_1, NOV_1, at(date(2026, 11, 2))
+    ) == Decimal("0.00")
+    owner = pmc.owners[0].owner_id
+    statement = dict(
+        conn.execute(
+            "SELECT item, amount FROM trust_report_income_statement(%s, %s, %s, %s)"
+            " WHERE property IS NOT NULL",
+            (pmc.pmc_id, owner, OCT_1, date(2026, 10, 31)),
+        ).fetchall()
+    )
+    assert statement["income: rent"] == Decimal("0.00")
+    year_end = conn.execute(
+        "SELECT item, amount FROM trust_report_owner_year_end(%s, %s, 2026)"
+        " WHERE property IS NOT NULL",
+        (pmc.pmc_id, owner),
+    ).fetchall()
+    assert ("collected from tenants", Decimal("0.00")) in year_end
+    assert set(bank_sums(conn, pmc.pmc_id).values()) == {Decimal(0)}
+
+
+def test_a_reversal_moves_the_money_back_the_way_the_payment_came(conn, app_conn, pmc, authority):
+    lease = lease_of(conn, pmc)
+    account = pmc.owners[0].account
+    assist(conn, pmc.pmc_id, lease, authority, OCT_1, "800.00")
+    charge_rent_due(conn, pmc.pmc_id, OCT_1)
+    owed = base_charge(conn, lease)
+    (paid,) = transfer_batch(conn, [(pmc.operating_cash, account, "800.00")], at(date(2026, 10, 3)))
+    apply_assistance_payment(app_conn, pmc.pmc_id, owed, paid, "800.00")
+    (wrong_way,) = transfer_batch(
+        conn, [(pmc.operating_cash, account, "1.00")], at(date(2026, 10, 9))
+    )
+    (early,) = transfer_batch(conn, [(account, pmc.operating_cash, "5.00")], at(date(2026, 10, 2)))
+
+    with pytest.raises(psycopg.errors.InvalidParameterValue, match="does not move money back"):
+        reverse_assistance_payment(app_conn, pmc.pmc_id, owed, paid, wrong_way, "1.00")
+    with pytest.raises(psycopg.errors.InvalidParameterValue, match="dated before"):
+        reverse_assistance_payment(app_conn, pmc.pmc_id, owed, paid, early, "5.00")
+    with pytest.raises(psycopg.errors.InvalidParameterValue, match="pays nothing"):
+        reverse_assistance_payment(app_conn, pmc.pmc_id, owed, early, early, "5.00")
+
+
+def test_an_authority_payment_in_a_payment_hold_is_refused_unless_allowed(
+    conn, app_conn, pmc, authority
+):
+    lease = lease_of(conn, pmc)
+    assist(conn, pmc.pmc_id, lease, authority, OCT_1, "800.00")
+    charge_rent_due(conn, pmc.pmc_id, OCT_1)
+    owed = base_charge(conn, lease)
+    hold = hold_payments(conn, pmc.pmc_id, lease, OCT_1)
+    (paid,) = transfer_batch(
+        conn, [(pmc.operating_cash, pmc.owners[0].account, "800.00")], at(date(2026, 10, 3))
+    )
+
+    with pytest.raises(psycopg.errors.CheckViolation, match="payment hold"):
+        apply_assistance_payment(app_conn, pmc.pmc_id, owed, paid, "800.00")
+    allow_payment(conn, pmc.pmc_id, hold, paid)
+    assert apply_assistance_payment(app_conn, pmc.pmc_id, owed, paid, "800.00") == 800
+
+
+def test_an_authoritys_late_fee_paid_is_a_late_fee_not_rent(conn, app_conn, pmc, authority):
+    lease = lease_of(conn, pmc)
+    account = pmc.owners[0].account
+    add_agreement(conn, pmc.pmc_id, account, SEP_1, fee_percent="10")
+    assist(conn, pmc.pmc_id, lease, authority, OCT_1, "800.00")
+    add_authority_late_fee(conn, pmc.pmc_id, authority, SEP_1, 5, "25.00")
+    charge_rent_due(conn, pmc.pmc_id, OCT_1)
+    assess_authority_late_fees(app_conn, pmc.pmc_id, date(2026, 10, 7))
+    fee = conn.execute(
+        "SELECT id FROM trust_assistance_charges WHERE lease_id = %s AND source = 'late fee'",
+        (lease,),
+    ).fetchone()[0]
+    (paid,) = transfer_batch(conn, [(pmc.operating_cash, account, "825.00")], at(date(2026, 10, 9)))
+    apply_assistance_payment(app_conn, pmc.pmc_id, base_charge(conn, lease), paid, "800.00")
+    apply_assistance_payment(app_conn, pmc.pmc_id, fee, paid, "25.00")
+
+    # 10% of the 800.00 of rent; the late fee is not rent for the fee.
+    assert post_management_fee(
+        conn, pmc.pmc_id, account, OCT_1, NOV_1, at(date(2026, 11, 2))
+    ) == Decimal("80.00")
+    owner = pmc.owners[0].owner_id
+    statement = dict(
+        conn.execute(
+            "SELECT item, amount FROM trust_report_income_statement(%s, %s, %s, %s)"
+            " WHERE property IS NOT NULL",
+            (pmc.pmc_id, owner, OCT_1, date(2026, 10, 31)),
+        ).fetchall()
+    )
+    assert (statement["income: rent"], statement["income: late fees"]) == (
+        Decimal("800.00"),
+        Decimal("25.00"),
+    )
+    accrual = dict(
+        conn.execute(
+            "SELECT item, amount FROM trust_report_income_statement_accrual(%s, %s, %s, %s)"
+            " WHERE property IS NOT NULL",
+            (pmc.pmc_id, owner, OCT_1, date(2026, 10, 31)),
+        ).fetchall()
+    )
+    assert accrual["income: late fees"] == Decimal("25.00")
 
 
 # --- records -----------------------------------------------------------------------------------
