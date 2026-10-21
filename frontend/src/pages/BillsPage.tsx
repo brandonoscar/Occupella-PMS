@@ -18,6 +18,7 @@ import { PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Tabs } from "../components/Tabs";
 import { Wide } from "../components/Wide";
+import { latest } from "../latest";
 import { day, money, usDate } from "../money";
 import type { Bill, Recurring } from "../payables";
 import { billBadge } from "../payables";
@@ -84,15 +85,17 @@ export function BillsPage({ me }: { me: Me }) {
   const failed = (why: unknown) => setError(why instanceof ApiError ? why.detail : String(why));
 
   useEffect(() => {
+    const run = latest();
     setError("");
     if (show === "recurring") {
-      api.get<Recurring[]>("/api/payables/recurring").then(setRecurring).catch(failed);
-      return;
+      api.get<Recurring[]>("/api/payables/recurring").then(run.keep(setRecurring)).catch(run.keep(failed));
+      return run.stop;
     }
     const query = new URLSearchParams({ show, page: String(number), ...scopeParams(scope) });
     if (vendor) query.set("vendor", vendor);
     if (dueBy) query.set("due_by", dueBy);
-    api.get<Paged<Bill>>(`/api/payables/bills?${query}`).then(setPage).catch(failed);
+    api.get<Paged<Bill>>(`/api/payables/bills?${query}`).then(run.keep(setPage)).catch(run.keep(failed));
+    return run.stop;
   }, [show, scope, vendor, dueBy, number, runs]);
   useEffect(() => {
     api.get<Portfolio>("/api/setup").then(setBooks).catch(failed);

@@ -13,6 +13,7 @@ import { Said } from "../components/Said";
 import { Select } from "../components/Select";
 import { PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
+import { latest } from "../latest";
 import { day, money, sumMoney, usDate } from "../money";
 import type { OwnerMoney, OwnerPaid, PayoutMethod } from "../payables";
 import { paidSummary } from "../payables";
@@ -43,11 +44,13 @@ export function PayOwnersPage({ me }: { me: Me }) {
   const { ask, prompt } = useConfirm();
 
   useEffect(() => {
+    const run = latest();
     const query = new URLSearchParams(scopeParams(scope)).toString();
     api
       .get<OwnerMoney[]>(query ? `/api/payables/owners?${query}` : "/api/payables/owners")
-      .then(setOwners)
-      .catch((why) => setError(why instanceof ApiError ? why.detail : String(why)));
+      .then(run.keep(setOwners))
+      .catch(run.keep((why) => setError(why instanceof ApiError ? why.detail : String(why))));
+    return run.stop;
   }, [scope, runs]);
 
   const payable = (owners ?? []).filter((o) => Number(o.available) > 0);

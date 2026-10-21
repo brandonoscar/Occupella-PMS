@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { holdBack } from "../holdBack";
 import type { Paged } from "../rentals";
 import type { HistoryLine } from "./HistoryCard";
 import { HistoryCard } from "./HistoryCard";
@@ -53,6 +54,24 @@ describe("HistoryCard", () => {
     expect(await screen.findByRole("columnheader", { name: "Property" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     expect(await screen.findByText("February draw")).toBeTruthy();
+  });
+
+  it("shows the lines of the page turned to now, even when an earlier page's answer comes back last", async () => {
+    const draw = (description: string, n: number) => page([{ ...LINE, unit: null, property: "Property 1", description }], n, 101);
+    server({ 1: draw("March draw", 1), 2: draw("February draw", 2), 3: draw("January draw", 3) });
+    const release = holdBack((path) => path.endsWith("page=3"));
+    render(<HistoryCard about="owner" id="o1" />);
+    await screen.findByText("March draw");
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByText("February draw");
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+    await screen.findByText("March draw");
+    await release();
+
+    expect(screen.getByText("March draw")).toBeTruthy();
+    expect(screen.queryByText("January draw")).toBeNull();
   });
 
   it("shows nothing for someone with no history, and a vendor's lines with no place column", async () => {

@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BankDeposit, Breakdown, RegisterLine, Undeposited } from "../banking";
+import { holdBack } from "../holdBack";
 import { BreakdownTab, DepositsTab, RegisterTab } from "./BankAccountTabs";
 
 afterEach(() => {
@@ -73,6 +74,20 @@ describe("RegisterTab", () => {
     render(<RegisterTab bankId="b1" />);
     expect((await screen.findByRole("alert")).textContent).toBe("only staff may do that");
   });
+
+  it("shows the register of the account picked now, even when an earlier account's answer comes back last", async () => {
+    const other: RegisterLine = {
+      ...LINES[1]!, transfer_id: "t9", party: "Tenant B", memo: "Rent – Tenant B, Property 2 Unit 1", property: "Property 2",
+    };
+    server((path) => ({ items: path.startsWith("/api/bank-accounts/b1/") ? LINES : [other], total: 2, page: 1, per_page: 50 }));
+    const release = holdBack((path) => path.startsWith("/api/bank-accounts/b1/"));
+    const { rerender } = render(<RegisterTab bankId="b1" />);
+    rerender(<RegisterTab bankId="b2" />);
+    await screen.findByRole("cell", { name: "Tenant B" });
+    await release();
+
+    expect(cells(screen.getByRole("table", { name: "Register" })).map((row) => row[2])).toEqual(["Tenant B"]);
+  });
 });
 
 const BREAKDOWN: Breakdown = {
@@ -117,6 +132,19 @@ describe("BreakdownTab", () => {
     server(() => "only staff may do that");
     render(<BreakdownTab bankId="b2" />);
     expect((await screen.findByRole("alert")).textContent).toBe("only staff may do that");
+  });
+
+  it("shows what the account picked now holds, even when an earlier account's answer comes back last", async () => {
+    server((path) => (path.startsWith("/api/bank-accounts/b1/") ? BREAKDOWN
+      : { book_cash: "900.00", held: [{ kind: "tenant_deposit", label: "Tenants' security deposits", amount: "900.00" }], owners: [] }));
+    const release = holdBack((path) => path.startsWith("/api/bank-accounts/b1/"));
+    const { rerender } = render(<BreakdownTab bankId="b1" />);
+    rerender(<BreakdownTab bankId="b2" />);
+    await screen.findByText("Tenants' security deposits");
+    await release();
+
+    expect(screen.getByTestId("breakdown-cash").textContent).toBe("$900.00");
+    expect(screen.queryByRole("table", { name: "By owner" })).toBeNull();
   });
 });
 
@@ -165,5 +193,17 @@ describe("DepositsTab", () => {
     server((path) => (path.endsWith("/deposits") ? "no such trust bank account" : WAITING));
     render(<DepositsTab bankId="b1" />);
     expect((await screen.findByRole("alert")).textContent).toBe("no such trust bank account");
+  });
+
+  it("shows what waits in the account picked now, even when an earlier account's answer comes back last", async () => {
+    server((path) => (path.startsWith("/api/bank-accounts/b1/") ? (path.endsWith("/undeposited") ? WAITING : [DONE]) : []));
+    const release = holdBack((path) => path === "/api/bank-accounts/b1/undeposited");
+    const { rerender } = render(<DepositsTab bankId="b1" />);
+    rerender(<DepositsTab bankId="b2" />);
+    await screen.findByText("Everything that came in is in a deposit.");
+    await release();
+
+    expect(screen.getByText("Everything that came in is in a deposit.")).toBeTruthy();
+    expect(screen.queryByRole("list", { name: "Not deposited yet" })).toBeNull();
   });
 });

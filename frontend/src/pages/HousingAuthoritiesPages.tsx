@@ -14,6 +14,8 @@ import { Select } from "../components/Select";
 import { PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
+import type { Keep } from "../latest";
+import { keepAll, latest } from "../latest";
 import { day, money, usDate } from "../money";
 import type { PaymentMethod } from "../rent";
 import { PAYMENT_METHODS, requestId } from "../rent";
@@ -109,10 +111,15 @@ export function HousingAuthorityPage({ me, id }: { me: Me; id: string }) {
   const [paying, setPaying] = useState(false);
   const { said, error: refused, record } = useRecord(refresh);
 
-  function refresh() {
-    api.get<AuthorityPage>(`/api/assistance/authorities/${id}`).then(setPage).catch((failed) => setError(detail(failed)));
+  function refresh(keep: Keep = keepAll) {
+    api.get<AuthorityPage>(`/api/assistance/authorities/${id}`).then(keep(setPage))
+      .catch(keep((failed) => setError(detail(failed))));
   }
-  useEffect(refresh, [id]);
+  useEffect(() => {
+    const run = latest();
+    refresh(run.keep);
+    return run.stop;
+  }, [id]);
 
   if (page === null) {
     return (

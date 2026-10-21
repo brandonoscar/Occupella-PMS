@@ -16,6 +16,7 @@ import { PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { TenantLinks } from "../components/TenantLinks";
 import { Wide } from "../components/Wide";
+import { latest } from "../latest";
 import { day, money, usDate } from "../money";
 import type { RentRun, RentRunLine } from "../rent";
 import { rentRunSummary } from "../rent";
@@ -63,11 +64,13 @@ export function RentPage({ me }: { me: Me }) {
   const admin = me.roles?.includes("admin") ?? false;
 
   useEffect(() => {
+    const run = latest();
     const query = new URLSearchParams({ page: String(number), show, ...scopeParams(scope) });
     api
       .get<Paged<RentRollRow>>(`/api/leases?${query}`)
-      .then(setPage)
-      .catch((failed) => setError(detail(failed)));
+      .then(run.keep(setPage))
+      .catch(run.keep((failed) => setError(detail(failed))));
+    return run.stop;
   }, [scope, show, number, changes]);
 
   // A form in a side panel closes once what it recorded is recorded.

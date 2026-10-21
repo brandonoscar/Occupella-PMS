@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
+import { holdBack } from "../holdBack";
 import type { Paged } from "../rentals";
 import type { VendorRow } from "../vendors";
 import { standingTone, standingWord } from "../vendors";
@@ -80,6 +81,27 @@ describe("VendorsPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Next" }));
     await vi.waitFor(() => expect(screen.queryByRole("row", { name: "Vendor 1" })).toBeNull());
     expect(fetch.mock.calls.map(([p]) => p)).toEqual(["/api/vendors?page=1", "/api/vendors?page=2"]);
+  });
+
+  it("shows the page of vendors asked for now, even when an earlier page's answer comes back last", async () => {
+    server({
+      "/api/vendors?page=1": { ...PAGE, items: [ROWS[0]], total: 151 },
+      "/api/vendors?page=2": { ...PAGE, items: [ROWS[1]], page: 2, total: 151 },
+      "/api/vendors?page=3": { ...PAGE, items: [{ ...ROWS[0], id: "v3", name: "Vendor 3" }], page: 3, total: 151 },
+    });
+    const release = holdBack((path) => path === "/api/vendors?page=3");
+    render(<VendorsPage me={ME} />);
+    await screen.findByRole("row", { name: "Vendor 1" });
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    await screen.findByRole("row", { name: "Vendor 2" });
+
+    fireEvent.click(screen.getByRole("button", { name: "Next" }));
+    fireEvent.click(screen.getByRole("button", { name: "Previous" }));
+    await screen.findByRole("row", { name: "Vendor 1" });
+    await release();
+
+    expect(screen.getByRole("row", { name: "Vendor 1" })).toBeTruthy();
+    expect(screen.queryByRole("row", { name: "Vendor 3" })).toBeNull();
   });
 
   it("adds a vendor with their trade, 1099, how they are paid and contact, then opens their page", async () => {

@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
+import { holdBack } from "../holdBack";
 import type { Bill, Recurring } from "../payables";
 import type { Portfolio } from "../setup";
 import { BillsPage } from "./BillsPage";
@@ -246,5 +247,24 @@ describe("BillsPage", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));
     render(<BillsPage me={ME} />);
     expect((await screen.findAllByRole("alert"))[0]?.textContent).toBe("sign in first");
+  });
+
+  it("shows the bills of the vendor picked now, even when an earlier vendor's answer comes back last", async () => {
+    server({
+      "/api/payables/bills?show=open&page=1&vendor=v1": paged([BILL]),
+      "/api/payables/bills?show=open&page=1&vendor=v2": paged([{ ...BILL, id: "b9", vendor_id: "v2", vendor: "Vendor 2", reference: "INV-9" }]),
+    });
+    const release = holdBack((path) => path.includes("vendor=v1"));
+    render(<BillsPage me={ME} />);
+    const vendor = screen.getByRole("combobox", { name: "Vendor" });
+    await within(vendor).findByRole("option", { name: "Vendor 2" });
+
+    fireEvent.change(vendor, { target: { value: "v1" } });
+    fireEvent.change(vendor, { target: { value: "v2" } });
+    await screen.findByRole("row", { name: "Vendor 2 INV-9" });
+    await release();
+
+    expect(screen.getByRole("row", { name: "Vendor 2 INV-9" })).toBeTruthy();
+    expect(screen.queryByRole("row", { name: "Vendor 1 INV-1" })).toBeNull();
   });
 });

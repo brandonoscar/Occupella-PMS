@@ -17,6 +17,7 @@ import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
 import type { ContentType, FileRow, Kind, Library } from "../documents";
 import { ATTACHED, KINDS, MAX_BYTES, kindLabel, sizeLabel, titleOf, toBase64, typeOf } from "../documents";
+import { latest } from "../latest";
 import { usDate } from "../money";
 import type { Paged } from "../rentals";
 import { scopeParams, useScope } from "../scope";
@@ -45,12 +46,14 @@ export function DocumentsPage({ me }: { me: Me }) {
   const { said, error: refused, record } = useRecord(() => setRuns((n) => n + 1));
 
   useEffect(() => {
+    const run = latest();
     const query = new URLSearchParams({ page: String(number), ...scopeParams(scope) });
     if (kind) query.set("kind", kind);
     api
       .get<Paged<FileRow>>(`/api/documents/files?${query}`)
-      .then(setPage)
-      .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
+      .then(run.keep(setPage))
+      .catch(run.keep((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed))));
+    return run.stop;
   }, [scope, kind, number, runs]);
   const restart = <T,>(set: (value: T) => void) => (value: T) => { set(value); setNumber(1); };
   const uploadThenClose: Recorder = async (path, body, done) => {

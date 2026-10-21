@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { holdBack } from "../holdBack";
 import { VendorLinkCard } from "./VendorLinkCard";
 
 afterEach(() => {
@@ -64,6 +65,19 @@ describe("VendorLinkCard", () => {
     // The link shown is gone with it.
     expect(screen.queryByLabelText("Work order link, Vendor 1")).toBeNull();
     expect(posted(fetch)).toEqual(["/api/vendors/v1/link", "/api/vendors/v1/link/revoke"]);
+  });
+
+  it("shows the link of the vendor opened now, even when an earlier vendor's answer comes back last", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (path: string) =>
+      new Response(JSON.stringify({ made_at: path === "/api/vendors/v1/link" ? "2026-10-01T09:00:00Z" : null }))));
+    const release = holdBack((path) => path === "/api/vendors/v1/link");
+    const { rerender } = render(<VendorLinkCard vendorId="v1" name="Vendor 1" />);
+    rerender(<VendorLinkCard vendorId="v2" name="Vendor 2" />);
+    await vi.waitFor(() => expect(screen.getByTestId("vendor-link").textContent).toContain("Vendor 2 has no link."));
+    await release();
+
+    expect(screen.getByTestId("vendor-link").textContent).toContain("Vendor 2 has no link.");
+    expect(screen.getByTestId("vendor-link").textContent).not.toContain("made 10/01/2026");
   });
 
   it("says when its state can't be read", async () => {

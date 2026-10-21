@@ -4,6 +4,7 @@ import { Notice } from "../components/Notice";
 import { Pager } from "../components/Pager";
 import { Card } from "../components/Shell";
 import { Wide } from "../components/Wide";
+import { latest } from "../latest";
 import { money, usDate } from "../money";
 import type { Paged } from "../rentals";
 
@@ -25,9 +26,11 @@ export function HistoryCard({ about, id }: { about: "tenant" | "owner" | "vendor
   const [n, setN] = useState(1);
   const [error, setError] = useState("");
   useEffect(() => {
+    const run = latest();
     api.get<Paged<HistoryLine>>(`/api/history?${new URLSearchParams({ [`${about}_id`]: id, page: String(n) })}`)
-      .then(setPage)
-      .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
+      .then(run.keep(setPage))
+      .catch(run.keep((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed))));
+    return run.stop;
   }, [about, id, n]);
   if (error) return <Card title="Before the switch"><Notice tone="error">{error}</Notice></Card>;
   if (page === null || page.total === 0) return null;

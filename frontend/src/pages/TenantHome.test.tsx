@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
+import { holdBack } from "../holdBack";
 import type { Lease } from "./TenantHome";
 import { TenantHome, comingDueLabel, firstLease, leaseLabel, monthlyLabel } from "./TenantHome";
 
@@ -364,6 +365,28 @@ describe("TenantHome", () => {
       carrier: "Carrier B", policy_number: "RI-2", starts_on: "2026-12-01", expires_on: "2027-11-30",
       liability_limit: "100000.00", landlord_interested_party: false,
     });
+  });
+
+  it("shows the ledger of the lease picked now, even when an earlier lease's answer comes back last", async () => {
+    server({
+      "GET /api/tenant/leases": [lease("1", true), lease("2", false)],
+      "GET /api/tenant/requests": [],
+      "GET /api/tenant/renewals": [],
+      "GET /api/tenant/leases/1/ledger": LEDGER,
+      "GET /api/tenant/leases/2/ledger": {
+        ...LEDGER,
+        rows: [...LEDGER.rows.slice(0, 2), ["3", "2026-06-30", "balance", "end of day UTC", "1500.00", "0.00", "1500.00"]],
+      },
+    });
+    const release = holdBack((path) => path === "/api/tenant/leases/1/ledger");
+    render(<TenantHome me={ME} />);
+
+    fireEvent.change(await screen.findByLabelText("Lease"), { target: { value: "2" } });
+    await screen.findByText("Balance at the end of 06/30/2026");
+    await release();
+
+    expect(screen.getByText("Balance at the end of 06/30/2026")).toBeTruthy();
+    expect(screen.queryByText("Balance at the end of 10/11/2026")).toBeNull();
   });
 
   it("takes no request under a lease that has ended", async () => {

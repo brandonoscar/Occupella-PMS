@@ -11,6 +11,7 @@ import { Notice } from "../components/Notice";
 import { Said } from "../components/Said";
 import { PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
+import { latest } from "../latest";
 import { day, money, sumMoney, usDate } from "../money";
 import type { Fee, FeeDue } from "../payables";
 import { lastMonthPeriod } from "../payables";
@@ -35,13 +36,15 @@ export function ManagementFeesPage({ me }: { me: Me }) {
   const { ask, prompt } = useConfirm();
 
   useEffect(() => {
+    const run = latest();
     setError("");
     if (!start || !end) return;
     const query = new URLSearchParams({ period_start: start, period_end: end });
     api
       .get<FeeDue[]>(`/api/payables/management-fees?${query}`)
-      .then(setFees)
-      .catch((why) => { setFees(null); setError(why instanceof ApiError ? why.detail : String(why)); });
+      .then(run.keep(setFees))
+      .catch(run.keep((why) => { setFees(null); setError(why instanceof ApiError ? why.detail : String(why)); }));
+    return run.stop;
   }, [start, end, runs]);
   // How the company takes its fees: by hand here, or each month by themselves.
   const [automatic, setAutomatic] = useState<AutomaticFees | null>(null);

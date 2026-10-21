@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { holdBack } from "../holdBack";
 import { NotesCard } from "./NotesCard";
 
 afterEach(() => {
@@ -35,6 +36,20 @@ describe("NotesCard", () => {
       "Asked about parking.Someone · 10/01/2026",
     ]);
     expect(fetch.mock.calls[0]?.[0]).toBe("/api/notes?about=lease&about_id=l1");
+  });
+
+  it("shows the notes of the record opened now, even when an earlier record's answer comes back last", async () => {
+    const other = [{ id: "n9", body: "Keys returned.", by: "Staff 2", at: "2026-10-13T15:00:00Z" }];
+    vi.stubGlobal("fetch", vi.fn(async (path: string) =>
+      new Response(JSON.stringify(path.endsWith("about_id=l1") ? NOTES : other))));
+    const release = holdBack((path) => path.endsWith("about_id=l1"));
+    const { rerender } = render(<NotesCard about="lease" aboutId="l1" name="Unit 1, Property 1" />);
+    rerender(<NotesCard about="lease" aboutId="l2" name="Unit 2, Property 1" />);
+    await screen.findByText("Keys returned.");
+    await release();
+
+    expect(screen.getByText("Keys returned.")).toBeTruthy();
+    expect(screen.queryByText("Asked about parking.")).toBeNull();
   });
 
   it("adds a note and clears the box", async () => {

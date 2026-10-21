@@ -14,6 +14,7 @@ import { Tabs } from "../components/Tabs";
 import { Wide } from "../components/Wide";
 import type { Budget } from "../budgets";
 import { MONTHS, budgetVsActualHref, isAmount, lineLabel, spread, total } from "../budgets";
+import { latest } from "../latest";
 import { money } from "../money";
 import type { OwnerMoney } from "../payables";
 import { fromCents, toCents } from "../reconcile";
@@ -51,18 +52,20 @@ export function BudgetsPage({ me }: { me: Me }) {
   const share = shares.find((o) => o.account === account) ?? shares[0];
 
   useEffect(() => {
+    const run = latest();
     if (!share || !/^\d{4}$/.test(year)) return;
     setError("");
     api
       .get<Budget>(`/api/budgets?${new URLSearchParams({ account: share.account, year })}`)
-      .then((found) => {
+      .then(run.keep((found) => {
         setBudget(found);
         setLoads((n) => n + 1);
-      })
-      .catch((why) => {
+      }))
+      .catch(run.keep((why) => {
         setBudget(null);
         failed(why);
-      });
+      }));
+    return run.stop;
   }, [share?.account, year, runs]);
 
   return (
@@ -202,12 +205,14 @@ function VersusActual({ budget, propertyId }: { budget: Budget; propertyId: stri
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
+    const run = latest();
     setPreview(null);
     setError("");
     api
       .get<Preview>(budgetVsActualHref(budget.owner_id, budget.year, "json", propertyId))
-      .then(setPreview)
-      .catch((why) => setError(why instanceof ApiError ? why.detail : String(why)));
+      .then(run.keep(setPreview))
+      .catch(run.keep((why) => setError(why instanceof ApiError ? why.detail : String(why))));
+    return run.stop;
   }, [budget.owner_id, budget.year, propertyId]);
   if (preview === null) return <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>;
   const at = (name: string) => preview.columns.indexOf(name);

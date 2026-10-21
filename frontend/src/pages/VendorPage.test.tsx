@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
+import { holdBack } from "../holdBack";
 import type { VendorPageData } from "../workOrders";
 import { VendorPage } from "./VendorPage";
 
@@ -158,6 +159,21 @@ describe("VendorPage", () => {
 
     expect(await screen.findByText("Renamed Vendor One.")).toBeTruthy();
     expect(posted(fetch)).toEqual([["/api/vendors/v1/name", { name: "Vendor One" }]]);
+  });
+
+  it("shows the vendor opened now, even when an earlier vendor's answer comes back last", async () => {
+    const reads = server();
+    vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) =>
+      path === "/api/vendors/v2" ? new Response(JSON.stringify({ ...VENDOR, id: "v2", name: "Vendor 2" }), { status: 200 })
+      : reads(path, init)));
+    const release = holdBack((path) => path === "/api/vendors/v1");
+    const { rerender } = render(<VendorPage me={ME} id="v1" />);
+    rerender(<VendorPage me={ME} id="v2" />);
+    await screen.findByRole("heading", { level: 1, name: "Vendor 2" });
+    await release();
+
+    expect(screen.getByRole("heading", { level: 1, name: "Vendor 2" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 1, name: "Vendor 1" })).toBeNull();
   });
 
   it("says when they have nothing on file yet, and when there is no such vendor", async () => {

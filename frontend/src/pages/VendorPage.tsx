@@ -14,6 +14,8 @@ import { Card, PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Tabs } from "../components/Tabs";
 import { Wide } from "../components/Wide";
+import type { Keep } from "../latest";
+import { keepAll, latest } from "../latest";
 import { day, money, usDate } from "../money";
 import { COVERAGES, PAYMENT, standingTone, standingWord } from "../vendors";
 import type { VendorPageData } from "../workOrders";
@@ -53,13 +55,17 @@ export function VendorPage({ me, id }: { me: Me; id: string }) {
   const [renamed, setRenamed] = useState("");
   const { said, error: refused, record } = useRecord(refresh);
 
-  function refresh() {
+  function refresh(keep: Keep = keepAll) {
     api
       .get<VendorPageData>(`/api/vendors/${id}`)
-      .then(setVendor)
-      .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
+      .then(keep(setVendor))
+      .catch(keep((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed))));
   }
-  useEffect(refresh, [id]);
+  useEffect(() => {
+    const run = latest();
+    refresh(run.keep);
+    return run.stop;
+  }, [id]);
   const recordThenClose: Recorder = async (path, body, done) => {
     const recorded = await record(path, body, done);
     if (recorded) setPanel(null);

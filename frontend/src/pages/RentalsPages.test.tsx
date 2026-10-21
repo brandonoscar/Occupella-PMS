@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
+import { holdBack } from "../holdBack";
 import type { Paged, Property, PropertyRow, Unit } from "../rentals";
 import { PropertiesPage, PropertyPage, UnitPage, tenantsEmailed } from "./RentalsPages";
 
@@ -166,6 +167,28 @@ describe("PropertiesPage", () => {
     expect(asked(fetch)).toContain("/api/properties?page=1&archived=false&group=g1");
   });
 
+  it("shows the properties of the one picked now, even when an earlier pick's answer comes back last", async () => {
+    server({
+      "/api/properties?page=1&archived=false": ROWS,
+      "/api/properties?page=1&archived=false&property=p1": { ...ROWS, items: [ROWS.items[0]], total: 1 },
+      "/api/properties?page=1&archived=false&property=p2": { ...ROWS, items: [{ ...ROWS.items[1]!, owners: ["Owner 9"] }], total: 1 },
+      "/api/property-groups": GROUPS,
+    });
+    const release = holdBack((path) => path.includes("property=p1"));
+    render(<PropertiesPage me={ME} />);
+    await screen.findByRole("row", { name: "Property 1" });
+    const picker = screen.getByRole("combobox", { name: "Properties shown" });
+    await within(picker).findByRole("option", { name: "Property 2" });
+
+    fireEvent.change(picker, { target: { value: "property:p1" } });
+    fireEvent.change(picker, { target: { value: "property:p2" } });
+    await screen.findByText("Owner 9");
+    await release();
+
+    expect(screen.getByRole("row", { name: "Property 2" })).toBeTruthy();
+    expect(screen.queryByRole("row", { name: "Property 1" })).toBeNull();
+  });
+
   it("says when the properties can't be read", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));
     render(<PropertiesPage me={ME} />);
@@ -199,6 +222,19 @@ describe("PropertyPage", () => {
     expect(within(units[0]!).getByRole("link", { name: "Unit 1" }).getAttribute("href")).toBe("/units/u1");
     expect(within(units[0]!).getByRole("link", { name: "Open lease" }).getAttribute("href")).toBe("/leases/l1");
     expect(within(units[2]!).queryByRole("link", { name: "Open lease" })).toBeNull();
+  });
+
+  it("shows the property opened now, even when an earlier property's answer comes back last", async () => {
+    server({ "/api/properties/p1": PROPERTY, "/api/properties/p2": { ...PROPERTY, id: "p2", name: "Property 2" } });
+    const release = holdBack((path) => path === "/api/properties/p1");
+    const { rerender } = render(<PropertyPage me={ME} id="p1" />);
+
+    rerender(<PropertyPage me={ME} id="p2" />);
+    await screen.findByRole("heading", { level: 1, name: "Property 2" });
+    await release();
+
+    expect(screen.getByRole("heading", { level: 1, name: "Property 2" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 1, name: "Property 1" })).toBeNull();
   });
 
   it("renames it, and archives it only when asked twice, saying why one is refused", async () => {
@@ -416,6 +452,19 @@ describe("UnitPage", () => {
       ["Tenant 2", "/tenants/t2"],
       ["01/01/2026 – Month to month", "/leases/l1"],
     ]);
+  });
+
+  it("shows the unit opened now, even when an earlier unit's answer comes back last", async () => {
+    server({ "/api/units/u1": UNIT, "/api/units/u2": { ...UNIT, id: "u2", name: "Unit 2" } });
+    const release = holdBack((path) => path === "/api/units/u1");
+    const { rerender } = render(<UnitPage me={ME} id="u1" />);
+
+    rerender(<UnitPage me={ME} id="u2" />);
+    await screen.findByRole("heading", { level: 1, name: "Unit 2, Property 1" });
+    await release();
+
+    expect(screen.getByRole("heading", { level: 1, name: "Unit 2, Property 1" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 1, name: "Unit 1, Property 1" })).toBeNull();
   });
 
   it("archives a unit with nothing on it, and says when it has no lease yet", async () => {

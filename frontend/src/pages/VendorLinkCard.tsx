@@ -5,6 +5,7 @@ import { ConfirmDialog } from "../components/Confirm";
 import { Notice } from "../components/Notice";
 import { Said } from "../components/Said";
 import { Card } from "../components/Shell";
+import { latest } from "../latest";
 import { usDate } from "../money";
 import { useRecord } from "./useRecord";
 
@@ -19,10 +20,12 @@ export function VendorLinkCard({ vendorId, name }: { vendorId: string; name: str
   const [unread, setUnread] = useState("");
   const { said, error, record } = useRecord(() => setRuns((n) => n + 1));
   useEffect(() => {
+    const run = latest();
     api
       .get<{ made_at: string | null }>(`/api/vendors/${vendorId}/link`)
-      .then((state) => setMadeAt(state.made_at))
-      .catch((failed) => setUnread(failed instanceof ApiError ? failed.detail : String(failed)));
+      .then(run.keep((state) => setMadeAt(state.made_at)))
+      .catch(run.keep((failed) => setUnread(failed instanceof ApiError ? failed.detail : String(failed))));
+    return run.stop;
   }, [vendorId, runs]);
   if (madeAt === undefined) return <Notice tone={unread ? "error" : "info"}>{unread || "Loading"}</Notice>;
   return (

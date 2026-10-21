@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
+import { holdBack } from "../holdBack";
 import type { OwnerMoney } from "../payables";
 import { PayOwnersPage } from "./PayOwnersPage";
 
@@ -114,5 +115,27 @@ describe("PayOwnersPage", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));
     render(<PayOwnersPage me={ME} />);
     expect((await screen.findAllByRole("alert"))[0]?.textContent).toBe("sign in first");
+  });
+
+  it("shows the owners of the property group picked now, even when an earlier group's answer comes back last", async () => {
+    server({
+      "/api/property-groups": { groups: [{ id: "g1", name: "North", properties: [] }, { id: "g2", name: "South", properties: [] }], properties: [] },
+      "/api/payables/owners": [line(3, "0.00")],
+      "/api/payables/owners?group=g1": [line(1, "900.00")],
+      "/api/payables/owners?group=g2": [line(2, "250.50")],
+    });
+    const release = holdBack((path) => path.includes("group=g1"));
+    render(<PayOwnersPage me={ME} />);
+    await screen.findByRole("row", { name: "Owner 3, Property 3" });
+    const picker = screen.getByRole("combobox", { name: "Properties shown" });
+    await within(picker).findByRole("option", { name: "South" });
+
+    fireEvent.change(picker, { target: { value: "group:g1" } });
+    fireEvent.change(picker, { target: { value: "group:g2" } });
+    await screen.findByRole("row", { name: "Owner 2, Property 2" });
+    await release();
+
+    expect(screen.getByRole("row", { name: "Owner 2, Property 2" })).toBeTruthy();
+    expect(screen.queryByRole("row", { name: "Owner 1, Property 1" })).toBeNull();
   });
 });

@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
+import { holdBack } from "../holdBack";
 import type { FeeDue } from "../payables";
 import { ManagementFeesPage } from "./ManagementFeesPage";
 
@@ -97,5 +98,20 @@ describe("ManagementFeesPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Collect fees" }));
     fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Confirm" }));
     expect((await screen.findByRole("alert")).textContent).toBe("trust bank account is reconciled and closed");
+  });
+
+  it("shows the fees of the period picked now, even when an earlier period's answer comes back last", async () => {
+    server();
+    const release = holdBack((path) => path.includes("period_start=2020-02-01"));
+    render(<ManagementFeesPage me={ME} />);
+    await screen.findByRole("table", { name: "Management fees" });
+
+    fireEvent.change(screen.getByLabelText("Period from"), { target: { value: "2020-02-01" } });
+    fireEvent.change(screen.getByLabelText("Period from"), { target: { value: "2026-01-01" } });
+    await screen.findByTestId("empty-state");
+    await release();
+
+    expect(screen.getByTestId("empty-state").textContent).toContain("No management agreement in force for this period.");
+    expect(screen.queryByRole("table", { name: "Management fees" })).toBeNull();
   });
 });

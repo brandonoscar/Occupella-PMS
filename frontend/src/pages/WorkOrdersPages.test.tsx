@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
+import { holdBack } from "../holdBack";
 import type { Paged } from "../rentals";
 import type { WorkOrder, WorkOrderRow } from "../workOrders";
 import { WorkOrderPage, WorkOrdersPage, shownQuery, stepLine } from "./WorkOrdersPages";
@@ -305,6 +306,25 @@ describe("WorkOrdersPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "New work order" }));
     expect(await within(screen.getByRole("dialog")).findByRole("alert")).toBeTruthy();
   });
+
+  it("shows the work orders of the vendor picked now, even when an earlier vendor's answer comes back last", async () => {
+    server({
+      "/api/work-orders?show=open&page=1&vendor=v1": PAGE,
+      "/api/work-orders?show=open&page=1&vendor=v2": { ...PAGE, items: [{ ...ROW, id: "w9", vendor_id: "v2", vendor: "Vendor 2", summary: "Broken window" }] },
+    });
+    const release = holdBack((path) => path.includes("vendor=v1"));
+    render(<WorkOrdersPage me={ME} />);
+    const vendor = screen.getByRole("combobox", { name: "Vendor" });
+    await within(vendor).findByRole("option", { name: "Vendor 2" });
+
+    fireEvent.change(vendor, { target: { value: "v1" } });
+    fireEvent.change(vendor, { target: { value: "v2" } });
+    await screen.findByRole("row", { name: "Broken window" });
+    await release();
+
+    expect(screen.getByRole("row", { name: "Broken window" })).toBeTruthy();
+    expect(screen.queryByRole("row", { name: "Leak under the sink" })).toBeNull();
+  });
 });
 
 describe("WorkOrderPage", () => {
@@ -477,5 +497,17 @@ describe("WorkOrderPage", () => {
 
     render(<WorkOrderPage me={ME} id="nope" />);
     expect((await screen.findByRole("alert")).textContent).toBe("no such work order");
+  });
+
+  it("shows the work order opened now, even when an earlier work order's answer comes back last", async () => {
+    server({ "/api/work-orders/w2": { ...ORDER, id: "w2", number: 9, summary: "Broken window" } });
+    const release = holdBack((path) => path === "/api/work-orders/w1");
+    const { rerender } = render(<WorkOrderPage me={ME} id="w1" />);
+    rerender(<WorkOrderPage me={ME} id="w2" />);
+    await screen.findByRole("heading", { level: 1, name: "#9 Broken window" });
+    await release();
+
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("#9 Broken window");
+    expect(screen.queryByRole("heading", { level: 1, name: "#7 Leak under the sink" })).toBeNull();
   });
 });

@@ -11,6 +11,8 @@ import { RecordActions } from "../components/RecordActions";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import type { Tenant, TenantRow } from "../directory";
+import type { Keep } from "../latest";
+import { keepAll, latest } from "../latest";
 import { money } from "../money";
 import type { Paged } from "../rentals";
 import { LEASE_STATUS, PORTAL, termLabel } from "../rentals";
@@ -44,11 +46,13 @@ export function TenantsPage({ me }: { me: Me }) {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    const run = latest();
     const query = new URLSearchParams({ page: String(number), archived: String(archived), ...scopeParams(scope) });
     api
       .get<Paged<TenantRow>>(`/api/tenants?${query}`)
-      .then(setPage)
-      .catch((failed) => setError(detail(failed)));
+      .then(run.keep(setPage))
+      .catch(run.keep((failed) => setError(detail(failed))));
+    return run.stop;
   }, [scope, archived, number]);
 
   return (
@@ -117,10 +121,14 @@ export function TenantPage({ me, id }: { me: Me; id: string }) {
   const [error, setError] = useState("");
   const [tab, setTab] = useState<TenantTab>("summary");
 
-  function refresh() {
-    api.get<Tenant>(`/api/tenants/${id}`).then(setTenant).catch((failed) => setError(detail(failed)));
+  function refresh(keep: Keep = keepAll) {
+    api.get<Tenant>(`/api/tenants/${id}`).then(keep(setTenant)).catch(keep((failed) => setError(detail(failed))));
   }
-  useEffect(refresh, [id]);
+  useEffect(() => {
+    const run = latest();
+    refresh(run.keep);
+    return run.stop;
+  }, [id]);
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
