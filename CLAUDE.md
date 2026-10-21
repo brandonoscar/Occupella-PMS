@@ -678,6 +678,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   checked by a trigger; append-only, naming who recorded it. A deposit moves no money; it has a
   slip (PDF), and at month-end auto-match pairs its one bank line with all of it (and ticking one
   of its transfers ticks the deposit).
+- History before the switch (migration 0107, the founder's review q129): the old system's past
+  lines come over at Settings, Import as history, a CSV file of tenants', owners' or vendors' at a
+  time (`trust_history_files`, once per SHA-256, and `trust_history_lines`: each one person's, of
+  the file's kind, never dated after it came in; append-only). A tenant who left before the switch
+  is added to hold theirs. History is never posted: it moves no money, charges nothing and is in
+  no report or balance; the books still start at the cutover. Staff read it newest first under
+  Before the switch on a tenant's Leases tab, an owner's Statements tab and a vendor's Bills tab
+  (`GET /api/history`, `src/pms/api/history.py`). The AI role reads it as it reads the ledger.
 - Switching (migration 0033): after a trust bank account's opening balances, the checks and
   deposits the bank had not cleared at the cutover are carried over (`trust_cutover_items`, the
   cash each moved in the old books, issued by the cutover) until a staff member signs off the

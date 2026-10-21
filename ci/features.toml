@@ -865,3 +865,11 @@ operations = ["GET /api/year-close", "POST /api/year-close"]
 browser = [
   "features.spec.ts › staff approve last December in each trust bank account, close the year, and a charge dated in it is refused in words",
 ]
+
+[[feature]]
+id = "history-before-the-switch"
+statement = "Staff bring the old system's past lines in at Settings, Import as history, a file of tenants', owners' or vendors' at a time (a tenant who left before the switch is added to hold theirs; the same file again adds nothing), and read each person's lines newest first under Before the switch on their page: a tenant's Leases tab, an owner's Statements tab, a vendor's Bills tab. History is never posted (migration 0107, the founder's review q129)."
+operations = ["GET /api/history"]
+browser = [
+  "features.spec.ts › staff bring the old system's tenant, owner and vendor history in once, and read it under Before the switch on each page",
+]

@@ -20,6 +20,7 @@ import { EmailsCard } from "../components/EmailsCard";
 import { NotesCard } from "../components/NotesCard";
 import { FilesCard } from "./FilesCard";
 import { PortalCard } from "./PortalCard";
+import { HistoryCard } from "./HistoryCard";
 import { SamePersonCard, SignsInElsewhere } from "./SamePersonCard";
 import { Tabs } from "../components/Tabs";
 import { navigate } from "../router";
@@ -155,6 +156,7 @@ export function TenantPage({ me, id }: { me: Me; id: string }) {
             {tab === "notes" && <NotesCard about="tenant" aboutId={id} name={tenant.name} />}
             {tab === "email" && <EmailsCard about="tenant" aboutId={id} name={tenant.name} emailOn={me.email_on} />}
             {tab === "leases" && (
+              <div className="flex flex-col gap-6">
               <Card title="Leases">
                 {tenant.leases.length === 0 ? (
                   <EmptyState icon={Users} title="No lease yet." body="A lease comes through Leasing, Draft leases." />
@@ -189,6 +191,8 @@ export function TenantPage({ me, id }: { me: Me; id: string }) {
                   </Wide>
                 )}
               </Card>
+              <HistoryCard about="tenant" id={id} />
+              </div>
             )}
           </div>
         </>

@@ -3555,6 +3555,55 @@ test("staff approve last December in each trust bank account, close the year, an
   await expect(lease).toContainText("Fee of $25.00 added.");
 });
 
+test("staff bring the old system's tenant, owner and vendor history in once, and read it under Before the switch on each page", async ({
+  page,
+}) => {
+  const people = seed.features["history"]!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "Import from another PMS");
+  const roster = part(page, "Bring the roster in");
+  const bring = async (label: string, name: string, csv: string, said: string) => {
+    await roster.getByRole("combobox", { name: "File of" }).selectOption({ label });
+    await roster.getByLabel("CSV file").setInputFiles({ name, mimeType: "text/csv", buffer: Buffer.from(csv) });
+    await roster.getByRole("button", { name: "Import" }).click();
+    await expect(roster).toContainText(said);
+  };
+  const tenants =
+    "Property,Tenant,Unit,Date,Type,Description,Amount,Reference\n" +
+    "Cedar House,Taylor Demo,House,2024-05-01,Charge,May rent,2100.00,\n" +
+    "Cedar House,Taylor Demo,House,2024-05-03,Payment,Check 1201,-2100.00,1201\n" +
+    "Elm Court,Robin Former,Unit 1,2023-12-01,Charge,December rent,1300.00,\n";
+  await bring("Tenants' history before the switch", "tenants.csv", tenants, "3 added.");
+  // Sent again: nothing twice.
+  await bring("Tenants' history before the switch", "tenants.csv", tenants, "0 added; 3 already here.");
+  await bring("Owners' history before the switch", "owners.csv",
+    "Owner,Property,Date,Type,Description,Amount\nDemo Owner A,Cedar House,2024-05-31,Owner draw,May draw,-1850.00\n",
+    "1 added.");
+  await bring("Vendors' history before the switch", "vendors.csv",
+    "Vendor,Date,Type,Description,Amount,Reference\nDemo Plumbing Co,2024-04-12,Payment,Water heater,640.00,CHK-88\n",
+    "1 added.");
+
+  // Taylor's lines, newest first, on their Leases tab.
+  await section(page, "Tenants");
+  await page.getByRole("row", { name: /^Taylor Demo/ }).getByRole("link", { name: "Taylor Demo" }).click();
+  await page.getByRole("tab", { name: "Leases" }).click();
+  const before = page.getByRole("table", { name: "Before the switch" });
+  await expect(before.getByRole("row")).toHaveText([
+    "DateUnitTypeDescriptionReferenceAmount",
+    "05/03/2024HousePaymentCheck 12011201($2,100.00)",
+    "05/01/2024HouseChargeMay rent$2,100.00",
+  ]);
+  // The owner's under Statements, the vendor's under Bills.
+  await section(page, "Owners");
+  await page.getByRole("row", { name: /^Demo Owner A/ }).getByRole("link", { name: "Demo Owner A" }).click();
+  await page.getByRole("tab", { name: "Statements" }).click();
+  await expect(page.getByRole("table", { name: "Before the switch" })).toContainText("Cedar HouseOwner drawMay draw");
+  await section(page, "Vendors");
+  await page.getByRole("link", { name: "Demo Plumbing Co", exact: true }).first().click();
+  await page.getByRole("tab", { name: "Bills" }).click();
+  await expect(page.getByRole("table", { name: "Before the switch" })).toContainText("04/12/2024PaymentWater heaterCHK-88$640.00");
+});
+
 test("staff add charge types and give a lease's fee and monthly charge one; the owner's income statement counts the type on its own line", async ({
   browser,
   page,

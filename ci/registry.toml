@@ -1344,3 +1344,15 @@ tests = [
   "tests/test_year_close.py::test_a_charge_dated_in_the_year_waits_for_a_close_under_way_and_then_is_refused",
 ]
 
+[[invariant]]
+id = "history-is-never-posted"
+statement = "The old system's past lines come in as history (migration 0107): a file of tenants', owners' or vendors' lines goes in once by its SHA-256 (the same file again adds nothing), whole or not at all; each line is one person's of its file's kind (an owner's line an owner's property account of the PMC), never dated after it came in, append-only; nothing in it moves money, charges a lease or changes a balance or report."
+tests = [
+  "tests/properties/test_history_properties.py::test_history_holds_each_files_lines_once_under_their_person_and_moves_nothing",
+  "tests/test_history.py::test_each_line_is_of_its_files_kind_of_person",
+  "tests/test_history.py::test_nothing_is_dated_after_it_came_in",
+  "tests/test_history.py::test_a_file_comes_in_once_and_history_is_never_rewritten_nor_posted",
+  "tests/test_history.py::test_a_line_is_of_its_own_company",
+  "tests/api/test_history_api.py::test_staff_bring_each_persons_history_in_once_and_read_it_newest_first",
+]
+

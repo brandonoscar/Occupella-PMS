@@ -61,6 +61,7 @@ from pms.api import (
     emails,
     general_ledger,
     groups,
+    history,
     household,
     inspections,
     journal,
@@ -546,6 +547,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(vendors.router)
     app.include_router(inspections.router)
     app.include_router(switching.router)
+    app.include_router(history.router)
     app.include_router(staff.router)
     app.include_router(signers.router)
     app.include_router(moveout.router)

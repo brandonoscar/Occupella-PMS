@@ -242,6 +242,9 @@ TABLES = {
     "trust_tenant_links": {"SELECT", "INSERT"},
     # Years closed (migration 0106): written only by trust_close_year.
     "trust_year_closes": {"SELECT"},
+    # The old system's past transactions (migration 0107), never posted.
+    "trust_history_files": {"SELECT", "INSERT"},
+    "trust_history_lines": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -457,6 +460,7 @@ FUNCTIONS = {
     "trust_check_tenant_link()": set(),
     "trust_check_tenant_login()": set(),
     "trust_refuse_closed_year()": set(),
+    "trust_check_history_line()": set(),
     "trust_check_decision_override()": set(),
     "trust_fill_bill_markup()": set(),
     # Reports read trust records, so only the app and the AI; they run with the caller's own

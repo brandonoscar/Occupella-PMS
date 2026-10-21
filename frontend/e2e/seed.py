@@ -516,6 +516,7 @@ FEATURES = (
     "phone",
     "quickbooks",
     "two-homes",
+    "history",
 )
 
 

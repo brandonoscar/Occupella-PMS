@@ -2523,6 +2523,45 @@ $$;
 
 
 --
+-- Name: trust_check_history_line(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_history_line() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_kind text;
+BEGIN
+    SELECT f.kind INTO v_kind FROM trust_history_files AS f
+    WHERE f.pmc_id = NEW.pmc_id AND f.id = NEW.file_id;
+    IF v_kind IS DISTINCT FROM (CASE WHEN NEW.tenant_id IS NOT NULL THEN 'tenant'
+                                     WHEN NEW.owner_account IS NOT NULL THEN 'owner'
+                                     ELSE 'vendor' END) THEN
+        RAISE EXCEPTION 'trust: line % of a file of % history is not a %''s', NEW.line_no,
+            v_kind, v_kind
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.owner_account IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM trust_ledger_accounts AS a
+        WHERE a.ledger_account_id = NEW.owner_account AND a.pmc_id = NEW.pmc_id
+          AND a.kind = 'owner_property'
+    ) THEN
+        RAISE EXCEPTION 'trust: % is not an owner''s property account of PMC %',
+            NEW.owner_account, NEW.pmc_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.posted_on > (now() AT TIME ZONE 'UTC')::date THEN
+        RAISE EXCEPTION 'trust: line % is dated %, which has not come yet', NEW.line_no,
+            to_char(NEW.posted_on, 'MM/DD/YYYY')
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_hold_allowance(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -12710,6 +12749,53 @@ CREATE TABLE public.trust_expense_accounts (
 
 
 --
+-- Name: trust_history_files; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_history_files (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    kind text NOT NULL,
+    file_sha256 bytea NOT NULL,
+    line_count integer NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_history_files_file_sha256_check CHECK ((length(file_sha256) = 32)),
+    CONSTRAINT trust_history_files_kind_check CHECK ((kind = ANY (ARRAY['tenant'::text, 'owner'::text, 'vendor'::text]))),
+    CONSTRAINT trust_history_files_line_count_check CHECK ((line_count > 0))
+);
+
+
+--
+-- Name: trust_history_lines; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_history_lines (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    file_id uuid NOT NULL,
+    line_no integer NOT NULL,
+    tenant_id uuid,
+    owner_account text,
+    vendor_id uuid,
+    posted_on date NOT NULL,
+    kind text NOT NULL,
+    description text NOT NULL,
+    amount numeric NOT NULL,
+    reference text,
+    unit text,
+    CONSTRAINT trust_history_lines_amount_check CHECK (((amount = round(amount, 2)) AND (abs(amount) < (1000000000)::numeric))),
+    CONSTRAINT trust_history_lines_check CHECK ((num_nonnulls(tenant_id, owner_account, vendor_id) = 1)),
+    CONSTRAINT trust_history_lines_check1 CHECK (((unit IS NULL) OR (tenant_id IS NOT NULL))),
+    CONSTRAINT trust_history_lines_description_check CHECK (((description ~ '\S'::text) AND (length(description) <= 200))),
+    CONSTRAINT trust_history_lines_kind_check CHECK (((kind ~ '\S'::text) AND (length(kind) <= 50))),
+    CONSTRAINT trust_history_lines_line_no_check CHECK ((line_no > 0)),
+    CONSTRAINT trust_history_lines_reference_check CHECK (((reference ~ '\S'::text) AND (length(reference) <= 100))),
+    CONSTRAINT trust_history_lines_unit_check CHECK (((unit ~ '\S'::text) AND (length(unit) <= 200)))
+);
+
+
+--
 -- Name: trust_housing_authorities; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15389,6 +15475,46 @@ ALTER TABLE ONLY public.trust_expense_accounts
 
 
 --
+-- Name: trust_history_files trust_history_files_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_files
+    ADD CONSTRAINT trust_history_files_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_history_files trust_history_files_pmc_id_file_sha256_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_files
+    ADD CONSTRAINT trust_history_files_pmc_id_file_sha256_key UNIQUE (pmc_id, file_sha256);
+
+
+--
+-- Name: trust_history_files trust_history_files_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_files
+    ADD CONSTRAINT trust_history_files_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_history_lines trust_history_lines_file_id_line_no_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_lines
+    ADD CONSTRAINT trust_history_lines_file_id_line_no_key UNIQUE (file_id, line_no);
+
+
+--
+-- Name: trust_history_lines trust_history_lines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_lines
+    ADD CONSTRAINT trust_history_lines_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_housing_authorities trust_housing_authorities_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -17483,6 +17609,34 @@ CREATE INDEX trust_emails_vendor_id ON public.trust_emails USING btree (vendor_i
 
 
 --
+-- Name: trust_history_files_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_history_files_recorded_by ON public.trust_history_files USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_history_lines_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_history_lines_owner ON public.trust_history_lines USING btree (owner_account, posted_on);
+
+
+--
+-- Name: trust_history_lines_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_history_lines_tenant ON public.trust_history_lines USING btree (pmc_id, tenant_id, posted_on);
+
+
+--
+-- Name: trust_history_lines_vendor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_history_lines_vendor ON public.trust_history_lines USING btree (pmc_id, vendor_id, posted_on);
+
+
+--
 -- Name: trust_housing_authorities_name; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -18967,6 +19121,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_history_files trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_history_files FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_history_lines trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_history_lines FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_housing_authorities trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20073,6 +20241,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_expe
 
 
 --
+-- Name: trust_history_files trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_history_files FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_history_lines trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_history_lines FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_housing_authorities trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20948,6 +21130,13 @@ CREATE TRIGGER trust_charge_waiver_fits BEFORE INSERT ON public.trust_charge_wai
 
 
 --
+-- Name: trust_history_lines trust_check_history_line; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_history_line BEFORE INSERT ON public.trust_history_lines FOR EACH ROW EXECUTE FUNCTION public.trust_check_history_line();
+
+
+--
 -- Name: trust_payment_hold_allowances trust_check_hold_allowance; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -21330,6 +21519,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_contacts FOR EACH
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_email_settings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_history_files trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_history_files FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -23297,6 +23493,62 @@ ALTER TABLE ONLY public.trust_emails
 
 ALTER TABLE ONLY public.trust_expense_accounts
     ADD CONSTRAINT trust_expense_accounts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_history_files trust_history_files_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_files
+    ADD CONSTRAINT trust_history_files_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_history_files trust_history_files_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_files
+    ADD CONSTRAINT trust_history_files_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_history_lines trust_history_lines_owner_account_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_lines
+    ADD CONSTRAINT trust_history_lines_owner_account_fkey FOREIGN KEY (owner_account) REFERENCES public.trust_ledger_accounts(ledger_account_id);
+
+
+--
+-- Name: trust_history_lines trust_history_lines_pmc_id_file_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_lines
+    ADD CONSTRAINT trust_history_lines_pmc_id_file_id_fkey FOREIGN KEY (pmc_id, file_id) REFERENCES public.trust_history_files(pmc_id, id);
+
+
+--
+-- Name: trust_history_lines trust_history_lines_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_lines
+    ADD CONSTRAINT trust_history_lines_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_history_lines trust_history_lines_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_lines
+    ADD CONSTRAINT trust_history_lines_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
+
+
+--
+-- Name: trust_history_lines trust_history_lines_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_history_lines
+    ADD CONSTRAINT trust_history_lines_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
 
 
 --
@@ -26060,4 +26312,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261021000103'),
     ('20261021000104'),
     ('20261021000105'),
-    ('20261021000106');
+    ('20261021000106'),
+    ('20261021000107');
