@@ -2,5 +2,8 @@ line	item	property	unit	vacant_since	days_vacant	last_rent	next_lease_starts
 1	PMC	Golden PMC	NULL	NULL	NULL	NULL	NULL
 2	as of	2026-03-31, end of day UTC	NULL	NULL	NULL	NULL	NULL
 3	vacant	Property 1	Unit A	2026-03-01	31	1200.00	2026-04-15
-4	vacant	Property 1	Unit C	NULL	NULL	NULL	NULL
-5	total	4 units: 2 occupied, 2 vacant (50.0% occupied)	NULL	NULL	NULL	NULL	NULL
+4	vacant	Property 1	Unit C	2026-01-15	76	NULL	NULL
+5	never leased	vacant since it was added to the PMS	Unit C	NULL	NULL	NULL	NULL
+6	vacant	Property 1	Unit D	NULL	NULL	NULL	NULL
+7	never leased	added to the PMS after this day: vacant since a day not known	Unit D	NULL	NULL	NULL	NULL
+8	total	5 units: 2 occupied, 3 vacant (40.0% occupied)	NULL	NULL	NULL	NULL	NULL

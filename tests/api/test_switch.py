@@ -282,6 +282,26 @@ def test_bad_contact_details_say_their_line_and_bring_nothing(client, conn, staf
     ).fetchone() == (0,)
 
 
+def test_a_file_that_is_not_csv_is_refused_in_words_not_a_server_error(client, conn, staff, pmc):
+    # A bare carriage return ends a line (old Mac files); the API fuzz test found it answered 500.
+    refused(
+        client.post("/api/switching/import", json={"kind": "bills", "content": "\r0"}),
+        422,
+        "line 1: no vendor, owner, property, reference, bill date, due on, amount, memo column",
+    )
+    # A field longer than the csv module reads.
+    refused(
+        client.post(
+            "/api/switching/import", json={"kind": "owners", "content": "Name\n" + "x" * 140_000}
+        ),
+        422,
+        "line 2: this isn't CSV the PMS can read (field larger than field limit (131072))",
+    )
+    assert conn.execute(
+        "SELECT count(*) FROM trust_owners WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone() == (len(pmc.owners),)
+
+
 def test_a_lease_over_another_is_refused_with_its_line(client, staff, pmc):
     roster(client)
     ok(
@@ -717,24 +737,36 @@ def vendor_payments(client, *lines, paid_before="2026-03-01"):
 def report(conn, pmc, year):
     return conn.execute(
         "SELECT item, vendor, payments, paid FROM trust_report_vendor_payments(%s, %s)"
-        " WHERE item <> 'PMC'",
+        " WHERE item NOT IN ('PMC', 'threshold')",
         (pmc.pmc_id, year),
     ).fetchall()
 
 
+def of_vendor(rows, name):
+    """A vendor's line in the 1099 summary, whichever part it is in."""
+    return [row for row in rows if row[1] == name]
+
+
 def test_what_the_old_system_paid_vendors_comes_over_once(client, conn, staff, pmc):
     ok(imported(client, "vendors", "Name", "Vendor A", "Vendor B"))
+    conn.execute(
+        "INSERT INTO trust_vendor_profiles (pmc_id, vendor_id, gets_1099)"
+        " SELECT pmc_id, id, true FROM trust_vendors WHERE pmc_id = %s",
+        (pmc.pmc_id,),
+    )
 
-    first = vendor_payments(client, "Vendor,Paid", 'Vendor A,"$1,250.50"', "Vendor B,80.00")
-    again = vendor_payments(client, "vendor,paid", "Vendor A,1250.50")
+    first = vendor_payments(client, "Vendor,Paid", 'Vendor A,"$2,250.50"', "Vendor B,80.00")
+    again = vendor_payments(client, "vendor,paid", "Vendor A,2250.50")
 
     assert (ok(first, 201), ok(again, 201)) == ({"added": 2, "kept": 0}, {"added": 0, "kept": 1})
+    # What the old system paid counts toward the year's 1099 (q060: 2026's threshold, 2000.00).
     assert report(conn, pmc, 2026)[1:] == [
-        ("vendor", "Vendor A", 0, Decimal("1250.50")),
-        ("carried over", "paid in the old system before 2026-03-01", None, Decimal("1250.50")),
-        ("vendor", "Vendor B", 0, Decimal("80.00")),
+        ("vendor", "Vendor A", 0, Decimal("2250.50")),
+        ("carried over", "paid in the old system before 2026-03-01", None, Decimal("2250.50")),
+        ("total", None, 0, Decimal("2250.50")),
+        ("under the threshold", "Vendor B", 0, Decimal("80.00")),
         ("carried over", "paid in the old system before 2026-03-01", None, Decimal("80.00")),
-        ("total", None, 0, Decimal("1330.50")),
+        ("not marked for a 1099", "0 vendors", 0, Decimal("0.00")),
     ]
     assert conn.execute(
         "SELECT staff_id FROM trust_audit_log"
@@ -748,7 +780,9 @@ def test_a_january_first_cutover_carries_over_the_year_before(client, conn, staf
 
     ok(vendor_payments(client, "Vendor,Paid", "Vendor A,900.00", paid_before="2027-01-01"), 201)
 
-    assert report(conn, pmc, 2026)[-1] == ("total", None, 0, Decimal("900.00"))
+    assert of_vendor(report(conn, pmc, 2026), "Vendor A") == [
+        ("no 1099 setting", "Vendor A", 0, Decimal("900.00"))
+    ]
 
 
 @pytest.mark.parametrize(
@@ -768,7 +802,7 @@ def test_a_vendor_payments_file_that_cant_go_in_says_why_and_adds_nothing(
     ok(imported(client, "vendors", "Name", "Vendor A"))
 
     refused(vendor_payments(client, *lines), 422, why)
-    assert report(conn, pmc, 2026)[-1] == ("total", None, 0, Decimal("0.00"))
+    assert of_vendor(report(conn, pmc, 2026), "Vendor A") == []
 
 
 def test_another_amount_for_a_year_carried_over_is_refused(client, conn, staff, pmc):

@@ -420,8 +420,30 @@ force is NOT VERIFIED.
 - The HAP contract itself and the agency's rent reasonableness review: the PMS keeps the amount
   staff enter and the contract's number, nothing more. The agency's inspections and the
   household's certifications are recorded since migration 0108 (below).
-- A late HAP payment's fee, and an authority's payment that bounces: neither is built; staff
-  charge the authority by hand, and a returned authority payment is corrected by a journal entry.
+- Whether its HAP contract provides a late payment fee and how much: staff set the fee and grace
+  days the contract says (since migration 0116, below).
+
+### An authority's late fee, a returned payment and a payment hold (migration 0116)
+
+**The rule.** 24 CFR 982.451(b)(4) (above): the agency pays the HAP promptly, and the HAP contract
+may provide a penalty for a late payment, the agency's to pay, never the family's; the agency
+isn't obligated to pay it when HUD finds the delay beyond the agency's control. (Full text NOT
+VERIFIED, as above.) A payment hold (an eviction filed, migration 0025) is about whether accepting
+rent waives the eviction, which state law decides; no state's rule is built in.
+
+**What the PMS does.**
+- Staff set an authority's late payment fee from a day: grace days and a flat fee, as its HAP
+  contract says (0 charges none). The nightly run and Run rent now charge it to each part of a
+  rent the authority still owes at the end of its last grace day (UTC), once, on the authority.
+  The tenant is never charged it. A late fee paid is a late fee on the income statements, not
+  rent for the management fee.
+- A payment of the authority's that the bank returned is marked bounced from its ⋯ menu: its
+  money moves back out of the owners' accounts, and what it paid of each charge is owed again.
+- A lease on a payment hold takes the authority's payment only when staff accept it past the
+  hold, as a tenant's, naming who did.
+
+**Left to the company.** Whether its contract provides a late fee and collecting it from the
+agency; whether accepting a payment during an eviction is right in its state.
 - Payment holds (an eviction filed) hold the tenant's payments only; an authority's payment is
   not held.
 
@@ -687,3 +709,26 @@ same way to every applicant, and its reasons when it departs from them.
   charge, to whoever asks.
 - Whether its state asks more of a lease's signing (a separate signature beside a disclosure, a
   witness) and the lease's own words.
+
+## The 1099 summary's threshold (migration 0113)
+
+**The rule.** A business that pays a non-employee for services reports it on Form 1099-NEC (rents
+and some other payments on 1099-MISC) once the year's payments reach a threshold. That threshold
+was $600 for payments made through December 31, 2025. The One Big Beautiful Bill Act (Pub. L.
+119-21, section 70433) raised it to $2,000 for payments made after December 31, 2025, adjusted
+for inflation from 2027. (From tax practitioners' summaries of the Act, e.g. NATP and Sovos; the
+statute's text and the IRS's Publication 1099 figures are NOT VERIFIED here.)
+
+**What the PMS does.**
+- The 1099 summary lists the vendors whose latest profile marks them for a 1099. Each paid the
+  year's threshold or more (600.00 through 2025, 2000.00 for 2026) is on it and in its total;
+  one paid less is listed under the threshold, so nothing marked disappears.
+- A vendor with no profile is listed apart as having no 1099 setting, so staff can say; those
+  marked for none are one line with how many and what they were paid.
+- For 2027 and later it uses 2000.00 and says on its threshold line that the inflation
+  adjustment is not known to it.
+- It counts what the old system paid a vendor in the cutover's year.
+
+**Left to the company.** Whether a vendor gets a 1099 at all (a corporation usually doesn't; the
+W-9 says), the year's adjusted threshold from 2027, and filing: the PMS files nothing and keeps
+no tax ID.

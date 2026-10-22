@@ -28,6 +28,8 @@ export const REPORTS: ReportSpec[] = [
   { name: "income_statement", label: "Income statement", group: "Financial", args: ["owner", "from", "to"], byProperty: false },
   // The same counting what was charged and billed in the days, not what moved (q115).
   { name: "income_statement_accrual", label: "Income statement, accrual basis", group: "Financial", args: ["owner", "from", "to"], byProperty: false },
+  // Every owner's in one, each property named with its owner (q108).
+  { name: "income_statement_all_owners", label: "Income statement, all owners", group: "Financial", args: DAYS, byProperty: false },
   { name: "cash_flow", label: "Cash flow", group: "Financial", args: DAYS, byProperty: false },
   { name: "trial_balance", label: "Trial balance", group: "Financial", args: AS_OF, byProperty: true },
   { name: "general_ledger", label: "General ledger", group: "Financial", args: DAYS, byProperty: true },

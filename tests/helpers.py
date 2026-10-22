@@ -584,13 +584,16 @@ def offer_lease(
     application_id=None,
     renews_lease_id=None,
     signers=(("Signer 1", "signer1@example.com"),),
+    security_deposit=None,
 ) -> UUID:
-    """A lease offer (for an application or renewing a lease) and its signers."""
+    """A lease offer (for an application or renewing a lease) and its signers, maybe asking a
+    security deposit."""
     offer = _one(
         connection,
         "INSERT INTO trust_lease_offers (pmc_id, application_id, renews_lease_id, unit_id,"
-        " starts_on, ends_on, monthly_rent, document_title, document, offered_by)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s, 'Lease', %s, %s) RETURNING id",
+        " starts_on, ends_on, monthly_rent, document_title, document, offered_by,"
+        " security_deposit)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, 'Lease', %s, %s, %s) RETURNING id",
         (
             pmc_id,
             application_id,
@@ -601,6 +604,7 @@ def offer_lease(
             Decimal(rent),
             LEASE_PDF,
             staff_id,
+            None if security_deposit is None else Decimal(security_deposit),
         ),
     )
     for n, (name, email) in enumerate(signers, 1):
@@ -1277,6 +1281,30 @@ def authority_charges(connection, lease_id) -> list[tuple]:
         " ORDER BY due_on, created_at, id",
         (lease_id,),
     ).fetchall()
+
+
+def add_authority_late_fee(connection, pmc_id, authority_id, starts_on, grace_days, flat_fee):
+    """An authority's late payment fee from a day (migration 0116): grace days, a flat fee."""
+    return _one(
+        connection,
+        "INSERT INTO trust_authority_late_fees"
+        " (pmc_id, housing_authority_id, starts_on, grace_days, flat_fee)"
+        " VALUES (%s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, authority_id, starts_on, grace_days, Decimal(flat_fee)),
+    )
+
+
+def assess_authority_late_fees(connection, pmc_id, as_of) -> int:
+    return _one(connection, "SELECT trust_assess_authority_late_fees(%s, %s)", (pmc_id, as_of))
+
+
+def reverse_assistance_payment(connection, pmc_id, charge_id, transfer_id, reversal_id, amount):
+    """What of an authority's payment of a charge the bank returned (migration 0116)."""
+    return _one(
+        connection,
+        "SELECT trust_reverse_assistance_payment(%s, %s, %s, %s, %s)",
+        (pmc_id, charge_id, transfer_id, reversal_id, Decimal(amount)),
+    )
 
 
 def apply_assistance_payment(connection, pmc_id, charge_id, transfer_id, amount) -> Decimal:

@@ -31,8 +31,10 @@ jobs:
     name: ci
     runs-on: ubuntu-24.04
     # The example tests alone took 8m55s on PR #120 and outgrew 10 minutes with migrations 0078
-    # to 0080; a cap to stop a hung run, not a budget.
-    timeout-minutes: 20
+    # to 0080; a cap to stop a hung run, not a budget. The whole job took 17m51s to 19m07s on
+    # 10/21 (PRs #140, #142, #144), and one run of #144's commit was stopped at 20 minutes with
+    # its tests still passing.
+    timeout-minutes: 30
     permissions:
       contents: read
       issues: read # check_registry reads whether each pending issue is still open

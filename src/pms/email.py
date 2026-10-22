@@ -17,7 +17,8 @@ its cause does. After that commits, deliver_pending() hands each email not yet d
 server's sender and records every attempt (trust_email_deliveries): delivered, or why not. One
 that failed is tried again on a later delivery, at most MAX_ATTEMPTS times in all. The outbox
 keeps an email's text; it goes as that text and as HTML made from it (src/pms/email_html.py),
-under the company's name and mailing address.
+under the company's name and mailing address. A payment receipt and an owner statement carry
+their PDF, made as the email is handed to the sender (src/pms/attachments.py, migration 0111).
 
 The server's PMS_EMAIL_SENDER picks the sender: "fake" keeps each email in the outbox and sends
 it nowhere (development and CI); "smtp" sends through the PMC's own mail server, always with
@@ -60,6 +61,13 @@ LINK_LOST = "its sign-in link is held only until it is sent, and it was not sent
 
 
 @dataclass(frozen=True)
+class Attachment:
+    filename: str
+    data: bytes
+    content_type: str = "application/pdf"
+
+
+@dataclass(frozen=True)
 class Message:
     to: str
     subject: str
@@ -70,6 +78,8 @@ class Message:
     html: str = ""
     # The company's own email, where replies go (q086); none, to the From address.
     reply_to: str = ""
+    # Files it carries: a receipt's or a statement's PDF.
+    attachments: tuple[Attachment, ...] = ()
 
 
 class Sender(Protocol):
@@ -109,6 +119,11 @@ class SmtpSender:
         email.set_content(message.body)
         if message.html:
             email.add_alternative(message.html, subtype="html")
+        for attached in message.attachments:
+            main, sub = attached.content_type.split("/", 1)
+            email.add_attachment(
+                attached.data, maintype=main, subtype=sub, filename=attached.filename
+            )
         with smtplib.SMTP(self.host, self.port, timeout=20) as smtp:
             smtp.starttls(context=ssl.create_default_context())
             if self.username:
@@ -507,6 +522,7 @@ def tell_admins(
 
 PENDING = """
 SELECT e.id, e.pmc_id, e.kind, e.to_address, e.subject, e.body, e.needs_link,
+       e.owner_id, e.period, e.transfer_id,
        e.created_at < now() - make_interval(mins => %(minutes)s), p.display_name,
        (SELECT count(*) FROM trust_email_deliveries AS d WHERE d.email_id = e.id),
        a.reply_to, a.address_line_1, a.address_line_2,
@@ -537,6 +553,10 @@ def deliver_pending(conn: psycopg.Connection[Any], sender: Sender, limit: int = 
     its own, and records the attempt. Two deliveries at once never send the same email: each
     takes the email's advisory lock and skips one another holds. An email whose last attempt
     failed is given up on, and the company's admins are told (once a day; not of an alert)."""
+    # Imported here: the attachments are made by the API's own report and receipt code, which
+    # imports this module.
+    from pms import attachments
+
     sent = failed = 0
     for row in conn.execute(
         PENDING,
@@ -550,6 +570,9 @@ def deliver_pending(conn: psycopg.Connection[Any], sender: Sender, limit: int = 
             subject,
             body,
             needs_link,
+            owner_id,
+            period,
+            transfer_id,
             stale,
             company,
             attempts,
@@ -573,11 +596,17 @@ def deliver_pending(conn: psycopg.Connection[Any], sender: Sender, limit: int = 
                 error = LINK_LOST  # given up on, once
             else:
                 try:
+                    with conn.transaction():
+                        files = attachments.for_email(
+                            conn, pmc_id, kind, owner_id, period, transfer_id
+                        )
                     text = body.replace(LINK, link) if link is not None else body
                     lines = tuple(line for line in address if line)
                     html = email_html.render(text, kind, subject, company, lines)
-                    sender.send(Message(to, subject, text, company, html, reply_to or ""))
+                    sender.send(Message(to, subject, text, company, html, reply_to or "", files))
                     error = None
+                except (psycopg.Error, LookupError) as broken:
+                    error = f"its attachment could not be made: {broken}"[:1000]
                 except (OSError, smtplib.SMTPException) as refused:
                     error = f"{type(refused).__name__}: {refused}"[:1000]
             conn.execute(

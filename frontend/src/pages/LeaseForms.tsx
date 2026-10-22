@@ -355,7 +355,9 @@ export function DepositForm({ lease, record }: { lease: RentLease; record: Recor
   const [bank, setBank] = useState("");
   const [id, setId] = useState(requestId);
   const [tenant, setTenant] = useState(lease.tenants[0]?.id ?? "");
-  const [amount, setAmount] = useState("");
+  // What the signed lease asked and is not held yet, to start from (q036).
+  const owing = lease.deposit_asked && Number(lease.deposit_asked.to_receive) > 0 ? lease.deposit_asked.to_receive : "";
+  const [amount, setAmount] = useState(owing);
   const [on, setOn] = useState(day(new Date()));
   const [kind, setKind] = useState<DepositKind>("security");
   const label = DEPOSIT_KINDS.find((k) => k.value === kind)?.label ?? "Deposit";

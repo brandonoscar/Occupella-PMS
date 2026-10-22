@@ -1,12 +1,22 @@
-"""Staff's documents (src/pms/api/documents.py) and an owner's own documents in the owner
-portal (src/pms/api/owner.py). Every file here is synthetic."""
+"""Staff's documents (src/pms/api/documents.py) and what an owner sees of them in the owner
+portal (src/pms/api/owner.py): their own documents, their properties' and units' files and their
+bills' receipts (q046). Every file here is synthetic."""
 
 import base64
 import uuid
 from datetime import UTC, date, datetime
 
 import pytest
-from helpers import JPEG, PDF, PNG, add_document, add_work_order, enter_bill, make_pmc
+from helpers import (
+    JPEG,
+    PDF,
+    PNG,
+    add_document,
+    add_unit,
+    add_work_order,
+    enter_bill,
+    make_pmc,
+)
 from people import join_as_owner, join_as_staff, join_as_tenant
 
 
@@ -153,6 +163,45 @@ def test_an_owner_reads_their_own_documents_only(client, other_client, conn, app
         refused(client.get(f"/api/owner/documents/{not_theirs}/file"), 404)
     ok(other_client.post(f"/api/documents/{mine['id']}/remove", json={}), 204)
     assert ok(client.get("/api/owner/documents")) == []
+
+
+def test_an_owner_reads_their_properties_files_and_their_bills_receipts(
+    client, other_client, conn, app_conn, pmc
+):
+    join_as_staff(other_client, conn, app_conn, pmc)
+    first, second = pmc.owners
+    unit = add_unit(conn, pmc.pmc_id, first.property_id, name="Unit 4")
+    tenant = conn.execute(
+        "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
+        (pmc.prepaid_rent,),
+    ).fetchone()[0]
+    day = date(2026, 3, 2)
+    ours = enter_bill(conn, pmc.pmc_id, pmc.vendor_id, first.account, "INV-1", day, day, "80.00")
+    theirs = enter_bill(conn, pmc.pmc_id, pmc.vendor_id, second.account, "INV-2", day, day, "9")
+    made = {
+        title: ok(upload(other_client, kind, about, title=title), 201)["id"]
+        for title, kind, about in (
+            ("Insurance binder", "property_document", first.property_id),
+            ("Water heater manual", "unit_document", unit),
+            ("Plumber's receipt", "receipt", ours),
+            ("Their binder", "property_document", second.property_id),
+            ("Their receipt", "receipt", theirs),
+            ("Tenant's ID", "tenant_document", tenant),
+            ("W-9", "w9", pmc.vendor_id),
+        )
+    }
+    join_as_owner(client, app_conn, pmc)
+
+    listed = ok(client.get("/api/owner/documents"))
+    assert sorted((d["title"], d["about"], d["about_name"]) for d in listed) == [
+        ("Insurance binder", "property", "Property 1"),
+        ("Plumber's receipt", "bill", "Bill INV-1, Vendor 1"),
+        ("Water heater manual", "property", "Property 1, Unit 4"),
+    ]
+    for title in ("Insurance binder", "Plumber's receipt", "Water heater manual"):
+        assert client.get(f"/api/owner/documents/{made[title]}/file").content == PDF
+    for title in ("Their binder", "Their receipt", "Tenant's ID", "W-9"):
+        refused(client.get(f"/api/owner/documents/{made[title]}/file"), 404)
 
 
 STAFF_ENDPOINTS = [

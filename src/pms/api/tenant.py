@@ -88,6 +88,9 @@ class Lease(BaseModel):
     coming_due: list[ComingDue]
     # Its tenants' deposits were returned at move-out: the statement can be downloaded.
     deposit_returned: bool
+    # The security deposit the signed lease asked, what is held of it and what is still to give
+    # the manager; None when it asked none, or once the deposit was returned.
+    deposit_asked: rent_api.DepositAsked | None
     # A lease in effect: whether it requires renters insurance, and the policy on file.
     renters_insurance: rent_api.RentersInsurance | None
     # Each payment to it, newest first, each with its receipt to download.
@@ -204,6 +207,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
             )
         )
     files = {row[0]: files_of(conn, session.pmc_id, row[0]) for row in rows}
+    asked = {row[0]: rent_api.deposits_asked(conn, session.pmc_id, row[0]) for row in rows}
     return [
         Lease(
             lease_id=lease,
@@ -226,6 +230,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
                 if due > on
             ],
             deposit_returned=returned,
+            deposit_asked=asked[lease].get(lease),
             renters_insurance=insured.get(lease),
             payments=paid.get(lease, []),
             files=files[lease],

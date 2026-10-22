@@ -4,6 +4,7 @@ late fee terms and leases already in place."""
 
 import json
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from types import SimpleNamespace
 
 import pytest
@@ -227,6 +228,36 @@ def test_terms_start_on_a_day_and_show_once_in_force(client, staff):
     assert seen["accounts"][0]["agreement"]["fee_percent"] == "8"
     assert seen["properties"][0]["late_fees"]["grace_days"] == 3
     assert seen["properties"][0]["nsf_fee"] == {"starts_on": str(earlier), "fee": "25.00"}
+
+
+def test_terms_for_every_owner_of_a_property_go_to_each_of_their_accounts(client, conn, staff):
+    """q044: a property's owners share one set of management terms, so its fee can be one for the
+    property, split by their shares."""
+    books = build(client)
+    other = made(post(client, "owners", name="Owner B"))
+    made(
+        client.post(
+            f"/api/setup/properties/{books.property}/owners",
+            json={"owner_id": other, "bank_account_id": books.operating},
+        )
+    )
+    terms = {"account": books.account, "fee_percent": "8", "minimum_fee": "50.00"}
+
+    made(post(client, "agreements", starts_on=str(TODAY), every_owner=True, **terms))
+    again = post(client, "agreements", starts_on=str(TODAY), every_owner=True, **terms)
+
+    refused(again, 409, "an owner's account at this property has terms starting that day already")
+    held = conn.execute(
+        "SELECT o.display_name, m.fee_percent, m.minimum_fee FROM trust_management_agreements AS m"
+        " JOIN trust_ledger_accounts AS a ON a.ledger_account_id = m.ledger_account_id"
+        " JOIN trust_owners AS o ON o.id = a.owner_id WHERE a.property_id = %s"
+        " ORDER BY o.display_name",
+        (books.property,),
+    ).fetchall()
+    assert held == [
+        ("Owner A", Decimal("8"), Decimal("50.00")),
+        ("Owner B", Decimal("8"), Decimal("50.00")),
+    ]
 
 
 def test_an_agreement_is_only_for_an_owners_account_of_the_pmc(client, conn, staff, blank):

@@ -29,7 +29,17 @@ export type Document = {
 export type Library = { documents: Document[]; subjects: Record<Kind, Subject[]> };
 // A row of Files: a document and the page of the record it is about.
 export type FileRow = Document & { about_path: string };
-export type OwnerDocument = { id: string; title: string; content_type: ContentType; size: number; uploaded_at: string };
+// What an owner sees in the portal (q046): their own documents, their properties' and units'
+// files, and their bills' receipts, each saying what it is about.
+export type OwnerDocument = {
+  id: string;
+  title: string;
+  content_type: ContentType;
+  size: number;
+  uploaded_at: string;
+  about: "owner" | "property" | "bill";
+  about_name: string | null;
+};
 
 // Each kind (a file's category), as the page names it and what it is about.
 export const KINDS: { kind: Kind; label: string; about: string }[] = [

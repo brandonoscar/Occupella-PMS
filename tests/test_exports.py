@@ -111,7 +111,7 @@ def test_the_ai_role_exports_reports_too(conn, ai_conn):
 
     table = exports.run_report(ai_conn, "trust_report_vendor_payments", [pmc.pmc_id, 2026])
 
-    assert table.rows[-1][1] == "total"
+    assert [row[1] for row in table.rows][-2:] == ["total", "not marked for a 1099"]
 
 
 @pytest.mark.parametrize(

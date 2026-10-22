@@ -1,8 +1,10 @@
 line	item	vendor	payments	paid
 1	PMC	Golden PMC	NULL	NULL
 2	year	2026, paid January 1 to December 31 UTC	NULL	NULL
-3	vendor	Golden Lawn Care	2	600.00
-4	carried over	paid in the old system before 2026-03-01	NULL	360.00
-5	vendor	Golden Plumbing	0	1250.75
-6	carried over	paid in the old system before 2026-03-01	NULL	1250.75
-7	total	NULL	2	1850.75
+3	threshold	a 1099 for a vendor marked for one and paid this much or more (IRS, payments from 2026)	NULL	2000.00
+4	total	NULL	0	0.00
+5	under the threshold	Golden Lawn Care	2	600.00
+6	carried over	paid in the old system before 2026-03-01	NULL	360.00
+7	under the threshold	Golden Plumbing	0	1250.75
+8	carried over	paid in the old system before 2026-03-01	NULL	1250.75
+9	not marked for a 1099	0 vendors	0	0.00

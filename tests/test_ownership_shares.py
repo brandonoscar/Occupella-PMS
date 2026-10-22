@@ -3,6 +3,7 @@ percent of it, from a day, together 100, in one trust bank account; an amount sp
 in force to the cent, the cents left over to the largest remainders; and what a lease owes, kept
 from its deposits at move-out, going to the owners by their shares. Every name is synthetic."""
 
+import uuid
 from datetime import UTC, date, datetime
 from decimal import Decimal
 
@@ -10,6 +11,7 @@ import psycopg
 import pytest
 from helpers import (
     acting_as,
+    add_agreement,
     add_staff,
     add_unit,
     balance,
@@ -24,6 +26,8 @@ from helpers import (
     split_by_ownership,
     transfer_batch,
 )
+
+from pms.api import rent as rent_work
 
 JAN_1, MAR_1, JUN_1, JUN_30, JUL_5 = (
     date(2026, 1, 1),
@@ -263,3 +267,114 @@ def test_without_shares_kept_money_still_goes_to_the_one_named(conn, app_conn, p
 
     assert return_deposit(app_conn, pmc.pmc_id, lease, "move-out-1", at(JUL_5), second) == 200
     assert (balance(conn, first), balance(conn, second)) == (Decimal(0), Decimal("300.00"))
+
+
+# --- management fees by share (migration 0115) -------------------------------------------------
+
+
+def fee(conn, pmc, account, start=JUN_1, end=date(2026, 7, 1)):
+    return conn.execute(
+        "SELECT trust_post_management_fee(%s, %s, %s, %s, %s)",
+        (pmc.pmc_id, account, start, end, at(end)),
+    ).fetchone()[0]
+
+
+def june_rent_paid(conn, app_conn, pmc, amount="1000.00"):
+    """Unit 1's June rent, paid on June 10 into the owners' accounts by their shares."""
+    tenant = conn.execute(
+        "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
+        (pmc.tenant_deposit,),
+    ).fetchone()[0]
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id)
+    lease = open_lease(conn, pmc.pmc_id, unit, JAN_1, None, amount, [tenant])
+    charge(conn, pmc.pmc_id, lease, JUN_1, amount, "rent", "June rent")
+    with app_conn.transaction():
+        rent_work.record_payment(
+            app_conn, pmc.pmc_id, lease, uuid.uuid4(), Decimal(amount), date(2026, 6, 10)
+        )
+
+
+def test_a_shared_propertys_management_fee_is_one_fee_split_by_its_shares(
+    conn, app_conn, pmc, owners
+):
+    """q044: the owners' rent collected added up, under the terms they share, one minimum and
+    one flat fee for the property, split 60/40 to the cent."""
+    first, second = owners
+    set_ownership(conn, pmc.pmc_id, pmc.owners[0].property_id, JAN_1, [(first, 60), (second, 40)])
+    for account in owners:
+        add_agreement(conn, pmc.pmc_id, account, JAN_1, "8", "50.00", "10.01")
+    june_rent_paid(conn, app_conn, pmc)
+    assert (balance(conn, first), balance(conn, second)) == (Decimal("600.00"), Decimal("400.00"))
+
+    # 8% of 1000.00 is 80.00, over the minimum, plus 10.01: 90.01 for the property. Split 60/40:
+    # 54.006 and 36.004, the spare cent to the larger remainder.
+    assert fee(app_conn, pmc, first) == Decimal("54.01")
+    assert fee(app_conn, pmc, second) == Decimal("36.00")
+    assert fee(app_conn, pmc, second) == Decimal("36.00")  # once per period
+    assert (balance(conn, first), balance(conn, second)) == (Decimal("545.99"), Decimal("364.00"))
+    assert conn.execute(
+        "SELECT t.metadata ->> 'memo' FROM trust_management_fees AS f"
+        " JOIN pgledger_transfers AS t ON t.id = f.transfer_id WHERE f.ledger_account_id = %s",
+        (first,),
+    ).fetchone() == (
+        "Management fee 2026-06-01 to 2026-06-30, this owner's share of the property's 90.01",
+    )
+    assert set(bank_sums(conn, pmc.pmc_id).values()) == {Decimal(0)}
+
+
+def test_the_minimum_is_charged_once_for_the_property_not_once_per_owner(
+    conn, app_conn, pmc, owners
+):
+    first, second = owners
+    set_ownership(conn, pmc.pmc_id, pmc.owners[0].property_id, JAN_1, [(first, 75), (second, 25)])
+    for account in owners:
+        add_agreement(conn, pmc.pmc_id, account, JAN_1, "8", "100.00", "0")
+        transfer_batch(conn, [(pmc.operating_cash, account, "500.00")], at(JAN_1))
+
+    # Nothing collected: the property's minimum, 100.00, split 75/25.
+    assert (fee(app_conn, pmc, first), fee(app_conn, pmc, second)) == (
+        Decimal("75.00"),
+        Decimal("25.00"),
+    )
+
+
+def test_owners_whose_terms_differ_take_no_fee_until_their_terms_agree(conn, app_conn, pmc, owners):
+    first, second = owners
+    set_ownership(conn, pmc.pmc_id, pmc.owners[0].property_id, JAN_1, [(first, 50), (second, 50)])
+    add_agreement(conn, pmc.pmc_id, first, JAN_1, "8", "50.00", "0")
+    add_agreement(conn, pmc.pmc_id, second, JAN_1, "10", "50.00", "0")
+    for account in owners:
+        transfer_batch(conn, [(pmc.operating_cash, account, "500.00")], at(JAN_1))
+
+    for account in owners:
+        with pytest.raises(psycopg.errors.CheckViolation, match="don't share the same"):
+            fee(app_conn, pmc, account)
+    assert conn.execute(
+        "SELECT count(*) FROM trust_management_fees WHERE ledger_account_id = ANY(%s)",
+        (list(owners),),
+    ).fetchone() == (0,)
+
+    # The same terms from June: the property's fee, split.
+    add_agreement(conn, pmc.pmc_id, second, JUN_1, "8", "50.00", "0")
+    assert (fee(app_conn, pmc, first), fee(app_conn, pmc, second)) == (
+        Decimal("25.00"),
+        Decimal("25.00"),
+    )
+
+
+def test_an_owner_out_of_the_shares_on_the_last_day_takes_their_own_fee(
+    conn, app_conn, pmc, owners
+):
+    """Shares from June 15 leave the second owner out: their June fee is their own, as before;
+    the first owner, alone in the shares, takes the property's."""
+    first, second = owners
+    set_ownership(conn, pmc.pmc_id, pmc.owners[0].property_id, JAN_1, [(first, 50), (second, 50)])
+    set_ownership(conn, pmc.pmc_id, pmc.owners[0].property_id, date(2026, 6, 15), [(first, 100)])
+    for account in owners:
+        add_agreement(conn, pmc.pmc_id, account, JAN_1, "10", "20.00", "0")
+    june_rent_paid(conn, app_conn, pmc)  # June 10: 500.00 each
+
+    # The first owner: 10% of their own 500.00, the only account in the shares, 50.00.
+    assert fee(app_conn, pmc, first) == Decimal("50.00")
+    # The second: 10% of their 500.00, their own fee, 50.00.
+    assert fee(app_conn, pmc, second) == Decimal("50.00")

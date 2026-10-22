@@ -5,12 +5,14 @@ holding; none at all until it does):
 - a rent reminder to each tenant of a lease in effect on the next first of the month, from some
   days before it (once per tenant, lease and due day);
 - a late notice to each tenant of a lease a late fee was just charged to (once per tenant and fee);
-- last month's statement in brief to each owner with a property account, from a day of the month
-  (once per owner and month);
+- last month's statement to each owner with a property account, from a day of the month, in
+  brief with the whole statement attached as a PDF (once per owner and month);
 - a work order to its vendor when it is assigned to them or their visit is scheduled (once per
   step);
 - the adverse action notice to each applicant of an application declined or approved on
   conditions on a screening, when the decision is recorded (once per applicant and application);
+- a receipt to each tenant of a lease a payment is recorded to, with the receipt attached as a PDF
+  (migration 0111, the founder's review q029; once per tenant and payment);
 - an emergency a tenant files, to each staff member on call (migration 0084; once per request and
   staff member, to their login's email). No setting turns it on: the company's list of who is
   on call does;
@@ -31,6 +33,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
@@ -50,6 +53,7 @@ class Settings:
     owner_statement_day: int | None = None
     work_order_notices: bool = False
     adverse_action_notices: bool = False
+    payment_receipts: bool = False
     # An owner hears when one of their property accounts falls below its reserve.
     reserve_alerts: bool = False
 
@@ -60,6 +64,7 @@ FIELDS = (
     "owner_statement_day",
     "work_order_notices",
     "adverse_action_notices",
+    "payment_receipts",
     "reserve_alerts",
 )
 
@@ -355,11 +360,10 @@ def write_owner_statements(
             if item in TOTALS
         }
         month = f"{period:%B %Y}"
-        more = (
-            f"Sign in to see each property's lines and download the whole statement:\n"
-            f"{public_url.rstrip('/')}/\n\n"
+        more = "The whole statement, each property's lines, is attached as a PDF.\n\n" + (
+            f"Sign in to see it on screen:\n{public_url.rstrip('/')}/\n\n"
             if can_sign_in(conn, pmc_id, "owner", owner)
-            else f"Ask {company} for the whole statement.\n\n"
+            else ""
         )
         body = (
             f"Hello {name},\n\n"
@@ -464,6 +468,71 @@ def write_reserve_alerts(
                 "reserve_event_id": made[0],
                 "to_address": to,
                 "subject": one_line(f"{prop}: your account is below its reserve")[:200],
+                "body": body,
+            },
+        )
+    return written
+
+
+# --- payment receipts ----------------------------------------------------------------------
+
+PAYERS = """
+SELECT lt.tenant_id, t.display_name, p.display_name, u.display_name
+FROM trust_leases AS l
+JOIN trust_units AS u ON u.id = l.unit_id
+JOIN trust_properties AS p ON p.id = u.property_id
+JOIN trust_lease_tenants AS lt ON lt.lease_id = l.id
+JOIN trust_tenants AS t ON t.id = lt.tenant_id
+WHERE l.pmc_id = %(pmc)s AND l.id = %(lease)s
+  -- Not a tenant who left the lease before the payment came (others staying on it).
+  AND NOT EXISTS (SELECT 1 FROM trust_lease_departures AS d
+                  WHERE d.lease_id = l.id AND d.tenant_id = lt.tenant_id AND d.left_on < %(day)s)
+ORDER BY t.display_name COLLATE "C", lt.tenant_id
+"""
+
+
+def write_payment_receipts(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    lease_id: UUID,
+    transfer_id: str,
+    amount: Decimal,
+    received_on: date,
+) -> int:
+    """Sends each tenant of the lease the receipt of a payment recorded to it, as the company's
+    settings ask; in the caller's transaction, once per tenant and payment. The receipt's PDF is
+    made when the email is sent (src/pms/attachments.py)."""
+    if not settings_of(conn, pmc_id).payment_receipts:
+        return 0
+    company = company_of(conn, pmc_id)
+    written = 0
+    rows = conn.execute(PAYERS, {"pmc": pmc_id, "lease": lease_id, "day": received_on})
+    for tenant, name, prop, unit in rows.fetchall():
+        to = address(conn, pmc_id, "tenant", tenant)
+        if to is None:
+            continue
+        portal = (
+            "It is in the tenant portal too, with your lease's payments.\n\n"
+            if can_sign_in(conn, pmc_id, "tenant", tenant)
+            else ""
+        )
+        body = (
+            f"Hello {name},\n\n"
+            f"{company} received a payment of {email.dollars(amount)} on {us(received_on)} for "
+            f"{prop}, {unit}. Its receipt is attached as a PDF.\n\n{portal}{company}\n"
+        )
+        written += _insert(
+            conn,
+            pmc_id,
+            "payment_receipt",
+            {
+                "tenant_id": tenant,
+                "lease_id": lease_id,
+                "transfer_id": transfer_id,
+                "to_address": to,
+                "subject": one_line(
+                    f"Your receipt: {email.dollars(amount)} received {us(received_on)}"
+                ),
                 "body": body,
             },
         )

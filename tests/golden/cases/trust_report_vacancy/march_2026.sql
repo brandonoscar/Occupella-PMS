@@ -1,7 +1,9 @@
 -- Vacancy at the end of March 31, 2026. Worked by hand: Unit A's lease ended 2026-02-28, so
 -- it is vacant from 2026-03-01, 31 days through the 31st, last at 1200.00, next leased from
--- 2026-04-15. Unit C was never leased: no day it became vacant, no rent. Unit B and House are
--- leased: 2 of 4 units occupied, 50.0%.
+-- 2026-04-15. Unit C was never leased: vacant since it was added to the PMS on 2026-01-15, 76
+-- days through March 31, no rent, a line under it saying so (q084). Unit D was added on
+-- 2026-04-02, after the day, and never leased: vacant since a day not known, which its line says.
+-- Unit B and House are leased: 2 of 5 units occupied, 40.0%.
 --
 -- The scenario (the same for each of migration 0054's reports), through March 31, 2026 (UTC):
 --   Owner 1 holds Property 1 (Units A, B, C) under an agreement from 2026-01-01 (10%, minimum
@@ -42,15 +44,18 @@ INSERT INTO trust_properties (id, pmc_id, display_name) VALUES
 ('00000000-0000-4000-8000-000000000031', '00000000-0000-4000-8000-000000000001', 'Property 1'),
 ('00000000-0000-4000-8000-000000000032', '00000000-0000-4000-8000-000000000001', 'Property 2');
 
-INSERT INTO trust_units (id, pmc_id, property_id, display_name) VALUES
+-- Each unit with the day it was added to the PMS.
+INSERT INTO trust_units (id, pmc_id, property_id, display_name, created_at) VALUES
 ('00000000-0000-4000-8000-000000000041', '00000000-0000-4000-8000-000000000001',
- '00000000-0000-4000-8000-000000000031', 'Unit A'),
+ '00000000-0000-4000-8000-000000000031', 'Unit A', '2025-01-02 09:00+00'),
 ('00000000-0000-4000-8000-000000000042', '00000000-0000-4000-8000-000000000001',
- '00000000-0000-4000-8000-000000000031', 'Unit B'),
+ '00000000-0000-4000-8000-000000000031', 'Unit B', '2025-01-02 09:00+00'),
 ('00000000-0000-4000-8000-000000000043', '00000000-0000-4000-8000-000000000001',
- '00000000-0000-4000-8000-000000000031', 'Unit C'),
+ '00000000-0000-4000-8000-000000000031', 'Unit C', '2026-01-15 10:00+00'),
+('00000000-0000-4000-8000-000000000045', '00000000-0000-4000-8000-000000000001',
+ '00000000-0000-4000-8000-000000000031', 'Unit D', '2026-04-02 09:00+00'),
 ('00000000-0000-4000-8000-000000000044', '00000000-0000-4000-8000-000000000001',
- '00000000-0000-4000-8000-000000000032', 'House');
+ '00000000-0000-4000-8000-000000000032', 'House', '2025-01-02 09:00+00');
 
 INSERT INTO trust_tenants (id, pmc_id, property_id, display_name) VALUES
 ('00000000-0000-4000-8000-000000000061', '00000000-0000-4000-8000-000000000001',

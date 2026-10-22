@@ -15,6 +15,7 @@ import { money } from "../money";
 import { lateFeeSummary, nsfFeeSummary } from "../setup";
 import { AutomaticEmailsCard } from "./AutomaticEmailsCard";
 import { AutomaticFeesCard } from "./AutomaticFeesCard";
+import { AutomaticPrepaidCard } from "./AutomaticPrepaidCard";
 import { ScreeningCriteriaCard } from "./ScreeningCriteriaCard";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
@@ -77,6 +78,7 @@ export function SetupPage({ me }: { me: Me }) {
             <div className="mt-3"><Button variant="secondary" onClick={() => setOpen("fees")}>Set default fees</Button></div>
           </Card>
           <AutomaticFeesCard />
+          <AutomaticPrepaidCard />
           <AutomaticEmailsCard />
           <ScreeningCriteriaCard />
           {open === "company" && (

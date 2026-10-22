@@ -85,8 +85,12 @@ class Row:
 
 def rows(content: str, needs: tuple[str, ...]) -> list[Row]:
     """A CSV file's rows, by lower-case column name (spaces and underscores alike)."""
-    reader = csv.reader(io.StringIO(content.lstrip("\ufeff")))
-    found = [r for r in reader if any(c.strip() for c in r)]
+    # newline="": the csv module itself reads \r\n, \n and a bare \r as the end of a row.
+    reader = csv.reader(io.StringIO(content.lstrip("\ufeff"), newline=""))
+    try:
+        found = [r for r in reader if any(c.strip() for c in r)]
+    except csv.Error as bad:
+        raise Bad(f"line {reader.line_num}: this isn't CSV the PMS can read ({bad})") from None
     if not found:
         raise Bad("the file is empty")
     headers = [h.strip().lower().replace("_", " ") for h in found[0]]

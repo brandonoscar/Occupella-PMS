@@ -220,6 +220,8 @@ class EmailSettings(BaseModel):
     adverse_action_notices: bool = False
     # An owner is told when one of their property accounts falls below its reserve, once a drop.
     reserve_alerts: bool = False
+    # Each tenant of a lease gets the receipt of a payment staff record to it, as a PDF.
+    payment_receipts: bool = False
 
 
 class EmailSettingsOut(EmailSettings):

@@ -6,7 +6,8 @@ import type { OwnerDocument } from "../documents";
 import { sizeLabel } from "../documents";
 import { usDate } from "../money";
 
-// The documents staff keep for the signed-in owner, to download.
+// What the signed-in owner sees of the files, to download: their own documents, their
+// properties' and units' files, and their bills' receipts (q046), each saying what it is about.
 export function OwnerDocuments() {
   const [documents, setDocuments] = useState<OwnerDocument[] | null>(null);
   const [error, setError] = useState("");
@@ -30,7 +31,7 @@ export function OwnerDocuments() {
                 {d.title}
               </a>{" "}
               <span className="text-ink-muted">
-                ({sizeLabel(d.size)}, {usDate(d.uploaded_at)})
+                ({d.about_name ? `${d.about_name}, ` : ""}{sizeLabel(d.size)}, {usDate(d.uploaded_at)})
               </span>
             </li>
           ))}

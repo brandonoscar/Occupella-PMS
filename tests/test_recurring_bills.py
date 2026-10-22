@@ -13,6 +13,7 @@ import pytest
 from helpers import (
     add_recurring_bill,
     approve_bill,
+    carry_over_vendor_payments,
     end_recurring_bill,
     enter_bill,
     enter_recurring_bills,
@@ -207,6 +208,24 @@ def report(conn, pmc, year=2026):
     ).fetchall()
 
 
+def mark(conn, pmc, vendor, gets_1099):
+    """The vendor's profile says whether they get a 1099 (migration 0073; the latest holds)."""
+    conn.execute(
+        "INSERT INTO trust_vendor_profiles (pmc_id, vendor_id, gets_1099) VALUES (%s, %s, %s)",
+        (pmc.pmc_id, vendor, gets_1099),
+    )
+
+
+def nothing_paid(year):
+    """The lines after the year when no vendor was paid: the threshold, a total of 0.00 and no
+    vendor marked for none."""
+    threshold = Decimal("600.00") if year <= 2025 else Decimal("2000.00")
+    return [
+        (4, "total", None, 0, Decimal("0.00")),
+        (5, "not marked for a 1099", "0 vendors", 0, Decimal("0.00")),
+    ], threshold
+
+
 def paid_bill(conn, pmc, vendor, reference, amount, paid_at):
     """A bill entered, set aside and paid at `paid_at`."""
     transfer_batch(conn, [(pmc.operating_cash, pmc.owners[0].account, amount)])
@@ -236,7 +255,29 @@ def test_the_report_reads_every_year_from_1900_to_9998(conn, pmc, year):
     rows = report(conn, pmc, year)
 
     assert rows[1][1:3] == ("year", f"{year}, paid January 1 to December 31 UTC")
-    assert rows[2:] == [(3, "total", None, 0, Decimal("0.00"))]
+    after, threshold = nothing_paid(year)
+    assert rows[2][1] == "threshold"
+    assert rows[2][3:] == (None, threshold)
+    assert rows[3:] == after
+
+
+@pytest.mark.parametrize(
+    ("year", "threshold", "why"),
+    [
+        (2025, "600.00", "(IRS, payments through 2025)"),
+        (2026, "2000.00", "(IRS, payments from 2026)"),
+        (
+            2027,
+            "2000.00",
+            "(IRS, payments from 2026; its adjustment for inflation from 2027 is not known here)",
+        ),
+    ],
+)
+def test_the_threshold_is_the_irss_for_the_year(conn, pmc, year, threshold, why):
+    (_, item, vendor, payments, paid) = report(conn, pmc, year)[2]
+
+    assert (item, payments, paid) == ("threshold", None, Decimal(threshold))
+    assert vendor == f"a 1099 for a vendor marked for one and paid this much or more {why}"
 
 
 def test_the_report_refuses_an_unknown_pmc(conn):
@@ -257,15 +298,65 @@ def test_each_vendor_shows_what_it_was_paid_in_the_year(conn, app_conn, pmc):
     paid_bill(conn, pmc, pmc.vendor_id, "A-3", "999.00", datetime(2025, 12, 31, 23, 59, tzinfo=UTC))
     paid_bill(conn, pmc, pmc.vendor_id, "A-4", "777.00", datetime(2027, 1, 1, tzinfo=UTC))
     paid_bill(conn, pmc, second, "B-1", "40.00", datetime(2026, 6, 1, tzinfo=UTC))
+    for vendor in (pmc.vendor_id, second):
+        mark(conn, pmc, vendor, True)
 
     rows = report(app_conn, pmc)
 
     assert [row[0] for row in rows] == list(range(1, len(rows) + 1))
     assert rows[1][1:3] == ("year", "2026, paid January 1 to December 31 UTC")
-    assert rows[2:] == [
-        (3, "vendor", "Vendor 1", 2, Decimal("350.50")),
-        (4, "vendor", "Vendor 2", 1, Decimal("40.00")),
-        (5, "total", None, 3, Decimal("390.50")),
+    # Neither reached 2026's threshold of 2000.00; in 2025 Vendor 1 passed 600.00.
+    assert rows[3:] == [
+        (4, "total", None, 0, Decimal("0.00")),
+        (5, "under the threshold", "Vendor 1", 2, Decimal("350.50")),
+        (6, "under the threshold", "Vendor 2", 1, Decimal("40.00")),
+        (7, "not marked for a 1099", "0 vendors", 0, Decimal("0.00")),
+    ]
+    assert report(app_conn, pmc, 2025)[3:] == [
+        (4, "vendor", "Vendor 1", 1, Decimal("999.00")),
+        (5, "total", None, 1, Decimal("999.00")),
+        (6, "not marked for a 1099", "0 vendors", 0, Decimal("0.00")),
+    ]
+
+
+def test_only_vendors_marked_for_a_1099_are_on_it_by_their_latest_profile(conn, pmc):
+    """q060: a 1099 vendor paid the threshold or more is on it and in its total; one paid less
+    is under the threshold; one with no profile is listed so staff can say; those marked for
+    none are one line. The latest profile holds."""
+    names = ["Vendor 1", "Vendor 2", "Vendor 3", "Vendor 4", "Vendor 5"]
+    vendors = [pmc.vendor_id]
+    for name in names[1:]:
+        vendors.append(
+            conn.execute(
+                "INSERT INTO trust_vendors (pmc_id, display_name) VALUES (%s, %s) RETURNING id",
+                (pmc.pmc_id, name),
+            ).fetchone()[0]
+        )
+        conn.execute(
+            "SELECT trust_open_vendor_account(%s, %s, %s)",
+            (pmc.pmc_id, pmc.operating_bank_id, vendors[-1]),
+        )
+    paid = ["1500.00", "40.00", "10.00", "700.00", "2000.00"]
+    for i, (vendor, amount) in enumerate(zip(vendors, paid, strict=True)):
+        paid_bill(conn, pmc, vendor, f"R-{i}", amount, datetime(2026, 3, 1, tzinfo=UTC))
+    paid_bill(conn, pmc, vendors[0], "R-9", "500.00", datetime(2026, 4, 1, tzinfo=UTC))
+    carry_over_vendor_payments(conn, pmc.pmc_id, vendors[1], 2026, date(2026, 2, 1), "25.00")
+    mark(conn, pmc, vendors[0], True)
+    mark(conn, pmc, vendors[1], True)
+    # Vendor 3 has no profile. Vendor 4 was marked, then not: the latest holds.
+    mark(conn, pmc, vendors[3], True)
+    mark(conn, pmc, vendors[3], False)
+    mark(conn, pmc, vendors[4], False)
+    mark(conn, pmc, vendors[4], True)
+
+    assert report(conn, pmc)[3:] == [
+        (4, "vendor", "Vendor 1", 2, Decimal("2000.00")),
+        (5, "vendor", "Vendor 5", 1, Decimal("2000.00")),
+        (6, "total", None, 3, Decimal("4000.00")),
+        (7, "under the threshold", "Vendor 2", 1, Decimal("65.00")),
+        (8, "carried over", "paid in the old system before 2026-02-01", None, Decimal("25.00")),
+        (9, "no 1099 setting", "Vendor 3", 1, Decimal("10.00")),
+        (10, "not marked for a 1099", "1 vendor", 1, Decimal("700.00")),
     ]
 
 
@@ -284,7 +375,7 @@ def test_money_set_aside_but_not_paid_is_not_a_payment(conn, pmc):
     approve_bill(conn, pmc.pmc_id, bill, date(2026, 1, 1), "Owner 1, by email")
     set_aside_bill(conn, pmc.pmc_id, bill, datetime(2026, 1, 2, tzinfo=UTC))
 
-    assert report(conn, pmc)[2:] == [(3, "total", None, 0, Decimal("0.00"))]
+    assert report(conn, pmc)[3:] == nothing_paid(2026)[0]
 
 
 def test_the_report_reads_the_same_in_any_time_zone_and_for_every_role(
@@ -299,7 +390,7 @@ def test_the_report_reads_the_same_in_any_time_zone_and_for_every_role(
             readings.append(report(session, pmc))
 
     assert all(reading == readings[0] for reading in readings)
-    assert readings[0][-1][3:] == (1, Decimal("100.00"))
+    assert readings[0][-2][1:] == ("no 1099 setting", "Vendor 1", 1, Decimal("100.00"))
 
 
 def test_vendors_list_in_the_same_order_on_any_server(database_url):
@@ -320,4 +411,4 @@ def test_vendors_list_in_the_same_order_on_any_server(database_url):
             paid_bill(conn, pmc, vendor, reference, "10.00", datetime(2026, 3, 1, tzinfo=UTC))
         rows = report(conn, pmc)
 
-    assert [r[2] for r in rows if r[1] == "vendor"] == ["Vendor b", "vendor a"]
+    assert [r[2] for r in rows if r[1] == "no 1099 setting"] == ["Vendor b", "vendor a"]

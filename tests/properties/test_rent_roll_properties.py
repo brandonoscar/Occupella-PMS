@@ -1820,6 +1820,35 @@ class RentRollMachine(RuleBasedStateMachine):
         self.attempt_match(role, charge_id, paid, owed)
         self.income_statement_is_the_models(role, owner, when.date(), when.date())
 
+    def all_owners_statement_is_each_owners(self, role, first, last):
+        """The income statement across every owner (q108): each owner's property account's
+        lines as that owner's own statement has them, named by its property and owner, and each
+        line across them all the sum of theirs."""
+        conn = self.conns[role]
+        everyone = conn.execute(
+            "SELECT property, item, schedule_e, amount"
+            " FROM trust_report_income_statement_all_owners(%s, %s, %s) WHERE line > 3",
+            (self.pmc_id, first, last),
+        ).fetchall()
+        totals: dict[str, tuple[int | None, Decimal]] = {}
+        for i, owner in enumerate(self.pmc.owners):
+            own = conn.execute(
+                "SELECT item, schedule_e, amount FROM trust_report_income_statement(%s, %s, %s, %s)"
+                " WHERE line > 3 AND property IS NOT NULL",
+                (self.pmc_id, owner.owner_id, first, last),
+            ).fetchall()
+            named = f"{self.property_names[i]}, {self.owner_names[i]}"
+            assert [(item, line, amount) for p, item, line, amount in everyone if p == named] == own
+            for item, line, amount in own:
+                totals[item] = (line, totals.get(item, (line, Decimal(0)))[1] + amount)
+        across = {
+            item.removeprefix("all properties: "): (line, amount)
+            for p, item, line, amount in everyone
+            if p is None
+        }
+        assert across == totals
+        assert len(everyone) == len(across) + sum(1 for row in everyone if row[0] is not None)
+
     def income_statement_is_the_models(self, role, owner, first, last):
         account = self.owner_account[owner]
         start = datetime.combine(first, time(0), UTC)
@@ -1906,6 +1935,7 @@ class RentRollMachine(RuleBasedStateMachine):
             *((name, item, line, amount) for item, line, amount in expected),
             *((None, f"all properties: {item}", line, amount) for item, line, amount in expected),
         ]
+        self.all_owners_statement_is_each_owners(role, first, last)
         # With no budget, the budget against actual is every line of it at a budget of 0.00, and
         # each line's actual is the statement's.
         against = (

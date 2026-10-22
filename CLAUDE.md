@@ -140,11 +140,16 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   email (`outbox.SENDING`; the nightly run's `sending`): a rent reminder to each tenant of a lease
   in effect on its next due day (the first unless it picked another), from 1 to 15 days before it; a late notice to each tenant when the
   run charges a late fee; last month's statement in brief to each owner with a property account,
-  from a day of the month (1 to 28); a vendor's work order when assigned or scheduled; and the
+  from a day of the month (1 to 28); a vendor's work order when assigned or scheduled; the
   adverse action notice to each applicant when a decision rests on a screening (the PDF's text,
-  shown on the applicant's page). Each names what it is about and is written once (a unique index
-  per kind); a lease under a payment hold gets no reminder or late notice. The nightly run and an
-  admin's Run rent now write the first three, after the run, in its transaction.
+  shown on the applicant's page); and, since migration 0111 (q029), a payment's receipt to each
+  tenant on its lease when staff record it (`payment_receipt`, once per tenant and payment). Each
+  names what it is about and is written once (a unique index per kind); a lease under a payment
+  hold gets no reminder or late notice. The nightly run and an admin's Run rent now write the
+  first three, after the run, in its transaction. A receipt carries the receipt's PDF and an owner's
+  statement the whole month's statement as a PDF (`src/pms/attachments.py`, q045, q055), made when
+  the email is handed to the sender from what the database holds then (the outbox keeps no file);
+  one whose file can't be made is a failed delivery saying why.
   Since migration 0150 (the founder, 2026-10-22) they also look at each owner's property account
   for a company that turned on its low balance alerts (`reserve_alerts`): one that fell below the
   reserve of the agreement in force since the last look is a drop (`trust_reserve_events`: drops
@@ -398,7 +403,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - The owner money loop: a management agreement per owner's property account, in force from a
   date (new terms are a new row). `trust_post_management_fee` takes its percent of rent and
   recurring fees collected in a period (net of bounces; recurring fees since migration 0040),
-  or the minimum, plus a flat fee, into the PMC's fee account, once per period;
+  or the minimum, plus a flat fee, into the PMC's fee account, once per period (a property owned
+  in shares on the period's last day: one fee for the property, its owners' collections added up
+  under the terms they share, split by the shares, each account paying its part; owners whose
+  terms differ take none until they agree; migration 0115, q044; staff set every owner's terms at
+  once from the property's Set terms, `every_owner`);
   `trust_post_leasing_fee` once per lease; `trust_draw_owner` pays out the balance above the
   reserve and unpaid bills, once per request key. All at READ COMMITTED.
 - Owners' fees (migration 0082, the founder's review q049 to q051): a company may have the
@@ -469,8 +478,19 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   tenant's charges or an authority's, never both) to its charges; the management fee, income
   statement and year-end count it as rent. Rentals, Housing authorities
   (`/housing-authorities`, `src/pms/api/assistance.py`, area rent) records its payment for many
-  leases at once; the lease's Summary shows the split. No payment hold or bounce applies to it.
-  The AI role reads all four tables.
+  leases at once; the lease's Summary shows the split. The AI role reads all four tables. Since
+  migration 0116 (the rest of q034): an authority's late payment fee from a day
+  (`trust_authority_late_fees`: grace days, a flat fee, 0 none; append-only, naming who; Set late
+  fee on its page) is charged on the authority by `trust_assess_authority_late_fees` (the nightly
+  run and Run rent now) to each rent part still open at the end of its last grace day, once
+  (`source` 'late fee', `late_for_id`), never the tenant; the management fee doesn't count it as
+  rent and the income statements count it as a late fee. A payment the bank returned is undone
+  (`POST /api/assistance/payments/<transfer>/bounce`, the payment's ⋯ menu): its money moves back
+  to cash and `trust_reverse_assistance_payment` reverses each match
+  (`trust_assistance_payment_reversals`), so the charges are owed again and every report counts it
+  back out. `trust_apply_assistance_payment` refuses a payment dated in a lease's payment hold
+  unless the transfer was allowed on it, as a tenant's is; Record payment's Accept this payment
+  past the payment hold allows it, naming who.
 - Assisted lease compliance (migration 0108, the founder's review q143, `docs/law.md`): the
   household's income certifications (`trust_income_certifications`: move-in, annual or interim,
   the day it takes effect, household size, annual income, the day the next annual one is due) and
@@ -676,8 +696,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   signers become its tenants; a renewal keeps the lease's tenants and ends it the day before.
   READ COMMITTED; all append-only. Since migration 0071 an offer may be kept as a draft (no
   signature request until staff send it), asks a security deposit (`security_deposit`; asked,
-  not held) and lists up to ten monthly fees or credits (`trust_lease_offer_charges`, written
-  only before it is sent) that become the lease's recurring charges from its first day when it
+  not held: the lease's page, the tenant portal and the Dashboard say what its signed offer asked,
+  what is held of it for its tenants and what is still to receive, until staff record it;
+  `rent.deposits_asked`, the founder's review q036) and lists up to ten monthly fees or credits
+  (`trust_lease_offer_charges`, written only before it is sent) that become the lease's recurring charges from its first day when it
   completes; staff void an offer that is not a lease yet (`trust_lease_offer_voids`, once,
   naming who and why), after which it is never sent, signed or completed (a void and a
   completion wait for each other), the tenant no longer sees it, and the expirations report
@@ -782,14 +804,20 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   rent and recurring charges for the month (due on its first day, or on a lease's own due day
   once it comes; migration 0081), the late fees of rents past
   their grace as of the day, the recurring bills due, with their owners' emails, and the recurring
-  work orders due (migration 0085). Rent and late
+  work orders due (migration 0085), and, for a company that turns it on in Company setup
+  (`trust_prepaid_rent_settings`, migration 0117: append-only, the latest row holding, naming who
+  changed it; `/api/rent/prepaid/automatic`, area rent; off by default), each lease's tenants'
+  prepaid rent for what it owes, as Use prepaid rent does, once a day per lease, leaving a lease on
+  a payment hold or whose owner's account staff choose (`rent.use_prepaid_by_itself`; Run rent now
+  too). Rent and late
   fees go through `trust_run_rent`, which records the run (`trust_rent_runs`, append-only, naming
   nobody); an admin runs it by hand from the rent roll (Run rent now), and a named staff member
   without admin is refused. Each part charges once per date, so a run again charges nothing new.
   The API runs it at start and every day at 06:00 UTC unless `PMS_NIGHTLY` is "off" (e2e turns it
   off); `python -m pms.nightly` runs it once, one run at a time across servers (an advisory lock:
   another leaves the work to it). It moves no trust money but a company's monthly
-  management fees, once it turns them on (migration 0082), inside trust.
+  management fees and tenants' prepaid rent, once it turns them on (migrations 0082 and 0117),
+  inside trust.
 - Notes (migration 0066, ADR 0006): what staff write about a property, unit, lease, tenant, owner
   or vendor of the PMC (`trust_notes`, exactly one of them, append-only, naming who wrote it; a
   correction is a new note), on its Notes tab (`src/pms/api/notes.py`). They move no money, and
@@ -824,7 +852,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   insert against the type's first bytes, the size and SHA-256 its row says, and there at
   commit): never audited and never read by `trust_ai_agent`. A removal is a row
   (`trust_document_removals`); nothing is deleted. The PMS reads nothing out of a file. An
-  owner downloads their own owner documents in the portal. The company's logo is a document too
+  owner downloads their own owner documents in the portal, and since q046 the files about the
+  properties they hold an account for and those properties' units, and the receipts of their
+  accounts' bills (`OWNER_SEES` in `src/pms/api/documents.py`), each named with what it is about. The company's logo is a document too
   (`company_logo`, migration 0075: a PNG or JPEG about no one record, the latest not removed
   holding), kept by `src/pms/api/company.py` and in no list of files.
 - The company (migration 0075, ADR 0006): its name is `trust_pmcs.display_name`, which staff
@@ -833,8 +863,12 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (append-only, the latest row holding, naming who recorded it; saving the same again writes
   nothing). A default changes no property already there. The AI role never reads it.
 - Vendor payments: `trust_report_vendor_payments` lists what each vendor was paid through
-  `trust_pay_bill` in a calendar year (UTC), for 1099 preparation. It files nothing, holds no
-  tax IDs and applies no threshold. What the old system paid a vendor in the cutover's year
+  `trust_pay_bill` in a calendar year (UTC), for 1099 preparation. It files nothing and holds no
+  tax IDs. Since migration 0113 (q060) it is the 1099 summary: a vendor whose latest profile marks
+  them for a 1099 and was paid the IRS's threshold or more (600.00 through 2025, 2000.00 from
+  2026; the inflation adjustment from 2027 is not known to it, and its line says so) is on it and
+  in its total, one paid less is under the threshold, one with no profile is listed apart (no
+  1099 setting), and those marked for none are one line. What the old system paid a vendor in the cutover's year
   before it (`trust_vendor_payments_carried_over`, migration 0038, once per vendor and year; a
   January 1 cutover carries over the year before) is added to the vendor's year, on a line of
   its own.
@@ -863,7 +897,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   what each charge is (rent, recurring charges, late fees, NSF fees, other; a lease end's
   adjustment is what it adjusts), management fees (line 11), leasing fees (line 8), bills set
   aside by expense account (a split bill by its lines; those in none on no line), net income,
-  then by Schedule E line. It
+  then by Schedule E line; with no owner, every owner's, each property account named by its
+  property and owner (migration 0112, q108; Reports, Income statement, all owners:
+  `trust_report_income_statement_all_owners`). It
   files nothing. Charge types (migration 0100, the founder's review q133): a company's own kinds
   of fee (`trust_charge_types`: a name once per PMC whatever its case, none of the statement's
   income lines; append-only, naming who added it; Settings, Chart of accounts), which a fee, once
@@ -891,7 +927,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   sheet (`trust_report_balance_sheet`: each trust bank account's cash by the books against what
   it holds by kind, at a day's end), cash flow (`trust_report_cash_flow`: each one's cash over
   days, every move of it in or out once, by what it was), vacancy (units with no lease in
-  effect, since when; never leased is unknown), work orders (status and vendor as of a day,
+  effect, since when; never leased, since it was added to the PMS, a line saying so: migration
+  0114, q084), work orders (status and vendor as of a day,
   days open, billed), and directories of tenants, owners and vendors (names and what they are
   to the company on a day; contact details stay out of reports).
 - Budgets (migration 0055): a month's budget of an owner's property account on one of the
@@ -905,7 +942,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - Vendor profiles (migration 0073, ADR 0006): a vendor's trade, whether they are a 1099 vendor
   and how they are paid (check or EFT), in `trust_vendor_profiles` (append-only, the latest row
   holding, naming who recorded it; the same again writes nothing). No tax ID is kept: it stays on
-  the W-9. A profile decides nothing and moves no money; the AI role reads it.
+  the W-9. A profile moves no money; whether a vendor gets a 1099 decides only whether the 1099
+  summary lists them (migration 0113). The AI role reads it.
 - A lease's people (migration 0080, `docs/law.md`): a tenant leaves a lease others stay on, once,
   from a day within it (`trust_remove_lease_tenant`, writing `trust_lease_departures`, naming
   who recorded it); the last tenant can't (the lease ends instead), nor anyone once its deposit

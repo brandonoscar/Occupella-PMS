@@ -15,11 +15,17 @@ household's income certifications (at move-in, every year, 24 CFR 982.516(a), an
 between) and the home's inspections for its authority (at least every two years, 24 CFR
 982.405(a)), each saying where it stands today as trust_report_assistance_compliance words it. The
 PMS files nothing with HUD and checks no income or rent limit.
+
+Since migration 0116 (the rest of q034) an authority's page sets its late payment fee, as its HAP
+contract provides (the nightly run and Run rent now charge it on the authority, never the tenant),
+lists its payments with It bounced for one the bank returned (its money moves back to cash and
+its charges are open again), and a payment dated in a lease's payment hold is refused unless staff
+accept it past the hold, as a tenant's is.
 """
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -135,8 +141,9 @@ class AuthorityCharge(BaseModel):
     authority_id: UUID
     due_on: date
     memo: str
-    # 'rent': a month's part of the rent; 'staff': charged by hand.
-    source: Literal["rent", "staff"]
+    # 'rent': a month's part of the rent; 'staff': charged by hand; 'late fee': the authority's
+    # late payment fee on a rent's part (migration 0116).
+    source: Literal["rent", "staff", "late fee"]
     charged: str
     # What a lease's end or staff's credits added to it or took off it (signed).
     adjusted: str
@@ -159,7 +166,9 @@ SELECT c.id, c.lease_id, c.housing_authority_id, c.due_on, c.memo, c.source, c.a
        coalesce((SELECT sum(CASE a.kind WHEN 'credit' THEN -a.amount ELSE a.amount END)
                  FROM trust_assistance_charges AS a WHERE a.adjusts_id = c.id), 0),
        coalesce((SELECT sum(p.amount) FROM trust_assistance_payments AS p
-                 WHERE p.assistance_charge_id = c.id), 0),
+                 WHERE p.assistance_charge_id = c.id), 0)
+       - coalesce((SELECT sum(r.amount) FROM trust_assistance_payment_reversals AS r
+                   WHERE r.assistance_charge_id = c.id), 0),
        trust_assistance_open(c.id)
 FROM trust_assistance_charges AS c
 WHERE c.pmc_id = %(pmc)s AND c.adjusts_id IS NULL
@@ -599,6 +608,26 @@ class AssistedLease(BaseModel):
     owed: str
     # Its charges with something open, oldest first.
     open_charges: list[AuthorityCharge]
+    # A payment hold on the lease in force today (an eviction filed): from when, and why.
+    hold_since: date | None = None
+    hold_reason: str | None = None
+
+
+class AuthorityLateFee(BaseModel):
+    starts_on: date
+    grace_days: int
+    flat_fee: str
+
+
+class AuthorityPaymentRow(BaseModel):
+    # The payment's first transfer: It bounced names it.
+    transfer_id: str
+    received_on: date
+    amount: str
+    reference: str | None
+    method: str | None
+    # The day the bank returned it, once it bounced.
+    bounced_on: date | None
 
 
 class AuthorityPage(BaseModel):
@@ -606,6 +635,45 @@ class AuthorityPage(BaseModel):
     name: str
     leases: list[AssistedLease]
     owed: str
+    # Its late payment fee in force today (none: no terms, or terms of 0).
+    late_fee: AuthorityLateFee | None = None
+    # Its payments, the latest first.
+    payments: list[AuthorityPaymentRow] = []
+
+
+LATE_FEE = """
+SELECT f.starts_on, f.grace_days, f.flat_fee FROM trust_authority_late_fees AS f
+WHERE f.pmc_id = %s AND f.housing_authority_id = %s AND f.starts_on <= %s
+ORDER BY f.starts_on DESC LIMIT 1
+"""
+
+# An authority's payments: the transfers posted under each key, and the day a bounce of it moved
+# the money back.
+PAYMENTS = """
+WITH paid AS (
+    SELECT t.metadata ->> 'key' AS key, min(t.id) AS first,
+           (t.metadata ->> 'received_on')::date AS received_on, sum(t.amount) AS amount,
+           t.metadata ->> 'reference' AS reference, t.metadata ->> 'method' AS method
+    FROM pgledger_transfers AS t
+    JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id
+    WHERE a.pmc_id = %s AND t.metadata ->> 'kind' = 'housing authority payment'
+      AND t.metadata ->> 'housing_authority_id' = %s
+    GROUP BY 1, 3, 5, 6
+)
+SELECT p.first, p.received_on, p.amount, p.reference, p.method,
+       (SELECT min(b.event_at) FROM pgledger_transfers AS b
+        WHERE b.metadata ->> 'key' = 'bounce/' || p.key)
+FROM paid AS p
+ORDER BY p.received_on DESC, p.first DESC
+"""
+
+HOLD_TODAY = """
+SELECT h.starts_on, h.reason FROM trust_payment_holds AS h
+LEFT JOIN trust_payment_hold_releases AS r ON r.hold_id = h.id
+WHERE h.pmc_id = %(pmc)s AND h.lease_id = %(lease)s AND h.starts_on <= %(day)s
+  AND (r.ends_on IS NULL OR %(day)s < r.ends_on)
+ORDER BY h.starts_on, h.id LIMIT 1
+"""
 
 
 @router.get("/authorities/{authority_id}")
@@ -628,6 +696,9 @@ def authority_page(session: Staff, conn: Conn, authority_id: UUID) -> AuthorityP
     leases = []
     for lease_id, monthly, contract in rows:
         mine = [c for c in charges if c.lease_id == lease_id]
+        hold = conn.execute(
+            HOLD_TODAY, {"pmc": session.pmc_id, "lease": lease_id, "day": rent.today()}
+        ).fetchone()
         leases.append(
             AssistedLease(
                 lease_id=lease_id,
@@ -636,15 +707,64 @@ def authority_page(session: Staff, conn: Conn, authority_id: UUID) -> AuthorityP
                 contract=contract,
                 owed=rent.cents(sum((Decimal(c.open) for c in mine), ZERO)),
                 open_charges=[c for c in mine if Decimal(c.open) != 0],
+                hold_since=None if hold is None else hold[0],
+                hold_reason=None if hold is None else hold[1],
             )
         )
     leases.sort(key=lambda lease: (lease.home, str(lease.lease_id)))
+    fee = conn.execute(LATE_FEE, (session.pmc_id, authority_id, rent.today())).fetchone()
     return AuthorityPage(
         id=authority_id,
         name=name,
         leases=leases,
         owed=rent.cents(sum((Decimal(c.open) for c in charges), ZERO)),
+        late_fee=None
+        if fee is None or fee[2] == 0
+        else AuthorityLateFee(starts_on=fee[0], grace_days=fee[1], flat_fee=rent.cents(fee[2])),
+        payments=[
+            AuthorityPaymentRow(
+                transfer_id=first,
+                received_on=received,
+                amount=rent.cents(amount),
+                reference=reference,
+                method=method,
+                bounced_on=None if bounced is None else bounced.astimezone(UTC).date(),
+            )
+            for first, received, amount, reference, method, bounced in conn.execute(
+                PAYMENTS, (session.pmc_id, str(authority_id))
+            ).fetchall()
+        ],
     )
+
+
+class NewAuthorityLateFee(BaseModel):
+    starts_on: date
+    grace_days: Annotated[int, Field(ge=0, le=60)]
+    # 0 charges none from the day.
+    flat_fee: Annotated[Decimal, Field(ge=0, le=Decimal("100000"), decimal_places=2)]
+
+
+@router.post("/authorities/{authority_id}/late-fees", status_code=201)
+def set_late_fee(
+    session: Staff, conn: Conn, authority_id: UUID, new: NewAuthorityLateFee
+) -> Created:
+    """An authority's late payment fee from a day, as its HAP contract provides (24 CFR
+    982.451(b)(4)): its part of a rent still open after the grace days is charged the fee, on the
+    authority, once. New terms are a new row from a later day."""
+    authority_named(conn, session.pmc_id, authority_id)
+    try:
+        with conn.transaction():
+            made = conn.execute(
+                "INSERT INTO trust_authority_late_fees (pmc_id, housing_authority_id, starts_on,"
+                " grace_days, flat_fee) VALUES (%s, %s, %s, %s, %s) RETURNING id",
+                (session.pmc_id, authority_id, new.starts_on, new.grace_days, new.flat_fee),
+            ).fetchone()
+    except psycopg.errors.UniqueViolation:
+        raise HTTPException(
+            409, "this authority has late fee terms from that day already"
+        ) from None
+    assert made is not None
+    return Created(id=made[0])
 
 
 # --- an authority's payment -------------------------------------------------------------------
@@ -665,6 +785,8 @@ class NewAuthorityPayment(BaseModel):
     reference: rent.Memo | None = None
     method: rent.Method | None = None
     lines: Annotated[list[PaymentLine], Field(min_length=1, max_length=200)]
+    # Accept it past a lease's payment hold (an eviction filed), naming the staff member.
+    past_hold: bool = False
 
 
 class AuthorityPayment(BaseModel):
@@ -700,6 +822,20 @@ def record_payment(session: Staff, conn: Conn, new: NewAuthorityPayment) -> Auth
     for lease_id in sorted(leases, key=str):
         properties[lease_id] = rent.lease_of(conn, session.pmc_id, lease_id).property_id
         rent.lock_lease(conn, lease_id)
+    # A lease on a payment hold that day takes it only when staff accept it past the hold.
+    if not new.past_hold:
+        for line in new.lines:
+            hold = conn.execute(
+                HOLD_TODAY,
+                {"pmc": session.pmc_id, "lease": line.lease_id, "day": new.received_on},
+            ).fetchone()
+            if hold is not None:
+                raise HTTPException(
+                    409,
+                    f"{rent.lease_memo(conn, line.lease_id)} is on a payment hold from"
+                    f" {hold[0]:%m/%d/%Y} ({hold[1]}); accept the payment past the hold to"
+                    " record it",
+                )
     # Each lease's part goes to its property's owners, by their shares on the day received.
     plans: list[tuple[PaymentLine, list[tuple[str, Decimal]]]] = []
     transfers: list[tuple[str, str, Decimal]] = []
@@ -724,6 +860,7 @@ def record_payment(session: Staff, conn: Conn, new: NewAuthorityPayment) -> Auth
         return AuthorityPayment(transfers=posted, paid=rent.cents(total))
     # Each owner's part pays what the authority owes on the lease, oldest first.
     sent = iter(posted)
+    by = rent.staff_name(conn, session.pmc_id, session.person_id) if new.past_hold else None
     for line, parts in plans:
         open_charges = [
             (charge, Decimal(left))
@@ -744,6 +881,10 @@ def record_payment(session: Staff, conn: Conn, new: NewAuthorityPayment) -> Auth
             )
         for _, part in parts:
             transfer = next(sent)
+            if by is not None:
+                rent.allow_past_holds(
+                    conn, session.pmc_id, line.lease_id, transfer, new.received_on, by
+                )
             for charge, piece in rent.allocate(open_charges, part):
                 conn.execute(
                     "SELECT trust_apply_assistance_payment(%s, %s, %s, %s)",
@@ -762,3 +903,68 @@ def shrink(charges: list[tuple[UUID, Decimal]], amount: Decimal) -> list[tuple[U
         if open_ > piece:
             left.append((charge, open_ - piece))
     return left
+
+
+# --- an authority's payment the bank returned (migration 0116) ---------------------------------
+
+
+class AuthorityReturn(BaseModel):
+    on: date
+
+
+class AuthorityReturned(BaseModel):
+    transfers: list[str]
+    amount: str
+
+
+@router.post("/payments/{transfer_id}/bounce", status_code=201)
+def bounce(
+    session: Staff, conn: Conn, transfer_id: str, returned: AuthorityReturn
+) -> AuthorityReturned:
+    """An authority's payment the bank returned: every transfer it posted moves back to cash, and
+    what each paid of the authority's charges is reversed (trust_reverse_assistance_payment), so
+    they are owed again. Once per payment."""
+    rent.not_after_today(returned.on)
+    rows = conn.execute(
+        "SELECT t.id, t.from_account_id, t.to_account_id, t.amount, t.metadata, t.event_at"
+        " FROM pgledger_transfers AS t"
+        " JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id"
+        " WHERE a.pmc_id = %s AND t.metadata ->> 'key' = ("
+        "   SELECT p.metadata ->> 'key' FROM pgledger_transfers AS p WHERE p.id = %s"
+        "     AND p.metadata ->> 'kind' = 'housing authority payment')"
+        " ORDER BY t.created_at, t.id",
+        (session.pmc_id, transfer_id),
+    ).fetchall()
+    if not rows:
+        raise HTTPException(404, "no such housing authority payment")
+    metadata = rows[0][4]
+    for lease_id in sorted({line[0] for line in metadata["lines"]}):
+        rent.lock_lease(conn, UUID(lease_id))
+    if returned.on < rows[0][5].astimezone(UTC).date():
+        raise HTTPException(422, "a payment bounces on or after the day it was received")
+    name = authority_named(conn, session.pmc_id, UUID(metadata["housing_authority_id"]))
+    key = f"bounce/{metadata['key']}"
+    back = {
+        "key": key,
+        "kind": "bounced housing authority payment",
+        "housing_authority_id": metadata["housing_authority_id"],
+        "reference": None,
+        "memo": f"Returned payment – {name}",
+    }
+    transfers = [(to, frm, Decimal(amount)) for _, frm, to, amount, _, _ in rows]
+    posted = rent.post(conn, session.pmc_id, key, transfers, returned.on, back)
+    if posted is None:
+        raise HTTPException(409, "this payment bounced already")
+    for (payment, *_), reversal in zip(rows, posted, strict=True):
+        for charge, matched in conn.execute(
+            "SELECT assistance_charge_id, amount FROM trust_assistance_payments"
+            " WHERE transfer_id = %s",
+            (payment,),
+        ).fetchall():
+            conn.execute(
+                "SELECT trust_reverse_assistance_payment(%s, %s, %s, %s, %s)",
+                (session.pmc_id, charge, payment, reversal, matched),
+            )
+    return AuthorityReturned(
+        transfers=posted, amount=rent.cents(sum((t[2] for t in transfers), ZERO))
+    )
