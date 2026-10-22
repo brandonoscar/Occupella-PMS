@@ -165,7 +165,7 @@ describe("TenantHome", () => {
     expect(within(card).getByText("Pet rent: $35.00")).toBeTruthy();
     expect(within(card).getByText("01/01/2099 Key replacement: $50.00")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Deposit statement (PDF)" }).getAttribute("href")).toBe(
-      "/api/tenant/leases/1/deposit-return/download?format=pdf",
+      "/api/tenant/leases/1/deposit-statement",
     );
   });
 

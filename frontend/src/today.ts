@@ -36,6 +36,17 @@ export type Today = {
   renters_insurance: Uninsured[];
   // Leases not ended whose signed offer asked a security deposit not all held yet.
   deposits_to_receive: DepositDue[];
+  // Leases past their last day whose deposits are still held, and when they are due back.
+  deposits_to_return: DepositBack[];
+};
+export type DepositBack = {
+  lease_id: string;
+  property: string;
+  unit: string;
+  tenants: string[];
+  held: string;
+  return_by: string;
+  standing: string;
 };
 export type DepositDue = {
   lease_id: string;
@@ -153,6 +164,12 @@ export function signerNoteLine(note: SignerNote): string {
 export function uninsuredLine(lease: Uninsured): string {
   const who = lease.tenants ? ` (${lease.tenants})` : "";
   return `${lease.unit}, ${lease.property}${who}: renters insurance ${lease.standing}`;
+}
+
+// "Unit 1, Property 1 (Tenant 1): $1,200.00 held, due back by 11/04/2026 (due in 13 days)".
+export function depositBackLine(back: DepositBack): string {
+  const who = back.tenants.length ? ` (${back.tenants.join(", ")})` : "";
+  return `${back.unit}, ${back.property}${who}: ${money(back.held)} held, due back by ${usDate(back.return_by)} (${back.standing})`;
 }
 
 // "Unit 1, Property 1 (Tenant A): $500.00 of the $1,500.00 security deposit the signed lease asked

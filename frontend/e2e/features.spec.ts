@@ -1298,6 +1298,21 @@ test("a lease ended mid-month keeps only its days of the month's rent, and its d
   await lease.getByLabel("Amount").fill("100.00");
   await lease.getByRole("button", { name: "Charge it" }).click();
   await expect(lease).toContainText("Charged $100.00: Carpet cleaning.");
+  // Owing something, the deposit is due back 14 days after the last day (the strictest deadline
+  // found), here and on the Dashboard; the fee keeps its receipt.
+  const returnBy = us(daysFromToday(13));
+  await expect(lease).toContainText(`Return by ${returnBy}`);
+  await lease.getByLabel("Receipt for Carpet cleaning").setInputFiles({
+    name: "carpet-cleaning.pdf", mimeType: PDF, buffer: Buffer.from("%PDF-1.4\n% synthetic receipt\n"),
+  });
+  await lease.getByRole("button", { name: "Add receipt" }).click();
+  await expect(page.getByText("Kept carpet-cleaning as a receipt for Carpet cleaning.")).toBeVisible();
+  await expect(lease.getByRole("link", { name: "carpet-cleaning" })).toBeVisible();
+  await section(page, "Dashboard");
+  await expect(page.getByRole("region", { name: "Deposits to return" })).toContainText(
+    `Unit 1, Aspen Row (Drew Sample): $1,180.00 held, due back by ${returnBy}`,
+  );
+  await section(page, "Move-outs");
   const kept = cents + 10_000;
   const back = 118_000 - kept;
   await expect(lease).toContainText(`Keeps ${dollars(kept)} for what the lease owes; ${dollars(back)} goes back.`);
@@ -1309,12 +1324,14 @@ test("a lease ended mid-month keeps only its days of the month's rent, and its d
   await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
   await expect(lease).toContainText(`Returned ${dollars(back)} to the tenants; the rest paid what the lease owed.`);
   await expect(lease.getByText("Deposit returned")).toBeVisible();
-  await downloads(page, "Statement for the tenants (PDF)", PDF);
+  await downloads(page, "Statement for Drew Sample (PDF)", PDF);
 
-  // The tenant downloads the same statement from the portal.
+  // The tenant downloads the same statement from the portal; with their login, staff email it too.
   const tenant = await (await browser.newContext()).newPage();
   await joinPortal(tenant, people.drew);
   await downloads(tenant, "Deposit statement (PDF)", PDF);
+  await lease.getByRole("button", { name: "Email the statement" }).click();
+  await expect(page.getByText(`Emailed Drew Sample at ${people.emails.drew}.`)).toBeVisible();
 });
 
 test("staff list a vacant unit on the public page; someone applies from it, staff screen and approve it and record its withdrawal, take it off the page and close the link", async ({

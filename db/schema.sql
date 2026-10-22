@@ -2599,6 +2599,30 @@ $$;
 
 
 --
+-- Name: trust_check_deduction_receipt(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_deduction_receipt() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM trust_charges AS c
+        JOIN trust_documents AS d ON d.lease_id = c.lease_id
+        WHERE c.id = NEW.charge_id AND d.id = NEW.document_id
+          AND c.kind = 'fee' AND d.kind = 'lease_document'
+    ) THEN
+        RAISE EXCEPTION 'trust: a receipt is a document of the lease of the fee it is for'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_deposit_return_signer(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -13528,6 +13552,19 @@ CREATE TABLE public.trust_cutover_signoffs (
 
 
 --
+-- Name: trust_deduction_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_deduction_receipts (
+    charge_id uuid NOT NULL,
+    document_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
 -- Name: trust_deposit_return_lines; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16433,6 +16470,14 @@ ALTER TABLE ONLY public.trust_cutover_signoffs
 
 
 --
+-- Name: trust_deduction_receipts trust_deduction_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_deduction_receipts
+    ADD CONSTRAINT trust_deduction_receipts_pkey PRIMARY KEY (charge_id, document_id);
+
+
+--
 -- Name: trust_deposit_return_lines trust_deposit_return_lines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -16597,7 +16642,7 @@ ALTER TABLE ONLY public.trust_email_settings
 --
 
 ALTER TABLE public.trust_emails
-    ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text, 'rent_reminder'::text, 'late_notice'::text, 'owner_statement'::text, 'work_order'::text, 'adverse_action'::text, 'emergency_request'::text, 'signing_request'::text, 'payment_receipt'::text]))) NOT VALID;
+    ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text, 'rent_reminder'::text, 'late_notice'::text, 'owner_statement'::text, 'work_order'::text, 'adverse_action'::text, 'emergency_request'::text, 'signing_request'::text, 'payment_receipt'::text, 'deposit_statement'::text]))) NOT VALID;
 
 
 --
@@ -16634,8 +16679,9 @@ CASE kind
     WHEN 'emergency_request'::text THEN ((staff_id IS NOT NULL) AND (request_id IS NOT NULL) AND (num_nonnulls(tenant_id, owner_id, vendor_id) = 0))
     WHEN 'signing_request'::text THEN ((offer_id IS NOT NULL) AND (signer_position IS NOT NULL) AND (num_nonnulls(tenant_id, owner_id, vendor_id, staff_id) = 0))
     WHEN 'payment_receipt'::text THEN ((tenant_id IS NOT NULL) AND (lease_id IS NOT NULL) AND (transfer_id IS NOT NULL) AND (num_nonnulls(owner_id, vendor_id, staff_id) = 0))
+    WHEN 'deposit_statement'::text THEN ((tenant_id IS NOT NULL) AND (lease_id IS NOT NULL) AND (num_nonnulls(owner_id, vendor_id, staff_id) = 0))
     ELSE ((tenant_id IS NULL) AND (vendor_id IS NULL) AND (staff_id IS NULL))
-END AND ((kind = 'message'::text) = (sent_by IS NOT NULL)) AND ((kind = ANY (ARRAY['invite'::text, 'password_reset'::text, 'signing_request'::text])) = needs_link) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'late_notice'::text, 'payment_receipt'::text])) = (lease_id IS NOT NULL)) AND ((kind = 'late_notice'::text) = (charge_id IS NOT NULL)) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'owner_statement'::text])) = (period IS NOT NULL)) AND ((kind = 'owner_statement'::text) <= (period = (date_trunc('month'::text, (period)::timestamp with time zone))::date)) AND ((kind = 'work_order'::text) = (work_order_step_id IS NOT NULL)) AND ((kind = 'adverse_action'::text) = ((application_id IS NOT NULL) AND (applicant_id IS NOT NULL))) AND ((kind = 'emergency_request'::text) = (request_id IS NOT NULL)) AND ((kind = 'signing_request'::text) = ((offer_id IS NOT NULL) OR (signer_position IS NOT NULL))) AND ((kind = 'payment_receipt'::text) = (transfer_id IS NOT NULL)))) NOT VALID;
+END AND ((kind = 'message'::text) = (sent_by IS NOT NULL)) AND ((kind = ANY (ARRAY['invite'::text, 'password_reset'::text, 'signing_request'::text])) = needs_link) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'late_notice'::text, 'payment_receipt'::text, 'deposit_statement'::text])) = (lease_id IS NOT NULL)) AND ((kind = 'late_notice'::text) = (charge_id IS NOT NULL)) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'owner_statement'::text])) = (period IS NOT NULL)) AND ((kind = 'owner_statement'::text) <= (period = (date_trunc('month'::text, (period)::timestamp with time zone))::date)) AND ((kind = 'work_order'::text) = (work_order_step_id IS NOT NULL)) AND ((kind = 'adverse_action'::text) = ((application_id IS NOT NULL) AND (applicant_id IS NOT NULL))) AND ((kind = 'emergency_request'::text) = (request_id IS NOT NULL)) AND ((kind = 'signing_request'::text) = ((offer_id IS NOT NULL) OR (signer_position IS NOT NULL))) AND ((kind = 'payment_receipt'::text) = (transfer_id IS NOT NULL)))) NOT VALID;
 
 
 --
@@ -18888,6 +18934,27 @@ CREATE INDEX trust_cutover_items_bank_account_id ON public.trust_cutover_items U
 
 
 --
+-- Name: trust_deduction_receipts_charge; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_deduction_receipts_charge ON public.trust_deduction_receipts USING btree (pmc_id, charge_id);
+
+
+--
+-- Name: trust_deduction_receipts_document; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_deduction_receipts_document ON public.trust_deduction_receipts USING btree (pmc_id, document_id);
+
+
+--
+-- Name: trust_deduction_receipts_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_deduction_receipts_recorded_by ON public.trust_deduction_receipts USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_documents_pmc_id_kind; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20652,6 +20719,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_deduction_receipts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_deduction_receipts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_deposit_return_lines trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -21898,6 +21972,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_cuto
 
 
 --
+-- Name: trust_deduction_receipts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_deduction_receipts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_deposit_return_lines trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23032,6 +23113,13 @@ CREATE TRIGGER trust_decision_override BEFORE INSERT ON public.trust_application
 
 
 --
+-- Name: trust_deduction_receipts trust_deduction_receipt; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_deduction_receipt BEFORE INSERT ON public.trust_deduction_receipts FOR EACH ROW EXECUTE FUNCTION public.trust_check_deduction_receipt();
+
+
+--
 -- Name: trust_bill_payments trust_disburse; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23372,6 +23460,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_company_profiles 
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_contacts FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_deduction_receipts trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_deduction_receipts FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -25190,6 +25285,38 @@ ALTER TABLE ONLY public.trust_cutover_signoffs
 
 ALTER TABLE ONLY public.trust_cutover_signoffs
     ADD CONSTRAINT trust_cutover_signoffs_pmc_id_signed_by_fkey FOREIGN KEY (pmc_id, signed_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_deduction_receipts trust_deduction_receipts_pmc_id_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_deduction_receipts
+    ADD CONSTRAINT trust_deduction_receipts_pmc_id_charge_id_fkey FOREIGN KEY (pmc_id, charge_id) REFERENCES public.trust_charges(pmc_id, id);
+
+
+--
+-- Name: trust_deduction_receipts trust_deduction_receipts_pmc_id_document_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_deduction_receipts
+    ADD CONSTRAINT trust_deduction_receipts_pmc_id_document_id_fkey FOREIGN KEY (pmc_id, document_id) REFERENCES public.trust_documents(pmc_id, id);
+
+
+--
+-- Name: trust_deduction_receipts trust_deduction_receipts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_deduction_receipts
+    ADD CONSTRAINT trust_deduction_receipts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_deduction_receipts trust_deduction_receipts_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_deduction_receipts
+    ADD CONSTRAINT trust_deduction_receipts_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -28655,5 +28782,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261021000117'),
     ('20261021000118'),
     ('20261021000119'),
+    ('20261022000120'),
     ('20261022000151'),
     ('20261022000152');

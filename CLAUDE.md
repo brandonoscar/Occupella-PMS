@@ -40,9 +40,12 @@ deletes: archive) and contact details the AI never reads. Since 2026-10-16
 (`docs/adr/0006-buildium-punch-list.md`): the founder's punch list, built in its order (property
 groups first; rent, recurring charges, late fees and recurring bills to post by themselves each
 night; fees still move only when staff ask, unless a company turns on taking its monthly
-management fees by itself, the founder's amendment of 2026-10-18). Still out of scope: Stripe and online payments, text messages, bank files (ACH, check
-printing), 1099 filing, and state rules beyond the no-negative rule. If one of these looks needed, stop
-and ask the founder.
+management fees by itself, the founder's amendment of 2026-10-18). Since 2026-10-22 (founder,
+split with the other session): a deposit's return deadline and statement (q040, q039), filling a
+company's own lease, deposit interest (q041) and HUD forms (q143); the strictest deposit rules
+found are in `docs/law.md`. Still out of scope: Stripe and online payments, text messages, bank files (ACH, check
+printing), 1099 filing, and state rules beyond the no-negative rule and those `docs/law.md`
+records. If one of these looks needed, stop and ask the founder.
 
 ## The standing rule: tests come with the code
 
@@ -265,7 +268,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`src/pms/api/tenant.py`) show the session's tenant only: a lease named in a path is answered
   only if they are on it, and reads as not found otherwise. They show what each lease charges (rent as of its next due date, each change from its day)
   every month and what is charged already but due later, and once a deposit was returned at
-  move-out, its statement (`trust_report_deposit_return`) to download; and a lease's files (q120):
+  move-out, their statement letter (migration 0120) to download; and a lease's files (q120):
   the lease as signed, its signing certificate when signed on the PMS's page, and the lease
   documents staff keep on its Files tab (move-out photos stay with staff). Both portals show the
   manager's name, mailing address and logo (`/api/company/card`). The portal takes no payments.
@@ -802,7 +805,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   to what is open of its charges rent first, the cash moving to the owner's trust bank account;
   the rest goes back to each tenant from the security-deposit account. A tenant still on another lease keeps
   their deposit with it. It takes the disburse role. `trust_report_deposit_return` is the
-  itemized statement for the tenants. READ COMMITTED; append-only.
+  itemized statement for the tenants. READ COMMITTED; append-only. Since migration 0120 (q040,
+  q039, `docs/law.md`) each lease past its last day shows the day its deposit is due back, 14 days
+  after it, 10 while it owes nothing (the strictest found; Move-outs and the Dashboard), staff keep
+  receipts for the fees a deposit keeps (`trust_deduction_receipts`: a lease document linked to
+  one of its fees, once, append-only, naming who), and each tenant's statement is a letter to
+  their forwarding address (their contact mailing address) carrying the receipts and the lease's
+  move-out photos (`src/pms/deposit_statement.py`, pypdf), downloaded by staff or the tenant and
+  emailed (`deposit_statement`, its PDF made when sent; again after a receipt comes in).
 - Property groups (migration 0065, ADR 0006): a PMC's named sets of its properties, a name once
   per PMC whatever its case. A group is renamed, never deleted; a property joins or leaves it by
   a row of `trust_property_group_members` (append-only, the latest for a group and property
