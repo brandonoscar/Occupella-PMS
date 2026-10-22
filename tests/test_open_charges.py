@@ -79,10 +79,10 @@ def late_fees(conn, rent):
 @pytest.fixture
 def late(conn, pmc):
     """A lease with 5 days' grace and a late fee of 50.00 plus 10% of what is unpaid, and
-    February's rent charged: (lease, rent)."""
+    February's rent charged on its due date: (lease, rent)."""
     lease = lease_on(conn, pmc)
     add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, JAN_1, 5, "50", "10")
-    rent = charge(conn, pmc.pmc_id, lease, FEB_1, "1500.00")
+    rent = charge(conn, pmc.pmc_id, lease, FEB_1, "1500.00", charged_at=at(FEB_1))
     return lease, rent
 
 
@@ -118,7 +118,8 @@ def test_a_credit_counts_if_due_by_the_last_day_of_grace(conn, pmc, late, credit
 
 def test_credits_come_off_the_oldest_open_charges_first(conn, pmc, late):
     lease, rent = late
-    january = charge(conn, pmc.pmc_id, lease, JAN_1, "1500.00")  # older, unpaid
+    # Older, and unpaid.
+    january = charge(conn, pmc.pmc_id, lease, JAN_1, "1500.00", charged_at=at(JAN_1))
     charge(conn, pmc.pmc_id, lease, FEB_1, "100.00", "credit")
     pay(conn, pmc, rent, "1400.00", at(date(2026, 2, 2)))
 

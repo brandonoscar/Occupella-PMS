@@ -3,10 +3,17 @@
 trust_charge_rent_due charges every lease in effect on a due date its rent, once per lease and
 date (by the days of the month since migration 0045: tests/test_prorated_rent.py).
 trust_assess_late_fees charges each rent still unpaid at the end of its last day of grace its
-late fee, once, under the property's terms in force on the rent's due date.
+late fee, once, under the property's terms in force on the rent's due date. Its grace starts on
+its due date, or on the day it was charged (UTC) if that came later (migration 0151): a rent
+charged long after its due date (a lease entered late, a night the run didn't run) has the
+whole of its grace from that day.
+
+A test names its days by their dates while the database's clock reads today's, so a rent made
+here is said to have been made on its due date (rent_charged_when_due) or on another day
+(charged_on), as the nightly run would have made it.
 """
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
 import psycopg
@@ -18,10 +25,12 @@ from helpers import (
     assess_late_fees,
     charge,
     charge_rent_due,
+    charged_on,
     end_lease,
     in_background,
     make_pmc,
     open_lease,
+    rent_charged_when_due,
     reverse_payment,
     transfer_batch,
     wait_until_blocked,
@@ -205,10 +214,12 @@ def test_late_fee_terms_are_for_a_property_of_their_pmc_once_per_day(conn, pmc):
 @pytest.fixture
 def late(conn, pmc):
     """A lease of Property 1 at 1500.00 from Jan 1, rent charged for Feb 1, and late fee terms
-    of 5 days' grace, 50.00 plus 10% of what is unpaid. (lease, February's rent charge)."""
+    of 5 days' grace, 50.00 plus 10% of what is unpaid. (lease, February's rent charge),
+    charged on its due date."""
     lease = lease_on(conn, pmc, JAN_1)
     add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, JAN_1, 5, "50", "10")
     charge_rent_due(conn, pmc.pmc_id, FEB_1)
+    rent_charged_when_due(conn, pmc.pmc_id)
     return lease, rent_due(conn, lease, FEB_1)
 
 
@@ -297,6 +308,7 @@ def test_the_cap_limits_the_fee(conn, pmc, maximum, fee):
     lease = lease_on(conn, pmc, JAN_1)
     add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, JAN_1, 5, "50", "10", maximum)
     charge_rent_due(conn, pmc.pmc_id, FEB_1)
+    rent_charged_when_due(conn, pmc.pmc_id)
 
     assess_late_fees(conn, pmc.pmc_id, date(2026, 2, 7))
 
@@ -313,6 +325,7 @@ def test_a_fee_of_nothing_is_not_charged(conn, pmc, flat, percent, maximum):
         conn, pmc.pmc_id, pmc.owners[0].property_id, JAN_1, 5, flat, percent, maximum
     )
     charge_rent_due(conn, pmc.pmc_id, FEB_1)
+    rent_charged_when_due(conn, pmc.pmc_id)
 
     assert assess_late_fees(conn, pmc.pmc_id, date(2026, 2, 7)) == 0
     assert charges(conn, lease, "fee") == []
@@ -322,6 +335,7 @@ def test_a_fee_rounds_to_the_cent(conn, pmc):
     lease = lease_on(conn, pmc, JAN_1, rent="1234.56")
     add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, JAN_1, 0, "0", "3.333")
     charge_rent_due(conn, pmc.pmc_id, FEB_1)
+    rent_charged_when_due(conn, pmc.pmc_id)
 
     assess_late_fees(conn, pmc.pmc_id, date(2026, 2, 2))
 
@@ -345,6 +359,7 @@ def test_the_terms_in_force_on_the_rents_due_date_apply(conn, pmc):
     add_late_fee_policy(conn, pmc.pmc_id, property_id, date(2026, 2, 2), 0, "99")
     for due_on in (FEB_1, MAR_1):
         charge_rent_due(conn, pmc.pmc_id, due_on)
+    rent_charged_when_due(conn, pmc.pmc_id)
 
     assert assess_late_fees(conn, pmc.pmc_id, date(2026, 3, 10)) == 2
     assert [(row[0], row[2]) for row in charges(conn, lease, "fee")] == [
@@ -371,6 +386,7 @@ def test_one_run_charges_what_a_run_every_day_would(conn, pmc):
                 " VALUES (%s, %s, %s, %s, 'rent', %s) RETURNING id",
                 (f"{first * 8}-0000-4000-8000-{name[-1] * 12}", pmc.pmc_id, lease, due_on, RENT),
             ).fetchone()[0]
+        rent_charged_when_due(conn, pmc.pmc_id)
         # A concession due March 2: by March's late day it has paid February's rent and 100.00
         # more, which goes to March's rent before February's late fee (due Feb 7): rent first.
         charge(conn, pmc.pmc_id, lease, date(2026, 3, 2), "1600.00", "credit")
@@ -386,6 +402,7 @@ def test_one_run_charges_what_a_run_every_day_would(conn, pmc):
 def test_without_terms_nothing_is_late(conn, pmc):
     lease = lease_on(conn, pmc, JAN_1)
     charge_rent_due(conn, pmc.pmc_id, FEB_1)
+    rent_charged_when_due(conn, pmc.pmc_id)
     # Terms that start after the rent was due don't reach back to it.
     add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, date(2026, 2, 2), 0, "50")
 
@@ -497,4 +514,96 @@ def test_an_ended_lease_keeps_rent_charged_before_it_ended(conn, pmc):
     assert [row[:3] for row in charges(conn, lease)] == [
         (FEB_1, "credit", Decimal("696.43")),
         (FEB_1, "rent", RENT),
+    ]
+
+
+# --- a rent charged after its due date (migration 0151) ------------------------------------
+
+
+def test_a_lease_entered_after_it_started_is_not_late_the_day_its_rent_is_charged(conn, pmc):
+    """The walkthrough of the demo company: a lease already in place, entered on 10/22 with a
+    start of 10/15, then the rent run that day. It charged the first part month (due 10/15) and,
+    in the same run, a late fee dated 10/21: the rent's grace had ended before the rent existed.
+    Its grace now runs from the day it was charged, 10/22, to 10/27."""
+    add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, date(2026, 10, 1), 5, "50")
+    lease = lease_on(conn, pmc, date(2026, 10, 15), rent="1200.00")
+
+    # The run of 10/22, by hand or at night: October's rent, and late fees as of that day. The
+    # database's clock reads today, the day the rent was made, so this holds whenever it runs.
+    conn.execute(
+        "SELECT trust_run_rent(%s, %s, %s)", (pmc.pmc_id, date(2026, 10, 1), date(2026, 10, 22))
+    )
+
+    # 1200.00 x 17 / 31 for October 15 to 31, and no late fee with it.
+    assert [row[:3] for row in charges(conn, lease)] == [
+        (date(2026, 10, 15), "rent", Decimal("658.06"))
+    ]
+    # The nights after it: the rent was made on 10/22, the run's day.
+    charged_on(conn, [rent_due(conn, lease, date(2026, 10, 15))], date(2026, 10, 22))
+    for as_of in (date(2026, 10, 22), date(2026, 10, 23), date(2026, 10, 27)):
+        assert assess_late_fees(conn, pmc.pmc_id, as_of) == 0
+    assert assess_late_fees(conn, pmc.pmc_id, date(2026, 10, 28)) == 1
+    assert charges(conn, lease, "fee") == [
+        (date(2026, 10, 28), "fee", Decimal("50.00"), "Late fee, rent due 2026-10-15")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("charged", "late_day"),
+    [
+        (date(2026, 1, 25), date(2026, 2, 7)),  # charged ahead: its grace runs from its due date
+        (FEB_1, date(2026, 2, 7)),  # charged when due, as the nightly run charges it
+        (date(2026, 2, 3), date(2026, 2, 9)),  # two nights late: its whole grace from then
+        (date(2026, 2, 22), date(2026, 2, 28)),  # long after a grace from its due date ended
+    ],
+)
+def test_a_rents_grace_runs_from_its_due_date_or_the_later_day_it_was_charged(
+    conn, pmc, charged, late_day
+):
+    lease = lease_on(conn, pmc, JAN_1)
+    add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, JAN_1, 5, "50", "10")
+    charge_rent_due(conn, pmc.pmc_id, FEB_1)
+    charged_on(conn, [rent_due(conn, lease, FEB_1)], charged)
+
+    assert assess_late_fees(conn, pmc.pmc_id, late_day - timedelta(days=1)) == 0
+    assert assess_late_fees(conn, pmc.pmc_id, late_day) == 1
+    # Due the first day the rent is late: 50.00 + 10% of 1500.00.
+    assert charges(conn, lease, "fee") == [
+        (late_day, "fee", Decimal("200.00"), "Late fee, rent due 2026-02-01")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("paid_at", "fee"),
+    [
+        (at(date(2026, 2, 27), 23, 59, 59), []),  # the last moment of its own grace: on time
+        (at(date(2026, 2, 28), 0, 0, 0), [Decimal("200.00")]),  # the first late moment
+    ],
+)
+def test_a_rent_charged_late_counts_a_payment_by_the_end_of_its_own_grace(conn, pmc, paid_at, fee):
+    lease = lease_on(conn, pmc, JAN_1)
+    add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, JAN_1, 5, "50", "10")
+    charge_rent_due(conn, pmc.pmc_id, FEB_1)
+    rent = rent_due(conn, lease, FEB_1)
+    charged_on(conn, [rent], date(2026, 2, 22))
+    pay(conn, pmc, rent, RENT, paid_at)
+
+    assess_late_fees(conn, pmc.pmc_id, date(2026, 3, 20))
+
+    assert [row[2] for row in charges(conn, lease, "fee")] == fee
+
+
+def test_a_rent_charged_late_keeps_the_terms_in_force_on_its_due_date(conn, pmc):
+    lease = lease_on(conn, pmc, JAN_1)
+    property_id = pmc.owners[0].property_id
+    add_late_fee_policy(conn, pmc.pmc_id, property_id, JAN_1, 5, "50")
+    add_late_fee_policy(conn, pmc.pmc_id, property_id, date(2026, 2, 10), 0, "99")
+    charge_rent_due(conn, pmc.pmc_id, FEB_1)
+    charged_on(conn, [rent_due(conn, lease, FEB_1)], date(2026, 2, 20))
+
+    # January's terms: five days' grace from February 20, then 50.00.
+    assert assess_late_fees(conn, pmc.pmc_id, date(2026, 2, 25)) == 0
+    assert assess_late_fees(conn, pmc.pmc_id, date(2026, 2, 26)) == 1
+    assert [(row[0], row[2]) for row in charges(conn, lease, "fee")] == [
+        (date(2026, 2, 26), Decimal("50.00"))
     ]

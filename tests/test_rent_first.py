@@ -111,7 +111,15 @@ def test_a_late_fee_no_longer_depends_on_chance(conn):
         ).fetchone()[0]
         lease = new_lease(conn, pmc, mine)
         add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, JAN_1, 0, "25.00", "10")
-        charge(conn, pmc.pmc_id, lease, MAR_1, "1000.00", "rent")
+        charge(
+            conn,
+            pmc.pmc_id,
+            lease,
+            MAR_1,
+            "1000.00",
+            "rent",
+            charged_at=datetime(2026, 3, 1, 6, tzinfo=UTC),  # when due, as the nightly run would
+        )
         charge(conn, pmc.pmc_id, lease, MAR_1, "35.00", "fee", "Lost key")
         charge(conn, pmc.pmc_id, lease, FEB_1, "35.00", "credit", "Courtesy")
         assert assess_late_fees(conn, pmc.pmc_id, MAR_10) == 1

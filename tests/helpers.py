@@ -13,7 +13,8 @@ import zlib
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import UTC, date, datetime
+from datetime import time as time_of_day
 from decimal import Decimal
 from pathlib import Path
 from uuid import UUID
@@ -310,13 +311,58 @@ def end_lease(connection, pmc_id, lease_id, ends_on) -> None:
     connection.execute("SELECT trust_end_lease(%s, %s, %s)", (pmc_id, lease_id, ends_on))
 
 
-def charge(connection, pmc_id, lease_id, due_on, amount, kind="rent", memo=None) -> UUID:
+def charge(
+    connection, pmc_id, lease_id, due_on, amount, kind="rent", memo=None, charged_at=None
+) -> UUID:
+    """A charge of the lease, made now, or at charged_at: a test names its days by their dates
+    while the database's clock reads today's, and a rent's grace counts from the day it was
+    charged when that came after its due date (migration 0151; see charged_on)."""
+    if charged_at is None:
+        return _one(
+            connection,
+            "INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)"
+            " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+            (pmc_id, lease_id, due_on, kind, Decimal(amount), memo),
+        )
     return _one(
         connection,
-        "INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)"
-        " VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
-        (pmc_id, lease_id, due_on, kind, Decimal(amount), memo),
+        "INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo, created_at)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, lease_id, due_on, kind, Decimal(amount), memo, charged_at),
     )
+
+
+# When the nightly run posts each day (src/pms/nightly.py), UTC.
+NIGHTLY_AT = time_of_day(6, 0)
+
+
+def charged_on(connection, charge_ids, day) -> None:
+    """Say the charges were made on `day`, at the hour the nightly run posts (UTC). A test names
+    its days by their dates while the database's clock reads today's, so a rent the rent run
+    makes in a test was made today, however long past its due date; and a rent's grace counts
+    from the day it was charged when that came after its due date (migration 0151). This sets
+    the clock back for them: behind the triggers that keep a charge as it was and log every
+    write, as only a test may, so `connection` is the owner's (the `conn` fixture)."""
+    connection.execute("SET session_replication_role = replica")
+    try:
+        connection.execute(
+            "UPDATE trust_charges SET created_at = %s WHERE id = ANY (%s)",
+            (datetime.combine(day, NIGHTLY_AT, tzinfo=UTC), list(charge_ids)),
+        )
+    finally:
+        connection.execute("RESET session_replication_role")
+
+
+def rent_charged_when_due(connection, pmc_id) -> None:
+    """Say each of the PMC's rents made after its due date was made on that date, as the
+    nightly run makes it (charged_on)."""
+    for due_on, ids in connection.execute(
+        "SELECT due_on, array_agg(id) FROM trust_charges"
+        " WHERE pmc_id = %s AND kind = 'rent' AND (created_at AT TIME ZONE 'UTC')::date > due_on"
+        " GROUP BY due_on",
+        (pmc_id,),
+    ).fetchall():
+        charged_on(connection, ids, due_on)
 
 
 def apply_payment(connection, pmc_id, charge_id, transfer_id, amount) -> Decimal:

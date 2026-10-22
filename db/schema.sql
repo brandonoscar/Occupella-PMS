@@ -910,7 +910,8 @@ BEGIN
     END IF;
 
     -- The rents past their grace without a late fee, locked one by one in id order: one lock
-    -- order for every run, so two at once can't deadlock.
+    -- order for every run, so two at once can't deadlock. A rent's grace starts on its due date,
+    -- or on the day it was charged (UTC) if that came later.
     FOR v_rent IN
         SELECT c.id
         FROM trust_charges AS c
@@ -925,7 +926,8 @@ BEGIN
             LIMIT 1
         ) AS p ON true
         WHERE c.pmc_id = p_pmc_id AND c.kind = 'rent'
-          AND c.due_on + p.grace_days < p_as_of
+          AND greatest(c.due_on, (c.created_at AT TIME ZONE 'UTC')::date) + p.grace_days
+              < p_as_of
           AND NOT EXISTS (
               SELECT f.rent_charge_id FROM trust_late_fees AS f WHERE f.rent_charge_id = c.id
           )
@@ -940,8 +942,10 @@ BEGIN
 
     -- Then each, in the order its grace ends, as a run every day would reach them.
     FOR v_rent IN
-        SELECT c.id, c.lease_id, c.due_on, p.id AS policy_id, p.grace_days, p.flat_fee,
-               p.percent, p.maximum
+        SELECT c.id, c.lease_id, c.due_on,
+               greatest(c.due_on, (c.created_at AT TIME ZONE 'UTC')::date) + p.grace_days
+                   AS grace_ends,
+               p.id AS policy_id, p.flat_fee, p.percent, p.maximum
         FROM trust_charges AS c
         JOIN trust_leases AS l ON l.id = c.lease_id
         JOIN trust_units AS u ON u.id = l.unit_id
@@ -953,9 +957,9 @@ BEGIN
             LIMIT 1
         ) AS p ON true
         WHERE c.id = ANY (v_due)
-        ORDER BY c.due_on + p.grace_days, c.due_on, c.id
+        ORDER BY grace_ends, c.due_on, c.id
     LOOP
-        v_cutoff := (v_rent.due_on + v_rent.grace_days + 1)::timestamp AT TIME ZONE 'UTC';
+        v_cutoff := (v_rent.grace_ends + 1)::timestamp AT TIME ZONE 'UTC';
         -- What is open of it then: payments and bounces dated before then, and the lease's
         -- credits due by its last day of grace, oldest charges first (the fees this run charged
         -- for the rents whose grace ended before its own among them).
@@ -971,7 +975,7 @@ BEGIN
 
         INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)
         VALUES (
-            p_pmc_id, v_rent.lease_id, v_rent.due_on + v_rent.grace_days + 1, 'fee', v_fee,
+            p_pmc_id, v_rent.lease_id, v_rent.grace_ends + 1, 'fee', v_fee,
             'Late fee, rent due ' || to_char(v_rent.due_on, 'YYYY-MM-DD')
         )
         RETURNING id INTO v_fee_id;
@@ -26981,4 +26985,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261021000107'),
     ('20261021000108'),
     ('20261021000109'),
-    ('20261021000110');
+    ('20261021000110'),
+    ('20261022000151');

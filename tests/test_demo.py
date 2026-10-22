@@ -136,7 +136,7 @@ def test_two_months_of_the_work_staff_do(conn, books):
     month_ago, last_month, this_month = built.months
     count = lambda query: conn.execute(query, (built.pmc_id,)).fetchone()[0]  # noqa: E731
 
-    # Rent for six leases each month, pet rent twice, one late fee, one bounce.
+    # Rent for six leases each month, pet rent twice, one tenant paying late, one bounce.
     assert count("SELECT count(*) FROM trust_charges WHERE pmc_id = %s AND kind = 'rent'") == 12
     assert (
         count(
@@ -145,10 +145,20 @@ def test_two_months_of_the_work_staff_do(conn, books):
         )
         == 2
     )
+    # The late tenant takes no late fee: the demo's rent is made when the demo is built, today,
+    # and a rent's grace counts from the day it was charged (migration 0151). The run a week into
+    # the month before last, which would have charged one, charges nothing.
+    assert (
+        count(
+            "SELECT count(*) FROM trust_charges AS c WHERE c.pmc_id = %s"
+            " AND c.kind = 'fee' AND c.recurring_charge_id IS NULL"
+        )
+        == 0
+    )
     assert count(
-        "SELECT array_agg(c.due_on) FROM trust_charges AS c WHERE c.pmc_id = %s"
-        " AND c.kind = 'fee' AND c.recurring_charge_id IS NULL"
-    ) == [month_ago + 6 * DAY]  # the late fee, due the day it was assessed
+        "SELECT array_agg(late_fees ORDER BY late_fees_as_of) FROM trust_rent_runs"
+        " WHERE pmc_id = %s"
+    ) == [0, 0, 0, 0]
     assert count("SELECT count(*) FROM trust_payment_reversals WHERE pmc_id = %s") == 1
     # Every lease is paid up.
     assert (

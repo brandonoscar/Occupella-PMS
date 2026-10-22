@@ -24,6 +24,7 @@ from helpers import (
     record_decision,
     record_screening,
     release_hold,
+    rent_charged_when_due,
     submit_application,
 )
 
@@ -31,7 +32,7 @@ from pms import accounts, nightly, notices
 
 URL = "https://pms.example"
 DAY = timedelta(days=1)
-OCT_16 = date(2026, 10, 16)
+OCT_1, OCT_16 = date(2026, 10, 1), date(2026, 10, 16)
 ALL_ON = {
     "rent_reminder_days": 5,
     "late_notices": True,
@@ -88,6 +89,14 @@ def lease_of(conn, pmc, starts=date(2026, 9, 1), ends=None, rent="1000.00", tena
 
 
 # --- the settings -------------------------------------------------------------------------------
+
+
+def octobers_rent(conn, app_conn, pmc):
+    """The night of October 1, which charged October's rent. The database's clock reads today, so
+    say the rent was made that night: a rent's grace counts from the day it was charged when that
+    came after its due date (migration 0151)."""
+    nightly.run_pmc(app_conn, pmc.pmc_id, OCT_1, URL)
+    rent_charged_when_due(conn, pmc.pmc_id)
 
 
 def test_the_latest_settings_hold_and_none_turns_everything_off(conn, app_conn, pmc):
@@ -271,6 +280,7 @@ def test_a_tenant_who_left_the_lease_hears_no_more_of_its_rent(conn, app_conn, p
         (pmc.pmc_id, lease, first, date(2026, 10, 15)),
     )
     add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, date(2026, 9, 1), 5, "50.00")
+    octobers_rent(conn, app_conn, pmc)
     ran = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16, URL, sending=True)
     assert ran.late_fees == 1
     assert notices.write_rent_reminders(app_conn, pmc.pmc_id, date(2026, 10, 27), 5, URL) == 1
@@ -314,6 +324,7 @@ def test_a_late_notice_goes_to_each_tenant_for_the_late_fee_the_run_charged(conn
     contact(conn, pmc.pmc_id, "tenant_id", tenant, "tenant.one@example.com")
     lease = lease_of(conn, pmc)
     add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, date(2026, 9, 1), 5, "50.00")
+    octobers_rent(conn, app_conn, pmc)
 
     first = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16, URL, sending=True)
     again = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16 + DAY, URL, sending=True)
@@ -340,6 +351,7 @@ def test_late_fees_charged_before_notices_were_on_get_none(conn, app_conn, pmc):
     contact(conn, pmc.pmc_id, "tenant_id", tenant, "tenant.one@example.com")
     lease_of(conn, pmc)
     add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, date(2026, 9, 1), 5, "50.00")
+    octobers_rent(conn, app_conn, pmc)
     assert nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16, URL, sending=True).late_fees == 1
     turn_on(conn, pmc.pmc_id, late_notices=True)
     assert nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16 + DAY, URL, sending=True).emails == 0

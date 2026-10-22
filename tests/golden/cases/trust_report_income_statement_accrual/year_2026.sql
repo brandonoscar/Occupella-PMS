@@ -112,6 +112,15 @@ WHERE l.unit_id = '00000000-0000-4000-8000-000000000042';
 SELECT trust_charge_rent_due('00000000-0000-4000-8000-000000000001', '2026-01-01');
 SELECT trust_charge_recurring_due('00000000-0000-4000-8000-000000000001', '2026-01-01');
 
+-- The run charged January's rent on its due date, as the nightly run would. The database's clock
+-- reads today, and a rent's grace counts from the day it was charged when that came after its
+-- due date (migration 0151): set the clock back for it, behind the triggers that keep a charge
+-- as it was, as only a test may.
+SET LOCAL session_replication_role = replica;
+UPDATE trust_charges SET created_at = (due_on + time '06:00') AT TIME ZONE 'UTC'
+WHERE pmc_id = '00000000-0000-4000-8000-000000000001' AND kind = 'rent';
+SET LOCAL session_replication_role = origin;
+
 INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount, memo)
 SELECT l.pmc_id, l.id, '2026-01-15', 'fee', 75.00, 'Key replacement'
 FROM trust_leases AS l
