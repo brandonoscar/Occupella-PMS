@@ -3,13 +3,17 @@ trust_report_vendor_insurance has it, and recording a policy; the list a page at
 added with their profile (trade, 1099, how they are paid; migration 0073) and contact, and the
 profile changed."""
 
-from datetime import date, timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from helpers import add_document, enter_bill, make_pmc
 from people import join_as_owner, join_as_staff
 
-TODAY = date.today()
+
+def today():
+    """The day the API takes as today (UTC), read when a test needs it: a day fixed when the
+    module loads is yesterday's for a test run that crosses midnight."""
+    return datetime.now(UTC).date()
 
 
 @pytest.fixture
@@ -33,8 +37,8 @@ def policy(**change):
         "coverage": "general liability",
         "carrier": "Carrier A",
         "policy_number": "GL-1",
-        "starts_on": str(TODAY - timedelta(days=300)),
-        "expires_on": str(TODAY + timedelta(days=65)),
+        "starts_on": str(today() - timedelta(days=300)),
+        "expires_on": str(today() + timedelta(days=65)),
         "limit_amount": "1000000",
     } | change
 
@@ -49,7 +53,7 @@ def test_staff_record_a_policy_and_see_how_it_stands(client, conn, pmc, staff):
                 coverage="commercial auto",
                 policy_number="AU-1",
                 carrier=" Carrier C ",
-                expires_on=str(TODAY + timedelta(days=10)),
+                expires_on=str(today() + timedelta(days=10)),
                 limit_amount=None,
             ),
         ),
@@ -70,7 +74,7 @@ def test_staff_record_a_policy_and_see_how_it_stands(client, conn, pmc, staff):
     # one has run out.
     assert found["insurance_standing"] == "expires in 10 days"
     assert ok(client.get("/api/vendors"))["items"][0]["insurance"] == "expires in 10 days"
-    later = ok(client.get("/api/vendors", params={"on": str(TODAY + timedelta(days=11))}))
+    later = ok(client.get("/api/vendors", params={"on": str(today() + timedelta(days=11))}))
     assert later["items"][0]["insurance"] == "expired"
     # The audit log names who recorded it.
     assert conn.execute(
@@ -96,9 +100,9 @@ def test_a_vendor_with_no_policy_says_so(client, conn, pmc, staff):
 def test_expiring_insurance_waits_on_today(client, pmc, staff):
     """Today lists every coverage that isn't current: expiring and expired, not current."""
     for coverage, expires in (
-        ("general liability", TODAY),
-        ("commercial auto", TODAY - timedelta(days=1)),
-        ("workers compensation", TODAY + timedelta(days=31)),
+        ("general liability", today()),
+        ("commercial auto", today() - timedelta(days=1)),
+        ("workers compensation", today() + timedelta(days=31)),
     ):
         ok(
             client.post(
@@ -143,7 +147,7 @@ def test_only_the_pmcs_staff_record_or_see_insurance(
         {"coverage": "flood"},
         {"carrier": " "},
         {"policy_number": "x" * 101},
-        {"expires_on": str(TODAY - timedelta(days=301))},
+        {"expires_on": str(today() - timedelta(days=301))},
         {"limit_amount": "0"},
         {"limit_amount": "1.001"},
         {"starts_on": "soon"},
@@ -302,7 +306,9 @@ def test_staff_archive_a_vendor_who_leaves_the_list_pickers_and_search_and_bring
 
 
 def test_a_vendor_with_a_bill_not_paid_stays_and_says_why(client, conn, pmc, staff):
-    enter_bill(conn, pmc.pmc_id, pmc.vendor_id, pmc.owners[0].account, "INV-1", TODAY, TODAY, "50")
+    enter_bill(
+        conn, pmc.pmc_id, pmc.vendor_id, pmc.owners[0].account, "INV-1", today(), today(), "50"
+    )
 
     refused(
         archive(client, pmc.vendor_id),
