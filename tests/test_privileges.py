@@ -277,6 +277,10 @@ TABLES = {
     "trust_deposit_interest_terms": {"SELECT", "INSERT"},
     "trust_deposit_interest_payments": {"SELECT"},
     "trust_deposit_interest_lines": {"SELECT"},
+    # Tax credit (LIHTC) terms (migration 0123): a property's income limits and a unit's
+    # designation, each from a day, which staff record.
+    "trust_tax_credit_limits": {"SELECT", "INSERT"},
+    "trust_tax_credit_units": {"SELECT", "INSERT"},
     # Owners' accounts fallen below their reserve and back (migration 0150), read by the AI as
     # the ledger is; what failed, told to the company's admins, which it never reads.
     "trust_reserve_events": {"SELECT", "INSERT"},
@@ -526,6 +530,10 @@ FUNCTIONS = {
     "trust_deposit_interest_from(uuid)": {"trust_app"},
     "trust_deposit_interest_due(uuid,date,date)": {"trust_app"},
     "trust_pay_deposit_interest(uuid,uuid,date,text,text,text,timestamptz)": {"trust_app"},
+    # Tax credit limits (migration 0123), for the app; the AI reads them through the report.
+    "trust_tax_credit_unit_on(uuid,date)": {"trust_app"},
+    "trust_tax_credit_income_limit(uuid,date,integer,integer)": {"trust_app"},
+    "trust_tax_credit_rent_limit(uuid,date,integer,integer)": {"trust_app"},
     # Reports read trust records, so only the app and the AI; they run with the caller's own
     # read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app", "trust_ai_agent"},
@@ -563,6 +571,7 @@ FUNCTIONS = {
     "trust_report_trust_account_signers(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_renters_insurance(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_deposit_interest(uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_tax_credit_compliance(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_is_archived(uuid,uuid,uuid,uuid,uuid)": {"trust_app"},
     "trust_group_properties(uuid)": {"trust_app"},
     "trust_run_rent(uuid,date,date)": {"trust_app"},
@@ -711,6 +720,9 @@ SECURITY_DEFINER = {
     # Works out each lease's deposit interest for the AI role with functions only the app calls
     # (migration 0122).
     "trust_report_deposit_interest(uuid,date)",
+    # Reads households' certifications for the AI role, which never reads them, and prints words,
+    # limits and rents, never income or household size (migration 0123).
+    "trust_report_tax_credit_compliance(uuid,date)",
 }
 
 

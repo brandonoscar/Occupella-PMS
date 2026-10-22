@@ -56,6 +56,8 @@ export const REPORTS: ReportSpec[] = [
   { name: "trust_account_signers", label: "Trust account signers", group: "Compliance", args: AS_OF, byProperty: false },
   // Each lease with housing assistance: its income certification and inspection, where each stands (q143).
   { name: "assistance_compliance", label: "Housing assistance compliance", group: "Compliance", args: AS_OF, byProperty: true },
+  // Each tax credit unit: its household's certification, the income and rent tests (q143).
+  { name: "tax_credit_compliance", label: "Tax credit compliance", group: "Compliance", args: AS_OF, byProperty: true },
   { name: "audit_log", label: "Audit log", group: "Compliance", args: DAYS, byProperty: false },
 ];
 

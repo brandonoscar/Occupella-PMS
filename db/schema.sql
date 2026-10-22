@@ -2039,7 +2039,14 @@ DECLARE
 BEGIN
     SELECT l.* INTO v_lease FROM trust_leases AS l
     WHERE l.pmc_id = NEW.pmc_id AND l.id = NEW.lease_id;
-    IF NOT EXISTS (SELECT 1 FROM trust_rent_assistance AS a WHERE a.lease_id = NEW.lease_id) THEN
+    IF NOT EXISTS (SELECT 1 FROM trust_rent_assistance AS a WHERE a.lease_id = NEW.lease_id)
+       AND NOT (TG_TABLE_NAME = 'trust_income_certifications'
+                AND EXISTS (SELECT 1 FROM trust_tax_credit_unit_on(v_lease.unit_id, v_day))) THEN
+        IF TG_TABLE_NAME = 'trust_income_certifications' THEN
+            RAISE EXCEPTION 'trust: this lease has no housing assistance on file, and its unit is'
+                ' not a tax credit unit on %: record one first', to_char(v_day, 'MM/DD/YYYY')
+                USING ERRCODE = 'check_violation';
+        END IF;
         RAISE EXCEPTION 'trust: this lease has no housing assistance on file: record its terms first'
             USING ERRCODE = 'check_violation';
     END IF;
@@ -10487,6 +10494,115 @@ $$;
 
 
 --
+-- Name: trust_report_tax_credit_compliance(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_tax_credit_compliance(p_pmc_id uuid, p_as_of date) RETURNS TABLE(line integer, item text, unit_id uuid, property text, unit text, tenants text, income_percent integer, bedrooms integer, certification text, income_test text, max_gross_rent numeric, gross_rent numeric, rent_test text)
+    LANGUAGE plpgsql STABLE SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+#variable_conflict use_column
+BEGIN
+    IF p_as_of IS NULL THEN
+        RAISE EXCEPTION 'trust: tax credit compliance is as of a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF NOT EXISTS (SELECT pmc.pmc_id FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id) THEN
+        RAISE EXCEPTION 'trust: no PMC %', p_pmc_id USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    RETURN QUERY
+    WITH units AS (
+        SELECT u.id AS unit_id, u.display_name AS unit, p.id AS property_id,
+               p.display_name AS property, d.income_percent, d.bedrooms, d.utility_allowance,
+               (SELECT l.id FROM trust_leases AS l
+                WHERE l.unit_id = u.id AND l.starts_on <= p_as_of
+                  AND (l.ends_on IS NULL OR l.ends_on >= p_as_of)) AS lease_id
+        FROM trust_units AS u
+        JOIN trust_properties AS p ON p.id = u.property_id
+        CROSS JOIN LATERAL trust_tax_credit_unit_on(u.id, p_as_of) AS d
+        WHERE u.pmc_id = p_pmc_id
+    ),
+    rows AS (
+        SELECT x.*,
+               (SELECT string_agg(t.display_name, ', ' ORDER BY t.display_name COLLATE "C", t.id)
+                FROM trust_lease_tenants AS lt JOIN trust_tenants AS t ON t.id = lt.tenant_id
+                WHERE lt.lease_id = x.lease_id) AS tenants,
+               first.effective_on AS first_on, first.household_size AS first_size,
+               first.annual_income AS first_income,
+               latest.id AS latest_id, latest.effective_on AS latest_on,
+               latest.household_size AS latest_size, latest.annual_income AS latest_income,
+               latest.next_due_on,
+               trust_tax_credit_rent_limit(x.property_id, p_as_of, x.income_percent, x.bedrooms)
+                   AS max_rent,
+               trust_rent_on(x.lease_id, p_as_of) + x.utility_allowance AS gross
+        FROM units AS x
+        LEFT JOIN LATERAL (
+            SELECT c.* FROM trust_income_certifications AS c
+            WHERE c.lease_id = x.lease_id AND c.effective_on <= p_as_of
+            ORDER BY (c.kind = 'move-in') DESC, c.effective_on, c.created_at, c.id
+            LIMIT 1
+        ) AS first ON true
+        LEFT JOIN LATERAL (
+            SELECT c.* FROM trust_income_certifications AS c
+            WHERE c.lease_id = x.lease_id AND c.effective_on <= p_as_of
+            ORDER BY c.effective_on DESC, c.created_at DESC, c.id DESC
+            LIMIT 1
+        ) AS latest ON true
+    ),
+    tested AS (
+        SELECT r.*,
+               CASE
+                   WHEN r.lease_id IS NULL THEN 'vacant'
+                   WHEN r.first_on IS NULL THEN 'no certification on file'
+                   WHEN trust_tax_credit_income_limit(
+                            r.property_id, r.first_on, r.income_percent, r.first_size) IS NULL
+                       THEN 'no income limits on file'
+                   WHEN r.first_income > trust_tax_credit_income_limit(
+                            r.property_id, r.first_on, r.income_percent, r.first_size)
+                       THEN 'over the limit at move-in'
+                   WHEN r.latest_on > r.first_on
+                        AND r.latest_income > 1.4 * trust_tax_credit_income_limit(
+                            r.property_id, r.latest_on, r.income_percent, r.latest_size)
+                       THEN 'over 140%: next available unit rule'
+                   ELSE 'qualified'
+               END AS income_word
+        FROM rows AS r
+    ),
+    lines AS (
+        SELECT 0 AS part, t.property, t.property_id, t.unit, t.unit_id, 'unit' AS item, t.tenants,
+               t.income_percent, t.bedrooms,
+               CASE WHEN t.lease_id IS NULL THEN NULL
+                    ELSE trust_due_standing(t.next_due_on, p_as_of) END AS certification,
+               t.income_word,
+               t.max_rent,
+               t.gross,
+               CASE WHEN t.lease_id IS NULL THEN NULL
+                    WHEN t.max_rent IS NULL THEN 'no income limits on file'
+                    WHEN t.gross <= t.max_rent THEN 'within the limit'
+                    ELSE 'over by ' || to_char(t.gross - t.max_rent, 'FM999999990.00') END
+                   AS rent_word
+        FROM tested AS t
+        UNION ALL
+        SELECT 1, t.property, t.property_id, NULL, NULL, 'qualified units', NULL, NULL, NULL, NULL,
+               count(*) FILTER (WHERE t.income_word IN ('qualified',
+                                                        'over 140%: next available unit rule'))
+               || ' of ' || count(*), NULL, NULL, NULL
+        FROM tested AS t
+        GROUP BY t.property, t.property_id
+    )
+    SELECT (row_number() OVER (
+                ORDER BY l.property COLLATE "C", l.property_id, l.part, l.unit COLLATE "C",
+                         l.unit_id
+            ))::integer,
+           l.item, l.unit_id, l.property, l.unit, l.tenants, l.income_percent, l.bedrooms,
+           l.certification, l.income_word, l.max_rent, l.gross, l.rent_word
+    FROM lines AS l
+    ORDER BY 1;
+END;
+$$;
+
+
+--
 -- Name: trust_report_tenant_directory(uuid, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -12505,6 +12621,65 @@ BEGIN
     VALUES (p_pmc_id, p_request_key, p_account, p_kind, p_amount, btrim(p_memo), v_transfer_id);
     RETURN v_transfer_id;
 END;
+$$;
+
+
+--
+-- Name: trust_tax_credit_income_limit(uuid, date, integer, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_tax_credit_income_limit(p_property_id uuid, p_day date, p_percent integer, p_size integer) RETURNS numeric
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT round(
+        CASE WHEN p_size <= 8 THEN l.limits[p_size]
+             ELSE l.limits[8] + (p_size - 8) * l.limits[4] * 0.08 END
+        * p_percent / 50
+    )
+    FROM trust_tax_credit_limits AS l
+    WHERE l.property_id = p_property_id AND l.starts_on <= p_day AND p_size >= 1
+    ORDER BY l.starts_on DESC
+    LIMIT 1
+$$;
+
+
+--
+-- Name: trust_tax_credit_rent_limit(uuid, date, integer, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_tax_credit_rent_limit(p_property_id uuid, p_day date, p_percent integer, p_bedrooms integer) RETURNS numeric
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT floor(
+        CASE WHEN p_bedrooms = 0
+             THEN trust_tax_credit_income_limit(p_property_id, p_day, p_percent, 1)
+             ELSE (trust_tax_credit_income_limit(
+                       p_property_id, p_day, p_percent, floor(p_bedrooms * 1.5)::integer)
+                   + trust_tax_credit_income_limit(
+                       p_property_id, p_day, p_percent, ceil(p_bedrooms * 1.5)::integer)) / 2
+        END * 0.30 / 12
+    )
+$$;
+
+
+--
+-- Name: trust_tax_credit_unit_on(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_tax_credit_unit_on(p_unit_id uuid, p_day date) RETURNS TABLE(income_percent integer, bedrooms integer, utility_allowance numeric)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT d.income_percent, d.bedrooms, d.utility_allowance
+    FROM (
+        SELECT t.* FROM trust_tax_credit_units AS t
+        WHERE t.unit_id = p_unit_id AND t.starts_on <= p_day
+        ORDER BY t.starts_on DESC
+        LIMIT 1
+    ) AS d
+    WHERE d.income_percent IS NOT NULL
 $$;
 
 
@@ -15976,6 +16151,43 @@ CREATE TABLE public.trust_staff_roles (
 
 
 --
+-- Name: trust_tax_credit_limits; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_tax_credit_limits (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    property_id uuid NOT NULL,
+    starts_on date NOT NULL,
+    limits numeric[] NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_tax_credit_limits_limits_check CHECK (((cardinality(limits) = 8) AND (array_position(limits, NULL::numeric) IS NULL) AND ((0)::numeric < ALL (limits)) AND ((10000000)::numeric > ALL (limits))))
+);
+
+
+--
+-- Name: trust_tax_credit_units; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_tax_credit_units (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    unit_id uuid NOT NULL,
+    starts_on date NOT NULL,
+    income_percent integer,
+    bedrooms integer,
+    utility_allowance numeric,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_tax_credit_units_bedrooms_check CHECK (((bedrooms >= 0) AND (bedrooms <= 6))),
+    CONSTRAINT trust_tax_credit_units_check CHECK ((((income_percent IS NULL) = (bedrooms IS NULL)) AND ((income_percent IS NULL) = (utility_allowance IS NULL)))),
+    CONSTRAINT trust_tax_credit_units_income_percent_check CHECK ((income_percent = ANY (ARRAY[20, 30, 40, 50, 60, 70, 80]))),
+    CONSTRAINT trust_tax_credit_units_utility_allowance_check CHECK (((utility_allowance >= (0)::numeric) AND (utility_allowance < (100000)::numeric) AND (utility_allowance = round(utility_allowance, 2))))
+);
+
+
+--
 -- Name: trust_tenant_links; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18784,6 +18996,38 @@ ALTER TABLE ONLY public.trust_staff_roles
 
 
 --
+-- Name: trust_tax_credit_limits trust_tax_credit_limits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_credit_limits
+    ADD CONSTRAINT trust_tax_credit_limits_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_tax_credit_limits trust_tax_credit_limits_property_id_starts_on_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_credit_limits
+    ADD CONSTRAINT trust_tax_credit_limits_property_id_starts_on_key UNIQUE (property_id, starts_on);
+
+
+--
+-- Name: trust_tax_credit_units trust_tax_credit_units_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_credit_units
+    ADD CONSTRAINT trust_tax_credit_units_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_tax_credit_units trust_tax_credit_units_unit_id_starts_on_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_credit_units
+    ADD CONSTRAINT trust_tax_credit_units_unit_id_starts_on_key UNIQUE (unit_id, starts_on);
+
+
+--
 -- Name: trust_tenant_links trust_tenant_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20832,6 +21076,34 @@ CREATE INDEX trust_staff_roles_pmc_id ON public.trust_staff_roles USING btree (p
 
 
 --
+-- Name: trust_tax_credit_limits_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_tax_credit_limits_pmc ON public.trust_tax_credit_limits USING btree (pmc_id, property_id);
+
+
+--
+-- Name: trust_tax_credit_limits_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_tax_credit_limits_recorded_by ON public.trust_tax_credit_limits USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_tax_credit_units_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_tax_credit_units_pmc ON public.trust_tax_credit_units USING btree (pmc_id, unit_id);
+
+
+--
+-- Name: trust_tax_credit_units_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_tax_credit_units_recorded_by ON public.trust_tax_credit_units USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_tenant_links_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22183,6 +22455,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_tax_credit_limits trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_tax_credit_limits FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_tax_credit_units trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_tax_credit_units FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_tenant_links trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23513,6 +23799,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_staf
 
 
 --
+-- Name: trust_tax_credit_limits trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_tax_credit_limits FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_tax_credit_units trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_tax_credit_units FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_tenant_links trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24595,6 +24895,20 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_showings FOR EACH
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_signing_links FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_tax_credit_limits trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_tax_credit_limits FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_tax_credit_units trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_tax_credit_units FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -29214,6 +29528,54 @@ ALTER TABLE ONLY public.trust_staff_roles
 
 
 --
+-- Name: trust_tax_credit_limits trust_tax_credit_limits_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_credit_limits
+    ADD CONSTRAINT trust_tax_credit_limits_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_tax_credit_limits trust_tax_credit_limits_pmc_id_property_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_credit_limits
+    ADD CONSTRAINT trust_tax_credit_limits_pmc_id_property_id_fkey FOREIGN KEY (pmc_id, property_id) REFERENCES public.trust_properties(pmc_id, id);
+
+
+--
+-- Name: trust_tax_credit_limits trust_tax_credit_limits_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_credit_limits
+    ADD CONSTRAINT trust_tax_credit_limits_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_tax_credit_units trust_tax_credit_units_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_credit_units
+    ADD CONSTRAINT trust_tax_credit_units_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_tax_credit_units trust_tax_credit_units_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_credit_units
+    ADD CONSTRAINT trust_tax_credit_units_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_tax_credit_units trust_tax_credit_units_pmc_id_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_tax_credit_units
+    ADD CONSTRAINT trust_tax_credit_units_pmc_id_unit_id_fkey FOREIGN KEY (pmc_id, unit_id) REFERENCES public.trust_units(pmc_id, id);
+
+
+--
 -- Name: trust_tenant_links trust_tenant_links_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29759,4 +30121,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000120'),
     ('20261022000121'),
     ('20261022000122'),
+    ('20261022000123'),
     ('20261022000150');

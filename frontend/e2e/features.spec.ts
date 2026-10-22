@@ -4524,3 +4524,71 @@ test("staff set a property's deposit interest, credit a lease's interest against
   // The saved toasts sit over the page's corner until they go.
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
 });
+
+test("staff enter a property's tax credit income limits, make a unit a tax credit unit, certify its household and see the compliance report", async ({
+  page,
+}) => {
+  const people = seed.features["tax-credit"]!;
+  await joinAsStaff(page, people.manager);
+  // Elm Court's area limits at 50% of median, from two months ago (a synthetic table).
+  const from = firstOfMonthsAgo(2);
+  const table = ["45000", "51450", "57900", "64300", "69450", "74600", "79750", "84900"];
+  await openProperty(page, "Elm Court");
+  const limits = part(page, "Tax credit income limits");
+  await expect(limits.getByTestId("no-income-limits")).toBeVisible();
+  const set = await setupPanel(page, "Set income limits");
+  await set.getByLabel("From").fill(from);
+  for (const [n, value] of table.entries()) {
+    await set.getByLabel(n === 0 ? "1 person" : `${n + 1} people`, { exact: true }).fill(value);
+  }
+  await set.getByRole("button", { name: "Save income limits" }).click();
+  await expect(page.getByText(`Income limits from ${us(from)} saved.`)).toBeVisible();
+  await expect(limits.getByRole("row", { name: `From ${us(from)}` })).toContainText("$57,900.00");
+
+  // Unit 1: households up to 60% of median, two bedrooms, a $100.00 utility allowance. Two
+  // bedrooms are three people: 57,900 x 60/50 x 30% / 12 = 1,737.00 a month at most.
+  await page.getByRole("table").filter({ hasText: "Unit 1" }).getByRole("link", { name: "Unit 1", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Unit 1, Elm Court" })).toBeVisible();
+  await expect(page.getByTestId("tax-credit-unit")).toHaveText("Not a tax credit unit.");
+  const unit = await setupPanel(page, "Set tax credit");
+  await unit.getByLabel("From").fill(from);
+  await unit.getByLabel("Household income up to").selectOption("60");
+  await unit.getByLabel("Bedrooms").fill("2");
+  await unit.getByLabel("Utility allowance a month").fill("100.00");
+  await unit.getByRole("button", { name: "Save tax credit" }).click();
+  await expect(page.getByText(`A tax credit unit at 60% of median from ${us(from)}.`)).toBeVisible();
+  await expect(page.getByTestId("tax-credit-unit")).toHaveText(
+    "A tax credit unit at 60% of median, 2 bedrooms. The rent and the $100.00 utility allowance may come to $1,737.00 a month.",
+  );
+
+  // Riley Demo's lease: no certification yet, then last month's for a household of two at
+  // $60,000.00, under the 61,740 two people may earn at 60%.
+  await openLease(page, "Elm Court, Unit 1");
+  const card = part(page, "Tax credit");
+  await expect(card.getByTestId("tax-credit-income")).toHaveText("no certification on file");
+  await expect(card.getByTestId("tax-credit-rent")).toHaveText("within the limit");
+  await expect(card).toContainText("at most $1,737.00");
+  await card.getByRole("button", { name: "Record certification" }).click();
+  const certification = page.getByRole("dialog", { name: "Record an income certification" });
+  const certified = firstOfMonthsAgo(1);
+  await certification.getByLabel("Takes effect").fill(certified);
+  await certification.getByLabel("People in the household").fill("2");
+  await certification.getByLabel("Annual income").fill("60000.00");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await certification.getByRole("button", { name: "Record certification" }).click();
+  await expect(page.getByText(`Annual certification from ${us(certified)} recorded.`)).toBeVisible();
+  await expect(card.getByTestId("tax-credit-income")).toHaveText("qualified");
+  await expect(card.getByTestId("tax-credit-certification")).toHaveText("current");
+
+  // The report: Unit 1 qualified and within its rent limit, one of Elm Court's one tax credit
+  // unit occupied by a qualified household, and never the household's income.
+  await section(page, "Reports");
+  await page.getByRole("list", { name: "Compliance" }).getByRole("link", { name: "Tax credit compliance" }).click();
+  const report = page.getByRole("table", { name: "Tax credit compliance" });
+  const row = report.getByRole("row").filter({ hasText: "Unit 1" });
+  await expect(row).toContainText("qualified");
+  await expect(row).toContainText("within the limit");
+  await expect(report).toContainText("1 of 1");
+  await expect(report).not.toContainText("60,000");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+});

@@ -582,6 +582,53 @@ force is NOT VERIFIED.
   inspection standard.
 - An agency that inspects every year, or a stricter schedule: staff give the due day.
 
+## Tax credit units (LIHTC, migration 0123)
+
+**The rule.** A low-income housing tax credit property keeps a share of its units for households
+under an income limit, at a rent under a limit, for its compliance period. It is federal law,
+the same in every state; each state's housing finance agency monitors it.
+
+- 26 U.S.C. 42(g)(1): the owner elects a minimum set-aside: 20% of units for households at or
+  under 50% of area median gross income, 40% at or under 60%, or the average income test (40% of
+  units, each designated 20% to 80% in steps of 10, averaging 60% or under).
+- 42(g)(2): a unit's gross rent (the rent and a utility allowance) is at most 30% of the income
+  limit imputed to it: one person for a unit with no bedroom, one and a half people a bedroom.
+- 42(g)(2)(D)(ii): a household that qualified at move-in stays qualified as its income rises;
+  once it is over 140% of the limit, the next available unit of comparable or smaller size in the
+  building must go to a qualified household (the next available unit rule).
+- HUD publishes the Multifamily Tax Subsidy Project income limits each year at 50% of median for
+  households of one to eight; 60% is 120% of them, and each person over eight adds 8% of the
+  four-person limit.
+
+Read in search excerpts of 26 U.S.C. 42, Treasury's regulations and HUD's limits; their full text as
+now in force is NOT VERIFIED.
+
+**What the PMS does.**
+- Staff enter a property's 50% limits for households of one to eight from a day, on its page,
+  each year as published; the PMS looks nothing up. Each other percent is in proportion, to the
+  dollar, and nine people or more add 8% of the four-person limit each.
+- Staff make a unit a tax credit unit from a day, on its page: the percent of median its
+  household may earn, its bedrooms and the utility allowance; a later row ends it. The page says
+  the most the rent and the allowance may come to: 30% of the imputed household's limit a year,
+  by the month, down to the dollar.
+- A tax credit unit's lease takes income certifications as an assisted lease does (migration
+  0108). Its page, and the Tax credit compliance report on a day, say where it stands: the
+  certification's standing, the income test (the move-in certification against the limit on its
+  day; after it, over 140% of the latest one's limit is the next available unit rule) and the rent
+  test (within the limit, or over by how much); then each property's units held by qualified
+  households, of all its tax credit units.
+- A household's income stays private as in migration 0108: the AI never reads a certification,
+  and the report prints words, limits and rents, never income or household size.
+
+**Left to the company.**
+- The election and whether the property meets it (the report counts units; it decides nothing),
+  the average income test's average, the next available unit itself, and any building-by-building
+  count.
+- An agency's own table or rounding where it differs from the proportion above: staff enter the
+  50% limits the agency uses.
+- The tenant income certification form, student status, the state agency's reporting and file
+  reviews, and IRS forms 8609 and 8823: the PMS files and sends nothing.
+
 ## Utility billing: RUBS and submeters (migration 0096)
 
 **The rule.** A tenant owes only what their lease says they owe, so a utility is billed back only

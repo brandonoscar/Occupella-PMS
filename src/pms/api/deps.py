@@ -179,6 +179,7 @@ AREA_PATHS = (
     ("/api/year-close", "month-end"),
     ("/api/switching/", "switching"),
     ("/api/setup/", "setup"),
+    ("/api/tax-credit/", "setup"),  # a property's income limits and a unit's designation
     ("/api/quickbooks/", "setup"),
     ("/api/company", "setup"),
     ("/api/properties/", "setup"),
