@@ -24,6 +24,16 @@ def test_known_blanks_are_filled_and_unknown_ones_named():
         "Dear <tenant_names>, owe <balance_due>."
     )
     assert notice_letters.unknown("{ not a blank } {{}}") == [""]
+    # A name keeps the spaces inside it: "{{ tenant names }}" is not a blank the PMS fills.
+    assert notice_letters.unknown("{{ tenant names }}") == ["tenant names"]
+
+
+def test_a_long_run_of_spaces_in_an_open_blank_is_read_in_one_pass():
+    # The blank's pattern once let a space match two ways, so this took minutes (CodeQL
+    # py/polynomial-redos); each space now matches one way only.
+    text = "{{" + " " * 50_000 + "x"
+    assert notice_letters.unknown(text) == []
+    assert notice_letters.fill(text, {}) == text
 
 
 def test_names_read_as_a_person_would_write_them():

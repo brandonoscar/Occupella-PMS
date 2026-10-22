@@ -26,13 +26,15 @@ FIELDS: dict[str, str] = {
     "company_address": "the company's mailing address, on one line",
     "staff_name": "who made the notice",
 }
-BLANK = re.compile(r"\{\{\s*([^{}]*?)\s*\}\}")
+# No part of a blank can match two ways (a name's spaces are stripped after), so a long run of
+# spaces in a template takes linear time, never polynomial (CodeQL py/polynomial-redos).
+BLANK = re.compile(r"\{\{([^{}]*)\}\}")
 
 
 def unknown(text: str) -> list[str]:
     """The blanks in a text that are not a blank the PMS fills, each once, as written."""
     seen: list[str] = []
-    for name in BLANK.findall(text):
+    for name in (found.strip() for found in BLANK.findall(text)):
         if name not in FIELDS and name not in seen:
             seen.append(name)
     return seen
@@ -40,7 +42,7 @@ def unknown(text: str) -> list[str]:
 
 def fill(text: str, values: dict[str, str]) -> str:
     """The text with each blank replaced by its value. Every blank must be one FIELDS names."""
-    return BLANK.sub(lambda found: values[found.group(1)], text)
+    return BLANK.sub(lambda found: values[found.group(1).strip()], text)
 
 
 def us(day: date) -> str:
