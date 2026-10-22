@@ -96,7 +96,10 @@ def test_a_deposit_statement_email_names_one_tenant_and_their_lease(conn, pmc):
             (pmc.pmc_id, "deposit_statement", "t@example.com", "S", "B", *about.values()),
         )
 
-    write(tenant_id=tenant, lease_id=lease)
+    # Only the constraint is tried here: the email it takes is never kept, so no delivery of
+    # another test's tries to make a statement for a deposit not returned.
+    with conn.transaction(force_rollback=True):
+        write(tenant_id=tenant, lease_id=lease)
     for about in ({"tenant_id": tenant}, {"lease_id": lease}):
         with pytest.raises(psycopg.errors.CheckViolation, match="recipient_check"):
             write(**about)

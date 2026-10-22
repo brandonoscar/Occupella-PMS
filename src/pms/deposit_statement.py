@@ -14,6 +14,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from fpdf import FPDF
+from fpdf.errors import FPDFException
 from pypdf import PdfReader, PdfWriter
 from pypdf.errors import PyPdfError
 
@@ -174,7 +175,7 @@ def _unreadable_page(file: File, generated: datetime) -> bytes:
 
 def render(statement: Statement, generated: datetime) -> bytes:
     """The letter, then each receipt and photo: a PDF's pages as they are, an image on a page of
-    its own, and a PDF that can't be read named on a page saying where it is."""
+    its own, and a PDF or an image that can't be read named on a page saying where it is."""
     writer = PdfWriter()
     writer.append(PdfReader(io.BytesIO(_letter(statement, generated))))
     for file in statement.files:
@@ -185,7 +186,12 @@ def render(statement: Statement, generated: datetime) -> bytes:
             except PyPdfError:
                 part = _unreadable_page(file, generated)
         else:
-            part = _image_page(file, generated)
+            # A photo whose first bytes are an image's but whose rest is not (cut short, say)
+            # passes the upload's check; the image library refuses it here.
+            try:
+                part = _image_page(file, generated)
+            except (OSError, ValueError, FPDFException):
+                part = _unreadable_page(file, generated)
         writer.append(PdfReader(io.BytesIO(part)))
     out = io.BytesIO()
     writer.write(out)

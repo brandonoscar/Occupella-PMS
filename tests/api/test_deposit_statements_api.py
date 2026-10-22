@@ -272,17 +272,24 @@ def test_staff_email_each_tenant_their_statement_with_its_pdf(client, conn, staf
 
 
 def test_a_statement_that_cannot_be_made_is_a_failed_delivery(conn, pmc, lease):
-    """An email of a lease whose deposit isn't returned (written by hand) can't carry it."""
+    """An email of a lease whose deposit isn't returned (written by hand) can't carry it: tried
+    at each delivery until it is given up on, after five failures, so it waits for no other
+    test's delivery either."""
     conn.execute(
         "INSERT INTO trust_emails (pmc_id, kind, tenant_id, lease_id, to_address, subject, body)"
         " VALUES (%s, 'deposit_statement', %s, %s, 'tenant1@example.com', 'Statement F1', 'B')",
         (pmc.pmc_id, tenant_of(conn, pmc), lease),
     )
-    email.deliver_pending(conn, Keeping())
-    assert conn.execute(
-        "SELECT d.error FROM trust_email_deliveries AS d JOIN trust_emails AS e"
-        " ON e.id = d.email_id WHERE e.subject = 'Statement F1'"
-    ).fetchone() == ("its attachment could not be made: the deposit hasn't been returned yet",)
+    for _ in range(email.MAX_ATTEMPTS + 1):
+        email.deliver_pending(conn, Keeping())
+    assert (
+        conn.execute(
+            "SELECT d.error FROM trust_email_deliveries AS d JOIN trust_emails AS e"
+            " ON e.id = d.email_id WHERE e.subject = 'Statement F1'"
+        ).fetchall()
+        == [("its attachment could not be made: the deposit hasn't been returned yet",)]
+        * email.MAX_ATTEMPTS
+    )
 
 
 def test_the_tenant_downloads_their_own_statement(

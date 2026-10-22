@@ -9,7 +9,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal
 
 from fpdf import FPDF
-from helpers import PDF, png
+from helpers import PDF, PNG, png
 from pypdf import PdfReader
 
 from pms import deposit_statement as ds
@@ -86,11 +86,14 @@ def test_each_file_follows_the_letter_on_pages_of_its_own():
         ds.File("Invoice CC-1", "application/pdf", a_pdf("Synthetic invoice CC-1")),
         ds.File("Broken PDF", "application/pdf", PDF),  # starts as a PDF does; no PDF inside
         ds.File("Living room", "image/png", png()),
+        # Starts as a PNG does, so the upload took it; the rest is no image.
+        ds.File("Kitchen", "image/png", PNG),
     )
 
-    letter, invoice, broken, photo = pages(ds.render(statement(files=files, photos=1), MADE))
+    letter, invoice, broken, photo, cut = pages(ds.render(statement(files=files, photos=2), MADE))
 
-    assert "2 receipt file(s) and 1 move-out photo(s)" in letter
+    assert "2 receipt file(s) and 2 move-out photo(s)" in letter
     assert "Synthetic invoice CC-1" in invoice
     assert "Broken PDF could not be added here: it is with the lease's files." in broken
     assert "Living room" in photo
+    assert "Kitchen could not be added here: it is with the lease's files." in cut
