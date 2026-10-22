@@ -223,6 +223,17 @@ browser = [
 ]
 
 [[feature]]
+id = "prepaid-rent"
+statement = "A company turns on tenants' prepaid rent paying what their lease owes by itself: the nightly run, and an admin's Run rent now, use it once a day per lease once new charges post, rent first, oldest first, as Use prepaid rent does, leaving a lease on a payment hold or whose owner's account staff choose. Off until a company turns it on."
+operations = [
+  "GET /api/rent/prepaid/automatic",
+  "POST /api/rent/prepaid/automatic",
+]
+browser = [
+  "features.spec.ts › a company has tenants' prepaid rent pay their new rent by itself, and Run rent now uses it",
+]
+
+[[feature]]
 id = "shared-bills"
 statement = "Staff share one vendor invoice across properties, a bill for each owner's share following every bill rule on its own, add the markup each owner's management terms set (taken with the bill's money into the company's fee account), and pay several bills at once."
 operations = [
@@ -244,7 +255,7 @@ browser = [
 
 [[feature]]
 id = "housing-assistance"
-statement = "Staff keep the company's housing authorities and set a lease's housing assistance from the first of a month; as each month's rent is charged the authority's part becomes its own charge and the tenant owes the rest, so the tenant's late fees, deposit and balance are their part alone; staff charge or credit the authority by hand, and record its payment for many leases, each lease's part paying what it owes there oldest first into the owners' accounts, counted as rent collected."
+statement = "Staff keep the company's housing authorities and set a lease's housing assistance from the first of a month; as each month's rent is charged the authority's part becomes its own charge and the tenant owes the rest, so the tenant's late fees, deposit and balance are their part alone; staff charge or credit the authority by hand, and record its payment for many leases, each lease's part paying what it owes there oldest first into the owners' accounts, counted as rent collected. Since migration 0116 (q034) an authority's late payment fee from a day, charged on the authority by the run once its part is still open after the grace days; a payment the bank returned, marked bounced so the authority owes it again; and a payment for a lease on a payment hold taken only past the hold."
 operations = [
   "GET /api/assistance/authorities",
   "POST /api/assistance/authorities",
@@ -253,9 +264,11 @@ operations = [
   "POST /api/assistance/leases/{lease_id}/terms",
   "POST /api/assistance/leases/{lease_id}/charges",
   "POST /api/assistance/payments",
+  "POST /api/assistance/authorities/{authority_id}/late-fees",
+  "POST /api/assistance/payments/{transfer_id}/bounce",
 ]
 browser = [
-  "features.spec.ts › staff add a housing authority, set a lease's assistance, charge and credit the authority and record its payment",
+  "features.spec.ts › staff add a housing authority, set a lease's assistance, charge and credit the authority and record its payment; its late fee, a bounce, and a payment past a hold",
 ]
 
 [[feature]]
@@ -461,7 +474,7 @@ operations = [
 ]
 browser = [
   "features.spec.ts › staff keep a vendor's W-9, a bill's receipt, a move-out photo and a property's document from Files, narrow the list, refuse a file that isn't what it says, and remove one",
-  "portal.spec.ts › staff keep an owner's document and the owner downloads it from the portal",
+  "portal.spec.ts › staff keep an owner's document and a property's, and the owner downloads them from the portal",
 ]
 
 [[feature]]
@@ -747,7 +760,7 @@ operations = [
   "POST /api/emails/settings",
 ]
 browser = [
-  "features.spec.ts › staff turn on the emails the PMS writes by itself, and a run of rent sends each owner last month's statement onto their Email tab",
+  "features.spec.ts › staff turn on the emails the PMS writes by itself, and a run of rent sends each owner last month's statement onto their Email tab, its PDF attached; a payment sends its tenant the receipt",
 ]
 
 [[feature]]

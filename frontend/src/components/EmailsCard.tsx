@@ -18,7 +18,8 @@ export type EmailLine = {
   id: string;
   kind:
     | "message" | "invite" | "password_reset" | "bill_approval"
-    | "rent_reminder" | "late_notice" | "owner_statement" | "work_order" | "adverse_action";
+    | "rent_reminder" | "late_notice" | "owner_statement" | "work_order" | "adverse_action"
+    | "payment_receipt";
   to: string;
   subject: string;
   body: string;
@@ -38,6 +39,12 @@ const KIND: Record<EmailLine["kind"], string> = {
   owner_statement: "Monthly statement",
   work_order: "Work order",
   adverse_action: "Adverse action notice",
+  payment_receipt: "Payment receipt",
+};
+// The PDF an email carries, made as it is sent (src/pms/attachments.py).
+const ATTACHED: Partial<Record<EmailLine["kind"], string>> = {
+  owner_statement: "The month's statement attached (PDF)",
+  payment_receipt: "The receipt attached (PDF)",
 };
 const STATUS: Record<EmailLine["status"], { word: string; tone: BadgeTone }> = {
   sent: { word: "Sent", tone: "positive" },
@@ -141,6 +148,7 @@ export function EmailsCard({ about, aboutId, name, emailOn }: {
               <p className="text-sm text-ink-subtle">
                 {KIND[line.kind]} to {line.to} · {line.by ?? "Sent by the PMS"} · {usDate(line.at)}
               </p>
+              {ATTACHED[line.kind] && <p className="text-sm text-ink-muted">{ATTACHED[line.kind]}</p>}
               {line.status === "failed" && line.error && <p className="text-sm text-danger">{line.error}</p>}
               <details className="text-sm text-ink-muted">
                 <summary className="cursor-pointer">Show the email</summary>

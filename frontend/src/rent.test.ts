@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { Hold, OpenCharge, RecurringCharge, RentLease } from "./rent";
+import type { DepositAsked, Hold, OpenCharge, RecurringCharge, RentLease } from "./rent";
 import {
   balanceDue,
   bounceSummary,
+  depositAskedLine,
   depositKindsLine,
   moveHome,
   PAYMENT_METHODS,
@@ -12,6 +13,7 @@ import {
   insuranceLine,
   methodLabel,
   rentChangeLine,
+  tenantDepositLine,
   chargeLabel,
   dueDayLabel,
   dueDayLine,
@@ -149,6 +151,19 @@ describe("rent", () => {
       "Concession: credit of $35.00 a month from 01/01/2026, stops 07/01/2026",
     );
   });
+  it("says what security deposit a signed lease asked, what is held and what is still to receive", () => {
+    const asked: DepositAsked = { asked: "1500.00", held: "1000.00", to_receive: "500.00" };
+    expect(depositAskedLine(asked)).toBe("The signed lease asked $1,500.00: $1,000.00 held, $500.00 still to receive");
+    expect(depositAskedLine({ ...asked, held: "1600.00", to_receive: "0.00" })).toBe(
+      "The signed lease asked $1,500.00: all held",
+    );
+    expect(tenantDepositLine(asked)).toBe(
+      "Security deposit your lease asks: $1,500.00. Held: $1,000.00; $500.00 still to give the manager.",
+    );
+    expect(tenantDepositLine({ ...asked, held: "1500.00", to_receive: "0.00" })).toBe(
+      "Security deposit your lease asks: $1,500.00. Held: all of it.",
+    );
+  });
   it("says what the rent run charged", () => {
     expect(rentRunSummary({ rents: 1, recurring: 1, late_fees: 1 })).toBe(
       "1 rent, 1 recurring charge and 1 late fee charged.",
@@ -162,6 +177,13 @@ describe("rent", () => {
     );
     expect(rentRunSummary({ rents: 1, recurring: 0, late_fees: 0, emails: 0 })).toBe(
       "1 rent, 0 recurring charges and 0 late fees charged.",
+    );
+    // And the leases whose prepaid rent paid what they owe, for a company that turned that on.
+    expect(rentRunSummary({ rents: 2, recurring: 0, late_fees: 0, emails: 0, prepaid_used: 1 })).toBe(
+      "2 rents, 0 recurring charges and 0 late fees charged. Prepaid rent paid what 1 lease owed.",
+    );
+    expect(rentRunSummary({ rents: 2, recurring: 0, late_fees: 0, emails: 1, prepaid_used: 2 })).toBe(
+      "2 rents, 0 recurring charges and 0 late fees charged. Prepaid rent paid what 2 leases owed. 1 email written.",
     );
   });
   it("says a payment hold's days, why, who released it and what it let past", () => {

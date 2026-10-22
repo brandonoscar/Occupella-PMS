@@ -1,8 +1,10 @@
 """The emails the PMS writes by itself (migration 20261017000077, src/pms/notices.py,
 docs/adr/0007-email.md): the company's settings, then rent reminders, late notices, owner
-statements, vendors' work orders and applicants' adverse action notices, each once, each only
-when the company turned it on and the server sends email. Every name and address is synthetic."""
+statements, vendors' work orders, applicants' adverse action notices and tenants' payment
+receipts (migration 0111), each once, each only when the company turned it on and the server
+sends email. Every name and address is synthetic."""
 
+import uuid
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 
@@ -29,6 +31,7 @@ from helpers import (
 )
 
 from pms import accounts, nightly, notices
+from pms.api import rent
 
 URL = "https://pms.example"
 DAY = timedelta(days=1)
@@ -39,6 +42,7 @@ ALL_ON = {
     "owner_statement_day": 5,
     "work_order_notices": True,
     "adverse_action_notices": True,
+    "payment_receipts": True,
 }
 
 
@@ -49,7 +53,8 @@ def pmc(conn):
 
 def turn_on(conn, pmc_id, by=None, **wanted):
     settings = {**dict.fromkeys(notices.FIELDS), **wanted}
-    for flag in ("late_notices", "work_order_notices", "adverse_action_notices"):
+    flags = ("late_notices", "work_order_notices", "adverse_action_notices", "payment_receipts")
+    for flag in flags:
         settings[flag] = bool(settings[flag])
     with acting_as(conn, by):
         return conn.execute(
@@ -151,6 +156,7 @@ def test_each_automatic_email_names_what_it_is_about_and_nothing_else(conn, pmc)
     tenant, owner = tenant_of(conn, pmc), pmc.owners[0].owner_id
     lease = lease_of(conn, pmc)
     nov = date(2026, 11, 1)
+    payment = paid(conn, pmc.pmc_id, lease)
     for kind, about in (
         ("rent_reminder", {"tenant_id": tenant, "period": nov}),  # no lease
         ("rent_reminder", {"tenant_id": tenant, "lease_id": lease}),  # no due day
@@ -161,12 +167,19 @@ def test_each_automatic_email_names_what_it_is_about_and_nothing_else(conn, pmc)
         ("work_order", {"vendor_id": pmc.vendor_id}),  # no step
         ("adverse_action", {"tenant_id": tenant}),
         ("message", {"tenant_id": tenant, "period": nov}),  # a message is about no month
+        ("payment_receipt", {"tenant_id": tenant, "lease_id": lease}),  # no payment
+        ("payment_receipt", {"owner_id": owner, "lease_id": lease, "transfer_id": payment}),
+        ("message", {"tenant_id": tenant, "transfer_id": payment}),  # nor is a message
     ):
         with conn.transaction(), pytest.raises(psycopg.errors.CheckViolation):
             outbox(conn, pmc.pmc_id, kind, **about)
     outbox(conn, pmc.pmc_id, "owner_statement", owner_id=owner, period=date(2026, 9, 1))
-    with pytest.raises(psycopg.errors.UniqueViolation):
+    with conn.transaction(), pytest.raises(psycopg.errors.UniqueViolation):
         outbox(conn, pmc.pmc_id, "owner_statement", owner_id=owner, period=date(2026, 9, 1))
+    receipt = {"tenant_id": tenant, "lease_id": lease, "transfer_id": payment}
+    outbox(conn, pmc.pmc_id, "payment_receipt", **receipt)
+    with pytest.raises(psycopg.errors.UniqueViolation):
+        outbox(conn, pmc.pmc_id, "payment_receipt", **receipt)
 
 
 def test_what_an_email_is_about_is_of_its_company(conn, pmc):
@@ -386,7 +399,8 @@ def test_each_owner_gets_last_months_statement_from_the_day_the_company_picked(c
         "  Opening balance  $0.00\n  Money in         $250.00\n  Money out        $0.00\n"
         "  Closing balance  $250.00\n" in body
     )
-    assert "Ask Synthetic PMC" in body  # no portal login
+    assert "The whole statement, each property's lines, is attached as a PDF." in body
+    assert "Sign in" not in body  # no portal login
     # November's run sends October's, contribution and all.
     contact(conn, pmc.pmc_id, "owner_id", second.owner_id, "owner.two@example.com")
     assert notices.write_owner_statements(app_conn, pmc.pmc_id, date(2026, 11, 5), 5, URL) == 2
@@ -404,6 +418,73 @@ def test_an_archived_owner_gets_no_statement(conn, app_conn, pmc):
         (pmc.pmc_id, owner),
     )
     assert notices.write_owner_statements(app_conn, pmc.pmc_id, date(2026, 10, 5), 1, URL) == 0
+
+
+# --- payment receipts --------------------------------------------------------------------------
+
+
+def paid(conn, pmc_id, lease, amount="125.00", on=date(2026, 10, 3)):
+    """A tenant payment recorded to the lease, as staff record one: its first transfer."""
+    with conn.transaction():
+        made = rent.record_payment(conn, pmc_id, lease, uuid.uuid4(), Decimal(amount), on)
+    return made.transfers[0]
+
+
+def receipts(conn, pmc_id):
+    return conn.execute(
+        "SELECT to_address, subject, body, tenant_id, lease_id, transfer_id FROM trust_emails"
+        " WHERE pmc_id = %s AND kind = 'payment_receipt' ORDER BY to_address COLLATE \"C\"",
+        (pmc_id,),
+    ).fetchall()
+
+
+def test_each_tenant_gets_the_receipt_of_a_payment_once(conn, app_conn, pmc):
+    turn_on(conn, pmc.pmc_id, payment_receipts=True)
+    first = tenant_of(conn, pmc)
+    second = add_tenant(conn, pmc.pmc_id, pmc.owners[0].property_id, "Tenant 2")
+    lease = lease_of(conn, pmc, tenants=[first, second])
+    contact(conn, pmc.pmc_id, "tenant_id", first, "tenant.one@example.com")
+    contact(conn, pmc.pmc_id, "tenant_id", second, "tenant.two@example.com")
+    payment = paid(conn, pmc.pmc_id, lease)
+    on = date(2026, 10, 3)
+
+    amount = Decimal("125.00")
+    assert notices.write_payment_receipts(app_conn, pmc.pmc_id, lease, payment, amount, on) == 2
+    # Once per tenant and payment.
+    assert notices.write_payment_receipts(app_conn, pmc.pmc_id, lease, payment, amount, on) == 0
+    rows = receipts(conn, pmc.pmc_id)
+    subject = "Your receipt: $125.00 received 10/03/2026"
+    assert [(row[0], row[1], *row[3:]) for row in rows] == [
+        ("tenant.one@example.com", subject, first, lease, payment),
+        ("tenant.two@example.com", subject, second, lease, payment),
+    ]
+    body = rows[0][2]
+    assert body.startswith("Hello ")
+    assert "received a payment of $125.00 on 10/03/2026 for " in body
+    assert "Its receipt is attached as a PDF." in body
+    assert "tenant portal" not in body  # no portal login
+
+
+def test_no_receipt_when_off_without_an_email_or_to_a_tenant_who_left(conn, app_conn, pmc):
+    first = tenant_of(conn, pmc)
+    second = add_tenant(conn, pmc.pmc_id, pmc.owners[0].property_id, "Tenant 2")
+    third = add_tenant(conn, pmc.pmc_id, pmc.owners[0].property_id, "Tenant 3")
+    lease = lease_of(conn, pmc, tenants=[first, second, third])
+    contact(conn, pmc.pmc_id, "tenant_id", first, "tenant.one@example.com")
+    contact(conn, pmc.pmc_id, "tenant_id", second, "tenant.two@example.com")
+    payment = paid(conn, pmc.pmc_id, lease)
+    on, amount = date(2026, 10, 3), Decimal("125.00")
+    # Off: none.
+    assert notices.write_payment_receipts(app_conn, pmc.pmc_id, lease, payment, amount, on) == 0
+
+    turn_on(conn, pmc.pmc_id, payment_receipts=True)
+    # Tenant 1 left on October 1, before the payment came; Tenant 3 has no email on file.
+    conn.execute(
+        "SELECT trust_remove_lease_tenant(%s, %s, %s, %s, NULL)",
+        (pmc.pmc_id, lease, first, date(2026, 10, 1)),
+    )
+    assert notices.write_payment_receipts(app_conn, pmc.pmc_id, lease, payment, amount, on) == 1
+    assert [row[3] for row in receipts(conn, pmc.pmc_id)] == [second]
 
 
 # --- the nightly run --------------------------------------------------------------------------

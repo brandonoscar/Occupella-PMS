@@ -256,10 +256,12 @@ tenant's deposit against the deposit account's cash) and `trust_report_general_l
 ledger account over a period: its opening balance, every entry with the balance after it, and
 its closing balance) and `trust_report_audit_log` (each change to the PMC's records and ledger
 over a period, with who made it) and `trust_report_vendor_payments` (what each vendor was paid in
-a calendar year, for 1099 preparation; it files nothing) and
+a calendar year, for 1099 preparation: the vendors marked for a 1099 against the IRS's threshold
+for the year; it files nothing) and
 `trust_report_income_statement` (an owner's income and expenses over days, cash basis, per
 property and across them: collected by what it paid, the fees, each expense account's bills, net
-income, and the Schedule E lines) and `trust_report_balance_sheet` (each trust bank account's
+income, and the Schedule E lines; `trust_report_income_statement_all_owners` the same across every
+owner, each property named with its owner) and `trust_report_balance_sheet` (each trust bank account's
 cash against what it holds, by kind) and `trust_report_cash_flow` (each trust bank account's cash
 over days, from opening to closing, by what came in and went out) and `trust_report_vacancy`
 (units without a lease, since when, and occupancy) and `trust_report_work_orders` (each work

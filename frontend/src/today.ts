@@ -34,6 +34,16 @@ export type Today = {
   company_fees: CompanyFees[];
   signers: SignerNote[];
   renters_insurance: Uninsured[];
+  // Leases not ended whose signed offer asked a security deposit not all held yet.
+  deposits_to_receive: DepositDue[];
+};
+export type DepositDue = {
+  lease_id: string;
+  property: string;
+  unit: string;
+  tenants: string[];
+  asked: string;
+  to_receive: string;
 };
 export type Uninsured = {
   lease_id: string;
@@ -143,4 +153,11 @@ export function signerNoteLine(note: SignerNote): string {
 export function uninsuredLine(lease: Uninsured): string {
   const who = lease.tenants ? ` (${lease.tenants})` : "";
   return `${lease.unit}, ${lease.property}${who}: renters insurance ${lease.standing}`;
+}
+
+// "Unit 1, Property 1 (Tenant A): $500.00 of the $1,500.00 security deposit the signed lease asked
+// still to receive".
+export function depositDueLine(due: DepositDue): string {
+  const who = due.tenants.length ? ` (${due.tenants.join(", ")})` : "";
+  return `${due.unit}, ${due.property}${who}: ${money(due.to_receive)} of the ${money(due.asked)} security deposit the signed lease asked still to receive`;
 }

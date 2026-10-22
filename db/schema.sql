@@ -498,6 +498,7 @@ DECLARE
     v_existing numeric;
     v_open numeric;
     v_used numeric;
+    v_hold trust_payment_holds;
 BEGIN
     IF current_setting('transaction_isolation') <> 'read committed' THEN
         RAISE EXCEPTION 'trust: apply a payment at READ COMMITTED, not %',
@@ -561,6 +562,30 @@ BEGIN
                 USING ERRCODE = 'unique_violation';
         END IF;
         RETURN v_existing;  -- a retry: the original match
+    END IF;
+
+    -- A payment hold on the lease (an eviction filed, migration 0025) in force on the transfer's
+    -- day (UTC) refuses an authority's payment as it does a tenant's, unless the transfer was
+    -- allowed for that hold (q034). The lease's row lock orders this against a hold being placed.
+    PERFORM l.id FROM trust_leases AS l WHERE l.id = v_charge.lease_id FOR SHARE;
+    SELECT h.* INTO v_hold
+    FROM trust_payment_holds AS h
+    LEFT JOIN trust_payment_hold_releases AS r ON r.hold_id = h.id
+    WHERE h.lease_id = v_charge.lease_id
+      AND h.starts_on <= (v_transfer.event_at AT TIME ZONE 'UTC')::date
+      AND (r.ends_on IS NULL OR (v_transfer.event_at AT TIME ZONE 'UTC')::date < r.ends_on)
+      AND NOT EXISTS (
+          SELECT a.hold_id FROM trust_payment_hold_allowances AS a
+          WHERE a.hold_id = h.id AND a.transfer_id = p_transfer_id
+      )
+    ORDER BY h.starts_on, h.id
+    LIMIT 1;
+    IF FOUND THEN
+        RAISE EXCEPTION 'trust: lease % is on a payment hold from % (%); transfer % is not '
+            'allowed for it', v_charge.lease_id, v_hold.starts_on, v_hold.reason, p_transfer_id
+            USING ERRCODE = 'check_violation',
+                  HINT = 'Record an allowance for this transfer (trust_payment_hold_allowances) '
+                         'to accept it.';
     END IF;
 
     v_open := trust_assistance_open(p_charge_id);
@@ -883,6 +908,56 @@ $$;
 
 
 --
+-- Name: trust_assess_authority_late_fees(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_assess_authority_late_fees(p_pmc_id uuid, p_as_of date) RETURNS integer
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_made integer;
+BEGIN
+    IF p_as_of IS NULL THEN
+        RAISE EXCEPTION 'trust: late fees are assessed as of a day'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    WITH due AS (
+        SELECT c.id, c.lease_id, c.housing_authority_id, c.due_on, t.grace_days, t.flat_fee
+        FROM trust_assistance_charges AS c
+        CROSS JOIN LATERAL (
+            SELECT f.grace_days, f.flat_fee FROM trust_authority_late_fees AS f
+            WHERE f.housing_authority_id = c.housing_authority_id AND f.starts_on <= c.due_on
+            ORDER BY f.starts_on DESC
+            LIMIT 1
+        ) AS t
+        WHERE c.pmc_id = p_pmc_id AND c.source = 'rent' AND t.flat_fee > 0
+          -- The last grace day has ended by the end of the day.
+          AND c.due_on + t.grace_days < p_as_of
+          AND NOT EXISTS (
+              SELECT 1 FROM trust_assistance_charges AS l
+              WHERE l.late_for_id = c.id AND l.source = 'late fee'
+          )
+          AND trust_assistance_open_at(
+              c.id, (c.due_on + t.grace_days + 1)::timestamp AT TIME ZONE 'UTC'
+          ) > 0
+    )
+    INSERT INTO trust_assistance_charges (
+        pmc_id, lease_id, housing_authority_id, due_on, kind, amount, memo, source, late_for_id
+    )
+    SELECT p_pmc_id, d.lease_id, d.housing_authority_id, d.due_on + d.grace_days + 1, 'charge',
+           d.flat_fee, 'Late payment fee, rent due ' || to_char(d.due_on, 'YYYY-MM-DD'),
+           'late fee', d.id
+    FROM due AS d
+    ORDER BY d.due_on, d.id
+    ON CONFLICT (late_for_id) WHERE source = 'late fee' DO NOTHING;
+    GET DIAGNOSTICS v_made = ROW_COUNT;
+    RETURN v_made;
+END;
+$$;
+
+
+--
 -- Name: trust_assess_late_fees(uuid, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1036,6 +1111,32 @@ CREATE FUNCTION public.trust_assistance_open(p_charge_id uuid) RETURNS numeric
                        FROM trust_assistance_charges AS a WHERE a.adjusts_id = c.id), 0)
            - coalesce((SELECT sum(p.amount) FROM trust_assistance_payments AS p
                        WHERE p.assistance_charge_id = c.id), 0)
+           + coalesce((SELECT sum(r.amount) FROM trust_assistance_payment_reversals AS r
+                       WHERE r.assistance_charge_id = c.id), 0)
+    FROM trust_assistance_charges AS c
+    WHERE c.id = p_charge_id
+$$;
+
+
+--
+-- Name: trust_assistance_open_at(uuid, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_assistance_open_at(p_charge_id uuid, p_at timestamp with time zone) RETURNS numeric
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT c.amount
+           + coalesce((SELECT sum(CASE a.kind WHEN 'credit' THEN -a.amount ELSE a.amount END)
+                       FROM trust_assistance_charges AS a
+                       WHERE a.adjusts_id = c.id
+                         AND a.due_on < (p_at AT TIME ZONE 'UTC')::date), 0)
+           - coalesce((SELECT sum(p.amount) FROM trust_assistance_payments AS p
+                       JOIN pgledger_transfers AS t ON t.id = p.transfer_id
+                       WHERE p.assistance_charge_id = c.id AND t.event_at < p_at), 0)
+           + coalesce((SELECT sum(r.amount) FROM trust_assistance_payment_reversals AS r
+                       JOIN pgledger_transfers AS t ON t.id = r.reversal_id
+                       WHERE r.assistance_charge_id = c.id AND t.event_at < p_at), 0)
     FROM trust_assistance_charges AS c
     WHERE c.id = p_charge_id
 $$;
@@ -1890,6 +1991,17 @@ CREATE FUNCTION public.trust_check_assistance_charge() RETURNS trigger
 DECLARE
     v_target trust_assistance_charges;
 BEGIN
+    -- A late fee is on an authority's part of a rent, of the same lease and authority.
+    IF NEW.late_for_id IS NOT NULL THEN
+        SELECT c.* INTO v_target FROM trust_assistance_charges AS c
+        WHERE c.id = NEW.late_for_id AND c.pmc_id = NEW.pmc_id;
+        IF FOUND AND (v_target.source <> 'rent' OR v_target.lease_id <> NEW.lease_id
+                      OR v_target.housing_authority_id <> NEW.housing_authority_id) THEN
+            RAISE EXCEPTION 'trust: a late fee is on an authority''s part of a rent of the same '
+                'lease and authority'
+                USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
     IF NEW.adjusts_id IS NULL THEN
         RETURN NEW;
     END IF;
@@ -4788,6 +4900,53 @@ $$;
 
 
 --
+-- Name: trust_management_fee_collected(text, timestamp with time zone, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_management_fee_collected(p_account text, p_start timestamp with time zone, p_end timestamp with time zone) RETURNS numeric
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT coalesce((
+        SELECT sum(cp.amount)
+        FROM trust_charge_payments AS cp
+        -- Rent, or a fee the rent run made from a recurring charge. (A recurring credit is
+        -- never paid, so it has no payments here.)
+        JOIN trust_charges AS c ON c.id = cp.charge_id
+            AND (c.kind = 'rent' OR c.recurring_charge_id IS NOT NULL)
+        JOIN pgledger_transfers AS t ON t.id = cp.transfer_id
+        WHERE t.to_account_id = p_account AND t.event_at >= p_start AND t.event_at < p_end
+    ), 0)
+    -- A housing authority's part of the rent it paid (migration 0095).
+    + coalesce((
+        SELECT sum(ap.amount)
+        FROM trust_assistance_payments AS ap
+        JOIN trust_assistance_charges AS ac ON ac.id = ap.assistance_charge_id
+            AND ac.source <> 'late fee'
+        JOIN pgledger_transfers AS t ON t.id = ap.transfer_id
+        WHERE t.to_account_id = p_account AND t.event_at >= p_start AND t.event_at < p_end
+    ), 0)
+    -- ...less what of it bounced back (migration 0116); an authority's late fee is not rent.
+    - coalesce((
+        SELECT sum(ar.amount)
+        FROM trust_assistance_payment_reversals AS ar
+        JOIN trust_assistance_charges AS ac ON ac.id = ar.assistance_charge_id
+            AND ac.source <> 'late fee'
+        JOIN pgledger_transfers AS t ON t.id = ar.reversal_id
+        WHERE t.from_account_id = p_account AND t.event_at >= p_start AND t.event_at < p_end
+    ), 0)
+    - coalesce((
+        SELECT sum(r.amount)
+        FROM trust_payment_reversals AS r
+        JOIN trust_charges AS c ON c.id = r.charge_id
+            AND (c.kind = 'rent' OR c.recurring_charge_id IS NOT NULL)
+        JOIN pgledger_transfers AS t ON t.id = r.reversal_id
+        WHERE t.from_account_id = p_account AND t.event_at >= p_start AND t.event_at < p_end
+    ), 0)
+$$;
+
+
+--
 -- Name: trust_match_bank_lines(uuid, uuid, uuid[], text[], uuid[], uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5625,8 +5784,14 @@ DECLARE
     v_end timestamptz := p_period_end::timestamp AT TIME ZONE 'UTC';
     v_taken trust_management_fees;
     v_agreement trust_management_agreements;
+    v_theirs trust_management_agreements;
+    v_share record;
+    v_shared boolean;
     v_collected numeric;
+    v_whole_collected numeric := 0.00;
+    v_whole numeric;
     v_fee numeric;
+    v_memo text;
 BEGIN
     IF p_period_start IS NULL OR p_period_end IS NULL OR p_period_end <= p_period_start THEN
         RAISE EXCEPTION 'trust: a fee period must end after it starts (got % to %)',
@@ -5655,39 +5820,54 @@ BEGIN
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
 
-    SELECT coalesce(sum(cp.amount), 0) INTO v_collected
-    FROM trust_charge_payments AS cp
-    -- Rent, or a fee the rent run made from a recurring charge. (A recurring credit is never
-    -- paid, so it has no payments here.)
-    JOIN trust_charges AS c ON c.id = cp.charge_id
-        AND (c.kind = 'rent' OR c.recurring_charge_id IS NOT NULL)
-    JOIN pgledger_transfers AS t ON t.id = cp.transfer_id
-    WHERE t.to_account_id = p_account AND t.event_at >= v_start AND t.event_at < v_end;
-    -- A housing authority's part of the rent it paid (migration 0095).
-    SELECT v_collected + coalesce(sum(ap.amount), 0) INTO v_collected
-    FROM trust_assistance_payments AS ap
-    JOIN pgledger_transfers AS t ON t.id = ap.transfer_id
-    WHERE t.to_account_id = p_account AND t.event_at >= v_start AND t.event_at < v_end;
-    SELECT v_collected - coalesce(sum(r.amount), 0) INTO v_collected
-    FROM trust_payment_reversals AS r
-    JOIN trust_charges AS c ON c.id = r.charge_id
-        AND (c.kind = 'rent' OR c.recurring_charge_id IS NOT NULL)
-    JOIN pgledger_transfers AS t ON t.id = r.reversal_id
-    WHERE t.from_account_id = p_account AND t.event_at >= v_start AND t.event_at < v_end;
+    v_collected := trust_management_fee_collected(p_account, v_start, v_end);
+    v_memo := format('Management fee %s to %s', p_period_start, p_period_end - 1);
 
-    v_fee := greatest(round(v_agreement.fee_percent / 100 * v_collected, 2),
-                      v_agreement.minimum_fee)
-             + v_agreement.flat_fee;
+    -- Owned in shares on the period's last day, with this account among them: one fee for the
+    -- property, under the terms its owners share, split by their shares (q044).
+    v_shared := EXISTS (
+        SELECT o.ledger_account_id
+        FROM trust_ownership_on(v_account.property_id, p_period_end - 1) AS o
+        WHERE o.ledger_account_id = p_account
+    );
+    IF v_shared THEN
+        FOR v_share IN
+            SELECT o.ledger_account_id
+            FROM trust_ownership_on(v_account.property_id, p_period_end - 1) AS o
+        LOOP
+            v_theirs := trust_agreement_on(v_share.ledger_account_id, p_period_start);
+            IF v_theirs.id IS NULL
+               OR (v_theirs.fee_percent, v_theirs.minimum_fee, v_theirs.flat_fee)
+                  IS DISTINCT FROM
+                  (v_agreement.fee_percent, v_agreement.minimum_fee, v_agreement.flat_fee)
+            THEN
+                RAISE EXCEPTION 'trust: the owners of this property don''t share the same '
+                    'management fee terms on %: give each owner''s account the same fee '
+                    'percent, minimum and flat fee', p_period_start
+                    USING ERRCODE = 'check_violation';
+            END IF;
+            v_whole_collected := v_whole_collected
+                + trust_management_fee_collected(v_share.ledger_account_id, v_start, v_end);
+        END LOOP;
+        v_whole := greatest(round(v_agreement.fee_percent / 100 * v_whole_collected, 2),
+                            v_agreement.minimum_fee)
+                   + v_agreement.flat_fee;
+        SELECT coalesce(sum(s.amount), 0) INTO v_fee
+        FROM trust_split_by_ownership(v_account.property_id, p_period_end - 1, v_whole) AS s
+        WHERE s.ledger_account_id = p_account;
+        v_memo := format('%s, this owner''s share of the property''s %s', v_memo, v_whole);
+    ELSE
+        v_fee := greatest(round(v_agreement.fee_percent / 100 * v_collected, 2),
+                          v_agreement.minimum_fee)
+                 + v_agreement.flat_fee;
+    END IF;
 
     INSERT INTO trust_management_fees (
         pmc_id, ledger_account_id, period_start, period_end, agreement_id, collected, fee,
         transfer_id
     ) VALUES (
         p_pmc_id, p_account, p_period_start, p_period_end, v_agreement.id, v_collected, v_fee,
-        CASE WHEN v_fee > 0 THEN trust_post_fee(
-            v_account, v_fee, p_event_at,
-            format('Management fee %s to %s', p_period_start, p_period_end - 1)
-        ) END
+        CASE WHEN v_fee > 0 THEN trust_post_fee(v_account, v_fee, p_event_at, v_memo) END
     );
     RETURN v_fee;
 END;
@@ -7969,7 +8149,8 @@ BEGIN
             p_from, p_through
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
-    IF NOT EXISTS (
+    -- No owner: every owner of the PMC (q108).
+    IF p_owner_id IS NOT NULL AND NOT EXISTS (
         SELECT o.id FROM trust_owners AS o WHERE o.id = p_owner_id AND o.pmc_id = p_pmc_id
     ) THEN
         RAISE EXCEPTION 'trust: no owner % in PMC %', p_owner_id, p_pmc_id
@@ -7992,10 +8173,16 @@ BEGIN
                (4, 'income: NSF fees'), (5, 'income: other charges')
     ),
     accounts AS (
-        SELECT t.ledger_account_id AS account, pr.display_name AS name
+        -- An owner's property accounts by their property; every owner's, each named by its
+        -- property and owner, when no owner is given.
+        SELECT t.ledger_account_id AS account,
+               CASE WHEN p_owner_id IS NULL THEN pr.display_name || ', ' || o.display_name
+                    ELSE pr.display_name END AS name
         FROM trust_ledger_accounts AS t
         JOIN trust_properties AS pr ON pr.id = t.property_id
-        WHERE t.pmc_id = p_pmc_id AND t.owner_id = p_owner_id AND t.kind = 'owner_property'
+        JOIN trust_owners AS o ON o.id = t.owner_id
+        WHERE t.pmc_id = p_pmc_id AND (p_owner_id IS NULL OR t.owner_id = p_owner_id)
+          AND t.kind = 'owner_property'
     ),
     -- What each charge's money is: rent, a recurring charge (pet rent, parking), a late fee, an
     -- NSF fee, or another charge, and the company's own type of it if it has one (its own, or
@@ -8035,11 +8222,21 @@ BEGIN
         JOIN classes AS k ON k.id = r.charge_id
         WHERE r.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
         UNION ALL
-        -- A housing authority's part of the rent, as it paid it (migration 0095): rent.
-        SELECT tr.to_account_id, 1, NULL::uuid, ap.amount
+        -- A housing authority's part of the rent, as it paid it (migration 0095): rent; its late
+        -- fee a late fee; less what bounced back (migration 0116).
+        SELECT tr.to_account_id, CASE ac.source WHEN 'late fee' THEN 3 ELSE 1 END, NULL::uuid,
+               ap.amount
         FROM trust_assistance_payments AS ap
+        JOIN trust_assistance_charges AS ac ON ac.id = ap.assistance_charge_id
         JOIN pgledger_transfers AS tr ON tr.id = ap.transfer_id
         WHERE ap.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
+        UNION ALL
+        SELECT tr.from_account_id, CASE ac.source WHEN 'late fee' THEN 3 ELSE 1 END, NULL::uuid,
+               -ar.amount
+        FROM trust_assistance_payment_reversals AS ar
+        JOIN trust_assistance_charges AS ac ON ac.id = ar.assistance_charge_id
+        JOIN pgledger_transfers AS tr ON tr.id = ar.reversal_id
+        WHERE ar.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
     ),
     fees AS (
         SELECT f.ledger_account_id AS account, 0 AS ord, tr.amount
@@ -8165,8 +8362,9 @@ BEGIN
                NULL::numeric AS total
         FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
         UNION ALL
-        SELECT 0, NULL, NULL, 0, 2, 'owner', o.display_name, NULL, NULL
-        FROM trust_owners AS o WHERE o.id = p_owner_id
+        SELECT 0, NULL, NULL, 0, 2, 'owner', coalesce(o.display_name, 'all owners'), NULL, NULL
+        FROM (SELECT 1) AS one
+        LEFT JOIN trust_owners AS o ON o.id = p_owner_id
         UNION ALL
         SELECT 0, NULL, NULL, 0, 3, 'period',
                p_from::text || ' to ' || p_through::text || ' UTC, cash basis', NULL, NULL
@@ -8283,8 +8481,9 @@ BEGIN
         JOIN trust_units AS u ON u.id = l.unit_id
         WHERE c.pmc_id = p_pmc_id AND c.due_on BETWEEN p_from AND p_through
         UNION ALL
-        SELECT l.id, u.property_id, NULL, 1, ac.due_on,
-               CASE ac.kind WHEN 'credit' THEN -ac.amount ELSE ac.amount END
+        -- An authority's late fee (migration 0116) is a late fee.
+        SELECT l.id, u.property_id, NULL, CASE ac.source WHEN 'late fee' THEN 3 ELSE 1 END,
+               ac.due_on, CASE ac.kind WHEN 'credit' THEN -ac.amount ELSE ac.amount END
         FROM trust_assistance_charges AS ac
         JOIN trust_leases AS l ON l.id = ac.lease_id
         JOIN trust_units AS u ON u.id = l.unit_id
@@ -8467,6 +8666,18 @@ BEGIN
     FROM lines AS l
     ORDER BY 1;
 END;
+$$;
+
+
+--
+-- Name: trust_report_income_statement_all_owners(uuid, date, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_report_income_statement_all_owners(p_pmc_id uuid, p_from date, p_through date) RETURNS TABLE(line integer, property text, item text, schedule_e integer, amount numeric)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT * FROM trust_report_income_statement(p_pmc_id, NULL, p_from, p_through);
 $$;
 
 
@@ -8833,7 +9044,12 @@ BEGIN
                - coalesce((SELECT sum(p.amount)
                            FROM trust_assistance_payments AS p
                            JOIN pgledger_transfers AS tr ON tr.id = p.transfer_id
-                           WHERE p.assistance_charge_id = ac.id AND tr.event_at < v_cutoff), 0),
+                           WHERE p.assistance_charge_id = ac.id AND tr.event_at < v_cutoff), 0)
+               -- What of it bounced back is owed again (migration 0116).
+               + coalesce((SELECT sum(r.amount)
+                           FROM trust_assistance_payment_reversals AS r
+                           JOIN pgledger_transfers AS tr ON tr.id = r.reversal_id
+                           WHERE r.assistance_charge_id = ac.id AND tr.event_at < v_cutoff), 0),
                2
         FROM trust_assistance_charges AS ac
         JOIN trust_leases AS l ON l.id = ac.lease_id
@@ -9313,6 +9529,12 @@ BEGIN
         FROM trust_assistance_payments AS ap
         JOIN pgledger_transfers AS tr ON tr.id = ap.transfer_id
         WHERE ap.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
+        UNION ALL
+        -- ...less what of it bounced back (migration 0116).
+        SELECT tr.from_account_id, 1, -ar.amount
+        FROM trust_assistance_payment_reversals AS ar
+        JOIN pgledger_transfers AS tr ON tr.id = ar.reversal_id
+        WHERE ar.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
         UNION ALL
         SELECT f.ledger_account_id, 2, -tr.amount
         FROM trust_management_fees AS f
@@ -10309,7 +10531,14 @@ BEGIN
                    WHERE l.unit_id = u.id AND l.starts_on <= p_as_of
                      AND (l.ends_on IS NULL OR l.ends_on >= p_as_of)
                ) AS occupied,
-               last.ends_on + 1 AS since,
+               -- Vacant from the day after its last lease ended; a unit never leased by the
+               -- day, from the day it was added to the PMS (UTC), if that is by the day.
+               coalesce(
+                   last.ends_on + 1,
+                   CASE WHEN (u.created_at AT TIME ZONE 'UTC')::date <= p_as_of
+                        THEN (u.created_at AT TIME ZONE 'UTC')::date END
+               ) AS since,
+               last.ends_on IS NULL AS never_leased,
                last.monthly_rent AS rent,
                (SELECT min(l.starts_on) FROM trust_leases AS l
                 WHERE l.unit_id = u.id AND l.starts_on > p_as_of) AS next_start
@@ -10339,11 +10568,21 @@ BEGIN
         SELECT 0, NULL, NULL, NULL, 1, 'as of',
                to_char(p_as_of, 'YYYY-MM-DD') || ', end of day UTC', NULL, NULL, NULL, NULL
         UNION ALL
-        -- A unit never leased has no day it became vacant: unknown, not zero.
         SELECT 1, o.place, o.unit_name, o.id, 0, 'vacant', o.place, o.since,
                p_as_of - o.since + 1, o.rent, o.next_start
         FROM units AS o
         WHERE NOT o.occupied
+        UNION ALL
+        -- A unit never leased by the day says so under it: vacant since it was added, or, added
+        -- after the day, since a day not known (q084).
+        SELECT 1, o.place, o.unit_name, o.id, 1, 'never leased',
+               CASE WHEN o.since IS NULL
+                    THEN 'added to the PMS after this day: vacant since a day not known'
+                    ELSE 'vacant since it was added to the PMS'
+               END,
+               NULL, NULL, NULL, NULL
+        FROM units AS o
+        WHERE NOT o.occupied AND o.never_leased
         UNION ALL
         SELECT 2, NULL, NULL, NULL, 0, 'total',
                CASE WHEN c.total = 0 THEN 'no units'
@@ -10542,6 +10781,8 @@ CREATE FUNCTION public.trust_report_vendor_payments(p_pmc_id uuid, p_year intege
 DECLARE
     v_start timestamptz;
     v_end timestamptz;
+    v_threshold numeric;
+    v_why text;
 BEGIN
     IF p_year IS NULL OR p_year NOT BETWEEN 1900 AND 9998 THEN
         RAISE EXCEPTION 'trust: vendor payments are for a calendar year, not %', p_year
@@ -10553,6 +10794,21 @@ BEGIN
     END IF;
     v_start := make_date(p_year, 1, 1)::timestamp AT TIME ZONE 'UTC';
     v_end := make_date(p_year + 1, 1, 1)::timestamp AT TIME ZONE 'UTC';
+    -- The IRS's threshold for a 1099-NEC or 1099-MISC in the year.
+    IF p_year <= 2025 THEN
+        v_threshold := 600.00;
+        v_why := 'a 1099 for a vendor marked for one and paid this much or more'
+            || ' (IRS, payments through 2025)';
+    ELSIF p_year = 2026 THEN
+        v_threshold := 2000.00;
+        v_why := 'a 1099 for a vendor marked for one and paid this much or more'
+            || ' (IRS, payments from 2026)';
+    ELSE
+        v_threshold := 2000.00;
+        v_why := 'a 1099 for a vendor marked for one and paid this much or more'
+            || ' (IRS, payments from 2026; its adjustment for inflation from 2027 is not known'
+            || ' here)';
+    END IF;
 
     RETURN QUERY
     WITH here AS (
@@ -10569,14 +10825,34 @@ BEGIN
         FROM trust_vendor_payments_carried_over AS c
         WHERE c.pmc_id = p_pmc_id AND c.year = p_year
     ),
-    paid AS (
+    -- Each vendor's latest profile: whether they get a 1099.
+    profiles AS (
+        SELECT DISTINCT ON (pr.vendor_id) pr.vendor_id, pr.gets_1099
+        FROM trust_vendor_profiles AS pr
+        WHERE pr.pmc_id = p_pmc_id
+        ORDER BY pr.vendor_id, pr.created_at DESC, pr.id DESC
+    ),
+    totals AS (
         SELECT v.id AS vendor_id, v.display_name, coalesce(h.payments, 0) AS payments,
                coalesce(h.total, 0) + coalesce(c.amount, 0) AS total,
-               c.paid_before, c.amount AS carried
+               c.paid_before, c.amount AS carried, pf.gets_1099
         FROM trust_vendors AS v
         LEFT JOIN here AS h ON h.vendor_id = v.id
         LEFT JOIN before AS c ON c.vendor_id = v.id
+        LEFT JOIN profiles AS pf ON pf.vendor_id = v.id
         WHERE v.pmc_id = p_pmc_id AND (h.vendor_id IS NOT NULL OR c.vendor_id IS NOT NULL)
+    ),
+    -- Where each one goes: 1 a 1099 vendor at or over the threshold, 3 under it, 4 no 1099
+    -- setting, 5 marked for none.
+    paid AS (
+        SELECT t.*,
+               CASE
+                   WHEN t.gets_1099 IS NULL THEN 4
+                   WHEN NOT t.gets_1099 THEN 5
+                   WHEN t.total >= v_threshold THEN 1
+                   ELSE 3
+               END AS section
+        FROM totals AS t
     ),
     lines AS (
         SELECT 0 AS section, NULL::text AS name, NULL::uuid AS id, 0 AS part, 'PMC' AS item,
@@ -10586,24 +10862,39 @@ BEGIN
         SELECT 0, NULL, NULL, 1, 'year', p_year::text || ', paid January 1 to December 31 UTC',
                NULL, NULL
         UNION ALL
-        SELECT 1, p.display_name, p.vendor_id, 0, 'vendor', p.display_name, p.payments, p.total
-        FROM paid AS p
+        SELECT 0, NULL, NULL, 2, 'threshold', v_why, NULL, v_threshold
+        UNION ALL
+        SELECT p.section, p.display_name, p.vendor_id, 0,
+               CASE p.section
+                   WHEN 1 THEN 'vendor' WHEN 3 THEN 'under the threshold'
+                   ELSE 'no 1099 setting'
+               END,
+               p.display_name, p.payments, p.total
+        FROM paid AS p WHERE p.section <> 5
         UNION ALL
         -- What of the vendor's total the old system paid, under the vendor's line.
-        SELECT 1, p.display_name, p.vendor_id, 1, 'carried over',
+        SELECT p.section, p.display_name, p.vendor_id, 1, 'carried over',
                'paid in the old system before ' || to_char(p.paid_before, 'YYYY-MM-DD'),
                NULL, p.carried
-        FROM paid AS p WHERE p.carried IS NOT NULL
+        FROM paid AS p WHERE p.carried IS NOT NULL AND p.section <> 5
         UNION ALL
-        SELECT 2, NULL, NULL, 0, 'total', NULL, coalesce(sum(p.payments), 0)::bigint,
-               coalesce(sum(p.total), 0)
+        -- The 1099 vendors' total, right after them.
+        SELECT 2, NULL, NULL, 0, 'total', NULL,
+               coalesce(sum(p.payments) FILTER (WHERE p.section = 1), 0)::bigint,
+               coalesce(sum(p.total) FILTER (WHERE p.section = 1), 0)
         FROM paid AS p
+        UNION ALL
+        SELECT 5, NULL, NULL, 0, 'not marked for a 1099',
+               count(*)::text || CASE count(*) WHEN 1 THEN ' vendor' ELSE ' vendors' END,
+               coalesce(sum(p.payments), 0)::bigint, coalesce(sum(p.total), 0)
+        FROM paid AS p WHERE p.section = 5
     )
     SELECT row_number() OVER (
                ORDER BY l.section, l.name COLLATE "C", l.id, l.part
            )::integer,
            l.item,
-           -- The PMC's name and the year sit in the vendor column of the first two lines.
+           -- The PMC's name, the year and the threshold sit in the vendor column of the first
+           -- three lines.
            l.label,
            l.payments,
            round(l.total, 2)
@@ -11038,6 +11329,116 @@ BEGIN
         END IF;
     END LOOP;
     RETURN v_held - v_kept;
+END;
+$$;
+
+
+--
+-- Name: trust_reverse_assistance_payment(uuid, uuid, text, text, numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_reverse_assistance_payment(p_pmc_id uuid, p_charge_id uuid, p_transfer_id text, p_reversal_id text, p_amount numeric) RETURNS numeric
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_matched numeric;
+    v_payment pgledger_transfers;
+    v_reversal pgledger_transfers;
+    v_existing numeric;
+    v_used numeric;
+BEGIN
+    -- The sums below must count every reversal that committed while this waited for the locks.
+    IF current_setting('transaction_isolation') <> 'read committed' THEN
+        RAISE EXCEPTION 'trust: reverse a payment at READ COMMITTED, not %',
+            current_setting('transaction_isolation')
+            USING ERRCODE = 'invalid_transaction_state';
+    END IF;
+    IF p_amount IS NULL OR p_amount <= 0 THEN
+        RAISE EXCEPTION 'trust: a reversal undoes a positive amount, not %', p_amount
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    -- Waits for matches and reversals in progress on the charge (trust_apply_assistance_payment
+    -- takes the same lock), then for those on the reversing transfer.
+    PERFORM c.id FROM trust_assistance_charges AS c
+    WHERE c.id = p_charge_id AND c.pmc_id = p_pmc_id
+    FOR NO KEY UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no housing authority charge % in PMC %', p_charge_id, p_pmc_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    SELECT p.amount INTO v_matched
+    FROM trust_assistance_payments AS p
+    WHERE p.assistance_charge_id = p_charge_id AND p.transfer_id = p_transfer_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: transfer % pays nothing of charge %', p_transfer_id, p_charge_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT t.* INTO v_payment FROM pgledger_transfers AS t WHERE t.id = p_transfer_id;
+
+    SELECT t.* INTO v_reversal
+    FROM pgledger_transfers AS t
+    WHERE t.id = p_reversal_id
+    FOR NO KEY UPDATE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'trust: no transfer %', p_reversal_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- A draw also moves money from the owner's account to cash, but it paid the owner.
+    IF EXISTS (
+        SELECT d.transfer_id FROM trust_owner_draws AS d WHERE d.transfer_id = p_reversal_id
+    ) THEN
+        RAISE EXCEPTION 'trust: transfer % paid the owner (an owner draw); it reverses no payment',
+            p_reversal_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF v_reversal.from_account_id <> v_payment.to_account_id
+        OR v_reversal.to_account_id <> v_payment.from_account_id THEN
+        RAISE EXCEPTION 'trust: transfer % does not move money back the way transfer % came',
+            p_reversal_id, p_transfer_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    IF v_reversal.event_at < v_payment.event_at THEN
+        RAISE EXCEPTION 'trust: transfer % is dated before the payment it reverses', p_reversal_id
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+
+    SELECT r.amount INTO v_existing
+    FROM trust_assistance_payment_reversals AS r
+    WHERE r.assistance_charge_id = p_charge_id AND r.transfer_id = p_transfer_id
+      AND r.reversal_id = p_reversal_id;
+    IF FOUND THEN
+        IF v_existing <> p_amount THEN
+            RAISE EXCEPTION 'trust: transfer % already reverses % of that payment, not %',
+                p_reversal_id, v_existing, p_amount
+                USING ERRCODE = 'unique_violation';
+        END IF;
+        RETURN v_existing;  -- a retry: the original reversal
+    END IF;
+
+    SELECT coalesce(sum(r.amount), 0) INTO v_used
+    FROM trust_assistance_payment_reversals AS r
+    WHERE r.assistance_charge_id = p_charge_id AND r.transfer_id = p_transfer_id;
+    IF v_used + p_amount > v_matched THEN
+        RAISE EXCEPTION 'trust: transfer % pays % of charge % and % of it is reversed already; '
+            '% more is too much', p_transfer_id, v_matched, p_charge_id, v_used, p_amount
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    SELECT coalesce(sum(r.amount), 0) INTO v_used
+    FROM trust_assistance_payment_reversals AS r WHERE r.reversal_id = p_reversal_id;
+    IF v_used + p_amount > v_reversal.amount THEN
+        RAISE EXCEPTION 'trust: transfer % moved % and already reverses %; % more is too much',
+            p_reversal_id, v_reversal.amount, v_used, p_amount
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    INSERT INTO trust_assistance_payment_reversals (
+        pmc_id, assistance_charge_id, transfer_id, reversal_id, amount
+    ) VALUES (p_pmc_id, p_charge_id, p_transfer_id, p_reversal_id, p_amount);
+    RETURN p_amount;
 END;
 $$;
 
@@ -12345,6 +12746,7 @@ CREATE TABLE public.trust_assistance_charges (
     adjusts_id uuid,
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    late_for_id uuid,
     CONSTRAINT trust_assistance_charges_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
     CONSTRAINT trust_assistance_charges_check CHECK (((source = 'rent'::text) = ((monthly_rent IS NOT NULL) AND (monthly_assistance IS NOT NULL)))),
     CONSTRAINT trust_assistance_charges_check1 CHECK (((source <> 'rent'::text) OR ((kind = 'charge'::text) AND (adjusts_id IS NULL)))),
@@ -12353,8 +12755,7 @@ CREATE TABLE public.trust_assistance_charges (
     CONSTRAINT trust_assistance_charges_kind_check CHECK ((kind = ANY (ARRAY['charge'::text, 'credit'::text]))),
     CONSTRAINT trust_assistance_charges_memo_check CHECK (((btrim(memo) <> ''::text) AND (length(memo) <= 200))),
     CONSTRAINT trust_assistance_charges_monthly_assistance_check CHECK ((monthly_assistance > (0)::numeric)),
-    CONSTRAINT trust_assistance_charges_monthly_rent_check CHECK ((monthly_rent > (0)::numeric)),
-    CONSTRAINT trust_assistance_charges_source_check CHECK ((source = ANY (ARRAY['rent'::text, 'lease end'::text, 'staff'::text])))
+    CONSTRAINT trust_assistance_charges_monthly_rent_check CHECK ((monthly_rent > (0)::numeric))
 );
 
 
@@ -12374,6 +12775,21 @@ CREATE TABLE public.trust_assistance_inspections (
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT trust_assistance_inspections_check CHECK ((due_on > inspected_on)),
     CONSTRAINT trust_assistance_inspections_result_check CHECK ((result = ANY (ARRAY['passed'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: trust_assistance_payment_reversals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_assistance_payment_reversals (
+    pmc_id uuid NOT NULL,
+    assistance_charge_id uuid NOT NULL,
+    transfer_id text NOT NULL,
+    reversal_id text NOT NULL,
+    amount numeric NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_assistance_payment_reversals_amount_check CHECK ((amount > (0)::numeric))
 );
 
 
@@ -12421,6 +12837,24 @@ ALTER TABLE public.trust_audit_log ALTER COLUMN id ADD GENERATED BY DEFAULT AS I
     NO MINVALUE
     NO MAXVALUE
     CACHE 1
+);
+
+
+--
+-- Name: trust_authority_late_fees; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_authority_late_fees (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    housing_authority_id uuid NOT NULL,
+    starts_on date NOT NULL,
+    grace_days integer NOT NULL,
+    flat_fee numeric NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_authority_late_fees_flat_fee_check CHECK (((flat_fee >= (0)::numeric) AND (flat_fee = round(flat_fee, 2)))),
+    CONSTRAINT trust_authority_late_fees_grace_days_check CHECK (((grace_days >= 0) AND (grace_days <= 60)))
 );
 
 
@@ -13064,6 +13498,7 @@ CREATE TABLE public.trust_email_settings (
     adverse_action_notices boolean NOT NULL,
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    payment_receipts boolean DEFAULT false NOT NULL,
     CONSTRAINT trust_email_settings_owner_statement_day_check CHECK (((owner_statement_day >= 1) AND (owner_statement_day <= 28))),
     CONSTRAINT trust_email_settings_rent_reminder_days_check CHECK (((rent_reminder_days >= 1) AND (rent_reminder_days <= 15)))
 );
@@ -13097,6 +13532,7 @@ CREATE TABLE public.trust_emails (
     request_id uuid,
     offer_id uuid,
     signer_position bigint,
+    transfer_id text,
     CONSTRAINT trust_emails_body_check CHECK (((body <> ''::text) AND (length(body) <= 10000))),
     CONSTRAINT trust_emails_check CHECK (((kind = 'bill_approval'::text) = (bill_id IS NOT NULL))),
     CONSTRAINT trust_emails_subject_check CHECK (((subject <> ''::text) AND (length(subject) <= 200))),
@@ -14115,6 +14551,19 @@ CREATE TABLE public.trust_pmcs (
     display_name text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_pmcs_display_name_check CHECK ((display_name <> ''::text))
+);
+
+
+--
+-- Name: trust_prepaid_rent_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_prepaid_rent_settings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    automatic boolean NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
 );
 
 
@@ -15175,6 +15624,14 @@ ALTER TABLE ONLY public.trust_archivals
 
 
 --
+-- Name: trust_assistance_charges trust_assistance_charges_late_fee_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_assistance_charges
+    ADD CONSTRAINT trust_assistance_charges_late_fee_check CHECK ((((source = 'late fee'::text) = (late_for_id IS NOT NULL)) AND ((source <> 'late fee'::text) OR ((kind = 'charge'::text) AND (adjusts_id IS NULL))))) NOT VALID;
+
+
+--
 -- Name: trust_assistance_charges trust_assistance_charges_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15188,6 +15645,14 @@ ALTER TABLE ONLY public.trust_assistance_charges
 
 ALTER TABLE ONLY public.trust_assistance_charges
     ADD CONSTRAINT trust_assistance_charges_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_assistance_charges trust_assistance_charges_source_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_assistance_charges
+    ADD CONSTRAINT trust_assistance_charges_source_check CHECK ((source = ANY (ARRAY['rent'::text, 'lease end'::text, 'staff'::text, 'late fee'::text]))) NOT VALID;
 
 
 --
@@ -15207,6 +15672,14 @@ ALTER TABLE ONLY public.trust_assistance_inspections
 
 
 --
+-- Name: trust_assistance_payment_reversals trust_assistance_payment_reversals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_payment_reversals
+    ADD CONSTRAINT trust_assistance_payment_reversals_pkey PRIMARY KEY (assistance_charge_id, transfer_id, reversal_id);
+
+
+--
 -- Name: trust_assistance_payments trust_assistance_payments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -15220,6 +15693,22 @@ ALTER TABLE ONLY public.trust_assistance_payments
 
 ALTER TABLE ONLY public.trust_audit_log
     ADD CONSTRAINT trust_audit_log_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_authority_late_fees trust_authority_late_fees_housing_authority_id_starts_on_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_authority_late_fees
+    ADD CONSTRAINT trust_authority_late_fees_housing_authority_id_starts_on_key UNIQUE (housing_authority_id, starts_on);
+
+
+--
+-- Name: trust_authority_late_fees trust_authority_late_fees_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_authority_late_fees
+    ADD CONSTRAINT trust_authority_late_fees_pkey PRIMARY KEY (id);
 
 
 --
@@ -15819,7 +16308,7 @@ ALTER TABLE ONLY public.trust_email_settings
 --
 
 ALTER TABLE public.trust_emails
-    ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text, 'rent_reminder'::text, 'late_notice'::text, 'owner_statement'::text, 'work_order'::text, 'adverse_action'::text, 'emergency_request'::text, 'signing_request'::text]))) NOT VALID;
+    ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text, 'rent_reminder'::text, 'late_notice'::text, 'owner_statement'::text, 'work_order'::text, 'adverse_action'::text, 'emergency_request'::text, 'signing_request'::text, 'payment_receipt'::text]))) NOT VALID;
 
 
 --
@@ -15855,8 +16344,9 @@ CASE kind
     WHEN 'adverse_action'::text THEN ((applicant_id IS NOT NULL) AND (application_id IS NOT NULL) AND (num_nonnulls(tenant_id, owner_id, vendor_id, staff_id) = 0))
     WHEN 'emergency_request'::text THEN ((staff_id IS NOT NULL) AND (request_id IS NOT NULL) AND (num_nonnulls(tenant_id, owner_id, vendor_id) = 0))
     WHEN 'signing_request'::text THEN ((offer_id IS NOT NULL) AND (signer_position IS NOT NULL) AND (num_nonnulls(tenant_id, owner_id, vendor_id, staff_id) = 0))
+    WHEN 'payment_receipt'::text THEN ((tenant_id IS NOT NULL) AND (lease_id IS NOT NULL) AND (transfer_id IS NOT NULL) AND (num_nonnulls(owner_id, vendor_id, staff_id) = 0))
     ELSE ((tenant_id IS NULL) AND (vendor_id IS NULL) AND (staff_id IS NULL))
-END AND ((kind = 'message'::text) = (sent_by IS NOT NULL)) AND ((kind = ANY (ARRAY['invite'::text, 'password_reset'::text, 'signing_request'::text])) = needs_link) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'late_notice'::text])) = (lease_id IS NOT NULL)) AND ((kind = 'late_notice'::text) = (charge_id IS NOT NULL)) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'owner_statement'::text])) = (period IS NOT NULL)) AND ((kind = 'owner_statement'::text) <= (period = (date_trunc('month'::text, (period)::timestamp with time zone))::date)) AND ((kind = 'work_order'::text) = (work_order_step_id IS NOT NULL)) AND ((kind = 'adverse_action'::text) = ((application_id IS NOT NULL) AND (applicant_id IS NOT NULL))) AND ((kind = 'emergency_request'::text) = (request_id IS NOT NULL)) AND ((kind = 'signing_request'::text) = ((offer_id IS NOT NULL) OR (signer_position IS NOT NULL))))) NOT VALID;
+END AND ((kind = 'message'::text) = (sent_by IS NOT NULL)) AND ((kind = ANY (ARRAY['invite'::text, 'password_reset'::text, 'signing_request'::text])) = needs_link) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'late_notice'::text, 'payment_receipt'::text])) = (lease_id IS NOT NULL)) AND ((kind = 'late_notice'::text) = (charge_id IS NOT NULL)) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'owner_statement'::text])) = (period IS NOT NULL)) AND ((kind = 'owner_statement'::text) <= (period = (date_trunc('month'::text, (period)::timestamp with time zone))::date)) AND ((kind = 'work_order'::text) = (work_order_step_id IS NOT NULL)) AND ((kind = 'adverse_action'::text) = ((application_id IS NOT NULL) AND (applicant_id IS NOT NULL))) AND ((kind = 'emergency_request'::text) = (request_id IS NOT NULL)) AND ((kind = 'signing_request'::text) = ((offer_id IS NOT NULL) OR (signer_position IS NOT NULL))) AND ((kind = 'payment_receipt'::text) = (transfer_id IS NOT NULL)))) NOT VALID;
 
 
 --
@@ -16748,6 +17238,14 @@ ALTER TABLE ONLY public.trust_pmcs
 
 
 --
+-- Name: trust_prepaid_rent_settings trust_prepaid_rent_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_prepaid_rent_settings
+    ADD CONSTRAINT trust_prepaid_rent_settings_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_properties trust_properties_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -17617,6 +18115,13 @@ CREATE INDEX trust_assistance_charges_authority ON public.trust_assistance_charg
 
 
 --
+-- Name: trust_assistance_charges_one_late_fee; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_assistance_charges_one_late_fee ON public.trust_assistance_charges USING btree (late_for_id) WHERE (source = 'late fee'::text);
+
+
+--
 -- Name: trust_assistance_charges_one_rent_per_month; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -17659,6 +18164,20 @@ CREATE INDEX trust_assistance_inspections_recorded_by ON public.trust_assistance
 
 
 --
+-- Name: trust_assistance_payment_reversals_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_assistance_payment_reversals_pmc ON public.trust_assistance_payment_reversals USING btree (pmc_id, assistance_charge_id);
+
+
+--
+-- Name: trust_assistance_payment_reversals_reversal; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_assistance_payment_reversals_reversal ON public.trust_assistance_payment_reversals USING btree (reversal_id);
+
+
+--
 -- Name: trust_assistance_payments_charge; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -17670,6 +18189,20 @@ CREATE INDEX trust_assistance_payments_charge ON public.trust_assistance_payment
 --
 
 CREATE INDEX trust_audit_log_pmc_id_at ON public.trust_audit_log USING btree (pmc_id, at);
+
+
+--
+-- Name: trust_authority_late_fees_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_authority_late_fees_pmc ON public.trust_authority_late_fees USING btree (pmc_id, housing_authority_id);
+
+
+--
+-- Name: trust_authority_late_fees_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_authority_late_fees_recorded_by ON public.trust_authority_late_fees USING btree (pmc_id, recorded_by);
 
 
 --
@@ -18034,6 +18567,13 @@ CREATE UNIQUE INDEX trust_emails_one_late_notice ON public.trust_emails USING bt
 --
 
 CREATE UNIQUE INDEX trust_emails_one_owner_statement ON public.trust_emails USING btree (owner_id, period) WHERE (kind = 'owner_statement'::text);
+
+
+--
+-- Name: trust_emails_one_payment_receipt; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_emails_one_payment_receipt ON public.trust_emails USING btree (tenant_id, transfer_id) WHERE (kind = 'payment_receipt'::text);
 
 
 --
@@ -18650,6 +19190,20 @@ CREATE INDEX trust_pmc_fee_withdrawals_ledger_account_id ON public.trust_pmc_fee
 --
 
 CREATE INDEX trust_pmc_fee_withdrawals_transfer_id ON public.trust_pmc_fee_withdrawals USING btree (transfer_id);
+
+
+--
+-- Name: trust_prepaid_rent_settings_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_prepaid_rent_settings_pmc ON public.trust_prepaid_rent_settings USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_prepaid_rent_settings_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_prepaid_rent_settings_recorded_by ON public.trust_prepaid_rent_settings USING btree (pmc_id, recorded_by);
 
 
 --
@@ -19360,6 +19914,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_assistance_payment_reversals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_assistance_payment_reversals FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_assistance_payments trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -19371,6 +19932,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_audit_log FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_authority_late_fees trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_authority_late_fees FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -20032,6 +20600,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_prepaid_rent_settings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_prepaid_rent_settings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_property_addresses trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20529,10 +21104,24 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_assi
 
 
 --
+-- Name: trust_assistance_payment_reversals trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_assistance_payment_reversals FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_assistance_payments trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_assistance_payments FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_authority_late_fees trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_authority_late_fees FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -21205,6 +21794,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_pmc_
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_pmcs FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_prepaid_rent_settings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_prepaid_rent_settings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -22048,6 +22644,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_assistance_inspec
 
 
 --
+-- Name: trust_authority_late_fees trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_authority_late_fees FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_bank_deposits trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22269,6 +22872,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_ownership_shares 
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payout_methods FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_prepaid_rent_settings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_prepaid_rent_settings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -22937,6 +23547,14 @@ ALTER TABLE ONLY public.trust_archivals
 
 
 --
+-- Name: trust_assistance_charges trust_assistance_charges_late_for_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_charges
+    ADD CONSTRAINT trust_assistance_charges_late_for_fkey FOREIGN KEY (pmc_id, late_for_id) REFERENCES public.trust_assistance_charges(pmc_id, id) NOT VALID;
+
+
+--
 -- Name: trust_assistance_charges trust_assistance_charges_pmc_id_adjusts_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -23009,6 +23627,38 @@ ALTER TABLE ONLY public.trust_assistance_inspections
 
 
 --
+-- Name: trust_assistance_payment_reversals trust_assistance_payment_reve_transfer_id_assistance_charg_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_payment_reversals
+    ADD CONSTRAINT trust_assistance_payment_reve_transfer_id_assistance_charg_fkey FOREIGN KEY (transfer_id, assistance_charge_id) REFERENCES public.trust_assistance_payments(transfer_id, assistance_charge_id);
+
+
+--
+-- Name: trust_assistance_payment_reversals trust_assistance_payment_rever_pmc_id_assistance_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_payment_reversals
+    ADD CONSTRAINT trust_assistance_payment_rever_pmc_id_assistance_charge_id_fkey FOREIGN KEY (pmc_id, assistance_charge_id) REFERENCES public.trust_assistance_charges(pmc_id, id);
+
+
+--
+-- Name: trust_assistance_payment_reversals trust_assistance_payment_reversals_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_payment_reversals
+    ADD CONSTRAINT trust_assistance_payment_reversals_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_assistance_payment_reversals trust_assistance_payment_reversals_reversal_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_assistance_payment_reversals
+    ADD CONSTRAINT trust_assistance_payment_reversals_reversal_id_fkey FOREIGN KEY (reversal_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
 -- Name: trust_assistance_payments trust_assistance_payments_pmc_id_assistance_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -23046,6 +23696,30 @@ ALTER TABLE ONLY public.trust_audit_log
 
 ALTER TABLE ONLY public.trust_audit_log
     ADD CONSTRAINT trust_audit_log_pmc_id_staff_id_fkey FOREIGN KEY (pmc_id, staff_id) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_authority_late_fees trust_authority_late_fees_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_authority_late_fees
+    ADD CONSTRAINT trust_authority_late_fees_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_authority_late_fees trust_authority_late_fees_pmc_id_housing_authority_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_authority_late_fees
+    ADD CONSTRAINT trust_authority_late_fees_pmc_id_housing_authority_id_fkey FOREIGN KEY (pmc_id, housing_authority_id) REFERENCES public.trust_housing_authorities(pmc_id, id);
+
+
+--
+-- Name: trust_authority_late_fees trust_authority_late_fees_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_authority_late_fees
+    ADD CONSTRAINT trust_authority_late_fees_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -24134,6 +24808,14 @@ ALTER TABLE ONLY public.trust_emails
 
 ALTER TABLE ONLY public.trust_emails
     ADD CONSTRAINT trust_emails_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id) NOT VALID;
+
+
+--
+-- Name: trust_emails trust_emails_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id) NOT VALID;
 
 
 --
@@ -25689,6 +26371,22 @@ ALTER TABLE ONLY public.trust_pmc_fee_withdrawals
 
 
 --
+-- Name: trust_prepaid_rent_settings trust_prepaid_rent_settings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_prepaid_rent_settings
+    ADD CONSTRAINT trust_prepaid_rent_settings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_prepaid_rent_settings trust_prepaid_rent_settings_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_prepaid_rent_settings
+    ADD CONSTRAINT trust_prepaid_rent_settings_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_properties trust_properties_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -27046,5 +27744,12 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261021000108'),
     ('20261021000109'),
     ('20261021000110'),
+    ('20261021000111'),
+    ('20261021000112'),
+    ('20261021000113'),
+    ('20261021000114'),
+    ('20261021000115'),
+    ('20261021000116'),
+    ('20261021000117'),
     ('20261022000151'),
     ('20261022000152');

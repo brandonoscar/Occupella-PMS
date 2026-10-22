@@ -3,7 +3,8 @@
 --   Dec 30, 2025 is the year before. 2 payments, 240.00.
 --   Vendor 2 (Golden Plumbing): paid 450.25 on Dec 31, 2026 at 23:30 UTC (still 2026 in UTC);
 --   a 75.00 bill set aside but not paid is not a payment. 1 payment, 450.25.
---   Total: 3 payments, 690.25.
+--   Both are marked for a 1099 and paid under 2026's threshold of 2000.00 (q060), so both are
+--   under the threshold and the 1099s' total is 0 payments, 0.00; no vendor is marked for none.
 INSERT INTO trust_pmcs (pmc_id, display_name)
 VALUES ('00000000-0000-4000-8000-000000000001', 'Golden PMC');
 
@@ -22,6 +23,10 @@ INSERT INTO trust_vendors (id, pmc_id, display_name) VALUES
  'Golden Lawn Care'),
 ('00000000-0000-4000-8000-000000000052', '00000000-0000-4000-8000-000000000001',
  'Golden Plumbing');
+
+INSERT INTO trust_vendor_profiles (pmc_id, vendor_id, gets_1099)
+SELECT '00000000-0000-4000-8000-000000000001', v.id, true
+FROM trust_vendors AS v WHERE v.pmc_id = '00000000-0000-4000-8000-000000000001';
 
 SELECT trust_open_ledger_account(
     '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000011',

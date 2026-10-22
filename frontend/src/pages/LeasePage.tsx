@@ -18,6 +18,7 @@ import { day, money, usDate } from "../money";
 import { downloadHref, FORMATS } from "../reports";
 import {
   balanceDue,
+  depositAskedLine,
   depositKindsLine,
   dueDayLabel,
   dueDayLine,
@@ -213,7 +214,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
       {panel === null && <ShortOwnerLinks owners={shortOwners(refusal)} />}
       <div>
         <Tabs label="Lease" tabs={TABS} value={tab} onChange={setTab} />
-        {tab === "summary" && <Summary lease={lease} record={record} />}
+        {tab === "summary" && <Summary lease={lease} record={record} recordDeposit={() => setPanel("deposit")} />}
         {tab === "ledger" && <LedgerTab lease={lease} ledger={ledger} record={record} />}
         {tab === "tenants" && (
           <div className="flex flex-col gap-6">
@@ -271,7 +272,7 @@ function ShortOwnerLinks({ owners }: { owners: ShortOwner[] }) {
 // Summary: the term and rent (and its changes), what is held for the tenants, what is still
 // open, the monthly charges (each stopped from its ⋯ menu), housing assistance and renters
 // insurance.
-function Summary({ lease, record }: { lease: LeaseDetail; record: Recorder }) {
+function Summary({ lease, record, recordDeposit }: { lease: LeaseDetail; record: Recorder; recordDeposit: () => void }) {
   const deposit = lease.tenants.reduce((sum, t) => sum + Number(t.deposit), 0).toFixed(2);
   const prepaid = lease.tenants.reduce((sum, t) => sum + Number(t.prepaid), 0).toFixed(2);
   const kinds = depositKindsLine(lease.tenants);
@@ -285,6 +286,19 @@ function Summary({ lease, record }: { lease: LeaseDetail; record: Recorder }) {
           {kinds && <dd className="text-sm text-ink-muted" data-testid="deposit-kinds">{kinds}</dd>}</div>
         <div><dt className="text-sm text-ink-muted">Prepaid rent</dt><dd data-testid="prepaid">{money(prepaid)}</dd></div>
       </dl>
+      {lease.deposit_asked && (
+        <Card title="Security deposit asked">
+          <p className="flex flex-wrap items-center gap-2 text-base" data-testid="deposit-asked">
+            <span>{depositAskedLine(lease.deposit_asked)}</span>
+            {Number(lease.deposit_asked.to_receive) > 0
+              ? <Badge tone="caution">To receive</Badge>
+              : <Badge tone="positive">Held</Badge>}
+          </p>
+          {Number(lease.deposit_asked.to_receive) > 0 && (
+            <div className="mt-3"><Button variant="secondary" onClick={recordDeposit}>Record deposit</Button></div>
+          )}
+        </Card>
+      )}
       {lease.rent_changes.length > 0 && (
         <Card title="Rent changes">
           <ul className="text-base" aria-label={`Rent changes, ${lease.unit}`}>

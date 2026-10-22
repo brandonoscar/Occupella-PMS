@@ -15,6 +15,9 @@ the account first by id on a tie. After every step:
     account lacks, and goes through once each puts that back;
   - what went to the owners is what the lease owed, matched to its charges, the rest prepaid rent;
   - the deposit kept at move-out goes to the owners by their shares on that day, piece by piece;
+  - a management fee is one for the property (migration 0115): its owners' rent collected in the
+    period added up, under the terms they share, split by the shares on the period's last day;
+    an owner not in those shares takes their own fee; terms that differ are refused;
   - every trust bank account ties out.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
@@ -22,10 +25,11 @@ Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 
 import uuid
 from datetime import UTC, date, datetime
-from decimal import ROUND_DOWN, Decimal
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 
 import psycopg
 from helpers import (
+    add_agreement,
     add_unit,
     balance,
     bank_sums,
@@ -49,6 +53,12 @@ PAID_ON = [date(2026, 2, 10), date(2026, 6, 10)]
 USED_ON = date(2026, 6, 20)
 DRAWN_ON = date(2026, 6, 15)
 RETURNED = datetime(2026, 7, 5, 12, tzinfo=UTC)
+# Fee periods: February, June, and January through June.
+PERIODS = [
+    (date(2026, 2, 1), date(2026, 3, 1)),
+    (date(2026, 6, 1), date(2026, 7, 1)),
+    (JAN_1, date(2026, 7, 1)),
+]
 MONEY = st.integers(min_value=1, max_value=200_000).map(lambda c: Decimal(c) / 100)
 WHOLE = 1_000_000  # 100% in ten-thousandths of a percent
 
@@ -114,8 +124,15 @@ def owed(app, lease):
         max_size=4,
     ),
     deposit=st.one_of(st.just(Decimal(0)), MONEY),
+    terms=st.tuples(
+        st.integers(min_value=0, max_value=2000).map(lambda b: Decimal(b) / 100),  # percent
+        st.sampled_from([Decimal(0), Decimal("50.00"), Decimal("99.99")]),  # minimum
+        st.sampled_from([Decimal(0), Decimal("10.01")]),  # flat
+    ),
+    period=st.sampled_from(PERIODS),
+    differ=st.booleans(),
 )
-def check(conn, app, owned, charges, payments, bounce, paid_out, deposit):
+def check(conn, app, owned, charges, payments, bounce, paid_out, deposit, terms, period, differ):
     count, first, later = owned
     pmc = make_pmc(conn, owners=count)
     # Owner 1's account at Property 1, and each other owner's as a co-owner of it.
@@ -261,6 +278,79 @@ def check(conn, app, owned, charges, payments, bounce, paid_out, deposit):
 
     # Only the owners' accounts at Property 1 were paid: their own properties took nothing.
     assert all(balance(conn, owner.account) == 0 for owner in pmc.owners[1:])
+
+    # The management fee for a period: one for the property, split by the shares on its last day.
+    percent, minimum, flat = terms
+
+    def percent_of(account):
+        """The last owner's terms differ, now and then."""
+        return percent + (1 if differ and account == accounts[-1] else 0)
+
+    for a in accounts:
+        add_agreement(conn, pmc.pmc_id, a, JAN_1, str(percent_of(a)), str(minimum), str(flat))
+        transfer_batch(conn, [(pmc.operating_cash, a, "10000.00")], at(JAN_1))
+    start, end = period
+    last = date.fromordinal(end.toordinal() - 1)
+    owning = shares(last)
+    if differ and accounts[-1] in owning and len(owning) > 1:
+        # Owners whose terms differ: the property's fee can't be worked out, so none is taken.
+        try:
+            app.execute(
+                "SELECT trust_post_management_fee(%s, %s, %s, %s, %s)",
+                (pmc.pmc_id, accounts[-1], start, end, at(end)),
+            )
+        except psycopg.errors.CheckViolation as refused:
+            assert "don't share the same management fee terms" in str(refused)
+        else:
+            raise AssertionError("fees under terms that differ were taken")
+        event("terms differ: refused")
+        return
+
+    def collected(account):
+        """Rent matched into the account in the period, less what bounced back of it."""
+        return (
+            conn.execute(
+                "SELECT coalesce(sum(p.amount) FILTER (WHERE t.to_account_id = %(a)s), 0)"
+                " FROM trust_charge_payments AS p JOIN trust_charges AS c ON c.id = p.charge_id"
+                " JOIN pgledger_transfers AS t ON t.id = p.transfer_id"
+                " WHERE c.kind = 'rent' AND t.event_at >= %(s)s AND t.event_at < %(e)s",
+                {"a": account, "s": start, "e": end},
+            ).fetchone()[0]
+            - conn.execute(
+                "SELECT coalesce(sum(r.amount), 0)"
+                " FROM trust_payment_reversals AS r JOIN trust_charges AS c ON c.id = r.charge_id"
+                " JOIN pgledger_transfers AS t ON t.id = r.reversal_id"
+                " WHERE c.kind = 'rent' AND t.from_account_id = %(a)s"
+                " AND t.event_at >= %(s)s AND t.event_at < %(e)s",
+                {"a": account, "s": start, "e": end},
+            ).fetchone()[0]
+        )
+
+    def fee(amount, account=accounts[0]):
+        cut = (percent_of(account) / 100 * amount).quantize(Decimal("0.01"), ROUND_HALF_UP)
+        return max(cut, minimum) + flat
+
+    # Under the terms the owners in the shares share (one owner alone: theirs).
+    whole = fee(sum((collected(a) for a in owning), Decimal(0)), next(iter(owning)))
+    parts = split(whole, owning)
+    for a in accounts:
+        before = balance(conn, a)
+        taken = app.execute(
+            "SELECT trust_post_management_fee(%s, %s, %s, %s, %s)",
+            (pmc.pmc_id, a, start, end, at(end)),
+        ).fetchone()[0]
+        want = parts.get(a, Decimal(0)) if a in owning else fee(collected(a), a)
+        assert taken == want
+        assert balance(conn, a) == before - want
+        again = app.execute(
+            "SELECT trust_post_management_fee(%s, %s, %s, %s, %s)",
+            (pmc.pmc_id, a, start, end, at(end)),
+        ).fetchone()[0]
+        assert again == want  # a retry takes nothing more
+        assert balance(conn, a) == before - want
+    assert sum((parts.get(a, Decimal(0)) for a in owning), Decimal(0)) == whole
+    assert set(bank_sums(conn, pmc.pmc_id).values()) == {0}
+    event("an owner outside the shares" if set(accounts) - set(owning) else "every owner shares")
 
 
 def test_a_co_owned_propertys_money_splits_by_its_shares_to_the_cent(database_url):

@@ -112,6 +112,7 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
             ],
             "coming_due": [],
             "deposit_returned": False,
+            "deposit_asked": None,
             "renters_insurance": {
                 "required": False,
                 "minimum_liability": None,
@@ -142,6 +143,7 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
             "each_month": [],  # it has ended
             "coming_due": [],
             "deposit_returned": False,
+            "deposit_asked": None,
             "renters_insurance": None,  # not in effect
             "payments": [],
             "files": [],

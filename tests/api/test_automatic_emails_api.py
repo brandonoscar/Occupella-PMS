@@ -1,8 +1,10 @@
 """The emails the PMS writes by itself, through the API (src/pms/api/emails.py, src/pms/notices.py,
 docs/adr/0007-email.md): the company's settings, and the emails a rent run by hand, a work order's
-step and an application's decision write while the server sends email. Every name and address
+step, an application's decision and a payment recorded (its receipt, migration 0111) write while
+the server sends email. Every name and address
 here is synthetic."""
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -26,6 +28,7 @@ OFF = {
     "owner_statement_day": None,
     "work_order_notices": False,
     "adverse_action_notices": False,
+    "payment_receipts": False,
 }
 ON = {
     "rent_reminder_days": 15,
@@ -33,6 +36,7 @@ ON = {
     "owner_statement_day": 1,
     "work_order_notices": True,
     "adverse_action_notices": True,
+    "payment_receipts": True,
 }
 
 
@@ -179,6 +183,36 @@ def test_assigning_and_scheduling_a_work_order_emails_its_vendor(client, conn, s
         ("work_order", "v@example.com", "sent")
     ]
     assert tab[0]["subject"].startswith("Work order #1 scheduled for ")
+
+
+# --- a payment's receipt ----------------------------------------------------------------------
+
+
+def test_a_payment_recorded_emails_its_receipt_while_receipts_are_on(client, conn, staff, pmc):
+    tenant = tenant_of(conn, pmc)
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, name="Unit 4")
+    lease = open_lease(conn, pmc.pmc_id, unit, TODAY - timedelta(30), None, "900.00", [tenant])
+    ok(client.post(f"/api/tenants/{tenant}/contact", json={"email": "t@example.com"}), 204)
+
+    def pay(amount):
+        body = {"request_id": str(uuid.uuid4()), "amount": amount, "received_on": str(TODAY)}
+        return ok(client.post(f"/api/rent/leases/{lease}/payments", json=body), 201)
+
+    pay("100.00")  # the server sends no email: none
+    client.app.state.email = email.FakeSender()
+    pay("110.00")  # receipts are off: none
+    assert kinds(conn, pmc.pmc_id) == []
+    ok(client.post("/api/emails/settings", json=ON))
+    paid = pay("125.00")
+
+    tab = ok(client.get("/api/emails", params={"about": "tenant", "about_id": str(tenant)}))
+    assert [(line["kind"], line["to"], line["status"]) for line in tab] == [
+        ("payment_receipt", "t@example.com", "sent")
+    ]
+    assert tab[0]["subject"] == f"Your receipt: $125.00 received {TODAY:%m/%d/%Y}"
+    assert conn.execute(
+        "SELECT transfer_id, lease_id FROM trust_emails WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchall() == [(paid["transfers"][0], lease)]
 
 
 # --- an application's decision ------------------------------------------------------------------
