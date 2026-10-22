@@ -505,7 +505,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   cap) are in force from a date; `trust_assess_late_fees` charges a rent still open at the
   end of its last grace day (UTC) one late fee under the terms in force on its due date, reaching
   its rents in the order their grace ends so one run charges what a run every day would (a late
-  fee is an open charge too; migration 0056). READ COMMITTED. What is open of a charge (`trust_open_charges`, migration 0049) is its amount less
+  fee is an open charge too; migration 0056). A rent's grace starts on its due date, or on the
+  day it was charged (UTC, `created_at`) if that came later (migration 0151): a lease entered
+  after it started, or rent a run posts late, is never late before the tenant has had the whole
+  grace to pay it. Tests set that day with `helpers.charged_on`. READ COMMITTED. What is open of a charge (`trust_open_charges`, migration 0049) is its amount less
   payments matched, plus what bounced, less its share of the lease's credits, which come off
   its rent first, as the delinquency report counts them (Rent first, below).
   A waiver (migration 0079, `trust_charge_waivers`; staff waive from an open charge's ⋯ menu on
@@ -532,7 +535,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   kept within the days the lease is in effect then. Leases due on the first are charged as
   before; `trust_charge_rent_on_due_days` and `trust_charge_recurring_on_due_days` charge the
   rest on their due date, the month's rent and recurring charges for the days in effect, once a
-  month, and `trust_run_rent` calls all four. Late fees count their grace from the due date.
+  month, and `trust_run_rent` calls all four. Late fees count their grace from the due date
+  (or the later day the rent was charged).
   Staff pick it in Add lease and from the lease's ⋯ menu (`POST /api/rent/leases/<id>/due-day`);
   a renewal keeps the due day of the lease it renews from its first month not charged; the
   tenant sees it in the portal.

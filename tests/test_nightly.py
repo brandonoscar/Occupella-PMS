@@ -15,8 +15,10 @@ from helpers import (
     add_recurring_bill,
     add_recurring_charge,
     add_unit,
+    charged_on,
     make_pmc,
     open_lease,
+    rent_charged_when_due,
 )
 
 from pms import accounts, email, nightly
@@ -31,7 +33,7 @@ def pmc(conn):
 
 
 DAY = timedelta(days=1)
-OCT_16 = date(2026, 10, 16)
+OCT_1, OCT_16 = date(2026, 10, 1), date(2026, 10, 16)
 
 
 def lease_since(conn, pmc, starts, rent="1000.00"):
@@ -65,10 +67,16 @@ def test_a_night_charges_the_months_rent_late_fees_and_bills_once(conn, app_conn
     )
     accounts.accept_invite(conn, invite.token, "a long synthetic passphrase")
 
-    first = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16, URL)
+    first = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_1, URL)
+    # The database's clock reads today: say October's rent was made that night (migration 0151).
+    rent_charged_when_due(conn, pmc.pmc_id)
+    later = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16, URL)
     again = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16, URL)
 
-    assert (first.rents, first.recurring, first.late_fees, first.bills) == (1, 1, 1, 2)
+    # October 1: the rent and pet rent due that day, and September's bill (due on the 3rd).
+    assert (first.rents, first.recurring, first.late_fees, first.bills) == (1, 1, 0, 1)
+    # October 16: the rent's late fee, its grace over on the 6th, and October's bill.
+    assert (later.rents, later.recurring, later.late_fees, later.bills) == (0, 0, 1, 1)
     assert (again.rents, again.recurring, again.late_fees, again.bills) == (0, 0, 0, 0)
     # October's rent and pet rent, due on its first day, and its rent's late fee.
     assert charges(conn, lease) == [
@@ -89,8 +97,34 @@ def test_a_night_charges_the_months_rent_late_fees_and_bills_once(conn, app_conn
         (pmc.pmc_id,),
     ).fetchall()
     assert runs == [
-        (date(2026, 10, 1), OCT_16, 1, 1, 1, None),
-        (date(2026, 10, 1), OCT_16, 0, 0, 0, None),
+        (OCT_1, OCT_1, 1, 1, 0, None),
+        (OCT_1, OCT_16, 0, 0, 1, None),
+        (OCT_1, OCT_16, 0, 0, 0, None),
+    ]
+
+
+def test_a_night_charging_rent_due_days_ago_charges_no_late_fee_with_it(conn, app_conn, pmc):
+    """A lease entered after it started (the walkthrough of the demo company: entered on 10/22,
+    from 10/15), or a night the run didn't run: the night charges the rent, and its late fee only
+    once its grace has run from that night (migration 0151), not from the due date."""
+    lease = lease_since(conn, pmc, date(2026, 10, 15), "1200.00")
+    add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, date(2026, 9, 1), 5, "50.00")
+
+    # The rent is made on the database's clock, today, so this run charges no late fee with it
+    # whenever the test runs.
+    ran = nightly.run_pmc(app_conn, pmc.pmc_id, date(2026, 10, 22), URL)
+    assert (ran.rents, ran.late_fees) == (1, 0)
+    assert charges(conn, lease) == [(date(2026, 10, 15), "rent", "658.06")]  # 17 of 31 days
+
+    (rent,) = conn.execute(
+        "SELECT id FROM trust_charges WHERE lease_id = %s AND kind = 'rent'", (lease,)
+    ).fetchone()
+    charged_on(conn, [rent], date(2026, 10, 22))  # the night it was made
+    assert nightly.run_pmc(app_conn, pmc.pmc_id, date(2026, 10, 27), URL).late_fees == 0
+    assert nightly.run_pmc(app_conn, pmc.pmc_id, date(2026, 10, 28), URL).late_fees == 1
+    assert charges(conn, lease) == [
+        (date(2026, 10, 15), "rent", "658.06"),
+        (date(2026, 10, 28), "fee", "50.00"),  # due the day after its grace from 10/22
     ]
 
 

@@ -378,7 +378,7 @@ tests = [
 
 [[invariant]]
 id = "late-fee-once-per-late-rent"
-statement = "A rent charge still open at the end of its last day of grace (UTC), counting payments dated before then net of bounces dated before then, and the lease's credits due by its last day of grace, which come off the lease's open charges in the pay order (rent and monthly charges first, then the rest, each oldest first; migration 0093), is charged one late fee: the flat fee plus the percent of what was open, rounded to the cent and capped, under the property's terms in force on the rent's due date. Never more than one per rent, and none for a fee of 0.00. One run charges what a run every day would: it reaches its rents in the order their grace ends, each counting the late fees charged before it as open charges."
+statement = "A rent charge still open at the end of its last day of grace (UTC; its grace starts on its due date, or on the day it was charged if that came later: migration 0151, so a rent charged after its due date has the whole of its grace from that day), counting payments dated before then net of bounces dated before then, and the lease's credits due by its last day of grace, which come off the lease's open charges in the pay order (rent and monthly charges first, then the rest, each oldest first; migration 0093), is charged one late fee: the flat fee plus the percent of what was open, rounded to the cent and capped, under the property's terms in force on the rent's due date. Never more than one per rent, and none for a fee of 0.00. One run charges what a run every day would: it reaches its rents in the order their grace ends, each counting the late fees charged before it as open charges."
 tests = [
   "tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments",
   "tests/test_rent_automation.py::test_a_payment_counts_only_if_dated_before_the_grace_runs_out",
@@ -386,6 +386,10 @@ tests = [
   "tests/test_rent_automation.py::test_the_terms_in_force_on_the_rents_due_date_apply",
   "tests/test_rent_automation.py::test_two_runs_at_once_charge_one_late_fee",
   "tests/test_rent_automation.py::test_one_run_charges_what_a_run_every_day_would",
+  "tests/test_rent_automation.py::test_a_lease_entered_after_it_started_is_not_late_the_day_its_rent_is_charged",
+  "tests/test_rent_automation.py::test_a_rents_grace_runs_from_its_due_date_or_the_later_day_it_was_charged",
+  "tests/test_rent_automation.py::test_a_rent_charged_late_counts_a_payment_by_the_end_of_its_own_grace",
+  "tests/test_nightly.py::test_a_night_charging_rent_due_days_ago_charges_no_late_fee_with_it",
   "tests/test_open_charges.py::test_a_lease_whose_credit_and_payment_cover_its_rent_is_not_late",
   "tests/test_open_charges.py::test_a_credit_counts_if_due_by_the_last_day_of_grace",
   "tests/test_open_charges.py::test_credits_come_off_the_oldest_open_charges_first",

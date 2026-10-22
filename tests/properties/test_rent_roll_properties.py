@@ -31,7 +31,10 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
     open when its grace ran out (unpaid, less its share of the lease's credits due by then,
     which come off its rent first, then its other charges, each oldest first: migration 0093)
     is charged one late fee, worked from what was open then under the terms in force on its due
-    date;
+    date. Its grace counts from its due date, or from the day it was charged if that came later
+    (migration 0151): rents are made on their due date, ahead of it, or nights after it (a run
+    that didn't run, a lease entered late), the day each was made set on the database (whose
+    clock reads today) with helpers.charged_on;
   - recurring charges are the model's: the rent run charges each recurring charge in force on
     the due date (from its first day, before the day it stops) whose lease is in effect then,
     once per recurring charge and due date, as a fee or credit of its lease, for the days of the
@@ -79,6 +82,7 @@ from helpers import (
     charge,
     charge_recurring_due,
     charge_rent_due,
+    charged_on,
     contribute,
     draw_owner,
     end_lease,
@@ -114,6 +118,10 @@ ROLES = st.sampled_from(["owner", "app"])
 # A lease's length in days after its first day; None is month to month.
 LENGTHS = st.one_of(st.integers(min_value=0, max_value=200), st.sampled_from([None, 0, 30, 364]))
 TIMES = st.integers(min_value=0, max_value=86_399)  # seconds into the day
+# Days after its due date a rent is made: mostly that day, as the nightly run makes it; now and
+# then ahead of it (a run by hand for a later due date) or nights after it (a run that didn't
+# run, a lease entered after it started).
+CHARGED_AFTER = st.sampled_from([0, 0, 0, -4, 1, 6, 25])
 
 
 @dataclass(frozen=True)
@@ -151,6 +159,9 @@ class Charge:
     kind: str
     amount: Decimal
     charge_type: str | None = None  # the company's type of a fee (migration 0100)
+    # The day a rent was made (UTC): its grace counts from it when it came after its due date
+    # (migration 0151). None for the rest, made on the database's clock and never charged late.
+    charged_on: date | None = None
 
 
 @dataclass
@@ -656,8 +667,9 @@ class RentRollMachine(RuleBasedStateMachine):
         kind=st.sampled_from(["rent", "rent", "fee", "credit"]),
         amount=AMOUNTS,
         typed=TYPED,
+        after=CHARGED_AFTER,
     )
-    def charge_a_lease(self, data, role, due, kind, amount, typed):
+    def charge_a_lease(self, data, role, due, kind, amount, typed, after):
         lease_id = data.draw(st.sampled_from(list(self.leases)))
         due_on = self.leases[lease_id].starts_on + timedelta(days=due)
         billed = any(
@@ -679,6 +691,18 @@ class RentRollMachine(RuleBasedStateMachine):
                 .fetchone()[0]
             )
             self.charges[charge_id] = Charge(lease_id, due_on, kind, amount, typed)
+        elif kind == "rent":
+            made = due_on + timedelta(days=after)
+            charge_id = charge(
+                self.conns[role],
+                self.pmc_id,
+                lease_id,
+                due_on,
+                amount,
+                kind,
+                charged_at=datetime.combine(made, time(6), tzinfo=UTC),
+            )
+            self.charges[charge_id] = Charge(lease_id, due_on, kind, amount, charged_on=made)
         else:
             charge_id = charge(self.conns[role], self.pmc_id, lease_id, due_on, amount, kind)
             self.charges[charge_id] = Charge(lease_id, due_on, kind, amount)
@@ -1120,8 +1144,15 @@ class RentRollMachine(RuleBasedStateMachine):
             )
             if rent is None:
                 amount = Decimal(rent_cents) / 100
-                rent = charge(self.conn, self.pmc_id, lease_id, start, amount)
-                self.charges[rent] = Charge(lease_id, start, "rent", amount)
+                rent = charge(
+                    self.conn,
+                    self.pmc_id,
+                    lease_id,
+                    start,
+                    amount,
+                    charged_at=datetime.combine(start, time(6), tzinfo=UTC),
+                )
+                self.charges[rent] = Charge(lease_id, start, "rent", amount, charged_on=start)
             owed = self.charges[rent].amount - self.paid_on(rent)
             if owed > 0:
                 when = datetime.combine(start + timedelta(days=day), time(12), tzinfo=UTC)
@@ -1333,18 +1364,19 @@ class RentRollMachine(RuleBasedStateMachine):
         return self.late_terms[(property_index, max(starts))] if starts else None
 
     @precondition(lambda self: self.leases)
-    @rule(data=st.data(), role=ROLES, day=DAYS)
-    def run_the_rent(self, data, role, day):
+    @rule(data=st.data(), role=ROLES, day=DAYS, after=CHARGED_AFTER)
+    def run_the_rent(self, data, role, day, after):
         """Usually on a day some lease is in effect, or starts later in the month (the first of
         its month), or some recurring charge starts or stops, so the run charges something. The
-        staff rent run charges the rent and then the recurring charges."""
+        staff rent run charges the rent and then the recurring charges, on the due date or some
+        days before or after it."""
         covered = sorted(
             {d for lease in self.leases.values() for d in (lease.starts_on, lease.ends_on) if d}
             | {lease.starts_on.replace(day=1) for lease in self.leases.values()}
             | {d for r in self.recurring.values() for d in (r.starts_on, r.ends_on) if d}
         )
         due_on = data.draw(st.sampled_from([*covered, BASE + timedelta(days=day)]))
-        self.charge_rent_on(role, due_on)
+        self.charge_rent_on(role, due_on, due_on + timedelta(days=after))
         self.charge_recurring_on(role, due_on)
 
     @precondition(lambda self: self.recurring)
@@ -1456,10 +1488,12 @@ class RentRollMachine(RuleBasedStateMachine):
             stop_recurring_charge(self.conns[role], self.pmc_id, recurring_id, ends_on)
             recurring.ends_on = ends_on
 
-    def charge_rent_on(self, role, due_on):
+    def charge_rent_on(self, role, due_on, on=None):
         """The rent run: each lease in effect on due_on its rent for the days of the month it is
         in effect, due that day; then each lease starting later that month, with no rent charged
-        in the month yet, its first part month, due on its first day."""
+        in the month yet, its first part month, due on its first day. It runs on `on` (due_on
+        unless named): the rents it makes are said to have been made that day."""
+        on = on or due_on
         month = (due_on.year, due_on.month)
         due = [
             (lease_id, due_on)
@@ -1500,7 +1534,8 @@ class RentRollMachine(RuleBasedStateMachine):
             rent, part = rent_for_month(self.leases[lease_id], day)
             assert amount == rent
             assert memo.startswith(f"Rent due {day}") and (", " in memo) == part
-            self.charges[charge_id] = Charge(lease_id, day, "rent", rent)
+            charged_on(self.conn, [charge_id], on)
+            self.charges[charge_id] = Charge(lease_id, day, "rent", rent, charged_on=on)
 
     def unpaid_by(self, charge_id, cutoff):
         """A charge less its matches dated before cutoff, plus what of them bounced back
@@ -1581,11 +1616,12 @@ class RentRollMachine(RuleBasedStateMachine):
         after=st.integers(min_value=0, max_value=60),
         grace=st.sampled_from([0, 3]),
         paid=st.sampled_from(["nothing", "half", "all", "all, a second late"]),
+        late_by=CHARGED_AFTER,
     )
-    def let_a_rent_go_late(self, data, role, after, grace, paid):
+    def let_a_rent_go_late(self, data, role, after, grace, paid, late_by):
         """The usual late month: late fee terms in force (recorded if none are), the rent run
-        on a day the lease is in effect, a payment dated just before the grace runs out or
-        just after, then the late fee run."""
+        for a day the lease is in effect, on that day or some days before or after it, a payment
+        dated just before the grace runs out or just after, then the late fee run."""
         lease_id = data.draw(st.sampled_from(list(self.leases)))
         lease = self.leases[lease_id]
         due_on = lease.starts_on + timedelta(days=after)
@@ -1597,7 +1633,7 @@ class RentRollMachine(RuleBasedStateMachine):
                 self.conn, self.pmc_id, self.properties[place], due_on, grace, "25.00", "10"
             )
             self.late_terms[(place, due_on)] = LateTerms(grace, Decimal(25), Decimal(10), None)
-        self.charge_rent_on(role, due_on)
+        self.charge_rent_on(role, due_on, due_on + timedelta(days=late_by))
         rent = next(
             (
                 c
@@ -1610,7 +1646,9 @@ class RentRollMachine(RuleBasedStateMachine):
             event("late month: a day's rent rounds to nothing, none charged")
             return
         terms = self.late_terms_on(place, due_on)
-        late_day = due_on + timedelta(days=terms.grace + 1)
+        late_day = self.grace_from(rent) + timedelta(days=terms.grace + 1)
+        if late_day > due_on + timedelta(days=terms.grace + 1):
+            event("late month: the rent was charged after its due date")
         cutoff = datetime.combine(late_day, time(0), tzinfo=UTC)
         owed = self.charges[rent].amount - self.paid_on(rent)
         amount = {"nothing": 0, "half": to_cents(owed / 2)}.get(paid, owed)
@@ -1620,6 +1658,12 @@ class RentRollMachine(RuleBasedStateMachine):
             self.attempt_match(role, rent, payment, amount)
         self.assess(role, late_day + timedelta(days=data.draw(st.integers(0, 5))))
 
+    def grace_from(self, rent_id):
+        """The first day of a rent's grace: its due date, or the day it was charged if that came
+        later (migration 0151)."""
+        rent = self.charges[rent_id]
+        return max(rent.due_on, rent.charged_on)
+
     def assess(self, role, as_of):
         """The late fee run: the rents past their grace, in the order their grace ends (then by
         due date, then id), each seeing the fees charged before it, as a run every day would."""
@@ -1628,10 +1672,10 @@ class RentRollMachine(RuleBasedStateMachine):
             if rent.kind != "rent" or charge_id in self.late_fees:
                 continue
             terms = self.late_terms_on(self.leases[rent.lease_id].unit.property_index, rent.due_on)
-            if terms is None or rent.due_on + timedelta(days=terms.grace) >= as_of:
+            last = None if terms is None else self.grace_from(charge_id) + timedelta(terms.grace)
+            if last is None or last >= as_of:
                 continue
-            late_day = rent.due_on + timedelta(days=terms.grace + 1)
-            due.append((late_day, rent.due_on, charge_id, terms))
+            due.append((last + timedelta(days=1), rent.due_on, charge_id, terms))
 
         assessed = assess_late_fees(self.conns[role], self.pmc_id, as_of)
         # The fee charges the run made, by rent, so the model orders them by the same ids; a
@@ -2607,7 +2651,16 @@ def test_the_model_counts_a_charge_paid_twice_by_then_as_the_database_does(conn)
     owed = charge(conn, pmc.pmc_id, lease, BASE, "5.00", "rent")
     twice = charge(conn, pmc.pmc_id, lease, BASE + timedelta(days=1), "0.01", "rent")
     credit = charge(conn, pmc.pmc_id, lease, BASE, "0.01", "credit", "Courtesy")
-    rent = charge(conn, pmc.pmc_id, lease, BASE + timedelta(days=31), "0.02", "rent")
+    # Charged on its due date, so its grace runs from then (migration 0151).
+    rent = charge(
+        conn,
+        pmc.pmc_id,
+        lease,
+        BASE + timedelta(days=31),
+        "0.02",
+        "rent",
+        charged_at=datetime.combine(BASE + timedelta(days=31), time(6), tzinfo=UTC),
+    )
     model = RentRollMachine.__new__(RentRollMachine)
     model.charges = {
         owed: Charge(lease, BASE, "rent", Decimal("5.00")),

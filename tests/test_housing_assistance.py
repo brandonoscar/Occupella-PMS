@@ -32,6 +32,7 @@ from helpers import (
     offer_lease,
     open_lease,
     post_management_fee,
+    rent_charged_when_due,
     return_deposit,
     send_offer,
     sign_offer,
@@ -230,6 +231,7 @@ def test_late_fees_count_only_the_tenants_part(conn, pmc, authority):
     add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, SEP_1, 5, percent="10")
     assist(conn, pmc.pmc_id, lease, authority, OCT_1, "800.00")
     charge_rent_due(conn, pmc.pmc_id, OCT_1)
+    rent_charged_when_due(conn, pmc.pmc_id)
 
     # The authority hasn't paid; the tenant owes 200.00 and is charged 10% of it, no more.
     assert assess_late_fees(conn, pmc.pmc_id, date(2026, 10, 10)) == 1
@@ -243,6 +245,7 @@ def test_a_tenant_who_paid_their_part_is_not_late_while_the_authority_owes(conn,
     add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, SEP_1, 5, flat_fee="50")
     assist(conn, pmc.pmc_id, lease, authority, OCT_1, "800.00")
     charge_rent_due(conn, pmc.pmc_id, OCT_1)
+    rent_charged_when_due(conn, pmc.pmc_id)
     rent = conn.execute(
         "SELECT id FROM trust_charges WHERE lease_id = %s AND kind = 'rent'", (lease,)
     ).fetchone()[0]

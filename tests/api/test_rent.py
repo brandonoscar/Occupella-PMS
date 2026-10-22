@@ -42,8 +42,8 @@ class Home:
         self.lease = open_lease(conn, pmc_id, self.unit, START, None, "1500.00", [self.tenant])
         self.owner = pmc.owners[0].account
 
-    def charge(self, conn, due_on, amount="1500.00", kind="rent"):
-        return charge(conn, self.pmc.pmc_id, self.lease, due_on, amount, kind)
+    def charge(self, conn, due_on, amount="1500.00", kind="rent", charged_at=None):
+        return charge(conn, self.pmc.pmc_id, self.lease, due_on, amount, kind, None, charged_at)
 
 
 @pytest.fixture
@@ -608,7 +608,8 @@ def test_a_deposit_needs_a_deposit_account_and_one_chosen_among_several(
 
 
 def test_late_fees_are_assessed_up_to_today(client, conn, staff, home, pmc):
-    home.charge(conn, START)
+    # Charged on its due date, as the nightly run charges it.
+    home.charge(conn, START, charged_at=datetime.combine(START, datetime.min.time(), UTC))
     add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, START, 5, "50.00")
 
     future = run(client, START, TODAY + DAY)
@@ -619,6 +620,22 @@ def test_late_fees_are_assessed_up_to_today(client, conn, staff, home, pmc):
     assert lease_row(client, home)["owed"] == "1550.00"
     # Run again, it charges nothing new.
     assert ok(run(client, START), 200) == {"rents": 0, "recurring": 0, "late_fees": 0, "emails": 0}
+
+
+def test_a_run_charging_rent_long_due_charges_no_late_fee_with_it(client, conn, staff, home, pmc):
+    """The walkthrough of the demo company: a lease added in place days after it started, then
+    Run rent now. Its rent (due on its first day) is charged today, so its grace runs from today
+    (migration 0151): the run charges the rent and no late fee on it."""
+    add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, START, 5, "50.00")
+
+    ran = ok(run(client, START), 200)
+    again = ok(run(client, START), 200)
+
+    assert (ran["rents"], ran["late_fees"]) == (1, 0)
+    assert (again["rents"], again["late_fees"]) == (0, 0)
+    assert conn.execute(
+        "SELECT kind FROM trust_charges WHERE lease_id = %s", (home.lease,)
+    ).fetchall() == [("rent",)]
 
 
 def test_a_charge_names_the_staff_member_in_the_audit_log(client, conn, staff, home):

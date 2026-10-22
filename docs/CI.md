@@ -131,7 +131,8 @@ records management agreements, takes fees and pays owners, and checks:
   reserve, and the owner balances report as of any day matches the model.
 - the rent run charges every lease in effect on its due date once; each late rent is charged one
   late fee, worked from what was unpaid when its grace ran out under the terms in force on its
-  due date.
+  due date, its grace counting from its due date or from the later day it was charged (rents
+  are made on their due date, ahead of it or nights after it).
 - the delinquency report matches the model line by line as of any day, and each lease's tenant
   ledger closes at its balance due.
 - a payment hold refuses every match of a payment dated inside it unless the transfer was

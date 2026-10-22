@@ -12,14 +12,15 @@ with invites for its manager and its owner of three properties, and another for 
 accessibility sweep. Last, a demo PMC's books
 (`demo.books`, without what the demo adds to every other page) for each feature test
 (frontend/e2e/features.spec.ts), so each starts from the same books and none sees another's
-changes. Every name is synthetic.
+changes; the rent terms test's with this month's rent charged on its first day. Every name is
+synthetic.
 """
 
 import json
 import os
 import secrets
 import uuid
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 import psycopg
@@ -451,6 +452,7 @@ def main() -> None:
             },
         }
         seeded["features"] = {name: feature_pmc(app, tag, name) for name in FEATURES}
+        rent_charged_on_the_first(seeded["features"]["rent-terms"]["pmc_id"])
         # Year close: books as of this year's first day, so last year's November is approved and
         # its December waits for approval in each trust bank account, whatever the day today.
         seeded["features"]["year-close"] = feature_pmc(
@@ -523,6 +525,24 @@ FEATURES = (
     "property-addresses",
     "vendor-archive",
 )
+
+
+def rent_charged_on_the_first(pmc_id: str) -> None:
+    """This month's rent charged to each lease in effect on its first day (a demo's books stop at
+    last month), and said to have been made that night, as the nightly run makes it: the
+    database's clock reads today, and a rent's grace counts from the day it was charged when that
+    came after its due date (migration 0151). For the rent terms test, whose late fee stops at its
+    cap. Behind the triggers that keep a charge as it was, as only a test's seed may: the owner's
+    connection."""
+    first = datetime.now(UTC).date().replace(day=1)
+    with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as owner:
+        owner.execute("SELECT trust_charge_rent_due(%s, %s)", (pmc_id, first))
+        owner.execute("SET session_replication_role = replica")
+        owner.execute(
+            "UPDATE trust_charges SET created_at = %s"
+            " WHERE pmc_id = %s AND kind = 'rent' AND due_on = %s",
+            (datetime.combine(first, time(6), tzinfo=UTC), pmc_id, first),
+        )
 
 
 def feature_pmc(

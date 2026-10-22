@@ -3,12 +3,13 @@
 `python -m pms.demo` adds a demo PMC to the database in DATABASE_URL (already migrated) and
 prints the links to sign in with. Every step goes through the API's own route functions, as
 trust_app, naming a staff member to the audit log as a request does. Its books (`books`): the
-setup, two months of rent (a pet fee, a late fee, a bounced payment), bills, management fees,
-the company's fees taken out of trust the month after (docs/law.md), owner draws, and each
-month's bank statement imported and matched to the books. The month before last is reconciled
-and approved. Last month is prepared by the bookkeeper and waits for the manager to approve it,
-with the roof repair's check not yet cleared at the bank: the three-way reconciliation the demo
-opens on. One owner has three properties, so their statement shows how one rolls up.
+setup, two months of rent (a pet fee, a tenant paying late, a bounced payment), bills,
+management fees, the company's fees taken out of trust the month after (docs/law.md), owner
+draws, and each month's bank statement imported and matched to the books. The month before
+last is reconciled and approved. Last month is prepared by the bookkeeper and waits for the
+manager to approve it, with the roof repair's check not yet cleared at the bank: the three-way
+reconciliation the demo opens on. One owner has three properties, so their statement shows how
+one rolls up.
 
 Then something on every other page (`every_page`): the manager is each trust bank account's
 broker and the bookkeeper a bonded signer; a leasing agent holds a custom role; the vendors have
@@ -332,7 +333,7 @@ def books(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
         )
 
     # The month before last: deposits brought over, the owners' reserve, rent (one tenant
-    # late), a plumbing bill, fees and draws.
+    # paying late), a plumbing bill, fees and draws.
     with b.as_staff(manager) as s:
         for _, _, units in PORTFOLIO:
             for _, monthly, people in units:
@@ -871,7 +872,7 @@ def lease_tenants(conn: psycopg.Connection[Any], lease: UUID) -> list[UUID]:
 def this_months_rent(b: Builder, demo: Demo, today: date) -> None:
     """This month's rent charged to every lease in effect and paid, but at Harbor Tower: one
     tenant paid part of it, one none, and one's payment bounced, charging the NSF fee. Late fees
-    come with the nightly run."""
+    come with the nightly run, once the rent's grace has run from the day it was charged."""
     conn = b.conn
     this_month = demo.months[2]
     with b.as_staff(demo.manager) as s:
@@ -1384,8 +1385,10 @@ def collect_rent(
     late: tuple[str, str] | None = None,
     bounced: tuple[str, str] | None = None,
 ) -> None:
-    """The month's rent run and each lease paying what it owes: one late (a late fee, then
-    paid), one bounced and paid again."""
+    """The month's rent run and each lease paying what it owes: one late (paid a week after
+    the late fee run, which charges it none: the demo's rent is made when the demo is built,
+    and a rent's grace counts from the day it was charged; migration 0151), one bounced and
+    paid again."""
     conn = b.conn
     with b.as_staff(manager) as s:
         rent.run_rent(s, conn, rent.RunRent(due_on=month, late_fees_as_of=month))

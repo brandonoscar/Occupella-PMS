@@ -4,8 +4,9 @@ Rent is due on the first unless a lease picks another day, 1 to 28, from the fir
 Leases due on the first are charged as before; another is charged on its due date, kept within
 the days the lease is in effect that month (its first day if it starts after it, its last if it
 ends before it), the month's rent and recurring charges for those days, once a month. A month
-whose rent is charged keeps its due date. Late fees count their grace from the due date. Every
-name here is synthetic."""
+whose rent is charged keeps its due date. Late fees count their grace from the due date, or from
+the day the rent was charged if that came later (migration 0151). Every name here is
+synthetic."""
 
 from datetime import date
 from decimal import Decimal
@@ -20,9 +21,11 @@ from helpers import (
     add_tenant,
     add_unit,
     charge_rent_due,
+    charged_on,
     end_lease,
     make_pmc,
     open_lease,
+    rent_charged_when_due,
     stop_recurring_charge,
 )
 
@@ -188,6 +191,8 @@ def test_late_fees_count_their_grace_from_the_due_date(conn, pmc):
     add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, date(2026, 9, 1), 5, "50.00")
     for day in (date(2026, 10, 10), date(2026, 10, 15)):
         run(conn, pmc.pmc_id, day)
+        # The night of the 10th charged the rent: say so to the database, whose clock reads today.
+        rent_charged_when_due(conn, pmc.pmc_id)
     assert conn.execute(
         "SELECT count(*) FROM trust_late_fees AS f JOIN trust_charges AS r"
         " ON r.id = f.rent_charge_id WHERE r.lease_id = %s",
@@ -199,6 +204,30 @@ def test_late_fees_count_their_grace_from_the_due_date(conn, pmc):
         " ON r.id = f.rent_charge_id WHERE r.lease_id = %s",
         (lease,),
     ).fetchall() == [(date(2026, 10, 10), Decimal("50.00"))]
+
+
+def test_rent_charged_nights_after_its_due_day_has_its_grace_from_that_night(conn, pmc):
+    """The nightly run didn't run from the 9th to the 19th: the rent due on the 10th was charged
+    on the night of the 20th, and its five days' grace runs from then (migration 0151)."""
+    lease = lease_of(conn, pmc)
+    due_day(conn, pmc.pmc_id, lease, OCT_1, 10)
+    add_late_fee_policy(conn, pmc.pmc_id, pmc.owners[0].property_id, date(2026, 9, 1), 5, "50.00")
+
+    run(conn, pmc.pmc_id, date(2026, 10, 20))
+    (rent,) = conn.execute(
+        "SELECT id FROM trust_charges WHERE lease_id = %s AND kind = 'rent'", (lease,)
+    ).fetchone()
+    charged_on(conn, [rent], date(2026, 10, 20))
+    run(conn, pmc.pmc_id, date(2026, 10, 25))
+    assert conn.execute(
+        "SELECT count(*) FROM trust_late_fees WHERE rent_charge_id = %s", (rent,)
+    ).fetchone() == (0,)  # its fifth grace day isn't over
+    run(conn, pmc.pmc_id, date(2026, 10, 26))
+    assert conn.execute(
+        "SELECT c.due_on, f.fee FROM trust_late_fees AS f JOIN trust_charges AS c"
+        " ON c.id = f.fee_charge_id WHERE f.rent_charge_id = %s",
+        (rent,),
+    ).fetchall() == [(date(2026, 10, 26), Decimal("50.00"))]
 
 
 def test_a_lease_ending_after_its_month_was_charged_is_credited_its_days(conn, pmc):

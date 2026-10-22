@@ -123,7 +123,7 @@ def test_what_was_collected_is_income_by_what_it_paid(conn, app_conn, pmc, lease
     property_id = pmc.owners[0].property_id
     add_late_fee_policy(conn, pmc.pmc_id, property_id, JAN_1, 5, flat_fee="50.00")
     add_nsf_fee_policy(conn, pmc.pmc_id, property_id, JAN_1, "35.00")
-    rent = charge(conn, pmc.pmc_id, lease, JAN_1, "1500.00")
+    rent = charge(conn, pmc.pmc_id, lease, JAN_1, "1500.00", charged_at=at(1, 1, hour=6))
     add_recurring_charge(conn, pmc.pmc_id, lease, "40.00", JAN_1, "Parking")
     charge_recurring_due(conn, pmc.pmc_id, JAN_1)
     assess_late_fees(conn, pmc.pmc_id, date(2026, 1, 7))
