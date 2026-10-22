@@ -918,7 +918,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
       "kept $150.00 of $1,180.00, $1,030.00 back to the tenants",
     );
     const statement = await page.request.get(
-      (await lease.getByRole("link", { name: "Statement for the tenants (PDF)" }).getAttribute("href")) ?? "",
+      (await lease.getByRole("link", { name: "Statement for Drew Sample (PDF)" }).getAttribute("href")) ?? "",
     );
     expect(statement.status()).toBe(200);
     expect(statement.headers()["content-type"]).toBe("application/pdf");

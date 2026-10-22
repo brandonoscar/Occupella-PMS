@@ -1030,7 +1030,7 @@ operations = [
   "POST /api/inspections",
   "POST /api/move-out/{lease_id}/deductions",
   "POST /api/move-out/{lease_id}/return",
-  "GET /api/tenant/leases/{lease_id}/deposit-return/download",
+  "GET /api/tenant/leases/{lease_id}/deposit-statement",
   "GET /api/reconcile",
   "GET /api/bank-accounts/{bank_account_id}/register",
   "GET /api/reconcile/{bank_account_id}",
