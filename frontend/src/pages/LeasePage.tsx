@@ -9,6 +9,7 @@ import { NotesCard } from "../components/NotesCard";
 import { Notice } from "../components/Notice";
 import type { RowAction } from "../components/RowMenu";
 import { RowMenu } from "../components/RowMenu";
+import { DepositInterestForm } from "./DepositInterestForm";
 import { Said } from "../components/Said";
 import { StateWarnings } from "../components/StateWarnings";
 import { Card, PageHeader, Shell } from "../components/Shell";
@@ -60,7 +61,7 @@ import { useRecord } from "./useRecord";
 
 type Panel =
   | "payment" | "charge" | "rent" | "due" | "recurring" | "insurance" | "deposit" | "leasing" | "hold"
-  | "release" | "end" | "remove" | "move";
+  | "release" | "end" | "remove" | "move" | "interest";
 const PANELS: Record<Panel, string> = {
   payment: "Receive payment",
   charge: "Enter charge",
@@ -75,6 +76,7 @@ const PANELS: Record<Panel, string> = {
   end: "End lease",
   remove: "Take a tenant off the lease",
   move: "Move to another unit",
+  interest: "Deposit interest",
 };
 type Tab = "summary" | "ledger" | "tenants" | "files" | "notes";
 const TABS: { value: Tab; label: string }[] = [
@@ -148,6 +150,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
     { label: "Add recurring charge", onSelect: () => setPanel("recurring") },
     { label: "Renters insurance", onSelect: () => setPanel("insurance") },
     { label: "Record deposit", onSelect: () => setPanel("deposit") },
+    { label: "Deposit interest", onSelect: () => setPanel("interest") },
     { label: "Take leasing fee", onSelect: () => setPanel("leasing") },
     open === null
       ? { label: "Place payment hold", onSelect: () => setPanel("hold") }
@@ -245,6 +248,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
           {panel === "release" && open !== null && <ReleaseForm hold={open} record={recordThenClose} />}
           {panel === "end" && <EndLeaseForm lease={lease} record={recordThenClose} />}
           {panel === "move" && <TransferForm lease={lease} record={recordThenClose} />}
+          {panel === "interest" && <DepositInterestForm lease={lease} record={recordThenClose} />}
           {panel === "remove" && leaving !== null && (
             <RemoveTenantForm lease={lease} person={leaving} record={recordThenClose} />
           )}

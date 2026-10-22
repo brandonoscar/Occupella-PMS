@@ -28,6 +28,7 @@ import { AddressCard } from "./AddressCard";
 import { FilesCard } from "./FilesCard";
 import { navigate } from "../router";
 import { agreementSummary, lateFeeSummary, leaseBreakFeeSummary, nsfFeeSummary } from "../setup";
+import { rateLine } from "../depositInterest";
 import { day, usDate } from "../money";
 import type { Panel } from "./SetupPanels";
 import {
@@ -36,6 +37,7 @@ import {
   AddPropertyPanel,
   AddUnitPanel,
   LateFeesPanel,
+  DepositInterestPanel,
   LeaseBreakFeePanel,
   NsfFeePanel,
   OwnershipPanel,
@@ -139,7 +141,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
   const [property, setProperty] = useState<Property | null>(null);
   const [said, setSaid] = useState("");
   const [error, setError] = useState("");
-  const [open, setOpen] = useState<"" | "unit" | "owner" | "terms" | "ownership" | "late" | "nsf" | "break" | "email">("");
+  const [open, setOpen] = useState<"" | "unit" | "owner" | "terms" | "ownership" | "late" | "nsf" | "break" | "interest" | "email">("");
   const [account, setAccount] = useState("");
   // The late fee terms in force against the property's state's rules (q142).
   const late = property?.late_fees;
@@ -242,6 +244,11 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
                 </dd>
                 <dd><Button size="sm" variant="secondary" onClick={() => setOpen("break")}>Set lease-break fee</Button></dd>
               </div>
+              <div>
+                <dt className="text-sm text-ink-muted">Deposit interest</dt>
+                <dd data-testid="deposit-interest">{rateLine(property.deposit_interest)}</dd>
+                <dd><Button size="sm" variant="secondary" onClick={() => setOpen("interest")}>Set deposit interest</Button></dd>
+              </div>
             </dl>
           </Card>
           <Card title="Units">
@@ -288,6 +295,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
           {open === "late" && <LateFeesPanel panel={panel} propertyId={id} />}
           {open === "nsf" && <NsfFeePanel panel={panel} propertyId={id} />}
           {open === "break" && <LeaseBreakFeePanel panel={panel} propertyId={id} />}
+          {open === "interest" && <DepositInterestPanel panel={panel} propertyId={id} />}
           {open === "email" && (
             <WriteEmail title={`Email tenants of ${property.name}`} onClose={panel.close}
               note="Everyone on a lease in effect today gets their own copy, kept on their Email tab."
