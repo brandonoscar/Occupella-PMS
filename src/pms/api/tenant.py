@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException, Query, Response
 from pydantic import BaseModel, Field
 
 from pms import accounts, exports, notices
-from pms.api import directory, documents, maintenance, offers, outbox, signing
+from pms.api import directory, documents, maintenance, moveout, offers, outbox, signing
 from pms.api import rent as rent_api
 from pms.api.deps import Conn, Rows, Tenant, download
 from pms.leasing import esign
@@ -377,24 +377,17 @@ def ledger_download(
     return download(exports.export(table, fmt), name, fmt)
 
 
-@router.get("/leases/{lease_id}/deposit-return/download")
-def deposit_return_download(
-    session: Tenant,
-    conn: Conn,
-    lease_id: UUID,
-    fmt: Annotated[Literal["csv", "xlsx", "pdf"], Query(alias="format")] = "pdf",
-) -> Response:
-    """The itemized statement of the lease's deposits returned at move-out: what each tenant
-    held, what was kept for what the lease owed, and what went back to each."""
-    lease_of(conn, session, lease_id)
-    try:
-        with conn.transaction():
-            table = exports.run_report(
-                conn, "trust_report_deposit_return", [session.pmc_id, lease_id]
-            )
-    except psycopg.errors.InvalidParameterValue:
-        raise HTTPException(404, "this lease's deposit has not been returned") from None
-    return download(exports.export(table, fmt), "deposit-return", fmt)
+@router.get("/leases/{lease_id}/deposit-statement")
+def deposit_statement_letter(session: Tenant, conn: Conn, lease_id: UUID) -> Response:
+    """Their own deposit statement once the deposit was returned (migration 0120): a letter with
+    what each tenant held, what was kept for what the lease owed and why, what went back to
+    each, and the receipts and move-out photos it names; the copy staff mail or email them."""
+    tenant = lease_of(conn, session, lease_id)
+    return Response(
+        moveout.statement_pdf(conn, session.pmc_id, lease_id, tenant),
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="security-deposit-statement.pdf"'},
+    )
 
 
 @router.get("/contact")

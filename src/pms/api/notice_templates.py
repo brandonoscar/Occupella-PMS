@@ -212,20 +212,7 @@ def filled(
         raise HTTPException(404, "no such lease")
     prop, unit, starts_on, ends_on, monthly, tenants = row
     by = company.name_of(conn, pmc_id)
-    address = company.address_of(company.profile(conn, pmc_id))
-    street = (
-        ""
-        if address is None
-        else ", ".join(
-            part
-            for part in (
-                address.address_line_1,
-                address.address_line_2,
-                f"{address.city}, {address.state} {address.postal_code}",
-            )
-            if part
-        )
-    )
+    street = company.street_of(conn, pmc_id)
     values = {
         "tenant_names": notice_letters.names(list(tenants)),
         "property": prop,

@@ -245,7 +245,7 @@ export function TenantHome({ me }: { me: Me }) {
             {lease.deposit_returned && (
               <div className="mt-4">
                 <LinkButton
-                  href={`/api/tenant/leases/${encodeURIComponent(lease.lease_id)}/deposit-return/download?format=pdf`}
+                  href={`/api/tenant/leases/${encodeURIComponent(lease.lease_id)}/deposit-statement`}
                 >
                   Deposit statement (PDF)
                 </LinkButton>

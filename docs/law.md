@@ -304,6 +304,60 @@ the old lease, and the written agreement itself.
 **Left to the company.** Its state's cap and whether it allows a separate pet or key deposit at
 all, and any non-refundable fee (which the PMS records as a charge, not a deposit).
 
+### A deposit's return deadline and its statement (migration 0120)
+
+The founder's review q040 and q039, brought in scope on 2026-10-22. Checked 2026-10-22 from
+search excerpts: the state code sites (mca.legmt.gov, nysenate.gov, leginfo.legislature.ca.gov)
+did not resolve from the container, so no statute was read in full.
+
+**The rule.**
+- Every state sets a deadline to return a deposit, with an itemized statement of anything kept,
+  counted from the tenancy's end, the tenant's leaving or the surrender of the home. Most give 30
+  days; the shortest found:
+  - Hawaii, HRS 521-44(c): the deposit, less what is lawfully kept, within 14 days after the
+    rental agreement ends, with written notice of what was kept and why; a landlord who misses it
+    keeps none of it. Mailed to an address the tenant supplied, postmarked by the 14th day, it is
+    presumed on time (the statute's text as the search quoted it).
+  - New York, General Obligations Law 7-108(1-a)(e): within 14 days after the tenant vacates, an
+    itemized statement of what was kept and the rest returned; missing it forfeits the right to
+    keep any (quoted by the search; whether the money itself is due in 14 days or only the
+    statement, secondary sources disagree: NOT VERIFIED).
+  - Montana, MCA 70-25-202: 30 days with an itemized list, but 10 days when nothing is to be kept
+    (no damage, no cleaning, no rent or utilities owing). Secondary sources only (hemlane.com,
+    ipropertymanagement.com, ezel.ai): NOT VERIFIED.
+  - Arizona gives 14 business days and Alaska 14 days when the tenant gave notice (secondary
+    sources: NOT VERIFIED); California 21 days (Civil Code 1950.5).
+- The statement: California asks the most found. With the itemized statement, copies of the
+  receipts or invoices for repairs over $125 and for cleaning done by someone else (or, for work
+  not done within the deadline, a good-faith estimate, then the receipts within 14 days of it), and
+  since April 1, 2025 (AB 2801) photos of the home taken after the tenant left and before the
+  repairs, and after them. Sources: law-firm and property-manager summaries (castelblanco.com,
+  bhrealestatelaw.com, snslawgroup.com, lifetimepm.com); the dates for AB 2801's move-in photos
+  differ between them: NOT VERIFIED.
+- Florida (s. 83.49(3)) asks a written notice of a claim on the deposit, in words the statute
+  gives, sent within 30 days, before anything is kept. Secondary sources only: NOT VERIFIED.
+- Local ordinances may set shorter deadlines than the state's.
+
+**What the PMS does.**
+- Each lease past its last day whose deposit is still held shows the day it is due back: 14 days
+  after its last day, 10 while the lease owes nothing (so nothing would be kept), the strictest
+  found. The Move-outs page shows it on each lease, past due once the day has passed, and the
+  Dashboard lists every one until the deposit is returned.
+- Staff keep a receipt or invoice for each fee a deposit keeps (one of the lease's documents,
+  linked to the fee), before or after the return; a fee over $125 with none on file is marked.
+- Each tenant's statement is a letter on the company's letterhead to their forwarding address
+  (the mailing address on their page; a line says when none is on file): what each tenant held,
+  what was kept for what and why with each fee's receipts named, what went back to whom and when,
+  then the receipts and the lease's move-out photos themselves. Staff download it to mail or
+  email it to each tenant (their contact email, else their login's), again after a receipt comes
+  in; the tenant downloads their own in the portal.
+- The PMS returns nothing by itself and decides nothing a state leaves to the landlord.
+
+**Left to the company.** Its state's own deadline when it is longer, and mailing the letter where
+its state asks for mail (the PMS emails it, which not every state counts); Florida's notice of a
+claim, which the company can write as a notice template and send from the lease; any state's own
+required wording; photos taken at move-in.
+
 ## A bill shared across properties, and the company's markup on a bill (migration 0083)
 
 **The rule.** A manager is the owner's agent: it pays out an owner's trust money only for that
