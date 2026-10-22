@@ -24,6 +24,7 @@ import { STAFF_NAV } from "./staffNav";
 import { Said } from "../components/Said";
 import { AddressCard } from "./AddressCard";
 import { FilesCard } from "./FilesCard";
+import { TaxCreditLimitsCard, TaxCreditUnitCard } from "./TaxCreditCards";
 import { navigate } from "../router";
 import { agreementSummary, lateFeeSummary, leaseBreakFeeSummary, nsfFeeSummary } from "../setup";
 import { rateLine } from "../depositInterest";
@@ -240,6 +241,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
               </div>
             </dl>
           </Card>
+          <TaxCreditLimitsCard propertyId={id} />
           <Card title="Units">
             {property.units.length === 0 ? (
               <EmptyState icon={Building2} title="No units yet." />
@@ -415,6 +417,7 @@ export function UnitPage({ me, id }: { me: Me; id: string }) {
             )}
             <div className="mt-3"><Button variant="secondary" onClick={() => setAdding(true)}>Add lease in place</Button></div>
           </Card>
+          <TaxCreditUnitCard unitId={id} />
           {adding && (
             <AddLeasePanel panel={{ say: setSaid, refresh, close: () => setAdding(false) }} unitId={id}
               propertyId={unit.property.id} propertyName={unit.property.name} />
