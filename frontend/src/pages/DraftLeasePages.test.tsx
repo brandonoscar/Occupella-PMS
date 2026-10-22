@@ -21,7 +21,7 @@ const OFFER: Offer = {
   unit_id: "u1", unit: "Unit 2", starts_on: "2027-01-01", ends_on: null, monthly_rent: "1500.00",
   security_deposit: "1500.00",
   recurring_charges: [{ kind: "fee", memo: "Pet rent", amount: "35.00" }, { kind: "credit", memo: "Autopay", amount: "10.00" }],
-  document_title: "Lease", offered_at: "2026-10-12T14:00:00Z", sent: false, lease_id: null, status: "draft", void: null,
+  document_title: "Lease", offered_at: "2026-10-12T14:00:00Z", sent: false, lease_id: null, status: "draft", void: null, closed: null,
   signers: [
     { position: 1, name: "Applicant A", email: "a@example.com", role: "tenant", signed_at: null, progress: "waiting" },
     { position: 2, name: "Applicant B", email: "b@example.com", role: "guarantor", signed_at: null, progress: "waiting" },
@@ -93,6 +93,14 @@ describe("DraftLeasesPage", () => {
     ]);
     fireEvent.click(row);
     expect(window.location.pathname).toBe("/draft-leases/o1");
+  });
+
+  it("marks a renewal that can no longer go ahead", async () => {
+    server({ ...OFFER, kind: "renewal", application_id: null, renews_lease_id: "l1", closed: "the lease it renews ended on 10/15/2026" });
+    render(<DraftLeasesPage me={ME} />);
+
+    const row = await screen.findByRole("row", { name: "Renewal for Property 1, Unit 2" });
+    expect(within(row).getAllByRole("cell")[4]?.textContent).toBe("Draft Can't go ahead");
   });
 
   it("says when a tab has nothing", async () => {
@@ -280,6 +288,32 @@ describe("DraftLeasePage", () => {
     expect((await screen.findByRole("link", { name: "Open the lease" })).getAttribute("href")).toBe("/leases/l9");
     expect(screen.getByRole("link", { name: "The lease" }).getAttribute("href")).toBe("/leases/l1");
     expect(screen.getByTestId("status").textContent).toBe("Lease active");
+  });
+
+  it("says a renewal whose lease ended can no longer go ahead, and offers only Void", async () => {
+    const why = "the lease it renews ended on 10/15/2026";
+    for (const status of ["draft", "partially signed", "signed"] as const) {
+      const fetch = server({
+        ...OFFER, kind: "renewal", application_id: null, renews_lease_id: "l1", status, sent: status !== "draft",
+        closed: why,
+      });
+      render(<DraftLeasePage me={ME} id="o1" />);
+
+      expect((await screen.findByTestId("closed")).textContent).toBe(
+        "This renewal can no longer be sent, signed or made a lease: the lease it renews ended on 10/15/2026."
+          + " Void it.",
+      );
+      expect(screen.getByText("Can't go ahead")).toBeTruthy();
+      for (const gone of ["Send", "Resend", "Activate lease"]) {
+        expect(screen.queryByRole("button", { name: gone })).toBeNull();
+      }
+      expect(screen.queryByRole("button", { name: /^Actions for/ })).toBeNull();
+      fireEvent.click(screen.getByRole("button", { name: "Void" }));
+      const panel = screen.getByRole("dialog", { name: "Void" });
+      fireEvent.click(within(panel).getByRole("button", { name: "Void it" }));
+      await vi.waitFor(() => expect(posted(fetch)).toEqual([["/api/leasing/offers/o1/void", { reason: null }]]));
+      cleanup();
+    }
   });
 
   it("says when the offer isn't found", async () => {

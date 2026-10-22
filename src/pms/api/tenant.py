@@ -37,8 +37,9 @@ def today() -> date:
 
 
 class Monthly(BaseModel):
-    """What the lease charges every month: its rent, and each recurring fee or credit not
-    stopped (from its first due date, until the first one it is no longer charged for)."""
+    """What the lease charges every month: its rent from its next due date (and each rent change
+    to come after it, until the next), and each recurring fee or credit not stopped (from its
+    first due date, until the first one it is no longer charged for)."""
 
     what: str
     kind: Literal["rent", "fee", "credit"]
@@ -217,7 +218,7 @@ def leases(session: Tenant, conn: Conn) -> list[Lease]:
             tenants=list(names),
             balance_due=exports.text(balance),
             in_effect=starts <= on and (ends is None or on <= ends),
-            each_month=[] if ends is not None and ends < on else monthly(conn, lease, starts, rent),
+            each_month=[] if ends is not None and ends < on else monthly(conn, lease),
             coming_due=[
                 ComingDue(due_on=due, kind=kind, memo=memo, open=rent_api.cents(left))
                 for _, _, due, kind, memo, _, left in rent_api.charges_open(
@@ -318,12 +319,50 @@ def lease_document(session: Tenant, conn: Conn, lease_id: UUID, document_id: UUI
     return documents.served(conn, session.pmc_id, document_id, None)
 
 
-def monthly(conn: psycopg.Connection[Any], lease: UUID, starts: date, rent: Any) -> list[Monthly]:
-    """The lease's rent, then each recurring fee or credit not stopped, by first due date."""
+# The lease's rent from its next due date on (today's or later, its first for a lease to come;
+# migration 0081): the rent in force then (migration 0061) from the day it took effect, then each
+# change after it. Without a due date to come (the lease ends first), the rent in force today.
+RENT_AHEAD = """
+WITH next AS (
+    SELECT l.id, l.starts_on, coalesce((
+        SELECT d.due_on
+        FROM (VALUES (trust_rent_due_on(l.id, f.day)),
+                     (trust_rent_due_on(l.id, (f.day + interval '1 month')::date))) AS d (due_on)
+        WHERE d.due_on >= f.day
+        ORDER BY d.due_on
+        LIMIT 1
+    ), %(on)s) AS due_on
+    FROM trust_leases AS l
+    CROSS JOIN LATERAL (SELECT greatest(%(on)s, l.starts_on) AS day) AS f
+    WHERE l.id = %(lease)s
+)
+SELECT coalesce((
+           SELECT max(c.effective_on) FROM trust_rent_changes AS c
+           WHERE c.lease_id = n.id AND c.effective_on <= n.due_on
+       ), n.starts_on),
+       trust_rent_on(n.id, n.due_on)
+FROM next AS n
+UNION ALL
+SELECT c.effective_on, c.monthly_rent
+FROM next AS n
+JOIN trust_rent_changes AS c ON c.lease_id = n.id AND c.effective_on > n.due_on
+ORDER BY 1
+"""
+
+
+def monthly(conn: psycopg.Connection[Any], lease: UUID) -> list[Monthly]:
+    """The lease's rent from its next due date, each rent until the change after it, then each
+    recurring fee or credit not stopped, by first due date."""
+    rents = conn.execute(RENT_AHEAD, {"lease": lease, "on": today()}).fetchall()
     return [
         Monthly(
-            what="Rent", kind="rent", amount=rent_api.cents(rent), starts_on=starts, ends_on=None
+            what="Rent",
+            kind="rent",
+            amount=rent_api.cents(amount),
+            starts_on=since,
+            ends_on=rents[n + 1][0] if n + 1 < len(rents) else None,
         )
+        for n, (since, amount) in enumerate(rents)
     ] + [
         Monthly(what=memo, kind=kind, amount=rent_api.cents(amount), starts_on=first, ends_on=last)
         for memo, kind, amount, first, last in conn.execute(

@@ -15,8 +15,11 @@ import { Wide } from "../components/Wide";
 import type { Keep } from "../latest";
 import { keepAll, latest } from "../latest";
 import { day, money, usDate } from "../money";
-import type { BreakFee, Household, LeaseDetail, LeasePerson } from "../rentals";
+import type { Offer } from "../offers";
+import { dayAfter, offerBadge } from "../offers";
+import type { BreakFee, Household, LeaseDetail, LeasePerson, Paged } from "../rentals";
 import { petLine, vehicleLine } from "../rentals";
+import { GoLink } from "./NeedsAttention";
 import type { Recorder } from "./LeaseForms";
 import { useRecord } from "./useRecord";
 
@@ -59,13 +62,29 @@ export function RemoveTenantForm({ lease, person, record }: { lease: LeaseDetail
   );
 }
 
+// The lease's renewals still to become a lease that can go ahead (drafts, sent or signed).
+function useOpenRenewals(leaseId: string): Offer[] {
+  const [found, setFound] = useState<Offer[]>([]);
+  useEffect(() => {
+    let live = true;
+    api.get<Paged<Offer>>(`/api/leasing/offers?show=open&renews=${encodeURIComponent(leaseId)}&per_page=200`)
+      .then((page) => { if (live) setFound(page.items.filter((o) => o.closed === null)); })
+      .catch(() => { if (live) setFound([]); });
+    return () => { live = false; };
+  }, [leaseId]);
+  return found;
+}
+
 // Ending a lease from its page, any lease, with or without a deposit: its last day, and the
 // lease-break fee its property's terms charge when a lease with an end date ends before it, only
-// if staff tick it.
+// if staff tick it. A renewal of it starting more than a day after the last day can no longer be
+// sent, signed or made the lease once it ends (migration 0152): the form says so before.
 export function EndLeaseForm({ lease, record }: { lease: LeaseDetail; record: Recorder }) {
   const [last, setLast] = useState(lease.ends_on ?? day(new Date()));
   const [fee, setFee] = useState<BreakFee | null>(null);
   const [charge, setCharge] = useState(false);
+  const renewals = useOpenRenewals(lease.id);
+  const cut = last ? renewals.filter((o) => dayAfter(last) < o.starts_on) : [];
   useEffect(() => {
     let live = true;
     if (last) {
@@ -99,6 +118,13 @@ export function EndLeaseForm({ lease, record }: { lease: LeaseDetail; record: Re
       <p className="text-sm text-ink-muted">
         Rent for the days after the last day comes off. Return the deposit from Move-outs.
       </p>
+      {cut.map((o) => (
+        <p key={o.id} className="text-sm text-ink" data-testid="renewal-cut">
+          Its renewal from {usDate(o.starts_on)} ({offerBadge(o.status).word.toLowerCase()}) can no
+          longer be sent, signed or made a lease once the lease ends on {usDate(last)}: void it.{" "}
+          <GoLink href={`/draft-leases/${o.id}`}>Open the renewal</GoLink>
+        </p>
+      ))}
       <div><Button type="submit">End lease</Button></div>
     </Form>
   );

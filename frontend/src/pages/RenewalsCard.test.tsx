@@ -46,6 +46,7 @@ const RENEWAL: Offer = {
   recurring_charges: [],
   status: "partially signed",
   void: null,
+  closed: null,
 };
 
 function server(renewals: Offer[], link: Response = new Response(JSON.stringify({ url: "http://x/sign#t" }))) {

@@ -109,7 +109,10 @@ export function applicationLine(application: Application): string {
 export function offerLine(offer: Offer): string {
   const signed = offer.signers.filter((s) => s.signed_at !== null).length;
   const kind = offer.kind === "renewal" ? "Renewal" : "New lease";
-  return `${kind} of ${offer.unit}, ${offer.property} from ${usDate(offer.starts_on)}: ${signed} of ${offer.signers.length} signed`;
+  const where = `${kind} of ${offer.unit}, ${offer.property} from ${usDate(offer.starts_on)}`;
+  // A renewal that no longer follows the lease it renews waits for no one: it is to be voided.
+  if (offer.closed) return `${where}: can't go ahead, ${offer.closed}; void it`;
+  return `${where}: ${signed} of ${offer.signers.length} signed`;
 }
 
 // "Rent deposited to the wrong property: $25.00, dated 2026-10-10, proposed by Bookkeeper 1".

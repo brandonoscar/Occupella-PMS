@@ -24,6 +24,8 @@ from helpers import (
 )
 from people import join_as, join_as_owner, join_as_staff, join_as_tenant, tenant_of
 
+from pms.api import tenant as tenant_api
+
 JAN_1, FEB_1 = date(2026, 1, 1), date(2026, 2, 1)
 JAN_3 = datetime(2026, 1, 3, 12, tzinfo=UTC)
 
@@ -173,6 +175,80 @@ def test_a_tenant_sees_what_each_month_charges_and_what_comes_due(client, conn, 
         }
     ]
     assert lease["balance_due"] == "1500.00"  # February's rent; the fee is not due yet
+
+
+def test_each_month_shows_the_rent_of_the_next_due_date_and_each_change_to_come(
+    client, conn, app_conn, home, monkeypatch
+):
+    """The rent a tenant pays next is the rent in force on the lease's next due date (H3: the
+    card said today's rent while a raise took effect on the next one)."""
+    pmc_id = home.pmc.pmc_id
+    for effective, rent, notice in (
+        (date(2026, 11, 1), "1575.00", date(2026, 9, 20)),
+        (date(2027, 1, 1), "1600.00", date(2026, 10, 1)),
+    ):
+        conn.execute(
+            "INSERT INTO trust_rent_changes (pmc_id, lease_id, effective_on, monthly_rent,"
+            " notice_given_on, served_by) VALUES (%s, %s, %s, %s, %s, 'mail')",
+            (pmc_id, home.lease, effective, rent, notice),
+        )
+    join_as_tenant(client, conn, app_conn, home.pmc)
+
+    def rents_on(day):
+        monkeypatch.setattr(tenant_api, "today", lambda: day)
+        (lease,) = [x for x in client.get("/api/tenant/leases").json() if x["in_effect"]]
+        return lease["monthly_rent"], [
+            (m["amount"], m["starts_on"], m["ends_on"])
+            for m in lease["each_month"]
+            if m["kind"] == "rent"
+        ]
+
+    # October's rent is the old one; November's, due next, is the new one, then January's.
+    assert rents_on(date(2026, 10, 22)) == (
+        "1500.00",
+        [("1575.00", "2026-11-01", "2027-01-01"), ("1600.00", "2027-01-01", None)],
+    )
+    # On a due date, that day's rent is the one to pay.
+    assert rents_on(date(2026, 10, 1)) == (
+        "1500.00",
+        [
+            ("1500.00", "2026-01-01", "2026-11-01"),
+            ("1575.00", "2026-11-01", "2027-01-01"),
+            ("1600.00", "2027-01-01", None),
+        ],
+    )
+    assert rents_on(date(2026, 11, 1))[1][0] == ("1575.00", "2026-11-01", "2027-01-01")
+    # Rent due on the 15th from October: October's, still to come on the 10th, is the old rent.
+    conn.execute(
+        "INSERT INTO trust_rent_due_days (pmc_id, lease_id, starts_on, due_day)"
+        " VALUES (%s, %s, '2026-10-01', 15)",
+        (pmc_id, home.lease),
+    )
+    assert rents_on(date(2026, 10, 10))[1][0] == ("1500.00", "2026-01-01", "2026-11-01")
+    assert rents_on(date(2026, 10, 16))[1][0] == ("1575.00", "2026-11-01", "2027-01-01")
+    # After the last change, one rent.
+    assert rents_on(date(2027, 2, 3)) == ("1600.00", [("1600.00", "2027-01-01", None)])
+
+
+def test_a_lease_to_come_shows_the_rent_of_its_first_due_date(client, conn, app_conn, home):
+    pmc_id = home.pmc.pmc_id
+    unit = add_unit(conn, pmc_id, home.pmc.owners[0].property_id, "Unit 9")
+    starts = datetime.now(UTC).date().replace(day=1) + timedelta(days=95)
+    to_come = open_lease(conn, pmc_id, unit, starts, None, "1800.00", [home.tenant])
+    join_as_tenant(client, conn, app_conn, home.pmc)
+
+    (lease,) = [x for x in client.get("/api/tenant/leases").json() if x["lease_id"] == str(to_come)]
+
+    assert lease["in_effect"] is False
+    assert lease["each_month"] == [
+        {
+            "what": "Rent",
+            "kind": "rent",
+            "amount": "1800.00",
+            "starts_on": str(starts),
+            "ends_on": None,
+        }
+    ]
 
 
 @pytest.fixture

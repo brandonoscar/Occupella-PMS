@@ -69,7 +69,7 @@ describe("today", () => {
       id: "o1", kind: "renewal", application_id: null, renews_lease_id: "l1", property_id: "p1",
       property: "Property 1", unit_id: "u1", unit: "Unit 1", starts_on: "2026-11-01", ends_on: null,
       monthly_rent: "1550.00", security_deposit: null, recurring_charges: [], status: "partially signed",
-      void: null, document_title: "Renewal", offered_at: "2026-10-01T00:00:00Z", sent: true, lease_id: null,
+      void: null, closed: null, document_title: "Renewal", offered_at: "2026-10-01T00:00:00Z", sent: true, lease_id: null,
       signers: [
         { position: 1, name: "Tenant A", email: "a@example.com", role: "tenant", signed_at: "2026-10-02T00:00:00Z", progress: "signed" },
         { position: 2, name: "Tenant B", email: "b@example.com", role: "tenant", signed_at: null, progress: "waiting" },
@@ -78,6 +78,9 @@ describe("today", () => {
     expect(offerLine(offer)).toBe("Renewal of Unit 1, Property 1 from 11/01/2026: 1 of 2 signed");
     expect(offerLine({ ...offer, kind: "new lease" })).toBe(
       "New lease of Unit 1, Property 1 from 11/01/2026: 1 of 2 signed",
+    );
+    expect(offerLine({ ...offer, closed: "the lease it renews ended on 10/15/2026" })).toBe(
+      "Renewal of Unit 1, Property 1 from 11/01/2026: can't go ahead, the lease it renews ended on 10/15/2026; void it",
     );
   });
 

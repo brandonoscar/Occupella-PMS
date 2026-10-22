@@ -26,8 +26,9 @@ import { ManagerCard } from "./ManagerCard";
 import { CalendarCard } from "./CalendarCard";
 import { MyContactCard } from "../components/ContactCard";
 
-// What the lease charges every month: its rent, and each recurring fee or credit not stopped
-// (ends_on is the first due date it is no longer charged for).
+// What the lease charges every month: its rent from its next due date (and each rent change to
+// come, until the next), and each recurring fee or credit not stopped (ends_on is the first due
+// date it is no longer charged for).
 export type Monthly = {
   what: string;
   kind: "rent" | "fee" | "credit";
@@ -63,17 +64,34 @@ export type Lease = {
   files: { kind: "signed lease" | "signing certificate" | "lease document"; title: string; url: string }[];
 };
 
-// "Pet rent: $35.00", "Parking: $25.00 off" for a credit, with when it starts or stops.
+// The day before a YYYY-MM-DD day.
+function dayBefore(iso: string): string {
+  return day(new Date(Date.parse(`${iso}T00:00:00Z`) - 86_400_000));
+}
+
+// "Pet rent: $35.00", "Parking: $25.00 off" for a credit, with when it starts or stops: a rent
+// change to come reads "Rent: $1,500.00, through 11/30/2026" then "Rent: $1,575.00, from
+// 12/01/2026".
 export function monthlyLabel(item: Monthly, today: string): string {
   const amount = item.kind === "credit" ? `${money(item.amount)} off` : money(item.amount);
   const from = item.starts_on > today ? `, from ${usDate(item.starts_on)}` : "";
-  const until = item.ends_on ? `, until ${usDate(item.ends_on)}` : "";
-  return `${item.what}: ${amount}${from}${until}`;
+  const through = item.ends_on ? `, through ${usDate(dayBefore(item.ends_on))}` : "";
+  return `${item.what}: ${amount}${from}${through}`;
 }
 
-// "10/23/2026 Key replacement: $50.00" (the kind when it has no memo).
+// The memo the rent run gives a month's rent ("Rent due 2026-11-01", maybe with the days it is
+// for or ", the tenant's part"): the books keep it as written.
+const RUN_RENT = /^Rent due (\d{4}-\d{2}-\d{2})/;
+
+// "10/23/2026 Key replacement: $50.00" (the kind when it has no memo). The day leads, so a rent
+// run's memo reads "11/01/2026 Rent: $2,300.00", not "11/01/2026 Rent due 2026-11-01", and any
+// day in the rest of it MM/DD/YYYY.
 export function comingDueLabel(charge: ComingDue): string {
-  const what = charge.memo ?? (charge.kind === "rent" ? "Rent" : "Fee");
+  const run = charge.kind === "rent" && charge.memo !== null ? RUN_RENT.exec(charge.memo) : null;
+  const what =
+    run && charge.memo !== null && run[1] === charge.due_on
+      ? `Rent${charge.memo.slice(run[0].length).replace(/\d{4}-\d{2}-\d{2}/g, (iso) => usDate(iso))}`
+      : (charge.memo ?? (charge.kind === "rent" ? "Rent" : "Fee"));
   return `${usDate(charge.due_on)} ${what}: ${money(charge.open)}`;
 }
 

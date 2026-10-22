@@ -99,13 +99,45 @@ describe("what comes up", () => {
   it("reads what each month charges, and a charge due later", () => {
     const pet = { what: "Pet rent", kind: "fee" as const, amount: "35.00", starts_on: "2026-02-01", ends_on: null };
     expect(monthlyLabel(pet, "2026-10-13")).toBe("Pet rent: $35.00");
+    // A charge stopped from 12/01 is last charged for a due date in November.
     expect(monthlyLabel({ ...pet, what: "Parking", kind: "credit", ends_on: "2026-12-01" }, "2026-10-13")).toBe(
-      "Parking: $35.00 off, until 12/01/2026",
+      "Parking: $35.00 off, through 11/30/2026",
     );
     expect(monthlyLabel({ ...pet, starts_on: "2026-11-01" }, "2026-10-13")).toBe("Pet rent: $35.00, from 11/01/2026");
     const key = { due_on: "2026-10-23", kind: "fee" as const, memo: "Key replacement", open: "50.00" };
     expect(comingDueLabel(key)).toBe("10/23/2026 Key replacement: $50.00");
     expect(comingDueLabel({ ...key, kind: "rent", memo: null, open: "1500.00" })).toBe("10/23/2026 Rent: $1,500.00");
+  });
+
+  it("reads a rent change to come with its days, and a month's rent the run charged early", () => {
+    const rent = { what: "Rent", kind: "rent" as const, amount: "2250.00", starts_on: "2026-01-01", ends_on: null };
+    // The raise takes effect on the next due date: that is the rent to pay.
+    expect(monthlyLabel({ ...rent, amount: "2300.00", starts_on: "2026-11-01" }, "2026-10-22")).toBe(
+      "Rent: $2,300.00, from 11/01/2026",
+    );
+    // A raise later on: the rent until it, then the new one.
+    expect(monthlyLabel({ ...rent, ends_on: "2026-12-01" }, "2026-10-22")).toBe("Rent: $2,250.00, through 11/30/2026");
+    expect(monthlyLabel({ ...rent, amount: "2300.00", starts_on: "2026-12-01" }, "2026-10-22")).toBe(
+      "Rent: $2,300.00, from 12/01/2026",
+    );
+    // A leap year's February.
+    expect(monthlyLabel({ ...rent, ends_on: "2028-03-01" }, "2027-12-01")).toBe("Rent: $2,250.00, through 02/29/2028");
+
+    const run = { due_on: "2026-11-01", kind: "rent" as const, memo: "Rent due 2026-11-01", open: "2300.00" };
+    expect(comingDueLabel(run)).toBe("11/01/2026 Rent: $2,300.00");
+    expect(
+      comingDueLabel({ ...run, memo: "Rent due 2026-11-01, 2026-11-01 to 2026-11-15 (15 of 30 days)", open: "1150.00" }),
+    ).toBe("11/01/2026 Rent, 11/01/2026 to 11/15/2026 (15 of 30 days): $1,150.00");
+    expect(comingDueLabel({ ...run, memo: "Rent due 2026-11-01, the tenant's part", open: "800.00" })).toBe(
+      "11/01/2026 Rent, the tenant's part: $800.00",
+    );
+    // A memo staff wrote, or one naming another day, reads as written.
+    expect(comingDueLabel({ ...run, memo: "Rent due 2026-10-01, carried over" })).toBe(
+      "11/01/2026 Rent due 2026-10-01, carried over: $2,300.00",
+    );
+    expect(comingDueLabel({ ...run, kind: "fee", memo: "Rent due 2026-11-01" })).toBe(
+      "11/01/2026 Rent due 2026-11-01: $2,300.00",
+    );
   });
 });
 
@@ -134,6 +166,30 @@ describe("TenantHome", () => {
     expect(screen.getByRole("link", { name: "Deposit statement (PDF)" }).getAttribute("href")).toBe(
       "/api/tenant/leases/1/deposit-return/download?format=pdf",
     );
+  });
+
+  it("shows the rent of the next due date when a raise comes then, and that month's rent charged early", async () => {
+    server({
+      "GET /api/tenant/leases": [{
+        ...lease("1", true),
+        monthly_rent: "2250.00",
+        rent_changes: [{ effective_on: "2099-11-01", monthly_rent: "2300.00", notice_given_on: "2099-09-20" }],
+        each_month: [{ what: "Rent", kind: "rent", amount: "2300.00", starts_on: "2099-11-01", ends_on: null }],
+        coming_due: [{ due_on: "2099-11-01", kind: "rent", memo: "Rent due 2099-11-01", open: "2300.00" }],
+      }],
+      "GET /api/tenant/requests": [],
+      "GET /api/tenant/renewals": [],
+      "GET /api/tenant/leases/1/ledger": LEDGER,
+    });
+    render(<TenantHome me={ME} />);
+
+    const card = (await screen.findByRole("heading", { name: "Coming up" })).closest("section") as HTMLElement;
+    expect(within(card).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
+      "Rent: $2,300.00, from 11/01/2099",
+      "11/01/2099 Rent: $2,300.00",
+    ]);
+    expect(within(card).queryByText(/\$2,250\.00/)).toBeNull();
+    expect(within(card).queryByText(/2099-11-01/)).toBeNull();
   });
 
   it("lists the lease as signed, its signing certificate and its documents to download", async () => {

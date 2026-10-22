@@ -108,7 +108,10 @@ export function DraftLeasesPage({ me }: { me: Me }) {
                         <td>{offer.signers.map((s) => s.name).join(", ")}</td>
                         <td className="whitespace-nowrap">{usDate(offer.starts_on)}</td>
                         <td className="text-right">{money(offer.monthly_rent)}</td>
-                        <td><Badge tone={badge.tone} data-testid="status">{badge.word}</Badge></td>
+                        <td>
+                          <Badge tone={badge.tone} data-testid="status">{badge.word}</Badge>
+                          {offer.closed && <> <Badge tone="danger">Can't go ahead</Badge></>}
+                        </td>
                         <td className="whitespace-nowrap">{usDate(offer.offered_at)}</td>
                       </tr>
                     );

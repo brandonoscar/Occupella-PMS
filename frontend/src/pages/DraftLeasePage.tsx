@@ -14,7 +14,7 @@ import { latest } from "../latest";
 import { when } from "../maintenance";
 import { money, usDate } from "../money";
 import type { Offer, Offered, SigningLink } from "../offers";
-import { offerBadge, sentLine, signedCount, term } from "../offers";
+import { closedLine, offerBadge, sentLine, signedCount, term } from "../offers";
 import { PROGRESS } from "../signing";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
@@ -29,6 +29,8 @@ const TEXTAREA = "rounded-sm border border-line-strong bg-sunken px-3 py-2 text-
 // its signing certificate. Send sends a draft to its signers; Resend makes each signer who hasn't
 // signed a new link (the old ones keep working until they run out); Activate lease makes a signed
 // offer the lease, with its monthly charges. Its ⋯ menu voids an offer that is not a lease yet.
+// A renewal whose lease ended before it, was moved from or had its deposit returned can no longer
+// be sent, signed or made the lease (migration 0152): the page says why and offers only Void.
 export function DraftLeasePage({ me, id }: { me: Me; id: string }) {
   const [found, setFound] = useState<Offer | null>(null);
   const [error, setError] = useState("");
@@ -60,7 +62,8 @@ export function DraftLeasePage({ me, id }: { me: Me; id: string }) {
   }
   const name = `${found.property}, ${found.unit}`;
   const badge = offerBadge(found.status);
-  const waiting = found.status === "sent" || found.status === "partially signed";
+  const closed = found.closed !== null;
+  const waiting = !closed && (found.status === "sent" || found.status === "partially signed");
   const resend = () =>
     record<SigningLink[]>(`/api/leasing/offers/${id}/links`, {}, (made) => {
       setLinks(made);
@@ -70,7 +73,8 @@ export function DraftLeasePage({ me, id }: { me: Me; id: string }) {
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title={`${found.kind === "renewal" ? "Renewal" : "Lease"} for ${name}`} actions={
         <div className="flex flex-wrap items-center gap-2">
-          {found.status === "draft" && (
+          {closed && <Button variant="secondary" onClick={() => setVoiding(true)}>Void</Button>}
+          {!closed && found.status === "draft" && (
             <Button onClick={() => record<Offered>(`/api/leasing/offers/${id}/send`, {}, (sent) => {
               setLinks(sent.links);
               return sentLine(sent);
@@ -79,14 +83,14 @@ export function DraftLeasePage({ me, id }: { me: Me; id: string }) {
             </Button>
           )}
           {waiting && <Button variant="secondary" onClick={resend}>Resend</Button>}
-          {(waiting || found.status === "signed") && (
+          {(waiting || (!closed && found.status === "signed")) && (
             <Button onClick={() => record<Offer>(`/api/leasing/offers/${id}/complete`, {},
               (made) => `${name} has its lease from ${usDate(made.starts_on)}.`)}>
               Activate lease
             </Button>
           )}
           {found.lease_id && <LinkButton href={`/leases/${found.lease_id}`}>Open the lease</LinkButton>}
-          {found.status !== "leased" && found.status !== "void" && (
+          {!closed && found.status !== "leased" && found.status !== "void" && (
             <RowMenu label={name} actions={[{ label: "Void", danger: true, onSelect: () => setVoiding(true) }]} />
           )}
         </div>
@@ -94,8 +98,12 @@ export function DraftLeasePage({ me, id }: { me: Me; id: string }) {
       <p className="flex flex-wrap items-center gap-3 text-base text-ink-muted">
         <GoLink href="/draft-leases" className={LINK}>Draft leases</GoLink>
         <Badge tone={badge.tone} data-testid="status">{badge.word}</Badge>
+        {closed && <Badge tone="danger">Can't go ahead</Badge>}
         {found.sent && <span>{signedCount(found)}</span>}
       </p>
+      {closed && (
+        <p className="text-base text-ink" data-testid="closed">{closedLine(found)} Void it.</p>
+      )}
       <Said>{said}</Said>
       {!voiding && <Notice tone="error">{refused || error}</Notice>}
       {links && (
