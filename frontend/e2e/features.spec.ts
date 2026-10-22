@@ -2924,8 +2924,9 @@ test("a company has tenants' prepaid rent pay their new rent by itself, and Run 
   await pay.getByRole("button", { name: "Record payment" }).click();
   await expect(aspen).toContainText("$500.00 held as prepaid rent.");
 
-  // Run rent now charges this month's $1,180.00 rent, then the prepaid rent pays $500.00 of it
-  // (a rent past its five days' grace took its $50.00 late fee first).
+  // Run rent now charges this month's $1,180.00 rent, then the prepaid rent pays $500.00 of it.
+  // Charged just now, the rent has its five days' grace from today, so no late fee comes with it
+  // whatever the day of the month (migration 0151).
   await section(page, "Rent roll");
   await page.getByRole("button", { name: "Actions for the rent roll" }).click();
   await page.getByRole("menuitem", { name: "Run rent now" }).click();
@@ -2934,9 +2935,8 @@ test("a company has tenants' prepaid rent pay their new rent by itself, and Run 
   await run.getByRole("button", { name: "Run rent now" }).click();
   await expect(run).toHaveCount(0);
   await expect(page.getByRole("main")).toContainText("Prepaid rent paid what 1 lease owed.");
-  const late = dayOfMonth() > 6;
   await expect(page.getByRole("row", { name: "Aspen Row, Unit 1", exact: true }).getByTestId("balance")).toHaveText(
-    late ? "$730.00" : "$680.00",
+    "$680.00",
   );
 });
 
@@ -3082,11 +3082,8 @@ test("staff set Birch Flats' ownership 60/40 between two owners; a payment and a
   await terms.getByRole("button", { name: "Set terms" }).click();
   await expect(page.getByText(`New terms for every owner of Birch Flats from ${firstOfThisMonth()}.`)).toBeVisible();
   await section(page, "Management fees");
-  const nextMonth = new Date(Date.UTC(Number(today().slice(0, 4)), Number(today().slice(5, 7)), 1))
-    .toISOString()
-    .slice(0, 10);
   await page.getByLabel("Period from").fill(firstOfThisMonth());
-  await page.getByLabel("Up to (not including)").fill(nextMonth);
+  await page.getByLabel("Period through").fill(lastOfThisMonth());
   await expect(page.getByRole("row", { name: "Demo Owner A, Birch Flats", exact: true })).toContainText("$15.00");
   await expect(page.getByRole("row", { name: "Demo Owner B, Birch Flats", exact: true })).toContainText("$10.00");
 });
