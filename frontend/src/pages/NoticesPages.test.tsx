@@ -107,6 +107,8 @@ describe("NoticeTemplatesPage", () => {
 describe("NoticesCard", () => {
   it("lists a lease's notices, each a PDF, and makes one after reading it filled in", async () => {
     const today = new Date().toISOString().slice(0, 10);
+    // Another day than today, whatever today is: picking it asks for its own filled-in text.
+    const later = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
     const fetch = server({
       "/api/notices?lease_id=l1": [MADE],
       "/api/notices/templates": TEMPLATES,
@@ -121,15 +123,15 @@ describe("NoticesCard", () => {
     fireEvent.click(screen.getByRole("button", { name: "Write a notice" }));
     const filled = await screen.findByRole("article", { name: "The notice as it will read" });
     expect(filled.textContent).toContain("Dear Morgan Demo, you owe $1,395.00.");
-    fireEvent.change(screen.getByLabelText("Dated"), { target: { value: "2026-10-22" } });
+    fireEvent.change(screen.getByLabelText("Dated"), { target: { value: later } });
     await screen.findByRole("article", { name: "The notice as it will read" });
     fireEvent.click(screen.getByRole("button", { name: "Make the notice" }));
 
     expect(await screen.findByText("Late rent, dated 10/22/2026, is made.")).toBeTruthy();
     expect(posted(fetch)).toEqual([
       ["/api/notices/preview", { lease_id: "l1", template_id: "t1", dated_on: today }],
-      ["/api/notices/preview", { lease_id: "l1", template_id: "t1", dated_on: "2026-10-22" }],
-      ["/api/notices", { lease_id: "l1", template_id: "t1", dated_on: "2026-10-22" }],
+      ["/api/notices/preview", { lease_id: "l1", template_id: "t1", dated_on: later }],
+      ["/api/notices", { lease_id: "l1", template_id: "t1", dated_on: later }],
     ]);
   });
 
