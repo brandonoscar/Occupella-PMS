@@ -358,6 +358,48 @@ its state asks for mail (the PMS emails it, which not every state counts); Flori
 claim, which the company can write as a notice template and send from the lease; any state's own
 required wording; photos taken at move-in.
 
+### Interest on security deposits (migration 0122)
+
+The founder's review q041, brought in scope on 2026-10-22. Written from what was known before
+this session; no statute or regulator's page was read in it, so every state's detail below is
+NOT VERIFIED.
+
+**The rule.** Most states ask no interest on a residential deposit. Those that do differ in each
+part of it:
+- The rate. A fixed rate (Massachusetts: 5% a year, or what the bank paid if less, under G.L. c.
+  186 s. 15B; Minnesota: 1% a year, simple, Stat. 504B.178), or one a regulator publishes each
+  year (Connecticut's deposit index, C.G.S. 47a-22a; Chicago's rate under its Residential Landlord
+  and Tenant Ordinance), or what the bank account the deposit sits in earns (New Jersey, N.J.S.A.
+  46:8-19; New York, General Obligations Law 7-103, in buildings of six or more units, less a 1%
+  a year fee the landlord may keep; Pennsylvania after the second year, 68 P.S. 250.511b).
+- Who it applies to. Some only above a size (New York's six units, Illinois' 25 under 765 ILCS
+  715) or a time and amount (Ohio, R.C. 5321.16: 5% a year on what exceeds $50 or a month's rent,
+  whichever is more, held six months or more).
+- When it is paid. Each year of the tenancy, paid or credited against the rent (Massachusetts, New
+  Jersey, Connecticut, Ohio), at the tenant's choice in New York, and what is left with the
+  deposit's return.
+
+**What the PMS does.**
+- A property's terms say its deposits' yearly rate from a day (0 earns none), as late fee terms
+  do; a new row from a later day changes it, so a rate published each year is entered each year.
+- Each day's deposit (what each tenant's deposit held at the day's end, UTC) earns the day's rate
+  over the days in its year, summed over the days and rounded to the cent per deposit: simple
+  interest, never compounded except on interest staff add to the deposit, which then earns too.
+- Staff pay it from the lease's page for the days since the last payment through a day gone by,
+  once per request: as a credit against the lease's rent while the lease is in effect (it moves no
+  money: the lease owes less), or added to the deposits from the owner's account, its cash moving
+  from the owner's trust bank account to the deposits' (taking the disburse role; an owner short
+  of it is refused). Added to a deposit, it goes back with the deposit at move-out.
+- Reports, Deposit interest lists each lease with deposits held, the rate, the first day its next
+  payment is for and what it would pay through the report's day.
+
+**Left to the company.** Its state's rate and whether its law applies at all (sizes, thresholds,
+how long the deposit was held), a fee the landlord may keep, paying it each year on time (the PMS
+pays nothing by itself), interest the bank pays on the deposit account (the PMS keeps none of the
+bank's interest apart), and an owner's income statement: interest added to a deposit is on the
+owner statement and in the year-end package's "anything else", not on its own line of the income
+statement; a rent credit shows as less rent collected.
+
 ## A bill shared across properties, and the company's markup on a bill (migration 0083)
 
 **The rule.** A manager is the owner's agent: it pays out an owner's trust money only for that

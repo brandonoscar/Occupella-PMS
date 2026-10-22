@@ -37,8 +37,10 @@ export function NoticesCard({ leaseId }: { leaseId: string }) {
     if (!writing || templates !== null) return;
     api.get<Templates>("/api/notices/templates")
       .then((answer) => {
-        setTemplates(answer);
-        setTemplate(answer.templates[0]?.id ?? "");
+        // A notice comes from a notice template; a lease template makes a draft lease.
+        const notices = answer.templates.filter((t) => t.used_for === "notice");
+        setTemplates({ ...answer, templates: notices });
+        setTemplate(notices[0]?.id ?? "");
       })
       .catch((failed) => setError(detail(failed)));
   }, [writing, templates]);

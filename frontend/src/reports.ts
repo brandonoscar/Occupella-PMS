@@ -34,6 +34,8 @@ export const REPORTS: ReportSpec[] = [
   { name: "trial_balance", label: "Trial balance", group: "Financial", args: AS_OF, byProperty: true },
   { name: "general_ledger", label: "General ledger", group: "Financial", args: DAYS, byProperty: true },
   { name: "security_deposits", label: "Security deposits", group: "Financial", args: AS_OF, byProperty: true },
+  // Each lease's deposits with what they earned since their last interest payment (q041).
+  { name: "deposit_interest", label: "Deposit interest", group: "Financial", args: AS_OF, byProperty: true },
   { name: "rent_roll", label: "Rent roll", group: "Rentals", args: AS_OF, byProperty: true },
   { name: "delinquency", label: "Delinquency", group: "Rentals", args: AS_OF, byProperty: true },
   { name: "vacancy", label: "Vacancy", group: "Rentals", args: AS_OF, byProperty: true },

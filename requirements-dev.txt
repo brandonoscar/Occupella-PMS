@@ -3,17 +3,17 @@
 -r requirements.txt
 coverage==7.16.2
 diff-cover==10.6.0
-httpx2==2.13.1
-hypothesis==6.168.5
+httpx2==2.14.0
+hypothesis==6.170.2
 mypy==2.4.0
 # Python mutation testing, nightly (BSD-3-Clause; mutation.yml, pyproject.toml [tool.mutmut]).
 mutmut==3.8.0
 pip-licenses==5.5.5
 pytest==9.1.1
-ruff==0.16.10
+ruff==0.17.1
 # Generated requests against the API's own OpenAPI schema (MIT; tests/api/test_api_fuzz.py).
-schemathesis==4.32.0
-squawk-cli==2.68.0
-types-openpyxl==3.1.5.20260827
+schemathesis==4.32.1
+squawk-cli==2.70.0
+types-openpyxl==3.1.5.20261017
 # Audits the GitHub workflows (MIT, a single binary with no dependencies).
 zizmor==1.31.1

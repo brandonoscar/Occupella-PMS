@@ -9,8 +9,9 @@ describe("reports", () => {
     expect(REPORTS.every((r) => GROUPS.includes(r.group))).toBe(true);
     expect(REPORTS.filter((r) => r.group === "Financial").map((r) => r.label)).toEqual([
       "Balance sheet", "Income statement", "Income statement, accrual basis", "Income statement, all owners",
-      "Cash flow", "Trial balance", "General ledger", "Security deposits",
+      "Cash flow", "Trial balance", "General ledger", "Security deposits", "Deposit interest",
     ]);
+    expect(reportSpec("deposit_interest")?.byProperty).toBe(true);
     expect(reportSpec("vendor_payments")?.label).toBe("1099 summary");
     expect(REPORTS.filter((r) => r.group === "Compliance").map((r) => r.label)).toEqual([
       "Trust account signers", "Housing assistance compliance", "Audit log",

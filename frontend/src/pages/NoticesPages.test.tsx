@@ -16,7 +16,7 @@ const ME: Me = {
 };
 const LATE: NoticeTemplate = {
   id: "t1", version_id: "v1", name: "Late rent", body: "Dear {{tenant_names}}, you owe {{balance_due}}.",
-  saved_at: "2026-10-20T15:00:00Z", saved_by: "Staff 1",
+  used_for: "notice", saved_at: "2026-10-20T15:00:00Z", saved_by: "Staff 1",
 };
 const TEMPLATES: Templates = {
   templates: [LATE],
@@ -24,6 +24,10 @@ const TEMPLATES: Templates = {
     { name: "tenant_names", what: "the lease's tenants" },
     { name: "balance_due", what: "what the lease owes now" },
   ],
+  lease_fields: [{ name: "security_deposit", what: "the security deposit asked" }],
+};
+const LEASE: NoticeTemplate = {
+  ...LATE, id: "t2", version_id: "v2", name: "Residential lease", body: "Deposit: {{security_deposit}}", used_for: "lease",
 };
 const FILLED: Filled = {
   title: "Late rent", letterhead: "Synthetic Homes LLC\n100 Example Way", body: "Dear Morgan Demo, you owe $1,395.00.",
@@ -71,7 +75,7 @@ describe("NoticeTemplatesPage", () => {
     fireEvent.click(within(panel).getByRole("button", { name: "Save template" }));
 
     expect(await screen.findByText("Entry is saved.")).toBeTruthy();
-    expect(posted(fetch)).toEqual([["/api/notices/templates", { name: "Entry", body: "We will enter {{unit}}." }]]);
+    expect(posted(fetch)).toEqual([["/api/notices/templates", { name: "Entry", body: "We will enter {{unit}}.", used_for: "notice" }]]);
   });
 
   it("edits a template from its row and says why a save is refused", async () => {
@@ -97,8 +101,31 @@ describe("NoticeTemplatesPage", () => {
     expect(posted(fetch)).toEqual([["/api/notices/templates/t1/remove", {}]]);
   });
 
+  it("keeps a lease template, with the blanks a draft lease's terms fill, its use fixed once made", async () => {
+    const fetch = server({ "/api/notices/templates": { ...TEMPLATES, templates: [LATE, LEASE] } });
+    render(<NoticeTemplatesPage me={ME} />);
+    const table = await screen.findByRole("table", { name: "Notice templates" });
+    expect(within(table).getByRole("row", { name: "Residential lease" }).textContent).toContain("A lease to sign");
+
+    fetch.mockImplementationOnce(async () => new Response(JSON.stringify({ ...LEASE, id: "t3", name: "Short lease" }), { status: 201 }));
+    fireEvent.click(screen.getByRole("button", { name: "Add template" }));
+    const panel = screen.getByRole("dialog", { name: "Add a notice template" });
+    fireEvent.change(within(panel).getByLabelText("Used for"), { target: { value: "lease" } });
+    const blanks = within(panel).getByRole("region", { name: "Blanks the PMS fills" });
+    expect(blanks.textContent).toContain("Blanks the PMS fills from the draft lease's terms:");
+    expect(blanks.textContent).toContain("{{security_deposit}} the security deposit asked");
+    fireEvent.change(within(panel).getByLabelText("Name"), { target: { value: "Short lease" } });
+    fireEvent.change(within(panel).getByLabelText("Text"), { target: { value: "Deposit {{security_deposit}}" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Save template" }));
+    expect(await screen.findByText("Short lease is saved.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/notices/templates", { name: "Short lease", body: "Deposit {{security_deposit}}", used_for: "lease" }]]);
+
+    fireEvent.click(screen.getByRole("row", { name: "Residential lease" }));
+    expect((screen.getByLabelText("Used for") as HTMLSelectElement).disabled).toBe(true);
+  });
+
   it("says when there is no template yet", async () => {
-    server({ "/api/notices/templates": { templates: [], fields: [] } });
+    server({ "/api/notices/templates": { templates: [], fields: [], lease_fields: [] } });
     render(<NoticeTemplatesPage me={ME} />);
     expect(await screen.findByText("No notice template yet.")).toBeTruthy();
   });
@@ -135,8 +162,18 @@ describe("NoticesCard", () => {
     ]);
   });
 
+  it("offers only notice templates, not lease ones", async () => {
+    server({
+      "/api/notices?lease_id=l1": [],
+      "/api/notices/templates": { ...TEMPLATES, templates: [LEASE] },
+    });
+    render(<NoticesCard leaseId="l1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Write a notice" }));
+    expect((await screen.findByRole("link", { name: "Settings, Notice templates" })).getAttribute("href")).toBe("/settings/notices");
+  });
+
   it("sends staff to Settings when the company has no template, and says when there is no notice", async () => {
-    server({ "/api/notices?lease_id=l1": [], "/api/notices/templates": { templates: [], fields: [] } });
+    server({ "/api/notices?lease_id=l1": [], "/api/notices/templates": { templates: [], fields: [], lease_fields: [] } });
     render(<NoticesCard leaseId="l1" />);
     expect(await screen.findByText("No notice made for this lease yet.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Write a notice" }));

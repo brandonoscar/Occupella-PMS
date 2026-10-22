@@ -1,7 +1,9 @@
 """A company's notice templates filled in (migration 0119; the founder's review q095): the blanks a
 template may use, such as {{tenant_names}}, what each is, the template's text with them filled,
 and the notice as a one-letter PDF. The words are the company's; the PMS writes no notice text and
-checks no state's notice period or wording.
+checks no state's notice period or wording. Since migration 0121 a template may be a company's own
+lease instead, with blanks a draft lease's terms fill (LEASE_FIELDS), made into the PDF it sends
+for signing.
 """
 
 from __future__ import annotations
@@ -26,22 +28,37 @@ FIELDS: dict[str, str] = {
     "company_address": "the company's mailing address, on one line",
     "staff_name": "who made the notice",
 }
+# The blanks a lease template may use (migration 0121), filled from a draft lease's terms.
+LEASE_FIELDS: dict[str, str] = {
+    "tenant_names": 'who signs as a tenant, as "Morgan Demo and Jamie Sample"',
+    "guarantor_names": "who signs as a guarantor, or none",
+    "property": "the property's name",
+    "unit": "the unit's name",
+    "monthly_rent": "the rent a month, as $1,395.00",
+    "security_deposit": "the security deposit asked, as $1,395.00, or none",
+    "monthly_charges": 'each monthly fee or credit besides rent, as "Pet rent, $25.00 a month"',
+    "lease_start": "the lease's first day, as 01/01/2026",
+    "lease_end": 'the lease\'s last day, or "month to month"',
+    "lease_date": "the day the lease is made, as 10/21/2026",
+    "company_name": "the company's name",
+    "company_address": "the company's mailing address, on one line",
+}
 # No part of a blank can match two ways (a name's spaces are stripped after), so a long run of
 # spaces in a template takes linear time, never polynomial (CodeQL py/polynomial-redos).
 BLANK = re.compile(r"\{\{([^{}]*)\}\}")
 
 
-def unknown(text: str) -> list[str]:
+def unknown(text: str, fields: dict[str, str] = FIELDS) -> list[str]:
     """The blanks in a text that are not a blank the PMS fills, each once, as written."""
     seen: list[str] = []
     for name in (found.strip() for found in BLANK.findall(text)):
-        if name not in FIELDS and name not in seen:
+        if name not in fields and name not in seen:
             seen.append(name)
     return seen
 
 
 def fill(text: str, values: dict[str, str]) -> str:
-    """The text with each blank replaced by its value. Every blank must be one FIELDS names."""
+    """The text with each blank replaced by its value. Every blank must be one the values name."""
     return BLANK.sub(lambda found: values[found.group(1).strip()], text)
 
 

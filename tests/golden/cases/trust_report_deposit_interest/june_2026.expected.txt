@@ -1,0 +1,3 @@
+line	lease_id	property	unit	tenants	held	annual_percent	interest_from	due
+1	<uuid1>	Property 1	Unit 1	Tenant 1	1200.00	2	2026-01-01	9.42
+2	<uuid2>	Property 1	Unit 2	Tenant 2	1000.00	2	2026-04-01	4.15
