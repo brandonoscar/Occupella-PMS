@@ -104,12 +104,18 @@ function server(answers: Record<string, unknown>, refuse: Record<string, string>
     }
     // Every record page's Files card reads the library; this one is empty.
     if (path === "/api/documents" && !(path in answers)) return new Response(JSON.stringify(NO_FILES), { status: 200 });
+    // Every property's and unit's tax credit card reads its own; none here (TaxCreditCards.test.tsx).
+    if (path.startsWith("/api/tax-credit/") && !(path in answers)) {
+      return new Response(JSON.stringify(path.includes("/units/") ? NOT_TAX_CREDIT : []), { status: 200 });
+    }
     if (!(path in answers)) return new Response(JSON.stringify({ detail: "no such page" }), { status: 404 });
     return new Response(JSON.stringify(answers[path]), { status: 200 });
   });
   vi.stubGlobal("fetch", fetch);
   return fetch;
 }
+
+const NOT_TAX_CREDIT = { in_force: null, max_gross_rent: null, designations: [] };
 
 const asked = (fetch: ReturnType<typeof server>) => fetch.mock.calls.map(([path, init]) =>
   init?.method === "POST" ? [path, JSON.parse(String(init.body))] : path);

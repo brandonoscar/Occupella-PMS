@@ -80,6 +80,7 @@ def test_report_discovery_and_missing_cases(conn, tmp_path):
         "trust_report_rent_roll",
         "trust_report_renters_insurance",
         "trust_report_security_deposits",
+        "trust_report_tax_credit_compliance",
         "trust_report_tenant_directory",
         "trust_report_tenant_ledger",
         "trust_report_three_way_reconciliation",
