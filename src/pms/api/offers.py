@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import base64
 import binascii
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -31,9 +31,9 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
 
-from pms import accounts, exports
+from pms import accounts, exports, notice_letters
 from pms import email as outgoing
-from pms.api import outbox, scope
+from pms.api import company, notice_templates, outbox, rent, scope
 from pms.api.deps import Conn, Staff, Tenant, refusal
 from pms.api.leasing import public_url
 from pms.api.rentals import Page, Paged, PerPage
@@ -79,9 +79,11 @@ class OfferIn(BaseModel):
     # The security deposit the lease asks for, if any; held only once it is received.
     security_deposit: Rent | None = None
     recurring_charges: list[ChargeIn] = Field(default_factory=list, max_length=10)
-    document_title: str = Field(min_length=1, max_length=200)
-    # The PDF, base64: 5 MB comes to about 6.7 million characters.
-    document_base64: str = Field(min_length=8, max_length=6_700_000)
+    # The company's own lease PDF, base64 (5 MB comes to about 6.7 million characters), with its
+    # title; or one of its lease templates (migration 0121), filled in from these terms.
+    document_title: str | None = Field(default=None, min_length=1, max_length=200)
+    document_base64: str | None = Field(default=None, min_length=8, max_length=6_700_000)
+    template_id: UUID | None = None
     # Who signs; for a new lease, the application's applicants when left out.
     signers: list[SignerIn] | None = Field(default=None, min_length=1, max_length=6)
     # Send it for signing now, or keep it as a draft to send later.
@@ -184,8 +186,10 @@ class LeaseOut(BaseModel):
 
 
 def document_of(offer: OfferIn) -> bytes:
+    if not offer.document_title or not offer.document_title.strip():
+        raise HTTPException(422, "the lease document has a title")
     try:
-        document = base64.b64decode(offer.document_base64, validate=True)
+        document = base64.b64decode(offer.document_base64 or "", validate=True)
     except (binascii.Error, ValueError):
         raise HTTPException(422, "the document isn't base64") from None
     if not document.startswith(b"%PDF-"):
@@ -444,6 +448,55 @@ def send_offer(
     return Offered(offer=found, links=links, emailed=emailed)
 
 
+# The unit's property and name.
+UNIT = """
+SELECT p.display_name, u.display_name FROM trust_units AS u
+JOIN trust_properties AS p ON p.id = u.property_id WHERE u.id = %s
+"""
+
+
+def from_template(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    template: notice_templates.Template,
+    new: OfferIn,
+    unit: UUID,
+    people: list[tuple[str, str, Role]],
+) -> bytes:
+    """A lease template filled in from a draft lease's terms, as the PDF it sends for signing."""
+    row = conn.execute(UNIT, (unit,)).fetchone()
+    assert row is not None
+    dollars = notice_templates.dollars
+    us = notice_letters.us
+    guarantors = [name for name, _, role in people if role == "guarantor"]
+    charges = [
+        f"{c.memo.strip()}, {dollars(c.amount)} a month"
+        + (" (a credit)" if c.kind == "credit" else "")
+        for c in new.recurring_charges
+    ]
+    today = rent.today()
+    street = company.street_of(conn, pmc_id)
+    values = {
+        "tenant_names": notice_letters.names([n for n, _, role in people if role == "tenant"]),
+        "guarantor_names": notice_letters.names(guarantors) if guarantors else "none",
+        "property": row[0],
+        "unit": row[1],
+        "monthly_rent": dollars(new.monthly_rent),
+        "security_deposit": dollars(new.security_deposit) if new.security_deposit else "none",
+        "monthly_charges": "; ".join(charges) if charges else "none",
+        "lease_start": us(new.starts_on),
+        "lease_end": "month to month" if new.ends_on is None else us(new.ends_on),
+        "lease_date": us(today),
+        "company_name": company.name_of(conn, pmc_id),
+        "company_address": street,
+    }
+    letterhead = values["company_name"] if not street else f"{values['company_name']}\n{street}"
+    letter = notice_letters.Letter(
+        template.name, letterhead, today, notice_letters.fill(template.body, values)
+    )
+    return notice_letters.render(letter, datetime.now(UTC))
+
+
 def make_offer(
     request: Request,
     session: accounts.Session,
@@ -457,13 +510,24 @@ def make_offer(
 ) -> Offered:
     if new.ends_on is not None and new.ends_on < new.starts_on:
         raise HTTPException(422, "a lease ends on or after the day it starts")
-    document = document_of(new)
+    if (new.template_id is None) == (new.document_base64 is None):
+        raise HTTPException(
+            422, "send the company's lease PDF or name a lease template, one of them"
+        )
     people = signers_of(new.signers or default_signers)
     if not people:
         raise HTTPException(422, "name who signs")
     charges = [(c.kind, c.memo.strip(), c.amount) for c in new.recurring_charges]
     if not all(memo for _, memo, _ in charges):
         raise HTTPException(422, "every monthly charge says what it is for")
+    template = None
+    if new.template_id is not None:
+        template = notice_templates.one(conn, session.pmc_id, new.template_id, "lease")
+        title = template.name
+        document = from_template(conn, session.pmc_id, template, new, unit, people)
+    else:
+        document = document_of(new)
+        title = (new.document_title or "").strip()
     try:
         row = conn.execute(
             "INSERT INTO trust_lease_offers (pmc_id, application_id, renews_lease_id, unit_id,"
@@ -478,7 +542,7 @@ def make_offer(
                 new.ends_on,
                 new.monthly_rent,
                 new.security_deposit,
-                new.document_title.strip(),
+                title,
                 document,
                 session.person_id,
             ),
@@ -487,6 +551,12 @@ def make_offer(
         raise HTTPException(409, refusal(refused)) from None
     assert row is not None
     offer_id = row[0]
+    if template is not None:
+        conn.execute(
+            "INSERT INTO trust_lease_offer_templates (pmc_id, offer_id, template_version_id)"
+            " VALUES (%s, %s, %s)",
+            (session.pmc_id, offer_id, template.version_id),
+        )
     with conn.cursor() as cur:
         cur.executemany(
             "INSERT INTO trust_lease_offer_signers (pmc_id, offer_id, position, display_name,"

@@ -4,13 +4,17 @@ Settings, Notice templates, with blanks such as {{tenant_names}} or {{balance_du
 (pms.notice_letters.FIELDS); on a lease's page they make one into a notice for that lease, dated
 a day they pick, kept as filled in and downloaded as a PDF. A template's words are the company's:
 the PMS writes no notice text and checks no state's notice period or wording. Area documents.
+
+Since migration 0121 a template is for a notice or for a lease, from when it is made: a lease
+template's blanks (pms.notice_letters.LEASE_FIELDS) are filled from a draft lease's terms
+(src/pms/api/offers.py). A notice comes only from a notice template.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, date, datetime
 from decimal import Decimal
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
 import psycopg
@@ -25,6 +29,7 @@ router = APIRouter(prefix="/api/notices")
 
 Name = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=100)]
 Body = Annotated[str, StringConstraints(min_length=1, max_length=20000, pattern=r"\S")]
+Use = Literal["notice", "lease"]
 
 
 class Field(BaseModel):
@@ -34,27 +39,32 @@ class Field(BaseModel):
 
 class Template(BaseModel):
     id: UUID
-    # The version a notice made now would come from.
+    # The version a notice or a lease made now would come from.
     version_id: UUID
     name: str
     body: str
+    used_for: Use
     saved_at: datetime
     saved_by: str | None
 
 
 class Templates(BaseModel):
     templates: list[Template]
+    # The blanks a notice template may use, and those a lease template may.
     fields: list[Field]
+    lease_fields: list[Field]
 
 
 class NewTemplate(BaseModel):
     name: Name
     body: Body
+    # What it is for, from when it is made.
+    used_for: Use = "notice"
 
 
 # The company's templates not removed, each at its latest version, by name.
 CURRENT = """
-SELECT t.id, v.id, v.name, v.body, v.created_at, s.display_name
+SELECT t.id, v.id, v.name, v.body, t.used_for, v.created_at, s.display_name
 FROM trust_notice_templates AS t
 CROSS JOIN LATERAL (
     SELECT * FROM trust_notice_template_versions AS v
@@ -62,30 +72,37 @@ CROSS JOIN LATERAL (
 ) AS v
 LEFT JOIN trust_staff AS s ON s.id = v.recorded_by
 WHERE t.pmc_id = %(pmc)s AND (%(template)s::uuid IS NULL OR t.id = %(template)s)
+  AND (%(use)s::text IS NULL OR t.used_for = %(use)s)
   AND NOT EXISTS (SELECT 1 FROM trust_notice_template_removals AS r WHERE r.template_id = t.id)
 ORDER BY lower(v.name) COLLATE "C", t.id
 """
 
 
 def current(
-    conn: psycopg.Connection[Any], pmc_id: UUID, template_id: UUID | None = None
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    template_id: UUID | None = None,
+    use: Use | None = None,
 ) -> list[Template]:
-    rows = conn.execute(CURRENT, {"pmc": pmc_id, "template": template_id}).fetchall()
+    rows = conn.execute(CURRENT, {"pmc": pmc_id, "template": template_id, "use": use}).fetchall()
     return [
-        Template(id=t, version_id=v, name=n, body=b, saved_at=at, saved_by=by)
-        for t, v, n, b, at, by in rows
+        Template(id=t, version_id=v, name=n, body=b, used_for=u, saved_at=at, saved_by=by)
+        for t, v, n, b, u, at, by in rows
     ]
 
 
-def one(conn: psycopg.Connection[Any], pmc_id: UUID, template_id: UUID) -> Template:
-    found = current(conn, pmc_id, template_id)
+def one(
+    conn: psycopg.Connection[Any], pmc_id: UUID, template_id: UUID, use: Use | None = None
+) -> Template:
+    found = current(conn, pmc_id, template_id, use)
     if not found:
-        raise HTTPException(404, "no such notice template")
+        raise HTTPException(404, f"no such {use or 'notice'} template")
     return found[0]
 
 
-def known_blanks(body: str) -> None:
-    strange = notice_letters.unknown(body)
+def known_blanks(body: str, use: Use) -> None:
+    fields = notice_letters.LEASE_FIELDS if use == "lease" else notice_letters.FIELDS
+    strange = notice_letters.unknown(body, fields)
     if strange:
         listed = ", ".join("{{" + name + "}}" for name in strange)
         raise HTTPException(
@@ -98,7 +115,7 @@ def known_blanks(body: str) -> None:
 def save(
     conn: psycopg.Connection[Any], pmc_id: UUID, template_id: UUID, new: NewTemplate
 ) -> Template:
-    known_blanks(new.body)
+    known_blanks(new.body, new.used_for)
     try:
         conn.execute(
             "INSERT INTO trust_notice_template_versions (pmc_id, template_id, name, body)"
@@ -112,19 +129,22 @@ def save(
 
 @router.get("/templates")
 def templates(session: Staff, conn: Conn) -> Templates:
-    """The company's notice templates, and the blanks a template may use."""
+    """The company's notice and lease templates, and the blanks each may use."""
     return Templates(
         templates=current(conn, session.pmc_id),
         fields=[Field(name=n, what=w) for n, w in notice_letters.FIELDS.items()],
+        lease_fields=[Field(name=n, what=w) for n, w in notice_letters.LEASE_FIELDS.items()],
     )
 
 
 @router.post("/templates", status_code=201)
 def add_template(session: Staff, conn: Conn, new: NewTemplate) -> Template:
-    """A new template; its name is the company's only one of that name, whatever its case."""
-    known_blanks(new.body)
+    """A new template, for notices or for leases; its name is the company's only one of that name,
+    whatever its case."""
+    known_blanks(new.body, new.used_for)
     row = conn.execute(
-        "INSERT INTO trust_notice_templates (pmc_id) VALUES (%s) RETURNING id", (session.pmc_id,)
+        "INSERT INTO trust_notice_templates (pmc_id, used_for) VALUES (%s, %s) RETURNING id",
+        (session.pmc_id, new.used_for),
     ).fetchone()
     assert row is not None
     return save(conn, session.pmc_id, row[0], new)
@@ -135,6 +155,8 @@ def change_template(session: Staff, conn: Conn, template_id: UUID, new: NewTempl
     """A template's new name and text, from now on; saving what it says already writes nothing.
     Notices made before keep the words they were made with."""
     was = one(conn, session.pmc_id, template_id)
+    if new.used_for != was.used_for:
+        raise HTTPException(422, f"this template is for a {was.used_for}, as it was made")
     if (was.name, was.body) == (new.name, new.body):
         return was
     return save(conn, session.pmc_id, template_id, new)
@@ -204,7 +226,7 @@ def dollars(amount: Decimal | None) -> str:
 def filled(
     conn: psycopg.Connection[Any], pmc_id: UUID, staff_id: UUID, asked: NewNotice
 ) -> tuple[Template, Filled]:
-    template = one(conn, pmc_id, asked.template_id)
+    template = one(conn, pmc_id, asked.template_id, "notice")
     row = conn.execute(
         LEASE, {"pmc": pmc_id, "lease": asked.lease_id, "day": asked.dated_on}
     ).fetchone()

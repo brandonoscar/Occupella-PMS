@@ -57,6 +57,7 @@ from pms.api import (
     company,
     custom_roles,
     dashboard,
+    deposit_interest,
     directory,
     documents,
     emails,
@@ -568,6 +569,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(staff.router)
     app.include_router(signers.router)
     app.include_router(moveout.router)
+    app.include_router(deposit_interest.router)
     app.include_router(household.router)
     app.include_router(documents.router)
     app.include_router(company.router)

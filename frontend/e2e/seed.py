@@ -531,6 +531,8 @@ FEATURES = (
     "vendor-archive",
     "payment-files",
     "notice-templates",
+    "lease-templates",
+    "deposit-interest",
 )
 
 

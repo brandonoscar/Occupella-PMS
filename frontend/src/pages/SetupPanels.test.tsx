@@ -5,7 +5,7 @@ import type { Portfolio } from "../setup";
 import { ChartOfAccountsPage } from "./ChartOfAccountsPage";
 import type { Panel } from "./SetupPanels";
 import {
-  AddLeasePanel, AddOwnerPanel, AddPropertyPanel, AddUnitPanel, LateFeesPanel, LeaseBreakFeePanel, NsfFeePanel,
+  AddLeasePanel, AddOwnerPanel, AddPropertyPanel, AddUnitPanel, DepositInterestPanel, LateFeesPanel, LeaseBreakFeePanel, NsfFeePanel,
   TermsPanel,
 } from "./SetupPanels";
 
@@ -226,6 +226,19 @@ describe("setup panels", () => {
     await vi.waitFor(() => expect(p.said).toEqual(["New lease-break fee for leases starting from 2026-10-17."]));
     expect(posted(fetch)).toEqual([["/api/setup/lease-break-fees", {
       property_id: "p1", starts_on: "2026-10-17", flat_fee: "250.00", rent_months: "1.5",
+    }]]);
+  });
+
+  it("sets the yearly rate a property's deposits earn from a day", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-17T12:00:00Z") });
+    const fetch = server();
+    const p = panel();
+    render(<DepositInterestPanel panel={p} propertyId="p1" />);
+    type("Percent a year", "1.5");
+    press("Set deposit interest");
+    await vi.waitFor(() => expect(p.said).toEqual(["Deposits earn 1.5% a year from 10/17/2026."]));
+    expect(posted(fetch)).toEqual([["/api/setup/deposit-interest", {
+      property_id: "p1", starts_on: "2026-10-17", annual_percent: "1.5",
     }]]);
   });
 

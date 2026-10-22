@@ -42,6 +42,16 @@ const LINKS = [
   { position: 2, name: "Applicant B", email: "b@example.com", url: "http://x/sign#two" },
 ];
 
+// The company's templates: a notice one and its own lease (migration 0121).
+const TEMPLATES = {
+  templates: [
+    { id: "t1", version_id: "v1", name: "Late rent", body: "x", used_for: "notice", saved_at: "2026-10-20T15:00:00Z", saved_by: null },
+    { id: "t2", version_id: "v2", name: "Residential lease", body: "y", used_for: "lease", saved_at: "2026-10-20T15:00:00Z", saved_by: null },
+  ],
+  fields: [],
+  lease_fields: [],
+};
+
 function server(found: Offer = OFFER, refuse: Record<string, string> = {}) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method === "POST") {
@@ -63,6 +73,7 @@ function server(found: Offer = OFFER, refuse: Record<string, string> = {}) {
     }
     if (path === "/api/leasing/leases") return new Response(JSON.stringify([LEASE]));
     if (path === "/api/property-groups") return new Response("[]");
+    if (path === "/api/notices/templates") return new Response(JSON.stringify(TEMPLATES));
     return new Response(JSON.stringify({ detail: path }), { status: 404 });
   });
   vi.stubGlobal("fetch", fetch);
@@ -153,6 +164,48 @@ describe("DraftLeasesPage", () => {
         send: false,
       },
     ]]);
+  });
+
+  it("fills one of the company's lease templates instead of a PDF", async () => {
+    const fetch = server();
+    window.history.replaceState(null, "", "/draft-leases?application=a1");
+    render(<DraftLeasesPage me={ME} />);
+
+    const panel = await screen.findByRole("dialog", { name: "New draft lease" });
+    await within(panel).findByDisplayValue("Applicant A, a@example.com");
+    fireEvent.change(within(panel).getByLabelText("The lease"), { target: { value: "template" } });
+    const pick = within(panel).getByLabelText("Lease template") as HTMLSelectElement;
+    await vi.waitFor(() => expect(pick.value).toBe("t2"));
+    expect([...pick.options].map((o) => o.textContent)).toEqual(["Residential lease"]);
+    expect(within(panel).queryByLabelText("Lease document (PDF, your own)")).toBeNull();
+    fireEvent.click(within(panel).getByRole("button", { name: "Save draft" }));
+
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/draft-leases/o1"));
+    expect(posted(fetch)).toEqual([[
+      "/api/leasing/applications/a1/offer",
+      {
+        starts_on: "2027-01-01", ends_on: null, monthly_rent: "1500.00", security_deposit: null,
+        recurring_charges: [], template_id: "t2", signers: [{ name: "Applicant A", email: "a@example.com" }],
+        send: false,
+      },
+    ]]);
+  });
+
+  it("says when the company has no lease template yet", async () => {
+    const fetch = server();
+    const base = fetch.getMockImplementation()!;
+    fetch.mockImplementation(async (path: string, init?: RequestInit) =>
+      path === "/api/notices/templates"
+        ? new Response(JSON.stringify({ ...TEMPLATES, templates: [TEMPLATES.templates[0]] }))
+        : base(path, init),
+    );
+    window.history.replaceState(null, "", "/draft-leases?application=a1");
+    render(<DraftLeasesPage me={ME} />);
+    const panel = await screen.findByRole("dialog", { name: "New draft lease" });
+    await within(panel).findByDisplayValue("Applicant A, a@example.com");
+    fireEvent.change(within(panel).getByLabelText("The lease"), { target: { value: "template" } });
+    expect(within(panel).getByText(/No lease template yet/)).toBeTruthy();
+    expect((within(panel).getByRole("button", { name: "Save draft" }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("sends a renewal for signing at once, from the day after the lease ends", async () => {
