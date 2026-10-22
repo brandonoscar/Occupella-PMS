@@ -358,7 +358,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   it a new table's SELECT only if `trust_app` has it, and never a write path. It never reads
   logins, invites, sessions or credentials, nor rental applications, applicants and their
   screenings, nor lease offers and signatures, nor documents' files, nor contact details, nor notes,
-  nor vendors' links, nor leads and showings, nor screening criteria (`AI_NEVER_READS` in
+  nor notices made for a lease, nor vendors' links, nor leads and showings, nor screening criteria (`AI_NEVER_READS` in
   `tests/test_privileges.py`), nor their rows in the audit log: row-level security shows it only
   the audit rows of tables it may read (migration 0043).
 - A new table starts with `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it
@@ -703,6 +703,18 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   how, what it paid of each charge, what was held as prepaid rent and, once it bounced, that it
   came back, with the company's name and address; staff print it from the lease's Ledger tab and
   the tenant downloads their own in the portal (another's reads as not found).
+- Payment files (migration 0118, `src/pms/api/payment_files.py`, the founder's review q035; Rentals,
+  Payment files at `/payment-files`): a bank's or lockbox's CSV file of the tenants' payments it
+  received (Date, Amount, and each line's Unit, with its Property when units share a name, or its
+  Payer; Reference and Method if given), shown line by line before it comes in, and brought in
+  once per PMC by its SHA-256 (`trust_payment_files`, all its lines at commit). A line naming one
+  lease in effect on its day is recorded to it through `rent.record_payment`, its request id from
+  the line's own id; one naming none or several, looking recorded already (that lease, day and
+  amount) or refused by the books (a hold, a closed period, an owner's account to choose) waits
+  with why (`trust_payment_file_lines.note`). Staff record a waiting line to a lease they find,
+  past a hold if they say, or set it aside with why: `trust_payment_file_postings` (checked at
+  commit to be a tenant payment of the line's amount and day to its lease) or
+  `trust_payment_file_skips`, once per line and never both. Append-only; area rent.
 - Bills and owners' money (`src/pms/api/payables.py`): staff enter, approve, set aside and pay
   bills, run recurring bills, record owner draws and contributions, and take management and
   leasing fees, each through its `trust_*` write path. What the owners page shows as available
@@ -807,6 +819,17 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   or vendor of the PMC (`trust_notes`, exactly one of them, append-only, naming who wrote it; a
   correction is a new note), on its Notes tab (`src/pms/api/notes.py`). They move no money, and
   the AI role never reads them (`AI_NEVER_READS`).
+- Notice templates (migration 0119, `src/pms/api/notice_templates.py`, `src/pms/notice_letters.py`,
+  the founder's review q095): the company's own notices at Settings, Notice templates
+  (`/settings/notices`), in its own words with blanks the PMS fills from a lease
+  (`notice_letters.FIELDS`: {{tenant_names}}, {{balance_due}}, {{notice_date}}...; any other blank
+  is refused). A template keeps its versions (`trust_notice_template_versions`, the latest holding,
+  a name once among the company's templates not removed, whatever its case) and is removed once
+  (`trust_notice_template_removals`). A lease's Files tab writes a notice from one, dated a day
+  staff pick, read filled in first and kept as made (`trust_notices`: its title, letterhead and
+  text, so its PDF reads the same every time). The PMS writes no notice text and checks no
+  state's notice period or wording. Append-only, area documents; the AI role reads the templates
+  but never a notice.
 - Archiving (migrations 0063 and 0064, ADR 0005; vendors since migration 0110, the founder's
   review q131): nothing in a PMC is deleted; a property, unit, tenant, owner or vendor is archived
   instead, a row in `trust_archivals` (append-only, the latest for a record holding,

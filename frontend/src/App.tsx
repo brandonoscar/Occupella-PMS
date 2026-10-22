@@ -41,6 +41,8 @@ import { ReportsPage } from "./pages/ReportsPage";
 import { CalendarPage } from "./pages/CalendarCard";
 import { DataExportPage } from "./pages/DataExportPage";
 import { QuickBooksPage } from "./pages/QuickBooksPage";
+import { NoticeTemplatesPage } from "./pages/NoticeTemplatesPage";
+import { PaymentFilePage, PaymentFilesPage } from "./pages/PaymentFilesPages";
 import { RentPage } from "./pages/RentPage";
 import { LeasePage } from "./pages/LeasePage";
 import { PropertiesPage, PropertyPage, UnitPage } from "./pages/RentalsPages";
@@ -109,6 +111,7 @@ function Home({ path }: { path: string }) {
 const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/properties": (me) => <PropertiesPage me={me} />,
   "/rent-roll": (me) => <RentPage me={me} />,
+  "/payment-files": (me) => <PaymentFilesPage me={me} />,
   "/tenants": (me) => <TenantsPage me={me} />,
   "/owners": (me) => <OwnersPage me={me} />,
   "/housing-authorities": (me) => <HousingAuthoritiesPage me={me} />,
@@ -141,6 +144,7 @@ const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/settings/data-export": (me) => <DataExportPage me={me} />,
   "/settings/quickbooks": (me) => <QuickBooksPage me={me} />,
   "/settings/calendar": (me) => <CalendarPage me={me} />,
+  "/settings/notices": (me) => <NoticeTemplatesPage me={me} />,
 };
 
 // A record's own page, by its address (ADR 0005).
@@ -148,6 +152,7 @@ const RECORDS: [RegExp, (me: Me, id: string) => React.ReactNode][] = [
   [/^\/properties\/([0-9a-f-]{36})$/, (me, id) => <PropertyPage me={me} id={id} />],
   [/^\/units\/([0-9a-f-]{36})$/, (me, id) => <UnitPage me={me} id={id} />],
   [/^\/leases\/([0-9a-f-]{36})$/, (me, id) => <LeasePage me={me} id={id} />],
+  [/^\/payment-files\/([0-9a-f-]{36})$/, (me, id) => <PaymentFilePage me={me} id={id} />],
   [/^\/tenants\/([0-9a-f-]{36})$/, (me, id) => <TenantPage me={me} id={id} />],
   [/^\/owners\/([0-9a-f-]{36})$/, (me, id) => <OwnerPage me={me} id={id} />],
   [/^\/housing-authorities\/([0-9a-f-]{36})$/, (me, id) => <HousingAuthorityPage me={me} id={id} />],
