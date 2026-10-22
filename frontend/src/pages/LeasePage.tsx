@@ -10,6 +10,7 @@ import { Notice } from "../components/Notice";
 import type { RowAction } from "../components/RowMenu";
 import { RowMenu } from "../components/RowMenu";
 import { Said } from "../components/Said";
+import { StateWarnings } from "../components/StateWarnings";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Tabs } from "../components/Tabs";
@@ -52,6 +53,7 @@ import {
   RentChangeForm,
 } from "./LeaseForms";
 import { navigate } from "../router";
+import { useStateCheck } from "../stateRules";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
@@ -257,6 +259,8 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
 // open, the monthly charges (each stopped from its ⋯ menu), housing assistance and renters
 // insurance.
 function Summary({ lease, record, recordDeposit }: { lease: LeaseDetail; record: Recorder; recordDeposit: () => void }) {
+  // The rent changes to come against the state's rules for a rent increase (q142).
+  const rentCheck = useStateCheck(lease.rent_changes.length > 0 ? `/api/state-rules/rent-change?lease_id=${lease.id}` : null, lease);
   const deposit = lease.tenants.reduce((sum, t) => sum + Number(t.deposit), 0).toFixed(2);
   const prepaid = lease.tenants.reduce((sum, t) => sum + Number(t.prepaid), 0).toFixed(2);
   const kinds = depositKindsLine(lease.tenants);
@@ -288,6 +292,7 @@ function Summary({ lease, record, recordDeposit }: { lease: LeaseDetail; record:
           <ul className="text-base" aria-label={`Rent changes, ${lease.unit}`}>
             {lease.rent_changes.map((c) => <li key={c.id}>{rentChangeLine(c)}</li>)}
           </ul>
+          <StateWarnings checked={rentCheck} label="State rules for the rent changes to come" className="mt-3" />
         </Card>
       )}
       {lease.due_days.length > 0 && (

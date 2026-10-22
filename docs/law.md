@@ -786,3 +786,72 @@ statute's text and the IRS's Publication 1099 figures are NOT VERIFIED here.)
 **Left to the company.** Whether a vendor gets a 1099 at all (a corporation usually doesn't; the
 W-9 says), the year's adjusted threshold from 2027, and filing: the PMS files nothing and keeps
 no tax ID.
+
+## State rules as warnings (q142)
+
+The founder, 2026-10-22: a table of per-state rules the PMS can check without deciding anything,
+shown as warnings where staff set those terms. **No attorney has reviewed it.** Every warning, the
+table on Settings, State rules, and this section say so.
+
+**How this was checked (2026-10-22).** One research pass over all 50 states and DC, through web
+searches only: every legislature's site, Justia and Cornell refused or failed the container's
+requests, so **no statute was read on an official site**. Each rule in `src/pms/state_rules.py`
+says how its number is known: `excerpt` when a search excerpt quoted the statute's words (some
+of them on a secondary site that reproduces the text), `secondary` when only summary sites said
+it (NOT VERIFIED; the page marks it "Not verified"). None is `official`. Recent changes the
+research found are in: Florida's entry notice is 24 hours since 2022 (ch. 2022-222), DC's rent
+increase notice more than 60 days since 01/01/2024, Washington's 90 days since EHB 1217
+(05/07/2025), Maine's 75 days for 10% or more (P.L. 2023 c. 594), Maryland's 90 or 60 days
+(8-209, 2023), its entry notice (8-221, 10/01/2025) and its late fee of 5% of the rent unpaid
+(2025 ch. 580), and Rhode Island's 60 days (2024 H 7304).
+
+**What the PMS checks.** The state is the one on the property's address; a property with no
+address is not checked, and says so.
+- **Late fees** (19 states). The wait: a fee only once rent is unpaid this many days after its due
+  date: CO 7, CT 9 (secondary), DC 5, DE 5 (secondary; 8 where the landlord has no office in the
+  county), MA 30, ME 15, NC 5, NV 3, NY 5, OR 3, TN 5 (secondary), TX 2, WA 5. The cap: CO the
+  greater of $50 or 5% of the rent past due; CT the lesser of $5 a day up to $50 or 5% of the rent
+  late (secondary; checked at $50, its month's most); DC 5% of the rent; DE 5%; HI 8% of the rent
+  not paid when due; IA $60 a month for rent up to $700, else $100 (its per-day amounts checked at
+  their monthly most); MD 5% of the rent unpaid; ME 4%; MN 8% of the rent overdue; NC the greater
+  of $15 or 5%; NM 10%; NV 5%; NY the lesser of $50 or 5%; TN 10% of the rent past due
+  (secondary); TX 12% at a property of four units or fewer, else 10% (presumed reasonable; more
+  only within the landlord's damages); VA 10% of the balance due. The cap is checked at the rent
+  of each lease in effect at the property: with all of it late, a dollar of it late, and where the
+  fee or the cap changes how it grows. MA, OR and WA set a wait and no number for the fee (Oregon's
+  flat fee must be reasonable).
+- **Notice of a rent increase** (17 states, beyond the full month every lease already gets):
+  CA 30 days, 90 for more than 10% within 12 months (secondary); CO 60 days without a written
+  lease, and at most one increase in 12 months (38-12-702); CT 45 (secondary); DC more than 60;
+  DE 60 at a renewal; HI 45 (month to month); IA 30; IN 30 unless the agreement says otherwise;
+  MD 60, 90 for a lease longer than a month; ME 45, 75 for 10% or more within 12 months; NM 30;
+  NV 60; NY 30, 60 or 90 days for an increase of 5% or more by how long the tenant has lived there
+  or the lease's term; OR 90, none in a tenancy's first year; RI 60 (120 for a tenant over 62,
+  which the PMS can't know); VT 60; WA 90 (30 where the rent is set by income). A lower rent is
+  never warned about. The tenancy counts back through the leases it renewed.
+- **Notice before entering a home** (29 states), when a work order at a unit with a lease in
+  effect that day has a visit: AK 24 hours, AL 48, AZ 48, CA 24 (written), DC 48 (written), DE 48
+  (not for a repair the tenant asked for), FL 24 (repairs), HI 48, IA 24, KY 48 (where the uniform
+  act was adopted), MD 24 (written), ME 24, MN 24, MT 24, NE 24 (written), NJ one day (a regulation,
+  buildings of three or more units), NM 24 (written), NV 24, OH 24, OK one day, OR 24, RI 48, SC 24
+  (secondary), SD 24, UT 24 unless the agreement says otherwise, VA 72 for routine maintenance the
+  tenant didn't ask for, VT 48, WA 48 (written), WI 12 (a regulation). It counts whole days from
+  the day the visit was set, as a visit's hour isn't known, and a work order opened for a tenant's
+  request is a repair they asked for.
+
+**What it doesn't do.** A warning decides nothing and refuses nothing: every save goes through as
+before (the full month's notice of a rent change is still enforced, as it was). It holds no
+security deposit rule (another session's work), no rent cap (CA 1947.12, OR 90.324, WA's 2025
+law), no city's rule, no exemption (owner-occupied buildings, subsidized housing), no business
+days or extra days for mailed notice, and nothing a state leaves to "reasonable".
+
+**Not settled by the research** (left out or marked): Washington's late fee cap (one source says
+HB 1217 set one; legal aid says none: none here), Hawaii's base for its 8% (here the rent unpaid),
+Oregon's once-in-12-months (found only in bills for manufactured dwelling parks: not here), the
+section numbers of Iowa's and Rhode Island's rent notice (cited by chapter), Idaho's and
+Montana's rent notice (15 or 30 days: not here), Connecticut's extra grace days from 2026 when the
+landlord's own online payments fail, and New Jersey's five business days for seniors.
+
+**Left to the company.** Its own attorney's or broker's reading of its state and city; the notices
+themselves (the PMS records the day notice was given and how, and writes none); anything the
+warnings don't cover.

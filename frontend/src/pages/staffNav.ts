@@ -72,6 +72,7 @@ export const SETTINGS = [
   { href: "/settings/setup", label: "Company setup" },
   { href: "/settings/accounts", label: "Chart of accounts" },
   { href: "/settings/notices", label: "Notice templates" },
+  { href: "/settings/state-rules", label: "State rules" },
   { href: "/settings/import", label: "Import from another PMS" },
   { href: "/settings/data-export", label: "Data export" },
   { href: "/settings/quickbooks", label: "QuickBooks" },

@@ -22,6 +22,8 @@ import { LEASE_STATUS, OWNERSHIP_STATE, occupancy, ownershipStates, sharesLine, 
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { Said } from "../components/Said";
+import { StateWarnings } from "../components/StateWarnings";
+import { checkQuery, useStateCheck } from "../stateRules";
 import { AddressCard } from "./AddressCard";
 import { FilesCard } from "./FilesCard";
 import { navigate } from "../router";
@@ -139,6 +141,14 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
   const [error, setError] = useState("");
   const [open, setOpen] = useState<"" | "unit" | "owner" | "terms" | "ownership" | "late" | "nsf" | "break" | "email">("");
   const [account, setAccount] = useState("");
+  // The late fee terms in force against the property's state's rules (q142).
+  const late = property?.late_fees;
+  const lateCheck = useStateCheck(
+    late ? `/api/state-rules/late-fees?${checkQuery({
+      property_id: id, grace_days: String(late.grace_days), flat_fee: late.flat_fee, percent: late.percent, maximum: late.maximum,
+    })}` : null,
+    property,
+  );
 
   function refresh(keep: Keep = keepAll) {
     api.get<Property>(`/api/properties/${id}`).then(keep(setProperty)).catch(keep((failed) => setError(detail(failed))));
@@ -215,6 +225,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
                     ? `${lateFeeSummary(property.late_fees)} (from ${usDate(property.late_fees.starts_on)})`
                     : "No late fee terms"}
                 </dd>
+                <dd><StateWarnings checked={lateCheck} label="State rules for the late fees in force" /></dd>
                 <dd><Button size="sm" variant="secondary" onClick={() => setOpen("late")}>Set late fees</Button></dd>
               </div>
               <div>

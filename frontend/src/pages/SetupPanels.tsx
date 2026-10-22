@@ -7,10 +7,12 @@ import { Notice } from "../components/Notice";
 import { Said } from "../components/Said";
 import { Select } from "../components/Select";
 import { SidePanel } from "../components/SidePanel";
+import { StateWarnings } from "../components/StateWarnings";
 import { day, usDate } from "../money";
 import type { OwnerAccount as PropertyOwner } from "../rentals";
 import { sharesLine, sharesTotal } from "../rentals";
 import type { Portfolio } from "../setup";
+import { checkQuery, useStateCheck } from "../stateRules";
 import { useRecord } from "./useRecord";
 
 // The setup forms, each in a side panel on the page of what it changes (ADR 0006, step 12:
@@ -252,6 +254,10 @@ export function LateFeesPanel({ panel, propertyId }: { panel: Panel; propertyId:
   const { error, save } = useSave(panel);
   const [fees, setFees] = useState({ starts_on: day(new Date()), grace_days: "5", flat_fee: "", percent: "", maximum: "" });
   const set = (key: keyof typeof fees) => (e: React.ChangeEvent<HTMLInputElement>) => setFees({ ...fees, [key]: e.target.value });
+  // The terms as typed against the property's state's rules (q142): a warning, never a refusal.
+  const checked = useStateCheck(
+    /^\d+$/.test(fees.grace_days.trim()) ? `/api/state-rules/late-fees?${checkQuery({ property_id: propertyId, ...fees })}` : null,
+  );
   return (
     <SidePanel title="Set late fees" onClose={panel.close}>
       <Form className="flex flex-col gap-3" onSubmit={(event) => {
@@ -266,6 +272,7 @@ export function LateFeesPanel({ panel, propertyId }: { panel: Panel; propertyId:
         <Field label="Flat fee" id="fees-flat" inputMode="decimal" value={fees.flat_fee} onChange={set("flat_fee")} />
         <Field label="Percent of unpaid" id="fees-percent" inputMode="decimal" value={fees.percent} onChange={set("percent")} />
         <Field label="Up to" id="fees-maximum" inputMode="decimal" value={fees.maximum} onChange={set("maximum")} />
+        <StateWarnings checked={checked} label="State rules for these late fees" />
         <div><Button type="submit">Set late fees</Button></div>
         <Notice tone="error">{error}</Notice>
       </Form>

@@ -525,6 +525,7 @@ FEATURES = (
     "vendor-archive",
     "payment-files",
     "notice-templates",
+    "state-rules",
 )
 
 

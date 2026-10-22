@@ -4383,3 +4383,103 @@ test("staff keep the company's own notice templates, make one into a notice for 
   // The saved toasts sit over the page's corner until they go.
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
 });
+
+test("staff are warned where they set late fees, a rent change or a visit that a property's state may not allow, and read the state rules, which no attorney has reviewed", async ({
+  page,
+}) => {
+  const people = seed.features["state-rules"]!;
+  await joinAsStaff(page, people.manager);
+  // Elm Court in Washington: before its address, no state's rules are checked.
+  await openProperty(page, "Elm Court");
+  await page.getByRole("button", { name: "Set late fees", exact: true }).click();
+  let fees = page.getByRole("dialog", { name: "Set late fees" });
+  await fees.getByLabel("Grace days").fill("2");
+  await expect(fees).toContainText("No address on file for this property, so no state's rules were checked.");
+  await fees.getByRole("button", { name: "Close" }).click();
+  const card = part(page, "Address");
+  await card.getByRole("button", { name: "Add address" }).click();
+  const add = page.getByRole("dialog", { name: "Add address" });
+  await add.getByLabel("Street").fill("300 Synthetic Way");
+  await add.getByLabel("City").fill("Demo City");
+  await add.getByLabel("State (two letters)").fill("wa");
+  await add.getByLabel("ZIP code").fill("00003");
+  await add.getByRole("button", { name: "Save address" }).click();
+  await expect(page.getByText("Address saved.")).toBeVisible();
+  // Its five grace days meet Washington's wait.
+  await expect(page.getByRole("region", { name: "State rules for the late fees in force" })).toHaveCount(0);
+
+  // Two grace days, as typed: a warning in the panel, which saves all the same.
+  await page.getByRole("button", { name: "Set late fees", exact: true }).click();
+  fees = page.getByRole("dialog", { name: "Set late fees" });
+  await fees.getByLabel("Grace days").fill("2");
+  await fees.getByLabel("Flat fee").fill("75.00");
+  const typed = fees.getByRole("region", { name: "State rules for these late fees" });
+  await expect(typed).toContainText("WA rules: a warning, not a refusal");
+  await expect(typed).toContainText(
+    "Washington: no late fee until rent is unpaid five days after its due date (RCW 59.18.170(2))."
+    + " These terms charge one after 2 days of grace; 5 or more meets it.",
+  );
+  await expect(typed).toContainText("No attorney has reviewed these state rules.");
+  await expectAccessible(page, "the late fee panel's warning");
+  await fees.getByLabel("Grace days").fill("5");
+  await expect(typed).toHaveCount(0);
+  await fees.getByLabel("Grace days").fill("2");
+  await expect(typed).toBeVisible();
+  await fees.getByRole("button", { name: "Set late fees" }).click();
+  await expect(page.getByText(`New late fee terms from ${today()}.`)).toBeVisible();
+  await expect(page.getByRole("region", { name: "State rules for the late fees in force" })).toContainText(
+    "These terms charge one after 2 days of grace; 5 or more meets it.",
+  );
+
+  // A rent increase on less than Washington's 90 days' notice, as typed and then on file.
+  await page.getByRole("row", { name: "Unit 1", exact: true }).getByRole("link", { name: "Open lease" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: /^Elm Court · Unit 1 · / })).toBeVisible();
+  const change = await leasePanel(page, "Change rent");
+  const from = dayOfMonth() === 1 ? firstOfMonthsAgo(-1) : firstOfMonthsAgo(-2);
+  const days = Math.round((Date.parse(from) - Date.parse(today())) / 86_400_000);
+  await change.getByLabel("New monthly rent").fill("1500.00");
+  await change.getByLabel("From (the first of a month)").fill(from);
+  const notice =
+    "Washington: a rent increase needs 90 days' written notice (30 where the rent is set by the tenant's income)"
+    + ` (RCW 59.18.140(3)). Notice given ${us(today())} for ${us(from)} is ${days} days.`;
+  await expect(change.getByRole("region", { name: "State rules for this rent change" })).toContainText(notice);
+  await change.getByRole("button", { name: "Change rent" }).click();
+  await expect(change).toHaveCount(0);
+  await expect(page.getByText(`Rent of $1,500.00 a month from ${us(from)} recorded.`)).toBeVisible();
+  await expect(page.getByRole("region", { name: "State rules for the rent changes to come" })).toContainText(notice);
+
+  // A visit tomorrow into a home someone lives in: Washington asks two days' written notice.
+  await section(page, "Work orders");
+  await page.getByRole("button", { name: "New work order" }).click();
+  const opened = page.getByRole("dialog", { name: "New work order" });
+  await opened.getByRole("combobox", { name: "Property", exact: true }).selectOption({ label: "Elm Court" });
+  await opened.getByRole("combobox", { name: "Unit", exact: true }).selectOption({ label: "Unit 1" });
+  await opened.getByLabel("Title").fill("Water heater rumbles");
+  await opened.getByRole("button", { name: "Open work order" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: /Water heater rumbles$/ })).toBeVisible();
+  await page.getByRole("button", { name: "Next step" }).click();
+  const assign = page.getByRole("dialog", { name: "Next step" });
+  await assign.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Roofing Co" });
+  await assign.getByRole("button", { name: "Record" }).click();
+  await expect(page.getByText("Assigned to Demo Roofing Co.")).toBeVisible();
+  await page.getByRole("button", { name: "Next step" }).click();
+  const next = page.getByRole("dialog", { name: "Next step" });
+  await next.getByRole("combobox", { name: "What happens next" }).selectOption({ label: "Schedule the visit" });
+  await next.getByLabel("Visit on").fill(daysFromToday(1));
+  const entry =
+    "Washington asks at least two days' written notice before entering, at reasonable times (RCW 59.18.150(6))."
+    + ` This visit on ${us(daysFromToday(1))} was set on ${us(today())}.`;
+  await expect(next.getByRole("region", { name: "State rules for this visit" })).toContainText(entry);
+  await next.getByRole("button", { name: "Record" }).click();
+  await expect(page.getByText(`Scheduled for ${us(daysFromToday(1))}.`)).toBeVisible();
+  await expect(page.getByRole("region", { name: "State rules for this visit" })).toContainText(entry);
+
+  // The table: what it is first, then each state's rules with their statutes.
+  await settings(page, "State rules");
+  await expect(page.getByTestId("not-reviewed")).toHaveText(/^No attorney has reviewed these state rules\./);
+  const washington = page.getByRole("row", { name: "Washington" });
+  await expect(washington).toContainText("no late fee until rent is unpaid five days after its due date");
+  await expect(washington.getByRole("link", { name: "RCW 59.18.140(3)" })).toHaveAttribute("href", /^https:\/\//);
+  await expect(page.getByRole("row", { name: "Tennessee" })).toContainText("Not verified");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+});

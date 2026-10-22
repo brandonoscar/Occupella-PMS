@@ -5,6 +5,7 @@ import { Field } from "../components/Field";
 import { Form } from "../components/Form";
 import { RowMenu } from "../components/RowMenu";
 import { Select } from "../components/Select";
+import { StateWarnings } from "../components/StateWarnings";
 import { Badge } from "../components/Badge";
 import { day, money, usDate } from "../money";
 import type { Bounce, DepositKind, Hold, OpenCharge, Payment, PaymentMethod, RecurringCharge, RentChange, RentLease } from "../rent";
@@ -24,6 +25,7 @@ import {
 import { sharesLine } from "../rentals";
 import type { Named, Portfolio } from "../setup";
 import { ChargeTypeSelect, useChargeTypes } from "./ChargeTypes";
+import { checkQuery, useStateCheck } from "../stateRules";
 
 // The forms of a lease's rent work (pages/LeasePage.tsx), each one thing recorded: a payment, a
 // fee or credit, one every month, a new rent, a deposit; and a payment's row, which can bounce,
@@ -268,14 +270,20 @@ export function RecurringForm({ lease, record }: { lease: RentLease; record: Rec
 }
 
 // A new monthly rent from the first of a month, after written notice of a full month. A lease
-// with an end date names the term that lets its rent change during it. A state or city may ask
-// for more notice, or cap the increase: that stays the company's to check.
+// with an end date names the term that lets its rent change during it. A state may ask for more
+// notice, or limit when rent may rise: the state rules warn of it as the change is typed (q142),
+// never refusing it. A city's rules and rent caps stay the company's to check.
 export function RentChangeForm({ lease, record }: { lease: RentLease; record: Recorder }) {
   const [from, setFrom] = useState(earliestRentChange(new Date()));
   const [amount, setAmount] = useState("");
   const [notice, setNotice] = useState(day(new Date()));
   const [served, setServed] = useState<RentChange["served_by"]>("mail");
   const [terms, setTerms] = useState("");
+  const checked = useStateCheck(
+    amount.trim() && from && notice
+      ? `/api/state-rules/rent-change?${checkQuery({ lease_id: lease.id, effective_on: from, notice_given_on: notice, monthly_rent: amount })}`
+      : null,
+  );
   return (
     <Form
       className="flex flex-wrap items-end gap-3"
@@ -310,6 +318,7 @@ export function RentChangeForm({ lease, record }: { lease: RentLease; record: Re
         <Field label="The lease term that allows it" id={`rent-change-terms-${lease.id}`} required
           maxLength={500} value={terms} onChange={(e) => setTerms(e.target.value)} />
       )}
+      <StateWarnings checked={checked} label="State rules for this rent change" className="basis-full" />
       <Button type="submit" variant="secondary">Change rent</Button>
     </Form>
   );

@@ -323,6 +323,20 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   its UID. A new link takes the old back, one person's links wait for each other, and a link
   taken back or whose login is disabled reads as not found. The access log prints the token as
   "…". It is no custom-role area (each person's own); the AI role reads neither table.
+- State rules as warnings (q142, `src/pms/state_rules.py`, `docs/law.md`): a table of the
+  numbers some states' statutes set (how long rent goes unpaid before a late fee and the most a
+  late fee may be; days of written notice of a rent increase, none in a tenancy's first year or
+  twice in 12 months; hours of notice before entering a home), each with its statute and how it
+  was checked ("official", "excerpt", or "secondary": NOT VERIFIED). No attorney has reviewed it,
+  and every warning and the table say so. `src/pms/api/state_rules.py` checks, against the state
+  on the property's address (none without one), the terms as staff type them or as on file:
+  late fees (`/api/state-rules/late-fees`: the cap at each lease in effect's rent), a rent change
+  (`/rent-change`: the tenancy back through the leases it renewed) and a visit into a lived-in
+  unit (`/entry`, by whole days); `components/StateWarnings.tsx` shows them in the late fee panel
+  and on the property's page, the rent change form and the lease's Rent changes, the work order's
+  Next step and its page; Settings, State rules (`/settings/state-rules`) lists the table. A
+  warning decides nothing and refuses nothing: no save waits on it. Security deposit rules, rent
+  caps and a city's rules are not in it.
 - Every table we add carries `pmc_id uuid`. It maps to Occupella's `companies.id` at merge time.
 - Table names: `pgledger_*` from upstream, `trust_*` for ours. Our functions and triggers are
   `trust_*` too. A report function is `trust_report_<name>`. `tests/test_schema_conventions.py`

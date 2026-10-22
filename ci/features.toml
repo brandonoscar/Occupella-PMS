@@ -953,3 +953,16 @@ operations = [
 browser = [
   "features.spec.ts › staff keep the company's own notice templates, make one into a notice for a lease, read it filled in and download its PDF",
 ]
+
+[[feature]]
+id = "state-rules"
+statement = "Staff are warned, never refused, where they set late fees (the panel as typed and the property's page for the terms in force: the wait and the cap at each lease's rent), a rent change (the form as typed and the lease's changes to come: the notice, a bigger increase's, a tenancy's first year, once in 12 months) or a visit into a lived-in unit (the work order's Next step and its page: the hours of notice) that the state on the property's address may not allow; Settings, State rules lists the table, each rule with its statute and how it was checked, and says first that no attorney has reviewed it (q142, src/pms/state_rules.py, docs/law.md)."
+operations = [
+  "GET /api/state-rules",
+  "GET /api/state-rules/late-fees",
+  "GET /api/state-rules/rent-change",
+  "GET /api/state-rules/entry",
+]
+browser = [
+  "features.spec.ts › staff are warned where they set late fees, a rent change or a visit that a property's state may not allow, and read the state rules, which no attorney has reviewed",
+]

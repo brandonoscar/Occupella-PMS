@@ -14,12 +14,14 @@ import { Said } from "../components/Said";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
+import { StateWarnings } from "../components/StateWarnings";
 import { Wide } from "../components/Wide";
 import { latest } from "../latest";
 import { day, money, usDate } from "../money";
 import type { Paged } from "../rentals";
 import { navigate } from "../router";
 import { scopeParams, useScope } from "../scope";
+import { checkQuery, useStateCheck } from "../stateRules";
 import type { Named, Portfolio } from "../setup";
 import type { OnCall } from "../maintenance";
 import type {
@@ -449,6 +451,8 @@ export function WorkOrderPage({ me, id }: { me: Me; id: string }) {
     if (recorded) setPanel(null);
     return recorded;
   };
+  // The visit on file against the state's notice before entering a home (q142).
+  const entryCheck = useStateCheck(order?.scheduled_for && order.unit ? `/api/state-rules/entry?work_order_id=${id}` : null, order);
 
   if (order === null) {
     return (
@@ -500,6 +504,7 @@ export function WorkOrderPage({ me, id }: { me: Me; id: string }) {
           <Item label="Entry">{order.entry ? ENTRY[order.entry] : "Not asked"}</Item>
         </dl>
         {order.description && <p className="mt-3 text-base whitespace-pre-line" data-testid="description">{order.description}</p>}
+        <StateWarnings checked={entryCheck} label="State rules for this visit" className="mt-3" />
       </Card>
       {(order.tenants.length > 0 || order.request) && (
         <Card title="Tenant">
@@ -700,6 +705,10 @@ function StepForm({ order, vendors, record }: { order: WorkOrder; vendors: Named
   const [slot, setSlot] = useState("");
   const [note, setNote] = useState("");
   const chosen = vendor || vendors[0]?.id || "";
+  // A visit into a home set today against the state's notice before entry (q142): a warning.
+  const checked = useStateCheck(
+    step === "scheduled" && on && order.unit ? `/api/state-rules/entry?${checkQuery({ work_order_id: order.id, day: on })}` : null,
+  );
   return (
     <Form
       className="flex flex-col gap-3"
@@ -735,6 +744,7 @@ function StepForm({ order, vendors, record }: { order: WorkOrder; vendors: Named
           <Field label="Visit on" id="step-on" type="date" required value={on} onChange={(event) => setOn(event.target.value)} />
           <Field label="Window (optional, like 8-10 am)" id="step-window" maxLength={60} value={slot}
             onChange={(event) => setSlot(event.target.value)} />
+          <StateWarnings checked={checked} label="State rules for this visit" />
         </>
       )}
       <Field label="Note (optional)" id="step-note" maxLength={2000} value={note} onChange={(event) => setNote(event.target.value)} />
