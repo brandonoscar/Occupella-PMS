@@ -337,6 +337,19 @@ def test_what_is_refused(conn, app_conn, pmc, lease):
         deposit_interest_terms(conn, pmc.pmc_id, pmc.owners[0].property_id, JAN_1_2025, 2)
 
 
+def test_a_lease_its_tenants_moved_from_pays_none(conn, app_conn, pmc, lease):
+    # Their deposits moved with them to the new lease, which pays the interest from then on.
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, "1B")
+    moved = conn.execute(
+        "SELECT trust_transfer_lease(%s, %s, %s, %s, NULL, 1500.00, NULL, %s)",
+        (pmc.pmc_id, lease, unit, date(2025, 7, 1), date(2025, 6, 15)),
+    ).fetchone()[0]
+    with refused(f"tenants moved to lease {moved}, and their deposits with them"):
+        pay_deposit_interest(
+            app_conn, pmc.pmc_id, lease, JUN_30_2025, "deposit", "moved", JAN_5_2026
+        )
+
+
 # --- the report --------------------------------------------------------------------------------
 
 
@@ -377,6 +390,10 @@ def test_the_report_lists_each_lease_from_its_next_payment(conn, app_conn, ai_co
     ]
     with refused("as of a day", psycopg.errors.InvalidParameterValue):
         report(app_conn, None)
+    with refused("no PMC", psycopg.errors.InvalidParameterValue):
+        app_conn.execute(
+            "SELECT * FROM trust_report_deposit_interest(gen_random_uuid(), %s)", (DEC_31_2025,)
+        )
 
 
 # --- kept as made ------------------------------------------------------------------------------
