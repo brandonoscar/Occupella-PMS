@@ -272,6 +272,11 @@ TABLES = {
     "trust_deduction_receipts": {"SELECT", "INSERT"},
     # The lease template version a lease offer's document was filled from (migration 0121).
     "trust_lease_offer_templates": {"SELECT", "INSERT"},
+    # Interest on security deposits (migration 0122): a property's rate from a day, which staff
+    # record; payments and their lines, written only by trust_pay_deposit_interest.
+    "trust_deposit_interest_terms": {"SELECT", "INSERT"},
+    "trust_deposit_interest_payments": {"SELECT"},
+    "trust_deposit_interest_lines": {"SELECT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -507,6 +512,13 @@ FUNCTIONS = {
     "trust_lock_notice_templates()": set(),
     "trust_check_deduction_receipt()": set(),
     "trust_check_template_use()": set(),
+    # Deposit interest (migration 0122): what it comes to, and paying it, for the app; the AI
+    # reads it through the report.
+    "trust_deposit_interest_rate(uuid,date)": {"trust_app"},
+    "trust_deposit_interest_on(text,uuid,date,date)": {"trust_app"},
+    "trust_deposit_interest_from(uuid)": {"trust_app"},
+    "trust_deposit_interest_due(uuid,date,date)": {"trust_app"},
+    "trust_pay_deposit_interest(uuid,uuid,date,text,text,text,timestamptz)": {"trust_app"},
     # Reports read trust records, so only the app and the AI; they run with the caller's own
     # read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app", "trust_ai_agent"},
@@ -543,6 +555,7 @@ FUNCTIONS = {
     "trust_report_vendor_insurance(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_trust_account_signers(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_renters_insurance(uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_deposit_interest(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_is_archived(uuid,uuid,uuid,uuid,uuid)": {"trust_app"},
     "trust_group_properties(uuid)": {"trust_app"},
     "trust_run_rent(uuid,date,date)": {"trust_app"},
@@ -663,6 +676,7 @@ SECURITY_DEFINER = {
     "trust_prepare_bank_reconciliation(uuid,uuid,date)",
     "trust_approve_bank_reconciliation(uuid,uuid)",
     "trust_return_deposit(uuid,uuid,text,text,timestamptz)",
+    "trust_pay_deposit_interest(uuid,uuid,date,text,text,text,timestamptz)",
     "trust_remove_lease_tenant(uuid,uuid,uuid,date,uuid)",
     "trust_transfer_lease(uuid,uuid,uuid,date,date,numeric,text,date)",
     "trust_close_year(uuid,integer)",
@@ -687,6 +701,9 @@ SECURITY_DEFINER = {
     # Reads households' certifications for the AI role, which never reads them, and returns only
     # days and where each stands, never income or household size (migration 0108).
     "trust_report_assistance_compliance(uuid,date)",
+    # Works out each lease's deposit interest for the AI role with functions only the app calls
+    # (migration 0122).
+    "trust_report_deposit_interest(uuid,date)",
 }
 
 

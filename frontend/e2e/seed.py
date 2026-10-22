@@ -526,6 +526,7 @@ FEATURES = (
     "payment-files",
     "notice-templates",
     "lease-templates",
+    "deposit-interest",
 )
 
 

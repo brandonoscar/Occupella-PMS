@@ -965,3 +965,15 @@ operations = [
 browser = [
   "features.spec.ts › staff keep the company's own lease as a template, and a draft lease is it filled in from its terms",
 ]
+
+[[feature]]
+id = "deposit-interest"
+statement = "Interest on security deposits (the founder's review q041; migration 0122): a property's yearly rate from a day, set on its page (the PMS builds in no state's rate); each day's deposit earns that day's rate over the days in its year, to the cent per deposit. From a lease's ⋯ menu staff see what its deposits earned since the last payment through a day and pay it, once per request, as a credit against the rent (a lease in effect) or added to the deposit from the owner's account with its cash (taking the disburse role); a deposit gone back takes none. Reports, Deposit interest lists each lease with deposits held, the rate, the next payment's first day and what is due."
+operations = [
+  "POST /api/setup/deposit-interest",
+  "GET /api/rent/leases/{lease_id}/deposit-interest",
+  "POST /api/rent/leases/{lease_id}/deposit-interest",
+]
+browser = [
+  "features.spec.ts › staff set a property's deposit interest, credit a lease's interest against its rent and see it in Reports",
+]

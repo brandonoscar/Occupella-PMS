@@ -139,6 +139,11 @@ class LeaseBreakFee(BaseModel):
     rent_months: str
 
 
+class DepositInterestTerms(BaseModel):
+    starts_on: date
+    annual_percent: str  # the yearly rate on the property's deposits; "0" earns none
+
+
 class Property(Named):
     units: list[Unit]
     # The late fee terms in force today, if any.
@@ -782,6 +787,31 @@ def add_lease_break_fee(session: Staff, conn: Conn, new: NewLeaseBreakFee) -> Cr
                 " (pmc_id, property_id, starts_on, flat_fee, rent_months)"
                 " VALUES (%s, %s, %s, %s, %s) RETURNING id",
                 (session.pmc_id, new.property_id, new.starts_on, new.flat_fee, new.rent_months),
+            )
+        )
+
+
+class NewDepositInterest(BaseModel):
+    property_id: UUID
+    starts_on: date
+    # As a percent a year, up to four decimals: 0 earns none from that day (migration 0122).
+    annual_percent: Annotated[Decimal, Field(ge=0, le=25, decimal_places=4)]
+
+
+@router.post("/deposit-interest", status_code=201)
+def add_deposit_interest(session: Staff, conn: Conn, new: NewDepositInterest) -> Created:
+    """The yearly rate a property's security deposits earn from a day, as the law the company
+    follows sets it (the PMS builds in no state's rate): each day's deposit earns the day's rate
+    over the days in its year, and staff pay it from the lease's page."""
+    found(conn, "property", session.pmc_id, new.property_id)
+    with refusals("this property's deposit interest changes on that day already"):
+        return Created(
+            id=insert(
+                conn,
+                "INSERT INTO trust_deposit_interest_terms"
+                " (pmc_id, property_id, starts_on, annual_percent) VALUES (%s, %s, %s, %s)"
+                " RETURNING id",
+                (session.pmc_id, new.property_id, new.starts_on, new.annual_percent),
             )
         )
 

@@ -4466,3 +4466,47 @@ test("staff keep the company's own lease as a template, and a draft lease is it 
     expect(read).toContain(words);
   }
 });
+
+test("staff set a property's deposit interest, credit a lease's interest against its rent and see it in Reports", async ({
+  page,
+}) => {
+  const people = seed.features["deposit-interest"]!;
+  await joinAsStaff(page, people.manager);
+  // Birch Flats' deposits earn 2% a year from two months ago, when Morgan Demo's came over.
+  const from = firstOfMonthsAgo(2);
+  await openProperty(page, "Birch Flats");
+  await expect(page.getByTestId("deposit-interest")).toHaveText("No deposit interest");
+  const terms = await setupPanel(page, "Set deposit interest");
+  await terms.getByLabel("Deposits earn from").fill(from);
+  await terms.getByLabel("Percent a year").fill("2");
+  await terms.getByRole("button", { name: "Set deposit interest" }).click();
+  await expect(page.getByTestId("deposit-interest")).toHaveText(`2% a year (from ${us(from)})`);
+
+  // On Morgan Demo's lease: what the deposit earned through today, credited against the rent.
+  await openLease(page, "Birch Flats, Unit A");
+  const panel = await leasePanel(page, "Deposit interest");
+  await expect(panel.getByTestId("interest-rate")).toHaveText(`2% a year (from ${us(from)})`);
+  await expect(panel.getByRole("list", { name: "Deposits" })).toContainText("Morgan Demo: $1,395.00 held, $");
+  const due = panel.getByTestId("interest-due");
+  await expect(due).toContainText(` to ${us(today())}: $`);
+  const amount = ((await due.textContent()) ?? "").split(": ")[1]!;
+  expect(amount).not.toBe("$0.00");
+  await expect(panel.getByLabel("Pay it as")).toHaveValue("rent_credit");
+  await panel.getByRole("button", { name: "Pay interest" }).click();
+  await expect(page.getByText(`${amount} credited against the rent, `, { exact: false }).first()).toBeVisible();
+  await page.getByRole("tab", { name: "Ledger" }).click();
+  await expect(page.getByRole("main")).toContainText(`Security deposit interest, `);
+
+  // Paid through today: nothing more is due, and Reports lists the lease from tomorrow.
+  const again = await leasePanel(page, "Deposit interest");
+  await expect(again.getByRole("list", { name: "Interest paid" })).toContainText(`${amount} credited against the rent`);
+  await again.getByRole("button", { name: "Close" }).click();
+  await section(page, "Reports");
+  await page.getByRole("list", { name: "Financial" }).getByRole("link", { name: "Deposit interest" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Deposit interest" })).toBeVisible();
+  const report = page.getByRole("table", { name: "Deposit interest" });
+  await expect(report).toContainText("Unit A");
+  await expect(report).toContainText("Morgan Demo");
+  // The saved toasts sit over the page's corner until they go.
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+});
