@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
+import { holdBack } from "../holdBack";
 import type { Bill, OwnerMoney } from "../payables";
 import { PayBillsPage, cashOf } from "./PayBillsPage";
 
@@ -115,5 +116,35 @@ describe("PayBillsPage", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));
     render(<PayBillsPage me={ME} />);
     expect((await screen.findAllByRole("alert"))[0]?.textContent).toBe("sign in first");
+  });
+
+  it("shows the bills and cash of the property group picked now, even when an earlier group's answers come back last", async () => {
+    const groups = { groups: [{ id: "g1", name: "North", properties: [] }, { id: "g2", name: "South", properties: [] }], properties: [] };
+    vi.stubGlobal("fetch", vi.fn(async (path: string) => {
+      const group = path.includes("group=g1") ? "g1" : path.includes("group=g2") ? "g2" : "";
+      const bills = group === "g1" ? [bill(1, "200.00", "to set aside")] : group === "g2" ? [bill(4, "50.00", "to set aside", "a2")] : [];
+      const read = path.startsWith("/api/payables/bills") ? { items: bills, total: bills.length, page: 1, per_page: 200 }
+        : path.startsWith("/api/payables/owners") ? (group === "g1" ? [OWNERS[0]] : group === "g2" ? [OWNERS[1]] : [])
+        : groups;
+      return new Response(JSON.stringify(read), { status: 200 });
+    }));
+    const releaseBills = holdBack((path) => path.startsWith("/api/payables/bills") && path.includes("group=g1"));
+    const releaseOwners = holdBack((path) => path.startsWith("/api/payables/owners") && path.includes("group=g1"));
+    render(<PayBillsPage me={ME} />);
+    await screen.findByTestId("empty-state");
+    const picker = screen.getByRole("combobox", { name: "Properties shown" });
+    await within(picker).findByRole("option", { name: "South" });
+
+    fireEvent.change(picker, { target: { value: "group:g1" } });
+    fireEvent.change(picker, { target: { value: "group:g2" } });
+    fireEvent.click(await screen.findByLabelText("Pay Vendor 1 INV-4"));
+    const cash = () => within(screen.getByRole("table", { name: "Each property's cash" })).getAllByRole("row").slice(1);
+    await vi.waitFor(() => expect(cash().map((row) => row.getAttribute("aria-label"))).toEqual(["Owner 1, Property 2"]));
+    await releaseBills();
+    await releaseOwners();
+
+    expect(screen.getByRole("row", { name: "Vendor 1 INV-4" })).toBeTruthy();
+    expect(screen.queryByRole("row", { name: "Vendor 1 INV-1" })).toBeNull();
+    expect(cash().map((row) => row.getAttribute("aria-label"))).toEqual(["Owner 1, Property 2"]);
   });
 });

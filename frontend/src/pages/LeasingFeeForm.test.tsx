@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { holdBack } from "../holdBack";
 import type { LeaseDetail } from "../rentals";
 import { LeasingFeeForm, leasingFeeSaid } from "./LeasingFeeForm";
 
@@ -30,6 +31,20 @@ describe("LeasingFeeForm", () => {
       "/api/payables/leasing-fees", { lease_id: "l1", account: "a2", on: "2026-10-16" }, expect.any(Function),
     );
     expect(record.mock.calls[0]![2]({ amount: "750.00" })).toBe("A leasing fee of $750.00 is taken.");
+  });
+
+  it("offers the owners of the lease's property now, even when an earlier property's answer comes back last", async () => {
+    const later = [{ account: "a3", owner: "Owner 3" }];
+    vi.stubGlobal("fetch", vi.fn(async (path: string) =>
+      new Response(JSON.stringify(path.endsWith("property=pr1") ? accounts : later))));
+    const release = holdBack((path) => path.endsWith("property=pr1"));
+    const { rerender } = render(<LeasingFeeForm lease={LEASE} record={vi.fn()} />);
+    rerender(<LeasingFeeForm lease={{ ...LEASE, property: "Property 2", property_id: "pr2" }} record={vi.fn()} />);
+    await screen.findByRole("option", { name: "Owner 3" });
+    await release();
+
+    expect(screen.getByRole("option", { name: "Owner 3" })).toBeTruthy();
+    expect(screen.queryByRole("option", { name: "Owner 1" })).toBeNull();
   });
 
   it("says when no owner holds an account for the property, and when the accounts can't be read", async () => {

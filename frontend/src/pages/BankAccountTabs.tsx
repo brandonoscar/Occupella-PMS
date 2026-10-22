@@ -13,6 +13,7 @@ import { Button } from "../components/Button";
 import { Form } from "../components/Form";
 import { Said } from "../components/Said";
 import { useRecord } from "./useRecord";
+import { latest } from "../latest";
 import { day, money, usDate } from "../money";
 import type { Paged } from "../rentals";
 import { GoLink } from "./NeedsAttention";
@@ -35,11 +36,13 @@ export function RegisterTab({ bankId }: { bankId: string }) {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    const run = latest();
     setError("");
     const query = new URLSearchParams({ start, end, page: String(number) });
     api.get<Paged<RegisterLine>>(`/api/bank-accounts/${bankId}/register?${query}`)
-      .then(setPage)
-      .catch((why) => { setPage(null); setError(detail(why)); });
+      .then(run.keep(setPage))
+      .catch(run.keep((why) => { setPage(null); setError(detail(why)); }));
+    return run.stop;
   }, [bankId, start, end, number]);
 
   return (
@@ -99,7 +102,10 @@ export function BreakdownTab({ bankId }: { bankId: string }) {
   const [found, setFound] = useState<Breakdown | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
-    api.get<Breakdown>(`/api/bank-accounts/${bankId}/breakdown`).then(setFound).catch((why) => setError(detail(why)));
+    const run = latest();
+    api.get<Breakdown>(`/api/bank-accounts/${bankId}/breakdown`)
+      .then(run.keep(setFound)).catch(run.keep((why) => setError(detail(why))));
+    return run.stop;
   }, [bankId]);
   if (found === null) return <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>;
   return (
@@ -163,8 +169,12 @@ export function DepositsTab({ bankId }: { bankId: string }) {
   const { said, error: refused, record } = useRecord(() => setRuns((n) => n + 1));
 
   useEffect(() => {
-    api.get<Undeposited[]>(`/api/bank-accounts/${bankId}/undeposited`).then(setWaiting).catch((why) => setError(detail(why)));
-    api.get<BankDeposit[]>(`/api/bank-accounts/${bankId}/deposits`).then(setDone).catch((why) => setError(detail(why)));
+    const run = latest();
+    api.get<Undeposited[]>(`/api/bank-accounts/${bankId}/undeposited`)
+      .then(run.keep(setWaiting)).catch(run.keep((why) => setError(detail(why))));
+    api.get<BankDeposit[]>(`/api/bank-accounts/${bankId}/deposits`)
+      .then(run.keep(setDone)).catch(run.keep((why) => setError(detail(why))));
+    return run.stop;
   }, [bankId, runs]);
 
   const picked = (waiting ?? []).filter((w) => chosen.includes(w.id));

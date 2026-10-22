@@ -8,6 +8,7 @@ import { Said } from "../components/Said";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
+import { latest } from "../latest";
 import { money, usDate } from "../money";
 import type { BillPageData } from "../payables";
 import { billBadge, emailNote, markupLabel } from "../payables";
@@ -43,8 +44,10 @@ export function BillPage({ me, id }: { me: Me; id: string }) {
   const { said, error: refused, record } = useRecord(() => setRuns((n) => n + 1));
 
   useEffect(() => {
-    api.get<BillPageData>(`/api/payables/bills/${id}`).then(setFound)
-      .catch((why) => setError(why instanceof ApiError ? why.detail : String(why)));
+    const run = latest();
+    api.get<BillPageData>(`/api/payables/bills/${id}`).then(run.keep(setFound))
+      .catch(run.keep((why) => setError(why instanceof ApiError ? why.detail : String(why))));
+    return run.stop;
   }, [id, runs]);
   useEffect(() => {
     api.get<Portfolio>("/api/setup").then(setBooks).catch(() => setBooks(null));

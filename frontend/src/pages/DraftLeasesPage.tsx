@@ -13,6 +13,7 @@ import { PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Tabs } from "../components/Tabs";
 import { Wide } from "../components/Wide";
+import { latest } from "../latest";
 import { money, usDate } from "../money";
 import type { Offer } from "../offers";
 import { offerBadge } from "../offers";
@@ -64,9 +65,11 @@ export function DraftLeasesPage({ me }: { me: Me }) {
   const { said, error: refused, record } = useRecord(() => setRuns((n) => n + 1));
 
   useEffect(() => {
+    const run = latest();
     const query = new URLSearchParams({ show, page: String(number), ...scopeParams(scope) });
-    api.get<Paged<Offer>>(`/api/leasing/offers?${query}`).then(setPage)
-      .catch((why) => setError(why instanceof ApiError ? why.detail : String(why)));
+    api.get<Paged<Offer>>(`/api/leasing/offers?${query}`).then(run.keep(setPage))
+      .catch(run.keep((why) => setError(why instanceof ApiError ? why.detail : String(why))));
+    return run.stop;
   }, [show, scope, number, runs]);
 
   return (

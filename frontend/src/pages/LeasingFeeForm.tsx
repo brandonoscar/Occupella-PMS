@@ -5,6 +5,7 @@ import { Field } from "../components/Field";
 import { Form } from "../components/Form";
 import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
+import { latest } from "../latest";
 import { day, money } from "../money";
 import type { OwnerMoney } from "../payables";
 import type { LeaseDetail } from "../rentals";
@@ -27,9 +28,11 @@ export function LeasingFeeForm({ lease, record }: { lease: LeaseDetail; record: 
   const [on, setOn] = useState(day(new Date()));
 
   useEffect(() => {
+    const run = latest();
     api.get<OwnerMoney[]>(`/api/payables/owners?${new URLSearchParams({ property: lease.property_id })}`)
-      .then(setAccounts)
-      .catch((why) => setError(why instanceof ApiError ? why.detail : String(why)));
+      .then(run.keep(setAccounts))
+      .catch(run.keep((why) => setError(why instanceof ApiError ? why.detail : String(why))));
+    return run.stop;
   }, [lease.property_id]);
 
   if (accounts === null) return <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>;

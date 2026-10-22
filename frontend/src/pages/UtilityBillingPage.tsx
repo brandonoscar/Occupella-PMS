@@ -13,6 +13,8 @@ import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
+import type { Keep } from "../latest";
+import { keepAll, latest } from "../latest";
 import { day, money, usDate } from "../money";
 import type { Paged, PropertyRow } from "../rentals";
 import type { BilledLease, Method, Plan, Preview, PropertyUtilities, UnitArea, Utility } from "../utilities";
@@ -53,11 +55,15 @@ export function UtilityBillingPage({ me }: { me: Me }) {
       })
       .catch((failed) => setError(detail(failed)));
   }, []);
-  function refresh() {
+  function refresh(keep: Keep = keepAll) {
     if (!property) return;
-    api.get<PropertyUtilities>(`/api/utilities/properties/${property}`).then(setPage).catch((failed) => setError(detail(failed)));
+    api.get<PropertyUtilities>(`/api/utilities/properties/${property}`).then(keep(setPage)).catch(keep((failed) => setError(detail(failed))));
   }
-  useEffect(refresh, [property]);
+  useEffect(() => {
+    const run = latest();
+    refresh(run.keep);
+    return run.stop;
+  }, [property]);
 
   const recordThenClose: Recorder = async (path, body, done) => {
     const recorded = await record(path, body, done);

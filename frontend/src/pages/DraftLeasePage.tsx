@@ -10,6 +10,7 @@ import { Said } from "../components/Said";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
+import { latest } from "../latest";
 import { when } from "../maintenance";
 import { money, usDate } from "../money";
 import type { Offer, Offered, SigningLink } from "../offers";
@@ -37,8 +38,10 @@ export function DraftLeasePage({ me, id }: { me: Me; id: string }) {
   const { said, error: refused, record } = useRecord(() => setRuns((n) => n + 1));
 
   useEffect(() => {
-    api.get<Offer>(`/api/leasing/offers/${id}`).then(setFound)
-      .catch((why) => setError(why instanceof ApiError ? why.detail : String(why)));
+    const run = latest();
+    api.get<Offer>(`/api/leasing/offers/${id}`).then(run.keep(setFound))
+      .catch(run.keep((why) => setError(why instanceof ApiError ? why.detail : String(why))));
+    return run.stop;
   }, [id, runs]);
 
   const voidThenClose: Recorder = async (path, body, done) => {

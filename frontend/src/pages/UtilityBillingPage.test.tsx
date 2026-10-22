@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
+import { holdBack } from "../holdBack";
 import type { Preview, PropertyUtilities } from "../utilities";
 import { UtilityBillingPage } from "./UtilityBillingPage";
 
@@ -106,6 +107,18 @@ describe("UtilityBillingPage", () => {
     await open();
     fireEvent.change(screen.getByLabelText("Property"), { target: { value: "p2" } });
     expect(await screen.findByText("No bill billed back yet.")).toBeTruthy();
+  });
+
+  it("shows the property picked now, even when an earlier property's answer comes back last", async () => {
+    server();
+    const release = holdBack((path) => path === "/api/utilities/properties/p1");
+    render(<UtilityBillingPage me={ME} />);
+    fireEvent.change(await screen.findByLabelText("Property"), { target: { value: "p2" } });
+    await screen.findByText("No bill billed back yet.");
+    await release();
+
+    expect(screen.getByText("No bill billed back yet.")).toBeTruthy();
+    expect(screen.queryByRole("listitem", { name: "Water, 09/01/2026 to 09/30/2026" })).toBeNull();
   });
 
   it("sets a plan, a unit's square feet and a lease's utilities", async () => {

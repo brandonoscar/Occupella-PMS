@@ -15,6 +15,7 @@ import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
+import { latest } from "../latest";
 import { day, money, usDate } from "../money";
 import type { Paged } from "../rentals";
 import { navigate } from "../router";
@@ -71,9 +72,11 @@ export function WorkOrdersPage({ me }: { me: Me }) {
     api.get<Named[]>("/api/maintenance/vendors").then(setVendors).catch(() => setVendors([]));
   }, []);
   useEffect(() => {
+    const run = latest();
     const query = new URLSearchParams({ ...shownQuery(shown), page: String(number), ...scopeParams(scope) });
     if (vendor) query.set("vendor", vendor);
-    api.get<Paged<WorkOrderRow>>(`/api/work-orders?${query}`).then(setPage).catch((failed) => setError(detail(failed)));
+    api.get<Paged<WorkOrderRow>>(`/api/work-orders?${query}`).then(run.keep(setPage)).catch(run.keep((failed) => setError(detail(failed))));
+    return run.stop;
   }, [shown, scope, vendor, number]);
   const restart = <T,>(set: (value: T) => void) => (value: T) => { set(value); setNumber(1); };
 
@@ -433,7 +436,9 @@ export function WorkOrderPage({ me, id }: { me: Me; id: string }) {
   const { said, error: refused, record } = useRecord(() => setRuns((n) => n + 1));
 
   useEffect(() => {
-    api.get<WorkOrder>(`/api/work-orders/${id}`).then(setOrder).catch((failed) => setError(detail(failed)));
+    const run = latest();
+    api.get<WorkOrder>(`/api/work-orders/${id}`).then(run.keep(setOrder)).catch(run.keep((failed) => setError(detail(failed))));
+    return run.stop;
   }, [id, runs]);
   useEffect(() => {
     api.get<Named[]>("/api/maintenance/vendors").then(setVendors).catch(() => setVendors([]));

@@ -13,6 +13,8 @@ import { RecordActions } from "../components/RecordActions";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { TenantLinks } from "../components/TenantLinks";
 import { Wide } from "../components/Wide";
+import type { Keep } from "../latest";
+import { keepAll, latest } from "../latest";
 import { money } from "../money";
 import { scopeParams, useScope } from "../scope";
 import type { Paged, Property, PropertyRow, Unit } from "../rentals";
@@ -64,11 +66,13 @@ export function PropertiesPage({ me }: { me: Me }) {
   const [said, setSaid] = useState("");
 
   useEffect(() => {
+    const run = latest();
     const query = new URLSearchParams({ page: String(number), archived: String(archived), ...scopeParams(scope) });
     api
       .get<Paged<PropertyRow>>(`/api/properties?${query}`)
-      .then(setPage)
-      .catch((failed) => setError(detail(failed)));
+      .then(run.keep(setPage))
+      .catch(run.keep((failed) => setError(detail(failed))));
+    return run.stop;
   }, [scope, archived, number]);
 
   return (
@@ -136,10 +140,14 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
   const [open, setOpen] = useState<"" | "unit" | "owner" | "terms" | "ownership" | "late" | "nsf" | "break" | "email">("");
   const [account, setAccount] = useState("");
 
-  function refresh() {
-    api.get<Property>(`/api/properties/${id}`).then(setProperty).catch((failed) => setError(detail(failed)));
+  function refresh(keep: Keep = keepAll) {
+    api.get<Property>(`/api/properties/${id}`).then(keep(setProperty)).catch(keep((failed) => setError(detail(failed))));
   }
-  useEffect(refresh, [id]);
+  useEffect(() => {
+    const run = latest();
+    refresh(run.keep);
+    return run.stop;
+  }, [id]);
   const panel: Panel = { say: setSaid, refresh, close: () => setOpen("") };
 
   return (
@@ -341,10 +349,14 @@ export function UnitPage({ me, id }: { me: Me; id: string }) {
   const [error, setError] = useState("");
   const [adding, setAdding] = useState(false);
 
-  function refresh() {
-    api.get<Unit>(`/api/units/${id}`).then(setUnit).catch((failed) => setError(detail(failed)));
+  function refresh(keep: Keep = keepAll) {
+    api.get<Unit>(`/api/units/${id}`).then(keep(setUnit)).catch(keep((failed) => setError(detail(failed))));
   }
-  useEffect(refresh, [id]);
+  useEffect(() => {
+    const run = latest();
+    refresh(run.keep);
+    return run.stop;
+  }, [id]);
 
   return (
     <Shell me={me} nav={STAFF_NAV}>

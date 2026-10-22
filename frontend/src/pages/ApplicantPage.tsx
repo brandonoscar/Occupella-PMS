@@ -13,6 +13,7 @@ import { Said } from "../components/Said";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
+import { latest } from "../latest";
 import type { Application, Decision } from "../leasing";
 import { againstScreening, applicantNames, applicationBadge, incomeMultiple, needsNotice, recommendationLabel } from "../leasing";
 import { when } from "../maintenance";
@@ -46,8 +47,10 @@ export function ApplicantPage({ me, id }: { me: Me; id: string }) {
   const { said, error: refused, record } = useRecord(() => setRuns((n) => n + 1));
 
   useEffect(() => {
-    api.get<Application>(`/api/leasing/applications/${id}`).then(setFound)
-      .catch((why) => setError(why instanceof ApiError ? why.detail : String(why)));
+    const run = latest();
+    api.get<Application>(`/api/leasing/applications/${id}`).then(run.keep(setFound))
+      .catch(run.keep((why) => setError(why instanceof ApiError ? why.detail : String(why))));
+    return run.stop;
   }, [id, runs]);
 
   const recordThenClose: Recorder = async (path, body, done) => {

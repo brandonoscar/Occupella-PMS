@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { Budget } from "../budgets";
+import { holdBack } from "../holdBack";
 import type { OwnerMoney } from "../payables";
 import type { Preview } from "../reports";
 import { BudgetsPage } from "./BudgetsPage";
@@ -47,7 +48,7 @@ const VERSUS: Preview = {
   total_rows: 6,
 };
 
-function server(owners: OwnerMoney[] = [owner(2), owner(1)], refuse = "") {
+function server(owners: OwnerMoney[] = [owner(2), owner(1)], refuse = "", versus = (_path: string) => VERSUS) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method === "POST") {
       return refuse
@@ -55,7 +56,7 @@ function server(owners: OwnerMoney[] = [owner(2), owner(1)], refuse = "") {
         : new Response(JSON.stringify({ changed: 13 }), { status: 200 });
     }
     if (path === "/api/payables/owners") return new Response(JSON.stringify(owners), { status: 200 });
-    if (path.startsWith("/api/reports/")) return new Response(JSON.stringify(VERSUS), { status: 200 });
+    if (path.startsWith("/api/reports/")) return new Response(JSON.stringify(versus(path)), { status: 200 });
     const query = new URLSearchParams(path.split("?")[1]);
     const account = query.get("account") ?? "";
     const at = owners.find((o) => o.account === account)?.property;
@@ -190,5 +191,37 @@ describe("BudgetsPage", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));
     render(<BudgetsPage me={ME} />);
     expect((await screen.findAllByRole("alert"))[0]?.textContent).toBe("sign in first");
+  });
+
+  it("shows the budget of the property picked now, even when an earlier property's answer comes back last", async () => {
+    server([owner(1), owner(2), owner(3)]);
+    const release = holdBack((path) => path.startsWith("/api/budgets?account=a2&"));
+    render(<BudgetsPage me={ME} />);
+    await screen.findByRole("row", { name: "Income: rent" });
+
+    fireEvent.change(screen.getByLabelText("Property"), { target: { value: "pr2" } });
+    fireEvent.change(screen.getByLabelText("Property"), { target: { value: "pr3" } });
+    await vi.waitFor(() => expect(screen.getByRole("link", { name: "Export" }).getAttribute("href")).toContain("?arg=o3&"));
+    await release();
+
+    expect(screen.getByRole("link", { name: "Export" }).getAttribute("href")).toContain("?arg=o3&");
+  });
+
+  it("lays the property picked now against what happened, even when an earlier property's answer comes back last", async () => {
+    const second: Preview = { ...VERSUS, rows: [["1", "Property 2", "income: rent", "900.00", "950.00", "50.00"]], total_rows: 1 };
+    server([owner(1), owner(2)], "", (path) => (path.includes("property_id=pr2") ? second : VERSUS));
+    const release = holdBack((path) => path.startsWith("/api/reports/") && path.includes("property_id=pr1"));
+    render(<BudgetsPage me={ME} />);
+    await screen.findByRole("row", { name: "Income: rent" });
+    const rows = () =>
+      within(screen.getByRole("table", { name: "Budget vs actual" })).getAllByRole("row").slice(1)
+        .map((r) => within(r).getAllByRole("cell").map((c) => c.textContent));
+
+    fireEvent.click(screen.getByRole("tab", { name: "Budget vs actual" }));
+    fireEvent.change(screen.getByLabelText("Property"), { target: { value: "pr2" } });
+    await vi.waitFor(() => expect(rows()).toEqual([["Income: rent", "$900.00", "$950.00", "$50.00"]]));
+    await release();
+
+    expect(rows()).toEqual([["Income: rent", "$900.00", "$950.00", "$50.00"]]);
   });
 });

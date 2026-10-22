@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
+import { holdBack } from "../holdBack";
 import type { Lead } from "../leads";
 import { askedAbout, showingTime, startsAt } from "../leads";
 import { LeadPage } from "./LeadPage";
@@ -103,6 +104,19 @@ describe("LeadsPage", () => {
       move_in_on: null, note: null,
     }]]);
   });
+
+  it("shows the leads of the tab picked now, even when an earlier tab's answer comes back last", async () => {
+    server();
+    const release = holdBack((path) => path.startsWith("/api/leasing/leads?status=open"));
+    render(<LeadsPage me={ME} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Closed" }));
+    await screen.findByText("No lead is closed yet.");
+    await release();
+
+    expect(screen.getByText("No lead is closed yet.")).toBeTruthy();
+    expect(screen.queryByRole("row", { name: "Lead Prospect 1" })).toBeNull();
+  });
 });
 
 describe("LeadPage", () => {
@@ -182,5 +196,19 @@ describe("LeadPage", () => {
     server();
     render(<LeadPage me={ME} id="l2" />);
     expect(await screen.findByText("/api/leasing/leads/l2")).toBeTruthy();
+  });
+
+  it("shows the lead opened now, even when an earlier lead's answer comes back last", async () => {
+    const reads = server();
+    vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) =>
+      path === "/api/leasing/leads/l2" ? new Response(JSON.stringify({ ...LEAD, id: "l2", name: "Prospect 2" })) : reads(path, init)));
+    const release = holdBack((path) => path === "/api/leasing/leads/l1");
+    const { rerender } = render(<LeadPage me={ME} id="l1" />);
+    rerender(<LeadPage me={ME} id="l2" />);
+    await screen.findByRole("heading", { level: 1, name: "Prospect 2" });
+    await release();
+
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Prospect 2");
+    expect(screen.queryByRole("heading", { level: 1, name: "Prospect 1" })).toBeNull();
   });
 });

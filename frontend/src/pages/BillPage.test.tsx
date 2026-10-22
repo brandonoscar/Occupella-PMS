@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
+import { holdBack } from "../holdBack";
 import type { Bill, BillPageData } from "../payables";
 import type { Portfolio } from "../setup";
 import { BillPage } from "./BillPage";
@@ -148,6 +149,21 @@ describe("BillPage", () => {
     expect(within(panel).queryByLabelText("Amount, line 3")).toBeNull();
 
     expect(posted(fetch)).toEqual([["/api/payables/bills/b1/expense-account", { expense_account_id: "e2" }]]);
+  });
+
+  it("shows the bill opened now, even when an earlier bill's answer comes back last", async () => {
+    const reads = server();
+    const other: BillPageData = { ...PAGE, bill: { ...BILL, id: "b9", reference: "ROOF-1/2", amount: "600.00" } };
+    vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) =>
+      path === "/api/payables/bills/b9" ? new Response(JSON.stringify(other), { status: 200 }) : reads(path, init)));
+    const release = holdBack((path) => path === "/api/payables/bills/b1");
+    const { rerender } = render(<BillPage me={ME} id="b1" />);
+    rerender(<BillPage me={ME} id="b9" />);
+    await screen.findByRole("heading", { level: 1, name: "Vendor 1 ROOF-1/2" });
+    await release();
+
+    expect(screen.getByRole("heading", { level: 1, name: "Vendor 1 ROOF-1/2" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 1, name: "Vendor 1 FIX-1" })).toBeNull();
   });
 
   it("offers no step for a paid bill, and says when there is no such bill", async () => {

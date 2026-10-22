@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
+import { holdBack } from "../holdBack";
 import type { Application } from "../leasing";
 import { ApplicantPage } from "./ApplicantPage";
 import { ApplicantsPage } from "./ApplicantsPage";
@@ -79,6 +80,19 @@ describe("ApplicantsPage", () => {
 
     await screen.findByText("No application was withdrawn.");
     expect(reads(fetch)).toContain("/api/leasing/applications?show=withdrawn&page=1");
+  });
+
+  it("shows the applications of the tab picked now, even when an earlier tab's answer comes back last", async () => {
+    server();
+    const release = holdBack((path) => path.startsWith("/api/leasing/applications?show=open"));
+    render(<ApplicantsPage me={ME} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Withdrawn" }));
+    await screen.findByText("No application was withdrawn.");
+    await release();
+
+    expect(screen.getByText("No application was withdrawn.")).toBeTruthy();
+    expect(screen.queryByRole("row", { name: "Application from Applicant A, Applicant B" })).toBeNull();
   });
 });
 
@@ -229,5 +243,20 @@ describe("ApplicantPage", () => {
     render(<ApplicantPage me={ME} id="zz" />);
 
     await screen.findByText("/api/leasing/applications/zz");
+  });
+
+  it("shows the application opened now, even when an earlier application's answer comes back last", async () => {
+    const answers = server();
+    const other = { ...APPLICATION, id: "a2", applicants: [{ name: "Applicant C", email: "c@example.com" }] };
+    vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) =>
+      path === "/api/leasing/applications/a2" ? new Response(JSON.stringify(other)) : answers(path, init)));
+    const release = holdBack((path) => path === "/api/leasing/applications/a1");
+    const { rerender } = render(<ApplicantPage me={ME} id="a1" />);
+    rerender(<ApplicantPage me={ME} id="a2" />);
+    await screen.findByRole("heading", { level: 1, name: "Applicant C" });
+    await release();
+
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Applicant C");
+    expect(screen.queryByRole("heading", { level: 1, name: "Applicant A, Applicant B" })).toBeNull();
   });
 });

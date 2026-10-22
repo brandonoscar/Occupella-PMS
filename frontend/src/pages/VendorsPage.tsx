@@ -13,6 +13,7 @@ import { Select } from "../components/Select";
 import { PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
+import { latest } from "../latest";
 import type { Paged } from "../rentals";
 import { navigate } from "../router";
 import type { PaymentMethod, VendorRow } from "../vendors";
@@ -32,10 +33,12 @@ export function VendorsPage({ me }: { me: Me }) {
   const [archived, setArchived] = useState(false);
 
   useEffect(() => {
+    const run = latest();
     api
       .get<Paged<VendorRow>>(`/api/vendors?page=${number}&archived=${archived}`)
-      .then(setPage)
-      .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
+      .then(run.keep(setPage))
+      .catch(run.keep((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed))));
+    return run.stop;
   }, [number, archived]);
 
   return (

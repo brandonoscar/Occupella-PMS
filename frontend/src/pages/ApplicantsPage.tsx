@@ -10,6 +10,7 @@ import { Pager } from "../components/Pager";
 import { PageHeader, Shell } from "../components/Shell";
 import { Tabs } from "../components/Tabs";
 import { Wide } from "../components/Wide";
+import { latest } from "../latest";
 import type { Application } from "../leasing";
 import { applicantNames, applicationBadge, incomeMultiple, latestScreening } from "../leasing";
 import { usDate } from "../money";
@@ -45,9 +46,11 @@ export function ApplicantsPage({ me }: { me: Me }) {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    const run = latest();
     const query = new URLSearchParams({ show, page: String(number), ...scopeParams(scope) });
-    api.get<Paged<Application>>(`/api/leasing/applications?${query}`).then(setPage)
-      .catch((why) => setError(why instanceof ApiError ? why.detail : String(why)));
+    api.get<Paged<Application>>(`/api/leasing/applications?${query}`).then(run.keep(setPage))
+      .catch(run.keep((why) => setError(why instanceof ApiError ? why.detail : String(why))));
+    return run.stop;
   }, [show, scope, number]);
 
   return (

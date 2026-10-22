@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AssistanceTerms, Authority, AuthorityCharge, Compliance, LeaseAssistance } from "../assistance";
+import { holdBack } from "../holdBack";
 import { AssistanceCard } from "./AssistanceCard";
 
 afterEach(() => {
@@ -71,6 +72,21 @@ describe("AssistanceCard", () => {
       "10/01/2026", "Rent due 2026-10-01", "$750.00", "$300.00", "$450.00",
     ]);
     expect(screen.getByTestId("authority-owes").textContent).toBe("The housing authority owes $450.00 for this lease.");
+  });
+
+  it("shows the assistance of the lease opened now, even when an earlier lease's answer comes back last", async () => {
+    const other: LeaseAssistance = { ...ASSISTED, monthly_rent: "1200.00", tenant_part: "400.00" };
+    vi.stubGlobal("fetch", vi.fn(async (path: string) => new Response(JSON.stringify(
+      path === "/api/assistance/authorities" ? AUTHORITIES : path.endsWith("/l1") ? ASSISTED : other,
+    ))));
+    const release = holdBack((path) => path === "/api/assistance/leases/l1");
+    const { rerender } = render(<AssistanceCard leaseId="l1" unit="Unit 1" />);
+    rerender(<AssistanceCard leaseId="l2" unit="Unit 2" />);
+    const split = "Synthetic Housing Authority pays $800.00 of the $1,200.00 rent; the tenant pays $400.00.";
+    await vi.waitFor(() => expect(screen.getByTestId("assistance-split").textContent).toBe(split));
+    await release();
+
+    expect(screen.getByTestId("assistance-split").textContent).toBe(split);
   });
 
   it("sets assistance from the first of a month", async () => {

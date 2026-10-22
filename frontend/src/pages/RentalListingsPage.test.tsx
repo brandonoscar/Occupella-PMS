@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
+import { holdBack } from "../holdBack";
 import type { OpenUnit } from "../leasing";
 import { RentalListingsPage, daysListed, publicPage } from "./RentalListingsPage";
 
@@ -184,6 +185,28 @@ describe("RentalListingsPage", () => {
       expect(fetch.mock.calls.filter(([path]) => path === "/api/leasing/units/u2/photos").length).toBe(3);
       expect(fetch.mock.calls.filter(([path]) => path.startsWith("/api/leasing/vacancies?")).length).toBe(3);
     });
+  });
+
+  it("shows the units of the property group picked now, even when an earlier group's answer comes back last", async () => {
+    const groups = { groups: [{ id: "g1", name: "North", properties: [] }, { id: "g2", name: "South", properties: [] }], properties: [] };
+    vi.stubGlobal("fetch", vi.fn(async (path: string) => {
+      if (path === "/api/property-groups") return new Response(JSON.stringify(groups));
+      const units = path.includes("group=g1") ? [VACANT] : path.includes("group=g2") ? [LISTED] : [LINKED];
+      return new Response(JSON.stringify({ items: units, total: units.length, page: 1, per_page: 50 }));
+    }));
+    const release = holdBack((path) => path.includes("group=g1"));
+    render(<RentalListingsPage me={ME} />);
+    await screen.findByRole("row", { name: "Property 1, Unit 3" });
+    const picker = screen.getByRole("combobox", { name: "Properties shown" });
+    await within(picker).findByRole("option", { name: "South" });
+
+    fireEvent.change(picker, { target: { value: "group:g1" } });
+    fireEvent.change(picker, { target: { value: "group:g2" } });
+    await screen.findByRole("row", { name: "Property 1, Unit 2" });
+    await release();
+
+    expect(screen.getByRole("row", { name: "Property 1, Unit 2" })).toBeTruthy();
+    expect(screen.queryByRole("row", { name: "Property 1, Unit 1" })).toBeNull();
   });
 
   it("says how many days a listing has been up", () => {

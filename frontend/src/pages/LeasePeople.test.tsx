@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { holdBack } from "../holdBack";
 import type { BreakFee, Household, LeaseDetail, LeasePerson } from "../rentals";
 import { petLine, vehicleLine } from "../rentals";
 import { EndLeaseForm, HouseholdCards, RemoveTenantForm } from "./LeasePeople";
@@ -135,6 +136,21 @@ describe("HouseholdCards", () => {
     expect(screen.getByText("Assistance animal")).toBeTruthy();
     expect(screen.getByText(/no pet rent, fee or deposit is charged for it \(Fair Housing Act\)/)).toBeTruthy();
     expect(screen.getByText("Make 1 Model 1, Blue, SYN-001 (State 1)")).toBeTruthy();
+  });
+
+  it("shows the household of the lease opened now, even when an earlier lease's answer comes back last", async () => {
+    serve({
+      "/api/leases/l1/household": HOUSEHOLD,
+      "/api/leases/l2/household": { ...HOUSEHOLD, guarantors: [{ ...HOUSEHOLD.guarantors[0]!, id: "g2", name: "Guarantor 2" }] },
+    });
+    const release = holdBack((path) => path === "/api/leases/l1/household");
+    const { rerender } = render(<HouseholdCards leaseId="l1" />);
+    rerender(<HouseholdCards leaseId="l2" />);
+    await screen.findByRole("row", { name: "Guarantor 2" });
+    await release();
+
+    expect(screen.getByRole("row", { name: "Guarantor 2" })).toBeTruthy();
+    expect(screen.queryByRole("row", { name: "Guarantor 1" })).toBeNull();
   });
 
   it("adds a pet in a side panel and takes a vehicle off once confirmed", async () => {

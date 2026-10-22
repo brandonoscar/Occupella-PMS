@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { FileRow, Library } from "../documents";
+import { holdBack } from "../holdBack";
 import type { Paged } from "../rentals";
 import { DocumentsPage } from "./DocumentsPage";
 
@@ -133,5 +134,23 @@ describe("DocumentsPage", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));
     render(<DocumentsPage me={ME} />);
     expect((await screen.findAllByRole("alert"))[0]?.textContent).toBe("sign in first");
+  });
+
+  it("shows the files of the category picked now, even when an earlier category's answer comes back last", async () => {
+    server({
+      "/api/documents/files?page=1&kind=w9": { ...PAGE, items: [{ ...ROW, id: "d2", kind: "w9", title: "W-9 Vendor 1" }] },
+      "/api/documents/files?page=1&kind=receipt": { ...PAGE, items: [{ ...ROW, id: "d3", kind: "receipt", title: "Receipt 7" }] },
+    });
+    const release = holdBack((path) => path.includes("kind=w9"));
+    render(<DocumentsPage me={ME} />);
+    await screen.findByRole("row", { name: "Deed" });
+
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "w9" } });
+    fireEvent.change(screen.getByLabelText("Category"), { target: { value: "receipt" } });
+    await screen.findByRole("row", { name: "Receipt 7" });
+    await release();
+
+    expect(screen.getByRole("row", { name: "Receipt 7" })).toBeTruthy();
+    expect(screen.queryByRole("row", { name: "W-9 Vendor 1" })).toBeNull();
   });
 });

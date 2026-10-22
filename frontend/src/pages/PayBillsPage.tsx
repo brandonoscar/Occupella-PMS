@@ -14,6 +14,7 @@ import { Said } from "../components/Said";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
+import { latest } from "../latest";
 import { day, money, sumMoney, usDate } from "../money";
 import type { Bill, BillPaid, OwnerMoney, PayoutMethod } from "../payables";
 import { billBadge, billsPaidSummary } from "../payables";
@@ -62,12 +63,15 @@ export function PayBillsPage({ me }: { me: Me }) {
   const { ask, prompt } = useConfirm();
 
   useEffect(() => {
+    const run = latest();
     const query = new URLSearchParams({ show: "open", per_page: "200", ...scopeParams(scope) });
     api.get<Paged<Bill>>(`/api/payables/bills?${query}`)
-      .then((page) => setBills(page.items.filter((b) => b.status === "to set aside" || b.status === "set aside")))
-      .catch((why) => setError(why instanceof ApiError ? why.detail : String(why)));
+      .then(run.keep((page) => setBills(page.items.filter((b) => b.status === "to set aside" || b.status === "set aside"))))
+      .catch(run.keep((why) => setError(why instanceof ApiError ? why.detail : String(why))));
     const owned = new URLSearchParams(scopeParams(scope)).toString();
-    api.get<OwnerMoney[]>(owned ? `/api/payables/owners?${owned}` : "/api/payables/owners").then(setOwners).catch(() => setOwners([]));
+    api.get<OwnerMoney[]>(owned ? `/api/payables/owners?${owned}` : "/api/payables/owners")
+      .then(run.keep(setOwners)).catch(run.keep(() => setOwners([])));
+    return run.stop;
   }, [scope, runs]);
 
   const payable = bills ?? [];
