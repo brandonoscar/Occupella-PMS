@@ -387,7 +387,14 @@ fees, credits, monthly charges, payments, prepaid rent, deposit and bounce, bill
 approves or declines in the portal, recurring bills, management and leasing fees and draws,
 staff roles and disabled logins, the owner's statement and year-end package, the tenant's lease
 and ledger, a mid-month move-out, a listing on the public vacancy page, setup, every report in
-every format, documents, and vendor payments carried over. On failure it keeps the Playwright
+every format, documents, and vendor payments carried over. `frontend/e2e/journey.spec.ts` runs
+a company's month start to end on a demo PMC of its own, as its people do it: a lease applied
+for, signed on the PMS's page and activated, the rent run, a check paid and one bounced, a
+repair a vendor finishes through their link and its bill the owner approves in the portal, last
+month's fees taken out of trust, an owner paid, a renewal, a move-out, and the month-end the
+bookkeeper prepares from a bank statement of every move the register shows and the manager
+approves; wherever money moves, the pages that show it must agree to the cent (52 to 54 s in
+three runs locally on 10/22; the other days of the month NOT VERIFIED). On failure it keeps the Playwright
 report and the API's log for 7 days. After every browser test, axe-core checks the page it
 ended on against WCAG 2.2 A and AA (`frontend/e2e/a11y.ts`), and one test walks every page of a
 demo of its own (staff's menu and Settings, a page of each kind a list opens, an owner's and a
