@@ -10,7 +10,7 @@ afterEach(() => {
 
 const OFF: EmailSettings = {
   rent_reminder_days: null, late_notices: false, owner_statement_day: null,
-  work_order_notices: false, adverse_action_notices: false, sending: true,
+  work_order_notices: false, adverse_action_notices: false, reserve_alerts: false, sending: true,
 };
 
 function server(settings: EmailSettings, refuse?: string) {
@@ -28,15 +28,17 @@ function server(settings: EmailSettings, refuse?: string) {
 
 describe("emailSettingsLines", () => {
   it("says each automatic email in words", () => {
-    expect(emailSettingsLines(OFF).map(([, how]) => how)).toEqual(["Off", "Off", "Off", "Off", "Off"]);
+    expect(emailSettingsLines(OFF).map(([, how]) => how)).toEqual(["Off", "Off", "Off", "Off", "Off", "Off"]);
     expect(emailSettingsLines({
       ...OFF, rent_reminder_days: 1, late_notices: true, owner_statement_day: 22, work_order_notices: true,
+      reserve_alerts: true,
     })).toEqual([
       ["Rent reminders to tenants", "1 day before rent is due"],
       ["Late fee notices to tenants", "On"],
       ["Monthly statements to owners", "Last month's, from the 22nd of each month"],
       ["Work orders to vendors", "On"],
       ["Adverse action notices to applicants", "Off"],
+      ["Low balance alerts to owners", "On"],
     ]);
   });
 
@@ -59,6 +61,7 @@ describe("AutomaticEmailsCard", () => {
     fireEvent.click(within(panel).getByLabelText("Monthly statements to owners"));
     fireEvent.change(within(panel).getByLabelText("Day of the month they go"), { target: { value: "10" } });
     fireEvent.click(within(panel).getByLabelText("Adverse action notices to applicants"));
+    fireEvent.click(within(panel).getByLabelText("Low balance alerts to owners"));
     fireEvent.click(within(panel).getByRole("button", { name: "Save" }));
 
     expect(await screen.findByText("Saved the automatic emails.")).toBeTruthy();
@@ -66,7 +69,7 @@ describe("AutomaticEmailsCard", () => {
     const [, init] = fetch.mock.calls.find(([, i]) => i?.method === "POST") ?? [];
     expect(JSON.parse(String(init?.body))).toEqual({
       rent_reminder_days: 3, late_notices: false, owner_statement_day: 10,
-      work_order_notices: false, adverse_action_notices: true,
+      work_order_notices: false, adverse_action_notices: true, reserve_alerts: true,
     });
     expect((await screen.findByText("3 days before rent is due"))).toBeTruthy();
     expect(screen.getByText("Last month's, from the 10th of each month")).toBeTruthy();

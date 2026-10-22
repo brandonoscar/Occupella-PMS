@@ -13,7 +13,12 @@ holding; none at all until it does):
   conditions on a screening, when the decision is recorded (once per applicant and application);
 - an emergency a tenant files, to each staff member on call (migration 0084; once per request and
   staff member, to their login's email). No setting turns it on: the company's list of who is
-  on call does.
+  on call does;
+- an owner's property account fallen below the reserve its management agreement keeps, to the
+  owner (the founder, 2026-10-22, q054; once per drop below it, found by the nightly run);
+- what failed, to each of the company's admins at their login's email: its nightly run, or an
+  email given up on (q149; src/pms/email.py's write_admin_alert, once per admin, kind and day).
+  No setting: admins hear of both.
 
 Each is written to the outbox in the transaction that causes it (src/pms/email.py), and only while
 the server sends email: none piles up to go out late on a server that sends none. A lease under a
@@ -45,6 +50,8 @@ class Settings:
     owner_statement_day: int | None = None
     work_order_notices: bool = False
     adverse_action_notices: bool = False
+    # An owner hears when one of their property accounts falls below its reserve.
+    reserve_alerts: bool = False
 
 
 FIELDS = (
@@ -53,6 +60,7 @@ FIELDS = (
     "owner_statement_day",
     "work_order_notices",
     "adverse_action_notices",
+    "reserve_alerts",
 )
 
 
@@ -377,6 +385,91 @@ def write_owner_statements(
     return written
 
 
+# --- an owner's account below its reserve --------------------------------------------------------
+
+# Each owner's property account of a property and owner not archived: what it holds today, the
+# reserve of the agreement in force on the day (0 with none) and its latest drop or return.
+RESERVES = """
+SELECT a.ledger_account_id, o.id, o.display_name, p.display_name, l.balance,
+       coalesce(g.reserve, 0), e.number, e.kind
+FROM trust_ledger_accounts AS a
+JOIN trust_owners AS o ON o.id = a.owner_id
+JOIN trust_properties AS p ON p.id = a.property_id
+JOIN pgledger_accounts AS l ON l.id = a.ledger_account_id
+LEFT JOIN LATERAL (
+    SELECT g.reserve FROM trust_management_agreements AS g
+    WHERE g.ledger_account_id = a.ledger_account_id AND g.starts_on <= %(day)s
+    ORDER BY g.starts_on DESC LIMIT 1
+) AS g ON true
+LEFT JOIN LATERAL (
+    SELECT e.number, e.kind, e.found_on FROM trust_reserve_events AS e
+    WHERE e.ledger_account_id = a.ledger_account_id
+    ORDER BY e.number DESC LIMIT 1
+) AS e ON true
+WHERE a.pmc_id = %(pmc)s AND a.kind = 'owner_property'
+  AND NOT trust_is_archived(NULL, NULL, NULL, o.id)
+  AND NOT trust_is_archived(p.id, NULL)
+  -- A look on a day before the last one changes nothing.
+  AND (e.found_on IS NULL OR e.found_on <= %(day)s)
+ORDER BY o.display_name COLLATE "C", p.display_name COLLATE "C", a.ledger_account_id
+"""
+
+
+def write_reserve_alerts(
+    conn: psycopg.Connection[Any], pmc_id: UUID, day: date, public_url: str
+) -> int:
+    """Records each owner's property account that fell below its reserve since the last look, and
+    each that came back to it; tells the owner of each drop, once. In the caller's transaction:
+    two runs at once record a drop once (its number is unique), and the second writes nothing."""
+    company = company_of(conn, pmc_id)
+    written = 0
+    for account, owner, name, prop, held, reserve, number, kind in conn.execute(
+        RESERVES, {"pmc": pmc_id, "day": day}
+    ).fetchall():
+        below = held < reserve
+        if below == (kind == "below"):
+            continue  # nothing changed since the last look
+        made = conn.execute(
+            "INSERT INTO trust_reserve_events"
+            " (pmc_id, ledger_account_id, number, kind, found_on, balance, reserve)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s)"
+            " ON CONFLICT (ledger_account_id, number) DO NOTHING RETURNING id",
+            (pmc_id, account, (number or 0) + 1, "below" if below else "back", day, held, reserve),
+        ).fetchone()
+        if made is None or not below:
+            continue
+        to = address(conn, pmc_id, "owner", owner)
+        if to is None:
+            continue
+        portal = (
+            f"See the account on your statement in the owner portal:\n{public_url.rstrip('/')}/\n\n"
+            if can_sign_in(conn, pmc_id, "owner", owner)
+            else ""
+        )
+        body = (
+            f"Hello {name},\n\n"
+            f"Your account for {prop} holds {email.dollars(held)} as of {us(day)}, below the"
+            f" reserve of {email.dollars(reserve)} your management agreement keeps in it for"
+            f" bills.\n"
+            f"{email.dollars(reserve - held)} would bring it back up. Send it to {company} by"
+            f" check or bank transfer; it shows on your statement once recorded.\n\n"
+            f"{portal}{company}\n"
+        )
+        written += _insert(
+            conn,
+            pmc_id,
+            "reserve_low",
+            {
+                "owner_id": owner,
+                "reserve_event_id": made[0],
+                "to_address": to,
+                "subject": one_line(f"{prop}: your account is below its reserve")[:200],
+                "body": body,
+            },
+        )
+    return written
+
+
 # --- what the nightly run (and an admin's run by hand) writes --------------------------------
 
 
@@ -385,13 +478,14 @@ class Written:
     rent_reminders: int = 0
     late_notices: int = 0
     owner_statements: int = 0
+    reserve_alerts: int = 0
 
 
 def write_scheduled(
     conn: psycopg.Connection[Any], pmc_id: UUID, day: date, public_url: str
 ) -> Written:
-    """The rent reminders, late notices and owner statements due on a day, as the company's
-    settings ask; in the caller's transaction, after its rent run. Each once."""
+    """The rent reminders, late notices, owner statements and reserve alerts due on a day, as the
+    company's settings ask; in the caller's transaction, after its rent run. Each once."""
     wanted = settings_of(conn, pmc_id)
     return Written(
         rent_reminders=0
@@ -403,6 +497,9 @@ def write_scheduled(
         owner_statements=0
         if wanted.owner_statement_day is None
         else write_owner_statements(conn, pmc_id, day, wanted.owner_statement_day, public_url),
+        reserve_alerts=write_reserve_alerts(conn, pmc_id, day, public_url)
+        if wanted.reserve_alerts
+        else 0,
     )
 
 
@@ -516,14 +613,6 @@ SELECT DISTINCT ON (o.staff_id) o.staff_id, o.on_call
 FROM trust_on_call_staff AS o WHERE o.pmc_id = %s
 ORDER BY o.staff_id, o.created_at DESC, o.id DESC
 """
-# A staff member's active login: accepted (a password set) and not disabled.
-STAFF_LOGIN = """
-SELECT s.display_name, l.email
-FROM trust_staff AS s
-JOIN trust_logins AS l ON l.pmc_id = s.pmc_id AND l.kind = 'staff' AND l.staff_id = s.id
-JOIN trust_login_secrets AS x ON x.login_id = l.id
-WHERE s.pmc_id = %s AND s.id = %s AND l.disabled_at IS NULL
-"""
 EMERGENCY = """
 SELECT r.summary, r.entry_allowed, p.display_name, u.display_name, t.display_name
 FROM trust_maintenance_requests AS r
@@ -552,7 +641,7 @@ def write_emergency(
     company = company_of(conn, pmc_id)
     written = 0
     for staff in on_call(conn, pmc_id):
-        login = conn.execute(STAFF_LOGIN, (pmc_id, staff)).fetchone()
+        login = conn.execute(email.STAFF_LOGIN, (pmc_id, staff)).fetchone()
         if login is None:
             continue  # no login to email
         name, address = login

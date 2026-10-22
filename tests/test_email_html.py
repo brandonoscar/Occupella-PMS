@@ -77,7 +77,7 @@ def test_each_kind_that_asks_one_thing_says_it_on_its_button(kind, label):
     assert f'And here:<br><a href="{URL}/two" style="color:#1957a0;">{URL}/two</a>' in page
 
 
-@pytest.mark.parametrize("kind", ["message", "work_order", "adverse_action"])
+@pytest.mark.parametrize("kind", ["message", "work_order", "adverse_action", "admin_alert"])
 def test_other_kinds_have_no_button_and_their_addresses_are_links(kind):
     page = html(f"Hello,\n\nSee:\n{URL}/x\n", kind=kind)
 
@@ -163,7 +163,14 @@ def test_every_kind_with_a_button_is_a_kind_of_email(conn):
     kinds = set(re.findall(r"'([a-z_]+)'::text", check))
 
     assert set(email_html.BUTTONS) <= kinds
-    assert kinds - set(email_html.BUTTONS) == {"message", "work_order", "adverse_action"}
+    # An admin's alert asks no one thing: a failed night's names Run rent now, an email given up
+    # on asks to look at the server.
+    assert kinds - set(email_html.BUTTONS) == {
+        "message",
+        "work_order",
+        "adverse_action",
+        "admin_alert",
+    }
 
 
 # --- sending it -------------------------------------------------------------------------------

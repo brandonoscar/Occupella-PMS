@@ -218,6 +218,8 @@ class EmailSettings(BaseModel):
     work_order_notices: bool = False
     # Each applicant gets the adverse action notice of a decision that rests on a screening.
     adverse_action_notices: bool = False
+    # An owner is told when one of their property accounts falls below its reserve, once a drop.
+    reserve_alerts: bool = False
 
 
 class EmailSettingsOut(EmailSettings):

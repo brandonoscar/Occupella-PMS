@@ -251,6 +251,10 @@ TABLES = {
     # A property's street address and where it is (migration 0109); the AI reads both.
     "trust_property_addresses": {"SELECT", "INSERT"},
     "trust_property_locations": {"SELECT", "INSERT"},
+    # Owners' accounts fallen below their reserve and back (migration 0150), read by the AI as
+    # the ledger is; what failed, told to the company's admins, which it never reads.
+    "trust_reserve_events": {"SELECT", "INSERT"},
+    "trust_admin_alerts": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -310,6 +314,8 @@ AI_NEVER_READS = {
     # Emails to owners and their deliveries: people's addresses (ADR 0004).
     "trust_emails",
     "trust_email_deliveries",
+    # What failed, told to an admin, maybe in the database's own words (migration 0150).
+    "trust_admin_alerts",
     # Tenants', owners' and vendors' emails, phones and mailing addresses (ADR 0005).
     "trust_contacts",
     # What staff write about people and their homes (ADR 0006).
@@ -469,6 +475,7 @@ FUNCTIONS = {
     "trust_check_tenant_login()": set(),
     "trust_refuse_closed_year()": set(),
     "trust_check_history_line()": set(),
+    "trust_check_reserve_event()": set(),
     "trust_check_assistance_record()": set(),
     "trust_check_decision_override()": set(),
     "trust_fill_bill_markup()": set(),
