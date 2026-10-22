@@ -508,7 +508,20 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   days, overdue, none on file, failed (reinspection due or overdue), and the counts to do. It runs
   as the owner and prints days and words, never income or household size, so the AI runs it but
   never reads a certification (`AI_NEVER_READS`); it reads the inspections. The PMS files nothing
-  with HUD and checks no income limit.
+  with HUD and checks no housing authority's income limit.
+- Tax credit units (migration 0123, the founder's review q143, `docs/law.md`, LIHTC): a property's
+  area income limits at 50% of median for households of one to eight from a day
+  (`trust_tax_credit_limits`, entered each year as published; each other percent in proportion)
+  and a unit's designation from a day (`trust_tax_credit_units`: the percent of median 20 to 80,
+  bedrooms, the utility allowance; a row naming none ends it), append-only, naming who; staff set
+  them on the property's and the unit's pages (`src/pms/api/tax_credit.py`, area setup). The unit
+  page says the most its rent and allowance may come to (30% of the limit for one person with no
+  bedroom, one and a half a bedroom, by the month, down to the dollar). A tax credit unit's lease
+  takes income certifications too (migration 0108's trigger), and its page and
+  `trust_report_tax_credit_compliance` (as the owner; words, limits and rents, never income) say
+  each tax credit unit's certification, income test (move-in against its day's limit; over 140%
+  after it, the next available unit rule) and rent test, and each property's units held by
+  qualified households of all of them. It files nothing with the state agency or the IRS.
 - Utility billing (migration 0096, the founder's review q021, `docs/law.md`): a property's plan
   for each utility from a day (`trust_utility_plans`: by unit, square feet, occupants or submeter,
   and the owner's percent for the common areas; 'none' stops it), units' square feet

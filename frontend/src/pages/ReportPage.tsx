@@ -17,7 +17,7 @@ import { STAFF_NAV } from "./staffNav";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 // Columns that are only for joining rows up, never for reading.
-const HIDDEN = new Set(["line", "lease_id", "vendor_id", "staff_id", "bank_account_id"]);
+const HIDDEN = new Set(["line", "lease_id", "unit_id", "vendor_id", "staff_id", "bank_account_id"]);
 
 // One report (ADR 0006, step 11): its filters (a day, or days with presets; an owner; a year;
 // the property group or property, and an owner's properties, when its rows have one; q109), its

@@ -977,3 +977,17 @@ operations = [
 browser = [
   "features.spec.ts › staff set a property's deposit interest, credit a lease's interest against its rent and see it in Reports",
 ]
+
+[[feature]]
+id = "tax-credit"
+statement = "Tax credit (LIHTC) compliance (the founder's review q143; migration 0123): staff enter a property's area income limits at 50% of median for households of one to eight from a day, each year as published (the PMS looks nothing up), and make a unit a tax credit unit from a day: the percent of median its household may earn (20 to 80), its bedrooms and the utility allowance, or end it. The unit's page says the most its rent and allowance may come to; a tax credit unit's lease takes income certifications and its page says where it stands (certification, the income test at move-in and the 140% rule after, the rent test). Reports, Tax credit compliance lists each tax credit unit on a day and each property's units held by qualified households, never printing income; it files nothing with the state agency or the IRS."
+operations = [
+  "POST /api/tax-credit/limits",
+  "GET /api/tax-credit/properties/{property_id}",
+  "POST /api/tax-credit/units",
+  "GET /api/tax-credit/units/{unit_id}",
+  "GET /api/tax-credit/leases/{lease_id}",
+]
+browser = [
+  "features.spec.ts › staff enter a property's tax credit income limits, make a unit a tax credit unit, certify its household and see the compliance report",
+]

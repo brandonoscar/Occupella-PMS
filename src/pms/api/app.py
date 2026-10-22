@@ -95,6 +95,7 @@ from pms.api import (
     signing,
     staff,
     switching,
+    tax_credit,
     tenant,
     today,
     utilities,
@@ -563,6 +564,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(signers.router)
     app.include_router(moveout.router)
     app.include_router(deposit_interest.router)
+    app.include_router(tax_credit.router)
     app.include_router(household.router)
     app.include_router(documents.router)
     app.include_router(company.router)

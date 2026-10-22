@@ -14,9 +14,10 @@ describe("reports", () => {
     expect(reportSpec("deposit_interest")?.byProperty).toBe(true);
     expect(reportSpec("vendor_payments")?.label).toBe("1099 summary");
     expect(REPORTS.filter((r) => r.group === "Compliance").map((r) => r.label)).toEqual([
-      "Trust account signers", "Housing assistance compliance", "Audit log",
+      "Trust account signers", "Housing assistance compliance", "Tax credit compliance", "Audit log",
     ]);
     expect(reportSpec("assistance_compliance")?.byProperty).toBe(true);
+    expect(reportSpec("tax_credit_compliance")?.byProperty).toBe(true);
     expect(reportSpec("nope")).toBeUndefined();
   });
 

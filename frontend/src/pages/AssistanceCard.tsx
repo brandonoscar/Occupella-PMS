@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
-import type { AssistanceTerms, Authority, AuthorityCharge, Compliance, LeaseAssistance } from "../assistance";
+import type {
+  AssistanceTerms, Authority, AuthorityCharge, Certification, Compliance, LeaseAssistance,
+} from "../assistance";
 import { complianceTone, dueLine, nextFirst, splitLine, termsLine } from "../assistance";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
@@ -246,32 +248,7 @@ function ComplianceList({ compliance }: { compliance: Compliance }) {
         <Badge tone={complianceTone(compliance.inspection)}>{compliance.inspection}</Badge>
         {dueLine("Inspect", compliance.inspect_by)}
       </p>
-      {compliance.certifications.length > 0 && (
-        <Wide>
-          <table className="w-full text-base" aria-label="Income certifications">
-            <thead>
-              <tr>
-                <th className="text-left">Takes effect</th>
-                <th className="text-left">Kind</th>
-                <th className="text-right">Household</th>
-                <th className="text-right">Annual income</th>
-                <th className="text-left">Next due</th>
-              </tr>
-            </thead>
-            <tbody>
-              {compliance.certifications.map((c) => (
-                <tr key={c.id}>
-                  <td>{usDate(c.effective_on)}</td>
-                  <td>{KINDS[c.kind]}</td>
-                  <td className="text-right">{c.household_size}</td>
-                  <td className="text-right">{money(c.annual_income)}</td>
-                  <td>{usDate(c.next_due_on)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Wide>
-      )}
+      <CertificationsTable certifications={compliance.certifications} />
       {compliance.inspections.length > 0 && (
         <Wide>
           <table className="w-full text-base" aria-label="Inspections">
@@ -300,7 +277,46 @@ function ComplianceList({ compliance }: { compliance: Compliance }) {
   );
 }
 
-function CertificationForm({ leaseId, record }: { leaseId: string; record: Recorder }) {
+// Every income certification recorded for a lease, the latest first; nothing when none is.
+export function CertificationsTable({ certifications }: { certifications: Certification[] }) {
+  if (certifications.length === 0) return null;
+  return (
+    <Wide>
+      <table className="w-full text-base" aria-label="Income certifications">
+        <thead>
+          <tr>
+            <th className="text-left">Takes effect</th>
+            <th className="text-left">Kind</th>
+            <th className="text-right">Household</th>
+            <th className="text-right">Annual income</th>
+            <th className="text-left">Next due</th>
+          </tr>
+        </thead>
+        <tbody>
+          {certifications.map((c) => (
+            <tr key={c.id}>
+              <td>{usDate(c.effective_on)}</td>
+              <td>{KINDS[c.kind]}</td>
+              <td className="text-right">{c.household_size}</td>
+              <td className="text-right">{money(c.annual_income)}</td>
+              <td>{usDate(c.next_due_on)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Wide>
+  );
+}
+
+const HOUSING_NOTE =
+  "The household's income and size as the housing authority certified them: at move-in, every year, or an " +
+  "interim one between when they change. The PMS files nothing with HUD.";
+
+// A household's income certification (migration 0108), for a housing authority or, with its own
+// note, a tax credit unit (migration 0123).
+export function CertificationForm({ leaseId, record, note = HOUSING_NOTE }: {
+  leaseId: string; record: Recorder; note?: string;
+}) {
   const [kind, setKind] = useState<keyof typeof KINDS>("annual");
   const [effectiveOn, setEffectiveOn] = useState(day(new Date()));
   const [size, setSize] = useState("");
@@ -316,10 +332,7 @@ function CertificationForm({ leaseId, record }: { leaseId: string; record: Recor
       return record(`/api/assistance/leases/${leaseId}/certifications`, body, () =>
         `${KINDS[kind]} certification from ${usDate(effectiveOn)} recorded.`);
     }}>
-      <p className="text-sm text-ink-muted">
-        The household's income and size as the housing authority certified them: at move-in, every year, or an
-        interim one between when they change. The PMS files nothing with HUD.
-      </p>
+      <p className="text-sm text-ink-muted">{note}</p>
       <Select label="Kind" id="cert-kind" value={kind} onChange={(e) => setKind(e.target.value as keyof typeof KINDS)}>
         {Object.entries(KINDS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </Select>

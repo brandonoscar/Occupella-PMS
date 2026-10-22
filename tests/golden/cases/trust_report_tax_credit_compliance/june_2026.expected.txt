@@ -1,0 +1,8 @@
+line	item	unit_id	property	unit	tenants	income_percent	bedrooms	certification	income_test	max_gross_rent	gross_rent	rent_test
+1	unit	<uuid1>	Property 1	Unit 1	Tenant 1	60	1	current	qualified	964	950.00	within the limit
+2	unit	<uuid2>	Property 1	Unit 2	Tenant 2	50	2	current	over 140%: next available unit rule	965	1175.00	over by 210.00
+3	unit	<uuid3>	Property 1	Unit 3	NULL	60	0	NULL	vacant	900	NULL	NULL
+4	unit	<uuid4>	Property 1	Unit 5	Tenant 5	40	1	none on file	no certification on file	643	500.00	within the limit
+5	qualified units	NULL	Property 1	NULL	NULL	NULL	NULL	NULL	2 of 4	NULL	NULL	NULL
+6	unit	<uuid5>	Property 2	Unit 6	Tenant 6	60	1	current	no income limits on file	NULL	700.00	no income limits on file
+7	qualified units	NULL	Property 2	NULL	NULL	NULL	NULL	NULL	0 of 1	NULL	NULL	NULL

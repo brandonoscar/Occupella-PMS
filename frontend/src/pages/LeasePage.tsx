@@ -32,6 +32,7 @@ import {
 import type { LeaseDetail, LeasePerson, Ledger } from "../rentals";
 import { LEASE_STATUS, LEDGER_KIND, PORTAL, rentLabel, termLabel } from "../rentals";
 import { AssistanceCard } from "./AssistanceCard";
+import { TaxCreditLeaseCard } from "./TaxCreditCards";
 import { FilesCard } from "./FilesCard";
 import { NoticesCard } from "./NoticesCard";
 import { InsuranceForms } from "./InsuranceForms";
@@ -318,6 +319,7 @@ function Summary({ lease, record, recordDeposit }: { lease: LeaseDetail; record:
         )}
       </Card>
       <AssistanceCard leaseId={lease.id} unit={lease.unit} />
+      <TaxCreditLeaseCard leaseId={lease.id} />
       <Card title="Renters insurance">
         {lease.renters_insurance ? (
           <p className="flex flex-wrap items-center gap-2 text-base" data-testid="renters-insurance">
