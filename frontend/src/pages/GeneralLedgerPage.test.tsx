@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { LedgerAccount } from "../generalLedger";
+import { holdBack } from "../holdBack";
 import type { Paged } from "../rentals";
 import { GeneralLedgerPage } from "./GeneralLedgerPage";
 
@@ -85,5 +86,24 @@ describe("GeneralLedgerPage", () => {
     expect((await screen.findByRole("alert")).textContent).toBe(
       "a general ledger runs from a day to the same day or a later one",
     );
+  });
+
+  it("shows the accounts of the search typed now, even when an earlier search's answer comes back last", async () => {
+    const OTHER: LedgerAccount = { ...OWNER, account: "owner_property: Owner 2 / Property 2" };
+    vi.stubGlobal("fetch", vi.fn(async (path: string) => {
+      const items = path.includes("q=Owner+2") ? [OTHER] : path.includes("q=Owner+1") ? [OWNER] : [];
+      return new Response(JSON.stringify({ ...PAGE, items }), { status: 200 });
+    }));
+    const release = holdBack((path) => path.includes("q=Owner+1"));
+    render(<GeneralLedgerPage me={ME} />);
+    await screen.findByTestId("empty-state");
+
+    fireEvent.change(screen.getByLabelText("Find an account"), { target: { value: "Owner 1" } });
+    fireEvent.change(screen.getByLabelText("Find an account"), { target: { value: "Owner 2" } });
+    await screen.findByRole("table", { name: "owner_property: Owner 2 / Property 2, Operating (operating)" });
+    await release();
+
+    expect(screen.getByRole("table", { name: "owner_property: Owner 2 / Property 2, Operating (operating)" })).toBeTruthy();
+    expect(screen.queryByRole("table", { name: "owner_property: Owner 1 / Property 1, Operating (operating)" })).toBeNull();
   });
 });

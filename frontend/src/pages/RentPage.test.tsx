@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
+import { holdBack } from "../holdBack";
 import type { RentRunLine } from "../rent";
 import type { LeaseDetail, Paged, RentRollRow } from "../rentals";
 import { RentPage } from "./RentPage";
@@ -108,6 +109,25 @@ describe("RentPage", () => {
         expect(fetch.mock.calls.at(-1)?.[0]).toBe(`/api/leases?page=1&show=${show}&property=p1`),
       );
     }
+  });
+
+  it("shows the leases of the status picked now, even when an earlier status's answer comes back last", async () => {
+    server({
+      "/api/leases?page=1&show=future": { ...ROLL, items: [{ ...ROW, id: "l2", property: { id: "p2", name: "Property 2" }, unit: { id: "u2", name: "Unit 2" } }] },
+      "/api/leases?page=1&show=past": { ...ROLL, items: [{ ...ROW, id: "l3", property: { id: "p3", name: "Property 3" }, unit: { id: "u3", name: "Unit 3" } }] },
+    });
+    const release = holdBack((path) => path.includes("show=future"));
+    render(<RentPage me={ME} />);
+    await roll();
+    const status = screen.getByRole("combobox", { name: "Status" });
+
+    fireEvent.change(status, { target: { value: "future" } });
+    fireEvent.change(status, { target: { value: "past" } });
+    await screen.findByRole("row", { name: "Property 3, Unit 3" });
+    await release();
+
+    expect(screen.getByRole("row", { name: "Property 3, Unit 3" })).toBeTruthy();
+    expect(screen.queryByRole("row", { name: "Property 2, Unit 2" })).toBeNull();
   });
 
   it("opens the lease from anywhere on its row, and a tenant from their name", async () => {

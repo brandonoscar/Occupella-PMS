@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { Owner, OwnerRow } from "../directory";
+import { holdBack } from "../holdBack";
 import type { OwnerMoney } from "../payables";
 import type { Paged } from "../rentals";
 import { OwnerPage, OwnersPage, agreementLine, lastTwelveMonths } from "./OwnersPage";
@@ -116,6 +117,29 @@ describe("OwnersPage", () => {
     );
   });
 
+  it("shows the owners of the property picked now, even when an earlier property's answer comes back last", async () => {
+    server({
+      "/api/property-groups": { groups: [], properties: [{ id: "p1", name: "Property 1" }, { id: "p2", name: "Property 2" }] },
+      "/api/owners?page=1&archived=false&property=p1": { ...ROWS, items: [ROWS.items[0]], total: 1 },
+      "/api/owners?page=1&archived=false&property=p2": {
+        ...ROWS, items: [{ ...ROWS.items[1]!, id: "o3", name: "Owner 3", properties: ["Property 2"] }], total: 1,
+      },
+    });
+    const release = holdBack((path) => path.includes("property=p1"));
+    render(<OwnersPage me={ME} />);
+    await screen.findByRole("row", { name: "Owner 1" });
+    const picker = screen.getByRole("combobox", { name: "Properties shown" });
+    await within(picker).findByRole("option", { name: "Property 2" });
+
+    fireEvent.change(picker, { target: { value: "property:p1" } });
+    fireEvent.change(picker, { target: { value: "property:p2" } });
+    await screen.findByRole("row", { name: "Owner 3" });
+    await release();
+
+    expect(screen.getByRole("row", { name: "Owner 3" })).toBeTruthy();
+    expect(screen.queryByRole("row", { name: "Owner 1" })).toBeNull();
+  });
+
   it("adds an owner and opens their page", async () => {
     const fetch = server({ "/api/setup/owners": { id: "o9" } });
     render(<OwnersPage me={ME} />);
@@ -161,6 +185,19 @@ describe("OwnerPage", () => {
       "https://pms.example/invite#token",
     );
     expect(posted(fetch)).toEqual([["/api/invites", { kind: "owner", person_id: "o1", email: "owner1@example.com" }]]);
+  });
+
+  it("shows the owner opened now, even when an earlier owner's answer comes back last", async () => {
+    server({ "/api/owners/o2": { ...OWNER, id: "o2", name: "Owner 2" } });
+    const release = holdBack((path) => path === "/api/owners/o1");
+    const { rerender } = render(<OwnerPage me={ME} id="o1" />);
+
+    rerender(<OwnerPage me={ME} id="o2" />);
+    await screen.findByRole("heading", { level: 1, name: "Owner 2" });
+    await release();
+
+    expect(screen.getByRole("heading", { level: 1, name: "Owner 2" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 1, name: "Owner 1" })).toBeNull();
   });
 
   it("offers a new invite to an owner invited already, none to a disabled login, and says when none has terms", async () => {
@@ -246,6 +283,29 @@ describe("OwnerPage", () => {
     const [[path, body]] = posted(fetch) as [[string, Record<string, unknown>]];
     expect(path).toBe("/api/payables/contributions");
     expect(body).toMatchObject({ account: "a2", amount: "75.00", memo: "Roof" });
+  });
+
+  it("shows the statement from the day picked now, even when an earlier day's answer comes back last", async () => {
+    const posting = (detail: string) => ({
+      ...STATEMENT, rows: STATEMENT.rows.map((row) => (row[3] === "posting" ? [...row.slice(0, 4), detail, ...row.slice(5)] : row)),
+    });
+    server({
+      "/api/owners/o1/statement?start=2026-02-01&end=2026-12-31": posting("Gutter cleaning"),
+      "/api/owners/o1/statement?start=2026-03-01&end=2026-12-31": posting("Roof repair"),
+    });
+    const release = holdBack((path) => path.includes("start=2026-02-01"));
+    render(<OwnerPage me={ME} id="o1" />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Financials" }));
+    await screen.findByText("Owner contribution");
+    fireEvent.change(screen.getByLabelText("To"), { target: { value: "2026-12-31" } });
+
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-02-01" } });
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-03-01" } });
+    await screen.findByText("Roof repair");
+    await release();
+
+    expect(screen.getByText("Roof repair")).toBeTruthy();
+    expect(screen.queryByText("Gutter cleaning")).toBeNull();
   });
 
   it("takes an inspection fee from one of the owner's properties", async () => {

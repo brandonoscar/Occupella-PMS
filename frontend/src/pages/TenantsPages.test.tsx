@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { Contact, Tenant, TenantRow } from "../directory";
+import { holdBack } from "../holdBack";
 import type { Paged } from "../rentals";
 import { TenantPage, TenantsPage } from "./TenantsPages";
 
@@ -118,6 +119,30 @@ describe("TenantsPage", () => {
     ]);
   });
 
+  it("shows the tenants of the property picked now, even when an earlier property's answer comes back last", async () => {
+    server({
+      "/api/tenants?page=1&archived=false": ROWS,
+      "/api/tenants?page=1&archived=false&property=p1": { ...ROWS, items: [ROWS.items[0]], total: 1 },
+      "/api/tenants?page=1&archived=false&property=p2": {
+        ...ROWS, items: [{ ...ROWS.items[1]!, id: "t3", name: "Tenant 3", property: { id: "p2", name: "Property 2" } }], total: 1,
+      },
+      "/api/property-groups": { groups: [], properties: [{ id: "p1", name: "Property 1" }, { id: "p2", name: "Property 2" }] },
+    });
+    const release = holdBack((path) => path.includes("property=p1"));
+    render(<TenantsPage me={ME} />);
+    await screen.findByRole("row", { name: "Tenant 1" });
+    const picker = screen.getByRole("combobox", { name: "Properties shown" });
+    await within(picker).findByRole("option", { name: "Property 2" });
+
+    fireEvent.change(picker, { target: { value: "property:p1" } });
+    fireEvent.change(picker, { target: { value: "property:p2" } });
+    await screen.findByRole("row", { name: "Tenant 3" });
+    await release();
+
+    expect(screen.getByRole("row", { name: "Tenant 3" })).toBeTruthy();
+    expect(screen.queryByRole("row", { name: "Tenant 1" })).toBeNull();
+  });
+
   it("says when the tenants can't be read", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));
     render(<TenantsPage me={ME} />);
@@ -151,6 +176,19 @@ describe("TenantPage", () => {
       ["Unit 1, Property 1", "01/01/2025 – 12/31/2025", "Ended", "$1,500.00", "$0.00"],
     ]);
     expect(within(rows[0]!).getByRole("link").getAttribute("href")).toBe("/leases/l1");
+  });
+
+  it("shows the tenant opened now, even when an earlier tenant's answer comes back last", async () => {
+    server({ "/api/tenants/t1": TENANT, "/api/tenants/t2": { ...TENANT, id: "t2", name: "Tenant 2" } });
+    const release = holdBack((path) => path === "/api/tenants/t1");
+    const { rerender } = render(<TenantPage me={ME} id="t1" />);
+
+    rerender(<TenantPage me={ME} id="t2" />);
+    await screen.findByRole("heading", { level: 1, name: "Tenant 2" });
+    await release();
+
+    expect(screen.getByRole("heading", { level: 1, name: "Tenant 2" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 1, name: "Tenant 1" })).toBeNull();
   });
 
   it("says when the tenant changed their contact details themselves, in the portal", async () => {

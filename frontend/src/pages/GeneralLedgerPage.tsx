@@ -11,6 +11,7 @@ import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import type { LedgerAccount } from "../generalLedger";
 import { ledgerHref, monthToDate, nonZero } from "../generalLedger";
+import { latest } from "../latest";
 import { day, money, usDate } from "../money";
 import type { Paged } from "../rentals";
 import { GoLink } from "./NeedsAttention";
@@ -32,17 +33,19 @@ export function GeneralLedgerPage({ me }: { me: Me }) {
   const [error, setError] = useState("");
 
   useEffect(() => {
+    const run = latest();
     if (!from || !to) return;
     setError("");
     const query = new URLSearchParams({ from, to, page: String(number) });
     if (q.trim()) query.set("q", q.trim());
     api
       .get<Paged<LedgerAccount>>(`/api/general-ledger?${query}`)
-      .then(setPage)
-      .catch((failed) => {
+      .then(run.keep(setPage))
+      .catch(run.keep((failed) => {
         setPage(null);
         setError(failed instanceof ApiError ? failed.detail : String(failed));
-      });
+      }));
+    return run.stop;
   }, [from, to, q, number]);
 
   return (

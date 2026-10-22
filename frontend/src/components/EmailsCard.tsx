@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
+import type { Keep } from "../latest";
+import { keepAll, latest } from "../latest";
 import { usDate } from "../money";
 import type { BadgeTone } from "./Badge";
 import { Badge } from "./Badge";
@@ -102,11 +104,15 @@ export function EmailsCard({ about, aboutId, name, emailOn }: {
   const [error, setError] = useState("");
   const query = new URLSearchParams({ about, about_id: aboutId });
 
-  function refresh() {
-    api.get<EmailLine[]>(`/api/emails?${query}`).then(setEmails)
-      .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
+  function refresh(keep: Keep = keepAll) {
+    api.get<EmailLine[]>(`/api/emails?${query}`).then(keep(setEmails))
+      .catch(keep((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed))));
   }
-  useEffect(refresh, [about, aboutId]);
+  useEffect(() => {
+    const run = latest();
+    refresh(run.keep);
+    return run.stop;
+  }, [about, aboutId]);
 
   async function send(subject: string, body: string) {
     setSaid("");

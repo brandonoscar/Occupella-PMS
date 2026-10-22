@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { holdBack } from "../holdBack";
 import type { EmailLine } from "./EmailsCard";
 import { EmailsCard, WriteEmail } from "./EmailsCard";
 
@@ -53,6 +54,20 @@ describe("EmailsCard", () => {
     expect(items[1]?.textContent).toContain("send a new one");
     expect(items[2]?.textContent).toContain("Password reset");
     expect(fetch.mock.calls[0]?.[0]).toBe("/api/emails?about=tenant&about_id=t1");
+  });
+
+  it("shows the email of the person opened now, even when an earlier person's answer comes back last", async () => {
+    const other: EmailLine[] = [{ ...EMAILS[0]!, id: "e9", to: "t2@example.com", subject: "Gate code" }];
+    vi.stubGlobal("fetch", vi.fn(async (path: string) =>
+      new Response(JSON.stringify(path.endsWith("about_id=t1") ? EMAILS : other))));
+    const release = holdBack((path) => path.endsWith("about_id=t1"));
+    const { rerender } = render(<EmailsCard about="tenant" aboutId="t1" name="Tenant 1" />);
+    rerender(<EmailsCard about="tenant" aboutId="t2" name="Tenant 2" />);
+    await screen.findByText("Gate code");
+    await release();
+
+    expect(screen.getByText("Gate code")).toBeTruthy();
+    expect(screen.queryByText("Water shutoff")).toBeNull();
   });
 
   it("writes an email in a side panel and says where it went", async () => {

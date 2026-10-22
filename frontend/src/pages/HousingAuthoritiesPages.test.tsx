@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import type { Authority, AuthorityPage } from "../assistance";
+import { holdBack } from "../holdBack";
 import { HousingAuthoritiesPage, HousingAuthorityPage } from "./HousingAuthoritiesPages";
 
 beforeEach(() => window.history.replaceState(null, "", "/housing-authorities"));
@@ -119,6 +120,21 @@ describe("HousingAuthorityPage", () => {
       .toEqual(["Tenant 3, Birch Flats Unit C", "", "None today", "$0.00", ""]);
     fireEvent.click(screen.getByRole("link", { name: "Tenant 1, Birch Flats Unit A" }));
     expect(window.location.pathname).toBe("/leases/l1");
+  });
+
+  it("shows the housing authority opened now, even when an earlier authority's answer comes back last", async () => {
+    server({
+      "/api/assistance/authorities/h1": PAGE,
+      "/api/assistance/authorities/h2": { ...PAGE, id: "h2", name: "Demo County Housing", owed: "0.00", leases: [] },
+    });
+    const release = holdBack((path) => path === "/api/assistance/authorities/h1");
+    const { rerender } = render(<HousingAuthorityPage me={ME} id="h1" />);
+    rerender(<HousingAuthorityPage me={ME} id="h2" />);
+    await screen.findByRole("heading", { level: 1, name: "Demo County Housing" });
+    await release();
+
+    expect(screen.getByRole("heading", { level: 1, name: "Demo County Housing" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { level: 1, name: "Synthetic Housing Authority" })).toBeNull();
   });
 
   it("records one payment for several leases, each no more than it owes", async () => {

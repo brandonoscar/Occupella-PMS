@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
+import { holdBack } from "../holdBack";
 import type { BankBooks, Worksheet } from "../reconcile";
 import { BankingPage, ReconcilePage } from "./ReconcilePage";
 
@@ -322,6 +323,26 @@ describe("ReconcilePage", () => {
     expect(screen.getByText("Import a statement to see the reconciliation.")).toBeTruthy();
     expect(screen.getAllByText("None.")).toHaveLength(2);
     expect(screen.getByText("None yet.")).toBeTruthy();
+  });
+
+  it("shows the worksheet at the day picked now, even when an earlier day's answer comes back last", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (path: string) => {
+      const read = path === "/api/reconcile" ? BANKS : path.startsWith("/api/bank-accounts/") ? NO_MOVES
+        : path === "/api/reconcile/b1?through=2026-01-31" ? TIED : SHEET;
+      return new Response(JSON.stringify(read), { status: 200 });
+    }));
+    const release = holdBack((path) => path === "/api/reconcile/b1?through=2026-01-15");
+    render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
+    expect(screen.getByText("Off by $65.00")).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText("At the end of"), { target: { value: "2026-01-15" } });
+    fireEvent.change(screen.getByLabelText("At the end of"), { target: { value: "2026-01-31" } });
+    await screen.findByText("Ties out");
+    await release();
+
+    expect(screen.getByText("Ties out")).toBeTruthy();
+    expect(screen.queryByText("Off by $65.00")).toBeNull();
   });
 
   it("says when there is no such trust bank account, and when the page can't be read", async () => {

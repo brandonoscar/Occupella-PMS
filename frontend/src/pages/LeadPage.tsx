@@ -12,6 +12,7 @@ import { Said } from "../components/Said";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
+import { latest } from "../latest";
 import type { Lead, ShowingOutcome } from "../leads";
 import { LEAD_STATUS, OUTCOME, askedAbout, showingTime, startsAt } from "../leads";
 import { usDate } from "../money";
@@ -35,8 +36,10 @@ export function LeadPage({ me, id }: { me: Me; id: string }) {
   const { said, error: refused, record } = useRecord(() => setRuns((n) => n + 1));
 
   useEffect(() => {
-    api.get<Lead>(`/api/leasing/leads/${id}`).then(setFound)
-      .catch((why) => setError(why instanceof ApiError ? why.detail : String(why)));
+    const run = latest();
+    api.get<Lead>(`/api/leasing/leads/${id}`).then(run.keep(setFound))
+      .catch(run.keep((why) => setError(why instanceof ApiError ? why.detail : String(why))));
+    return run.stop;
   }, [id, runs]);
 
   const recordThenClose: Recorder = async (path, body, done) => {

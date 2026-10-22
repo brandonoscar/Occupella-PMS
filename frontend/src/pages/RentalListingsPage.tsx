@@ -17,6 +17,7 @@ import { PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
 import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
+import { latest } from "../latest";
 import type { ListingPhoto, OpenUnit } from "../leasing";
 import { money, usDate } from "../money";
 import type { Paged } from "../rentals";
@@ -63,9 +64,11 @@ export function RentalListingsPage({ me }: { me: Me }) {
   const { error: refused, record } = useRecord(() => setRuns((n) => n + 1), setSaid);
 
   useEffect(() => {
+    const run = latest();
     const query = new URLSearchParams({ page: String(number), ...scopeParams(scope) });
-    api.get<Paged<OpenUnit>>(`/api/leasing/vacancies?${query}`).then(setPage)
-      .catch((why) => setError(why instanceof ApiError ? why.detail : String(why)));
+    api.get<Paged<OpenUnit>>(`/api/leasing/vacancies?${query}`).then(run.keep(setPage))
+      .catch(run.keep((why) => setError(why instanceof ApiError ? why.detail : String(why))));
+    return run.stop;
   }, [scope, number, runs]);
 
   async function copy() {

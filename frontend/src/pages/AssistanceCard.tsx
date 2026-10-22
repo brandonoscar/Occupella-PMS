@@ -13,6 +13,8 @@ import { Select } from "../components/Select";
 import { Card } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
+import type { Keep } from "../latest";
+import { keepAll, latest } from "../latest";
 import { day, money, sumMoney, usDate } from "../money";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
@@ -37,12 +39,16 @@ export function AssistanceCard({ leaseId, unit }: { leaseId: string; unit: strin
   const [panel, setPanel] = useState<Panel | null>(null);
   const { said, error: refused, record } = useRecord(refresh);
 
-  function refresh() {
-    api.get<LeaseAssistance>(`/api/assistance/leases/${leaseId}`).then(setAssistance)
-      .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
-    api.get<Authority[]>("/api/assistance/authorities").then(setAuthorities).catch(() => setAuthorities([]));
+  function refresh(keep: Keep = keepAll) {
+    api.get<LeaseAssistance>(`/api/assistance/leases/${leaseId}`).then(keep(setAssistance))
+      .catch(keep((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed))));
+    api.get<Authority[]>("/api/assistance/authorities").then(keep(setAuthorities)).catch(keep(() => setAuthorities([])));
   }
-  useEffect(refresh, [leaseId]);
+  useEffect(() => {
+    const run = latest();
+    refresh(run.keep);
+    return run.stop;
+  }, [leaseId]);
 
   const recordThenClose: Recorder = async (path, body, done) => {
     const recorded = await record(path, body, done);

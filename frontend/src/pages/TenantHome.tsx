@@ -5,6 +5,7 @@ import { Button, LinkButton } from "../components/Button";
 import { Notice } from "../components/Notice";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
+import { latest } from "../latest";
 import type { Ledger } from "../ledger";
 import { entryWords, readLedger } from "../ledger";
 import type { ContentType } from "../documents";
@@ -127,12 +128,14 @@ export function TenantHome({ me }: { me: Me }) {
   }, []);
 
   useEffect(() => {
+    const run = latest();
     if (!chosen) return;
     setLedger(null);
     api
       .get<StatementData>(`/api/tenant/leases/${chosen}/ledger`)
-      .then((data) => setLedger(readLedger(data)))
-      .catch(show);
+      .then(run.keep((data) => setLedger(readLedger(data))))
+      .catch(run.keep(show));
+    return run.stop;
   }, [chosen]);
 
   async function send(event: React.FormEvent) {

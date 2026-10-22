@@ -12,6 +12,8 @@ import { Select } from "../components/Select";
 import { Card } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
+import type { Keep } from "../latest";
+import { keepAll, latest } from "../latest";
 import { day, money, usDate } from "../money";
 import type { BreakFee, Household, LeaseDetail, LeasePerson } from "../rentals";
 import { petLine, vehicleLine } from "../rentals";
@@ -116,11 +118,15 @@ export function HouseholdCards({ leaseId }: { leaseId: string }) {
   const [household, setHousehold] = useState<Household | null>(null);
   const [failed, setFailed] = useState("");
   const [adding, setAdding] = useState<Kind | null>(null);
-  function load() {
-    api.get<Household>(`/api/leases/${leaseId}/household`).then(setHousehold)
-      .catch((error) => setFailed(detail(error)));
+  function load(keep: Keep = keepAll) {
+    api.get<Household>(`/api/leases/${leaseId}/household`).then(keep(setHousehold))
+      .catch(keep((error) => setFailed(detail(error))));
   }
-  useEffect(load, [leaseId]);
+  useEffect(() => {
+    const run = latest();
+    load(run.keep);
+    return run.stop;
+  }, [leaseId]);
   const { said, error, record } = useRecord(load);
   const addThenClose: Recorder = async (path, body, done) => {
     const recorded = await record(path, body, done);

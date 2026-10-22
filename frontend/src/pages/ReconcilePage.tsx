@@ -10,6 +10,7 @@ import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
+import { latest } from "../latest";
 import { day, money, usDate } from "../money";
 import { downloadHref, FORMATS } from "../reports";
 import type { CompanyFees } from "../payables";
@@ -223,12 +224,14 @@ export function ReconcilePage({ me, id }: { me: Me; id: string }) {
   }
   useEffect(refresh, []);
   useEffect(() => {
+    const run = latest();
     if (!bank) return;
     const query = through ? `?through=${through}` : "";
     api
       .get<Worksheet>(`/api/reconcile/${bank.id}${query}`)
-      .then((found) => setRead({ bank: bank.id, sheet: found }))
-      .catch(failed);
+      .then(run.keep((found) => setRead({ bank: bank.id, sheet: found })))
+      .catch(run.keep(failed));
+    return run.stop;
   }, [bank, through]);
 
   return (

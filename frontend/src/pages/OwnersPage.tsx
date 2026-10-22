@@ -19,6 +19,8 @@ import { StatementView } from "../components/StatementView";
 import { Tabs } from "../components/Tabs";
 import { Wide } from "../components/Wide";
 import type { Agreement, Owner, OwnerRow } from "../directory";
+import type { Keep } from "../latest";
+import { keepAll, latest } from "../latest";
 import { day, money, usDate } from "../money";
 import type { OwnerFeeKind, OwnerMoney } from "../payables";
 import { OWNER_FEE_KINDS, incomeStatementHref, ownerFeeSummary } from "../payables";
@@ -57,8 +59,10 @@ export function OwnersPage({ me }: { me: Me }) {
   const [adding, setAdding] = useState(false);
 
   useEffect(() => {
+    const run = latest();
     const query = new URLSearchParams({ page: String(number), archived: String(archived), ...scopeParams(scope) });
-    api.get<Paged<OwnerRow>>(`/api/owners?${query}`).then(setPage).catch((why) => setError(detail(why)));
+    api.get<Paged<OwnerRow>>(`/api/owners?${query}`).then(run.keep(setPage)).catch(run.keep((why) => setError(detail(why))));
+    return run.stop;
   }, [scope, archived, number]);
 
   return (
@@ -163,10 +167,14 @@ export function OwnerPage({ me, id }: { me: Me; id: string }) {
   const [error, setError] = useState("");
   const [tab, setTab] = useState<OwnerTab>("summary");
 
-  function refresh() {
-    api.get<Owner>(`/api/owners/${id}`).then(setOwner).catch((why) => setError(detail(why)));
+  function refresh(keep: Keep = keepAll) {
+    api.get<Owner>(`/api/owners/${id}`).then(keep(setOwner)).catch(keep((why) => setError(detail(why))));
   }
-  useEffect(refresh, [id]);
+  useEffect(() => {
+    const run = latest();
+    refresh(run.keep);
+    return run.stop;
+  }, [id]);
 
   if (owner === null) {
     return (
@@ -298,11 +306,13 @@ function OwnerFinancials({ owner, refresh }: { owner: Owner; refresh: () => void
   const { said, error: refused, record } = useRecord(() => { setRuns((n) => n + 1); refresh(); });
 
   useEffect(() => {
+    const run = latest();
     setError("");
     const query = new URLSearchParams({ start, end });
     api.get<StatementData>(`/api/owners/${owner.id}/statement?${query}`)
-      .then(setStatement)
-      .catch((why) => { setStatement(null); setError(detail(why)); });
+      .then(run.keep(setStatement))
+      .catch(run.keep((why) => { setStatement(null); setError(detail(why)); }));
+    return run.stop;
   }, [owner.id, start, end, runs]);
 
   const recordThenClose: Recorder = async (path, body, done) => {

@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
+import type { Keep } from "../latest";
+import { keepAll, latest } from "../latest";
 import { usDate } from "../money";
 import { Button } from "./Button";
 import { Form } from "./Form";
@@ -19,11 +21,15 @@ export function NotesCard({ about, aboutId, name }: { about: NoteAbout; aboutId:
   const [error, setError] = useState("");
   const query = new URLSearchParams({ about, about_id: aboutId });
 
-  function refresh() {
-    api.get<Note[]>(`/api/notes?${query}`).then(setNotes)
-      .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
+  function refresh(keep: Keep = keepAll) {
+    api.get<Note[]>(`/api/notes?${query}`).then(keep(setNotes))
+      .catch(keep((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed))));
   }
-  useEffect(refresh, [about, aboutId]);
+  useEffect(() => {
+    const run = latest();
+    refresh(run.keep);
+    return run.stop;
+  }, [about, aboutId]);
 
   return (
     <Card title="Notes">

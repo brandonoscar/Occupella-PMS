@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
+import { holdBack } from "../holdBack";
 import type { Offer } from "../offers";
 import { DraftLeasePage } from "./DraftLeasePage";
 import { DraftLeasesPage, startedFrom } from "./DraftLeasesPage";
@@ -102,6 +103,19 @@ describe("DraftLeasesPage", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Void" }));
 
     await screen.findByText("No draft lease was voided.");
+  });
+
+  it("shows the draft leases of the tab picked now, even when an earlier tab's answer comes back last", async () => {
+    server();
+    const release = holdBack((path) => path.startsWith("/api/leasing/offers?show=open"));
+    render(<DraftLeasesPage me={ME} />);
+
+    fireEvent.click(screen.getByRole("tab", { name: "Void" }));
+    await screen.findByText("No draft lease was voided.");
+    await release();
+
+    expect(screen.getByText("No draft lease was voided.")).toBeTruthy();
+    expect(screen.queryByRole("row", { name: "Lease for Property 1, Unit 2" })).toBeNull();
   });
 
   it("saves a draft with a deposit and monthly charges for an approved applicant", async () => {
@@ -273,5 +287,21 @@ describe("DraftLeasePage", () => {
     render(<DraftLeasePage me={ME} id="zz" />);
 
     await screen.findByText("/api/leasing/offers/zz");
+  });
+
+  it("shows the draft lease opened now, even when an earlier draft lease's answer comes back last", async () => {
+    const answers = server();
+    vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) =>
+      path === "/api/leasing/offers/o2"
+        ? new Response(JSON.stringify({ ...OFFER, id: "o2", unit_id: "u5", unit: "Unit 5" }))
+        : answers(path, init)));
+    const release = holdBack((path) => path === "/api/leasing/offers/o1");
+    const { rerender } = render(<DraftLeasePage me={ME} id="o1" />);
+    rerender(<DraftLeasePage me={ME} id="o2" />);
+    await screen.findByRole("heading", { level: 1, name: "Lease for Property 1, Unit 5" });
+    await release();
+
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Lease for Property 1, Unit 5");
+    expect(screen.queryByRole("heading", { level: 1, name: "Lease for Property 1, Unit 2" })).toBeNull();
   });
 });
