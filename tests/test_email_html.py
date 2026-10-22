@@ -163,12 +163,14 @@ def test_every_kind_with_a_button_is_a_kind_of_email(conn):
     kinds = set(re.findall(r"'([a-z_]+)'::text", check))
 
     assert set(email_html.BUTTONS) <= kinds
-    # These ask the reader to do nothing in the PMS: a receipt carries its PDF and no link.
+    # These ask the reader to do nothing in the PMS: a receipt and a deposit statement carry
+    # their PDF and no link.
     assert kinds - set(email_html.BUTTONS) == {
         "message",
         "work_order",
         "adverse_action",
         "payment_receipt",
+        "deposit_statement",
     }
 
 
