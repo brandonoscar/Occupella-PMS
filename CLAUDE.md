@@ -290,7 +290,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `pms.leasing.screening.Partner`; the server's `PMS_SCREENING_PARTNER` picks one ("fake" for
   development and CI, none by default). The PMS keeps only applicants' names and emails; the
   partner collects anything else on its own side. Lease offers (`src/pms/api/offers.py`) carry
-  the PMC's own lease PDF (the PMS writes no lease text) and are signed on the PMS's own signing
+  the PMC's own lease PDF, or one of its lease templates filled in from the offer's terms
+  (migration 0121; the PMS writes no lease text either way), and are signed on the PMS's own signing
   page (ADR 0008, migration 0097, `src/pms/api/signing.py`, `pms.leasing.esign`; it replaced the
   fake partner): each signer's link (`/sign#<token>`, kept as its SHA-256, 30 days, the token in
   JSON bodies) shows the ESIGN consumer disclosures to agree to, or "I'd rather sign on paper";
@@ -839,7 +840,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   staff pick, read filled in first and kept as made (`trust_notices`: its title, letterhead and
   text, so its PDF reads the same every time). The PMS writes no notice text and checks no
   state's notice period or wording. Append-only, area documents; the AI role reads the templates
-  but never a notice.
+  but never a notice. Since migration 0121 (the founder's request of 2026-10-22) a template is for
+  a notice or a lease to sign from when it is made (`trust_notice_templates.used_for`): a lease
+  template's blanks are `notice_letters.LEASE_FIELDS` ({{tenant_names}}, {{guarantor_names}},
+  {{security_deposit}}, {{monthly_charges}}...), filled from a draft lease's terms into the PDF it
+  sends for signing ("none" where there is nothing), and `trust_lease_offer_templates` keeps the
+  version an offer came from, once; a notice comes only from a notice template, an offer only from
+  a lease template (a trigger checks both).
 - Archiving (migrations 0063 and 0064, ADR 0005; vendors since migration 0110, the founder's
   review q131): nothing in a PMC is deleted; a property, unit, tenant, owner or vendor is archived
   instead, a row in `trust_archivals` (append-only, the latest for a record holding,

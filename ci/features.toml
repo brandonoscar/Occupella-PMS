@@ -953,3 +953,15 @@ operations = [
 browser = [
   "features.spec.ts › staff keep the company's own notice templates, make one into a notice for a lease, read it filled in and download its PDF",
 ]
+
+[[feature]]
+id = "lease-templates"
+statement = "A company's own lease, filled in (the founder's request of 2026-10-22; migration 0121): on Settings, Notice templates staff keep a template for a lease to sign, with the blanks the PMS fills from a draft lease's terms (tenants, guarantors, home, rent, deposit, monthly charges, its days, the company); a draft lease takes the company's PDF or one of its lease templates, filled in from its terms into the PDF it sends for signing, and keeps which version it came from. The words are the company's; the PMS writes no lease text."
+operations = [
+  "POST /api/notices/templates",
+  "POST /api/leasing/leases/{lease_id}/renewal",
+  "GET /api/leasing/offers/{offer_id}/document",
+]
+browser = [
+  "features.spec.ts › staff keep the company's own lease as a template, and a draft lease is it filled in from its terms",
+]

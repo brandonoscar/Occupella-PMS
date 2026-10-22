@@ -3803,6 +3803,31 @@ $$;
 
 
 --
+-- Name: trust_check_template_use(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_template_use() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_use text;
+BEGIN
+    SELECT t.used_for INTO v_use
+    FROM trust_notice_template_versions AS v
+    JOIN trust_notice_templates AS t ON t.id = v.template_id
+    WHERE v.id = NEW.template_version_id;
+    IF v_use <> TG_ARGV[0] THEN
+        RAISE EXCEPTION 'trust: a % is made from a % template, not a % one',
+            TG_ARGV[0], TG_ARGV[0], v_use
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_tenant_link(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -14103,6 +14128,19 @@ CREATE TABLE public.trust_lease_offer_signers (
 
 
 --
+-- Name: trust_lease_offer_templates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_offer_templates (
+    offer_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    template_version_id uuid NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
 -- Name: trust_lease_offer_voids; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14457,7 +14495,8 @@ CREATE TABLE public.trust_notice_templates (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     pmc_id uuid NOT NULL,
     recorded_by uuid,
-    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    used_for text DEFAULT 'notice'::text NOT NULL
 );
 
 
@@ -16997,6 +17036,14 @@ ALTER TABLE ONLY public.trust_lease_offer_signers
 
 
 --
+-- Name: trust_lease_offer_templates trust_lease_offer_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_templates
+    ADD CONSTRAINT trust_lease_offer_templates_pkey PRIMARY KEY (offer_id);
+
+
+--
 -- Name: trust_lease_offer_voids trust_lease_offer_voids_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -17338,6 +17385,14 @@ ALTER TABLE ONLY public.trust_notice_templates
 
 ALTER TABLE ONLY public.trust_notice_templates
     ADD CONSTRAINT trust_notice_templates_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_notice_templates trust_notice_templates_used_for_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_notice_templates
+    ADD CONSTRAINT trust_notice_templates_used_for_check CHECK ((used_for = ANY (ARRAY['notice'::text, 'lease'::text]))) NOT VALID;
 
 
 --
@@ -19234,6 +19289,20 @@ CREATE INDEX trust_lease_occupants_recorded_by ON public.trust_lease_occupants U
 
 
 --
+-- Name: trust_lease_offer_templates_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_offer_templates_recorded_by ON public.trust_lease_offer_templates USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_lease_offer_templates_version; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_offer_templates_version ON public.trust_lease_offer_templates USING btree (pmc_id, template_version_id);
+
+
+--
 -- Name: trust_lease_offer_voids_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20886,6 +20955,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_lease_offer_templates trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_offer_templates FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_lease_offer_voids trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22115,6 +22191,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_leas
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_offer_signers FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_lease_offer_templates trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_offer_templates FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -23490,6 +23573,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_occupants F
 
 
 --
+-- Name: trust_lease_offer_templates trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_offer_templates FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_lease_offer_voids trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23949,6 +24039,20 @@ CREATE TRIGGER trust_signing_link_signer BEFORE INSERT ON public.trust_signing_l
 --
 
 CREATE TRIGGER trust_staff_role_change BEFORE INSERT ON public.trust_staff_roles FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role_change();
+
+
+--
+-- Name: trust_lease_offer_templates trust_template_use; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_template_use BEFORE INSERT ON public.trust_lease_offer_templates FOR EACH ROW EXECUTE FUNCTION public.trust_check_template_use('lease');
+
+
+--
+-- Name: trust_notices trust_template_use; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_template_use BEFORE INSERT ON public.trust_notices FOR EACH ROW EXECUTE FUNCTION public.trust_check_template_use('notice');
 
 
 --
@@ -26197,6 +26301,38 @@ ALTER TABLE ONLY public.trust_lease_offer_signers
 
 ALTER TABLE ONLY public.trust_lease_offer_signers
     ADD CONSTRAINT trust_lease_offer_signers_pmc_id_offer_id_fkey FOREIGN KEY (pmc_id, offer_id) REFERENCES public.trust_lease_offers(pmc_id, id);
+
+
+--
+-- Name: trust_lease_offer_templates trust_lease_offer_templates_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_templates
+    ADD CONSTRAINT trust_lease_offer_templates_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_offer_templates trust_lease_offer_templates_pmc_id_offer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_templates
+    ADD CONSTRAINT trust_lease_offer_templates_pmc_id_offer_id_fkey FOREIGN KEY (pmc_id, offer_id) REFERENCES public.trust_lease_offers(pmc_id, id);
+
+
+--
+-- Name: trust_lease_offer_templates trust_lease_offer_templates_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_templates
+    ADD CONSTRAINT trust_lease_offer_templates_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_lease_offer_templates trust_lease_offer_templates_pmc_id_template_version_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_offer_templates
+    ADD CONSTRAINT trust_lease_offer_templates_pmc_id_template_version_id_fkey FOREIGN KEY (pmc_id, template_version_id) REFERENCES public.trust_notice_template_versions(pmc_id, id);
 
 
 --
@@ -28718,4 +28854,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261021000117'),
     ('20261021000118'),
     ('20261021000119'),
-    ('20261022000120');
+    ('20261022000120'),
+    ('20261022000121');

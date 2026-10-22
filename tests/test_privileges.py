@@ -270,6 +270,8 @@ TABLES = {
     # A receipt for a fee a deposit keeps: one of the lease's documents linked to the fee
     # (migration 0120). The AI reads the link, never the file.
     "trust_deduction_receipts": {"SELECT", "INSERT"},
+    # The lease template version a lease offer's document was filled from (migration 0121).
+    "trust_lease_offer_templates": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -504,6 +506,7 @@ FUNCTIONS = {
     "trust_check_notice_template_version()": set(),
     "trust_lock_notice_templates()": set(),
     "trust_check_deduction_receipt()": set(),
+    "trust_check_template_use()": set(),
     # Reports read trust records, so only the app and the AI; they run with the caller's own
     # read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app", "trust_ai_agent"},
