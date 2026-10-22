@@ -522,7 +522,7 @@ def tell_admins(
 
 PENDING = """
 SELECT e.id, e.pmc_id, e.kind, e.to_address, e.subject, e.body, e.needs_link,
-       e.owner_id, e.period, e.transfer_id,
+       e.owner_id, e.period, e.transfer_id, e.tenant_id, e.lease_id,
        e.created_at < now() - make_interval(mins => %(minutes)s), p.display_name,
        (SELECT count(*) FROM trust_email_deliveries AS d WHERE d.email_id = e.id),
        a.reply_to, a.address_line_1, a.address_line_2,
@@ -573,6 +573,8 @@ def deliver_pending(conn: psycopg.Connection[Any], sender: Sender, limit: int = 
             owner_id,
             period,
             transfer_id,
+            tenant_id,
+            lease_id,
             stale,
             company,
             attempts,
@@ -598,7 +600,7 @@ def deliver_pending(conn: psycopg.Connection[Any], sender: Sender, limit: int = 
                 try:
                     with conn.transaction():
                         files = attachments.for_email(
-                            conn, pmc_id, kind, owner_id, period, transfer_id
+                            conn, pmc_id, kind, owner_id, period, transfer_id, tenant_id, lease_id
                         )
                     text = body.replace(LINK, link) if link is not None else body
                     lines = tuple(line for line in address if line)

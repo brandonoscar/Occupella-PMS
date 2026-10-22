@@ -19,7 +19,17 @@ from uuid import UUID
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-from pms.api import journal, leasing, offers, payables, reconcile, rent, signers, vendors
+from pms.api import (
+    journal,
+    leasing,
+    moveout,
+    offers,
+    payables,
+    reconcile,
+    rent,
+    signers,
+    vendors,
+)
 from pms.api.deps import Conn, Staff
 
 router = APIRouter(prefix="/api/today")
@@ -96,6 +106,9 @@ class Today(BaseModel):
     renters_insurance: list[Uninsured]
     # Leases not ended whose signed offer asked a security deposit not all held yet.
     deposits_to_receive: list[DepositDue]
+    # Leases past their last day whose deposits are still held, with the day they are due back
+    # by the strictest deadline found (migration 0120, docs/law.md).
+    deposits_to_return: list[moveout.DueBack]
 
 
 # The leases named as the rent page names them: property, unit and every tenant on it.
@@ -211,6 +224,7 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
             f for f in payables.held_fees(conn, session.pmc_id, day) if Decimal(f.held) > 0
         ],
         deposits_to_receive=deposits,
+        deposits_to_return=moveout.due_back(conn, session.pmc_id, day),
         renters_insurance=[
             Uninsured(
                 lease_id=lease,
