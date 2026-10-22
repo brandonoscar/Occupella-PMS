@@ -49,6 +49,10 @@ Staff and tenants may each subscribe their own calendar app (Google, Apple, Outl
 private link of the PMS's: staff see the company's move-ins, leases ending, visits, bills due
 and insurance running out; a tenant their rent due days and repair visits.
 
+Staff sign in with a password and a code from an authenticator app. Owners and tenants may turn
+the same two-step sign-in on in their portal, and a company may require it of all of them; an
+admin's new invite is how one who lost their phone gets back in.
+
 Still true:
 
 - no hosted database and no deploy (CI uses a throwaway Postgres 16 container);

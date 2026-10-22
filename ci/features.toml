@@ -950,3 +950,17 @@ operations = [
 browser = [
   "features.spec.ts › staff keep the company's own notice templates, make one into a notice for a lease, read it filled in and download its PDF",
 ]
+
+[[feature]]
+id = "two-step-sign-in"
+statement = "Owners and tenants may sign in in two steps (the founder, 2026-10-22; migration 0153): one turns it on in their portal with an authenticator app, whose first code confirms it, and from then on each sign-in asks for a code after the password; they turn it off with a current code. Staff who may change who can sign in require it of every owner and tenant from Settings, Logins, which signs no one out: one without it sets it up after their password at their next sign-in, or from their invite, and can't turn it off while it is required. Logins says whose sign-in asks for a code. A reset the person asked for keeps it on; an admin's new invite clears it."
+operations = [
+  "POST /api/me/two-step/start",
+  "POST /api/me/two-step/confirm",
+  "POST /api/me/two-step/off",
+  "GET /api/logins/two-step",
+  "POST /api/logins/two-step",
+]
+browser = [
+  "features.spec.ts › a tenant turns two-step sign-in on and signs in with a code; staff require it, and owners without it set it up at sign-in or from their invite",
+]

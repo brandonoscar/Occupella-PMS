@@ -93,7 +93,24 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   by email; the link carries a token kept only as its SHA-256, in the URL fragment. Accepting
   sets an argon2id password (and for staff an authenticator, TOTP); a new invite resets a
   password. Staff invite from the person's own page (staff from the staff page) and disable a
-  login from Settings, Logins, for good: its sessions end and it takes no new invite. `trust_login_secrets` is never audited. The first staff member, their first admin
+  login from Settings, Logins, for good: its sessions end and it takes no new invite. `trust_login_secrets` is never audited.
+  Two-step sign-in for owners and tenants (migration 0153, the founder 2026-10-22,
+  `src/pms/api/two_step.py`): one turns it on for their own login in the portal's Two-step
+  sign-in card (`pages/TwoStepCard.tsx`, `POST /api/me/two-step/start` and `/confirm`): the
+  secret waits on their `trust_login_secrets` row, the same one shown until the app's first code
+  confirms it, and changes nothing at sign-in until then; from then on every sign-in asks for a
+  code after the password (staff's path, `accounts.CodeNeeded`), each code once, a wrong one
+  counting toward the lock. They turn it off with a current code (`/off`, a wrong one counting
+  too, refused while locked), unless their company requires it: staff who may change who can
+  sign in (area 'people') require it from Settings, Logins (`trust_sign_in_settings`:
+  append-only, the latest row holding, naming who changed it; `/api/logins/two-step`), which
+  signs no one out; an owner or a tenant without it then sets it up after their password, at
+  sign-in (the answer is the authenticator to set up, no session until its code comes with the
+  password) or from their invite (as staff do). `GET /api/me` says whether a login uses it and
+  must; Logins says whose sign-in asks for a code. Recovery stays an admin's new invite: one a
+  staff member made clears the authenticator, while a reset the person asked for (an invite no
+  staff member made) keeps it, and its lock, and signs nobody in while it is on: they sign in
+  with the new password and a code. The first staff member, their first admin
   role and their invite come from `python -m pms.admin`. A demo PMC to show the PMS with
   comes from `python -m pms.demo` (`src/pms/demo.py`): synthetic, built through the API's own
   route functions as its staff, with last month's reconciliation waiting for approval and
@@ -115,7 +132,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the outbox also carries portal invites (emailed when the server sends email; the page still
   shows the link once), password resets an owner or a tenant asks for at sign-in (`/forgot-password`,
   `POST /api/password-reset`: the same answer whether or not the email has a login, three an hour
-  at most; staff reset through an admin's invite, keeping their authenticator) and what staff
+  at most; staff reset through an admin's invite, keeping their authenticator; an owner's or a
+  tenant's two-step sign-in stays on through a reset they asked for) and what staff
   write (`src/pms/api/emails.py`): a tenant's, owner's or vendor's Email tab
   (`components/EmailsCard.tsx`) writes to them and lists every email the PMS wrote them with
   whether it went, and a property's Email tenants writes to each tenant living there today. An
@@ -239,7 +257,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   owner's properties (`?owner=`), by `src/pms/api/reports.py`, the general ledger and trial
   balance by each account's property, migration 0101; and Export), and Settings at `/settings`: staff roles and signers at `/settings/staff`
   (`src/pms/api/staff.py`; an admin invites a staff member from their row), logins at
-  `/settings/logins` (read only, by status; Disable in a row's menu), the company at
+  `/settings/logins` (read only, by status, whose sign-in asks for a code; Disable in a row's
+  menu; whether owners and tenants must use two-step sign-in, `pages/TwoStepRequiredCard.tsx`), the company at
   `/settings/setup` (`src/pms/api/company.py`: its name, address, logo and the fees new
   properties start with), expense accounts at `/settings/accounts` (Chart of accounts). The books'
   setup (`src/pms/api/setup.py`: plain inserts and the database's own write paths, nothing that
@@ -356,7 +375,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - `trust_ai_agent`, the role behind Occupella's API key, reads what `trust_app` reads and runs
   the reports. It holds no other grant: no write on any table, no function that writes. Grant
   it a new table's SELECT only if `trust_app` has it, and never a write path. It never reads
-  logins, invites, sessions or credentials, nor rental applications, applicants and their
+  logins, invites, sessions or credentials, nor whether a company requires two-step sign-in,
+  nor rental applications, applicants and their
   screenings, nor lease offers and signatures, nor documents' files, nor contact details, nor notes,
   nor notices made for a lease, nor vendors' links, nor leads and showings, nor screening criteria (`AI_NEVER_READS` in
   `tests/test_privileges.py`), nor their rows in the audit log: row-level security shows it only

@@ -19,17 +19,21 @@ const ME: Me = {
 };
 
 const PEOPLE = [
-  { kind: "staff", person_id: "s1", name: "Manager 1", email: "manager@example.com", login_id: "l1", status: "active" },
-  { kind: "staff", person_id: "s2", name: "Bookkeeper 1", email: "books@example.com", login_id: "l4", status: "active" },
-  { kind: "owner", person_id: "o1", name: "Owner 1", email: "owner@example.com", login_id: "l2", status: "invited" },
-  { kind: "tenant", person_id: "t1", name: "Tenant 1", email: null, login_id: null, status: "no login" },
-  { kind: "tenant", person_id: "t2", name: "Tenant 2", email: "t2@example.com", login_id: "l3", status: "disabled" },
+  { kind: "staff", person_id: "s1", name: "Manager 1", email: "manager@example.com", login_id: "l1", status: "active", two_step: true },
+  { kind: "staff", person_id: "s2", name: "Bookkeeper 1", email: "books@example.com", login_id: "l4", status: "active", two_step: true },
+  { kind: "owner", person_id: "o1", name: "Owner 1", email: "owner@example.com", login_id: "l2", status: "invited", two_step: false },
+  { kind: "owner", person_id: "o2", name: "Owner 2", email: "owner2@example.com", login_id: "l5", status: "active", two_step: false },
+  { kind: "tenant", person_id: "t1", name: "Tenant 1", email: null, login_id: null, status: "no login", two_step: false },
+  { kind: "tenant", person_id: "t2", name: "Tenant 2", email: "t2@example.com", login_id: "l3", status: "disabled", two_step: false },
+  { kind: "tenant", person_id: "t3", name: "Tenant 3", email: "t3@example.com", login_id: "l6", status: "active", two_step: true },
 ];
+const SETTING = { required: false, changed_at: null, changed_by: null };
 
 function server() {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method === "POST") return new Response(null, { status: 204 });
-    return new Response(JSON.stringify(path === "/api/people" ? PEOPLE : []), { status: 200 });
+    const found = path === "/api/people" ? PEOPLE : path === "/api/logins/two-step" ? SETTING : [];
+    return new Response(JSON.stringify(found), { status: 200 });
   });
   vi.stubGlobal("fetch", fetch);
   return fetch;
@@ -55,17 +59,34 @@ describe("LoginsPage", () => {
     expect(screen.queryByRole("textbox")).toBeNull();
   });
 
+  it("says whose active login signs in with a code too, and the company's rule for owners and tenants", async () => {
+    server();
+    render(<LoginsPage me={ME} />);
+    const twoStep = async (name: string) =>
+      within(await screen.findByRole("row", { name })).getAllByRole("cell")[4]!.textContent;
+
+    expect(await twoStep("Manager 1")).toBe("On");
+    expect(await twoStep("Owner 2")).toBe("Off");
+    expect(await twoStep("Tenant 3")).toBe("On");
+    // An invite not taken, no login or a disabled one: nothing to say.
+    expect([await twoStep("Owner 1"), await twoStep("Tenant 1"), await twoStep("Tenant 2")]).toEqual(["", "", ""]);
+    expect(screen.getByRole("columnheader", { name: "Two-step" })).toBeTruthy();
+    expect((await screen.findByTestId("two-step-required")).textContent).toBe(
+      "Each owner and tenant chooses whether to turn it on in their portal. Staff always sign in with a code.",
+    );
+  });
+
   it("narrows to one status", async () => {
     server();
     render(<LoginsPage me={ME} />);
     await screen.findByRole("row", { name: "Owner 1" });
 
     fireEvent.change(screen.getByLabelText("Status"), { target: { value: "active" } });
-    expect(screen.getAllByRole("row").slice(1).map((r) => r.getAttribute("aria-label"))).toEqual(["Manager 1", "Bookkeeper 1"]);
+    expect(screen.getAllByRole("row").slice(1).map((r) => r.getAttribute("aria-label"))).toEqual(["Manager 1", "Bookkeeper 1", "Owner 2", "Tenant 3"]);
     fireEvent.change(screen.getByLabelText("Status"), { target: { value: "invited" } });
     expect(screen.getAllByRole("row").slice(1).map((r) => r.getAttribute("aria-label"))).toEqual(["Owner 1"]);
     fireEvent.change(screen.getByLabelText("Status"), { target: { value: "" } });
-    expect(screen.getAllByRole("row")).toHaveLength(6);
+    expect(screen.getAllByRole("row")).toHaveLength(8);
   });
 
   it("disables a login for good from its row's menu once staff say yes, never their own, a disabled one or one not made", async () => {

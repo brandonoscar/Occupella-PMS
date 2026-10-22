@@ -79,6 +79,9 @@ TABLES = {
     "trust_invites": {"SELECT", "INSERT"},
     "trust_sessions": {"SELECT", "INSERT"},
     "trust_login_secrets": {"SELECT", "INSERT"},
+    # Whether a company requires two-step sign-in of its owners and tenants (migration 0153):
+    # staff change it with an insert, the latest row holding.
+    "trust_sign_in_settings": {"SELECT", "INSERT"},
     # Maintenance requests: tenants file them through the API, staff link a work order.
     "trust_maintenance_requests": {"SELECT", "INSERT"},
     "trust_maintenance_request_work_orders": {"SELECT", "INSERT"},
@@ -301,6 +304,8 @@ AI_NEVER_READS = {
     "trust_invites",
     "trust_sessions",
     "trust_login_secrets",
+    # Whether owners and tenants must sign in with a code: a rule of who can sign in.
+    "trust_sign_in_settings",
     "trust_application_links",
     "trust_application_link_closings",
     "trust_applications",

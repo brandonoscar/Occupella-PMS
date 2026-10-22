@@ -7,6 +7,16 @@ forgotten one; an owner or a tenant may ask for one by email themselves (request
 docs/adr/0007-email.md). Staff also enroll an authenticator app (TOTP) before their invite is
 used up, and every staff sign-in needs its code; a code works once.
 
+Two-step sign-in for owners and tenants (migration 20261022000153): an owner or a tenant may turn
+it on for their own login (start_two_step, then confirm_two_step with the app's first code), and
+from then on every sign-in of theirs needs a code too; they turn it off with a code
+(turn_off_two_step). A company may require it (trust_sign_in_settings, two_step_required): then an
+owner or a tenant without it sets it up when they sign in, after their password and before they
+get a session, with the same secret each try until a code confirms it. A secret not yet
+confirmed changes nothing at sign-in. Recovery stays an admin's new invite: accepting one a
+staff member made clears the authenticator, while a reset the person asked for keeps it, so an
+emailed link never gets past it.
+
 Passwords are hashed with argon2id. A sign-in that fails for any reason (no such login, wrong
 password, disabled, locked) gets the same answer, after the same work, so it doesn't tell an
 attacker which emails have logins. Ten failures in a row lock the login for LOCK_MINUTES.
@@ -89,7 +99,8 @@ class SignInRefused(Refused):
 
 
 class CodeNeeded(Refused):
-    """Staff: the password was right, and the authenticator code is missing or wrong."""
+    """The password was right, and the authenticator code is missing or wrong: staff, or an
+    owner or a tenant with two-step sign-in on (or setting it up)."""
 
 
 @dataclass(frozen=True)
@@ -137,9 +148,20 @@ class InviteView:
 
 @dataclass(frozen=True)
 class Enrollment:
-    """A staff invite's password is set; the authenticator must be confirmed next."""
+    """An authenticator to set up: a staff invite's password is set, an owner or a tenant turns
+    two-step sign-in on, or one whose company requires it signs in without it. Its first code
+    confirms it."""
 
     totp_uri: str
+    secret: str
+
+
+@dataclass(frozen=True)
+class PasswordSet:
+    """An owner's or a tenant's reset, asked for by email, set the new password; their
+    authenticator stays, so they sign in with the password and a code (no session yet)."""
+
+    pmc_id: UUID
 
 
 def digest(token: str) -> bytes:
@@ -212,7 +234,8 @@ def request_reset(conn: psycopg.Connection[Any], pmc_id: UUID, email: str) -> Re
     that can sign in and asked fewer than RESETS_PER_HOUR times in the last hour; None
     otherwise. The caller answers the same either way, so it doesn't tell who has a login. A
     staff member resets through an admin's new invite instead: an emailed link must not get past
-    their authenticator. Accepting it sets the new password, so until then the old one works."""
+    their authenticator. Accepting it sets the new password, so until then the old one works; an
+    owner's or a tenant's two-step sign-in stays on through it (accept_invite)."""
     found = _one(
         conn,
         "SELECT kind, coalesce(owner_id, tenant_id) FROM trust_logins"
@@ -236,10 +259,11 @@ def request_reset(conn: psycopg.Connection[Any], pmc_id: UUID, email: str) -> Re
 
 
 def _open_invite(conn: psycopg.Connection[Any], token: str, lock: bool) -> Any:
-    """The invite's row if it can still be used: not accepted, not expired, login enabled."""
+    """The invite's row if it can still be used: not accepted, not expired, login enabled; last,
+    the staff member who made it (None: a reset the person asked for, or the command line's)."""
     row = _one(
         conn,
-        "SELECT i.id, i.pmc_id, l.id, l.kind, l.email, i.expires_at"  # noqa: S608
+        "SELECT i.id, i.pmc_id, l.id, l.kind, l.email, i.expires_at, i.created_by"  # noqa: S608
         " FROM trust_invites AS i JOIN trust_logins AS l ON l.id = i.login_id"
         " WHERE i.token_hash = %s AND i.accepted_at IS NULL AND i.expires_at > now()"
         " AND l.disabled_at IS NULL" + (" FOR UPDATE OF i" if lock else ""),
@@ -265,47 +289,83 @@ def names(conn: psycopg.Connection[Any], login_id: UUID) -> tuple[str, str]:
 
 
 def view_invite(conn: psycopg.Connection[Any], token: str) -> InviteView:
-    _, _, login_id, kind, email, expires_at = _open_invite(conn, token, lock=False)
+    _, _, login_id, kind, email, expires_at, _ = _open_invite(conn, token, lock=False)
     name, pmc_name = names(conn, login_id)
     return InviteView(kind, email, name, pmc_name, expires_at)
 
 
-def accept_invite(conn: psycopg.Connection[Any], token: str, password: str) -> Signed | Enrollment:
-    """Set the password. An owner or a tenant is signed in; staff enroll an authenticator
-    next (confirm_invite), and their invite stays open until they do."""
+def accept_invite(
+    conn: psycopg.Connection[Any], token: str, password: str
+) -> Signed | Enrollment | PasswordSet:
+    """Set the password. Staff enroll an authenticator next (confirm_invite), and their invite
+    stays open until they do. An owner or a tenant is signed in, unless:
+      - the invite is a reset they asked for (no staff member made it) and their two-step sign-in
+        is on: it stays on, an emailed link must not get past it, so they sign in next with the
+        new password and a code (PasswordSet);
+      - their company requires two-step sign-in and they have none: they set it up next
+        (confirm_invite), as staff do.
+    An invite a staff member made clears an owner's or a tenant's authenticator, so one who lost
+    their phone gets back in: recovery stays an admin's new invite."""
     check_password(password)
-    invite_id, pmc_id, login_id, kind, _, _ = _open_invite(conn, token, lock=True)
-    totp_secret = pyotp.random_base32() if kind == "staff" else None
-    conn.execute(
-        "INSERT INTO trust_login_secrets (login_id, pmc_id, password_hash, totp_secret)"
-        " VALUES (%s, %s, %s, %s)"
-        " ON CONFLICT (login_id) DO UPDATE SET password_hash = excluded.password_hash,"
-        " totp_secret = excluded.totp_secret, totp_confirmed_at = NULL, totp_last_step = NULL,"
-        " failed_sign_ins = 0, locked_until = NULL, updated_at = now()",
-        (login_id, pmc_id, HASHER.hash(password), totp_secret),
+    invite_id, pmc_id, login_id, kind, _, _, made_by = _open_invite(conn, token, lock=True)
+    hashed = HASHER.hash(password)
+    if kind == "staff" or made_by is not None:
+        totp_secret = pyotp.random_base32() if kind == "staff" else None
+        conn.execute(
+            "INSERT INTO trust_login_secrets (login_id, pmc_id, password_hash, totp_secret)"
+            " VALUES (%s, %s, %s, %s)"
+            " ON CONFLICT (login_id) DO UPDATE SET password_hash = excluded.password_hash,"
+            " totp_secret = excluded.totp_secret, totp_confirmed_at = NULL,"
+            " totp_last_step = NULL, failed_sign_ins = 0, locked_until = NULL, updated_at = now()",
+            (login_id, pmc_id, hashed, totp_secret),
+        )
+        if totp_secret is not None:
+            return _enrollment(conn, login_id, totp_secret)
+    else:
+        # The person's own reset: the authenticator stays, and while it is on, so do the failed
+        # sign-ins counted and any lock, which an emailed link must not clear either.
+        conn.execute(
+            "INSERT INTO trust_login_secrets AS s (login_id, pmc_id, password_hash)"
+            " VALUES (%s, %s, %s)"
+            " ON CONFLICT (login_id) DO UPDATE SET password_hash = excluded.password_hash,"
+            " failed_sign_ins = CASE WHEN s.totp_confirmed_at IS NULL THEN 0"
+            " ELSE s.failed_sign_ins END,"
+            " locked_until = CASE WHEN s.totp_confirmed_at IS NULL THEN NULL"
+            " ELSE s.locked_until END, updated_at = now()",
+            (login_id, pmc_id, hashed),
+        )
+    secret, on = _one(
+        conn,
+        "SELECT totp_secret, totp_confirmed_at IS NOT NULL FROM trust_login_secrets"
+        " WHERE login_id = %s",
+        (login_id,),
     )
-    if totp_secret is not None:
-        email = _one(conn, "SELECT email FROM trust_logins WHERE id = %s", (login_id,))[0]
-        uri = pyotp.TOTP(totp_secret).provisioning_uri(name=email, issuer_name=ISSUER)
-        return Enrollment(uri)
+    if on:
+        _use_invite(conn, invite_id, login_id)
+        return PasswordSet(pmc_id)
+    if two_step_required(conn, pmc_id):
+        return _setup(conn, login_id, secret)
     return _finish_invite(conn, invite_id, login_id)
 
 
 def confirm_invite(conn: psycopg.Connection[Any], token: str, code: str) -> Signed:
-    """Staff: the first code from the authenticator app proves it is set up; then the invite
-    is used and they are signed in."""
-    invite_id, _, login_id, kind, _, _ = _open_invite(conn, token, lock=True)
+    """The first code from the authenticator app proves it is set up (staff, or an owner or a
+    tenant whose company requires two-step sign-in); then the invite is used and they are signed
+    in."""
+    invite_id, _, login_id, kind, _, _, _ = _open_invite(conn, token, lock=True)
     secret = _one(
         conn,
-        "SELECT totp_secret, totp_last_step FROM trust_login_secrets WHERE login_id = %s"
-        " FOR UPDATE",
+        "SELECT totp_secret, totp_last_step, totp_confirmed_at FROM trust_login_secrets"
+        " WHERE login_id = %s FOR UPDATE",
         (login_id,),
     )
-    if kind != "staff" or secret is None or secret[0] is None:
+    # An owner's or a tenant's authenticator is set up here only while it waits for its first
+    # code: one already on is never a way past the password.
+    if secret is None or secret[0] is None or (kind != "staff" and secret[2] is not None):
         raise Refused("set a password from this invite first")
     step = _code_step(secret[0], code, secret[1])
     if step is None:
-        raise CodeNeeded("that code is wrong or was already used: try the next one")
+        raise CodeNeeded(WRONG_CODE)
     conn.execute(
         "UPDATE trust_login_secrets SET totp_confirmed_at = now(), totp_last_step = %s,"
         " updated_at = now() WHERE login_id = %s",
@@ -314,14 +374,129 @@ def confirm_invite(conn: psycopg.Connection[Any], token: str, code: str) -> Sign
     return _finish_invite(conn, invite_id, login_id)
 
 
-def _finish_invite(conn: psycopg.Connection[Any], invite_id: UUID, login_id: UUID) -> Signed:
+def _use_invite(conn: psycopg.Connection[Any], invite_id: UUID, login_id: UUID) -> None:
     conn.execute("UPDATE trust_invites SET accepted_at = now() WHERE id = %s", (invite_id,))
     # A new password ends every session the old one opened.
     conn.execute(
         "UPDATE trust_sessions SET ended_at = now() WHERE login_id = %s AND ended_at IS NULL",
         (login_id,),
     )
+
+
+def _finish_invite(conn: psycopg.Connection[Any], invite_id: UUID, login_id: UUID) -> Signed:
+    _use_invite(conn, invite_id, login_id)
     return _new_session(conn, login_id)
+
+
+# --- two-step sign-in for owners and tenants ------------------------------------------------
+
+ENTER_CODE = "enter the code from your authenticator app"
+WRONG_CODE = "that code is wrong or was already used: try the next one"
+
+
+def two_step_required(conn: psycopg.Connection[Any], pmc_id: UUID) -> bool:
+    """Whether the company requires two-step sign-in of its owners and tenants: the latest row of
+    trust_sign_in_settings (none: it doesn't)."""
+    row = _one(
+        conn,
+        "SELECT require_two_step FROM trust_sign_in_settings WHERE pmc_id = %s"
+        " ORDER BY created_at DESC, id DESC LIMIT 1",
+        (pmc_id,),
+    )
+    return bool(row and row[0])
+
+
+def two_step_on(conn: psycopg.Connection[Any], login_id: UUID) -> bool:
+    """Whether the login signs in with a code: its authenticator is confirmed."""
+    row = _one(
+        conn,
+        "SELECT totp_confirmed_at IS NOT NULL FROM trust_login_secrets WHERE login_id = %s",
+        (login_id,),
+    )
+    return bool(row and row[0])
+
+
+def _enrollment(conn: psycopg.Connection[Any], login_id: UUID, secret: str) -> Enrollment:
+    email = _one(conn, "SELECT email FROM trust_logins WHERE id = %s", (login_id,))[0]
+    uri = pyotp.TOTP(secret).provisioning_uri(name=email, issuer_name=ISSUER)
+    return Enrollment(uri, secret)
+
+
+def _setup(conn: psycopg.Connection[Any], login_id: UUID, secret: str | None) -> Enrollment:
+    """An owner's or a tenant's authenticator to set up: the secret waiting for its first code,
+    or a new one kept to wait, so each try shows the same one until a code confirms it."""
+    if secret is None:
+        secret = pyotp.random_base32()
+        conn.execute(
+            "UPDATE trust_login_secrets SET totp_secret = %s, updated_at = now()"
+            " WHERE login_id = %s",
+            (secret, login_id),
+        )
+    return _enrollment(conn, login_id, secret)
+
+
+def _own_secret(conn: psycopg.Connection[Any], session: Session) -> Any:
+    """An owner's or a tenant's own authenticator, locked for the change: its secret, when it
+    was confirmed, the last step used, the failed sign-ins and whether the login is locked."""
+    if session.kind not in ("owner", "tenant"):
+        raise Refused("staff sign in with the authenticator they set up from their invite")
+    row = _one(
+        conn,
+        "SELECT totp_secret, totp_confirmed_at, totp_last_step, failed_sign_ins,"
+        " coalesce(locked_until > now(), false) FROM trust_login_secrets WHERE login_id = %s"
+        " FOR UPDATE",
+        (session.login_id,),
+    )
+    if row is None:
+        raise NotFound("set a password from your invite first")
+    return row
+
+
+def start_two_step(conn: psycopg.Connection[Any], session: Session) -> Enrollment:
+    """An owner or a tenant turns two-step sign-in on: the authenticator to set up. Nothing
+    changes at sign-in until its first code confirms it (confirm_two_step)."""
+    secret, confirmed, _, _, _ = _own_secret(conn, session)
+    if confirmed is not None:
+        raise Conflict("two-step sign-in is on already")
+    return _setup(conn, session.login_id, secret)
+
+
+def confirm_two_step(conn: psycopg.Connection[Any], session: Session, code: str) -> None:
+    """The first code from the app: from now on every sign-in of this login needs a code."""
+    secret, confirmed, last_step, _, _ = _own_secret(conn, session)
+    if confirmed is not None:
+        raise Conflict("two-step sign-in is on already")
+    if secret is None:
+        raise Refused("turn two-step sign-in on first")
+    step = _code_step(secret, code, last_step)
+    if step is None:
+        raise Refused(WRONG_CODE)
+    conn.execute(
+        "UPDATE trust_login_secrets SET totp_confirmed_at = now(), totp_last_step = %s,"
+        " updated_at = now() WHERE login_id = %s",
+        (step, session.login_id),
+    )
+
+
+def turn_off_two_step(conn: psycopg.Connection[Any], session: Session, code: str) -> None:
+    """An owner or a tenant turns two-step sign-in off with a current code, unless their company
+    requires it. A wrong code counts as a failed sign-in, and none is tried while the login is
+    locked, so a session left open can't be used to guess codes."""
+    secret, confirmed, last_step, failures, locked = _own_secret(conn, session)
+    if confirmed is None:
+        raise Conflict("two-step sign-in is off already")
+    if two_step_required(conn, session.pmc_id):
+        raise Refused("your property manager requires two-step sign-in, so it stays on")
+    if locked:
+        raise Refused(f"too many wrong tries: try again in {LOCK_MINUTES} minutes")
+    if _code_step(secret, code, last_step) is None:
+        _count_failure(conn, session.login_id, failures)
+        raise Refused(WRONG_CODE)
+    conn.execute(
+        "UPDATE trust_login_secrets SET totp_secret = NULL, totp_confirmed_at = NULL,"
+        " totp_last_step = NULL, updated_at = now() WHERE login_id = %s",
+        (session.login_id,),
+    )
 
 
 # --- signing in and out -------------------------------------------------------------------
@@ -329,9 +504,12 @@ def _finish_invite(conn: psycopg.Connection[Any], invite_id: UUID, login_id: UUI
 
 def sign_in(
     conn: psycopg.Connection[Any], pmc_id: UUID, email: str, password: str, code: str | None
-) -> Signed:
-    """A new session, or SignInRefused (the same for every reason) or CodeNeeded (staff whose
-    password was right). A failure is committed before it is raised, so it counts."""
+) -> Signed | Enrollment:
+    """A new session; or, for an owner or a tenant whose company requires two-step sign-in and
+    who has no authenticator yet, the one to set up (no session until a code from it comes with
+    the password). Refused with SignInRefused (the same for every reason) or CodeNeeded (the
+    password was right; the code is missing or wrong). A failure is committed before it is
+    raised, so it counts."""
     row = _one(
         conn,
         "SELECT l.id, l.kind, s.password_hash, s.totp_secret, s.totp_confirmed_at,"
@@ -350,22 +528,30 @@ def sign_in(
     if not right:
         _count_failure(conn, login_id, failures)
         raise SignInRefused()
+    if kind == "staff" and confirmed is None:
+        raise Refused("finish setting up from your invite link first")
+    sets_up = confirmed is None and kind != "staff" and two_step_required(conn, pmc_id)
+    if sets_up and (totp_secret is None or not code):
+        # Required, and not set up yet: the password was right, so the authenticator is set up
+        # now, as staff's is from their invite (a secret waiting already is the one shown).
+        return _setup(conn, login_id, totp_secret)
     step = None
-    if kind == "staff":
-        if confirmed is None:
-            raise Refused("finish setting up from your invite link first")
+    if confirmed is not None or sets_up:
+        # Staff, an owner or a tenant who turned two-step sign-in on, or one setting it up.
         if not code:
-            raise CodeNeeded("enter the code from your authenticator app")
+            raise CodeNeeded(ENTER_CODE)
         step = _code_step(totp_secret, code, last_step)
         if step is None:
             _count_failure(conn, login_id, failures)
-            raise CodeNeeded("that code is wrong or was already used: try the next one")
+            raise CodeNeeded(WRONG_CODE)
     conn.execute(
         "UPDATE trust_login_secrets SET failed_sign_ins = 0, locked_until = NULL,"
         " totp_last_step = coalesce(%s, totp_last_step),"
+        " totp_confirmed_at = CASE WHEN %s THEN now() ELSE totp_confirmed_at END,"
         " password_hash = coalesce(%s, password_hash), updated_at = now() WHERE login_id = %s",
         (
             step,
+            sets_up,
             HASHER.hash(password) if HASHER.check_needs_rehash(password_hash) else None,
             login_id,
         ),

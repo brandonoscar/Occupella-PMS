@@ -15,6 +15,7 @@ import { OwnerIncomeStatement } from "./OwnerIncomeStatement";
 import { OwnerYearEnd } from "./OwnerYearEnd";
 import { Form } from "../components/Form";
 import { ManagerCard } from "./ManagerCard";
+import { TwoStepCard } from "./TwoStepCard";
 
 type Property = { account_id: string; property_id: string; name: string; bank: string; balance: string };
 
@@ -108,6 +109,7 @@ export function OwnerHome({ me }: { me: Me }) {
       <OwnerYearEnd />
       <OwnerIncomeStatement />
       <OwnerDocuments />
+      <TwoStepCard me={me} />
       <ManagerCard />
     </Shell>
   );

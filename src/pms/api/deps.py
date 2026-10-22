@@ -197,6 +197,7 @@ AREA_PATHS = (
     ("/api/maintenance/", "maintenance"),
     ("/api/work-orders", "maintenance"),
     ("/api/invites", "people"),
+    ("/api/logins/two-step", "people"),  # whether owners and tenants must use two-step sign-in
     ("/api/emails", "email"),
 )
 READS = ("GET", "HEAD", "OPTIONS")

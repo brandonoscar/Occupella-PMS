@@ -4366,3 +4366,81 @@ test("staff keep the company's own notice templates, make one into a notice for 
   // The saved toasts sit over the page's corner until they go.
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
 });
+
+test("a tenant turns two-step sign-in on and signs in with a code; staff require it, and owners without it set it up at sign-in or from their invite", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["two-step"]!;
+  // An owner with a login from before the company required it, signed out.
+  const owner = await (await browser.newContext()).newPage();
+  await joinPortal(owner, people.owner_a);
+  await owner.getByRole("button", { name: "Sign out" }).click();
+  await expect(owner.getByRole("heading", { name: "Sign in" })).toBeVisible();
+
+  // The tenant turns it on in the portal: the app's key, then its first code.
+  await joinPortal(page, people.taylor);
+  const card = page.getByRole("group", { name: "Two-step sign-in" });
+  await expect(card.getByTestId("two-step-state")).toHaveText("Off: you sign in with your password alone.");
+  await card.getByRole("button", { name: "Turn on two-step sign-in" }).click();
+  const secret = (await card.locator("code").textContent()) ?? "";
+  await card.getByLabel("Code from your authenticator app").fill(totp(secret));
+  await card.getByRole("button", { name: "Turn on" }).click();
+  await expect(card.getByTestId("two-step-state")).toHaveText(
+    "On: each sign-in asks for your password and a code from your authenticator app.",
+  );
+
+  // Signed out, they sign in with the password, then the authenticator's next code.
+  await page.getByRole("button", { name: "Sign out" }).click();
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  await page.getByLabel("Email").fill(people.emails.taylor!);
+  await page.getByLabel("Password").fill(PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("alert")).toHaveText("enter the code from your authenticator app");
+  await page.getByLabel("Code from your authenticator app").fill(totp(secret, Date.now() + 30_000));
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByRole("navigation", { name: "Sections" })).toBeVisible();
+
+  // Staff see whose sign-in asks for a code, and require it of every owner and tenant.
+  const staff = await (await browser.newContext()).newPage();
+  await joinAsStaff(staff, people.manager);
+  await settings(staff, "Logins");
+  await expect(staff.getByRole("row", { name: "Taylor Demo", exact: true }).getByRole("cell").nth(4)).toHaveText("On");
+  await expect(staff.getByTestId("two-step-required")).toHaveText(
+    "Each owner and tenant chooses whether to turn it on in their portal. Staff always sign in with a code.",
+  );
+  await staff.getByRole("button", { name: "Require two-step sign-in" }).click();
+  await staff.getByRole("alertdialog").getByRole("button", { name: "Require it" }).click();
+  await expect(staff.getByTestId("two-step-required")).toContainText("Required: every owner and tenant");
+  await expect(staff.getByText(/^Changed by Demo Manager on \d\d\/\d\d\/\d{4}\.$/)).toBeVisible();
+
+  // The tenant, still signed in, can't turn it off now.
+  await card.getByLabel("Code from your authenticator app").fill(totp(secret, Date.now() + 60_000));
+  await card.getByRole("button", { name: "Turn off" }).click();
+  await expect(card.getByRole("alert")).toHaveText("your property manager requires two-step sign-in, so it stays on");
+
+  // The owner without it signs in: after the password they set it up, and its code lets them in.
+  await owner.getByLabel("Email").fill(people.emails.owner_a!);
+  await owner.getByLabel("Password").fill(PASSWORD);
+  await owner.getByRole("button", { name: "Sign in" }).click();
+  await expect(owner.getByText(/^Your property manager requires two-step sign-in\. Scan this/)).toBeVisible();
+  await expectAccessible(owner, "two-step sign-in set up at sign-in");
+  await owner.getByLabel("Code from your authenticator app").fill(totp((await owner.locator("code").textContent()) ?? ""));
+  await owner.getByRole("button", { name: "Sign in" }).click();
+  await expect(owner.getByRole("group", { name: "Two-step sign-in" }).getByTestId("two-step-state")).toHaveText(
+    "On: each sign-in asks for your password and a code from your authenticator app. Your property manager" +
+      " requires it, so it stays on.",
+  );
+
+  // An owner invited now sets it up from the invite, after their password.
+  const invited = await (await browser.newContext()).newPage();
+  await invited.goto(`/invite#${people.owner_b}`);
+  await invited.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
+  await invited.getByLabel("The same password again").fill(PASSWORD);
+  await invited.getByRole("button", { name: "Set password" }).click();
+  await expect(invited.getByText(/^Your property manager requires two-step sign-in: you sign in with a code/)).toBeVisible();
+  await invited.getByLabel("Code").fill(totp((await invited.locator("code").textContent()) ?? ""));
+  await invited.getByRole("button", { name: "Finish" }).click();
+  await expect(invited.getByRole("navigation", { name: "Sections" })).toBeVisible();
+  for (const other of [owner, staff, invited]) await other.context().close();
+});

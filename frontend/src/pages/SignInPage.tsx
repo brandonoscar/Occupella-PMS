@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
+import { AuthenticatorSetup } from "../components/AuthenticatorSetup";
 import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
@@ -21,6 +22,9 @@ export function SignInPage() {
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
   const [needsCode, setNeedsCode] = useState(false);
+  // An owner or a tenant whose company requires two-step sign-in and who has none yet: the
+  // authenticator to set up, after their password (the same each try until a code confirms it).
+  const [setup, setSetup] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   // Whether this server emails a link for a forgotten password (ADR 0007).
@@ -35,13 +39,18 @@ export function SignInPage() {
     setBusy(true);
     setError("");
     try {
-      const me = await api.post<Me>("/api/sign-in", {
+      const done = await api.post<Me | { totp_uri: string }>("/api/sign-in", {
         pmc_id: pmcId,
         email,
         password,
         ...(needsCode ? { code } : {}),
       });
-      localStorage.setItem(PMC_KEY, me.pmc_id);
+      if ("totp_uri" in done) {
+        setSetup(done.totp_uri);
+        setNeedsCode(true);
+        return;
+      }
+      localStorage.setItem(PMC_KEY, done.pmc_id);
       navigate("/");
     } catch (failed) {
       if (failed instanceof ApiError && failed.detail.includes("authenticator")) {
@@ -63,6 +72,15 @@ export function SignInPage() {
             onChange={(e) => setEmail(e.target.value)} required />
           <Field label="Password" id="password" type="password" autoComplete="current-password"
             value={password} onChange={(e) => setPassword(e.target.value)} required />
+          {setup && (
+            <>
+              <p className="text-sm text-ink-muted">
+                Your property manager requires two-step sign-in. Scan this with an authenticator app
+                on your phone, or type the key into it, then enter the code it shows.
+              </p>
+              <AuthenticatorSetup uri={setup} />
+            </>
+          )}
           {needsCode && (
             <Field label="Code from your authenticator app" id="code" inputMode="numeric"
               autoComplete="one-time-code" pattern="[0-9]{6}" value={code}

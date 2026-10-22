@@ -96,6 +96,7 @@ from pms.api import (
     switching,
     tenant,
     today,
+    two_step,
     utilities,
     vendor_links,
     vendors,
@@ -156,7 +157,7 @@ class Settings:
 Email = Annotated[str, Field(min_length=3, max_length=320)]
 Password = Annotated[str, Field(min_length=1, max_length=accounts.MAX_PASSWORD)]
 Token = Annotated[str, Field(min_length=20, max_length=100)]
-Code = Annotated[str, Field(pattern=r"^\s*\d{6}\s*$")]
+Code = two_step.Code
 
 
 class SignIn(BaseModel):
@@ -212,6 +213,10 @@ class Me(BaseModel):
     areas: list[str]
     # Whether this server sends email (PMS_EMAIL_SENDER); without it, emails wait in the outbox.
     email_on: bool
+    # Whether this login signs in with a code from an authenticator app (staff always do), and
+    # whether it must: always for staff, for an owner or a tenant when their company requires it.
+    two_step: bool
+    two_step_required: bool
 
 
 class InviteLink(BaseModel):
@@ -232,6 +237,13 @@ class InviteDetails(BaseModel):
 
 class Enroll(BaseModel):
     totp_uri: str
+
+
+class PasswordSet(BaseModel):
+    # A reset an owner or a tenant asked for set their new password; their two-step sign-in
+    # stays on, so they sign in next with it and a code from their app.
+    pmc_id: UUID
+    sign_in_with_code: Literal[True] = True
 
 
 # --- the app ------------------------------------------------------------------------------
@@ -369,6 +381,9 @@ def create_app(settings: Settings) -> FastAPI:
             roles=staff.roles_of(conn, session) if session.kind == "staff" else [],
             areas=custom_roles.areas_of(conn, session) if session.kind == "staff" else [],
             email_on=app.state.email is not None,
+            two_step=accounts.two_step_on(conn, session.login_id),
+            two_step_required=session.kind == "staff"
+            or accounts.two_step_required(conn, session.pmc_id),
         )
 
     @app.get("/health")
@@ -380,9 +395,14 @@ def create_app(settings: Settings) -> FastAPI:
             return JSONResponse({"status": "database unavailable"}, 503)
         return JSONResponse({"status": "ok"})
 
-    @app.post("/api/sign-in")
-    def sign_in(body: SignIn, response: Response, conn: Conn) -> Me:
+    @app.post("/api/sign-in", response_model=None)
+    def sign_in(body: SignIn, response: Response, conn: Conn) -> Me | two_step.TwoStepSetup:
+        """Signs in; or, for an owner or a tenant whose company requires two-step sign-in and
+        who has none yet, answers the authenticator to set up (no session until the password
+        comes again with a code from it)."""
         signed = accounts.sign_in(conn, body.pmc_id, body.email, body.password, body.code)
+        if isinstance(signed, accounts.Enrollment):
+            return two_step.setup_of(signed)
         return signed_in(response, signed, conn)
 
     @app.post("/api/sign-out", status_code=204)
@@ -451,10 +471,14 @@ def create_app(settings: Settings) -> FastAPI:
         return InviteDetails(**found.__dict__)
 
     @app.post("/api/invites/accept", response_model=None)
-    def accept_invite(body: AcceptInvite, response: Response, conn: Conn) -> Me | Enroll:
+    def accept_invite(
+        body: AcceptInvite, response: Response, conn: Conn
+    ) -> Me | Enroll | PasswordSet:
         done = accounts.accept_invite(conn, body.token, body.password)
         if isinstance(done, accounts.Enrollment):
             return Enroll(totp_uri=done.totp_uri)
+        if isinstance(done, accounts.PasswordSet):
+            return PasswordSet(pmc_id=done.pmc_id)
         return signed_in(response, done, conn)
 
     @app.post("/api/invites/confirm")
@@ -529,6 +553,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(quickbooks.router)
     calendar.hide_feed_tokens(logging.getLogger("uvicorn.access"))
     app.include_router(people.router)
+    app.include_router(two_step.router)
     app.include_router(setup.router)
     app.include_router(payment_files.router)
     app.include_router(rent.router)

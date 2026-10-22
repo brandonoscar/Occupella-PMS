@@ -15256,6 +15256,19 @@ CREATE TABLE public.trust_showings (
 
 
 --
+-- Name: trust_sign_in_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_sign_in_settings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    require_two_step boolean NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
 -- Name: trust_signature_evidence; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17967,6 +17980,14 @@ ALTER TABLE ONLY public.trust_showings
 
 
 --
+-- Name: trust_sign_in_settings trust_sign_in_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_sign_in_settings
+    ADD CONSTRAINT trust_sign_in_settings_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_signature_evidence trust_signature_evidence_link_id_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19993,6 +20014,20 @@ CREATE INDEX trust_showings_unit ON public.trust_showings USING btree (pmc_id, u
 
 
 --
+-- Name: trust_sign_in_settings_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_sign_in_settings_pmc ON public.trust_sign_in_settings USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_sign_in_settings_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_sign_in_settings_recorded_by ON public.trust_sign_in_settings USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_signing_links_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21274,6 +21309,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_sign_in_settings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_sign_in_settings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_signature_evidence trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22548,6 +22590,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_show
 
 
 --
+-- Name: trust_sign_in_settings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_sign_in_settings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_signature_evidence trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23637,6 +23686,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_showing_outcomes 
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_showings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_sign_in_settings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_sign_in_settings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -27857,6 +27913,22 @@ ALTER TABLE ONLY public.trust_showings
 
 
 --
+-- Name: trust_sign_in_settings trust_sign_in_settings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_sign_in_settings
+    ADD CONSTRAINT trust_sign_in_settings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_sign_in_settings trust_sign_in_settings_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_sign_in_settings
+    ADD CONSTRAINT trust_sign_in_settings_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_signature_evidence trust_signature_evidence_offer_id_position_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -28590,4 +28662,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261021000116'),
     ('20261021000117'),
     ('20261021000118'),
-    ('20261021000119');
+    ('20261021000119'),
+    ('20261022000153');

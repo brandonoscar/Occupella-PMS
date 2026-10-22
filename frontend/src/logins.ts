@@ -9,6 +9,8 @@ export type Person = {
   email: string | null;
   login_id: string | null;
   status: Portal;
+  // Whether its sign-in asks for a code from an authenticator app (two-step sign-in).
+  two_step: boolean;
 };
 
 export const ROLE: Record<Person["kind"], string> = { staff: "Staff", owner: "Owner", tenant: "Tenant" };

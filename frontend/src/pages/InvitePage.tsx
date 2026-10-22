@@ -1,7 +1,7 @@
-import qrcode from "qrcode-generator";
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
+import { AuthenticatorSetup } from "../components/AuthenticatorSetup";
 import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Notice } from "../components/Notice";
@@ -12,16 +12,16 @@ import { Form } from "../components/Form";
 
 type Details = { kind: string; email: string; name: string; pmc_name: string; expires_at: string };
 
-// An authenticator app reads the setup link as a QR code; the key is shown too, to type in.
-export function qrDataUrl(uri: string): string {
-  const code = qrcode(0, "M");
-  code.addData(uri);
-  code.make();
-  return code.createDataURL(4, 8);
-}
+// What setting the password answers: the person signed in; an authenticator to set up next (staff,
+// or an owner or a tenant whose company requires two-step sign-in); or, for a reset an owner or a
+// tenant asked for while their two-step sign-in is on, that they sign in next with a code too.
+type Accepted = Me | { totp_uri: string } | { pmc_id: string; sign_in_with_code: true };
 
-export function secretOf(uri: string): string {
-  return new URL(uri).searchParams.get("secret") ?? "";
+// Why the authenticator is set up now, in words for whom the invite is.
+export function enrollWords(kind: string): string {
+  return kind === "staff"
+    ? "Staff also sign in with a code from an authenticator app."
+    : "Your property manager requires two-step sign-in: you sign in with a code from an authenticator app too.";
 }
 
 // The invite link is /invite#<token>: the token stays in the fragment, which the browser
@@ -35,6 +35,8 @@ export function InvitePage() {
   const [totpUri, setTotpUri] = useState("");
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
+  // A reset that kept two-step sign-in on: the company to sign in to next.
+  const [signInTo, setSignInTo] = useState("");
 
   useEffect(() => {
     api
@@ -57,12 +59,12 @@ export function InvitePage() {
     setBusy(true);
     setError("");
     try {
-      const done = await api.post<Me | { totp_uri: string }>("/api/invites/accept", {
-        token,
-        password,
-      });
+      const done = await api.post<Accepted>("/api/invites/accept", { token, password });
       if ("totp_uri" in done) setTotpUri(done.totp_uri);
-      else signedIn(done);
+      else if ("sign_in_with_code" in done) {
+        localStorage.setItem(PMC_KEY, done.pmc_id);
+        setSignInTo(done.pmc_id);
+      } else signedIn(done);
     } catch (failed) {
       setError(failed instanceof ApiError ? failed.detail : String(failed));
     } finally {
@@ -94,7 +96,16 @@ export function InvitePage() {
           </p>
         </div>
       )}
-      {details && !totpUri && (
+      {signInTo && (
+        <div className="flex flex-col gap-3">
+          <Notice tone="info">
+            Your new password is set. Two-step sign-in stays on: sign in with your new password and
+            the code from your authenticator app.
+          </Notice>
+          <a href={`/sign-in?pmc=${signInTo}`} className="text-sm text-iris underline hover:text-iris-hover">Sign in</a>
+        </div>
+      )}
+      {details && !totpUri && !signInTo && (
         <Form className="flex flex-col gap-4" onSubmit={setThePassword}>
           <Field label="Choose a password (12 characters or more)" id="password" type="password"
             autoComplete="new-password" minLength={12} value={password}
@@ -111,11 +122,10 @@ export function InvitePage() {
       {totpUri && (
         <Form className="flex flex-col gap-4" onSubmit={confirm}>
           <p className="text-sm text-ink-muted">
-            Staff also sign in with a code from an authenticator app. Scan this with the app, or
-            type the key into it, then enter the code it shows.
+            {enrollWords(details?.kind ?? "staff")} Scan this with the app, or type the key into it,
+            then enter the code it shows.
           </p>
-          <img src={qrDataUrl(totpUri)} alt="Authenticator setup code" className="self-start rounded-sm" />
-          <code className="font-mono text-sm break-all text-ink-muted">{secretOf(totpUri)}</code>
+          <AuthenticatorSetup uri={totpUri} />
           <Field label="Code" id="code" inputMode="numeric" autoComplete="one-time-code"
             pattern="[0-9]{6}" value={code} onChange={(e) => setCode(e.target.value)} required />
           <Notice tone="error">{error}</Notice>

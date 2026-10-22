@@ -27,6 +27,10 @@ export type Me = {
   areas?: string[];
   // Whether the server sends email (PMS_EMAIL_SENDER); without it, emails wait to send.
   email_on?: boolean;
+  // Whether this login signs in with a code from an authenticator app too (staff always do), and
+  // whether it must: always for staff, for an owner or a tenant when their company requires it.
+  two_step?: boolean;
+  two_step_required?: boolean;
 };
 export type Role = "admin" | "approve" | "disburse";
 
