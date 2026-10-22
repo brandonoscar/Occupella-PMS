@@ -304,7 +304,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `pms.leasing.screening.Partner`; the server's `PMS_SCREENING_PARTNER` picks one ("fake" for
   development and CI, none by default). The PMS keeps only applicants' names and emails; the
   partner collects anything else on its own side. Lease offers (`src/pms/api/offers.py`) carry
-  the PMC's own lease PDF (the PMS writes no lease text) and are signed on the PMS's own signing
+  the PMC's own lease PDF, or one of its lease templates filled in from the offer's terms
+  (migration 0121; the PMS writes no lease text either way), and are signed on the PMS's own signing
   page (ADR 0008, migration 0097, `src/pms/api/signing.py`, `pms.leasing.esign`; it replaced the
   fake partner): each signer's link (`/sign#<token>`, kept as its SHA-256, 30 days, the token in
   JSON bodies) shows the ESIGN consumer disclosures to agree to, or "I'd rather sign on paper";
@@ -363,7 +364,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `trust_post_opening_balances`, `trust_record_owner_contribution`,
   `trust_complete_lease_offer`, `trust_match_bank_lines`, `trust_unmatch_bank_lines`,
   `trust_prepare_bank_reconciliation`, `trust_approve_bank_reconciliation`,
-  `trust_match_cutover_opening`, `trust_return_deposit`, `trust_transfer_lease`, `trust_open_deposit_account`, `trust_propose_journal_entry`,
+  `trust_match_cutover_opening`, `trust_return_deposit`, `trust_pay_deposit_interest`, `trust_transfer_lease`, `trust_open_deposit_account`, `trust_propose_journal_entry`,
   `trust_post_journal_entry`, `trust_decline_journal_entry`, `trust_apply_assistance_payment`,
   `trust_bill_back_utility` and `trust_close_year`, which run as the table owner (`trust_charge_rent_due`, `trust_enter_recurring_bills` and
   `trust_run_rent` run with the app's own grants). It can't call pgledger's posting functions: every posting it makes goes through
@@ -816,6 +817,18 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   their forwarding address (their contact mailing address) carrying the receipts and the lease's
   move-out photos (`src/pms/deposit_statement.py`, pypdf), downloaded by staff or the tenant and
   emailed (`deposit_statement`, its PDF made when sent; again after a receipt comes in).
+- Deposit interest (migration 0122, q041, `docs/law.md`): a property's yearly rate on its deposits
+  from a day (`trust_deposit_interest_terms`, as late fee terms; 0 earns none; set on its page,
+  `POST /api/setup/deposit-interest`). Each day's deposit earns the day's rate over the days in its
+  year, to the cent per deposit (`trust_deposit_interest_due`). `trust_pay_deposit_interest` pays a
+  lease's interest from the day after its last payment through a day gone by, once per request key:
+  as a credit against the rent (a lease in effect; no money moves) or added to the deposits from
+  the owner's account (its owners' by their shares) with its cash, taking the disburse role; none
+  after the deposit's return or once its tenants moved to another lease. Payments and their lines
+  (`trust_deposit_interest_payments`, `trust_deposit_interest_lines`) are append-only; the AI role
+  reads them and `trust_report_deposit_interest` (run as the owner, so the AI calls no helper).
+  Staff pay it from the lease's ⋯ menu (`src/pms/api/deposit_interest.py`,
+  `pages/DepositInterestForm.tsx`).
 - Property groups (migration 0065, ADR 0006): a PMC's named sets of its properties, a name once
   per PMC whatever its case. A group is renamed, never deleted; a property joins or leaves it by
   a row of `trust_property_group_members` (append-only, the latest for a group and property
@@ -853,7 +866,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   staff pick, read filled in first and kept as made (`trust_notices`: its title, letterhead and
   text, so its PDF reads the same every time). The PMS writes no notice text and checks no
   state's notice period or wording. Append-only, area documents; the AI role reads the templates
-  but never a notice.
+  but never a notice. Since migration 0121 (the founder's request of 2026-10-22) a template is for
+  a notice or a lease to sign from when it is made (`trust_notice_templates.used_for`): a lease
+  template's blanks are `notice_letters.LEASE_FIELDS` ({{tenant_names}}, {{guarantor_names}},
+  {{security_deposit}}, {{monthly_charges}}...), filled from a draft lease's terms into the PDF it
+  sends for signing ("none" where there is nothing), and `trust_lease_offer_templates` keeps the
+  version an offer came from, once; a notice comes only from a notice template, an offer only from
+  a lease template (a trigger checks both).
 - Archiving (migrations 0063 and 0064, ADR 0005; vendors since migration 0110, the founder's
   review q131): nothing in a PMC is deleted; a property, unit, tenant, owner or vendor is archived
   instead, a row in `trust_archivals` (append-only, the latest for a record holding,
