@@ -377,6 +377,9 @@ FUNCTIONS = {
     "trust_apply_assistance_payment(uuid,uuid,text,numeric)": {"trust_app"},
     # Whether a signing link still signs (migration 0097).
     "trust_signing_link_open(uuid)": {"trust_app"},
+    # Why a renewal can no longer be sent, signed or made a lease (migration 0152): the draft
+    # lease, signing and tenant pages read it.
+    "trust_renewal_closed(uuid)": {"trust_app"},
     # Utility billing (migration 0096): what holds on a day, a bill's shares (a preview writes
     # nothing) and billing it back.
     "trust_unit_area(uuid)": {"trust_app"},

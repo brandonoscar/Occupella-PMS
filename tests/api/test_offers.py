@@ -612,6 +612,7 @@ def test_a_renewal_that_is_a_lease_already_gives_no_signing_link(
     [
         ("get", "/api/leasing/offers?show=some"),
         ("get", "/api/leasing/offers?application=not-one"),
+        ("get", "/api/leasing/offers?renews=not-a-lease"),
         ("get", "/api/leasing/offers/not-an-offer"),
         ("post", "/api/leasing/offers/not-an-offer/complete"),
         ("post", "/api/leasing/offers/not-an-offer/send"),
@@ -908,3 +909,93 @@ def test_a_signer_is_emailed_their_link_once(conn, place, staff, client):
 
     assert first is not None
     assert second is None
+
+
+def test_a_renewal_of_a_lease_ended_early_is_not_sent_signed_or_made_a_lease(
+    client, other_client, conn, app_conn, staff, place
+):
+    """H7: a renewal of the lease from 01/01/2027 kept as a draft, another sent to the tenant;
+    then staff ended the lease on 10/15/2026. Neither goes ahead, each says why in words, the
+    tenant no longer sees a renewal, nobody is emailed a link, and staff void it."""
+    tenant = join_as(other_client, app_conn, place.pmc.pmc_id, "tenant", place.tenant)
+    renewal = terms(
+        starts_on="2027-01-01", ends_on=None, signers=[{"name": "Tenant 1", "email": tenant.email}]
+    )
+    path = f"/api/leasing/leases/{place.lease}/renewal"
+    draft = client.post(path, json={**renewal, "send": False}).json()["offer"]
+    sent = client.post(path, json=renewal).json()
+    sent_id = sent["offer"]["id"]
+    assert [o["id"] for o in other_client.get("/api/tenant/renewals").json()] == [sent_id]
+    kept = Kept()
+    client.app.state.email = kept
+
+    ended = client.post(f"/api/move-out/{place.lease}/end", json={"ends_on": "2026-10-15"})
+
+    assert ended.status_code == 204, ended.text
+    why = "the lease it renews ended on 10/15/2026"
+    words = f"this renewal can no longer be sent, signed or made a lease: {why}"
+    listed = client.get("/api/leasing/offers", params={"renews": str(place.lease)}).json()
+    assert [(o["id"], o["status"], o["closed"]) for o in listed["items"]] == [
+        (sent_id, "sent", why),
+        (draft["id"], "draft", why),
+    ]
+    answers = [
+        client.post(f"/api/leasing/offers/{draft['id']}/send", json={}),
+        client.post(f"/api/leasing/offers/{sent_id}/links", json={}),
+        client.post(f"/api/leasing/offers/{sent_id}/complete", json={}),
+    ]
+    assert [(a.status_code, a.json()["detail"]) for a in answers] == [(409, words)] * 3
+    assert [m for m in kept.sent if m.to == tenant.email] == []
+    assert conn.execute(
+        "SELECT count(*) FROM trust_emails WHERE offer_id IN (%s, %s)", (draft["id"], sent_id)
+    ).fetchone() == (0,)
+    # The link sent before says so, and takes no step.
+    token = sent["links"][0]["url"].split("#", 1)[1]
+    seen = client.post("/api/signing/view", json={"token": token}).json()
+    agreed = client.post(
+        "/api/signing/consent",
+        json={"token": token, "disclosure_sha256": seen["disclosure_sha256"]},
+    )
+    assert (seen["status"], seen["closed"]) == ("closed", why)
+    assert (agreed.status_code, agreed.json()["detail"]) == (
+        409,
+        f"this renewal can no longer be signed: {why}",
+    )
+    # The tenant who left sees no renewal of the home, and reaches none.
+    assert other_client.get("/api/tenant/renewals").json() == []
+    assert [
+        other_client.post(f"/api/tenant/renewals/{sent_id}/signing-link", json={}).status_code,
+        other_client.get(f"/api/tenant/renewals/{sent_id}/document").status_code,
+    ] == [404, 404]
+    # Staff void them; the lease stays ended and no other is made.
+    for offer_id in (draft["id"], sent_id):
+        voided = client.post(f"/api/leasing/offers/{offer_id}/void", json={"reason": "Moved out"})
+        assert (voided.status_code, voided.json()["status"], voided.json()["closed"]) == (
+            200,
+            "void",
+            None,
+        )
+    assert conn.execute(
+        "SELECT starts_on, ends_on FROM trust_leases WHERE unit_id = %s", (place.leased_unit,)
+    ).fetchall() == [(date(2026, 1, 1), date(2026, 10, 15))]
+    assert conn.execute(
+        "SELECT count(*) FROM trust_signature_requests WHERE offer_id = %s", (draft["id"],)
+    ).fetchone() == (0,)
+
+
+def test_a_renewal_whose_lease_ends_the_day_before_goes_ahead(client, other_client, staff, place):
+    """A fixed-term lease ending 12/31 renewed from 01/01 is sent, signed and made the lease."""
+    ended = client.post(f"/api/move-out/{place.lease}/end", json={"ends_on": "2026-12-31"})
+    made = client.post(
+        f"/api/leasing/leases/{place.lease}/renewal",
+        json=terms(
+            starts_on="2027-01-01", signers=[{"name": "Tenant 1", "email": "t1@example.com"}]
+        ),
+    ).json()
+    signed_all(client, other_client, made)
+    done = client.post(f"/api/leasing/offers/{made['offer']['id']}/complete", json={})
+
+    assert ended.status_code == 204
+    assert made["offer"]["closed"] is None
+    assert done.status_code == 200, done.text
+    assert done.json()["status"] == "leased"

@@ -43,6 +43,9 @@ export type Offer = {
   lease_id: string | null;
   status: OfferStatus;
   void: { reason: string | null; recorded_at: string; recorded_by: string | null } | null;
+  // A renewal, neither void nor a lease, that can no longer be sent, signed or made the lease
+  // (migration 0152): why, in words ("the lease it renews ended on 10/15/2026").
+  closed: string | null;
 };
 
 export type SigningLink = { position: number; name: string; email: string; url: string };
@@ -87,6 +90,11 @@ export function offerBadge(status: OfferStatus): { word: string; tone: BadgeTone
     leased: { word: "Lease active", tone: "positive" as const },
     void: { word: "Void", tone: "danger" as const },
   }[status];
+}
+
+// What staff read on a renewal that no longer follows the lease it renews.
+export function closedLine(offer: Offer): string {
+  return offer.closed ? `This renewal can no longer be sent, signed or made a lease: ${offer.closed}.` : "";
 }
 
 // How many of its signers have signed: "1 of 2 signed".

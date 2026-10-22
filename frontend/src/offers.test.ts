@@ -26,6 +26,7 @@ const OFFER: Offer = {
   recurring_charges: [],
   status: "partially signed",
   void: null,
+  closed: null,
 };
 
 describe("sentLine", () => {

@@ -27,6 +27,7 @@ const VIEW: SigningView = {
   disclosure: "Synthetic PMC asks you to receive and sign this lease electronically.\n\nPaper instead.",
   disclosure_sha256: "cd".repeat(32),
   status: "open",
+  closed: null,
   consented: false,
   opened: false,
   signed_at: null,
@@ -106,6 +107,7 @@ describe("SignPage", () => {
     fireEvent.click(sign);
 
     expect((await screen.findByTestId("sign-status")).textContent).toContain("You signed on 10/20/2026");
+    expect(screen.queryByTestId("sign-closed")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Download the signing certificate (PDF)" }));
     await vi.waitFor(() => expect(fetch.mock.calls.length).toBe(4));
     expect(bodies(fetch).slice(1)).toEqual([
@@ -131,8 +133,14 @@ describe("SignPage", () => {
   it.each([
     ["void", "Synthetic PMC withdrew this lease offer. It takes no signature."],
     ["expired", "This link has run out. Ask Synthetic PMC for a new one."],
+    [
+      "closed",
+      "This renewal can no longer be signed: the lease it renews ended on 10/15/2026. It takes no signature;"
+        + " ask Synthetic PMC if you have a question.",
+    ],
   ] as const)("says a %s link signs nothing", async (status, words) => {
-    server({ "/api/signing/view": { ...VIEW, status } });
+    const closed = status === "closed" ? "the lease it renews ended on 10/15/2026" : null;
+    server({ "/api/signing/view": { ...VIEW, status, closed } });
     render(<SignPage />);
 
     expect(await screen.findByText(words)).toBeTruthy();
@@ -144,5 +152,20 @@ describe("SignPage", () => {
     render(<SignPage />);
 
     expect(await screen.findByText("this signing link is not one of ours")).toBeTruthy();
+  });
+
+  it("keeps a signer's signed copy to download once the renewal can no longer be made a lease", async () => {
+    server({
+      "/api/signing/view": {
+        ...VIEW, status: "signed", consented: true, opened: true, signed_at: "2026-10-01T15:00:00Z",
+        closed: "the lease it renews ended on 10/15/2026",
+      },
+    });
+    render(<SignPage />);
+
+    expect((await screen.findByTestId("sign-closed")).textContent).toBe(
+      "This renewal can no longer be made a lease: the lease it renews ended on 10/15/2026.",
+    );
+    expect(screen.getByRole("button", { name: "Download the lease (PDF)" })).toBeTruthy();
   });
 });

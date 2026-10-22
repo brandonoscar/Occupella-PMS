@@ -91,6 +91,14 @@ function Standing({ view, step, save, paper }: { view: SigningView; step: Step; 
   if (view.status === "void") {
     return <Notice tone="info">{view.company} withdrew this lease offer. It takes no signature.</Notice>;
   }
+  if (view.status === "closed") {
+    return (
+      <Notice tone="info">
+        This renewal can no longer be signed: {view.closed}. It takes no signature; ask {view.company} if
+        you have a question.
+      </Notice>
+    );
+  }
   if (view.status === "expired") {
     return <Notice tone="info">This link has run out. Ask {view.company} for a new one.</Notice>;
   }
@@ -109,6 +117,11 @@ function Standing({ view, step, save, paper }: { view: SigningView; step: Step; 
           You signed on {usDate((view.signed_at ?? "").slice(0, 10))}. Keep a copy of the lease and
           its signing certificate.
         </p>
+        {view.closed && (
+          <p className="mt-2 text-base text-ink-muted" data-testid="sign-closed">
+            This renewal can no longer be made a lease: {view.closed}.
+          </p>
+        )}
         <div className="mt-4 flex flex-wrap gap-2">
           <Button type="button" variant="secondary" onClick={() => void save("document", "lease.pdf")}>
             Download the lease (PDF)

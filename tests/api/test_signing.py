@@ -369,6 +369,60 @@ def test_a_link_that_ran_out_or_whose_offer_was_voided_signs_nothing(
     assert "Signed by 0 of 2; the offer was voided" in pdf_text(certificate.content)
 
 
+def test_a_renewal_whose_lease_ended_before_it_signs_nothing_more(
+    client, other_client, conn, pmc, staff, place
+):
+    """H7: a renewal sent to two signers, one of whom signed; then staff ended the lease it
+    renews on 10/15/2026. The other's link signs nothing and says why; the one who signed still
+    keeps the lease they signed, and reads that it won't become a lease."""
+    tenants = [
+        add_tenant(conn, pmc.pmc_id, pmc.owners[0].property_id, f"Tenant {n}") for n in (1, 2)
+    ]
+    unit = add_unit(conn, pmc.pmc_id, pmc.owners[0].property_id, "Unit 2")
+    lease = open_lease(conn, pmc.pmc_id, unit, datetime(2026, 1, 1).date(), None, "1200", tenants)
+    answer = client.post(
+        f"/api/leasing/leases/{lease}/renewal",
+        json={
+            "starts_on": "2027-01-01",
+            "monthly_rent": "1250.00",
+            "document_title": "Renewal",
+            "document_base64": base64.b64encode(LEASE_PDF).decode(),
+            "signers": [
+                {"name": "Tenant 1", "email": "tenant1@example.com"},
+                {"name": "Tenant 2", "email": "tenant2@example.com"},
+            ],
+        },
+    ).json()
+    first, second = (link["url"].split("#", 1)[1] for link in answer["links"])
+    agree(other_client, first)
+    post(other_client, "document", first)
+    assert sign(other_client, first, "Tenant 1").status_code == 200
+    agree(other_client, second)
+
+    conn.execute("SELECT trust_end_lease(%s, %s, '2026-10-15')", (pmc.pmc_id, lease))
+
+    why = "the lease it renews ended on 10/15/2026"
+    signed, waiting = (post(other_client, "view", t).json() for t in (first, second))
+    late = [
+        post(other_client, "document", second),
+        sign(other_client, second, "Tenant 2"),
+        post(other_client, "paper", second),
+    ]
+    kept = post(other_client, "document", first)
+
+    assert (signed["status"], signed["closed"]) == ("signed", why)
+    assert (waiting["status"], waiting["closed"]) == ("closed", why)
+    assert [(a.status_code, a.json()["detail"]) for a in late] == [
+        (409, f"this renewal can no longer be signed: {why}")
+    ] * 3
+    assert (kept.status_code, kept.content) == (200, LEASE_PDF)
+    assert conn.execute(
+        "SELECT kind FROM trust_signing_events AS e JOIN trust_signing_links AS l"
+        " ON l.id = e.link_id WHERE l.offer_id = %s AND l.position = 2",
+        (answer["offer"]["id"],),
+    ).fetchall() == [("consented",)]
+
+
 def test_a_step_refused_by_the_database_is_said_in_words(other_client, conn, made, monkeypatch):
     # The offer is voided between the page's read and its write.
     token = made.tokens[0]

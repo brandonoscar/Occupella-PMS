@@ -659,6 +659,21 @@ tests = [
 ]
 
 [[invariant]]
+id = "a-renewal-follows-the-lease-it-renews"
+statement = "A renewal not yet a lease is never sent, given a signing link, acted on or signed through one, signed or made the lease once the lease it renews ends before the day before the renewal starts, was moved from (its tenants moved to another unit) or had its deposit returned (migration 20261022000152). The refusal says why in words, a lease ended early stays ended, staff see why on the offer and void it, the renewal's tenants no longer see it, and ending the lease and sending, signing or completing its renewal wait for each other. A fixed-term lease ending the day before its renewal starts, or one with no end, is renewed as before."
+tests = [
+  "tests/test_lease_offers.py::test_a_renewal_of_a_lease_ended_before_it_is_never_sent_signed_or_made_a_lease",
+  "tests/test_lease_offers.py::test_a_renewal_of_a_lease_that_ends_more_than_a_day_before_it_takes_nothing_more",
+  "tests/test_lease_offers.py::test_a_renewal_of_a_lease_moved_from_or_whose_deposit_was_returned_takes_nothing_more",
+  "tests/test_lease_offers.py::test_ending_a_lease_and_sending_its_renewal_wait_for_each_other",
+  "tests/test_lease_offers.py::test_a_renewal_ends_a_lease_only_if_it_runs_into_the_renewal",
+  "tests/properties/test_lease_offer_properties.py::test_lease_offer_invariants_hold_under_random_offers_signatures_and_completions",
+  "tests/api/test_offers.py::test_a_renewal_of_a_lease_ended_early_is_not_sent_signed_or_made_a_lease",
+  "tests/api/test_offers.py::test_a_renewal_whose_lease_ends_the_day_before_goes_ahead",
+  "tests/api/test_signing.py::test_a_renewal_whose_lease_ended_before_it_signs_nothing_more",
+]
+
+[[invariant]]
 id = "lease-documents-and-signatures"
 statement = "A lease offer carries the PMC's own lease document, a PDF of at most 5 MB: the PMS writes no lease text. A signature is recorded only for a sent offer and one of its signers (on the PMS's own page, with its evidence; ADR 0008). Offers, signers, signature requests, signatures and completions are never rewritten."
 tests = [

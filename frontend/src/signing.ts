@@ -2,9 +2,9 @@ import type { BadgeTone } from "./components/Badge";
 
 // The PMS's own signing page (ADR 0008; src/pms/api/signing.py): what a signer's link shows.
 
-// Where the link stands: open to sign, signed, asked to sign on paper, run out, or its offer
-// withdrawn.
-export type SigningStatus = "open" | "signed" | "paper" | "expired" | "void";
+// Where the link stands: open to sign, signed, asked to sign on paper, run out, its offer
+// withdrawn, or a renewal that no longer follows the lease it renews (closed, saying why).
+export type SigningStatus = "open" | "signed" | "paper" | "expired" | "void" | "closed";
 
 export type SigningView = {
   company: string;
@@ -19,6 +19,8 @@ export type SigningView = {
   disclosure: string;
   disclosure_sha256: string;
   status: SigningStatus;
+  // A renewal that can no longer be signed or made the lease: why, in words.
+  closed: string | null;
   consented: boolean;
   opened: boolean;
   signed_at: string | null;

@@ -35,8 +35,10 @@ Token = Annotated[str, Field(min_length=20, max_length=100)]
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 NOT_FOUND = "this signing link is not one of ours"
 # A link's standing for its signer: open to sign, signed, asked to sign on paper, run out (30
-# days after it was made), or of an offer since voided.
-Status = Literal["open", "signed", "paper", "expired", "void"]
+# days after it was made), of an offer since voided, or of a renewal that no longer follows the
+# lease it renews (migration 0152: that lease ended before it, was moved from or had its deposit
+# returned).
+Status = Literal["open", "signed", "paper", "expired", "void", "closed"]
 MAX_DRAWING = 100_000  # bytes, as the database checks
 
 
@@ -78,6 +80,8 @@ class SigningView(BaseModel):
     disclosure: str
     disclosure_sha256: str
     status: Status
+    # A renewal that can no longer be signed or made the lease: why, in words.
+    closed: str | None
     consented: bool
     opened: bool
     signed_at: datetime | None
@@ -94,12 +98,13 @@ class Link:
     consented: bool
     opened: bool
     signed_at: datetime | None
+    closed: str | None
 
 
 LINK = """
 SELECT l.id, l.pmc_id, l.offer_id, l.position,
        l.created_at > now() - make_interval(days => %(days)s),
-       v.offer_id IS NOT NULL, g.signed_at,
+       v.offer_id IS NOT NULL, trust_renewal_closed(l.offer_id), g.signed_at,
        EXISTS (SELECT 1 FROM trust_signing_events AS e
                WHERE e.link_id = l.id AND e.kind = 'consented'),
        EXISTS (SELECT 1 FROM trust_signing_events AS e
@@ -119,19 +124,22 @@ def link_of(conn: psycopg.Connection[Any], token: str) -> Link:
     ).fetchone()
     if row is None:
         raise HTTPException(404, NOT_FOUND)
-    link_id, pmc_id, offer_id, position, fresh, void, signed_at, consented, opened, paper = row
+    link_id, pmc_id, offer_id, position, fresh, void, closed, signed_at, *steps = row
+    consented, opened, paper = steps
     status: Status
     if void:
         status = "void"
     elif not fresh:
         status = "expired"
     elif signed_at is not None:
-        status = "signed"
+        status = "signed"  # they keep the lease they signed, whatever became of it
+    elif closed is not None:
+        status = "closed"
     elif paper:
         status = "paper"
     else:
         status = "open"
-    return Link(link_id, pmc_id, offer_id, position, status, consented, opened, signed_at)
+    return Link(link_id, pmc_id, offer_id, position, status, consented, opened, signed_at, closed)
 
 
 def open_link(conn: psycopg.Connection[Any], token: str) -> Link:
@@ -139,6 +147,8 @@ def open_link(conn: psycopg.Connection[Any], token: str) -> Link:
     link = link_of(conn, token)
     if link.status == "void":
         raise HTTPException(409, "this lease offer was withdrawn; it takes no signature")
+    if link.status == "closed":
+        raise HTTPException(409, f"this renewal can no longer be signed: {link.closed}")
     if link.status == "expired":
         raise HTTPException(409, "this signing link has run out; ask for a new one")
     if link.status == "signed":
@@ -219,6 +229,7 @@ def view_of(conn: psycopg.Connection[Any], link: Link) -> SigningView:
         disclosure=text,
         disclosure_sha256=esign.disclosure_digest(text),
         status=link.status,
+        closed=link.closed,
         consented=link.consented,
         opened=link.opened,
         signed_at=link.signed_at,

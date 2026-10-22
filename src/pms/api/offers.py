@@ -10,6 +10,9 @@ new links when one runs out. A signature is recorded as the signer signs, with i
 the offer's signing certificate is staff's to download. When everyone has signed, staff activate
 it: trust_complete_lease_offer opens the lease, with the offer's monthly charges as its recurring
 charges. Staff void an offer that is not a lease yet; it takes nothing more (migration 0071).
+A renewal follows the lease it renews (migration 0152): once that lease ends before the day before
+the renewal starts, was moved from or had its deposit returned, the renewal is no longer sent,
+signed or made the lease, the offer says why, and staff void it; its tenants no longer see it.
 
 Tenants see the renewal offers on their leases and get their own signing link, matched by the
 email of their login.
@@ -47,6 +50,8 @@ OfferStatus = Literal["draft", "sent", "partially signed", "signed", "leased", "
 # became leases, the void ones, or all.
 OffersShown = Literal["open", "leased", "void", "all"]
 VOIDED = "this lease offer was voided; it takes nothing more"
+# A renewal that no longer follows the lease it renews, then why (trust_renewal_closed).
+CLOSED = "this renewal can no longer be sent, signed or made a lease"
 
 
 Role = Literal["tenant", "guarantor"]
@@ -142,6 +147,9 @@ class OfferOut(BaseModel):
     lease_id: UUID | None
     status: OfferStatus
     void: VoidOut | None
+    # A renewal, neither void nor a lease, that can no longer be sent, signed or made the lease:
+    # why, in words ("the lease it renews ended on 10/15/2026"); None for any other offer.
+    closed: str | None = None
 
 
 class SigningLink(BaseModel):
@@ -207,7 +215,8 @@ OFFERS = f"""
 SELECT o.id, o.application_id, o.renews_lease_id, p.id, p.display_name, u.id, u.display_name,
        o.starts_on, o.ends_on, o.monthly_rent, o.security_deposit, o.document_title, o.offered_at,
        r.offer_id IS NOT NULL, c.lease_id, st.status,
-       v.offer_id IS NOT NULL, v.reason, v.recorded_at, vs.display_name, count(*) OVER ()
+       v.offer_id IS NOT NULL, v.reason, v.recorded_at, vs.display_name,
+       CASE WHEN v.offer_id IS NULL THEN trust_renewal_closed(o.id) END, count(*) OVER ()
 FROM trust_lease_offers AS o
 JOIN trust_units AS u ON u.id = o.unit_id
 JOIN trust_properties AS p ON p.id = u.property_id
@@ -327,6 +336,7 @@ def offers_of(
             void=VoidOut(reason=why, recorded_at=voided_at, recorded_by=voided_by)
             if voided
             else None,
+            closed=closed,
         )
         for (
             i,
@@ -349,6 +359,7 @@ def offers_of(
             why,
             voided_at,
             voided_by,
+            closed,
             _,
         ) in rows
     ]
@@ -383,6 +394,12 @@ def links_of(
     except psycopg.errors.CheckViolation as refused:
         # Voided, made the lease or signed since it was read.
         raise HTTPException(409, refusal(refused)) from None
+
+
+def still_renews(found: OfferOut) -> None:
+    """A 409 saying why, for a renewal that no longer follows the lease it renews."""
+    if found.closed is not None:
+        raise HTTPException(409, f"{CLOSED}: {found.closed}")
 
 
 def sent_here(conn: psycopg.Connection[Any], offer: UUID) -> None:
@@ -589,6 +606,7 @@ def offers(
     conn: Conn,
     show: Annotated[OffersShown, Query()] = "open",
     application: Annotated[UUID | None, Query()] = None,
+    renews: Annotated[UUID | None, Query()] = None,
     group: scope.Group = None,
     property_id: scope.Property = None,
     page: Page = 1,
@@ -596,10 +614,13 @@ def offers(
 ) -> Paged[OfferOut]:
     """The PMC's lease offers, newest first, a page at a time: by default those still to become
     a lease (drafts, sent, signed); or the ones that became leases, the void ones, or all. Maybe
-    of one application, or of a property group or property."""
+    of one application or renewing one lease (the lease page's End lease reads them), or of a
+    property group or property."""
     found, total = offers_of(
         conn,
         session.pmc_id,
+        None,
+        None if renews is None else [renews],
         application=application,
         show=show,
         group=group,
@@ -624,6 +645,7 @@ def send(request: Request, session: Staff, conn: Conn, offer_id: UUID) -> Offere
         raise HTTPException(409, VOIDED)
     if found.status != "draft":
         raise HTTPException(409, "this offer was sent already; new links are under Resend")
+    still_renews(found)
     return send_offer(conn, request, session, offer_id)
 
 
@@ -656,6 +678,7 @@ def links(request: Request, session: Staff, conn: Conn, offer_id: UUID) -> list[
         raise HTTPException(409, VOIDED)
     if found.status == "leased":
         raise HTTPException(409, "this offer is a lease already")
+    still_renews(found)
     sent_here(conn, offer_id)
     waiting = [s for s in found.signers if s.signed_at is None]
     return links_of(conn, request, session.pmc_id, offer_id, waiting)
@@ -678,6 +701,7 @@ def complete(session: Staff, conn: Conn, offer_id: UUID) -> OfferOut:
         raise HTTPException(409, VOIDED)
     if found.status == "draft":
         raise HTTPException(409, "this offer is a draft: send it to its signers first")
+    still_renews(found)
     try:
         conn.execute(
             "SELECT trust_complete_lease_offer(%s, %s, %s)",
@@ -759,12 +783,12 @@ def tenant_leases(conn: psycopg.Connection[Any], session: accounts.Session) -> l
 def tenant_offer(
     conn: psycopg.Connection[Any], session: accounts.Session, offer_id: UUID
 ) -> OfferOut:
-    """A renewal offer sent to sign on one of the tenant's leases, or 404 for any other (a draft
-    or a void one is not the tenant's to see)."""
+    """A renewal offer sent to sign on one of the tenant's leases, or 404 for any other (a draft,
+    a void one or one that no longer follows the lease it renews is not the tenant's to see)."""
     found = [
         o
         for o in offers_of(conn, session.pmc_id, offer_id, tenant_leases(conn, session))[0]
-        if o.status not in ("draft", "void")
+        if o.status not in ("draft", "void") and o.closed is None
     ]
     if not found:
         raise HTTPException(404, "no such renewal offer of yours")
@@ -773,9 +797,11 @@ def tenant_offer(
 
 @router.get("/api/tenant/renewals")
 def tenant_renewals(session: Tenant, conn: Conn) -> list[OfferOut]:
-    """Renewal offers sent to sign on the tenant's leases that aren't a lease yet, nor void."""
+    """Renewal offers sent to sign on the tenant's leases that aren't a lease yet, nor void, and
+    still follow the lease they renew (one ended before the renewal, moved from or whose deposit
+    was returned shows none)."""
     found, _ = offers_of(conn, session.pmc_id, None, tenant_leases(conn, session), show="open")
-    return [o for o in found if o.status != "draft"]
+    return [o for o in found if o.status != "draft" and o.closed is None]
 
 
 @router.post("/api/tenant/renewals/{offer_id}/signing-link")

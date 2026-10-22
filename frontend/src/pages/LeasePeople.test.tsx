@@ -116,6 +116,40 @@ describe("EndLeaseForm", () => {
     expect(record.mock.calls[0]?.[1]).toEqual({ ends_on: "2026-12-31", break_fee: false });
     expect(said).toEqual(["The lease ends on 12/31/2026."]);
   });
+
+  it("says a renewal starting more than a day after the last day can no longer go ahead", async () => {
+    const renewal = (id: string, starts_on: string, status: string, closed: string | null = null) => ({
+      id, kind: "renewal", starts_on, status, closed, renews_lease_id: "l1", signers: [],
+    });
+    const fetch = serve({
+      "/api/move-out/l1/break-fee": { early: false, fee: null, flat_fee: null, rent_months: null },
+      "/api/leasing/offers": {
+        items: [
+          renewal("o1", "2027-01-01", "draft"),
+          renewal("o2", "2027-03-01", "sent"),
+          renewal("o3", "2027-05-01", "draft", "the lease it renews ended on 10/15/2026"),
+        ],
+        total: 3, page: 1, per_page: 200,
+      },
+    });
+    render(<EndLeaseForm lease={LEASE} record={recorder().record} />);
+    // Ending on its end date, 12/31/2026: the renewal from 01/01/2027 goes ahead.
+    expect((await screen.findAllByTestId("renewal-cut")).map((p) => p.textContent)).toEqual([
+      "Its renewal from 03/01/2027 (sent) can no longer be sent, signed or made a lease once the lease ends on"
+        + " 12/31/2026: void it. Open the renewal",
+    ]);
+    expect(fetch.mock.calls.map(([path]) => path)).toContain("/api/leasing/offers?show=open&renews=l1&per_page=200");
+
+    fireEvent.change(screen.getByLabelText("Last day"), { target: { value: "2026-10-15" } });
+    expect(screen.getAllByTestId("renewal-cut").map((p) => p.textContent?.slice(0, 40))).toEqual([
+      "Its renewal from 01/01/2027 (draft) can ",
+      "Its renewal from 03/01/2027 (sent) can n",
+    ]);
+    expect(screen.getAllByRole("link", { name: "Open the renewal" }).map((a) => a.getAttribute("href"))).toEqual([
+      "/draft-leases/o1",
+      "/draft-leases/o2",
+    ]);
+  });
 });
 
 const HOUSEHOLD: Household = {

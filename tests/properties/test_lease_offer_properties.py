@@ -1,13 +1,15 @@
 """Property-based tests for lease offers and completing them (migration 20261011000031), with
-drafts' monthly charges and voids (migration 20261016000071) and signing on the PMS's own page
-(migration 20261020000097, ADR 0008).
+drafts' monthly charges and voids (migration 20261016000071), signing on the PMS's own page
+(migration 20261020000097, ADR 0008) and renewals that follow the lease they renew (migration
+20261022000152).
 
 Hypothesis approves applications for one unit, offers them leases (and renewals of the leases
 those became) with random terms, adds monthly charges to offers, sends (through a partner or to
 sign here), makes signers' links, agrees, opens, asks for paper and signs through them, signs and
-voids offers, and completes them, in random order. A Python model predicts every step: which
-leases the unit has, from and to when, with whose names and which recurring charges; the database
-must accept exactly what the model accepts and refuse the rest, writing nothing.
+voids offers, ends leases early, and completes offers, in random order. A Python model predicts
+every step: which leases the unit has, from and to when, with whose names and which recurring
+charges; the database must accept exactly what the model accepts and refuse the rest, writing
+nothing.
 
 Invariants checked after every step (ci/registry.toml maps them to this test):
   - the unit's leases are the model's, and never overlap;
@@ -22,7 +24,11 @@ Invariants checked after every step (ci/registry.toml maps them to this test):
     agreed to sign electronically and then opened the lease, never after asking for paper through
     it, with their name as it is on the offer and the SHA-256 of the lease sent; a link is made
     and used only while its offer is neither void nor a lease and its signer hasn't signed
-    (migration 20261020000097).
+    (migration 20261020000097);
+  - a renewal not yet a lease is never sent, given a link, acted on or signed through one, signed
+    or made the lease once the lease it renews ends before the day before it starts, however that
+    end came (a renewal of the same lease made the lease, or staff ending it early), and a lease
+    ended early stays ended (migration 20261022000152).
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
@@ -34,11 +40,13 @@ import psycopg
 import pytest
 from helpers import (
     add_staff,
+    add_tenant,
     add_unit,
     complete_offer,
     make_pmc,
     offer_lease,
     open_application_link,
+    open_lease,
     record_decision,
     send_offer,
     sign_offer,
@@ -80,6 +88,15 @@ class SigningOnThePage:
             (self.pmc_id, offer, esign.PARTNER, esign.reference(offer), self.staff),
         )
 
+    def closed(self, offer):
+        """trust_renewal_closed, as the model sees it: a renewal not yet a lease whose lease ends
+        before the day before it starts (no tenant moves and no deposit is returned here)."""
+        model = self.offers[offer]
+        if model.get("renews") is None or offer in self.completed:
+            return False
+        ends = self.leases[model["renews"]][1]
+        return ends is not None and ends < model["starts"] - timedelta(days=1)
+
     def link_signs(self, link):
         """trust_signing_link_open, as the model sees it (a link here is never 30 days old)."""
         offer, position = self.links[link]["offer"], self.links[link]["position"]
@@ -87,6 +104,7 @@ class SigningOnThePage:
             offer not in self.voided
             and offer not in self.completed
             and position not in self.offers[offer]["signed"]
+            and not self.closed(offer)
         )
 
     def new_link(self, offer, position):
@@ -108,6 +126,8 @@ class SigningOnThePage:
 
         if offer in self.voided:
             message = "was voided"
+        elif self.closed(offer):
+            message = "can no longer be sent, signed or made a lease: the lease it renews"
         elif offer in self.completed:
             message = "a lease already"
         elif position in model["signed"]:
@@ -251,7 +271,8 @@ class LeaseOfferMachine(SigningOnThePage, RuleBasedStateMachine):
         self.conn = conn
         pmc = make_pmc(conn)
         self.pmc_id = pmc.pmc_id
-        self.unit = add_unit(conn, self.pmc_id, pmc.owners[0].property_id, "Unit 1")
+        self.property = pmc.owners[0].property_id
+        self.unit = add_unit(conn, self.pmc_id, self.property, "Unit 1")
         self.staff = add_staff(conn, self.pmc_id)
         self.link = open_application_link(conn, self.pmc_id, self.unit, self.staff)
         # Model, in the order things happened so replays pick the same ones.
@@ -262,6 +283,16 @@ class LeaseOfferMachine(SigningOnThePage, RuleBasedStateMachine):
         self.completed: dict = {}  # offer -> lease
         self.voided: set = set()
         self.links: dict = {}  # link -> {"offer", "position", "events": kinds done through it}
+
+    @initialize(short=st.integers(min_value=0, max_value=60))
+    def a_lease_in_place(self, short):
+        """Tenant 0's lease of the unit for the year before the offers, ending up to 60 days
+        short of it: renewals of it start before, on or after the day after it ends."""
+        starts = BASE - timedelta(days=365)
+        ends = BASE - timedelta(days=1 + short)
+        tenant = add_tenant(self.conn, self.pmc_id, self.property, "Tenant 0")
+        lease = open_lease(self.conn, self.pmc_id, self.unit, starts, ends, "1400.00", [tenant])
+        self.leases[lease] = [starts, ends, ["Tenant 0"]]
 
     # --- applications and offers ---------------------------------------------------------
 
@@ -360,8 +391,9 @@ class LeaseOfferMachine(SigningOnThePage, RuleBasedStateMachine):
             if here
             else (lambda o: send_offer(self.conn, self.pmc_id, o, self.staff))
         )
-        if offer in self.voided:
-            refused = pytest.raises(psycopg.errors.CheckViolation, match="was voided")
+        if offer in self.voided or self.closed(offer):
+            message = "was voided" if offer in self.voided else "can no longer be sent"
+            refused = pytest.raises(psycopg.errors.CheckViolation, match=message)
             with refused, self.conn.transaction():
                 sending(offer)
             return
@@ -413,15 +445,62 @@ class LeaseOfferMachine(SigningOnThePage, RuleBasedStateMachine):
         )
         model = self.offers[offer]
         position = min(set(range(1, len(model["signers"]) + 1)) - model["signed"])
-        if offer in self.voided or model["here"]:
+        if offer in self.voided or self.closed(offer) or model["here"]:
             # An offer sent to sign here takes a signature only through its signer's link.
-            message = "was voided" if offer in self.voided else "through the signer's link"
+            message = (
+                "was voided"
+                if offer in self.voided
+                else "can no longer be sent, signed"
+                if self.closed(offer)
+                else "through the signer's link"
+            )
             refused = pytest.raises(psycopg.errors.CheckViolation, match=message)
             with refused, self.conn.transaction():
                 sign_offer(self.conn, self.pmc_id, offer, position)
             return
         sign_offer(self.conn, self.pmc_id, offer, position)
         model["signed"].add(position)
+
+    @precondition(lambda self: self.leases)
+    @rule(data=st.data(), days=st.integers(min_value=0, max_value=400))
+    def end_a_lease_early(self, data, days):
+        """Staff end a lease early, or one with no end (H7): never past its end, so it runs into
+        no other lease. A renewal of it starting more than a day after takes nothing more."""
+        lease = data.draw(st.sampled_from(list(self.leases)))
+        starts, ends, _ = self.leases[lease]
+        new_end = starts + timedelta(days=days)
+        if ends is not None and new_end >= ends:
+            return
+        self.end_lease(lease, new_end)
+
+    def end_lease(self, lease, ends):
+        self.conn.execute("SELECT trust_end_lease(%s, %s, %s)", (self.pmc_id, lease, ends))
+        self.leases[lease][1] = ends
+
+    @precondition(
+        lambda self: any(
+            v["renews"] is not None and o not in self.completed for o, v in self.offers.items()
+        )
+    )
+    @rule(data=st.data(), gap=st.integers(min_value=0, max_value=60))
+    def end_a_renewed_lease_early(self, data, gap):
+        """H7: staff end a lease while a renewal of it waits (a draft, sent or signed), on the day
+        before it starts (a gap of 0) or earlier."""
+        offer = data.draw(
+            st.sampled_from(
+                [
+                    o
+                    for o, v in self.offers.items()
+                    if v["renews"] is not None and o not in self.completed
+                ]
+            )
+        )
+        lease = self.offers[offer]["renews"]
+        starts, ends, _ = self.leases[lease]
+        new_end = self.offers[offer]["starts"] - timedelta(days=1 + gap)
+        if new_end < starts or (ends is not None and new_end >= ends):
+            return
+        self.end_lease(lease, new_end)
 
     # --- completing ----------------------------------------------------------------------
 
@@ -457,6 +536,8 @@ class LeaseOfferMachine(SigningOnThePage, RuleBasedStateMachine):
             refusal = (psycopg.errors.CheckViolation, "not signed by everyone")
         elif taken:
             refusal = (psycopg.errors.CheckViolation, "became its lease already")
+        elif self.closed(offer):
+            refusal = (psycopg.errors.CheckViolation, "can no longer be sent, signed or made")
         elif any(overlaps(model["starts"], model["ends"], s, e) for s, e in others):
             refusal = (psycopg.errors.ExclusionViolation, "would overlap")
         else:
