@@ -1,13 +1,19 @@
 // A month of a company, start to end, as the people in it do it (the founder: "testing the
 // management fee, everything ... like sending out leases"). Staff list a vacant unit and an
-// applicant applies, is approved and signs on the PMS's own page; the month's rent runs, a tenant
-// pays by check and a second check bounces; a tenant's repair goes to a vendor, who schedules and
+// applicant applies, is approved and signs on the PMS's own page; a renewal sent to a tenant who
+// turns out to have moved out last month can't go ahead; the month's rent runs, a tenant pays by
+// check and a second check bounces; a tenant's repair goes to a vendor, who schedules and
 // finishes it through their link, and to a bill the owner approves in the portal; last month's
-// management fees leave trust for the company; an owner is paid what is available; a lease is
-// renewed and its tenants sign it; a tenant who moved out gets their deposit back less damage;
-// the bookkeeper brings the bank's statement in, matches it and prepares the month, and the
-// manager approves it; the owner reads the month's statement; the balance sheet ties out.
-// Wherever a step moves money, the pages that show it must agree to the cent.
+// management fees leave trust for the company; an owner is paid what is available, then a check
+// that paid them comes back and the owner puts the money in; a rent goes up on notice and the
+// lease is renewed at it, its tenants signing; the tenant who moved out gets their deposit back
+// less damage; the bookkeeper brings the bank's statement in, matches it and prepares the month,
+// and the manager approves it; the owner reads the month's statement; the balance sheet ties out.
+// Wherever a step moves money, the pages that show it must agree to the cent. Along the way it
+// checks the fixes of the walkthrough's findings, each where a person meets it: H1 (no late fee
+// on rent charged today), H2 (a bounce the owner was paid out of), H3 (the next due date's rent
+// in the portal), H4 (nothing to collect), H5 (month-end before matching) and H7 (a renewal of a
+// lease that ended).
 //
 // It runs on a demo PMC's books of its own (e2e/seed.py, "journey": demo.books, two months of
 // history with last month's month-end waiting for the manager), on any day of the month: the
@@ -200,28 +206,44 @@ async function ownerRow(page: Page, name: string) {
 }
 
 // An owner statement on screen (StatementView): the totals over all properties, and each
-// property's opening and closing balance and the amounts posted between them.
-async function statementOf(where: Locator) {
-  const total = async (label: string) =>
-    amountIn(where.locator("dl > div").filter({ has: where.page().getByText(`${label}, all properties`, { exact: true }) }).locator("dd"));
-  const properties: Record<string, { opening: number; closing: number; postings: number[] }> = {};
-  for (const table of await where.getByRole("table").all()) {
-    const name = ((await table.locator("caption").textContent()) ?? "").trim();
-    const rows = table.getByRole("row");
-    const count = await rows.count();
-    const opening = await amountIn(rows.nth(1).getByRole("cell").last());
-    const closing = await amountIn(rows.nth(count - 1).getByRole("cell").last());
-    const postings = [];
-    for (let n = 2; n < count - 1; n++) postings.push(await amountIn(rows.nth(n).getByRole("cell").nth(2)));
-    properties[name] = { opening, closing, postings };
+// property's opening and closing balance and the amounts posted between them. It is read in one
+// go, as the page shows it at that moment (a statement still loading or being replaced reads as
+// null), so a page that refreshes it can be polled until it shows the one asked for.
+type Statement = {
+  opening: number;
+  moneyIn: number;
+  moneyOut: number;
+  closing: number;
+  properties: Record<string, { opening: number; closing: number; postings: number[] }>;
+};
+async function statementOf(where: Locator): Promise<Statement | null> {
+  const shown = await where.evaluate((root) => ({
+    totals: ["Opening", "Money in", "Money out", "Closing"].map(
+      (label) =>
+        [...root.querySelectorAll("dl > div")]
+          .find((item) => item.querySelector("dt")?.textContent === `${label}, all properties`)
+          ?.querySelector("dd")?.textContent ?? "",
+    ),
+    tables: [...root.querySelectorAll("table")].map((table) => ({
+      name: table.querySelector("caption")?.textContent?.trim() ?? "",
+      rows: [...table.querySelectorAll("tbody tr")].map((row) => [...row.querySelectorAll("td")].map((cell) => cell.textContent ?? "")),
+    })),
+  }));
+  try {
+    const [opening, moneyIn, moneyOut, closing] = shown.totals.map(cents) as [number, number, number, number];
+    const properties: Statement["properties"] = {};
+    for (const { name, rows } of shown.tables) {
+      if (rows.length < 2) return null;
+      properties[name] = {
+        opening: cents(rows[0]!.at(-1)!),
+        closing: cents(rows.at(-1)!.at(-1)!),
+        postings: rows.slice(1, -1).map((row) => cents(row[2]!)),
+      };
+    }
+    return { opening, moneyIn, moneyOut, closing, properties };
+  } catch {
+    return null; // not all of it shows yet
   }
-  return {
-    opening: await total("Opening"),
-    moneyIn: await total("Money in"),
-    moneyOut: await total("Money out"),
-    closing: await total("Closing"),
-    properties,
-  };
 }
 
 const LEASE = { name: "lease.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4 a synthetic lease for the month") };
@@ -372,49 +394,95 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     ]);
   });
 
-  // What Cedar House's lease owes once its second check bounced.
+  // What Cedar House's lease owes once its checks bounced, and the company's fees taken out of trust.
   let cedarOwes = 0;
+  let companyFees = 0;
   const taylor = await someone(browser);
+  const drew = await someone(browser);
 
-  await test.step("the month's rent runs; a tenant pays by check with a receipt, a second check bounces with the NSF fee, and the tenant's portal shows what the lease page shows", async () => {
-    // Drew Sample moved out on the last day of last month: staff record it before the month's
-    // rent runs, so the run charges his lease nothing (his deposit goes back at move-out, below).
+  await test.step("a renewal is sent for a lease that then turns out to have ended last month: once the lease ends it can't go ahead (H7), and the tenant's portal no longer offers it", async () => {
+    // Staff send Drew Sample a renewal from the first of next month, from his lease's menu.
+    await openLease(page, "Aspen Row, Unit 1");
+    await page.getByRole("button", { name: "Actions for this lease" }).click();
+    await page.getByRole("menuitem", { name: "Renew lease" }).click();
+    const draft = page.getByRole("dialog", { name: "New draft lease" });
+    await expect(draft.getByRole("combobox", { name: "For", exact: true }).locator("option:checked")).toHaveText(
+      "Aspen Row, Unit 1: Drew Sample",
+    );
+    await draft.getByLabel("Starts").fill(nextMonth);
+    await draft.getByLabel("Lease document (PDF, your own)").setInputFiles(RENEWAL);
+    await draft.getByLabel("Who signs, one a line: Name, email").fill(`Drew Sample, ${people.emails.drew}`);
+    await draft.getByRole("button", { name: "Save draft" }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Renewal for Aspen Row, Unit 1" })).toBeVisible();
+    const renewalPage = page.url();
+    await page.getByRole("button", { name: "Send", exact: true }).click();
+    await expect(page.getByText(/^Sent to 1 signer\./)).toBeVisible();
+    const drewLink = new URL((await page.getByTestId("signing-link").textContent()) ?? "");
+    await joinPortal(drew, people.drew);
+    await expect(drew.getByRole("listitem", { name: "Renewal of Unit 1" })).toContainText(
+      `${us(nextMonth)} – Month to month, $1,180.00 a month`,
+    );
+
+    // Drew says he moved out on the last day of last month: staff end his lease there, before the
+    // month's rent runs, so the run charges it nothing (his deposit goes back at move-out, below).
+    // The End lease panel warns that the renewal can't follow it.
+    await page.getByRole("link", { name: "The lease", exact: true }).click();
+    const ending = await leasePanel(page, "End lease");
+    await ending.getByLabel("Last day").fill(lastMonthEnd);
+    await expect(ending.getByTestId("renewal-cut")).toContainText(
+      `Its renewal from ${us(nextMonth)} (sent) can no longer be sent, signed or made a lease once the lease ends on ${us(lastMonthEnd)}: void it.`,
+    );
+    await ending.getByRole("button", { name: "End lease" }).click();
+    await expect(ending).toHaveCount(0);
+    await expect(page.getByRole("main")).toContainText(`The lease ends on ${us(lastMonthEnd)}.`);
+
+    // The renewal can't go ahead: its page says why and offers only Void; Drew's portal no
+    // longer offers it, and the link he was sent signs nothing.
+    const closed = `the lease it renews ended on ${us(lastMonthEnd)}`;
+    await section(page, "Draft leases");
+    await page.getByRole("row", { name: "Renewal for Aspen Row, Unit 1" }).click();
+    await expect(page).toHaveURL(renewalPage);
+    await expect(page.getByText("Can't go ahead", { exact: true })).toBeVisible();
+    await expect(page.getByTestId("closed")).toHaveText(
+      `This renewal can no longer be sent, signed or made a lease: ${closed}. Void it.`,
+    );
+    for (const gone of ["Send", "Resend", "Activate lease"]) {
+      await expect(page.getByRole("button", { name: gone, exact: true })).toHaveCount(0);
+    }
+    await drew.reload();
+    await expect(drew.getByRole("heading", { level: 1, name: "Welcome, Drew Sample" })).toBeVisible();
+    await expect(drew.getByRole("listitem", { name: "Renewal of Unit 1" })).toHaveCount(0);
+    await drew.goto(drewLink.pathname + drewLink.hash);
+    await expect(drew.getByText(`This renewal can no longer be signed: ${closed}.`)).toBeVisible();
+    await page.getByRole("button", { name: "Void", exact: true }).click();
+    const voiding = page.getByRole("dialog", { name: "Void" });
+    await voiding.getByLabel("Why (optional)").fill("The tenant moved out at the end of last month");
+    await voiding.getByRole("button", { name: "Void it" }).click();
+    await expect(page.getByTestId("status")).toHaveText("Void");
+
+    // Move-outs: his lease ended, its deposit to go back, nothing owed.
     await section(page, "Move-outs");
-    const drew = page.getByRole("region", { name: "Aspen Row / Unit 1: Drew Sample", exact: true });
-    await drew.getByText("Move-out for Unit 1").click();
-    await drew.getByLabel("Last day").fill(lastMonthEnd);
-    await drew.getByRole("button", { name: "End the lease" }).click();
-    await expect(drew).toContainText(`The lease ends on ${us(lastMonthEnd)}.`);
-    await expect(drew.getByText("Ended, deposit to return")).toBeVisible();
-    await expect(drew).toContainText("owes $0.00");
+    const moving = page.getByRole("region", { name: "Aspen Row / Unit 1: Drew Sample", exact: true });
+    await expect(moving.getByText("Ended, deposit to return")).toBeVisible();
+    await expect(moving).toContainText("owes $0.00");
+  });
 
+  await test.step("the month's rent runs with no late fee on rent charged today (H1); a tenant pays by check with a receipt, a second check bounces with the NSF fee, and the tenant's portal shows what the lease page shows", async () => {
     // An admin's Run rent now, as the nightly run does: the month's rent for the five leases in
-    // effect on its first, Birch Flats Unit A's pet rent, and a $50.00 late fee on each rent still
-    // open once its five days' grace ran out.
+    // effect on its first and Birch Flats Unit A's pet rent. The regression check of H1: a rent's
+    // five days' grace counts from the day it is charged, so rent charged today takes no late fee
+    // today, on any day of the month (before the fix, from the 7th on, this run charged five).
     await section(page, "Rent roll");
     await page.getByRole("button", { name: "Actions for the rent roll" }).click();
     await page.getByRole("menuitem", { name: "Run rent now" }).click();
     const run = page.getByRole("dialog", { name: "Run rent now" });
     await run.getByLabel("Rent due on").fill(month);
-    const asOf = today();
-    await run.getByLabel("Late fees as of").fill(asOf);
-    const late = asOf >= addDays(month, 6);
+    await run.getByLabel("Late fees as of").fill(today());
     await run.getByRole("button", { name: "Run rent now" }).click();
     await expect(run).toHaveCount(0);
-    await expect(page.getByRole("main")).toContainText(
-      `5 rents, 1 recurring charge and ${late ? "5 late fees" : "0 late fees"} charged.`,
-    );
-    const fee = late ? 5000 : 0;
-
-    // Birch Flats Unit B, late in the demo's first month, owes its rent and, once late, its late fee.
-    const unitB = page.getByRole("row", { name: "Birch Flats, Unit B", exact: true });
-    await expect(unitB.getByTestId("balance")).toHaveText(money(161_000 + fee));
-    await openLease(page, "Birch Flats, Unit B");
-    await expect(page.getByTestId("balance-due")).toHaveText(money(161_000 + fee));
-    const open = page.getByRole("list", { name: "Open charges" });
-    await expect(open.getByRole("listitem").filter({ hasText: "Late fee" })).toHaveCount(late ? 1 : 0);
-    await page.getByRole("tab", { name: "Ledger", exact: true }).click();
-    await expect(page.getByRole("table", { name: "Ledger" }).getByRole("row").filter({ hasText: "Late fee" })).toHaveCount(late ? 2 : 1);
+    await expect(page.getByRole("main")).toContainText("5 rents, 1 recurring charge and 0 late fees charged.");
+    // Birch Flats Unit B owes its rent alone.
+    await expect(page.getByRole("row", { name: "Birch Flats, Unit B", exact: true }).getByTestId("balance")).toHaveText("$1,610.00");
 
     // Cedar House charges a $35.00 NSF fee from this month, set on its page.
     await section(page, "Properties");
@@ -426,13 +494,13 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await nsf.getByRole("button", { name: "Set NSF fee" }).click();
     await expect(page.getByTestId("nsf-fee")).toHaveText("NSF fee $35.00");
 
-    // Taylor Demo and Quinn Demo pay Cedar House's $2,250.00 by two checks; payments pay rent first.
+    // Taylor Demo and Quinn Demo pay Cedar House's $2,250.00 by two checks.
     await openLease(page, "Cedar House, House");
     const owed = page.getByTestId("balance-due");
-    await expect(owed).toHaveText(money(225_000 + fee));
+    await expect(owed).toHaveText("$2,250.00");
     await receive(page, "1200.00", "Check 2101", "$1,200.00 paid what is owed.");
     await receive(page, "1050.00", "Check 2102", "$1,050.00 paid what is owed.");
-    await expect(owed).toHaveText(money(fee));
+    await expect(owed).toHaveText("$0.00");
 
     // Taylor's check has its receipt.
     await page.getByRole("tab", { name: "Ledger", exact: true }).click();
@@ -451,7 +519,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await page.getByRole("menuitem", { name: "It bounced" }).click();
     await bounced.getByRole("button", { name: "Record the $1,050.00 bounce" }).click();
     await expect(page.getByRole("main")).toContainText("The $1,050.00 payment bounced and is undone; a $35.00 NSF fee is charged.");
-    cedarOwes = 105_000 + 3_500 + fee;
+    cedarOwes = 105_000 + 3_500;
     await expect(owed).toHaveText(money(cedarOwes));
     const ledger = page.getByRole("table", { name: "Ledger" });
     await expect(ledger.getByRole("row").filter({ hasText: "NSF fee" })).toContainText("$35.00");
@@ -600,17 +668,19 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
 
     // Cedar House's account: its $250.00 reserve and the $2,250.00 paid, less the $1,050.00 that
     // bounced and the $640.00 bill; the $120.00 bill not yet set aside is held back from a draw.
-    expect(await ownerAccount(page, "Demo Owner A, Cedar House")).toEqual({
+    await expect.poll(() => ownerAccount(page, "Demo Owner A, Cedar House")).toEqual({
       holds: 81_000, reserve: 25_000, bills: 12_000, available: 44_000,
     });
   });
 
-  await test.step("last month's management fees were taken; the company's fees leave trust, the confirm naming the amount, and the Dashboard's note clears", async () => {
-    // Last month's period: each owner's account with an agreement took its fee (the demo's
-    // month-end took them); there is nothing left to collect.
+  await test.step("last month's management fees were taken, and the page offers nothing more to collect (H4); the company's fees leave trust, the confirm naming the amount, and the Dashboard's note clears", async () => {
+    // Last month's period, by its first and last days: each owner's account with an agreement
+    // took its fee (the demo's month-end took them). The regression check of H4: with nothing
+    // left to collect, Collect fees is off and the page says so, rather than offering to collect
+    // $0.00 and counting the fees taken before as collected now.
     await section(page, "Management fees");
     await page.getByLabel("Period from").fill(lastMonth);
-    await page.getByLabel("Up to (not including)").fill(month);
+    await page.getByLabel("Period through").fill(lastMonthEnd);
     // Each is its agreement's percent of last month's rent and recurring fees, all collected:
     // Demo Owner A's 8%, Demo Owner B's 10% (above Owner A's $50.00 minimum each).
     const fees = page.getByRole("table", { name: "Management fees" }).locator("tbody").getByRole("row");
@@ -626,6 +696,8 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
         .toHaveText([account.split(", ")[0]!, account.split(", ")[1]!, money(fee), "Collected"]);
     }
     const taken = terms.reduce((sum, [, fee]) => sum + fee, 0);
+    companyFees = taken;
+    await expect(page.getByTestId("nothing-to-collect")).toHaveText(`Nothing to collect for ${us(lastMonth)} to ${us(lastMonthEnd)}.`);
     await expect(page.getByRole("button", { name: "Collect fees" })).toBeDisabled();
 
     // Those fees are the company's, still in the operating trust account: the Dashboard says so,
@@ -663,7 +735,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await expect(confirm).toContainText("Pay $440.00 to 1 owner account by check on ");
     await confirm.getByRole("button", { name: "Confirm" }).click();
     await expect(page.getByRole("main")).toContainText("1 payout of $440.00 recorded, by check.");
-    expect(await ownerAccount(page, "Demo Owner A, Cedar House")).toEqual({
+    await expect.poll(() => ownerAccount(page, "Demo Owner A, Cedar House")).toEqual({
       holds: 37_000, reserve: 25_000, bills: 12_000, available: 0,
     });
 
@@ -673,16 +745,90 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     expect(ownerA.held).toBe(ownerA.reserve + 12_000);
   });
 
-  await test.step("Cedar House's lease is renewed at a new rent: staff send it, Taylor signs from the portal and Quinn from their link, staff activate it, and the rent roll shows both leases", async () => {
+  await test.step("Taylor's check, paid out to the owner since, comes back: the bounce is refused naming whose account is short and by how much, with a link to the owner's Financials to record a contribution (H2); once it is in, the bounce goes through", async () => {
+    // The regression check of H2: the $1,200.00 paid Cedar House's owner, who was paid out since,
+    // and the account holds $370.00. The bounce is refused, moving nothing, in words that name the
+    // owner, the property, what it holds and how much is short, and say what to do.
     await openLease(page, "Cedar House, House");
+    await page.getByRole("tab", { name: "Ledger", exact: true }).click();
+    const check = page.getByRole("table", { name: "Payments received" }).getByRole("row", { name: /Check 2101/ });
+    const bounce = async () => {
+      await check.getByRole("button", { name: /^Actions for / }).click();
+      await page.getByRole("menuitem", { name: "It bounced" }).click();
+      await check.getByRole("button", { name: "Record the $1,200.00 bounce" }).click();
+    };
+    await bounce();
+    await expect(page.getByRole("main")).toContainText(
+      "not enough money to record the bounce: Demo Owner A's account for Cedar House holds $370.00 of the $1,200.00"
+        + " it takes back, $830.00 short. Record a contribution of $830.00 from Demo Owner A (the owner's page,"
+        + " Financials, Record contribution), or wait for rent to bring it in, then record the bounce again.",
+    );
+    await expect(page.getByTestId("balance-due")).toHaveText(money(cedarOwes));
+    await expect(check.getByText("Bounced", { exact: true })).toHaveCount(0);
+
+    // Its link opens Demo Owner A's Financials, where the owner's money comes in.
+    await page.getByTestId("short-owners")
+      .getByRole("link", { name: "Record a contribution of $830.00 from Demo Owner A (Cedar House)" }).click();
+    await expect(page.getByRole("heading", { level: 1, name: "Demo Owner A" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Financials", exact: true })).toHaveAttribute("aria-selected", "true");
+    await page.getByRole("button", { name: "Record contribution" }).click();
+    const contribution = page.getByRole("dialog", { name: "Record contribution" });
+    await contribution.getByLabel("Into").selectOption({ label: "Cedar House" });
+    await contribution.getByLabel("Contribution received").fill("830.00");
+    await contribution.getByLabel("For", { exact: true }).fill("Check 2101 came back");
+    await contribution.getByRole("button", { name: "Record contribution" }).click();
+    await expect(contribution).toHaveCount(0);
+    await expect(page.getByRole("main")).toContainText("$830.00 from Demo Owner A recorded.");
+
+    // Then the bounce goes through: the rent it paid is owed again, with a second NSF fee, and
+    // Cedar House's account gives back all it held and the contribution.
+    await openLease(page, "Cedar House, House");
+    await page.getByRole("tab", { name: "Ledger", exact: true }).click();
+    await bounce();
+    await expect(page.getByRole("main")).toContainText("The $1,200.00 payment bounced and is undone; a $35.00 NSF fee is charged.");
+    cedarOwes += 120_000 + 3_500;
+    await expect(page.getByTestId("balance-due")).toHaveText(money(cedarOwes));
+    await expect(check.getByText("Bounced", { exact: true })).toBeVisible();
+    await expect.poll(() => ownerAccount(page, "Demo Owner A, Cedar House")).toEqual({
+      holds: 0, reserve: 25_000, bills: 12_000, available: 0,
+    });
+  });
+
+  await test.step("Cedar House's rent goes up next month after a month's written notice, and Taylor's portal shows the next due date's rent (H3); then the lease is renewed for a year at it, signed from Taylor's portal and Quinn's link and activated, and the rent roll shows both leases", async () => {
+    // Staff gave notice of the new rent by mail on the first of this month, a full month ahead.
+    await openLease(page, "Cedar House, House");
+    const change = await leasePanel(page, "Change rent");
+    await change.getByLabel("New monthly rent").fill("2300.00");
+    await change.getByLabel("From (the first of a month)").fill(nextMonth);
+    await change.getByLabel("Written notice given on").fill(month);
+    await change.getByLabel("Served").selectOption("mail");
+    await change.getByRole("button", { name: "Change rent" }).click();
+    await expect(change).toHaveCount(0);
+    await expect(page.getByRole("main")).toContainText(`Rent of $2,300.00 a month from ${us(nextMonth)} recorded.`);
+    await expect(page.getByRole("list", { name: "Rent changes, House" })).toHaveText(
+      `From ${us(nextMonth)}: $2,300.00 a month (notice by mail on ${us(month)})`,
+    );
+
+    // The regression check of H3: Taylor's Coming up gives each month's rent as the next due
+    // date's, $2,300.00 from the first of next month (before the fix, the $2,250.00 in force
+    // today). What the lease owes, both checks back, is what staff see.
+    await taylor.goto("/");
+    const coming = part(taylor, "Coming up");
+    await expect(coming).toContainText(`Rent: $2,300.00, from ${us(nextMonth)}`);
+    await expect(coming).not.toContainText("Rent: $2,250.00");
+    await expect(taylor.getByTestId("balance-due")).toHaveText(money(cedarOwes));
+
+    // The renewal: a year from the first of the month after next, at the new rent.
+    const renewStart = firstOfMonth(month, 2);
+    const renewEnd = addDays(firstOfMonth(month, 14), -1);
     await page.getByRole("button", { name: "Actions for this lease" }).click();
     await page.getByRole("menuitem", { name: "Renew lease" }).click();
     const draft = page.getByRole("dialog", { name: "New draft lease" });
     await expect(draft.getByRole("combobox", { name: "For", exact: true }).locator("option:checked")).toHaveText(
       /^Cedar House, House: /,
     );
-    await expect(draft.getByLabel("Rent a month")).toHaveValue("2250.00");
-    await draft.getByLabel("Starts").fill(nextMonth);
+    await draft.getByLabel("Starts").fill(renewStart);
+    await draft.getByLabel("Ends (empty for month to month)").fill(renewEnd);
     await draft.getByLabel("Rent a month").fill("2300.00");
     await draft.getByLabel("Lease document (PDF, your own)").setInputFiles(RENEWAL);
     await draft.getByLabel("Who signs, one a line: Name, email").fill(
@@ -699,9 +845,9 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     );
 
     // Taylor signs from the portal, as the signer with their login's email.
-    await taylor.goto("/");
+    await taylor.reload();
     const offered = taylor.getByRole("listitem", { name: "Renewal of House" });
-    await expect(offered).toContainText(`${us(nextMonth)} – Month to month, $2,300.00 a month`);
+    await expect(offered).toContainText(`${us(renewStart)} – ${us(renewEnd)}, $2,300.00 a month`);
     await offered.getByRole("button", { name: "Sign" }).click();
     await sign(taylor, "Taylor Demo", false);
     await taylor.goto("/");
@@ -714,25 +860,25 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await sign(quinn, "Quinn Demo", true);
     await done(quinn, "Quinn's signing page");
 
-    // Staff make it the lease: the old one ends with this month, the renewal starts the next.
+    // Staff make it the lease: the old one ends the day before, the renewal follows.
     await page.reload();
     await expect(page.getByText("2 of 2 signed", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: "Activate lease" }).click();
-    await expect(page.getByText(`Cedar House, House has its lease from ${us(nextMonth)}.`)).toBeVisible();
+    await expect(page.getByText(`Cedar House, House has its lease from ${us(renewStart)}.`)).toBeVisible();
     await expect(page.getByTestId("status")).toHaveText("Lease active");
     await section(page, "Rent roll");
     await page.getByRole("combobox", { name: "Status" }).selectOption({ label: "All" });
     const cedar = page.getByRole("row", { name: "Cedar House, House", exact: true });
     await expect(cedar).toHaveCount(2);
-    const renewal = cedar.filter({ hasText: us(nextMonth) });
-    await expect(renewal.getByRole("cell").nth(3)).toHaveText(us(nextMonth));
-    await expect(renewal.getByRole("cell").nth(4)).toHaveText("Month to month");
+    const renewal = cedar.filter({ hasText: us(renewStart) });
+    await expect(renewal.getByRole("cell").nth(3)).toHaveText(us(renewStart));
+    await expect(renewal.getByRole("cell").nth(4)).toHaveText(us(renewEnd));
     await expect(renewal.getByRole("cell").nth(6)).toHaveText("$2,300.00");
     await expect(renewal.getByTestId("balance")).toHaveText("$0.00");
-    const ending = cedar.filter({ hasNotText: us(nextMonth) });
-    await expect(ending.getByRole("cell").nth(4)).toHaveText(us(addDays(nextMonth, -1)));
+    // The lease renewed ends the day before, at the rent in force today; what it owes stays with it.
+    const ending = cedar.filter({ hasNotText: us(renewStart) });
+    await expect(ending.getByRole("cell").nth(4)).toHaveText(us(addDays(renewStart, -1)));
     await expect(ending.getByRole("cell").nth(6)).toHaveText("$2,250.00");
-    // What it owed stays with it.
     await expect(ending.getByTestId("balance")).toHaveText(money(cedarOwes));
   });
 
@@ -778,8 +924,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     expect(statement.headers()["content-type"]).toBe("application/pdf");
 
     // Drew downloads the same statement from the portal.
-    const drew = await someone(browser);
-    await joinPortal(drew, people.drew);
+    await drew.goto("/");
     const theirs = await drew.request.get(
       (await drew.getByRole("link", { name: "Deposit statement (PDF)" }).getAttribute("href")) ?? "",
     );
@@ -826,8 +971,11 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     expect(open.filter((t) => t.on >= firstDay).sort(byId)).toEqual([...moved].sort(byId));
     const earlier = open.filter((t) => t.on < firstDay);
     expect(earlier).toEqual([expect.objectContaining({ on: lastMonthEnd, amount: -65_000 })]);
-    // In: two checks, the kept deposit; out: the bounce, the bill, the company's fees, the draw.
-    expect(moved.filter((l) => l.amount > 0).map((l) => l.amount).sort((a, b) => a - b)).toEqual([15_000, 105_000, 120_000]);
+    // In: two checks, the owner's contribution and the deposit kept; out: the two bounces, the
+    // bill, the company's fees and the draw.
+    const amounts = (all: Line[]) => all.map((l) => l.amount).sort((a, b) => a - b);
+    expect(amounts(moved)).toEqual(amounts([15_000, 83_000, 105_000, 120_000, -120_000, -105_000, -64_000, -companyFees, -44_000]
+      .map((amount) => ({ id: "", on: "", amount }))));
     const lines = [...earlier.map((t) => ({ ...t, on: firstDay })), ...moved];
     const csv = [
       "Date,Description,Amount,Reference",
@@ -842,8 +990,23 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await bookkeeper.getByRole("button", { name: "Import statement" }).click();
     await expect(bookkeeper.getByText(`Imported ${lines.length} lines, ${us(firstDay)} to ${us(lastDay)}.`)).toBeVisible();
 
-    // Every line pairs with the one transfer of its amount: nothing is left on either side.
+    // The regression check of H5: before matching, each line is a bank line "not matched yet",
+    // and the page says they are likely in the books already, for Match the sure ones to pair; it
+    // never tells the bookkeeper to record them, which would put the month's money in twice.
     await bookkeeper.getByRole("tab", { name: "Reconciliations" }).click();
+    const total = lines.reduce((sum, l) => sum + l.amount, 0);
+    await expect(bookkeeper.getByText(`${lines.length} bank lines not matched`, { exact: true })).toBeVisible();
+    await expect(bookkeeper.getByTestId("next-steps")).toHaveText(
+      `${lines.length} bank lines of ${money(total)} have a transfer of the same amount in the books, so they are`
+        + " likely there already: Match the sure ones pairs all of them.",
+    );
+    const items = bookkeeper.getByRole("table", { name: "Reconciling items" }).getByRole("row");
+    await expect(items.filter({ hasText: "bank line not matched yet" })).toHaveCount(lines.length);
+    await expect(items.filter({ hasText: "not in the books" })).toHaveCount(0);
+    await expect(bookkeeper.getByRole("main")).not.toContainText("record them");
+    await expect(bookkeeper.getByText(/^Off by/)).toHaveCount(0);
+
+    // Every line pairs with the one transfer of its amount: nothing is left on either side.
     await bookkeeper.getByRole("button", { name: "Match the sure ones" }).click();
     await expect(bookkeeper.getByText(`${lines.length} lines matched.`)).toBeVisible();
     for (const side of ["Bank lines not matched", "Transfers not matched"]) {
@@ -908,17 +1071,19 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await card.getByLabel("To", { exact: true }).fill(today());
     await card.getByRole("button", { name: "Show" }).click();
     await expect(card.getByText("Closing, all properties")).toBeVisible();
-    const theirs = await statementOf(card);
+    const read = await statementOf(card);
+    expect(read).not.toBeNull();
+    const theirs = read!;
     expect(theirs.opening + theirs.moneyIn - Math.abs(theirs.moneyOut)).toBe(theirs.closing);
     // Each property's postings take it from its opening to its closing, and Cedar House's are the
-    // month's: two checks in, the bounce, the bill and the draw out.
+    // month's: two checks in and both back, the bill and the draw out, the owner's contribution in.
     for (const [name, property] of Object.entries(theirs.properties)) {
       expect(property.opening + property.postings.reduce((a, b) => a + b, 0), name).toBe(property.closing);
     }
     expect(Object.keys(theirs.properties).sort()).toEqual(["Birch Flats", "Cedar House", "Elm Court"]);
     const cedar = theirs.properties["Cedar House"]!;
-    expect([cedar.opening, cedar.closing]).toEqual([25_000, 37_000]);
-    expect([...cedar.postings].sort((a, b) => a - b)).toEqual([-105_000, -64_000, -44_000, 105_000, 120_000]);
+    expect([cedar.opening, cedar.closing]).toEqual([25_000, 0]);
+    expect([...cedar.postings].sort((a, b) => a - b)).toEqual([-120_000, -105_000, -64_000, -44_000, 83_000, 105_000, 120_000]);
     expect(Object.values(theirs.properties).reduce((sum, p) => sum + p.closing, 0)).toBe(theirs.closing);
     // What each property holds today is its closing.
     const holdings = part(owner, "What each property holds today");

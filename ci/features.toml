@@ -910,7 +910,7 @@ browser = [
 # A month run start to end (frontend/e2e/journey.spec.ts), on its own demo PMC (e2e/seed.py,
 # "journey"); its operations are claimed by the features above too.
 id = "a-month"
-statement = "A company's month, start to end, as its people do it, with the money agreeing on every page that shows it: staff list a vacant unit, an applicant applies from the public page, is screened and approved, signs the lease (a deposit and a monthly charge) on the PMS's own page, and staff activate it and take the deposit; the month's rent and late fees run, a tenant's check pays rent first and has its receipt, a second check bounces with the NSF fee, and the tenant's portal, the lease page and the rent roll owe the same; a tenant's repair request with a photo becomes a work order a vendor with an email and insurance schedules and finishes through their link, its bill over the owner's limit is approved in the owner's portal, set aside and paid after a question naming the amount; last month's management fees are each agreement's percent of what was collected, and exactly what Banking and the Dashboard hold as the company's fees, which leave trust; Pay owners pays an owner everything available, leaving their reserves and the bill not yet paid; a lease is renewed at a new rent, signed from the tenant's portal and by link, and activated; a tenant who moved out gets their deposit back less damage, and each trust bank account's cash moves by exactly what moved; the bookkeeper imports a bank statement of every move the register shows, matches it all, and prepares the month through yesterday, which the manager approves, closing the account; the owner's statement adds up and closes at what staff see; and the balance sheet ties every trust bank account's cash to what it holds and to Banking."
+statement = "A company's month, start to end, as its people do it, with the money agreeing on every page that shows it: staff list a vacant unit, an applicant applies from the public page, is screened and approved, signs the lease (a deposit and a monthly charge) on the PMS's own page, and staff activate it and take the deposit; a renewal sent to a tenant whose lease then ends last month can no longer be sent, signed or made a lease, the End lease panel warning of it, its page saying why and offering only Void, the tenant's portal no longer offering it and its link signing nothing (H7); the month's rent runs with no late fee on rent charged that day (H1), a tenant's check has its receipt, a second check bounces with the NSF fee, and the tenant's portal, the lease page and the rent roll owe the same; a tenant's repair request with a photo becomes a work order a vendor with an email and insurance schedules and finishes through their link, its bill over the owner's limit is approved in the owner's portal, set aside and paid after a question naming the amount; last month's management fees are each agreement's percent of what was collected, the page offering nothing more to collect (H4), and exactly what Banking and the Dashboard hold as the company's fees, which leave trust; Pay owners pays an owner everything available, leaving their reserves and the bill not yet paid; a check that paid them then comes back and its bounce is refused naming the owner, the property, what it holds and how much is short, with a link to the owner's Financials, where their contribution comes in before the bounce goes through (H2); a rent goes up on a month's notice and the tenant's portal gives the next due date's rent (H3), and the lease is renewed for a year at it, signed from the tenant's portal and by link, and activated; the tenant who moved out gets their deposit back less damage, and each trust bank account's cash moves by exactly what moved; the bookkeeper imports a bank statement of every move the register shows, which before matching reads as lines not matched yet and likely in the books, never as lines to record (H5), matches it all, and prepares the month through yesterday, which the manager approves, closing the account; the owner's statement adds up and closes at what staff see; and the balance sheet ties every trust bank account's cash to what it holds and to Banking."
 operations = [
   "GET /api/leasing/vacancies",
   "POST /api/leasing/links",
@@ -924,6 +924,7 @@ operations = [
   "POST /api/leasing/applications/{application_id}/screen",
   "POST /api/leasing/applications/{application_id}/decide",
   "POST /api/leasing/applications/{application_id}/offer",
+  "GET /api/leasing/offers",
   "GET /api/leasing/offers/{offer_id}",
   "POST /api/leasing/offers/{offer_id}/send",
   "POST /api/signing/view",
@@ -931,6 +932,7 @@ operations = [
   "POST /api/signing/document",
   "POST /api/signing/sign",
   "POST /api/leasing/offers/{offer_id}/complete",
+  "POST /api/leasing/offers/{offer_id}/void",
   "POST /api/rent/deposits",
   "GET /api/leases",
   "GET /api/leases/{lease_id}",
@@ -968,8 +970,10 @@ operations = [
   "POST /api/payables/company-fees",
   "GET /api/payables/owners",
   "POST /api/payables/draws/batch",
+  "POST /api/payables/contributions",
   "GET /api/owners",
   "GET /api/leasing/leases",
+  "POST /api/rent/leases/{lease_id}/rent-changes",
   "POST /api/leasing/leases/{lease_id}/renewal",
   "GET /api/tenant/renewals",
   "POST /api/tenant/renewals/{offer_id}/signing-link",

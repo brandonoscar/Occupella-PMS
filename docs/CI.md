@@ -394,8 +394,13 @@ for, signed on the PMS's page and activated, the rent run, a check paid and one 
 repair a vendor finishes through their link and its bill the owner approves in the portal, last
 month's fees taken out of trust, an owner paid, a renewal, a move-out, and the month-end the
 bookkeeper prepares from a bank statement of every move the register shows and the manager
-approves; wherever money moves, the pages that show it must agree to the cent (52 to 54 s in
-three runs locally on 10/22; the other days of the month NOT VERIFIED). On failure it keeps the Playwright
+approves; wherever money moves, the pages that show it must agree to the cent. On the way it
+checks the walkthrough's fixes where a person meets them: no late fee on rent charged that day
+(H1), a bounce the owner was paid out of refused in words with a link to record their
+contribution (H2), the next due date's rent in the tenant's portal (H3), nothing more to collect
+on the management fees page (H4), month-end lines "not matched yet" before matching, never to
+record (H5), and a renewal of a lease that ended refused, gone from the tenant's portal (H7)
+(about 44 s in three runs locally on 10/22; the other days of the month NOT VERIFIED). On failure it keeps the Playwright
 report and the API's log for 7 days. After every browser test, axe-core checks the page it
 ended on against WCAG 2.2 A and AA (`frontend/e2e/a11y.ts`), and one test walks every page of a
 demo of its own (staff's menu and Settings, a page of each kind a list opens, an owner's and a
