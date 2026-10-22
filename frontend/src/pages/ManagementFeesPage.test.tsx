@@ -2,6 +2,7 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import { holdBack } from "../holdBack";
+import { lastMonth, usDate } from "../money";
 import type { FeeDue } from "../payables";
 import { ManagementFeesPage } from "./ManagementFeesPage";
 
@@ -28,8 +29,9 @@ function server(due: FeeDue[] | null = DUE, refuse = "", automatic = false) {
     if (init?.method === "POST") {
       if (refuse) return new Response(JSON.stringify({ detail: refuse }), { status: 409 });
       return new Response(JSON.stringify([
-        { account: "a1", owner: "Owner 1", property: "Property 1", fee: "80.00", refused: null },
-        { account: "a3", owner: "Owner 3", property: "Property 3", fee: null, refused: "short" },
+        { account: "a1", owner: "Owner 1", property: "Property 1", fee: "80.00", refused: null, already: false },
+        { account: "a2", owner: "Owner 2", property: "Property 2", fee: "25.00", refused: null, already: true },
+        { account: "a3", owner: "Owner 3", property: "Property 3", fee: null, refused: "short", already: false },
       ]), { status: 200 });
     }
     if (due === null) return new Response(JSON.stringify({ detail: "a fee period ends after it starts" }), { status: 422 });
@@ -64,16 +66,46 @@ describe("ManagementFeesPage", () => {
       ["Owner 2", "Property 2", "$25.00", "Collected"],
       ["Owner 3", "Property 3", "", "not enough money: the owner's account would be $25.00 short"],
     ]);
-    expect(String(fetch.mock.calls[0]?.[0])).toMatch(/^\/api\/payables\/management-fees\?period_start=\d{4}-\d{2}-01&period_end=\d{4}-\d{2}-01$/);
+    // Last month by default, read by its last day; the API's period ends on this month's first.
+    const month = lastMonth(new Date());
+    const thisMonth = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString().slice(0, 10);
+    expect((screen.getByLabelText("Period through") as HTMLInputElement).value).toBe(month.end);
+    expect(String(fetch.mock.calls[0]?.[0])).toBe(
+      `/api/payables/management-fees?period_start=${month.start}&period_end=${thisMonth}`,
+    );
+    expect(screen.queryByTestId("nothing-to-collect")).toBeNull();
 
+    // The question names only what is taken now, and the period by its last day.
     fireEvent.click(screen.getByRole("button", { name: "Collect fees" }));
     const confirm = screen.getByRole("alertdialog");
-    expect(confirm.textContent).toContain("Collect $80.00 of management fees for");
+    expect(confirm.textContent).toContain(
+      `Collect $80.00 of management fees from 1 account for ${usDate(month.start)} to ${usDate(month.end)}? 1 was collected already.`,
+    );
     fireEvent.click(within(confirm).getByRole("button", { name: "Confirm" }));
 
-    expect(await screen.findByText("$80.00 collected from 1 account.")).toBeTruthy();
+    // The fee taken before is not counted as taken now.
+    expect(await screen.findByText("$80.00 collected from 1 account; 1 was collected already; 1 not taken: the list says why.")).toBeTruthy();
     const post = fetch.mock.calls.find(([, init]) => init?.method === "POST");
-    expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({ period_start: expect.any(String), period_end: expect.any(String) });
+    expect(JSON.parse(String(post?.[1]?.body))).toMatchObject({ period_start: month.start, period_end: thisMonth });
+  });
+
+  it("offers no collection when every fee is collected already or of nothing, and says so", async () => {
+    server([
+      { account: "a1", owner: "Owner 1", property: "Property 1", taken: true, fee: "120.00", refused: null },
+      { account: "a2", owner: "Owner 2", property: "Property 2", taken: false, fee: "0.00", refused: null },
+    ]);
+    render(<ManagementFeesPage me={ME} />);
+
+    const table = await screen.findByRole("table", { name: "Management fees" });
+    expect(within(table).getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").map((c) => c.textContent))).toEqual([
+      ["Owner 1", "Property 1", "$120.00", "Collected"],
+      ["Owner 2", "Property 2", "$0.00", "Nothing to collect"],
+    ]);
+    const month = lastMonth(new Date());
+    expect(screen.getByTestId("nothing-to-collect").textContent).toBe(
+      `Nothing to collect for ${usDate(month.start)} to ${usDate(month.end)}.`,
+    );
+    expect(screen.getByRole("button", { name: "Collect fees" })).toHaveProperty("disabled", true);
   });
 
   it("asks again for another period, and says when no agreement was in force", async () => {

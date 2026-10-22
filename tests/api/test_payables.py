@@ -19,6 +19,7 @@ from helpers import (
     bank_sums,
     charge,
     charge_recurring_due,
+    contribute,
     enter_bill,
     open_lease,
     post,
@@ -446,10 +447,35 @@ def test_management_fees_are_taken_once_a_period_for_each_agreement(client, conn
     )
     one = ok(call(client, "management-fees", account=pmc.owners[0].account, **period), 200)
 
-    assert [(f["owner"], f["fee"], f["refused"]) for f in first] == [("Owner 1", "150.00", None)]
-    assert again == first == one
+    assert [(f["owner"], f["fee"], f["refused"], f["already"]) for f in first] == [
+        ("Owner 1", "150.00", None, False)
+    ]
+    # Asked again, the fee taken first comes back, said to be taken already: nothing new.
+    assert again == one == [first[0] | {"already": True}]
     assert overlapping[0]["fee"] is None and "overlaps" in overlapping[0]["refused"]
+    assert overlapping[0]["already"] is False
     assert balance(conn, pmc.pmc_income) == Decimal("150.00")
+
+
+def test_collecting_says_which_fees_were_taken_before_and_takes_only_the_rest(
+    client, conn, staff, pmc
+):
+    Rented(conn, pmc)
+    add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 60 * DAY, fee_percent="10")
+    add_agreement(conn, pmc.pmc_id, pmc.owners[1].account, TODAY - 60 * DAY, minimum_fee="25")
+    contribute(conn, pmc.pmc_id, pmc.owners[1].account, "in-1", "100.00", NOW - 5 * DAY)
+    period = {"period_start": TODAY - 30 * DAY, "period_end": TODAY, "on": TODAY}
+
+    # Owner 1's fee is taken on its own first, as the nightly run or a click on one would.
+    one = ok(call(client, "management-fees", account=pmc.owners[0].account, **period), 200)
+    every = ok(call(client, "management-fees", **period), 200)
+
+    assert [(f["owner"], f["fee"], f["already"]) for f in one] == [("Owner 1", "150.00", False)]
+    assert [(f["owner"], f["fee"], f["already"]) for f in every] == [
+        ("Owner 1", "150.00", True),
+        ("Owner 2", "25.00", False),
+    ]
+    assert balance(conn, pmc.pmc_income) == Decimal("175.00")
 
 
 def test_the_fee_counts_a_recurring_fee_collected_with_the_rent(client, conn, staff, pmc):

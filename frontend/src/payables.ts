@@ -1,6 +1,6 @@
 // Staff's bills and owners' money as the API sends them (src/pms/api/payables.py), and how
 // they read.
-import { day, lastMonth, money, sumMoney, usDate } from "./money";
+import { day, money, sumMoney, usDate } from "./money";
 
 export type BillStatus = "needs approval" | "declined" | "to set aside" | "set aside" | "paid";
 export type Bill = {
@@ -161,6 +161,9 @@ export type Fee = {
 };
 // A management fee for a period: taken already, or what Collect fees would take, or why not.
 export type FeeDue = Fee & { taken: boolean };
+// What Collect fees did for each owner account (POST /api/payables/management-fees): `already`
+// is a fee taken for the period before (by hand or by the nightly run), so nothing new.
+export type FeeTaken = Fee & { already: boolean };
 // One payout of Pay owners, as recorded.
 export type OwnerPaid = { account: string; owner: string; property: string; amount: string; transfer_id: string };
 export type PayoutMethod = "check" | "EFT";
@@ -204,10 +207,60 @@ export function feeLine(fee: Fee): string {
   return fee.fee !== null ? `${who}: ${money(fee.fee)} taken` : `${who}: not taken, ${fee.refused}`;
 }
 
-// Last month as a fee period: from its first day up to, not including, this month's first.
-export function lastMonthPeriod(today: Date): { start: string; end: string } {
-  const thisMonth = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
-  return { start: lastMonth(today).start, end: day(thisMonth) };
+// A fee period as staff read it, by its first and last days: "09/01/2026 to 09/30/2026".
+export function feePeriod(start: string, last: string): string {
+  return `${usDate(start)} to ${usDate(last)}`;
+}
+
+// The API's end of a fee period: the day after its last day (a period runs up to, not
+// including, its end).
+export function feePeriodEnd(last: string): string {
+  return day(new Date(Date.parse(`${last}T00:00:00Z`) + 86_400_000));
+}
+
+const isZero = (amount: string) => sumMoney([amount]) === "0.00";
+const accounts = (n: number) => `${n} account${n === 1 ? "" : "s"}`;
+const were = (n: number) => `${n} ${n === 1 ? "was" : "were"}`;
+
+// The fees Collect fees would take now: not taken already, not refused, and more than nothing.
+export function feesToCollect(fees: FeeDue[]): FeeDue[] {
+  return fees.filter((f) => !f.taken && f.fee !== null && !isZero(f.fee));
+}
+
+// The question Collect fees asks, naming only what it takes now, and how many were collected
+// already.
+export function collectQuestion(fees: FeeDue[], start: string, last: string): string {
+  const due = feesToCollect(fees);
+  const total = sumMoney(due.map((f) => f.fee ?? "0"));
+  const taken = fees.filter((f) => f.taken).length;
+  const before = taken > 0 ? ` ${were(taken)} collected already.` : "";
+  return `Collect ${money(total)} of management fees from ${accounts(due.length)} for ${feePeriod(start, last)}?${before}`;
+}
+
+// Why there is nothing to collect for a period, when there isn't: every fee taken already or
+// of nothing (or refused, each saying why); null while something is to collect.
+export function nothingToCollect(fees: FeeDue[], start: string, last: string): string | null {
+  if (fees.length === 0 || feesToCollect(fees).length > 0) return null;
+  const refused = fees.some((f) => f.fee === null) ? " The fees not taken say why below." : "";
+  return `Nothing to collect for ${feePeriod(start, last)}.${refused}`;
+}
+
+// What Collect fees did, in a line: only what it took now, then how many were collected
+// already, had nothing to collect or were refused.
+export function collectedLine(taken: FeeTaken[]): string {
+  const now = taken.filter((f) => f.fee !== null && !f.already && !isZero(f.fee));
+  const before = taken.filter((f) => f.fee !== null && f.already).length;
+  const none = taken.filter((f) => f.fee !== null && !f.already && isZero(f.fee)).length;
+  const refused = taken.filter((f) => f.fee === null).length;
+  const parts = [
+    now.length > 0
+      ? `${money(sumMoney(now.map((f) => f.fee ?? "0")))} collected from ${accounts(now.length)}`
+      : "Nothing new collected",
+  ];
+  if (before > 0) parts.push(`${were(before)} collected already`);
+  if (none > 0) parts.push(`${none} had nothing to collect`);
+  if (refused > 0) parts.push(`${refused} not taken: the list says why`);
+  return `${parts.join("; ")}.`;
 }
 
 // A fee taken from an owner besides the management and leasing fees (migration 0082, q051).

@@ -12,9 +12,9 @@ import { Said } from "../components/Said";
 import { PageHeader, Shell } from "../components/Shell";
 import { Wide } from "../components/Wide";
 import { latest } from "../latest";
-import { day, money, sumMoney, usDate } from "../money";
-import type { Fee, FeeDue } from "../payables";
-import { lastMonthPeriod } from "../payables";
+import { day, lastMonth, money } from "../money";
+import type { FeeDue, FeeTaken } from "../payables";
+import { collectQuestion, collectedLine, feePeriodEnd, feesToCollect, nothingToCollect } from "../payables";
 import type { AutomaticFees } from "./AutomaticFeesCard";
 import { AUTOMATIC_FEES, automaticFeesLine } from "./AutomaticFeesCard";
 import { STAFF_NAV } from "./staffNav";
@@ -23,12 +23,13 @@ import { useRecord } from "./useRecord";
 // Accounting → Management fees (ADR 0006, decision 4, as the founder amended it on 2026-10-18):
 // each owner's account with a management agreement, and the period's fee: taken already, what
 // Collect fees would take (worked out by the database and rolled back, so looking moves nothing),
-// or why it can't be taken. A company may have the nightly run take last month's by itself
-// (Settings, Company setup); the page says which.
+// nothing to collect, or why it can't be taken. A company may have the nightly run take last
+// month's by itself (Settings, Company setup); the page says which. A period reads by its first
+// and last days; the API's period ends the day after its last.
 export function ManagementFeesPage({ me }: { me: Me }) {
-  const month = lastMonthPeriod(new Date());
+  const month = lastMonth(new Date());
   const [start, setStart] = useState(month.start);
-  const [end, setEnd] = useState(month.end);
+  const [last, setLast] = useState(month.end);
   const [fees, setFees] = useState<FeeDue[] | null>(null);
   const [error, setError] = useState("");
   const [runs, setRuns] = useState(0);
@@ -38,34 +39,32 @@ export function ManagementFeesPage({ me }: { me: Me }) {
   useEffect(() => {
     const run = latest();
     setError("");
-    if (!start || !end) return;
-    const query = new URLSearchParams({ period_start: start, period_end: end });
+    if (!start || !last) return;
+    const query = new URLSearchParams({ period_start: start, period_end: feePeriodEnd(last) });
     api
       .get<FeeDue[]>(`/api/payables/management-fees?${query}`)
       .then(run.keep(setFees))
       .catch(run.keep((why) => { setFees(null); setError(why instanceof ApiError ? why.detail : String(why)); }));
     return run.stop;
-  }, [start, end, runs]);
+  }, [start, last, runs]);
   // How the company takes its fees: by hand here, or each month by themselves.
   const [automatic, setAutomatic] = useState<AutomaticFees | null>(null);
   useEffect(() => {
     api.get<AutomaticFees>(AUTOMATIC_FEES).then(setAutomatic).catch(() => setAutomatic(null));
   }, []);
 
-  const due = (fees ?? []).filter((f) => !f.taken && f.fee !== null);
-  const total = sumMoney(due.map((f) => f.fee ?? "0"));
+  // Only what a collection takes now: not the fees taken already, nor fees of nothing.
+  const due = feesToCollect(fees ?? []);
+  const nothing = fees === null ? null : nothingToCollect(fees, start, last);
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title="Management fees" actions={
         <Button disabled={due.length === 0} onClick={() =>
-          ask(`Collect ${money(total)} of management fees for ${usDate(start)} to ${usDate(end)}?`, async () => {
-            await record<Fee[]>("/api/payables/management-fees",
-              { period_start: start, period_end: end, on: day(new Date()) },
-              (taken) => {
-                const collected = taken.filter((f) => f.fee !== null);
-                return `${money(sumMoney(collected.map((f) => f.fee ?? "0")))} collected from ${collected.length} account${collected.length === 1 ? "" : "s"}.`;
-              });
+          ask(collectQuestion(fees ?? [], start, last), async () => {
+            await record<FeeTaken[]>("/api/payables/management-fees",
+              { period_start: start, period_end: feePeriodEnd(last), on: day(new Date()) },
+              collectedLine);
           })
         }>
           Collect fees
@@ -80,9 +79,10 @@ export function ManagementFeesPage({ me }: { me: Me }) {
       <div className="flex flex-wrap items-end gap-3">
         <Field label="Period from" id="fee-start" type="date" required value={start}
           onChange={(event) => setStart(event.target.value)} />
-        <Field label="Up to (not including)" id="fee-end" type="date" required value={end}
-          onChange={(event) => setEnd(event.target.value)} />
+        <Field label="Period through" id="fee-end" type="date" required value={last}
+          onChange={(event) => setLast(event.target.value)} />
       </div>
+      {nothing && <p className="text-sm text-ink-muted" data-testid="nothing-to-collect">{nothing}</p>}
       <Said>{said}</Said>
       <Notice tone="error">{refused}</Notice>
       {fees === null ? (
@@ -109,8 +109,10 @@ export function ManagementFeesPage({ me }: { me: Me }) {
                   <td>
                     {fee.taken ? (
                       <Badge tone="positive">Collected</Badge>
-                    ) : fee.fee !== null ? (
+                    ) : fee.fee !== null && due.includes(fee) ? (
                       <Badge tone="caution">To collect</Badge>
+                    ) : fee.fee !== null ? (
+                      <Badge>Nothing to collect</Badge>
                     ) : (
                       <span className="text-sm text-danger">{fee.refused}</span>
                     )}

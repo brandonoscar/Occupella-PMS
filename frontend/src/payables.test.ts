@@ -1,15 +1,20 @@
 import { describe, expect, it } from "vitest";
-import type { Bill, CompanyFees, OwnerMoney, Recurring } from "./payables";
+import type { Bill, CompanyFees, FeeDue, FeeTaken, OwnerMoney, Recurring } from "./payables";
 import {
   paidSummary,
+  collectQuestion,
+  collectedLine,
   companyFeesDue,
   companyFeesLabel,
   emailNote,
   feeLine,
+  feePeriod,
+  feePeriodEnd,
+  feesToCollect,
   heldLabel,
   incomeStatementHref,
-  lastMonthPeriod,
   nextStep,
+  nothingToCollect,
   recurringLabel,
   billBadge,
   billsPaidSummary,
@@ -83,15 +88,60 @@ describe("payables", () => {
     );
   });
 
-  it("makes last month a fee period that ends on this month's first day", () => {
-    expect(lastMonthPeriod(new Date("2026-10-12T15:00:00Z"))).toEqual({
-      start: "2026-09-01",
-      end: "2026-10-01",
-    });
-    expect(lastMonthPeriod(new Date("2026-01-31T23:00:00Z"))).toEqual({
-      start: "2025-12-01",
-      end: "2026-01-01",
-    });
+  it("reads a fee period by its last day, and ends it for the API the day after", () => {
+    expect(feePeriod("2026-09-01", "2026-09-30")).toBe("09/01/2026 to 09/30/2026");
+    expect(feePeriodEnd("2026-09-30")).toBe("2026-10-01");
+    expect(feePeriodEnd("2025-12-31")).toBe("2026-01-01");
+    expect(feePeriodEnd("2028-02-28")).toBe("2028-02-29");
+  });
+
+  // Last month's fees as the walkthrough found them: four collected already, two of nothing.
+  const due = (fee: string | null, taken: boolean, refused: string | null = null): FeeDue =>
+    ({ account: `a-${fee}-${taken}`, owner: "Owner 1", property: "Property 1", fee, taken, refused });
+  const TAKEN_AND_NOTHING = [
+    due("120.00", true), due("100.00", true), due("279.20", true), due("280.00", true),
+    due("0.00", false), due("0.00", false),
+  ];
+
+  it("offers no collection of nothing, and says so for the period", () => {
+    expect(feesToCollect(TAKEN_AND_NOTHING)).toEqual([]);
+    expect(nothingToCollect(TAKEN_AND_NOTHING, "2026-09-01", "2026-09-30")).toBe(
+      "Nothing to collect for 09/01/2026 to 09/30/2026.",
+    );
+    expect(nothingToCollect([...TAKEN_AND_NOTHING, due(null, false, "short")], "2026-09-01", "2026-09-30")).toBe(
+      "Nothing to collect for 09/01/2026 to 09/30/2026. The fees not taken say why below.",
+    );
+    // Nothing is said while something is to collect, or when no agreement is in force.
+    expect(nothingToCollect([...TAKEN_AND_NOTHING, due("50.00", false)], "2026-09-01", "2026-09-30")).toBeNull();
+    expect(nothingToCollect([], "2026-09-01", "2026-09-30")).toBeNull();
+  });
+
+  it("asks to collect only what a collection takes now, saying how many were collected already", () => {
+    const fees = [...TAKEN_AND_NOTHING, due("50.00", false), due("25.50", false)];
+    expect(feesToCollect(fees).map((f) => f.fee)).toEqual(["50.00", "25.50"]);
+    expect(collectQuestion(fees, "2026-09-01", "2026-09-30")).toBe(
+      "Collect $75.50 of management fees from 2 accounts for 09/01/2026 to 09/30/2026? 4 were collected already.",
+    );
+    expect(collectQuestion([due("50.00", false)], "2026-09-01", "2026-09-30")).toBe(
+      "Collect $50.00 of management fees from 1 account for 09/01/2026 to 09/30/2026?",
+    );
+    expect(collectQuestion([due("50.00", false), due("25.00", true)], "2026-09-01", "2026-09-30")).toBe(
+      "Collect $50.00 of management fees from 1 account for 09/01/2026 to 09/30/2026? 1 was collected already.",
+    );
+  });
+
+  it("says what a collection took now, never a fee taken before", () => {
+    const taken = (fee: string | null, already: boolean): FeeTaken =>
+      ({ account: "a", owner: "Owner 1", property: "Property 1", fee, already, refused: fee === null ? "short" : null });
+    // The walkthrough's collection: nothing new, where it once said "$779.20 collected from 6 accounts."
+    expect(collectedLine([
+      taken("120.00", true), taken("100.00", true), taken("279.20", true), taken("280.00", true),
+      taken("0.00", false), taken("0.00", false),
+    ])).toBe("Nothing new collected; 4 were collected already; 2 had nothing to collect.");
+    expect(collectedLine([taken("50.00", false), taken("25.50", false), taken("80.00", true), taken(null, false)])).toBe(
+      "$75.50 collected from 2 accounts; 1 was collected already; 1 not taken: the list says why.",
+    );
+    expect(collectedLine([taken("50.00", false)])).toBe("$50.00 collected from 1 account.");
   });
 
   it("tells staff about the owner's email only while a bill waits for the owner", () => {

@@ -1368,6 +1368,9 @@ class Fee(BaseModel):
     property: str
     fee: str | None
     refused: str | None
+    # Taken for this period before this request (by hand or by the nightly run): Collect fees
+    # took nothing new from the account, and its fee is the one taken then.
+    already: bool = False
 
 
 class FeeDue(BaseModel):
@@ -1461,7 +1464,7 @@ def management_fees(session: Staff, conn: Conn, run: FeeRun) -> list[Fee]:
     """Takes the management fee of a period from each owner's account (or one), once per
     period: its percent of the rent and recurring fees (pet rent, parking) collected in it, at
     least the minimum, plus a flat fee. An account the fee can't be taken from says why, and the
-    others are taken."""
+    others are taken; one whose fee was taken for the period before says so (already)."""
     not_after_today(run.on)
     if run.period_end <= run.period_start:
         raise HTTPException(422, "a fee period ends after it starts")
@@ -1479,8 +1482,23 @@ def management_fees(session: Staff, conn: Conn, run: FeeRun) -> list[Fee]:
                     "SELECT trust_post_management_fee(%s, %s, %s, %s, %s)",
                     (session.pmc_id, account, run.period_start, run.period_end, at(run.on)),
                 )
+                # A fee taken for the period before comes back as it was. One taken now was
+                # recorded at this transaction's own time (now()); an earlier one at its own.
+                already = one(
+                    conn,
+                    "SELECT created_at <> now() FROM trust_management_fees"
+                    " WHERE ledger_account_id = %s AND period_start = %s AND period_end = %s",
+                    (account, run.period_start, run.period_end),
+                )
             taken.append(
-                Fee(account=account, owner=owner, property=prop, fee=cents(fee), refused=None)
+                Fee(
+                    account=account,
+                    owner=owner,
+                    property=prop,
+                    fee=cents(fee),
+                    refused=None,
+                    already=already,
+                )
             )
         except FEE_REFUSALS as refused:
             taken.append(

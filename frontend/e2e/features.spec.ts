@@ -27,6 +27,8 @@ const today = () => new Date().toISOString().slice(0, 10);
 // A day as the portal shows it: MM/DD/YYYY.
 const us = (iso: string) => `${iso.slice(5, 7)}/${iso.slice(8, 10)}/${iso.slice(0, 4)}`;
 const firstOfThisMonth = () => `${today().slice(0, 8)}01`;
+const lastOfThisMonth = () =>
+  new Date(Date.UTC(Number(today().slice(0, 4)), Number(today().slice(5, 7)), 0)).toISOString().slice(0, 10);
 const dayOfMonth = () => Number(today().slice(8, 10));
 const firstOfMonthsAgo = (months: number) => {
   const [year, month] = today().split("-").map(Number) as [number, number];
@@ -1031,11 +1033,8 @@ test("staff take the month's management fees once, find no leasing fee due, and 
   // Management fees: nothing was collected yet this month, so Demo Owner A's agreements would
   // take their $50.00 minimum; looking takes nothing, and Collect fees takes it, once.
   await section(page, "Management fees");
-  const nextMonth = new Date(Date.UTC(Number(today().slice(0, 4)), Number(today().slice(5, 7)), 1))
-    .toISOString()
-    .slice(0, 10);
   await page.getByLabel("Period from").fill(firstOfThisMonth());
-  await page.getByLabel("Up to (not including)").fill(nextMonth);
+  await page.getByLabel("Period through").fill(lastOfThisMonth());
   const fee = page.getByRole("row", { name: "Demo Owner A, Birch Flats", exact: true });
   await expect(fee).toContainText("$50.00");
   await expect(fee).toContainText("To collect");
@@ -2834,11 +2833,8 @@ test("a company has its management fees taken each month, staff set a flat fee a
     `Birch Flats: 0% of rent collected, at least $50.00, plus $25.00; leasing fee 0%; reserve $0.00; the owner approves bills over $0.00; from ${us(firstOfThisMonth())}`,
   );
   await section(page, "Management fees");
-  const nextMonth = new Date(Date.UTC(Number(today().slice(0, 4)), Number(today().slice(5, 7)), 1))
-    .toISOString()
-    .slice(0, 10);
   await page.getByLabel("Period from").fill(firstOfThisMonth());
-  await page.getByLabel("Up to (not including)").fill(nextMonth);
+  await page.getByLabel("Period through").fill(lastOfThisMonth());
   await expect(page.getByRole("row", { name: "Demo Owner A, Birch Flats", exact: true })).toContainText("$75.00");
 
   // An inspection fee from Birch Flats, which holds $250.00: on the owner's statement with what

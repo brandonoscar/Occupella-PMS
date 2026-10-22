@@ -19,7 +19,7 @@ Invariants checked after every step (ci/registry.toml maps them to this test):
     can't pay (the refusal naming that owner and property); sent again it pays nothing twice,
     and each payout keeps how it was sent;
   - the management fees page says what Collect fees would take, moving nothing, and then that
-    it was taken;
+    it was taken; collected again, it is said to be taken already and nothing more is taken;
   - the company takes out at most the fees its fee account holds, never an owner's money, and
     sending a withdrawal again takes nothing twice;
   - every trust bank account ties out.
@@ -297,6 +297,7 @@ class PayablesMachine(RuleBasedStateMachine):
         assert balance(self.conn, self.account) == self.held
         (fee,) = self.call(payables.management_fees, run)
         assert (due.taken, due.fee, due.refused) == (False, fee.fee, fee.refused)
+        assert fee.already is False  # taken now, not before
         (after,) = [
             d
             for d in self.call(payables.management_fees_due, run.period_start, run.period_end)
@@ -314,6 +315,10 @@ class PayablesMachine(RuleBasedStateMachine):
         assert Decimal(fee.fee) == FEE
         self.held -= FEE
         self.company += FEE
+        # Collected again, the fee is said to be taken already, and nothing more is taken.
+        (again,) = self.call(payables.management_fees, run)
+        assert (again.fee, again.refused, again.already) == (fee.fee, None, True)
+        assert balance(self.conn, self.account) == self.held
 
     @rule(amount=st.none() | CENTS)
     def take_the_companys_fees_out(self, amount):
