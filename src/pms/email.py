@@ -29,6 +29,7 @@ usage: python -m pms.email deliver    (DATABASE_URL, acting as trust_app)
 
 from __future__ import annotations
 
+import logging
 import os
 import smtplib
 import ssl
@@ -37,7 +38,7 @@ import threading
 import time
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from email.message import EmailMessage
 from email.utils import formataddr
@@ -48,6 +49,8 @@ import psycopg
 from psycopg import sql
 
 from pms import email_html
+
+log = logging.getLogger("pms.email")
 
 MAX_ATTEMPTS = 5
 # Where an invite's or a reset's link goes in its body, and how long the link is held for it.
@@ -403,11 +406,109 @@ def write_signing_request(
     return email_id
 
 
+# --- what failed, to the company's admins ------------------------------------------------------
+
+# A staff member's active login: accepted (a password set) and not disabled.
+STAFF_LOGIN = """
+SELECT s.display_name, l.email
+FROM trust_staff AS s
+JOIN trust_logins AS l ON l.pmc_id = s.pmc_id AND l.kind = 'staff' AND l.staff_id = s.id
+JOIN trust_login_secrets AS x ON x.login_id = l.id
+WHERE s.pmc_id = %s AND s.id = %s AND l.disabled_at IS NULL
+"""
+ADMINS = """
+SELECT s.id FROM trust_staff AS s
+WHERE s.pmc_id = %s AND trust_staff_holds(s.pmc_id, s.id, 'admin')
+ORDER BY s.display_name COLLATE "C", s.id
+"""
+Alert = Literal["nightly_failed", "deliveries_failing"]
+SUPPORT = "Whoever runs the server finds what to do in the PMS's docs/support.md."
+
+
+def alert_text(kind: Alert, company: str, day: date, what: str, public_url: str) -> tuple[str, str]:
+    """An alert's subject and what it says, below the admin's name."""
+    if kind == "nightly_failed":
+        return (
+            f"{company}: the nightly run of {day:%m/%d/%Y} failed",
+            f"The nightly run of {day:%m/%d/%Y} failed for {company}, so none of its work was"
+            " done: rent and recurring charges, late fees, recurring bills, monthly management"
+            " fees, recurring work orders and the emails they send. It is all or nothing, so"
+            " nothing was half done.\n\n"
+            f"What failed: {what}\n\n"
+            "The next run, tomorrow at 06:00 UTC, tries again. An admin can run it now from"
+            f" Rent roll, Run rent now:\n{public_url.rstrip('/')}/rent-roll\n\n{SUPPORT}\n",
+        )
+    return (
+        f"{company}: emails are not going out",
+        f"An email from {company} failed {MAX_ATTEMPTS} times and was given up on. {what}\n\n"
+        "Each person's Email tab shows every email to them and whether it went. Usually the"
+        " server's mail settings or the mail server are at fault, so other emails may be"
+        f" failing too.\n\n{SUPPORT}\n",
+    )
+
+
+def write_admin_alert(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    kind: Alert,
+    day: date,
+    what: str,
+    public_url: str = "",
+) -> int:
+    """Tells each of the company's admins with an active login, at its email, what failed; in the
+    caller's transaction, once per admin, kind and day. The number written."""
+    company = conn.execute(
+        "SELECT display_name FROM trust_pmcs WHERE pmc_id = %s", (pmc_id,)
+    ).fetchone()
+    assert company is not None
+    what = " ".join(what.split())[:1000] or "no reason was given"
+    subject, text = alert_text(kind, company[0], day, what, public_url)
+    written = 0
+    for (staff,) in conn.execute(ADMINS, (pmc_id,)).fetchall():
+        login = conn.execute(STAFF_LOGIN, (pmc_id, staff)).fetchone()
+        if login is None:
+            continue  # no login to email
+        alert = conn.execute(
+            "INSERT INTO trust_admin_alerts (pmc_id, staff_id, kind, day, what)"
+            " VALUES (%s, %s, %s, %s, %s)"
+            " ON CONFLICT (pmc_id, staff_id, kind, day) DO NOTHING RETURNING id",
+            (pmc_id, staff, kind, day, what),
+        ).fetchone()
+        if alert is None:
+            continue  # told already today
+        conn.execute(
+            "INSERT INTO trust_emails (pmc_id, kind, alert_id, to_address, subject, body)"
+            " VALUES (%s, 'admin_alert', %s, %s, %s, %s)",
+            (pmc_id, alert[0], login[1], subject[:200], f"Hello {login[0]},\n\n{text}"),
+        )
+        written += 1
+    return written
+
+
+def tell_admins(
+    conn: psycopg.Connection[Any], pmc_id: UUID, to: str, subject: str, error: str
+) -> None:
+    """Tells a company's admins one of its emails was given up on, in a savepoint of the
+    delivery's transaction: when even that fails, the attempt stays recorded and the log has it."""
+    try:
+        with conn.transaction():
+            write_admin_alert(
+                conn,
+                pmc_id,
+                "deliveries_failing",
+                datetime.now(UTC).date(),
+                f'The last attempt, to {to} ("{subject}"), said: {error}',
+            )
+    except psycopg.Error:
+        log.exception("the admins of PMC %s could not be told an email was given up on", pmc_id)
+
+
 # --- delivery ----------------------------------------------------------------------------------
 
 PENDING = """
 SELECT e.id, e.pmc_id, e.kind, e.to_address, e.subject, e.body, e.needs_link,
        e.created_at < now() - make_interval(mins => %(minutes)s), p.display_name,
+       (SELECT count(*) FROM trust_email_deliveries AS d WHERE d.email_id = e.id),
        a.reply_to, a.address_line_1, a.address_line_2,
        a.city || ', ' || a.state || ' ' || a.postal_code
 FROM trust_emails AS e
@@ -434,7 +535,8 @@ class Delivered:
 def deliver_pending(conn: psycopg.Connection[Any], sender: Sender, limit: int = 100) -> Delivered:
     """Hands each email not yet delivered to the sender, oldest first, each in a transaction of
     its own, and records the attempt. Two deliveries at once never send the same email: each
-    takes the email's advisory lock and skips one another holds."""
+    takes the email's advisory lock and skips one another holds. An email whose last attempt
+    failed is given up on, and the company's admins are told (once a day; not of an alert)."""
     sent = failed = 0
     for row in conn.execute(
         PENDING,
@@ -450,6 +552,7 @@ def deliver_pending(conn: psycopg.Connection[Any], sender: Sender, limit: int = 
             needs_link,
             stale,
             company,
+            attempts,
             reply_to,
             *address,
         ) = row
@@ -482,6 +585,17 @@ def deliver_pending(conn: psycopg.Connection[Any], sender: Sender, limit: int = 
                 " VALUES (%s, %s, %s, %s)",
                 (email_id, pmc_id, sender.name, error),
             )
+            if error is not None and error != LINK_LOST and attempts + 1 >= MAX_ATTEMPTS:
+                log.error(
+                    "email %s (%s) of PMC %s was given up on after %s failed attempts: %s",
+                    email_id,
+                    kind,
+                    pmc_id,
+                    MAX_ATTEMPTS,
+                    error,
+                )
+                if kind != "admin_alert":
+                    tell_admins(conn, pmc_id, to, subject, error)
         if error is None:
             _drop_link(email_id)
             sent += 1

@@ -120,11 +120,12 @@ describe("EmailsCard", () => {
       line("b", "late_notice", "A late fee of $50.00 was charged"),
       line("c", "owner_statement", "Your statement for September 2026"),
       line("d", "work_order", "Work order #1 at Property 1: Gate stuck"),
+      line("e", "reserve_low", "Property 1: your account is below its reserve"),
     ]);
     render(<EmailsCard about="tenant" aboutId="t1" name="Tenant 1" />);
     const items = within(await screen.findByRole("list", { name: "Email, Tenant 1" })).getAllByRole("listitem");
     expect(items.map((item) => item.querySelectorAll("p")[1]?.textContent?.split(" to ")[0])).toEqual([
-      "Rent reminder", "Late fee notice", "Monthly statement", "Work order",
+      "Rent reminder", "Late fee notice", "Monthly statement", "Work order", "Below its reserve",
     ]);
   });
 

@@ -40,8 +40,13 @@ deletes: archive) and contact details the AI never reads. Since 2026-10-16
 (`docs/adr/0006-buildium-punch-list.md`): the founder's punch list, built in its order (property
 groups first; rent, recurring charges, late fees and recurring bills to post by themselves each
 night; fees still move only when staff ask, unless a company turns on taking its monthly
-management fees by itself, the founder's amendment of 2026-10-18). Still out of scope: Stripe and online payments, text messages, bank files (ACH, check
-printing), 1099 filing, and state rules beyond the no-negative rule. If one of these looks needed, stop
+management fees by itself, the founder's amendment of 2026-10-18). Since 2026-10-22 (founder): an
+email to an owner whose property account falls below its reserve (q054; online owner payments stay
+on hold), emails to a company's admins when its nightly run fails or emails keep failing, with a
+written support process (q149, `docs/support.md`), two-step sign-in for owners and tenants, state
+rules as warnings where staff set terms (q142; no attorney has reviewed them), and the states'
+security deposit rules (return deadline, statement, interest). Still out of scope: Stripe and online payments, text messages, bank files (ACH, check
+printing), 1099 filing, and state rules beyond the no-negative rule and those above. If one of these looks needed, stop
 and ask the founder.
 
 ## The standing rule: tests come with the code
@@ -140,6 +145,16 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   shown on the applicant's page). Each names what it is about and is written once (a unique index
   per kind); a lease under a payment hold gets no reminder or late notice. The nightly run and an
   admin's Run rent now write the first three, after the run, in its transaction.
+  Since migration 0150 (the founder, 2026-10-22) they also look at each owner's property account
+  for a company that turned on its low balance alerts (`reserve_alerts`): one that fell below the
+  reserve of the agreement in force since the last look is a drop (`trust_reserve_events`: drops
+  and returns, one after the other, append-only; the AI role reads them), and its owner is emailed
+  once per drop (`reserve_low`, q054). And each of a company's admins with an active login is
+  emailed what failed (`email.write_admin_alert`, `trust_admin_alerts`, once per admin, kind and
+  day; the AI role never reads them; q149): its nightly run (`nightly.run_all`, after logging it)
+  or an email given up on after its fifth failed attempt (`email.deliver_pending`; an alert's own
+  email aside). No setting turns those off; nothing is written while the server sends no email.
+  Who looks, where the logs are and how to restore: `docs/support.md`.
 - The portal (`frontend/`): React 19, Vite and Tailwind v4, following Occupella's `DESIGN.md`
   and looking like Occupella's app (founder, 2026-10-14): its light theme, a full-height
   light-blue left sidebar with the wordmark, the sections (lucide icons) and Sign out, a white

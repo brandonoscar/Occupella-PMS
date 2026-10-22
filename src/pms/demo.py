@@ -797,6 +797,7 @@ def company_profile(b: Builder, demo: Demo) -> None:
                 owner_statement_day=5,
                 work_order_notices=True,
                 adverse_action_notices=True,
+                reserve_alerts=True,
             ),
         )
 

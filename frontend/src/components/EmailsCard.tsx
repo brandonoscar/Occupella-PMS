@@ -18,7 +18,7 @@ export type EmailLine = {
   id: string;
   kind:
     | "message" | "invite" | "password_reset" | "bill_approval"
-    | "rent_reminder" | "late_notice" | "owner_statement" | "work_order" | "adverse_action";
+    | "rent_reminder" | "late_notice" | "owner_statement" | "work_order" | "adverse_action" | "reserve_low";
   to: string;
   subject: string;
   body: string;
@@ -38,6 +38,7 @@ const KIND: Record<EmailLine["kind"], string> = {
   owner_statement: "Monthly statement",
   work_order: "Work order",
   adverse_action: "Adverse action notice",
+  reserve_low: "Below its reserve",
 };
 const STATUS: Record<EmailLine["status"], { word: string; tone: BadgeTone }> = {
   sent: { word: "Sent", tone: "positive" },

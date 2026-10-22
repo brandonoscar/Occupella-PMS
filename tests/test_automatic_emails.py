@@ -48,7 +48,7 @@ def pmc(conn):
 
 def turn_on(conn, pmc_id, by=None, **wanted):
     settings = {**dict.fromkeys(notices.FIELDS), **wanted}
-    for flag in ("late_notices", "work_order_notices", "adverse_action_notices"):
+    for flag in ("late_notices", "work_order_notices", "adverse_action_notices", "reserve_alerts"):
         settings[flag] = bool(settings[flag])
     with acting_as(conn, by):
         return conn.execute(
