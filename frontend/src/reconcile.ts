@@ -43,7 +43,22 @@ export type BankBooks = {
   reconciliations: Approved[];
   prepared: Prepared | null;
 };
-export type ReportRow = { line: number; item: string; detail: string | null; amount: string | null };
+// A row of trust_report_bank_reconciliation. `pending`: a reconciling item that may only be
+// waiting to be matched (a bank line with a transfer or deposit of its amount open in the books,
+// or a transfer with a bank line of its amount not matched yet); the report counts it either way.
+export type ReportRow = { line: number; item: string; detail: string | null; amount: string | null; pending?: boolean };
+// The bank lines up to the day that no match holds: those with a transfer or bank deposit of their
+// amount open in the books (likely in the books already; Match the sure ones pairs `sure` of them
+// now), and those with nothing of their amount there (alone).
+export type Unmatched = {
+  lines: number;
+  total: string;
+  sure: number;
+  likely: number;
+  likely_total: string;
+  alone: number;
+  alone_total: string;
+};
 export type OpenLine = {
   id: string;
   posted_on: string;
@@ -86,6 +101,8 @@ export type Worksheet = {
   open_items: OpenItem[];
   opening: Opening | null;
   matches: StandingMatch[];
+  // None before a statement covers the day.
+  unmatched: Unmatched | null;
 };
 
 // Money as whole cents, so a sum of amounts is exact: "1,234.50" and "-0.05" both read.
@@ -121,6 +138,66 @@ export function items(rows: ReportRow[]): ReportRow[] {
 
 export function difference(rows: ReportRow[]): string | null {
   return rows.find((r) => r.line === 9)?.amount ?? null;
+}
+
+// A reconciling item as the page names it. Before matching, the same money is both a bank line
+// "not in the books" and a transfer "in transit": one that may only wait to be matched says so.
+const WAITING: Record<string, string> = {
+  "bank line not in the books": "bank line not matched yet",
+  "deposit in transit": "deposit not matched yet",
+  "outstanding withdrawal": "withdrawal not matched yet",
+};
+export function itemWord(row: ReportRow): string {
+  return row.pending ? (WAITING[row.item] ?? row.item) : row.item;
+}
+
+const bankLines = (n: number) => `${n} bank line${n === 1 ? "" : "s"}`;
+const have = (n: number) => (n === 1 ? "has" : "have");
+
+// Where the reconciliation stands, as its badge says: it ties out; bank lines are not matched
+// yet (never "off by" money counted twice before matching); or it is off by what is left.
+export function standing(gap: string, unmatched: Unmatched | null): { tone: "positive" | "caution"; word: string } {
+  if (gap === "0.00") return { tone: "positive", word: "Ties out" };
+  if (unmatched && unmatched.lines > 0) return { tone: "caution", word: `${bankLines(unmatched.lines)} not matched` };
+  return { tone: "caution", word: `Off by ${money(gap)}` };
+}
+
+// What to do before the period can be prepared. Matching comes first: a line with a transfer of
+// its amount in the books is likely there already (Match the sure ones, then by hand); only a
+// line with nothing of its amount there may be missing from the books, and is recorded only if
+// it is.
+export function nextSteps(gap: string, unmatched: Unmatched | null): string[] {
+  if (gap === "0.00") return [];
+  if (!unmatched || unmatched.lines === 0) return [`Off by ${money(gap)}: the reconciling items say where.`];
+  const said: string[] = [];
+  const { likely, sure, alone } = unmatched;
+  if (likely > 0) {
+    const them = likely === 1 ? "it" : "them";
+    const how = sure === 0 ? `match ${them} by hand`
+      : sure === likely ? `Match the sure ones pairs ${likely === 1 ? "it" : "all of them"}`
+      : `start with Match the sure ones (it pairs ${sure}), then match the rest by hand`;
+    said.push(
+      `${bankLines(likely)} of ${money(unmatched.likely_total)} ${have(likely)} a transfer of the same amount in the`
+        + ` books, so ${likely === 1 ? "it is" : "they are"} likely there already: ${how}.`,
+    );
+  }
+  if (alone > 0) {
+    const each = alone === 1 ? "it" : "each";
+    said.push(
+      `${bankLines(alone)} of ${money(unmatched.alone_total)} ${have(alone)} nothing of ${alone === 1 ? "its" : "their"}`
+        + ` amount in the books: match ${each} to the transfers it adds up to, or, if the books lack it, record it`
+        + " and then match it.",
+    );
+  }
+  return said;
+}
+
+// Until the lines with a transfer of their amount are matched, the figures count that money
+// twice: in the bank balance, and again in transit (or outstanding).
+export function countedTwice(unmatched: Unmatched | null): string | null {
+  if (!unmatched || unmatched.likely === 0) return null;
+  return "Until they are matched, money both the bank and the books show counts twice in these figures:"
+    + " in the bank balance, and again in transit or outstanding. The figures settle as you match.";
 }
 
 // A file's statement format, from its name: OFX (and its QFX flavour), or CSV.

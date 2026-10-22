@@ -175,6 +175,18 @@ def test_month_end_matches_a_deposits_one_bank_line_to_all_of_it(client, conn, s
         **dict.fromkeys(first + second, str(TODAY)),
         **dict.fromkeys(lone, None),
     }
+    # Before matching, the deposit's line has the deposit to match (not a line the books lack),
+    # and each payment in it waits for that line: none is said to be missing.
+    assert sheet["unmatched"] == {
+        "lines": 2,
+        "total": "1875.00",
+        "sure": 2,
+        "likely": 2,
+        "likely_total": "1875.00",
+        "alone": 0,
+        "alone_total": "0.00",
+    }
+    assert all(r["pending"] for r in sheet["rows"] if r["line"] > 9)
 
     counted = ok(post(client, f"/api/reconcile/{pmc.operating_bank_id}/auto-match"))
     assert counted == {"matched": 2}

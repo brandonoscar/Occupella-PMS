@@ -341,6 +341,11 @@ class Row(BaseModel):
     item: str
     detail: str | None
     amount: str | None
+    # A reconciling item that may only be waiting to be matched (the report counts it either
+    # way): a bank line with a transfer or bank deposit of its amount open in the books, or a
+    # transfer with a bank line of its amount up to the day that no match holds. Before
+    # matching, the same money is both: a line "not in the books" and a transfer "in transit".
+    pending: bool = False
 
 
 class OpenLine(BaseModel):
@@ -388,6 +393,22 @@ class Opening(BaseModel):
     matched: bool
 
 
+class Unmatched(BaseModel):
+    """The bank lines up to the day that no match holds, as month-end starts on them: those with
+    a transfer or bank deposit of their amount open in the books (likely in the books already:
+    matching comes first, and Match the sure ones would pair `sure` of them now), and those with
+    nothing of their amount open in the books (alone: matched to several transfers by hand, or
+    missing from the books)."""
+
+    lines: int
+    total: str
+    sure: int
+    likely: int
+    likely_total: str
+    alone: int
+    alone_total: str
+
+
 class Worksheet(BaseModel):
     through: date | None
     rows: list[Row]
@@ -396,6 +417,7 @@ class Worksheet(BaseModel):
     open_items: list[OpenItem]
     opening: Opening | None
     matches: list[StandingMatch]
+    unmatched: Unmatched | None = None  # none before a statement covers the day
 
 
 LIVE = "NOT EXISTS (SELECT 1 FROM trust_bank_unmatches AS u WHERE u.match_id = {0}.match_id)"
@@ -516,7 +538,11 @@ def worksheet(
     through: Annotated[date | None, Query()] = None,
 ) -> Worksheet:
     """The reconciliation at the end of a day (by default the last statement's last day), the
-    lines and transfers no match holds, and the matches that stand."""
+    lines and transfers no match holds, and the matches that stand. Before matching, each bank
+    line and transfer of the same money is a reconciling item twice over; the rows that may only
+    be waiting to be matched are marked pending, and `unmatched` says which lines have a transfer
+    of their amount in the books and which have none, so the page asks staff to match first and
+    to record only what the books lack."""
     bank_of(conn, session.pmc_id, bank_account_id)
     if through is None:
         (through,) = conn.execute(
@@ -567,14 +593,81 @@ def worksheet(
                 ),
             )
         )
+    lines = open_lines(conn, bank_account_id, UNMATCHED_LINE)
+    moved = transfers(conn, bank_account_id, UNMATCHED_TRANSFER)
+    unmatched = None
+    if through is not None:
+        rows, unmatched = sorted_out(
+            rows,
+            [line for line in lines if line.posted_on <= through],
+            lines,
+            moved,
+            candidates(conn, session.pmc_id, bank_account_id, moved),
+        )
     return Worksheet(
         through=through,
         rows=rows,
-        open_lines=open_lines(conn, bank_account_id, UNMATCHED_LINE),
-        open_transfers=transfers(conn, bank_account_id, UNMATCHED_TRANSFER),
+        open_lines=lines,
+        open_transfers=moved,
         open_items=items(conn, bank_account_id, OPEN_ITEM),
         opening=opening(conn, bank_account_id),
         matches=matches,
+        unmatched=unmatched,
+    )
+
+
+def line_detail(line: OpenLine) -> str:
+    """A bank line's detail as trust_report_bank_reconciliation words it."""
+    ref = "" if line.reference is None else f" ({line.reference})"
+    return f"{line.posted_on.isoformat()} {line.description}{ref}"
+
+
+def transfer_detail(transfer: OpenTransfer) -> str:
+    """A transfer's detail as trust_report_bank_reconciliation words it."""
+    return f"{transfer.on.isoformat()} {transfer.memo or ''}"
+
+
+def sorted_out(
+    rows: list[Row],
+    upto: list[OpenLine],
+    lines: list[OpenLine],
+    moved: list[OpenTransfer],
+    found: list[Candidate],
+) -> tuple[list[Row], Unmatched]:
+    """The report's rows with each reconciling item that may only be waiting to be matched
+    marked pending, and the bank lines up to the day that no match holds, sorted out: with a
+    transfer or bank deposit of their amount open in the books, or with none."""
+    in_books = {total for _, total, _ in found} | {Decimal(t.amount) for t in moved}
+    likely = [line for line in upto if Decimal(line.amount) in in_books]
+    alone = [line for line in upto if Decimal(line.amount) not in in_books]
+    on_statement = {Decimal(line.amount) for line in upto}
+    paired = {t.id for t in moved if Decimal(t.amount) in on_statement} | {
+        i for ids, total, _ in found if total in on_statement for i in ids
+    }
+    pending_lines = {(line_detail(line), line.amount) for line in likely}
+    pending_moves = {(transfer_detail(t), t.amount) for t in moved if t.id in paired}
+    marked = [
+        row.model_copy(
+            update={
+                "pending": (row.detail, row.amount)
+                in (pending_lines if row.item == "bank line not in the books" else pending_moves)
+            }
+        )
+        if row.line > 9
+        else row
+        for row in rows
+    ]
+    shown = {line.id for line in upto}
+    total = sum((Decimal(line.amount) for line in upto), Decimal(0))
+    likely_total = sum((Decimal(line.amount) for line in likely), Decimal(0))
+    return marked, Unmatched(
+        lines=len(upto),
+        total=cents(total),
+        sure=sum(line.id in shown for line, _ in sure_pairs(lines, found)),
+        likely=len(likely),
+        likely_total=cents(likely_total),
+        alone=len(alone),
+        alone_total=cents(total - likely_total),
     )
 
 
@@ -681,6 +774,29 @@ def auto_match(session: Staff, conn: Conn, bank_account_id: UUID) -> Counted:
     bank_of(conn, session.pmc_id, bank_account_id)
     lines = open_lines(conn, bank_account_id, UNMATCHED_LINE)
     moved = transfers(conn, bank_account_id, UNMATCHED_TRANSFER)
+    matched = 0
+    for line, partner in sure_pairs(
+        lines, candidates(conn, session.pmc_id, bank_account_id, moved)
+    ):
+        try:
+            with conn.transaction():  # a savepoint: a refusal leaves the others standing
+                match(conn, session, bank_account_id, [line.id], partner[0])
+            matched += 1
+        except psycopg.errors.CheckViolation:  # in a closed period
+            continue
+    return Counted(matched=matched)
+
+
+# What a bank line may be matched to: one open transfer's ids, or a whole bank deposit's, with
+# the cash they moved and their day.
+Candidate = tuple[list[str], Decimal, date]
+
+
+def candidates(
+    conn: psycopg.Connection[Any], pmc_id: UUID, bank: UUID, moved: list[OpenTransfer]
+) -> list[Candidate]:
+    """The open transfers a bank line may be matched to: each one in no bank deposit, and each
+    bank deposit whose transfers are all open, as one."""
     # A transfer in a deposit goes to the bank with it: the deposit is its candidate, once every
     # transfer in it is still open; a deposit partly matched by hand is left to staff.
     open_ids = {t.id for t in moved}
@@ -689,10 +805,10 @@ def auto_match(session: Staff, conn: Conn, bank_account_id: UUID) -> Counted:
         "SELECT i.deposit_id, i.transfer_id FROM trust_bank_deposit_items AS i"
         " JOIN trust_bank_deposits AS d ON d.id = i.deposit_id"
         " WHERE d.pmc_id = %s AND d.bank_account_id = %s ORDER BY i.transfer_id",
-        (session.pmc_id, bank_account_id),
+        (pmc_id, bank),
     ):
         in_deposit.setdefault(deposit, []).append(transfer)
-    candidates: list[tuple[list[str], Decimal, date]] = [
+    found: list[Candidate] = [
         ([t.id], Decimal(t.amount), t.on) for t in moved if t.deposit_id is None
     ]
     for t in moved:
@@ -701,26 +817,26 @@ def auto_match(session: Staff, conn: Conn, bank_account_id: UUID) -> Counted:
         ids = in_deposit.pop(t.deposit_id, None)
         if ids is not None and open_ids.issuperset(ids):
             total = sum((Decimal(o.amount) for o in moved if o.id in ids), Decimal(0))
-            candidates.append((ids, total, t.deposited_on))
+            found.append((ids, total, t.deposited_on))
+    return found
 
-    def near(line: OpenLine, candidate: tuple[list[str], Decimal, date]) -> bool:
-        return (
-            Decimal(line.amount) == candidate[1]
-            and abs((line.posted_on - candidate[2]).days) <= MATCH_DAYS
-        )
 
-    matched = 0
+def near(line: OpenLine, candidate: Candidate) -> bool:
+    return (
+        Decimal(line.amount) == candidate[1]
+        and abs((line.posted_on - candidate[2]).days) <= MATCH_DAYS
+    )
+
+
+def sure_pairs(lines: list[OpenLine], found: list[Candidate]) -> list[tuple[OpenLine, Candidate]]:
+    """What Match the sure ones pairs: each line with the one candidate of its amount within a
+    week of it, when that candidate has no other such line."""
+    pairs = []
     for line in lines:
-        partners = [c for c in candidates if near(line, c)]
-        if len(partners) != 1 or sum(near(other, partners[0]) for other in lines) != 1:
-            continue
-        try:
-            with conn.transaction():  # a savepoint: a refusal leaves the others standing
-                match(conn, session, bank_account_id, [line.id], partners[0][0])
-            matched += 1
-        except psycopg.errors.CheckViolation:  # in a closed period
-            continue
-    return Counted(matched=matched)
+        partners = [c for c in found if near(line, c)]
+        if len(partners) == 1 and sum(near(other, partners[0]) for other in lines) == 1:
+            pairs.append((line, partners[0]))
+    return pairs
 
 
 # --- preparing and approving --------------------------------------------------------------

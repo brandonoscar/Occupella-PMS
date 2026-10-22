@@ -1,17 +1,21 @@
 import { describe, expect, it } from "vitest";
 import type { Me } from "./api";
-import type { Prepared, ReportRow } from "./reconcile";
+import type { Prepared, ReportRow, Unmatched } from "./reconcile";
 import {
   approver,
   byDay,
+  countedTwice,
   difference,
   figures,
   formatOf,
   fromCents,
   itemLabel,
+  itemWord,
   items,
   lastDayOf,
   lineLabel,
+  nextSteps,
+  standing,
   sum,
   toCents,
   toggleTransfer,
@@ -46,6 +50,56 @@ describe("reconcile", () => {
     expect(items(ROWS).map((r) => r.item)).toEqual(["deposit in transit"]);
     expect(difference(ROWS)).toBe("65.00");
     expect(difference([])).toBeNull();
+  });
+
+  it("names an item that may only wait to be matched as not matched yet", () => {
+    const row = (item: string, pending?: boolean): ReportRow => ({ line: 10, item, detail: "d", amount: "1.00", pending });
+    expect(itemWord(row("bank line not in the books", true))).toBe("bank line not matched yet");
+    expect(itemWord(row("deposit in transit", true))).toBe("deposit not matched yet");
+    expect(itemWord(row("outstanding withdrawal", true))).toBe("withdrawal not matched yet");
+    expect(itemWord(row("bank line not in the books", false))).toBe("bank line not in the books");
+    expect(itemWord(row("deposit in transit"))).toBe("deposit in transit");
+  });
+
+  const unmatched = (u: Partial<Unmatched>): Unmatched => ({
+    lines: 0, total: "0.00", sure: 0, likely: 0, likely_total: "0.00", alone: 0, alone_total: "0.00", ...u,
+  });
+
+  it("is never off by a double count before matching", () => {
+    expect(standing("0.00", unmatched({ lines: 3 }))).toEqual({ tone: "positive", word: "Ties out" });
+    expect(standing("54625.00", unmatched({ lines: 41 }))).toEqual({ tone: "caution", word: "41 bank lines not matched" });
+    expect(standing("10.00", unmatched({ lines: 1 }))).toEqual({ tone: "caution", word: "1 bank line not matched" });
+    // Every line matched, and still a difference: off by it.
+    expect(standing("10.00", unmatched({}))).toEqual({ tone: "caution", word: "Off by $10.00" });
+    expect(standing("-10.00", null)).toEqual({ tone: "caution", word: "Off by ($10.00)" });
+  });
+
+  it("says to match first, and to record only a line with nothing of its amount in the books", () => {
+    // The walkthrough: every line has its transfer in the books.
+    expect(nextSteps("54625.00", unmatched({ lines: 41, sure: 41, likely: 41, likely_total: "54625.00" }))).toEqual([
+      "41 bank lines of $54,625.00 have a transfer of the same amount in the books, so they are likely there"
+        + " already: Match the sure ones pairs all of them.",
+    ]);
+    expect(nextSteps("1500.00", unmatched({ lines: 1, sure: 1, likely: 1, likely_total: "1500.00" }))).toEqual([
+      "1 bank line of $1,500.00 has a transfer of the same amount in the books, so it is likely there already:"
+        + " Match the sure ones pairs it.",
+    ]);
+    expect(nextSteps("1400.00", unmatched({ lines: 2, likely: 2, likely_total: "1400.00" }))).toEqual([
+      "2 bank lines of $1,400.00 have a transfer of the same amount in the books, so they are likely there"
+        + " already: match them by hand.",
+    ]);
+    expect(nextSteps("-15.00", unmatched({ lines: 1, alone: 1, alone_total: "-15.00" }))).toEqual([
+      "1 bank line of ($15.00) has nothing of its amount in the books: match it to the transfers it adds up to,"
+        + " or, if the books lack it, record it and then match it.",
+    ]);
+    expect(nextSteps("0.00", unmatched({ lines: 2, likely: 2 }))).toEqual([]);
+    expect(nextSteps("10.00", unmatched({}))).toEqual(["Off by $10.00: the reconciling items say where."]);
+  });
+
+  it("says the figures count money twice only while a line has its transfer to match", () => {
+    expect(countedTwice(unmatched({ lines: 2, likely: 1 }))).toMatch(/^Until they are matched, money both the bank/);
+    expect(countedTwice(unmatched({ lines: 2, alone: 2 }))).toBeNull();
+    expect(countedTwice(null)).toBeNull();
   });
 
   it("tells a statement's format by its file name", () => {

@@ -86,6 +86,8 @@ const SHEET: Worksheet = {
   ],
   open_items: [],
   opening: null,
+  // Neither open line has a transfer of its amount: $2,750.00 is two transfers, matched by hand.
+  unmatched: { lines: 2, total: "2735.00", sure: 0, likely: 0, likely_total: "0.00", alone: 2, alone_total: "2735.00" },
 };
 
 const TIED: Worksheet = {
@@ -151,8 +153,10 @@ describe("ReconcilePage", () => {
     await open("Reconciliations");
     const shown = screen.getByRole("table", { name: "Figures" });
     expect(shown.textContent).toContain("bank balance (statements)$4,075.00");
-    // Off by the difference, until the books lack no line.
-    expect(screen.getByText("Off by $65.00").closest("[data-tone]")?.getAttribute("data-tone")).toBe("caution");
+    // Not "off by" anything while bank lines are not matched yet.
+    expect(screen.getByText("2 bank lines not matched").closest("[data-tone]")?.getAttribute("data-tone")).toBe("caution");
+    expect(screen.queryByText(/Off by/)).toBeNull();
+    expect(screen.queryByTestId("counted-twice")).toBeNull();
     expect(cells(screen.getByRole("table", { name: "Reconciling items" }))).toEqual([
       ["bank line not in the books", "2026-01-28 Service fee", "($15.00)"],
     ]);
@@ -172,7 +176,56 @@ describe("ReconcilePage", () => {
     const prepare = screen.getByRole("button", { name: "Prepare through 01/31/2026" });
     expect((prepare as HTMLButtonElement).disabled).toBe(true);
     expect(screen.queryByRole("button", { name: /^Approve/ })).toBeNull();
-    expect(screen.getByText("Lines the books lack come to $65.00: record them and match them first.")).toBeTruthy();
+    expect(screen.getByTestId("next-steps").textContent).toBe(
+      "2 bank lines of $2,735.00 have nothing of their amount in the books: match each to the transfers it adds up"
+        + " to, or, if the books lack it, record it and then match it.",
+    );
+  });
+
+  it("before matching, says to match first and never that the books lack what they may hold", async () => {
+    // The walkthrough's month: a statement just imported, every line and transfer still open.
+    const before: Worksheet = {
+      ...SHEET,
+      rows: [
+        { line: 4, item: "bank balance (statements)", detail: null, amount: "3725.00" },
+        { line: 5, item: "deposits in transit", detail: null, amount: "3700.00" },
+        { line: 7, item: "adjusted bank balance", detail: null, amount: "7425.00" },
+        { line: 8, item: "trust journal (book cash)", detail: null, amount: "3700.00" },
+        { line: 9, item: "difference: adjusted bank balance - trust journal", detail: null, amount: "3725.00" },
+        { line: 10, item: "deposit in transit", detail: "2026-01-04 Rent, Unit 1", amount: "1500.00", pending: true },
+        { line: 11, item: "deposit in transit", detail: "2026-01-12 Rent, Unit 2", amount: "2000.00", pending: true },
+        { line: 12, item: "deposit in transit", detail: "2026-01-30 Rent, Unit 3", amount: "200.00", pending: false },
+        { line: 13, item: "bank line not in the books", detail: "2026-01-05 Deposit (D1)", amount: "1500.00", pending: true },
+        { line: 14, item: "bank line not in the books", detail: "2026-01-13 Deposit (D2)", amount: "2000.00", pending: true },
+        { line: 15, item: "bank line not in the books", detail: "2026-01-20 Deposit (D3)", amount: "240.00", pending: false },
+        { line: 16, item: "bank line not in the books", detail: "2026-01-28 Service fee", amount: "-15.00", pending: false },
+      ],
+      unmatched: { lines: 4, total: "3725.00", sure: 1, likely: 2, likely_total: "3500.00", alone: 2, alone_total: "225.00" },
+    };
+    server(before);
+    render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
+
+    expect(screen.getByText("4 bank lines not matched")).toBeTruthy();
+    expect(screen.queryByText(/Off by/)).toBeNull();
+    // The figures say they count the same money twice until it is matched.
+    expect(screen.getByTestId("counted-twice").textContent).toBe(
+      "Until they are matched, money both the bank and the books show counts twice in these figures: in the bank"
+        + " balance, and again in transit or outstanding. The figures settle as you match.",
+    );
+    // An item that may only wait to be matched says so; the rest keep the report's words.
+    expect(cells(screen.getByRole("table", { name: "Reconciling items" })).map((row) => row[0])).toEqual([
+      "deposit not matched yet", "deposit not matched yet", "deposit in transit",
+      "bank line not matched yet", "bank line not matched yet", "bank line not in the books", "bank line not in the books",
+    ]);
+    // Matching first; recording only what has nothing of its amount in the books.
+    expect(screen.getByTestId("next-steps").textContent).toBe(
+      "2 bank lines of $3,500.00 have a transfer of the same amount in the books, so they are likely there already:"
+        + " start with Match the sure ones (it pairs 1), then match the rest by hand. 2 bank lines of $225.00 have"
+        + " nothing of their amount in the books: match each to the transfers it adds up to, or, if the books lack"
+        + " it, record it and then match it.",
+    );
+    expect(screen.queryByText(/record them/)).toBeNull();
   });
 
   it("imports a statement file with its days and balances", async () => {
@@ -238,7 +291,7 @@ describe("ReconcilePage", () => {
     render(<ReconcilePage me={ME} id="b1" />);
     await open("Reconciliations");
     const prepare = await screen.findByRole("button", { name: "Prepare through 01/31/2026" });
-    expect(screen.queryByText(/Lines the books lack/)).toBeNull();
+    expect(screen.queryByTestId("next-steps")).toBeNull();
     expect(screen.getByText("Ties out").closest("[data-tone]")?.getAttribute("data-tone")).toBe("positive");
 
     fireEvent.click(prepare);
@@ -334,7 +387,7 @@ describe("ReconcilePage", () => {
     const release = holdBack((path) => path === "/api/reconcile/b1?through=2026-01-15");
     render(<ReconcilePage me={ME} id="b1" />);
     await open("Reconciliations");
-    expect(screen.getByText("Off by $65.00")).toBeTruthy();
+    expect(screen.getByText("2 bank lines not matched")).toBeTruthy();
 
     fireEvent.change(screen.getByLabelText("At the end of"), { target: { value: "2026-01-15" } });
     fireEvent.change(screen.getByLabelText("At the end of"), { target: { value: "2026-01-31" } });
@@ -342,7 +395,7 @@ describe("ReconcilePage", () => {
     await release();
 
     expect(screen.getByText("Ties out")).toBeTruthy();
-    expect(screen.queryByText("Off by $65.00")).toBeNull();
+    expect(screen.queryByText("2 bank lines not matched")).toBeNull();
   });
 
   it("says when there is no such trust bank account, and when the page can't be read", async () => {

@@ -24,13 +24,17 @@ import type { BankBooks, OpenItem, OpenLine, OpenTransfer, Worksheet } from "../
 import {
   approver,
   byDay,
+  countedTwice,
   difference,
   figures,
   formatOf,
   itemLabel,
+  itemWord,
   items,
   lastDayOf,
   lineLabel,
+  nextSteps,
+  standing,
   sum,
   toggleTransfer,
   transferLabel,
@@ -379,6 +383,10 @@ function WorksheetCard({
   const { said, error, record } = useRecord(refresh);
   const shown = figures(sheet.rows);
   const gap = difference(sheet.rows);
+  // Before matching, a line and its transfer are each a reconciling item: the page says lines
+  // are not matched yet, never that the books lack what they may hold (reconcile.ts nextSteps).
+  const stands = gap === null ? null : standing(gap, sheet.unmatched);
+  const twice = countedTwice(sheet.unmatched);
   const day = through || sheet.through || "";
   const prepared = bank.prepared;
   const who = prepared && approver(me, prepared);
@@ -393,12 +401,7 @@ function WorksheetCard({
               <Field label="At the end of" id="reconcile-through" type="date" value={day}
                 onChange={(e) => setThrough(e.target.value)} />
             </div>
-            {gap !== null &&
-              (gap === "0.00" ? (
-                <Badge tone="positive">Ties out</Badge>
-              ) : (
-                <Badge tone="caution">{`Off by ${money(gap)}`}</Badge>
-              ))}
+            {stands && <Badge tone={stands.tone}>{stands.word}</Badge>}
           </div>
           {day && (
             <div className="mb-4 flex flex-wrap items-center gap-2" role="group" aria-label="Download the reconciliation">
@@ -418,6 +421,7 @@ function WorksheetCard({
               ))}
             </tbody>
           </table>
+          {twice && <p className="mt-2 max-w-prose text-sm text-ink-subtle" data-testid="counted-twice">{twice}</p>}
           {items(sheet.rows).length > 0 && (
             <table className="mt-4 text-sm" aria-label="Reconciling items">
               <thead>
@@ -430,7 +434,7 @@ function WorksheetCard({
               <tbody>
                 {items(sheet.rows).map((row) => (
                   <tr key={row.line}>
-                    <td className="first-letter:uppercase">{row.item}</td>
+                    <td className="first-letter:uppercase">{itemWord(row)}</td>
                     <td className="text-ink-muted">{row.detail}</td>
                     <td className="text-right">{money(row.amount)}</td>
                   </tr>
@@ -477,9 +481,9 @@ function WorksheetCard({
             >
               Prepare through {usDate(day)}
             </Button>
-            {gap !== "0.00" && (
-              <span className="text-sm text-ink-subtle">
-                Lines the books lack come to {money(gap)}: record them and match them first.
+            {gap !== null && gap !== "0.00" && (
+              <span className="text-sm text-ink-subtle" data-testid="next-steps">
+                {nextSteps(gap, sheet.unmatched).join(" ")}
               </span>
             )}
           </div>

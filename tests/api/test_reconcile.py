@@ -256,10 +256,79 @@ def test_the_worksheet_shows_the_report_and_what_no_match_holds(client, conn, st
     )
 
 
+def test_before_matching_the_worksheet_tells_lines_the_books_have_from_lines_they_lack(
+    client, conn, staff, pmc
+):
+    rent(conn, pmc, "1500.00", date(2026, 1, 4), memo="Rent, Unit 1")  # its line is sure
+    rent(conn, pmc, "700.00", date(2026, 1, 10), memo="Rent, Unit 2")  # two of the line's amount
+    rent(conn, pmc, "700.00", date(2026, 1, 11), memo="Rent, Unit 3")
+    rent(conn, pmc, "300.00", date(2026, 1, 12), memo="Rent, Unit 4")  # one line for both
+    rent(conn, pmc, "450.00", date(2026, 1, 12), memo="Rent, Unit 5")
+    rent(conn, pmc, "200.00", date(2026, 1, 30), memo="Rent, Unit 9")  # not at the bank yet
+    ok(
+        statement(
+            client,
+            pmc,
+            csv(
+                ("2026-01-05", "Deposit", "1500.00", "D1"),
+                ("2026-01-12", "Deposit", "700.00", "D2"),
+                ("2026-01-14", "Deposit", "750.00", "D3"),
+                ("2026-01-28", "Service fee", "-15.00", ""),
+            ),
+            first_day=JAN_1,
+            last_day=JAN_31,
+        )
+    )
+
+    shown = sheet(client, pmc)
+
+    # The report still counts every open line as not in the books and every open transfer as in
+    # transit (its golden case is unchanged); the rows that may only wait to be matched say so.
+    assert [(r["item"], r["detail"], r["pending"]) for r in shown["rows"] if r["line"] > 9] == [
+        ("deposit in transit", "2026-01-04 Rent, Unit 1", True),
+        ("deposit in transit", "2026-01-10 Rent, Unit 2", True),
+        ("deposit in transit", "2026-01-11 Rent, Unit 3", True),
+        ("deposit in transit", "2026-01-12 Rent, Unit 4", False),
+        ("deposit in transit", "2026-01-12 Rent, Unit 5", False),
+        ("deposit in transit", "2026-01-30 Rent, Unit 9", False),
+        ("bank line not in the books", "2026-01-05 Deposit (D1)", True),
+        ("bank line not in the books", "2026-01-12 Deposit (D2)", True),
+        ("bank line not in the books", "2026-01-14 Deposit (D3)", False),
+        ("bank line not in the books", "2026-01-28 Service fee", False),
+    ]
+    assert all(not r["pending"] for r in shown["rows"] if r["line"] <= 9)
+    # Two lines have a transfer of their amount (one sure); two have none: $750.00 is two
+    # transfers matched by hand, and the $15.00 fee is all the books lack.
+    assert shown["unmatched"] == {
+        "lines": 4,
+        "total": "2935.00",
+        "sure": 1,
+        "likely": 2,
+        "likely_total": "2200.00",
+        "alone": 2,
+        "alone_total": "735.00",
+    }
+
+    ok(client.post(f"/api/reconcile/{pmc.operating_bank_id}/auto-match", json={}), 200)
+    after = sheet(client, pmc)
+    assert after["unmatched"] == {
+        "lines": 3,
+        "total": "1435.00",
+        "sure": 0,
+        "likely": 1,
+        "likely_total": "700.00",
+        "alone": 2,
+        "alone_total": "735.00",
+    }
+    # Up to a day before the fee's line, only the lines up to it count.
+    assert sheet(client, pmc, through="2026-01-20")["unmatched"]["lines"] == 2
+
+
 def test_a_worksheet_before_any_statement_lists_only_the_books(client, conn, staff, pmc):
     rent(conn, pmc, "10.00", date(2026, 1, 4))
     shown = sheet(client, pmc)
     assert (shown["through"], shown["rows"], len(shown["open_transfers"])) == (None, [], 1)
+    assert shown["unmatched"] is None
 
 
 def test_a_rent_receipt_on_the_books_side_names_the_tenants_and_the_home(client, conn, staff, pmc):
