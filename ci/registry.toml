@@ -1421,3 +1421,16 @@ tests = [
   "tests/api/test_prepaid_by_itself_api.py::test_a_lease_on_hold_or_whose_owners_account_staff_choose_is_left_for_staff",
   "tests/api/test_prepaid_by_itself_api.py::test_the_nightly_run_uses_it_for_its_company_only",
 ]
+
+
+[[invariant]]
+id = "payment-files-record-each-line-once"
+statement = "A bank's or lockbox's payment file (migration 0118) comes in once per PMC with all its lines; a line naming exactly one lease in effect on its day is recorded to it as Receive payment records one, unless a payment of its amount and day is recorded to that lease already or the books refuse it (a payment hold, a closed period, an owner's account to choose), and every other line waits. A line is recorded at most once, as a tenant's payment of its amount and day to its lease (checked at commit), or set aside with why, never both; recording it again records nothing new. What each lease owes and every trust bank account tie out. Append-only."
+tests = [
+  "tests/properties/test_payment_files_properties.py::test_payment_files_record_each_line_once_to_the_lease_it_names",
+  "tests/test_payment_files.py::test_a_recorded_line_is_a_payment_of_its_amount_on_its_day_to_its_lease",
+  "tests/test_payment_files.py::test_a_line_is_recorded_or_set_aside_once_never_both",
+  "tests/test_payment_files.py::test_a_file_has_all_its_lines_at_commit_and_no_more",
+  "tests/api/test_payment_files_api.py::test_a_file_records_each_line_to_the_lease_it_names_and_the_rest_wait",
+  "tests/api/test_payment_files_api.py::test_a_lease_on_a_payment_hold_waits_until_staff_accept_it_past_the_hold",
+]

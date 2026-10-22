@@ -24,6 +24,7 @@ import type { LeaseDetail, Paged, RentRollRow } from "../rentals";
 import { navigate } from "../router";
 import { scopeParams, useScope } from "../scope";
 import type { Recorder } from "./LeaseForms";
+import { LeaseFinder } from "./LeaseFinder";
 import { GoLink } from "./NeedsAttention";
 import { PaymentForm } from "./LeaseForms";
 import { STAFF_NAV } from "./staffNav";
@@ -49,8 +50,8 @@ function firstOfThisMonth(): string {
 // Rentals → Rent roll (ADR 0006): every lease a page at a time, current, to come, ended, owing
 // or all, each row opening its lease. Rent, recurring charges and late fees post by themselves
 // every night (pms.nightly); an admin's ⋯ menu has Run rent now for a catch-up. Receive payment
-// records a tenant's payment to any lease. The PMS records what reached the bank; it takes no
-// payments itself.
+// records a tenant's payment to any lease, and Payment files brings in a bank's or lockbox's file of
+// them. The PMS records what reached the bank; it takes no payments itself.
 export function RentPage({ me }: { me: Me }) {
   const [page, setPage] = useState<Paged<RentRollRow> | null>(null);
   const [scope, setScope] = useScope();
@@ -85,6 +86,7 @@ export function RentPage({ me }: { me: Me }) {
       <PageHeader title="Rent roll" actions={
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={() => setPanel("payment")}>Receive payment</Button>
+          <Button variant="secondary" onClick={() => navigate("/payment-files")}>Payment files</Button>
           {admin && (
             <RowMenu label="the rent roll" actions={[{ label: "Run rent now", onSelect: () => setPanel("run") }]} />
           )}
@@ -165,28 +167,7 @@ export function RentPage({ me }: { me: Me }) {
 
 // Receive payment: find the lease by its tenant, unit or property, then the payment.
 function ReceivePayment({ record }: { record: Recorder }) {
-  const [q, setQ] = useState("");
-  const [found, setFound] = useState<RentRollRow[]>([]);
   const [lease, setLease] = useState<LeaseDetail | null>(null);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    if (q.trim().length < 2) {
-      setFound([]);
-      return;
-    }
-    let live = true;
-    const query = new URLSearchParams({ q: q.trim(), show: "all", per_page: "10" });
-    api.get<Paged<RentRollRow>>(`/api/leases?${query}`)
-      .then((answer) => { if (live) setFound(answer.items); })
-      .catch((failed) => { if (live) setError(detail(failed)); });
-    return () => { live = false; };
-  }, [q]);
-
-  function choose(id: string) {
-    setError("");
-    api.get<LeaseDetail>(`/api/leases/${id}`).then(setLease).catch((failed) => setError(detail(failed)));
-  }
 
   if (lease !== null) {
     return (
@@ -200,25 +181,7 @@ function ReceivePayment({ record }: { record: Recorder }) {
       </div>
     );
   }
-  return (
-    <div className="flex flex-col gap-3">
-      <Field label="Lease" id="pay-find-lease" placeholder="Tenant, unit or property" value={q}
-        onChange={(event) => setQ(event.target.value)} />
-      <Notice tone="error">{error}</Notice>
-      {found.length > 0 && (
-        <ul aria-label="Leases found" className="flex flex-col divide-y divide-line">
-          {found.map((row) => (
-            <li key={row.id}>
-              <button type="button" onClick={() => choose(row.id)}
-                className="w-full py-2 text-left text-base text-ink hover:bg-raised">
-                {row.property.name} · {row.unit.name} · {row.tenants.join(", ")}
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
+  return <LeaseFinder id="pay-find-lease" onLease={setLease} />;
 }
 
 // Run rent now (admins): what the nightly run does, for a due date and a day of late fees, and

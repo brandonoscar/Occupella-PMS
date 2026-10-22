@@ -2965,6 +2965,43 @@ $$;
 
 
 --
+-- Name: trust_check_notice_template_version(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_notice_template_version() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('notice templates ' || NEW.pmc_id::text, 0));
+    IF EXISTS (
+        SELECT 1 FROM trust_notice_template_removals AS r WHERE r.template_id = NEW.template_id
+    ) THEN
+        RAISE EXCEPTION 'trust: notice template % is removed', NEW.template_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF EXISTS (
+        SELECT 1
+        FROM trust_notice_templates AS t
+        CROSS JOIN LATERAL (
+            SELECT v.name FROM trust_notice_template_versions AS v
+            WHERE v.template_id = t.id ORDER BY v.created_at DESC, v.id DESC LIMIT 1
+        ) AS latest
+        WHERE t.pmc_id = NEW.pmc_id AND t.id <> NEW.template_id
+          AND lower(btrim(latest.name)) = lower(btrim(NEW.name))
+          AND NOT EXISTS (
+              SELECT 1 FROM trust_notice_template_removals AS r WHERE r.template_id = t.id
+          )
+    ) THEN
+        RAISE EXCEPTION 'trust: a notice template is named % already', NEW.name
+            USING ERRCODE = 'unique_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_ownership_share_line(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3013,6 +3050,106 @@ BEGIN
     IF v_banks <> 1 THEN
         RAISE EXCEPTION 'trust: a property''s owners in shares have their accounts in one trust '
             'bank account'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: trust_check_payment_file_line(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_payment_file_line() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_count bigint;
+BEGIN
+    SELECT f.line_count INTO v_count FROM trust_payment_files AS f WHERE f.id = NEW.file_id;
+    IF NEW.line_no > v_count + 1 THEN
+        RAISE EXCEPTION 'trust: payment file % has % lines after its header, not line %',
+            NEW.file_id, v_count, NEW.line_no
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_payment_file_lines(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_payment_file_lines() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_lines bigint;
+BEGIN
+    SELECT count(*) INTO v_lines FROM trust_payment_file_lines AS l WHERE l.file_id = NEW.id;
+    IF v_lines <> NEW.line_count THEN
+        RAISE EXCEPTION 'trust: payment file % has % lines; it says %', NEW.id, v_lines,
+            NEW.line_count
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: trust_check_payment_file_outcome(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_payment_file_outcome() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('payment file line ' || NEW.line_id::text, 0));
+    IF EXISTS (SELECT 1 FROM trust_payment_file_postings AS p WHERE p.line_id = NEW.line_id) THEN
+        RAISE EXCEPTION 'trust: payment file line % is recorded already', NEW.line_id
+            USING ERRCODE = 'unique_violation';
+    END IF;
+    IF EXISTS (SELECT 1 FROM trust_payment_file_skips AS s WHERE s.line_id = NEW.line_id) THEN
+        RAISE EXCEPTION 'trust: payment file line % is set aside already', NEW.line_id
+            USING ERRCODE = 'unique_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_payment_file_posting(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_payment_file_posting() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_line trust_payment_file_lines;
+BEGIN
+    SELECT l.* INTO v_line FROM trust_payment_file_lines AS l WHERE l.id = NEW.line_id;
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pgledger_transfers AS t
+        JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id
+        WHERE a.pmc_id = NEW.pmc_id
+          AND t.event_at = v_line.received_on::timestamp AT TIME ZONE 'UTC'
+          AND t.metadata ->> 'key' = 'payment/' || NEW.request_id::text
+          AND t.metadata ->> 'kind' = 'tenant payment'
+          AND t.metadata ->> 'lease_id' = NEW.lease_id::text
+          AND t.metadata ->> 'amount' = to_char(v_line.amount, 'FM999999999990.00')
+          AND t.metadata ->> 'received_on' = to_char(v_line.received_on, 'YYYY-MM-DD')
+    ) THEN
+        RAISE EXCEPTION 'trust: payment file line % has no payment of % on % to lease %',
+            NEW.line_id, v_line.amount, v_line.received_on, NEW.lease_id
             USING ERRCODE = 'check_violation';
     END IF;
     RETURN NULL;
@@ -4848,6 +4985,21 @@ BEGIN
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
     RETURN v_entry;
+END;
+$$;
+
+
+--
+-- Name: trust_lock_notice_templates(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_lock_notice_templates() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('notice templates ' || NEW.pmc_id::text, 0));
+    RETURN NEW;
 END;
 $$;
 
@@ -14285,6 +14437,68 @@ CREATE TABLE public.trust_notes (
 
 
 --
+-- Name: trust_notice_template_removals; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_notice_template_removals (
+    template_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_notice_template_versions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_notice_template_versions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    template_id uuid NOT NULL,
+    name text NOT NULL,
+    body text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_notice_template_versions_body_check CHECK (((body ~ '\S'::text) AND (length(body) <= 20000))),
+    CONSTRAINT trust_notice_template_versions_name_check CHECK (((name ~ '\S'::text) AND (length(name) <= 100)))
+);
+
+
+--
+-- Name: trust_notice_templates; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_notice_templates (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_notices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_notices (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    template_version_id uuid NOT NULL,
+    dated_on date NOT NULL,
+    title text NOT NULL,
+    letterhead text NOT NULL,
+    body text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_notices_body_check CHECK (((body ~ '\S'::text) AND (length(body) <= 40000))),
+    CONSTRAINT trust_notices_letterhead_check CHECK (((letterhead ~ '\S'::text) AND (length(letterhead) <= 1000))),
+    CONSTRAINT trust_notices_title_check CHECK (((title ~ '\S'::text) AND (length(title) <= 100)))
+);
+
+
+--
 -- Name: trust_nsf_fee_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14439,6 +14653,81 @@ CREATE TABLE public.trust_ownership_shares (
     starts_on date NOT NULL,
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_payment_file_lines; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payment_file_lines (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    file_id uuid NOT NULL,
+    line_no bigint NOT NULL,
+    received_on date NOT NULL,
+    amount numeric NOT NULL,
+    property text,
+    unit text,
+    payer text,
+    reference text,
+    method text,
+    lease_id uuid,
+    note text,
+    CONSTRAINT trust_payment_file_lines_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)) AND (amount < (1000000000)::numeric))),
+    CONSTRAINT trust_payment_file_lines_line_no_check CHECK ((line_no >= 2)),
+    CONSTRAINT trust_payment_file_lines_method_check CHECK ((method = ANY (ARRAY['check'::text, 'cashier''s check'::text, 'money order'::text, 'EFT'::text, 'cash'::text]))),
+    CONSTRAINT trust_payment_file_lines_note_check CHECK (((note ~ '\S'::text) AND (length(note) <= 500))),
+    CONSTRAINT trust_payment_file_lines_payer_check CHECK (((payer ~ '\S'::text) AND (length(payer) <= 200))),
+    CONSTRAINT trust_payment_file_lines_property_check CHECK (((property ~ '\S'::text) AND (length(property) <= 200))),
+    CONSTRAINT trust_payment_file_lines_reference_check CHECK (((reference ~ '\S'::text) AND (length(reference) <= 200))),
+    CONSTRAINT trust_payment_file_lines_unit_check CHECK (((unit ~ '\S'::text) AND (length(unit) <= 200)))
+);
+
+
+--
+-- Name: trust_payment_file_postings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payment_file_postings (
+    line_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    request_id uuid NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_payment_file_skips; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payment_file_skips (
+    line_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    reason text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_payment_file_skips_reason_check CHECK (((reason ~ '\S'::text) AND (length(reason) <= 500)))
+);
+
+
+--
+-- Name: trust_payment_files; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payment_files (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    file_name text NOT NULL,
+    file_sha256 text NOT NULL,
+    line_count bigint NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_payment_files_file_name_check CHECK (((file_name ~ '\S'::text) AND (length(file_name) <= 200))),
+    CONSTRAINT trust_payment_files_file_sha256_check CHECK ((file_sha256 ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT trust_payment_files_line_count_check CHECK (((line_count >= 1) AND (line_count <= 5000)))
 );
 
 
@@ -17074,6 +17363,54 @@ ALTER TABLE ONLY public.trust_notes
 
 
 --
+-- Name: trust_notice_template_removals trust_notice_template_removals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_template_removals
+    ADD CONSTRAINT trust_notice_template_removals_pkey PRIMARY KEY (template_id);
+
+
+--
+-- Name: trust_notice_template_versions trust_notice_template_versions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_template_versions
+    ADD CONSTRAINT trust_notice_template_versions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_notice_template_versions trust_notice_template_versions_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_template_versions
+    ADD CONSTRAINT trust_notice_template_versions_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_notice_templates trust_notice_templates_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_templates
+    ADD CONSTRAINT trust_notice_templates_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_notice_templates trust_notice_templates_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_templates
+    ADD CONSTRAINT trust_notice_templates_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_notices trust_notices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notices
+    ADD CONSTRAINT trust_notices_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_nsf_fee_policies trust_nsf_fee_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -17207,6 +17544,78 @@ ALTER TABLE ONLY public.trust_ownership_shares
 
 ALTER TABLE ONLY public.trust_ownership_shares
     ADD CONSTRAINT trust_ownership_shares_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_payment_file_lines trust_payment_file_lines_file_id_line_no_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_file_lines
+    ADD CONSTRAINT trust_payment_file_lines_file_id_line_no_key UNIQUE (file_id, line_no);
+
+
+--
+-- Name: trust_payment_file_lines trust_payment_file_lines_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_file_lines
+    ADD CONSTRAINT trust_payment_file_lines_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_payment_file_lines trust_payment_file_lines_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_file_lines
+    ADD CONSTRAINT trust_payment_file_lines_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_payment_file_postings trust_payment_file_postings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_file_postings
+    ADD CONSTRAINT trust_payment_file_postings_pkey PRIMARY KEY (line_id);
+
+
+--
+-- Name: trust_payment_file_postings trust_payment_file_postings_request_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_file_postings
+    ADD CONSTRAINT trust_payment_file_postings_request_id_key UNIQUE (request_id);
+
+
+--
+-- Name: trust_payment_file_skips trust_payment_file_skips_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_file_skips
+    ADD CONSTRAINT trust_payment_file_skips_pkey PRIMARY KEY (line_id);
+
+
+--
+-- Name: trust_payment_files trust_payment_files_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_files
+    ADD CONSTRAINT trust_payment_files_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_payment_files trust_payment_files_pmc_id_file_sha256_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_files
+    ADD CONSTRAINT trust_payment_files_pmc_id_file_sha256_key UNIQUE (pmc_id, file_sha256);
+
+
+--
+-- Name: trust_payment_files trust_payment_files_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_files
+    ADD CONSTRAINT trust_payment_files_pmc_id_id_key UNIQUE (pmc_id, id);
 
 
 --
@@ -19163,6 +19572,55 @@ CREATE INDEX trust_notes_vendor ON public.trust_notes USING btree (pmc_id, vendo
 
 
 --
+-- Name: trust_notice_template_removals_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notice_template_removals_recorded_by ON public.trust_notice_template_removals USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_notice_template_versions_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notice_template_versions_recorded_by ON public.trust_notice_template_versions USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_notice_template_versions_template; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notice_template_versions_template ON public.trust_notice_template_versions USING btree (template_id, created_at);
+
+
+--
+-- Name: trust_notice_templates_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notice_templates_recorded_by ON public.trust_notice_templates USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_notices_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notices_lease ON public.trust_notices USING btree (pmc_id, lease_id, created_at);
+
+
+--
+-- Name: trust_notices_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notices_recorded_by ON public.trust_notices USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_notices_version; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_notices_version ON public.trust_notices USING btree (pmc_id, template_version_id);
+
+
+--
 -- Name: trust_nsf_fees_policy_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -19237,6 +19695,48 @@ CREATE INDEX trust_ownership_shares_property ON public.trust_ownership_shares US
 --
 
 CREATE INDEX trust_ownership_shares_recorded_by ON public.trust_ownership_shares USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_payment_file_lines_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payment_file_lines_lease ON public.trust_payment_file_lines USING btree (pmc_id, lease_id);
+
+
+--
+-- Name: trust_payment_file_postings_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payment_file_postings_lease ON public.trust_payment_file_postings USING btree (pmc_id, lease_id);
+
+
+--
+-- Name: trust_payment_file_postings_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payment_file_postings_recorded_by ON public.trust_payment_file_postings USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_payment_file_skips_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payment_file_skips_recorded_by ON public.trust_payment_file_skips USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_payment_files_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payment_files_pmc ON public.trust_payment_files USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_payment_files_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payment_files_recorded_by ON public.trust_payment_files USING btree (pmc_id, recorded_by);
 
 
 --
@@ -20584,6 +21084,34 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_notice_template_removals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_notice_template_removals FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_notice_template_versions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_notice_template_versions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_notice_templates trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_notice_templates FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_notices trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_notices FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_nsf_fee_policies trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -20644,6 +21172,34 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_ownership_shares FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_payment_file_lines trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_file_lines FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_payment_file_postings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_file_postings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_payment_file_skips trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_file_skips FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_payment_files trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_files FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -21781,6 +22337,34 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_note
 
 
 --
+-- Name: trust_notice_template_removals trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_notice_template_removals FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_notice_template_versions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_notice_template_versions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_notice_templates trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_notice_templates FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_notices trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_notices FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_nsf_fee_policies trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -21848,6 +22432,34 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owne
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_ownership_shares FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_payment_file_lines trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_file_lines FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_payment_file_postings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_file_postings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_payment_file_skips trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_file_skips FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_payment_files trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_files FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -22691,6 +23303,20 @@ CREATE TRIGGER trust_no_negative_balance BEFORE INSERT OR UPDATE OF balance ON p
 
 
 --
+-- Name: trust_notice_template_removals trust_notice_template_removal; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_notice_template_removal BEFORE INSERT ON public.trust_notice_template_removals FOR EACH ROW EXECUTE FUNCTION public.trust_lock_notice_templates();
+
+
+--
+-- Name: trust_notice_template_versions trust_notice_template_version; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_notice_template_version BEFORE INSERT ON public.trust_notice_template_versions FOR EACH ROW EXECUTE FUNCTION public.trust_check_notice_template_version();
+
+
+--
 -- Name: trust_leases trust_one_lease_at_a_time; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22723,6 +23349,41 @@ CREATE CONSTRAINT TRIGGER trust_ownership_shares_whole AFTER INSERT ON public.tr
 --
 
 CREATE CONSTRAINT TRIGGER trust_ownership_shares_whole AFTER INSERT ON public.trust_ownership_shares DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_ownership_shares();
+
+
+--
+-- Name: trust_payment_file_lines trust_payment_file_line; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_payment_file_line BEFORE INSERT ON public.trust_payment_file_lines FOR EACH ROW EXECUTE FUNCTION public.trust_check_payment_file_line();
+
+
+--
+-- Name: trust_payment_files trust_payment_file_lines; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_payment_file_lines AFTER INSERT ON public.trust_payment_files DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_payment_file_lines();
+
+
+--
+-- Name: trust_payment_file_postings trust_payment_file_outcome; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_payment_file_outcome BEFORE INSERT ON public.trust_payment_file_postings FOR EACH ROW EXECUTE FUNCTION public.trust_check_payment_file_outcome();
+
+
+--
+-- Name: trust_payment_file_skips trust_payment_file_outcome; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_payment_file_outcome BEFORE INSERT ON public.trust_payment_file_skips FOR EACH ROW EXECUTE FUNCTION public.trust_check_payment_file_outcome();
+
+
+--
+-- Name: trust_payment_file_postings trust_payment_file_posting; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_payment_file_posting AFTER INSERT ON public.trust_payment_file_postings DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_payment_file_posting();
 
 
 --
@@ -22964,6 +23625,34 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_notes FOR EACH RO
 
 
 --
+-- Name: trust_notice_template_removals trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_notice_template_removals FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_notice_template_versions trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_notice_template_versions FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_notice_templates trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_notice_templates FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_notices trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_notices FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_on_call_staff trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22982,6 +23671,27 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_owner_fees FOR EA
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_ownership_shares FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_payment_file_postings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_file_postings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_payment_file_skips trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_file_skips FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_payment_files trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_files FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -26160,6 +26870,102 @@ ALTER TABLE ONLY public.trust_notes
 
 
 --
+-- Name: trust_notice_template_removals trust_notice_template_removals_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_template_removals
+    ADD CONSTRAINT trust_notice_template_removals_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_notice_template_removals trust_notice_template_removals_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_template_removals
+    ADD CONSTRAINT trust_notice_template_removals_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_notice_template_removals trust_notice_template_removals_pmc_id_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_template_removals
+    ADD CONSTRAINT trust_notice_template_removals_pmc_id_template_id_fkey FOREIGN KEY (pmc_id, template_id) REFERENCES public.trust_notice_templates(pmc_id, id);
+
+
+--
+-- Name: trust_notice_template_versions trust_notice_template_versions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_template_versions
+    ADD CONSTRAINT trust_notice_template_versions_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_notice_template_versions trust_notice_template_versions_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_template_versions
+    ADD CONSTRAINT trust_notice_template_versions_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_notice_template_versions trust_notice_template_versions_pmc_id_template_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_template_versions
+    ADD CONSTRAINT trust_notice_template_versions_pmc_id_template_id_fkey FOREIGN KEY (pmc_id, template_id) REFERENCES public.trust_notice_templates(pmc_id, id);
+
+
+--
+-- Name: trust_notice_templates trust_notice_templates_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_templates
+    ADD CONSTRAINT trust_notice_templates_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_notice_templates trust_notice_templates_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notice_templates
+    ADD CONSTRAINT trust_notice_templates_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_notices trust_notices_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notices
+    ADD CONSTRAINT trust_notices_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_notices trust_notices_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notices
+    ADD CONSTRAINT trust_notices_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_notices trust_notices_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notices
+    ADD CONSTRAINT trust_notices_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_notices trust_notices_pmc_id_template_version_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_notices
+    ADD CONSTRAINT trust_notices_pmc_id_template_version_id_fkey FOREIGN KEY (pmc_id, template_version_id) REFERENCES public.trust_notice_template_versions(pmc_id, id);
+
+
+--
 -- Name: trust_nsf_fee_policies trust_nsf_fee_policies_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26381,6 +27187,102 @@ ALTER TABLE ONLY public.trust_ownership_shares
 
 ALTER TABLE ONLY public.trust_ownership_shares
     ADD CONSTRAINT trust_ownership_shares_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_payment_file_lines trust_payment_file_lines_pmc_id_file_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_file_lines
+    ADD CONSTRAINT trust_payment_file_lines_pmc_id_file_id_fkey FOREIGN KEY (pmc_id, file_id) REFERENCES public.trust_payment_files(pmc_id, id);
+
+
+--
+-- Name: trust_payment_file_lines trust_payment_file_lines_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_file_lines
+    ADD CONSTRAINT trust_payment_file_lines_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_payment_file_lines trust_payment_file_lines_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_file_lines
+    ADD CONSTRAINT trust_payment_file_lines_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_payment_file_postings trust_payment_file_postings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_file_postings
+    ADD CONSTRAINT trust_payment_file_postings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_payment_file_postings trust_payment_file_postings_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_file_postings
+    ADD CONSTRAINT trust_payment_file_postings_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_payment_file_postings trust_payment_file_postings_pmc_id_line_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_file_postings
+    ADD CONSTRAINT trust_payment_file_postings_pmc_id_line_id_fkey FOREIGN KEY (pmc_id, line_id) REFERENCES public.trust_payment_file_lines(pmc_id, id);
+
+
+--
+-- Name: trust_payment_file_postings trust_payment_file_postings_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_file_postings
+    ADD CONSTRAINT trust_payment_file_postings_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_payment_file_skips trust_payment_file_skips_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_file_skips
+    ADD CONSTRAINT trust_payment_file_skips_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_payment_file_skips trust_payment_file_skips_pmc_id_line_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_file_skips
+    ADD CONSTRAINT trust_payment_file_skips_pmc_id_line_id_fkey FOREIGN KEY (pmc_id, line_id) REFERENCES public.trust_payment_file_lines(pmc_id, id);
+
+
+--
+-- Name: trust_payment_file_skips trust_payment_file_skips_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_file_skips
+    ADD CONSTRAINT trust_payment_file_skips_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_payment_files trust_payment_files_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_files
+    ADD CONSTRAINT trust_payment_files_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_payment_files trust_payment_files_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_files
+    ADD CONSTRAINT trust_payment_files_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -27916,4 +28818,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261021000115'),
     ('20261021000116'),
     ('20261021000117'),
+    ('20261021000118'),
+    ('20261021000119'),
     ('20261022000150');

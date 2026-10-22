@@ -4246,3 +4246,137 @@ test("staff name the operating trust account's cash for QuickBooks and download 
   expect(csv).toContain("Trust checking");
 });
 
+
+test("staff bring in a lockbox's payment file once: lines naming one lease are recorded to it, and staff record or set aside the ones that wait", async ({
+  page,
+}) => {
+  const people = seed.features["payment-files"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Payment files");
+  await expect(page.getByText("No payment file has come in yet.")).toBeVisible();
+
+  const day = today();
+  const lockbox =
+    "Date,Amount,Property,Unit,Payer,Reference,Method\n" +
+    `${day},1395.00,Birch Flats,Unit A,,2201,check\n` +
+    `${day},100.00,,Unit 1,,,\n` + // Elm Court and Aspen Row both have a Unit 1
+    `${day},50.00,,,Jamie Sample,,ACH\n`;
+  const bringIn = async (name: string, csv: string) => {
+    await page.getByRole("button", { name: "Bring in a file" }).click();
+    const panel = page.getByRole("dialog", { name: "Bring in a payment file" });
+    await panel.getByLabel("Payment file (CSV)").setInputFiles({ name, mimeType: "text/csv", buffer: Buffer.from(csv) });
+    return panel;
+  };
+
+  // What each line will do, before anything is written.
+  const panel = await bringIn("lockbox.csv", lockbox);
+  await expect(panel.getByTestId("preview-summary")).toHaveText(
+    "2 payments ($1,445.00) will be recorded; 1 will wait for you.",
+  );
+  await expect(panel.getByRole("table", { name: "What the file will do" }).getByRole("row")).toHaveText([
+    "LineReceivedAmountNamesWhat happens",
+    `2${us(day)}$1,395.00Birch Flats Unit ATo record Morgan Demo, Birch Flats Unit A`,
+    `3${us(day)}$100.00Unit 1Waiting 2 leases in effect on ${us(day)} at unit Unit 1; name the property too`,
+    `4${us(day)}$50.00Jamie SampleTo record Jamie Sample, Birch Flats Unit B`,
+  ]);
+  await panel.getByRole("button", { name: "Bring it in" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "lockbox.csv" })).toBeVisible();
+  await expect(page.getByTestId("file-summary")).toContainText("lockbox.csv: 2 payments recorded ($1,445.00); 1 wait for you.");
+  await expect(page.getByRole("row", { name: "Line 2" })).toContainText("RecordedMorgan Demo, Birch Flats Unit A");
+
+  // The line that waits goes to the lease staff find.
+  await page.getByRole("row", { name: "Line 3" }).getByRole("button", { name: "Actions for line 3" }).click();
+  await page.getByRole("menuitem", { name: "Record to a lease" }).click();
+  const record = page.getByRole("dialog", { name: "Record line 3" });
+  await record.getByLabel("Lease").fill("Riley");
+  await record.getByRole("button", { name: "Elm Court · Unit 1 · Riley Demo" }).click();
+  await record.getByRole("button", { name: "Record $100.00 to this lease" }).click();
+  await expect(page.getByText(`Line 3: $100.00 received ${us(day)} recorded to Riley Demo, Elm Court Unit 1.`)).toBeVisible();
+  await expect(page.getByTestId("file-summary")).toContainText("3 payments recorded ($1,545.00); nothing waits.");
+
+  // The same file again comes in once; a line naming nobody is set aside, with why.
+  await section(page, "Payment files");
+  const again = await bringIn("lockbox-again.csv", lockbox);
+  await expect(again.getByText(`This file came in on ${us(day)}; it comes in once.`)).toBeVisible();
+  await expect(again.getByRole("button", { name: "Bring it in" })).toHaveCount(0);
+  await again.getByRole("button", { name: "Close" }).click();
+  const stray = await bringIn("stray.csv", `Date,Amount,Payer\n${day},12.34,Nobody Sample\n`);
+  await stray.getByRole("button", { name: "Bring it in" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "stray.csv" })).toBeVisible();
+  await page.getByRole("row", { name: "Line 2" }).getByRole("button", { name: "Actions for line 2" }).click();
+  await page.getByRole("menuitem", { name: "Set aside" }).click();
+  const aside = page.getByRole("dialog", { name: "Set line 2 aside" });
+  await aside.getByLabel("Why").fill("A refund from the water utility, not rent");
+  await aside.getByRole("button", { name: "Set it aside" }).click();
+  await expect(page.getByRole("row", { name: "Line 2" })).toContainText("Set asideA refund from the water utility, not rent");
+
+  // Both files are listed, newest first; the payment is on Morgan Demo's lease.
+  await section(page, "Payment files");
+  await expect(page.getByRole("table", { name: "Payment files" }).getByRole("row")).toHaveCount(3);
+  await page.getByRole("row", { name: "lockbox.csv" }).click();
+  await page.getByRole("row", { name: "Line 2" }).getByRole("link", { name: "Morgan Demo, Birch Flats Unit A" }).click();
+  await page.getByRole("tab", { name: "Ledger" }).click();
+  await expect(page.getByRole("main")).toContainText("$1,395.00");
+});
+
+test("staff keep the company's own notice templates, make one into a notice for a lease, read it filled in and download its PDF", async ({
+  page,
+}) => {
+  const people = seed.features["notice-templates"]!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "Notice templates");
+  await expect(page.getByText("No notice template yet.")).toBeVisible();
+
+  // A blank the PMS doesn't fill is refused in words; the ones it does are listed beside the text.
+  await page.getByRole("button", { name: "Add template" }).click();
+  const add = page.getByRole("dialog", { name: "Add a notice template" });
+  await expect(add.getByRole("region", { name: "Blanks the PMS fills" })).toContainText("{{balance_due}}");
+  await add.getByLabel("Name").fill("Late rent");
+  await add.getByLabel("Text").fill("Dear {{tenant_names}}, please pay {{amount}}.");
+  await add.getByRole("button", { name: "Save template" }).click();
+  await expect(add.getByRole("alert")).toHaveText(
+    "{{amount}} is not a blank the PMS fills; the list beside the text shows the ones it does",
+  );
+  await add.getByLabel("Text").fill(
+    "Dear {{tenant_names}},\n\nAs of {{notice_date}} the lease of {{property}} {{unit}} owes {{balance_due}}.\n\n{{company_name}}",
+  );
+  await add.getByRole("button", { name: "Save template" }).click();
+  await expect(page.getByText("Late rent is saved.")).toBeVisible();
+
+  // Renamed later: a new version.
+  await page.getByRole("row", { name: "Late rent" }).click();
+  const edit = page.getByRole("dialog", { name: "Edit Late rent" });
+  await edit.getByLabel("Name").fill("Notice of late rent");
+  await edit.getByRole("button", { name: "Save template" }).click();
+  await expect(page.getByText("Notice of late rent is saved.")).toBeVisible();
+
+  // On Morgan Demo's lease, its Files tab makes it into a notice, read filled in first.
+  await section(page, "Rent roll");
+  await page.getByRole("row", { name: "Birch Flats, Unit A" }).click();
+  await page.getByRole("button", { name: "Actions for this lease" }).click();
+  await page.getByRole("menuitem", { name: "Write a notice" }).click();
+  await page.getByRole("button", { name: "Write a notice" }).click();
+  const filled = page.getByRole("article", { name: "The notice as it will read" });
+  await expect(filled).toContainText("Notice of late rent");
+  await expect(filled).toContainText(`Dear Morgan Demo,`);
+  await expect(filled).toContainText(`As of ${us(today())} the lease of Birch Flats Unit A owes $`);
+  await page.getByRole("button", { name: "Make the notice" }).click();
+  await expect(page.getByText(`Notice of late rent, dated ${us(today())}, is made.`)).toBeVisible();
+  const pdf = page.getByRole("list", { name: "Notices made" }).getByRole("link", { name: "Notice of late rent (PDF)" });
+  const answer = await page.request.get((await pdf.getAttribute("href")) ?? "");
+  expect(answer.status()).toBe(200);
+  expect((await answer.body()).subarray(0, 5).toString()).toBe("%PDF-");
+
+  // Removing the template keeps the notice made from it.
+  await settings(page, "Notice templates");
+  await page.getByRole("row", { name: "Notice of late rent" }).getByRole("button", { name: "Actions for Notice of late rent" }).click();
+  await page.getByRole("menuitem", { name: "Remove" }).click();
+  await page.getByRole("button", { name: "Remove" }).click();
+  await expect(page.getByText("No notice template yet.")).toBeVisible();
+  await section(page, "Rent roll");
+  await page.getByRole("row", { name: "Birch Flats, Unit A" }).click();
+  await page.getByRole("tab", { name: "Files" }).click();
+  await expect(page.getByRole("list", { name: "Notices made" })).toContainText("Notice of late rent (PDF)");
+  // The saved toasts sit over the page's corner until they go.
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+});

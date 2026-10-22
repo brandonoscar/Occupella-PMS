@@ -32,6 +32,7 @@ import type { LeaseDetail, LeasePerson, Ledger } from "../rentals";
 import { LEASE_STATUS, LEDGER_KIND, PORTAL, rentLabel, termLabel } from "../rentals";
 import { AssistanceCard } from "./AssistanceCard";
 import { FilesCard } from "./FilesCard";
+import { NoticesCard } from "./NoticesCard";
 import { InsuranceForms } from "./InsuranceForms";
 import { LeasingFeeForm } from "./LeasingFeeForm";
 import { EndLeaseForm, HouseholdCards, RemoveTenantForm } from "./LeasePeople";
@@ -150,6 +151,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
       ? { label: "Place payment hold", onSelect: () => setPanel("hold") }
       : { label: "Release payment hold", onSelect: () => setPanel("release") },
     { label: "Record NSF", onSelect: () => setTab("ledger") },
+    { label: "Write a notice", onSelect: () => setTab("files") },
     { label: "Renew lease", onSelect: () => navigate(`/draft-leases?lease=${id}`) },
     ...(lease.moved_to === null ? [{ label: "Move to another unit", onSelect: () => setPanel("move") }] : []),
     { label: "End lease", onSelect: () => setPanel("end") },
@@ -224,6 +226,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
           <FilesCard kind="move_out_photo" also={["lease_document"]} aboutId={id} name={`${lease.unit}, ${lease.property}`}
             note="Its tenants download its lease documents in the portal, with the lease as signed; move-out photos stay here." />
         )}
+        {tab === "files" && <NoticesCard leaseId={id} />}
         {tab === "notes" && <NotesCard about="lease" aboutId={id} name={`${lease.unit}, ${lease.property}`} />}
       </div>
       {panel !== null && (
