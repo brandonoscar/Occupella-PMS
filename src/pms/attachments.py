@@ -1,6 +1,7 @@
 """The PDF an automatic email carries (migration 0111; the founder's review q029, q045 and q055):
-a payment receipt's receipt, and an owner statement's whole statement for its month. Each is made
-when the email is handed to the sender (src/pms/email.py, deliver_pending), from what the
+a payment receipt's receipt, an owner statement's whole statement for its month, and since
+migration 0120 (q039) a tenant's security deposit statement with its receipts and photos. Each is
+made when the email is handed to the sender (src/pms/email.py, deliver_pending), from what the
 database holds then, so the outbox keeps no file. Every other kind of email carries none.
 """
 
@@ -28,10 +29,19 @@ def for_email(
     owner_id: UUID | None,
     period: date | None,
     transfer_id: str | None,
+    tenant_id: UUID | None = None,
+    lease_id: UUID | None = None,
 ) -> tuple[email.Attachment, ...]:
     """The files an email of this kind carries, made now."""
     # Imported here: the API's modules import this package's email module themselves.
-    from pms.api import owner, receipts
+    from pms.api import moveout, owner, receipts
+
+    if kind == "deposit_statement" and tenant_id is not None and lease_id is not None:
+        try:
+            pdf = moveout.statement_pdf(conn, pmc_id, lease_id, tenant_id)
+        except HTTPException as missing:
+            raise LookupError(str(missing.detail)) from None
+        return (email.Attachment("security-deposit-statement.pdf", pdf),)
 
     if kind == "payment_receipt" and transfer_id is not None:
         try:

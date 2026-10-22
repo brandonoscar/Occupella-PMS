@@ -192,6 +192,7 @@ def test_a_quiet_day_shows_nothing(client, conn, staff, pmc):
         "signers": [],
         "renters_insurance": [],
         "deposits_to_receive": [],
+        "deposits_to_return": [],
     }
 
 

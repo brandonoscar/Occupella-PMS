@@ -18,7 +18,7 @@ const ME: Me = {
 const QUIET: Today = {
   on: "2026-10-13", late_rent: [], bills_due: [], unreconciled: [], applications: [], unsigned_offers: [],
   journal_waiting: [], vendor_insurance: [], company_fees: [], signers: [], renters_insurance: [],
-  deposits_to_receive: [],
+  deposits_to_receive: [], deposits_to_return: [],
 };
 
 const FIGURES: Dashboard = {
@@ -164,6 +164,20 @@ describe("Dashboard", () => {
       "Unit 1, Property 1 (Tenant A, Tenant B): $500.00 of the $1,500.00 security deposit the signed lease asked still to receive",
     )).toBeTruthy();
     expect(within(deposits).getByRole("link", { name: "Open Rent roll" }).getAttribute("href")).toBe("/rent-roll");
+  });
+
+  it("lists leases past their last day whose deposits are due back, with when", async () => {
+    server({ ...QUIET, deposits_to_return: [
+      { lease_id: "l1", property: "Property 1", unit: "Unit 1", tenants: ["Tenant 1"], held: "1200.00",
+        return_by: "2026-11-04", standing: "due in 13 days" },
+    ] });
+    render(<DashboardPage me={ME} />);
+
+    const deposits = await screen.findByRole("region", { name: "Deposits to return" });
+    expect(within(deposits).getByText(
+      "Unit 1, Property 1 (Tenant 1): $1,200.00 held, due back by 11/04/2026 (due in 13 days)",
+    )).toBeTruthy();
+    expect(within(deposits).getByRole("link", { name: "Open Move-outs" }).getAttribute("href")).toBe("/move-out");
   });
 
   it("shows the company's figures, each opening the page where that work is done", async () => {

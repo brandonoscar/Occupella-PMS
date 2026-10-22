@@ -9,8 +9,21 @@ import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { day, money, usDate } from "../money";
-import type { MoveOut } from "../moveout";
-import { chargeLabel, hasEnded, leaseLabel, moveOutStatus, preview } from "../moveout";
+import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
+import type { Fee, MoveOut, StatementSent } from "../moveout";
+import {
+  chargeLabel,
+  feeLabel,
+  hasEnded,
+  leaseLabel,
+  moveOutStatus,
+  needsReceipt,
+  preview,
+  returnBy,
+  sentLine,
+  statementPath,
+} from "../moveout";
+import type { Recorder } from "./useRecord";
 import { sharesLine } from "../rentals";
 import { InspectionsPanel } from "./InspectionsPanel";
 import { STAFF_NAV } from "./staffNav";
@@ -19,9 +32,11 @@ import { Said } from "../components/Said";
 import { Form } from "../components/Form";
 
 // Staff's move-outs: end the lease, inspect it on the way in and out, charge what the tenants
-// owe for cleaning or damage, and return their deposits. The return keeps what the lease owes
-// for the owner and gives the rest back; the statement for the tenants is a report. It records
-// what the bank paid; the PMS moves no money itself.
+// owe for cleaning or damage with its receipts, and return their deposits by the day they are
+// due back (the strictest deadline found, migration 0120). The return keeps what the lease owes
+// for the owner and gives the rest back; each tenant's statement is a letter with the receipts
+// and move-out photos, downloaded or emailed. It records what the bank paid; the PMS moves no
+// money itself.
 export function MoveOutPage({ me }: { me: Me }) {
   const [leases, setLeases] = useState<MoveOut[] | null>(null);
   const [error, setError] = useState("");
@@ -72,6 +87,7 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
   const next = preview(lease);
   const ended = hasEnded(lease, today);
   const status = moveOutStatus(lease, today);
+  const due = returnBy(lease, today);
   // The end and a damage charge: in view once the lease has ended, folded away while it runs.
   const endAndCharge = (
     <>
@@ -113,7 +129,10 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
             <span className="font-medium">{lease.property}, {lease.unit}</span>
             <span className="text-ink-muted"> · {lease.tenants.join(", ")}</span>
           </p>
-          <Badge tone={status.tone}>{status.label}</Badge>
+          <span className="flex flex-wrap gap-2">
+            {due && <Badge tone={due.tone}>{due.label}</Badge>}
+            <Badge tone={status.tone}>{status.label}</Badge>
+          </span>
         </div>
         <p className="text-sm text-ink-muted">
           Lease {usDate(lease.starts_on)} to {lease.ends_on ? usDate(lease.ends_on) : "month to month"} · owes {money(lease.owed)}
@@ -121,15 +140,28 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
           deposits held {money(lease.held)}
         </p>
         <InspectionsPanel leaseId={id} label={leaseLabel(lease)} />
+        {lease.fees.length > 0 && <FeeReceipts lease={lease} record={record} />}
         {lease.settled ? (
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex flex-col gap-3">
             <p className="text-sm" aria-label={`Returned, ${leaseLabel(lease)}`}>
               Returned on {usDate(lease.settled.returned_on)}: kept {money(lease.settled.kept)} of{" "}
               {money(lease.settled.held)}, {money(lease.settled.returned)} back to the tenants.
             </p>
-            <LinkButton href={`/api/reports/trust_report_deposit_return?arg=${id}&format=pdf`}>
-              Statement for the tenants (PDF)
-            </LinkButton>
+            <div className="flex flex-wrap items-center gap-3">
+              {lease.tenants.map((name, i) => (
+                <LinkButton key={lease.tenant_ids[i]} href={statementPath(id, lease.tenant_ids[i] ?? "")}>
+                  Statement for {name} (PDF)
+                </LinkButton>
+              ))}
+              <Button variant="secondary" onClick={() =>
+                record<StatementSent>(`/api/move-out/${id}/statement/send`, {}, sentLine)}>
+                Email the statement
+              </Button>
+            </div>
+            <p className="text-sm text-ink-subtle">
+              Each statement is a letter to the tenant&apos;s forwarding address (their mailing address on
+              their page) with the receipts and move-out photos. Mail it where your state asks.
+            </p>
           </div>
         ) : (
           <>
@@ -198,6 +230,66 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
         <Said>{said}</Said>
         <Notice tone="error">{error}</Notice>
       </section>
+    </li>
+  );
+}
+
+// The fees a deposit may keep, each with its receipts: a link to each, a way to add one, and a
+// badge where a fee over $125 has none (California asks for them with the statement).
+function FeeReceipts({ lease, record }: { lease: MoveOut; record: Recorder }) {
+  return (
+    <ul className="flex flex-col gap-2 text-sm" aria-label={`Fees and receipts, ${leaseLabel(lease)}`}>
+      {lease.fees.map((fee) => (
+        <FeeRow key={fee.id} leaseId={lease.lease_id} fee={fee} record={record} />
+      ))}
+    </ul>
+  );
+}
+
+function FeeRow({ leaseId, fee, record }: { leaseId: string; fee: Fee; record: Recorder }) {
+  const [file, setFile] = useState<{ name: string; type: string; base64: string } | null>(null);
+  const [problem, setProblem] = useState("");
+  const [picker, setPicker] = useState(0);
+  return (
+    <li className="flex flex-col gap-1">
+      <div className="flex flex-wrap items-center gap-2">
+        <span>{feeLabel(fee)}: {money(fee.amount)}</span>
+        {needsReceipt(fee) && <Badge tone="caution">Receipt needed</Badge>}
+        {fee.receipts.map((r) => (
+          <a key={r.id} className="text-link underline" href={`/api/documents/${r.id}/file`}>{r.title}</a>
+        ))}
+      </div>
+      <Form
+        className="flex flex-wrap items-end gap-3"
+        onSubmit={async (event) => {
+          event.preventDefault();
+          if (!file) return;
+          const body = { title: titleOf(file.name), content_type: file.type, content_base64: file.base64 };
+          if (await record(`/api/move-out/${leaseId}/fees/${fee.id}/receipts`, body,
+            () => `Kept ${titleOf(file.name)} as a receipt for ${fee.memo ?? "the fee"}.`)) {
+            setFile(null);
+            setPicker((n) => n + 1);
+          }
+        }}
+      >
+        <label htmlFor={`receipt-${fee.id}`} className="flex flex-col gap-1.5 text-sm text-ink-muted">
+          Receipt for {fee.memo ?? "the fee"}
+          <input key={picker} id={`receipt-${fee.id}`} type="file" accept=".pdf,.jpg,.jpeg,.png"
+            className="text-sm text-ink"
+            onChange={async (e) => {
+              const picked = e.target.files?.[0];
+              setProblem("");
+              if (!picked) return setFile(null);
+              const type = typeOf(picked);
+              if (!type) return setProblem("A receipt is a PDF, JPEG or PNG.");
+              if (picked.size > MAX_BYTES) return setProblem("A receipt is a file of at most 5 MB.");
+              const bytes = new Uint8Array(await picked.arrayBuffer());
+              setFile({ name: picked.name, type, base64: toBase64(bytes) });
+            }} />
+        </label>
+        <Button type="submit" variant="secondary" disabled={file === null}>Add receipt</Button>
+      </Form>
+      <Notice tone="error">{problem}</Notice>
     </li>
   );
 }

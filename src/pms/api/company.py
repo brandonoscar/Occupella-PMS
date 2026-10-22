@@ -107,6 +107,23 @@ def address_of(found: dict[str, Any]) -> Address | None:
     return Address(**{part: found[part] for part in ADDRESS})
 
 
+def street_of(conn: psycopg.Connection[Any], pmc_id: UUID) -> str:
+    """The company's mailing address on one line, as a letter's letterhead prints it; "" when
+    it has none on file."""
+    address = address_of(profile(conn, pmc_id))
+    if address is None:
+        return ""
+    return ", ".join(
+        part
+        for part in (
+            address.address_line_1,
+            address.address_line_2,
+            f"{address.city}, {address.state} {address.postal_code}",
+        )
+        if part
+    )
+
+
 def logo_of(conn: psycopg.Connection[Any], pmc_id: UUID) -> Logo | None:
     row = conn.execute(
         "SELECT d.id, d.content_type, d.created_at FROM trust_documents AS d"

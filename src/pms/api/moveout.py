@@ -6,6 +6,11 @@ the owner's account and matched to its charges oldest first, the rest goes back 
 It pays out money, so it takes the disburse role (the database refuses anyone else: 403). The
 itemized statement staff send the tenants is trust_report_deposit_return, downloaded like any
 report. The PMS records what the bank did; it sends no money.
+
+Since migration 0120 (the founder's review q040 and q039; docs/law.md) each lease shows the day
+its deposit is due back by the strictest deadline found, staff keep receipts for the fees it
+keeps, and each tenant's statement is a letter to their forwarding address carrying the receipts
+and the move-out photos (src/pms/deposit_statement.py), downloaded or emailed.
 """
 
 from __future__ import annotations
@@ -16,11 +21,11 @@ from typing import Annotated, Any, Literal
 from uuid import UUID, uuid5
 
 import psycopg
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field, StringConstraints
 
-from pms import exports
-from pms.api import rent
+from pms import deposit_statement, exports, notice_letters, notices
+from pms.api import company, directory, documents, rent
 from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/move-out")
@@ -66,6 +71,22 @@ class OwnerAccount(BaseModel):
     percent: str | None = None
 
 
+class ReceiptFile(BaseModel):
+    id: UUID  # the lease's document
+    title: str
+
+
+class Fee(BaseModel):
+    """A fee charged at move-out (due on or after the lease's last day), or any fee of the lease
+    with a receipt on file: what the deposits may keep, and its receipts."""
+
+    id: UUID
+    due_on: date
+    memo: str | None
+    amount: str
+    receipts: list[ReceiptFile]
+
+
 class Settled(BaseModel):
     held: str
     kept: str
@@ -78,6 +99,8 @@ class MoveOut(BaseModel):
     property: str
     unit: str
     tenants: list[str]
+    # Each tenant's id, in the order of their names: their statement is theirs.
+    tenant_ids: list[UUID]
     starts_on: date
     ends_on: date | None
     # What the lease owes now, and the deposits held for its tenants now.
@@ -91,11 +114,132 @@ class MoveOut(BaseModel):
     # ownership shares split it.
     owner_accounts: list[OwnerAccount]
     settled: Settled | None
+    # The day the deposit and its statement are due back (return_by); none before the lease has
+    # a last day, or once it was returned.
+    return_by: date | None = None
+    fees: list[Fee] = []
+
+
+# The strictest deadlines found (docs/law.md): a deposit and its itemized statement within 14
+# days of the tenancy's end (Hawaii, New York), within 10 while nothing is to be kept (Montana).
+RETURN_WITHIN = timedelta(days=14)
+NOTHING_KEPT_WITHIN = timedelta(days=10)
+
+
+def return_by(ends_on: date | None, owes: Decimal) -> date | None:
+    """The day a lease's deposit is due back by the strictest deadline found, counted from its
+    last day: none until it has one."""
+    if ends_on is None:
+        return None
+    return ends_on + (RETURN_WITHIN if owes > 0 else NOTHING_KEPT_WITHIN)
+
+
+# Each lease of the PMC past its last day on the day whose tenants' deposits are still held, not
+# a lease its tenants moved from: what it and the leases they moved from owe, and what is held.
+DUE_BACK = """
+SELECT l.id, p.display_name, u.display_name, l.ends_on,
+       array(SELECT t.display_name FROM trust_lease_tenants AS lt
+             JOIN trust_tenants AS t ON t.id = lt.tenant_id WHERE lt.lease_id = l.id
+             ORDER BY t.display_name COLLATE "C", t.id),
+       trust_lease_owed(l.id) + coalesce((SELECT sum(trust_lease_owed(m.lease_id))
+                                          FROM trust_lease_moved_from(l.id) AS m), 0),
+       h.held
+FROM trust_leases AS l
+JOIN trust_units AS u ON u.id = l.unit_id
+JOIN trust_properties AS p ON p.id = u.property_id
+CROSS JOIN LATERAL (
+    SELECT coalesce(sum(b.balance), 0) AS held
+    FROM trust_lease_tenants AS lt
+    JOIN trust_ledger_accounts AS a ON a.tenant_id = lt.tenant_id AND a.kind = 'tenant_deposit'
+    JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
+    WHERE lt.lease_id = l.id
+) AS h
+WHERE l.pmc_id = %(pmc)s AND l.ends_on < %(day)s AND h.held > 0
+  AND NOT EXISTS (SELECT 1 FROM trust_deposit_returns AS r WHERE r.lease_id = l.id)
+  AND NOT EXISTS (SELECT 1 FROM trust_lease_transfers AS t WHERE t.from_lease_id = l.id)
+"""
+
+
+class DueBack(BaseModel):
+    lease_id: UUID
+    property: str
+    unit: str
+    tenants: list[str]
+    held: str
+    return_by: date
+    # "due in 3 days", "due today" or "4 days late".
+    standing: str
+
+
+def standing_of(due: date, day: date) -> str:
+    left = (due - day).days
+    if left == 0:
+        return "due today"
+    plural = "" if abs(left) == 1 else "s"
+    return f"due in {left} day{plural}" if left > 0 else f"{-left} day{plural} late"
+
+
+def due_back(conn: psycopg.Connection[Any], pmc_id: UUID, day: date) -> list[DueBack]:
+    """Each lease whose last day has passed and whose deposits are still held, soonest due
+    first, with the day they are due back by the strictest deadline found."""
+    found = []
+    for lease, prop, unit, ends, tenants, owes, held in conn.execute(
+        DUE_BACK, {"pmc": pmc_id, "day": day}
+    ).fetchall():
+        due = return_by(ends, owes)
+        assert due is not None
+        found.append(
+            DueBack(
+                lease_id=lease,
+                property=prop,
+                unit=unit,
+                tenants=tenants,
+                held=cents(held),
+                return_by=due,
+                standing=standing_of(due, day),
+            )
+        )
+    return sorted(found, key=lambda d: (d.return_by, d.property, d.unit, str(d.lease_id)))
+
+
+# A lease's fees charged at move-out, or with a receipt on file, each with its receipts not
+# removed, oldest first.
+FEES = """
+SELECT c.id, c.due_on, c.memo, c.amount,
+       coalesce(json_agg(json_build_object('id', d.id, 'title', d.title)
+                         ORDER BY r.created_at, d.id) FILTER (WHERE d.id IS NOT NULL), '[]')
+FROM trust_charges AS c
+LEFT JOIN trust_deduction_receipts AS r ON r.charge_id = c.id
+LEFT JOIN trust_documents AS d ON d.id = r.document_id
+     AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS x WHERE x.document_id = d.id)
+WHERE c.lease_id = %(lease)s AND c.kind = 'fee' AND c.recurring_charge_id IS NULL
+  AND (c.due_on >= %(ends)s OR r.charge_id IS NOT NULL)
+GROUP BY c.id
+ORDER BY c.due_on, c.created_at, c.id
+"""
+
+
+def fees_of(conn: psycopg.Connection[Any], lease_id: UUID, ends_on: date | None) -> list[Fee]:
+    return [
+        Fee(
+            id=i,
+            due_on=due_on,
+            memo=memo,
+            amount=cents(amount),
+            receipts=[ReceiptFile(id=UUID(r["id"]), title=r["title"]) for r in receipts],
+        )
+        for i, due_on, memo, amount, receipts in conn.execute(
+            FEES, {"lease": lease_id, "ends": ends_on}
+        ).fetchall()
+    ]
 
 
 LEASES = """
 SELECT l.id, p.display_name, u.display_name, l.starts_on, l.ends_on, trust_lease_owed(l.id),
        array(SELECT t.display_name FROM trust_lease_tenants AS lt
+             JOIN trust_tenants AS t ON t.id = lt.tenant_id WHERE lt.lease_id = l.id
+             ORDER BY t.display_name COLLATE "C", t.id),
+       array(SELECT t.id FROM trust_lease_tenants AS lt
              JOIN trust_tenants AS t ON t.id = lt.tenant_id WHERE lt.lease_id = l.id
              ORDER BY t.display_name COLLATE "C", t.id),
        coalesce((SELECT sum(b.balance) FROM trust_lease_tenants AS lt
@@ -153,20 +297,22 @@ def move_outs(session: Staff, conn: Conn) -> list[MoveOut]:
     found = []
     since = datetime.now(UTC).date() - RECENT
     for row in conn.execute(LEASES, (session.pmc_id,)).fetchall():
-        lease, prop, unit, starts, ends, owed, tenants, held, prop_id, *done = row
+        lease, prop, unit, starts, ends, owed, tenants, tenant_ids, held, prop_id, *done = row
         if held <= 0 and done[0] is None and (ends is None or ends < since):
             continue
         earlier = conn.execute(MOVED_FROM, (lease,)).fetchall()
+        carried = sum((owing for _, _, owing in earlier), Decimal(0))
         found.append(
             MoveOut(
                 lease_id=lease,
                 property=prop,
                 unit=unit,
                 tenants=tenants,
+                tenant_ids=tenant_ids,
                 starts_on=starts,
                 ends_on=ends,
                 owed=cents(owed),
-                carried=cents(sum((owing for _, _, owing in earlier), Decimal(0))),
+                carried=cents(carried),
                 held=cents(held),
                 open_charges=[
                     Charge(id=i, due_on=d, kind=k, memo=m, open=cents(o), home=home)
@@ -186,6 +332,8 @@ def move_outs(session: Staff, conn: Conn) -> list[MoveOut]:
                     returned=cents(done[2]),
                     returned_on=done[3].astimezone(UTC).date(),
                 ),
+                return_by=None if done[0] is not None else return_by(ends, owed + carried),
+                fees=fees_of(conn, lease, ends),
             )
         )
     return found
@@ -525,3 +673,184 @@ def return_deposit(session: Staff, conn: Conn, lease_id: UUID, body: Return) -> 
         raise HTTPException(409, refusal(refused)) from None
     assert back is not None
     return Returned(returned=cents(back[0]))
+
+
+# --- receipts for what is kept, and the statement ---------------------------------------------
+
+
+class NewReceipt(BaseModel):
+    title: documents.Title
+    content_type: documents.ContentType
+    content_base64: str = Field(min_length=4, max_length=7_000_000)
+
+
+@router.post("/{lease_id}/fees/{charge_id}/receipts", status_code=201)
+def add_receipt(
+    session: Staff, conn: Conn, lease_id: UUID, charge_id: UUID, new: NewReceipt
+) -> Created:
+    """Keeps a receipt or invoice for a fee of the lease (a repair, cleaning), as one of the
+    lease's documents linked to the fee; before or after the deposit is returned, since a repair
+    may be done later. The statement names it and carries the file."""
+    returned(conn, session.pmc_id, lease_id)
+    fee = conn.execute(
+        "SELECT 1 FROM trust_charges WHERE pmc_id = %s AND id = %s AND lease_id = %s"
+        " AND kind = 'fee'",
+        (session.pmc_id, charge_id, lease_id),
+    ).fetchone()
+    if fee is None:
+        raise HTTPException(404, "no such fee on this lease")
+    document = documents.keep(
+        conn,
+        session.pmc_id,
+        documents.NewDocument(
+            kind="lease_document",
+            about_id=lease_id,
+            title=new.title,
+            content_type=new.content_type,
+            content_base64=new.content_base64,
+        ),
+    )
+    conn.execute(
+        "INSERT INTO trust_deduction_receipts (pmc_id, charge_id, document_id) VALUES (%s, %s, %s)",
+        (session.pmc_id, charge_id, document),
+    )
+    return Created(id=document)
+
+
+# The fees the deposits paid, each once with what they paid of it, in the statement's order.
+KEPT = """
+SELECT c.id, c.due_on, c.kind, c.memo, sum(x.amount)
+FROM trust_deposit_return_lines AS x
+JOIN trust_charges AS c ON c.id = x.charge_id
+WHERE x.lease_id = %s
+GROUP BY c.id
+ORDER BY min(x.line_no)
+"""
+
+# Each kept fee's receipt files not removed, oldest first.
+RECEIPT_FILES = """
+SELECT r.charge_id, d.title, d.content_type, f.content
+FROM trust_deduction_receipts AS r
+JOIN trust_documents AS d ON d.id = r.document_id
+JOIN trust_document_files AS f ON f.document_id = d.id
+WHERE r.charge_id = ANY(%s)
+  AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS x WHERE x.document_id = d.id)
+ORDER BY r.created_at, d.id
+"""
+
+PHOTOS = """
+SELECT d.title, d.content_type, f.content
+FROM trust_documents AS d
+JOIN trust_document_files AS f ON f.document_id = d.id
+WHERE d.lease_id = %s AND d.kind = 'move_out_photo'
+  AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS x WHERE x.document_id = d.id)
+ORDER BY d.created_at, d.id
+"""
+
+
+def statement_of(
+    conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID, tenant_id: UUID
+) -> deposit_statement.Statement:
+    """A tenant's deposit statement: 404 when the lease isn't the PMC's or the tenant isn't on
+    it, 409 before its deposit was returned."""
+    if not returned(conn, pmc_id, lease_id):
+        raise HTTPException(409, "the deposit hasn't been returned yet")
+    named = conn.execute(
+        "SELECT t.display_name FROM trust_lease_tenants AS lt"
+        " JOIN trust_tenants AS t ON t.id = lt.tenant_id"
+        " WHERE lt.lease_id = %s AND lt.tenant_id = %s",
+        (lease_id, tenant_id),
+    ).fetchone()
+    if named is None:
+        raise HTTPException(404, "no such tenant on this lease")
+    contact = directory.contact_of(conn, "tenant_id", tenant_id)
+    address: tuple[str, ...] = ()
+    if contact.address_line_1:
+        address = tuple(
+            line
+            for line in (
+                contact.address_line_1,
+                contact.address_line_2,
+                f"{contact.city}, {contact.state} {contact.postal_code}",
+            )
+            if line
+        )
+    kept = conn.execute(KEPT, (lease_id,)).fetchall()
+    files: dict[UUID, list[deposit_statement.File]] = {}
+    for charge, title, content_type, content in conn.execute(
+        RECEIPT_FILES, ([k[0] for k in kept],)
+    ).fetchall():
+        files.setdefault(charge, []).append(
+            deposit_statement.File(title, content_type, bytes(content))
+        )
+    photos = [
+        deposit_statement.File(title, content_type, bytes(content))
+        for title, content_type, content in conn.execute(PHOTOS, (lease_id,)).fetchall()
+    ]
+    return deposit_statement.Statement(
+        company=company.name_of(conn, pmc_id),
+        street=company.street_of(conn, pmc_id),
+        dated_on=rent.today(),
+        to_name=named[0],
+        to_address=address,
+        lines=tuple(
+            (item, detail, amount)
+            for item, detail, amount in conn.execute(
+                "SELECT item, detail, amount FROM trust_report_deposit_return(%s, %s)"
+                " ORDER BY line",
+                (pmc_id, lease_id),
+            ).fetchall()
+        ),
+        kept=tuple(
+            deposit_statement.Kept(
+                label=f"{memo or kind} (due {notice_letters.us(due_on)})",
+                amount=amount,
+                receipts=tuple(f.title for f in files.get(charge, [])),
+            )
+            for charge, due_on, kind, memo, amount in kept
+        ),
+        files=(*(f for k in kept for f in files.get(k[0], [])), *photos),
+        photos=len(photos),
+    )
+
+
+def statement_pdf(
+    conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID, tenant_id: UUID
+) -> bytes:
+    return deposit_statement.render(
+        statement_of(conn, pmc_id, lease_id, tenant_id), datetime.now(UTC)
+    )
+
+
+@router.get("/{lease_id}/statement")
+def statement(session: Staff, conn: Conn, lease_id: UUID, tenant_id: UUID) -> Response:
+    """A tenant's deposit statement as a PDF letter to their forwarding address, with the
+    receipts and move-out photos it names: to print and mail, or keep."""
+    return Response(
+        statement_pdf(conn, session.pmc_id, lease_id, tenant_id),
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'attachment; filename="security-deposit-statement.pdf"'},
+    )
+
+
+class Emailed(BaseModel):
+    name: str
+    to: str
+
+
+class StatementSent(BaseModel):
+    emailed: list[Emailed]
+    # Tenants with no email on file: nothing was written to them.
+    without_email: list[str]
+
+
+@router.post("/{lease_id}/statement/send", status_code=201)
+def send_statement(session: Staff, conn: Conn, lease_id: UUID) -> StatementSent:
+    """Emails each tenant of the lease their deposit statement, its PDF made when it is sent; it
+    waits in the outbox while the server sends none. Sending again writes again."""
+    if not returned(conn, session.pmc_id, lease_id):
+        raise HTTPException(409, "the deposit hasn't been returned yet")
+    emailed, without = notices.write_deposit_statements(conn, session.pmc_id, lease_id)
+    return StatementSent(
+        emailed=[Emailed(name=name, to=to) for name, to in emailed], without_email=without
+    )

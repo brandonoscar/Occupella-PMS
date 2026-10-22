@@ -448,12 +448,15 @@ browser = [
 
 [[feature]]
 id = "move-out"
-statement = "Staff end a lease (its month's rent credited for the days after its end), charge the tenant's damage, and return the deposit less what the lease owes, once; the tenant downloads the statement."
+statement = "Staff end a lease (its month's rent credited for the days after its end), charge the tenant's damage, and return the deposit less what the lease owes, once; the tenant downloads the statement. Since migration 0120 (q040, q039) each lease shows the day its deposit is due back by the strictest deadline found (the Dashboard lists those past their last day), staff keep a receipt for each fee kept, and each tenant's statement is a letter to their forwarding address carrying the receipts and move-out photos, downloaded or emailed."
 operations = [
   "GET /api/move-out",
   "POST /api/move-out/{lease_id}/end",
   "POST /api/move-out/{lease_id}/deductions",
   "POST /api/move-out/{lease_id}/return",
+  "POST /api/move-out/{lease_id}/fees/{charge_id}/receipts",
+  "GET /api/move-out/{lease_id}/statement",
+  "POST /api/move-out/{lease_id}/statement/send",
 ]
 browser = [
   "portal.spec.ts › staff charge a tenant's damage at move-out, return the rest of the deposit and get the statement",
@@ -510,7 +513,7 @@ operations = [
   "GET /api/tenant/leases",
   "GET /api/tenant/leases/{lease_id}/ledger",
   "GET /api/tenant/leases/{lease_id}/ledger/download",
-  "GET /api/tenant/leases/{lease_id}/deposit-return/download",
+  "GET /api/tenant/leases/{lease_id}/deposit-statement",
 ]
 browser = [
   "features.spec.ts › a tenant sees their lease, what comes each month and two months of charges and payments, and downloads them",
