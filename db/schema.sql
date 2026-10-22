@@ -2814,17 +2814,33 @@ CREATE FUNCTION public.trust_check_lease_offer_not_void() RETURNS trigger
     LANGUAGE plpgsql
     SET search_path TO 'public', 'pg_temp'
     AS $$
+DECLARE
+    v_offer trust_lease_offers;
+    v_closed text;
 BEGIN
+    SELECT o.* INTO v_offer FROM trust_lease_offers AS o WHERE o.id = NEW.offer_id;
     -- Offers of one application or one lease wait for each other (trust_complete_lease_offer).
     PERFORM pg_advisory_xact_lock(hashtextextended(
-        'lease offer of ' || coalesce(o.application_id, o.renews_lease_id), 0
-    ))
-    FROM trust_lease_offers AS o WHERE o.id = NEW.offer_id;
+        'lease offer of ' || coalesce(v_offer.application_id, v_offer.renews_lease_id), 0
+    ));
     IF EXISTS (
         SELECT v.offer_id FROM trust_lease_offer_voids AS v WHERE v.offer_id = NEW.offer_id
     ) THEN
         RAISE EXCEPTION 'trust: this lease offer was voided; it takes nothing more'
             USING ERRCODE = 'check_violation';
+    END IF;
+    IF v_offer.renews_lease_id IS NOT NULL THEN
+        -- The end of the lease it renews waits for this, and this for an end under way
+        -- (trust_end_lease takes the lock alone), so the lease is read as it ends.
+        PERFORM pg_advisory_xact_lock_shared(
+            hashtextextended('lease days of ' || v_offer.pmc_id, 0)
+        );
+        v_closed := trust_renewal_closed(NEW.offer_id);
+        IF v_closed IS NOT NULL THEN
+            RAISE EXCEPTION
+                'trust: this renewal can no longer be sent, signed or made a lease: %', v_closed
+                USING ERRCODE = 'check_violation';
+        END IF;
     END IF;
     RETURN NEW;
 END;
@@ -3957,6 +3973,7 @@ DECLARE
     v_lease uuid;
     v_old trust_leases;
     v_tenants uuid[];
+    v_closed text;
 BEGIN
     IF current_setting('transaction_isolation') <> 'read committed' THEN
         RAISE EXCEPTION 'trust: complete lease offers at READ COMMITTED, not %',
@@ -4000,6 +4017,17 @@ BEGIN
         RAISE EXCEPTION 'trust: another offer for this % became its lease already',
             CASE WHEN v_offer.application_id IS NULL THEN 'lease' ELSE 'application' END
             USING ERRCODE = 'check_violation';
+    END IF;
+    IF v_offer.renews_lease_id IS NOT NULL THEN
+        -- The lease it renews is read as it ends: an end under way (trust_end_lease, which takes
+        -- this lock too, below or from elsewhere) commits first or waits for this.
+        PERFORM pg_advisory_xact_lock(hashtextextended('lease days of ' || p_pmc_id, 0));
+        v_closed := trust_renewal_closed(p_offer_id);
+        IF v_closed IS NOT NULL THEN
+            RAISE EXCEPTION
+                'trust: this renewal can no longer be sent, signed or made a lease: %', v_closed
+                USING ERRCODE = 'check_violation';
+        END IF;
     END IF;
 
     IF v_offer.application_id IS NOT NULL THEN
@@ -6488,6 +6516,37 @@ BEGIN
     VALUES (p_pmc_id, p_lease_id, p_tenant_id, p_left_on, p_deposit_to, v_moved);
     RETURN v_moved;
 END;
+$$;
+
+
+--
+-- Name: trust_renewal_closed(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_renewal_closed(p_offer_id uuid) RETURNS text
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT CASE
+        WHEN l.ends_on < o.starts_on - 1 AND l.ends_on < (now() AT TIME ZONE 'UTC')::date THEN
+            'the lease it renews ended on ' || to_char(l.ends_on, 'MM/DD/YYYY')
+        WHEN l.ends_on < o.starts_on - 1 THEN
+            'the lease it renews ends on ' || to_char(l.ends_on, 'MM/DD/YYYY')
+            || ', not the day before the renewal starts'
+        WHEN t.from_lease_id IS NOT NULL THEN
+            'its tenants moved to another unit on ' || to_char(t.moved_on, 'MM/DD/YYYY')
+        WHEN r.lease_id IS NOT NULL THEN
+            'the deposit of the lease it renews was returned on '
+            || to_char(r.returned_at AT TIME ZONE 'UTC', 'MM/DD/YYYY')
+    END
+    FROM trust_lease_offers AS o
+    JOIN trust_leases AS l ON l.id = o.renews_lease_id
+    LEFT JOIN trust_lease_transfers AS t ON t.from_lease_id = l.id
+    LEFT JOIN trust_deposit_returns AS r ON r.lease_id = l.id
+    WHERE o.id = p_offer_id
+      AND NOT EXISTS (
+          SELECT 1 FROM trust_lease_offer_completions AS c WHERE c.offer_id = o.id
+      )
 $$;
 
 
@@ -11273,6 +11332,7 @@ CREATE FUNCTION public.trust_signing_link_open(p_link_id uuid) RETURNS boolean
               SELECT 1 FROM trust_signatures AS g
               WHERE g.offer_id = l.offer_id AND g.position = l.position
           )
+          AND trust_renewal_closed(l.offer_id) IS NULL
     );
 $$;
 
@@ -26986,4 +27046,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261021000108'),
     ('20261021000109'),
     ('20261021000110'),
-    ('20261022000151');
+    ('20261022000151'),
+    ('20261022000152');

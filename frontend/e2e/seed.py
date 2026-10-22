@@ -12,8 +12,8 @@ with invites for its manager and its owner of three properties, and another for 
 accessibility sweep. Last, a demo PMC's books
 (`demo.books`, without what the demo adds to every other page) for each feature test
 (frontend/e2e/features.spec.ts), so each starts from the same books and none sees another's
-changes; the rent terms test's with this month's rent charged on its first day. Every name is
-synthetic.
+changes (the rent terms test's with this month's rent charged on its first day), and one more
+for the month run start to end (frontend/e2e/journey.spec.ts). Every name is synthetic.
 """
 
 import json
@@ -458,6 +458,10 @@ def main() -> None:
         seeded["features"]["year-close"] = feature_pmc(
             app, tag, "year-close", today=date(datetime.now(UTC).year, 1, 1)
         )
+        # A month of a company, start to end (frontend/e2e/journey.spec.ts), on books of its own:
+        # the manager does the month's work, the bookkeeper prepares its month-end and the manager
+        # approves it; an owner, two tenants, an applicant and a vendor play their parts.
+        seeded["journey"] = feature_pmc(app, tag, "journey")
     print(json.dumps(seeded))
 
 
