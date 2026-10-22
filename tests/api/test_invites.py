@@ -200,12 +200,16 @@ def test_an_owner_accepts_with_a_password_and_is_signed_in(client, conn, app_con
     assert answer.status_code == 200
     assert answer.json()["kind"] == "owner"
     assert client.get("/api/me").status_code == 200
+    # This company's login: another test's company may have one with the same email.
     stored = conn.execute(
         "SELECT s.password_hash, s.totp_secret FROM trust_login_secrets AS s"
-        " JOIN trust_logins AS l ON l.id = s.login_id WHERE l.email = 'o@example.com'"
-    ).fetchone()
-    assert stored[0].startswith("$argon2id$") and PASSWORD not in stored[0]
-    assert stored[1] is None
+        " JOIN trust_logins AS l ON l.id = s.login_id"
+        " WHERE l.email = 'o@example.com' AND l.pmc_id = %s",
+        (pmc.pmc_id,),
+    ).fetchall()
+    assert len(stored) == 1
+    assert stored[0][0].startswith("$argon2id$") and PASSWORD not in stored[0][0]
+    assert stored[0][1] is None
 
 
 def test_a_short_password_is_refused(client, app_conn, pmc):
