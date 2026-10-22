@@ -11127,11 +11127,13 @@ $$;
 -- Name: trust_report_vacancy(uuid, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.trust_report_vacancy(p_pmc_id uuid, p_as_of date) RETURNS TABLE(line integer, item text, property text, unit text, vacant_since date, days_vacant integer, last_rent numeric, next_lease_starts date)
+CREATE FUNCTION public.trust_report_vacancy(p_pmc_id uuid, p_as_of date) RETURNS TABLE(line integer, item text, property text, unit text, vacant_since date, days_vacant integer, last_rent numeric, next_lease_starts date, bedrooms integer, bathrooms numeric, square_feet integer, market_rent numeric)
     LANGUAGE plpgsql STABLE
     SET search_path TO 'public', 'pg_temp'
     AS $$
 #variable_conflict use_column
+DECLARE
+    v_end timestamptz;
 BEGIN
     IF p_as_of IS NULL THEN
         RAISE EXCEPTION 'trust: vacancy is as of a day; none was given'
@@ -11141,6 +11143,8 @@ BEGIN
         RAISE EXCEPTION 'trust: no PMC %', p_pmc_id
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    -- The end of the report's day (UTC): details recorded later are not in it.
+    v_end := ((p_as_of + 1)::timestamp AT TIME ZONE 'UTC') - interval '1 microsecond';
 
     RETURN QUERY
     WITH units AS (
@@ -11160,7 +11164,9 @@ BEGIN
                last.ends_on IS NULL AS never_leased,
                last.monthly_rent AS rent,
                (SELECT min(l.starts_on) FROM trust_leases AS l
-                WHERE l.unit_id = u.id AND l.starts_on > p_as_of) AS next_start
+                WHERE l.unit_id = u.id AND l.starts_on > p_as_of) AS next_start,
+               d.bedrooms AS beds, d.bathrooms AS baths, d.square_feet AS size,
+               d.market_rent AS market
         FROM trust_units AS u
         JOIN trust_properties AS pr ON pr.id = u.property_id
         LEFT JOIN LATERAL (
@@ -11173,6 +11179,14 @@ BEGIN
             ORDER BY l.ends_on DESC
             LIMIT 1
         ) AS last ON true
+        -- The latest details recorded by the end of the day.
+        LEFT JOIN LATERAL (
+            SELECT x.bedrooms, x.bathrooms, x.square_feet, x.market_rent
+            FROM trust_unit_details AS x
+            WHERE x.unit_id = u.id AND x.created_at <= v_end
+            ORDER BY x.created_at DESC, x.id DESC
+            LIMIT 1
+        ) AS d ON true
         WHERE u.pmc_id = p_pmc_id
     ),
     counted AS (
@@ -11181,14 +11195,17 @@ BEGIN
     lines AS (
         SELECT 0 AS part, NULL::text AS place, NULL::text AS unit_name, NULL::uuid AS unit_id,
                0 AS step, 'PMC' AS what, pmc.display_name AS label, NULL::date AS since,
-               NULL::integer AS days, NULL::numeric AS rent, NULL::date AS next_start
+               NULL::integer AS days, NULL::numeric AS rent, NULL::date AS next_start,
+               NULL::integer AS beds, NULL::numeric AS baths, NULL::integer AS size,
+               NULL::numeric AS market
         FROM trust_pmcs AS pmc WHERE pmc.pmc_id = p_pmc_id
         UNION ALL
         SELECT 0, NULL, NULL, NULL, 1, 'as of',
-               to_char(p_as_of, 'YYYY-MM-DD') || ', end of day UTC', NULL, NULL, NULL, NULL
+               to_char(p_as_of, 'YYYY-MM-DD') || ', end of day UTC', NULL, NULL, NULL, NULL,
+               NULL, NULL, NULL, NULL
         UNION ALL
         SELECT 1, o.place, o.unit_name, o.id, 0, 'vacant', o.place, o.since,
-               p_as_of - o.since + 1, o.rent, o.next_start
+               p_as_of - o.since + 1, o.rent, o.next_start, o.beds, o.baths, o.size, o.market
         FROM units AS o
         WHERE NOT o.occupied
         UNION ALL
@@ -11199,7 +11216,7 @@ BEGIN
                     THEN 'added to the PMS after this day: vacant since a day not known'
                     ELSE 'vacant since it was added to the PMS'
                END,
-               NULL, NULL, NULL, NULL
+               NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
         FROM units AS o
         WHERE NOT o.occupied AND o.never_leased
         UNION ALL
@@ -11209,13 +11226,14 @@ BEGIN
                          || (c.total - c.occupied) || ' vacant ('
                          || round(100.0 * c.occupied / c.total, 1) || '% occupied)'
                END,
-               NULL, NULL, NULL, NULL
+               NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL
         FROM counted AS c
     )
     SELECT (row_number() OVER (
                 ORDER BY l.part, l.place COLLATE "C", l.unit_name COLLATE "C", l.unit_id, l.step
             ))::integer,
-           l.what, l.label, l.unit_name, l.since, l.days, l.rent, l.next_start
+           l.what, l.label, l.unit_name, l.since, l.days, l.rent, l.next_start, l.beds, l.baths,
+           l.size, l.market
     FROM lines AS l
     ORDER BY 1;
 END;
@@ -16155,6 +16173,27 @@ CREATE TABLE public.trust_unit_areas (
 
 
 --
+-- Name: trust_unit_details; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_unit_details (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    unit_id uuid NOT NULL,
+    bedrooms integer,
+    bathrooms numeric,
+    square_feet integer,
+    market_rent numeric,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_unit_details_bathrooms_check CHECK ((((bathrooms >= (0)::numeric) AND (bathrooms <= (20)::numeric)) AND ((bathrooms * (2)::numeric) = trunc((bathrooms * (2)::numeric))))),
+    CONSTRAINT trust_unit_details_bedrooms_check CHECK (((bedrooms >= 0) AND (bedrooms <= 20))),
+    CONSTRAINT trust_unit_details_market_rent_check CHECK (((market_rent >= (0)::numeric) AND (market_rent <= (10000000)::numeric) AND (market_rent = round(market_rent, 2)))),
+    CONSTRAINT trust_unit_details_square_feet_check CHECK (((square_feet >= 1) AND (square_feet <= 100000)))
+);
+
+
+--
 -- Name: trust_units; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18928,6 +18967,14 @@ ALTER TABLE ONLY public.trust_unit_areas
 
 
 --
+-- Name: trust_unit_details trust_unit_details_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unit_details
+    ADD CONSTRAINT trust_unit_details_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_units trust_units_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20986,6 +21033,20 @@ CREATE INDEX trust_unit_areas_unit ON public.trust_unit_areas USING btree (pmc_i
 
 
 --
+-- Name: trust_unit_details_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_unit_details_recorded_by ON public.trust_unit_details USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_unit_details_unit; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_unit_details_unit ON public.trust_unit_details USING btree (pmc_id, unit_id, created_at);
+
+
+--
 -- Name: trust_units_property_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22320,6 +22381,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_unit_areas FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_unit_details trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_unit_details FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -23660,6 +23728,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_unit
 
 
 --
+-- Name: trust_unit_details trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_unit_details FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_units trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24742,6 +24817,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_tenant_links FOR 
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_unit_areas FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_unit_details trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_unit_details FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -29419,6 +29501,30 @@ ALTER TABLE ONLY public.trust_unit_areas
 
 
 --
+-- Name: trust_unit_details trust_unit_details_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unit_details
+    ADD CONSTRAINT trust_unit_details_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_unit_details trust_unit_details_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unit_details
+    ADD CONSTRAINT trust_unit_details_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_unit_details trust_unit_details_pmc_id_unit_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_unit_details
+    ADD CONSTRAINT trust_unit_details_pmc_id_unit_id_fkey FOREIGN KEY (pmc_id, unit_id) REFERENCES public.trust_units(pmc_id, id);
+
+
+--
 -- Name: trust_units trust_units_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29892,4 +29998,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000120'),
     ('20261022000121'),
     ('20261022000122'),
-    ('20261022000123');
+    ('20261022000123'),
+    ('20261022000124');

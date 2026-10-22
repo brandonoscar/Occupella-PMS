@@ -184,8 +184,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`src/pms/api/today.py`: read only, each part the work page's own answer). Rentals
   (`src/pms/api/rentals.py`): properties a page at a time at `/properties`, each at
   `/properties/<id>` (its owners' money, its units and their leases), a unit at `/units/<id>`
-  (every lease it had), the rent roll at `/rent-roll` (every lease a page at a time, current,
-  to come, ended or owing, with days left, rent, deposits and balance; Receive payment, and an
+  (its details, `src/pms/api/unit_details.py`, and every lease it had), the rent roll at
+  `/rent-roll` (every lease a page at a time, current,
+  to come, ended or owing, with days left, rent, market rent, deposits and balance; Receive payment, and an
   admin's Run rent now) and a lease at `/leases/<id>` (ADR 0006: its balance due on top, Receive payment, Enter
   charge and the ⋯ menu's rent work in side panels, `src/pms/api/rent.py`; tabs Summary, Ledger
   with the running balance of `trust_report_tenant_ledger`'s lines, Tenants with their portal
@@ -989,6 +990,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   left as it was writes nothing. `trust_report_budget_vs_actual` lays an owner's
   budget for the months that start within some days beside their income statement. A budget
   moves no money.
+- Unit details (migration 0124, the founder's regroup of 10/22): a unit's bedrooms, bathrooms (in
+  halves), square feet and market rent, in `trust_unit_details` (append-only, the latest row
+  holding, naming who recorded it; the same again writes nothing, and an empty save clears them),
+  kept on the unit's page (area setup) and brought over by a units file when switching. Its
+  property's page, the rent roll and Listings show its size and market rent; the public vacancy
+  page shows its size, never its market rent; the vacancy report has them as recorded by the end
+  of its day (UTC). They decide nothing and move no money; a tax credit unit's bedrooms stay its
+  designation's. The AI role reads them.
 - Vendor profiles (migration 0073, ADR 0006): a vendor's trade, whether they are a 1099 vendor
   and how they are paid (check or EFT), in `trust_vendor_profiles` (append-only, the latest row
   holding, naming who recorded it; the same again writes nothing). No tax ID is kept: it stays on
