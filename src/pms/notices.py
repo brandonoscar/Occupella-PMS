@@ -446,6 +446,62 @@ def write_payment_receipts(
     return written
 
 
+# A lease's tenants, each with the home the statement is about (migration 0120).
+STATEMENT_TO = """
+SELECT lt.tenant_id, t.display_name, p.display_name, u.display_name
+FROM trust_lease_tenants AS lt
+JOIN trust_tenants AS t ON t.id = lt.tenant_id
+JOIN trust_leases AS l ON l.id = lt.lease_id
+JOIN trust_units AS u ON u.id = l.unit_id
+JOIN trust_properties AS p ON p.id = u.property_id
+WHERE l.pmc_id = %(pmc)s AND l.id = %(lease)s
+ORDER BY t.display_name COLLATE "C", lt.tenant_id
+"""
+
+
+def write_deposit_statements(
+    conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """Writes each tenant of a lease whose deposit was returned their deposit statement, when
+    staff send it (again after a receipt comes in); its PDF is made when the email is sent
+    (src/pms/attachments.py). Returns who was written to, at which address, and who has no
+    email on file."""
+    company = company_of(conn, pmc_id)
+    emailed: list[tuple[str, str]] = []
+    without: list[str] = []
+    for tenant, name, prop, unit in conn.execute(
+        STATEMENT_TO, {"pmc": pmc_id, "lease": lease_id}
+    ).fetchall():
+        to = address(conn, pmc_id, "tenant", tenant)
+        if to is None:
+            without.append(name)
+            continue
+        portal = (
+            "It is in the tenant portal too.\n\n"
+            if can_sign_in(conn, pmc_id, "tenant", tenant)
+            else ""
+        )
+        _insert(
+            conn,
+            pmc_id,
+            "deposit_statement",
+            {
+                "tenant_id": tenant,
+                "lease_id": lease_id,
+                "to_address": to,
+                "subject": one_line(f"Your security deposit statement: {prop}, {unit}"),
+                "body": (
+                    f"Hello {name},\n\n"
+                    f"Your security deposit statement for {prop}, {unit} is attached as a PDF: "
+                    "what your deposit came to, what was kept and why, what came back to you, "
+                    f"and the receipts and move-out photos it names.\n\n{portal}{company}\n"
+                ),
+            },
+        )
+        emailed.append((name, to))
+    return emailed, without
+
+
 # --- what the nightly run (and an admin's run by hand) writes --------------------------------
 
 

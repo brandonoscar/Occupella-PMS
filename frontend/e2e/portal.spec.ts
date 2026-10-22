@@ -567,6 +567,18 @@ test("staff charge a tenant's damage at move-out, return the rest of the deposit
   await card.getByRole("button", { name: "Charge it" }).click();
   await expect(card.getByText("Charged $150.00: Carpet cleaning.")).toBeVisible();
   await expect(card.getByText(/Keeps \$150.00 for what the lease owes; \$750.00 goes back/)).toBeVisible();
+  // The day its deposit is due back (the strictest deadline found), and a receipt for what it keeps
+  // (migration 0120): over $125 with none on file, it asks for one.
+  await expect(card.getByText(/^(Return by|Was due back) \d\d\/\d\d\/\d{4}$/)).toBeVisible();
+  const fees = card.getByRole("list", { name: "Fees and receipts, E2E Property 8 / E2E Unit 8: Leaver E2E" });
+  await expect(fees.getByText("Receipt needed")).toBeVisible();
+  await fees.getByLabel("Receipt for Carpet cleaning").setInputFiles({
+    name: "carpet-invoice.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\n% synthetic invoice\n"),
+  });
+  await fees.getByRole("button", { name: "Add receipt" }).click();
+  await expect(card.getByText("Kept carpet-invoice as a receipt for Carpet cleaning.")).toBeVisible();
+  await expect(fees.getByRole("link", { name: "carpet-invoice" })).toBeVisible();
+  await expect(fees.getByText("Receipt needed")).toHaveCount(0);
 
   await card.getByRole("button", { name: "Return the deposit" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
@@ -574,11 +586,14 @@ test("staff charge a tenant's damage at move-out, return the rest of the deposit
   await expect(card.getByLabel("Returned, E2E Property 8 / E2E Unit 8: Leaver E2E")).toContainText(
     "kept $150.00 of $900.00, $750.00 back to the tenants",
   );
+  // Each tenant's statement: a letter with the receipt, to print and mail or to email.
   const statement = await page.request.get(
-    (await card.getByRole("link", { name: "Statement for the tenants (PDF)" }).getAttribute("href")) ?? "",
+    (await card.getByRole("link", { name: "Statement for Leaver E2E (PDF)" }).getAttribute("href")) ?? "",
   );
   expect(statement.status()).toBe(200);
   expect(statement.headers()["content-type"]).toBe("application/pdf");
+  await card.getByRole("button", { name: "Email the statement" }).click();
+  await expect(card.getByText(/^(Emailed Leaver E2E at .+\.|No email on file for Leaver E2E: add one on their page\.)$/)).toBeVisible();
 });
 
 test("staff keep an owner's document and a property's, and the owner downloads them from the portal", async ({ page, browser }) => {

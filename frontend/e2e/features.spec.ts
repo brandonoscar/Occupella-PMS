@@ -1312,7 +1312,7 @@ test("a lease ended mid-month keeps only its days of the month's rent, and its d
   await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
   await expect(lease).toContainText(`Returned ${dollars(back)} to the tenants; the rest paid what the lease owed.`);
   await expect(lease.getByText("Deposit returned")).toBeVisible();
-  await downloads(page, "Statement for the tenants (PDF)", PDF);
+  await downloads(page, "Statement for Drew Sample (PDF)", PDF);
 
   // The tenant downloads the same statement from the portal.
   const tenant = await (await browser.newContext()).newPage();
