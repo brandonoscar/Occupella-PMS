@@ -9,12 +9,13 @@ import { Form } from "../components/Form";
 import { Notice } from "../components/Notice";
 import { RowMenu } from "../components/RowMenu";
 import { Said } from "../components/Said";
+import { Select } from "../components/Select";
 import { PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
 import { usDate } from "../money";
-import type { Blank, NoticeTemplate, Templates } from "../notices";
-import { blank } from "../notices";
+import type { Blank, NoticeTemplate, TemplateUse, Templates } from "../notices";
+import { USE_LABEL, blank } from "../notices";
 import { STAFF_NAV } from "./staffNav";
 
 function detail(failed: unknown): string {
@@ -24,7 +25,8 @@ function detail(failed: unknown): string {
 // Settings → Notice templates (the founder's review q095): the company's own notices (late rent,
 // entry, non-renewal, anything it writes), with blanks the PMS fills from a lease. A lease's page
 // makes one into a notice for it. The words are the company's: the PMS writes no notice text and
-// checks no state's notice period or wording.
+// checks no state's notice period or wording. A template may be the company's own lease instead
+// (migration 0121), its blanks filled from a draft lease's terms when one is made from it.
 export function NoticeTemplatesPage({ me }: { me: Me }) {
   const [found, setFound] = useState<Templates | null>(null);
   const [error, setError] = useState("");
@@ -51,8 +53,9 @@ export function NoticeTemplatesPage({ me }: { me: Me }) {
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title="Notice templates" actions={<Button onClick={() => setEditing("new")}>Add template</Button>} />
       <p className="text-sm text-ink-muted">
-        Your own notices, in your own words. The PMS fills in the blanks from a lease and checks no state's notice
-        period or wording; have yours reviewed for the states you work in.
+        Your own notices and your own lease, in your own words. The PMS fills in the blanks from a lease, or from a
+        draft lease&apos;s terms, and checks no state&apos;s notice period or wording; have yours reviewed for the
+        states you work in.
       </p>
       <Said>{said}</Said>
       {editing === null && <Notice tone="error">{error}</Notice>}
@@ -67,6 +70,7 @@ export function NoticeTemplatesPage({ me }: { me: Me }) {
             <thead>
               <tr>
                 <th className="text-left">Template</th>
+                <th className="text-left">For</th>
                 <th className="text-left">Saved</th>
                 <th><span className="sr-only">Actions</span></th>
               </tr>
@@ -76,6 +80,7 @@ export function NoticeTemplatesPage({ me }: { me: Me }) {
                 <tr key={template.id} aria-label={template.name} className="cursor-pointer hover:bg-raised"
                   onClick={() => setEditing(template)}>
                   <td className="font-medium text-ink">{template.name}</td>
+                  <td className="text-sm text-ink-muted">{USE_LABEL[template.used_for]}</td>
                   <td className="text-sm text-ink-muted">
                     {usDate(template.saved_at.slice(0, 10))}{template.saved_by ? ` by ${template.saved_by}` : ""}
                   </td>
@@ -94,6 +99,7 @@ export function NoticeTemplatesPage({ me }: { me: Me }) {
       {editing !== null && found !== null && (
         <SidePanel title={editing === "new" ? "Add a notice template" : `Edit ${editing.name}`} onClose={() => setEditing(null)}>
           <TemplateForm template={editing === "new" ? null : editing} fields={found.fields}
+            leaseFields={found.lease_fields}
             onSaved={(saved) => {
               setSaid(`${saved.name} is saved.`);
               setEditing(null);
@@ -105,11 +111,13 @@ export function NoticeTemplatesPage({ me }: { me: Me }) {
   );
 }
 
-function TemplateForm({ template, fields, onSaved }: {
+function TemplateForm({ template, fields, leaseFields, onSaved }: {
   template: NoticeTemplate | null;
   fields: Blank[];
+  leaseFields: Blank[];
   onSaved: (saved: NoticeTemplate) => void;
 }) {
+  const [use, setUse] = useState<TemplateUse>(template?.used_for ?? "notice");
   const [name, setName] = useState(template?.name ?? "");
   const [body, setBody] = useState(template?.body ?? "");
   const [error, setError] = useState("");
@@ -120,11 +128,16 @@ function TemplateForm({ template, fields, onSaved }: {
       event.preventDefault();
       setError("");
       try {
-        onSaved(await api.post<NoticeTemplate>(path, { name, body }));
+        onSaved(await api.post<NoticeTemplate>(path, { name, body, used_for: use }));
       } catch (failed) {
         setError(detail(failed));
       }
     }}>
+      <Select label="Used for" id="notice-use" value={use} disabled={template !== null}
+        onChange={(event) => setUse(event.target.value as TemplateUse)}>
+        <option value="notice">{USE_LABEL.notice}</option>
+        <option value="lease">{USE_LABEL.lease}</option>
+      </Select>
       <Field label="Name" id="notice-name" required maxLength={100} value={name}
         onChange={(event) => setName(event.target.value)} />
       <label htmlFor="notice-body" className="text-sm text-ink-muted">Text</label>
@@ -134,9 +147,11 @@ function TemplateForm({ template, fields, onSaved }: {
       <Notice tone="error">{error}</Notice>
       <div><Button type="submit">Save template</Button></div>
       <section aria-label="Blanks the PMS fills" className="flex flex-col gap-1 text-sm">
-        <p className="text-ink-muted">Blanks the PMS fills from the lease:</p>
+        <p className="text-ink-muted">
+          {use === "lease" ? "Blanks the PMS fills from the draft lease's terms:" : "Blanks the PMS fills from the lease:"}
+        </p>
         <ul className="flex flex-col gap-1">
-          {fields.map((field) => (
+          {(use === "lease" ? leaseFields : fields).map((field) => (
             <li key={field.name}>
               <code className="break-all font-mono text-ink">{blank(field.name)}</code>{" "}
               <span className="text-ink-muted">{field.what}</span>

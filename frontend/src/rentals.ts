@@ -2,6 +2,7 @@
 // property, a unit, and search results; and how they read.
 import { money, usDate } from "./money";
 import type { Hold, RentLease } from "./rent";
+import type { DepositInterestTerms } from "./depositInterest";
 import type { Agreement, LateFees, LeaseBreakFee, NsfFee } from "./setup";
 
 export type Paged<T> = { items: T[]; total: number; page: number; per_page: number };
@@ -80,10 +81,11 @@ export type Property = {
   // Its ownership shares, the latest first.
   ownership: Ownership[];
   units: UnitLine[];
-  // The late fee, NSF fee and lease-break fee terms in force today, if any.
+  // The late fee, NSF fee, lease-break fee and deposit interest terms in force today, if any.
   late_fees: LateFees | null;
   nsf_fee: NsfFee | null;
   lease_break_fee: LeaseBreakFee | null;
+  deposit_interest: DepositInterestTerms | null;
 };
 export type Unit = { id: string; name: string; archived: boolean; property: Ref; leases: LeaseLine[] };
 

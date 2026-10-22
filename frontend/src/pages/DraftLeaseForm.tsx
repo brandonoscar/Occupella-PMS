@@ -7,6 +7,7 @@ import { Notice } from "../components/Notice";
 import { Select } from "../components/Select";
 import type { Application } from "../leasing";
 import { applicantNames } from "../leasing";
+import type { NoticeTemplate, Templates } from "../notices";
 import type { MonthlyCharge, Offered, RenewableLease } from "../offers";
 import { MAX_DOCUMENT, base64Of, dayAfter, isPdf, parseSigners, signersText } from "../offers";
 import type { Paged } from "../rentals";
@@ -17,7 +18,8 @@ const NO_CHARGE: MonthlyCharge = { kind: "fee", memo: "", amount: "" };
 
 // New draft lease (ADR 0006): a lease for an approved application or the renewal of a lease, its
 // days, rent, the security deposit it asks and the monthly fees and credits besides rent, the
-// company's own lease PDF and who signs. Saved as a draft to send later, or sent for signing now.
+// company's own lease PDF (or one of its lease templates, filled in from these terms; migration
+// 0121) and who signs. Saved as a draft to send later, or sent for signing now.
 // `from` starts it on an application ("application:<id>") or a lease ("lease:<id>").
 export function DraftLeaseForm({ from = "", record, onMade }: {
   from?: string;
@@ -37,6 +39,10 @@ export function DraftLeaseForm({ from = "", record, onMade }: {
   // Guarantors who sign too, one a line; they become the lease's guarantors, not tenants.
   const [guarantors, setGuarantors] = useState("");
   const [document, setDocument] = useState("");
+  // The company's own PDF, or a lease template of its own the PMS fills in.
+  const [from_, setFrom] = useState<"pdf" | "template">("pdf");
+  const [leaseTemplates, setLeaseTemplates] = useState<NoticeTemplate[]>([]);
+  const [templateId, setTemplateId] = useState("");
   const [problem, setProblem] = useState("");
   // Which of the two submit buttons was pressed: Send for signing, or Save draft.
   const sending = useRef(true);
@@ -46,6 +52,13 @@ export function DraftLeaseForm({ from = "", record, onMade }: {
       .then((open) => setApproved(open.items.filter((a) => a.status === "approved" || a.status === "conditional")))
       .catch(() => setApproved([]));
     api.get<RenewableLease[]>("/api/leasing/leases").then(setLeases).catch(() => setLeases([]));
+    api.get<Templates>("/api/notices/templates")
+      .then((found) => {
+        const leasesOnly = found.templates.filter((t) => t.used_for === "lease");
+        setLeaseTemplates(leasesOnly);
+        setTemplateId(leasesOnly[0]?.id ?? "");
+      })
+      .catch(() => setLeaseTemplates([]));
   }, []);
   // Started from an application's or a lease's page: that one, once it is loaded.
   const [started, setStarted] = useState(false);
@@ -87,6 +100,8 @@ export function DraftLeaseForm({ from = "", record, onMade }: {
     setDocument(base64Of(bytes));
   }
 
+  const ready = from_ === "pdf" ? document !== "" : templateId !== "";
+
   function change(n: number, part: Partial<MonthlyCharge>) {
     setCharges(charges.map((c, at) => (at === n ? { ...c, ...part } : c)));
   }
@@ -111,8 +126,9 @@ export function DraftLeaseForm({ from = "", record, onMade }: {
       monthly_rent: rent,
       security_deposit: deposit || null,
       recurring_charges: charges,
-      document_title: title,
-      document_base64: document,
+      ...(from_ === "template"
+        ? { template_id: templateId }
+        : { document_title: title, document_base64: document }),
       signers: [...people.signers, ...backing.signers.map((g) => ({ ...g, role: "guarantor" }))],
       send,
     }, (made) => {
@@ -181,10 +197,26 @@ export function DraftLeaseForm({ from = "", record, onMade }: {
               </div>
             )}
           </fieldset>
-          <Field label="Document title" id="draft-title" required maxLength={200} value={title}
-            onChange={(e) => setTitle(e.target.value)} />
-          <Field label="Lease document (PDF, your own)" id="draft-document" type="file" accept="application/pdf"
-            onChange={(e) => void pick(e.target.files?.[0])} />
+          <Select label="The lease" id="draft-from" value={from_}
+            onChange={(e) => setFrom(e.target.value as "pdf" | "template")}>
+            <option value="pdf">Your own PDF</option>
+            <option value="template">One of your lease templates, filled in</option>
+          </Select>
+          {from_ === "pdf" ? (
+            <>
+              <Field label="Document title" id="draft-title" required maxLength={200} value={title}
+                onChange={(e) => setTitle(e.target.value)} />
+              <Field label="Lease document (PDF, your own)" id="draft-document" type="file" accept="application/pdf"
+                onChange={(e) => void pick(e.target.files?.[0])} />
+            </>
+          ) : leaseTemplates.length === 0 ? (
+            <Notice tone="info">No lease template yet: add one at Settings, Notice templates, used for a lease to sign.</Notice>
+          ) : (
+            <Select label="Lease template" id="draft-template" value={templateId}
+              onChange={(e) => setTemplateId(e.target.value)}>
+              {leaseTemplates.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </Select>
+          )}
           <label htmlFor="draft-signers" className="flex flex-col gap-1.5 text-sm text-ink-muted">
             Who signs, one a line: Name, email
             <textarea id="draft-signers" rows={3} required value={signers} onChange={(e) => setSigners(e.target.value)}
@@ -196,12 +228,12 @@ export function DraftLeaseForm({ from = "", record, onMade }: {
               className={TEXTAREA} />
           </label>
           <Notice tone="error">{problem}</Notice>
-          {!document && <Notice tone="info">Choose the lease document first.</Notice>}
+          {from_ === "pdf" && !document && <Notice tone="info">Choose the lease document first.</Notice>}
           <div className="flex flex-wrap gap-2">
-            <Button type="submit" disabled={!document} onClick={() => { sending.current = true; }}>
+            <Button type="submit" disabled={!ready} onClick={() => { sending.current = true; }}>
               Send for signing
             </Button>
-            <Button type="submit" variant="secondary" disabled={!document} onClick={() => { sending.current = false; }}>
+            <Button type="submit" variant="secondary" disabled={!ready} onClick={() => { sending.current = false; }}>
               Save draft
             </Button>
           </div>
