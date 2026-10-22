@@ -202,6 +202,7 @@ AREA_PATHS = (
     ("/api/inspections", "move-out"),
     ("/api/documents", "documents"),
     ("/api/notes", "documents"),
+    ("/api/notices", "documents"),  # notice templates and the notices made from them
     ("/api/leasing/", "leasing"),
     ("/api/maintenance/", "maintenance"),
     ("/api/work-orders", "maintenance"),

@@ -20,6 +20,7 @@ export const STAFF_NAV: NavEntry[] = [
     items: [
       { href: "/properties", label: "Properties" },
       { href: "/rent-roll", label: "Rent roll" },
+      { href: "/payment-files", label: "Payment files" },
       { href: "/tenants", label: "Tenants" },
       { href: "/owners", label: "Owners" },
       { href: "/housing-authorities", label: "Housing authorities" },
@@ -70,6 +71,7 @@ export const SETTINGS = [
   { href: "/settings/groups", label: "Property groups" },
   { href: "/settings/setup", label: "Company setup" },
   { href: "/settings/accounts", label: "Chart of accounts" },
+  { href: "/settings/notices", label: "Notice templates" },
   { href: "/settings/import", label: "Import from another PMS" },
   { href: "/settings/data-export", label: "Data export" },
   { href: "/settings/quickbooks", label: "QuickBooks" },

@@ -920,6 +920,38 @@ browser = [
 ]
 
 [[feature]]
+id = "payment-files"
+statement = "Rentals, Payment files (the founder's review q035; migration 0118): staff bring in a bank's or lockbox's CSV file of the tenants' payments it received, after a preview of what each line will do. It comes in once. Each line naming one lease in effect on its day (by unit and property, or by payer) is recorded to it as Receive payment records one; a line naming none or several, looking recorded already, or refused by the books waits, and staff record it to a lease they find (its owner's account, past a hold) or set it aside with why."
+operations = [
+  "POST /api/rent/payment-files/preview",
+  "POST /api/rent/payment-files",
+  "GET /api/rent/payment-files",
+  "GET /api/rent/payment-files/{file_id}",
+  "POST /api/rent/payment-files/lines/{line_id}/record",
+  "POST /api/rent/payment-files/lines/{line_id}/set-aside",
+]
+browser = [
+  "features.spec.ts › staff bring in a lockbox's payment file once: lines naming one lease are recorded to it, and staff record or set aside the ones that wait",
+]
+
+[[feature]]
+id = "notice-templates"
+statement = "Settings, Notice templates (the founder's review q095; migration 0119): staff keep the company's own notices in its own words, with blanks the PMS fills from a lease (tenants, home, rent, balance due, lease days, the notice's day, the company, who made it); a blank it doesn't fill is refused; a name is the company's once; each save is a version, and a removed template stays on the notices made from it. A lease's Files tab writes a notice from one, dated a day staff pick, read filled in before it is made, kept as made and downloaded as a PDF. The PMS checks no state's notice period or wording."
+operations = [
+  "GET /api/notices/templates",
+  "POST /api/notices/templates",
+  "POST /api/notices/templates/{template_id}",
+  "POST /api/notices/templates/{template_id}/remove",
+  "POST /api/notices/preview",
+  "POST /api/notices",
+  "GET /api/notices",
+  "GET /api/notices/{notice_id}/pdf",
+]
+browser = [
+  "features.spec.ts › staff keep the company's own notice templates, make one into a notice for a lease, read it filled in and download its PDF",
+]
+
+[[feature]]
 # A month run start to end (frontend/e2e/journey.spec.ts), on its own demo PMC (e2e/seed.py,
 # "journey"); its operations are claimed by the features above too.
 id = "a-month"
