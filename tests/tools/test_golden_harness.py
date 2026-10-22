@@ -68,6 +68,7 @@ def test_report_discovery_and_missing_cases(conn, tmp_path):
         "trust_report_general_ledger",
         "trust_report_income_statement",
         "trust_report_income_statement_accrual",
+        "trust_report_income_statement_all_owners",
         "trust_report_inspection",
         "trust_report_lease_expirations",
         "trust_report_owner_balance_sheet",

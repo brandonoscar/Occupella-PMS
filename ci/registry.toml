@@ -840,7 +840,7 @@ tests = [
 
 [[report]]
 id = "income-statement"
-statement = "An owner's income statement over days (UTC), cash basis: per property and across them, what was collected from tenants (matched payments less what bounced back) by what it paid (rent, recurring charges, late fees, NSF fees, other charges; a lease end's adjustment is what it adjusts), each of the company's charge types on a line of its own after them once money was collected on it (a fee's own type, or its recurring charge's; migration 0100), the management fees (Schedule E line 11) and leasing fees (line 8), the bills set aside by their latest expense account and those in none, total expenses and net income; then the same by Schedule E line. Compared to a checked-in golden file."
+statement = "An owner's income statement over days (UTC), cash basis: per property and across them, what was collected from tenants (matched payments less what bounced back) by what it paid (rent, recurring charges, late fees, NSF fees, other charges; a lease end's adjustment is what it adjusts), each of the company's charge types on a line of its own after them once money was collected on it (a fee's own type, or its recurring charge's; migration 0100), the management fees (Schedule E line 11) and leasing fees (line 8), the bills set aside by their latest expense account and those in none, total expenses and net income; then the same by Schedule E line. Across every owner of the PMC (q108, migration 0112: trust_report_income_statement_all_owners), each property account's lines as its owner's own statement has them, named by its property and owner, and each line across them all their sum. Compared to checked-in golden files."
 tests = [
   "tests/golden/test_golden.py::test_every_golden_case_matches",
   "tests/test_income_statement.py::test_what_was_collected_is_income_by_what_it_paid",
@@ -1013,10 +1013,12 @@ tests = [
 
 [[report]]
 id = "vendor-payments"
-statement = "Vendor payments for a calendar year (UTC): what each vendor was paid through trust_pay_bill, by payment date, with the number of payments and the total, for 1099 preparation (nothing is filed and no threshold applied). Compared to a checked-in golden file."
+statement = "The 1099 summary for a calendar year (UTC): what each vendor was paid through trust_pay_bill, by payment date, and what the old system paid it that year before the cutover, with the number of payments; a vendor whose latest profile marks them for a 1099 and was paid the IRS's threshold or more (600.00 through 2025, 2000.00 from 2026) on it and in its total, one paid less under the threshold, one with no profile listed apart, and those marked for none on one line (q060, migration 0113). Nothing is filed. Compared to checked-in golden files."
 tests = [
   "tests/golden/test_golden.py::test_every_golden_case_matches",
   "tests/test_recurring_bills.py::test_each_vendor_shows_what_it_was_paid_in_the_year",
+  "tests/test_recurring_bills.py::test_only_vendors_marked_for_a_1099_are_on_it_by_their_latest_profile",
+  "tests/test_recurring_bills.py::test_the_threshold_is_the_irss_for_the_year",
   "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
 ]
 
@@ -1062,7 +1064,7 @@ tests = [
 
 [[invariant]]
 id = "a-document-is-its-file-and-its-bytes-stay-out-of-the-log"
-statement = "A document is a PDF, a JPEG or a PNG of at most 5 MB about one record of its own PMC (a vendor's W-9, a bill's receipt, a lease's move-out photo, an owner's document), and has its file at commit: bytes of the type, size and SHA-256 its row says. Documents and removals are append-only; the bytes are never copied into the audit log and trust_ai_agent never reads them. An owner downloads only their own owner documents."
+statement = "A document is a PDF, a JPEG or a PNG of at most 5 MB about one record of its own PMC (a vendor's W-9, a bill's receipt, a lease's move-out photo, an owner's document), and has its file at commit: bytes of the type, size and SHA-256 its row says. Documents and removals are append-only; the bytes are never copied into the audit log and trust_ai_agent never reads them. An owner downloads only their own owner documents, the files about the properties they hold an account for and those properties' units, and their accounts' bills' receipts (q046)."
 tests = [
   "tests/test_documents.py::test_a_file_is_the_type_its_document_says",
   "tests/test_documents.py::test_a_file_is_the_size_and_digest_its_document_says",
@@ -1070,6 +1072,7 @@ tests = [
   "tests/test_documents.py::test_the_log_records_the_document_and_never_its_bytes",
   "tests/test_documents.py::test_the_ai_knows_a_document_exists_and_never_reads_it",
   "tests/api/test_documents_api.py::test_an_owner_reads_their_own_documents_only",
+  "tests/api/test_documents_api.py::test_an_owner_reads_their_properties_files_and_their_bills_receipts",
   "tests/properties/test_document_properties.py::test_documents_are_their_files_and_their_bytes_stay_out_of_the_log",
 ]
 
@@ -1130,11 +1133,12 @@ tests = [
 
 [[report]]
 id = "vacancy"
-statement = "Vacancy at a day's end: each unit with no lease in effect, since the day after its last lease ended (unknown if never leased), its last rent and the next lease booked; then units, occupied, vacant and occupancy. Compared to a checked-in golden file."
+statement = "Vacancy at a day's end: each unit with no lease in effect, since the day after its last lease ended (one never leased by the day since the day it was added to the PMS, UTC, a line under it saying so, and since a day not known if it was added after the day; q084, migration 0114), its last rent and the next lease booked; then units, occupied, vacant and occupancy. Compared to a checked-in golden file."
 tests = [
   "tests/golden/test_golden.py::test_every_golden_case_matches",
   "tests/test_more_reports.py::test_a_lease_ending_on_the_day_keeps_its_unit_occupied_that_day",
   "tests/test_more_reports.py::test_a_company_with_no_units_says_so",
+  "tests/test_more_reports.py::test_a_unit_never_leased_is_vacant_since_it_was_added",
 ]
 
 [[report]]
@@ -1299,7 +1303,7 @@ tests = [
 
 [[invariant]]
 id = "housing-assistance-splits-the-rent"
-statement = "A lease's housing assistance from a month splits each month's rent as it is charged: the authority's part (its share of the month's rent to the cent, prorated as the rent, never more than it) is the authority's charge and the tenant is charged the rest, so the two come to the month's rent through every lease end set, moved or cleared; the tenant's late fees, deposit kept and balance count the tenant's part alone; an authority's payment pays its charges oldest first into the owners' accounts, never more than it owes, and counts as rent collected; a transfer pays a tenant's charges or an authority's, never both; every trust bank account ties out (migration 0095)."
+statement = "A lease's housing assistance from a month splits each month's rent as it is charged: the authority's part (its share of the month's rent to the cent, prorated as the rent, never more than it) is the authority's charge and the tenant is charged the rest, so the two come to the month's rent through every lease end set, moved or cleared; the tenant's late fees, deposit kept and balance count the tenant's part alone; an authority's payment pays its charges oldest first into the owners' accounts, never more than it owes, and counts as rent collected; a transfer pays a tenant's charges or an authority's, never both; every trust bank account ties out (migration 0095). Since migration 0116 (q034): a payment the bank returned moves its money back out of the owner's account and opens each charge it paid by what it paid of it, the tenant's side untouched; each part of a rent still open at the end of its last grace day gets one late fee on the authority, once, never the tenant, and a late fee paid is a late fee, not rent, on the income statements and for the management fee; an authority's payment dated in a lease's payment hold is refused unless allowed."
 tests = [
   "tests/properties/test_assistance_properties.py::test_the_rent_splits_between_tenant_and_authority_to_the_cent",
   "tests/test_housing_assistance.py::test_rent_charged_in_an_assisted_month_splits_between_tenant_and_authority",
@@ -1309,6 +1313,10 @@ tests = [
   "tests/test_housing_assistance.py::test_a_transfer_pays_a_tenants_charges_or_an_authoritys_never_both",
   "tests/test_housing_assistance.py::test_a_lease_end_moves_both_parts_to_its_days",
   "tests/test_housing_assistance.py::test_the_authoritys_rent_counts_as_rent_collected",
+  "tests/test_housing_assistance.py::test_an_authoritys_part_still_open_after_its_grace_is_charged_a_late_fee_once",
+  "tests/test_housing_assistance.py::test_an_authority_payment_that_bounced_is_owed_again_and_counts_back_out",
+  "tests/test_housing_assistance.py::test_an_authority_payment_in_a_payment_hold_is_refused_unless_allowed",
+  "tests/test_housing_assistance.py::test_an_authoritys_late_fee_paid_is_a_late_fee_not_rent",
   "tests/test_housing_assistance.py::test_a_renewal_keeps_the_assistance_and_splits_its_part_month",
   "tests/api/test_assistance_api.py::test_an_authority_pays_for_several_leases_into_each_propertys_owner",
   "tests/api/test_assistance_api.py::test_an_authority_pays_no_more_than_it_owes_and_all_or_none",
@@ -1317,7 +1325,7 @@ tests = [
 
 [[invariant]]
 id = "ownership-shares-split-to-the-cent"
-statement = "A property's ownership is each owner's percent from a day (above 0, to four decimals, together 100 at commit, each an owner's account at the property, all in one trust bank account; append-only, naming who recorded it; migration 0094). A payment, prepaid rent used, a deposit kept at move-out and a bill split by ownership go to the owners by the shares in force on the day: each percent rounded down to the cent, the cents left over to the largest remainders, the account first by id on a tie, so the parts come to the amount, each within a cent of its share; each part is matched in full, a bounce takes back each owner's part, and every trust bank account ties out. A property without shares keeps the one account staff choose."
+statement = "A property's ownership is each owner's percent from a day (above 0, to four decimals, together 100 at commit, each an owner's account at the property, all in one trust bank account; append-only, naming who recorded it; migration 0094). A payment, prepaid rent used, a deposit kept at move-out and a bill split by ownership go to the owners by the shares in force on the day: each percent rounded down to the cent, the cents left over to the largest remainders, the account first by id on a tie, so the parts come to the amount, each within a cent of its share; each part is matched in full, a bounce takes back each owner's part, and every trust bank account ties out. A property without shares keeps the one account staff choose. A management fee for a period is one for the property owned in shares on its last day (migration 0115, q044): its owners' rent and recurring fees collected added up, under the fee terms they share, the minimum and flat fee once, split by those shares to the cent, each owner's account paying its part once; an owner outside the shares takes their own fee; owners whose terms differ take none."
 tests = [
   "tests/properties/test_ownership_properties.py::test_a_co_owned_propertys_money_splits_by_its_shares_to_the_cent",
   "tests/test_ownership_shares.py::test_an_amount_splits_to_the_cent_and_the_parts_come_to_it",
@@ -1325,6 +1333,10 @@ tests = [
   "tests/test_ownership_shares.py::test_shares_come_to_100_at_commit",
   "tests/test_ownership_shares.py::test_the_owners_accounts_are_in_one_trust_bank_account",
   "tests/test_ownership_shares.py::test_what_a_lease_owes_kept_from_its_deposit_goes_to_its_owners_by_their_shares",
+  "tests/test_ownership_shares.py::test_a_shared_propertys_management_fee_is_one_fee_split_by_its_shares",
+  "tests/test_ownership_shares.py::test_the_minimum_is_charged_once_for_the_property_not_once_per_owner",
+  "tests/test_ownership_shares.py::test_owners_whose_terms_differ_take_no_fee_until_their_terms_agree",
+  "tests/api/test_setup.py::test_terms_for_every_owner_of_a_property_go_to_each_of_their_accounts",
   "tests/api/test_ownership_api.py::test_a_payment_pays_the_owners_by_their_shares",
   "tests/api/test_ownership_api.py::test_a_bounced_split_payment_takes_back_each_owners_part",
   "tests/api/test_ownership_api.py::test_prepaid_rent_used_pays_the_owners_by_their_shares",
@@ -1398,3 +1410,14 @@ tests = [
   "tests/api/test_assistance_api.py::test_records_are_of_a_lease_with_assistance_on_file_of_the_company",
 ]
 
+
+[[invariant]]
+id = "prepaid-rent-used-by-itself"
+statement = "A company that turns it on (migration 0117, append-only, the latest row holding, off by default) has the nightly run and an admin's Run rent now use each lease's tenants' prepaid rent for what the lease owes, as Use prepaid rent does: no more than either, once a day per lease, never for a lease on a payment hold that day or whose owner's account staff must choose; it uses nothing while off, and every trust bank account ties out."
+tests = [
+  "tests/properties/test_prepaid_by_itself_properties.py::test_prepaid_rent_used_by_itself_follows_the_setting_holds_and_days",
+  "tests/api/test_prepaid_by_itself_api.py::test_run_rent_now_uses_prepaid_rent_for_the_new_rent_once_it_is_on",
+  "tests/api/test_prepaid_by_itself_api.py::test_a_lease_uses_its_prepaid_rent_once_a_day",
+  "tests/api/test_prepaid_by_itself_api.py::test_a_lease_on_hold_or_whose_owners_account_staff_choose_is_left_for_staff",
+  "tests/api/test_prepaid_by_itself_api.py::test_the_nightly_run_uses_it_for_its_company_only",
+]

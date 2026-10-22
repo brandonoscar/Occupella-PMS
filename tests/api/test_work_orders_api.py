@@ -380,13 +380,15 @@ def test_a_vendors_page_has_their_bills_and_work_orders_and_they_are_renamed(
 
 
 def test_renewals_list_leases_ending_soon_with_their_lease_and_renewal(client, conn, staff, pmc):
+    # Today as the API takes it, read now: TODAY is yesterday's for a run that crosses midnight.
+    today = datetime.now(UTC).date()
     prop = pmc.owners[0].property_id
     unit = add_unit(conn, pmc.pmc_id, prop, "Unit 1")
     tenant = add_tenant(conn, pmc.pmc_id, prop, "Tenant 2")
-    ends = TODAY + 20 * DAY
-    lease = open_lease(conn, pmc.pmc_id, unit, TODAY - 300 * DAY, ends, "1000.00", [tenant])
+    ends = today + 20 * DAY
+    lease = open_lease(conn, pmc.pmc_id, unit, today - 300 * DAY, ends, "1000.00", [tenant])
     later = add_unit(conn, pmc.pmc_id, prop, "Unit 2")
-    open_lease(conn, pmc.pmc_id, later, TODAY - 300 * DAY, TODAY + 200 * DAY, "900.00", [tenant])
+    open_lease(conn, pmc.pmc_id, later, today - 300 * DAY, today + 200 * DAY, "900.00", [tenant])
     offer_lease(
         conn, pmc.pmc_id, unit, add_staff(conn, pmc.pmc_id), ends + DAY, renews_lease_id=lease
     )
@@ -403,7 +405,7 @@ def test_renewals_list_leases_ending_soon_with_their_lease_and_renewal(client, c
         "monthly_rent": "1000.00",
         "renewal": "drafted",
     }
-    later_on = ok(client.get("/api/leasing/renewals", params={"on": str(TODAY + 150 * DAY)}))
+    later_on = ok(client.get("/api/leasing/renewals", params={"on": str(today + 150 * DAY)}))
     assert [r["unit"] for r in later_on] == ["Unit 2"]
 
 

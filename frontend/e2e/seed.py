@@ -500,6 +500,7 @@ FEATURES = (
     "lease-people",
     "rent-due-day",
     "owner-fees",
+    "prepaid-rent",
     "shared-bills",
     "ownership",
     "housing-assistance",

@@ -306,6 +306,34 @@ describe("LeasePage", () => {
     expect(calls[3]?.[1]).toMatchObject({ tenant_id: "t1", amount: "300.00", kind: "pet" });
   });
 
+  it("says what deposit the signed lease asked and records the rest from its card", async () => {
+    const ASKED: LeaseDetail = { ...LEASE, deposit_asked: { asked: "2000.00", held: "1200.00", to_receive: "800.00" } };
+    const fetch = server(ASKED);
+    await open(ASKED);
+
+    const asked = screen.getByTestId("deposit-asked");
+    expect(asked.textContent).toBe("The signed lease asked $2,000.00: $1,200.00 held, $800.00 still to receiveTo receive");
+    fireEvent.click(within(asked.closest("section") as HTMLElement).getByRole("button", { name: "Record deposit" }));
+    const deposit = screen.getByRole("dialog", { name: "Record deposit" });
+    // It starts from what the signed lease asked and isn't held yet.
+    expect((within(deposit).getByLabelText("Deposit received") as HTMLInputElement).value).toBe("800.00");
+    fireEvent.click(within(deposit).getByRole("button", { name: "Record deposit" }));
+    expect(await screen.findByText("Security deposit of $800.00 held.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([
+      ["/api/rent/deposits", expect.objectContaining({ tenant_id: "t1", amount: "800.00", kind: "security" })],
+    ]);
+  });
+
+  it("shows a deposit the signed lease asked as held once it all is, with nothing to record", async () => {
+    const HELD: LeaseDetail = { ...LEASE, deposit_asked: { asked: "1200.00", held: "1200.00", to_receive: "0.00" } };
+    server(HELD);
+    await open(HELD);
+
+    const asked = screen.getByTestId("deposit-asked");
+    expect(asked.textContent).toBe("The signed lease asked $1,200.00: all heldHeld");
+    expect(within(asked.closest("section") as HTMLElement).queryByRole("button", { name: "Record deposit" })).toBeNull();
+  });
+
   it("asks which deposit account a deposit goes in when the company has two, and only then", async () => {
     const base = server();
     const fetch = vi.fn((path: string, init?: RequestInit) =>

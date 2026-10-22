@@ -103,6 +103,18 @@ def test_a_csv_keeps_descriptions_and_references_short():
     assert (len(read.lines[0].description), len(read.lines[0].reference or "")) == (500, 255)
 
 
+def test_a_csv_whose_lines_end_in_a_bare_carriage_return_is_read():
+    read = statements.read("Date,Amount,Description\r2026-01-02,5.00,Rent\r", "csv")
+    assert [(line.posted_on, line.amount) for line in read.lines] == [
+        (date(2026, 1, 2), Decimal("5.00"))
+    ]
+
+
+def test_a_field_longer_than_csv_reads_is_refused_in_words():
+    with pytest.raises(StatementError, match=r"line 2: this isn't CSV the PMS can read \(field"):
+        statements.read("Date,Amount\n" + "x" * 140_000, "csv")
+
+
 @pytest.mark.parametrize(
     "content, why",
     [
