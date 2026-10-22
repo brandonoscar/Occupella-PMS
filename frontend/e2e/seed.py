@@ -523,6 +523,8 @@ FEATURES = (
     "assistance-compliance",
     "property-addresses",
     "vendor-archive",
+    "payment-files",
+    "notice-templates",
 )
 
 
