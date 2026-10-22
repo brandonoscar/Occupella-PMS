@@ -218,7 +218,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   screen at `/general-ledger` (`src/pms/api/general_ledger.py`: trust_report_general_ledger's
   rows by account, a page of accounts at a time; cash basis) with its Journal entry button to
   `/journal` (`src/pms/api/journal.py`), Pay owners at `/owner-draws` (several owners at once, all
-  or none, recorded as sent by check or EFT), management fees at `/management-fees` (each
+  or none, recorded as sent by check or EFT), management fees at `/management-fees` (Collect fees counts only what it takes now; each
   agreement's fee for a period, worked out and rolled back, then Collect fees), budgets at
   `/budgets` (`src/pms/api/budgets.py`: a property's year in one grid, saved at once, or beside
   what happened). The company's fees leave trust from Banking (an
@@ -263,7 +263,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   owner only: no request names an owner, a property or a PMC, and a bill named in a path is
   answered only if it is theirs (they approve or decline those over their limit). A tenant's pages
   (`src/pms/api/tenant.py`) show the session's tenant only: a lease named in a path is answered
-  only if they are on it, and reads as not found otherwise. They show what each lease charges
+  only if they are on it, and reads as not found otherwise. They show what each lease charges (rent as of its next due date, each change from its day)
   every month and what is charged already but due later, and once a deposit was returned at
   move-out, its statement (`trust_report_deposit_return`) to download; and a lease's files (q120):
   the lease as signed, its signing certificate when signed on the PMS's page, and the lease
@@ -683,6 +683,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   for each other. `trust_complete_lease_offer` makes it the lease once everyone has signed, once per offer
   and safe to retry, and an application or a lease takes one completed offer: a new lease's
   signers become its tenants; a renewal keeps the lease's tenants and ends it the day before.
+  Since migration 0152 a renewal goes ahead only while the lease it renews runs up to the day
+  before it starts (no end, or that end), keeps its deposit and its tenants (`trust_renewal_closed`):
+  otherwise it is never sent, signed or made a lease, its page says why and offers Void, the
+  tenant no longer sees it, and the lease page's End lease warns of it.
   READ COMMITTED; all append-only. Since migration 0071 an offer may be kept as a draft (no
   signature request until staff send it), asks a security deposit (`security_deposit`; asked,
   not held: the lease's page, the tenant portal and the Dashboard say what its signed offer asked,
@@ -699,7 +703,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the first tenant's prepaid rent; prepaid rent is used the same way. Each record carries a
   request id the page makes (its key in `trust_post_transfers`), so sending it again records
   nothing new. The page lists each payment as it came in (its whole amount, prepaid rent
-  included), and a bounce moves back what the payment moved, reverses its matches and charges
+  included), and a bounce moves back what the payment moved (one the owner's account no longer
+  covers, paid out since, is refused in words naming each owner short and by how much, with a link
+  to their Financials to record the contribution that lets it through), reverses its matches and charges
   the property's NSF fee, once. A
   lease's rent work takes an advisory lock on the lease. The PMS records what the bank did;
   it sends no money. A payment came by check, cashier's check, money order, EFT or cash. Each has
@@ -720,7 +726,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   opening balance is a line of its own), each with all its lines, and a file goes in once.
   `trust_match_bank_lines` matches lines to transfers that moved the account's cash by the same
   total; a line or a transfer is in at most one match not undone (`trust_unmatch_bank_lines`),
-  and neither changes a period already approved. `trust_report_bank_reconciliation` shows a
+  and neither changes a period already approved; until matched, a line with a transfer of its
+  amount in the books reads as not matched yet, never as missing from them. `trust_report_bank_reconciliation` shows a
   day's end; `trust_prepare_bank_reconciliation` prepares a period only when no line up to it is
   missing from the books. All append-only. The three-way reconciliation report adds what had
   not cleared by a period's last day to its statement balance and lists it, from that day's
