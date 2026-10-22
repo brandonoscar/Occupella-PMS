@@ -3,6 +3,7 @@
 // and month-end, last month prepared and waiting for its approval. ci/features.toml names the test that proves
 // each feature, and tools/check_features.py keeps the two in step.
 import { readFileSync } from "node:fs";
+import { inflateSync } from "node:zlib";
 import { expect, type Locator, type Page, test } from "@playwright/test";
 import { expectAccessible } from "./a11y";
 import { totp } from "./totp";
@@ -4380,6 +4381,132 @@ test("staff keep the company's own notice templates, make one into a notice for 
   await page.getByRole("row", { name: "Birch Flats, Unit A" }).click();
   await page.getByRole("tab", { name: "Files" }).click();
   await expect(page.getByRole("list", { name: "Notices made" })).toContainText("Notice of late rent (PDF)");
+  // The saved toasts sit over the page's corner until they go.
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+});
+
+// The text a PDF of the PMS's own shows: each content stream, inflated.
+function pdfText(data: Buffer): string {
+  const text: string[] = [];
+  for (let at = data.indexOf("stream\n"); at >= 0; at = data.indexOf("stream\n", at + 1)) {
+    const end = data.indexOf("endstream", at);
+    try {
+      text.push(inflateSync(data.subarray(at + 7, end)).toString("latin1"));
+    } catch {
+      // A stream that isn't deflated (a font's, an image's) has no text to read.
+    }
+    at = end + 9;
+  }
+  return text.join("\n");
+}
+
+test("staff keep the company's own lease as a template, and a draft lease is it filled in from its terms", async ({
+  page,
+}) => {
+  const people = seed.features["lease-templates"]!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "Notice templates");
+  await page.getByRole("button", { name: "Add template" }).click();
+  const add = page.getByRole("dialog", { name: "Add a notice template" });
+  await add.getByLabel("Used for").selectOption({ label: "A lease to sign" });
+  await expect(add.getByRole("region", { name: "Blanks the PMS fills" })).toContainText("{{security_deposit}}");
+  await add.getByLabel("Name").fill("Residential lease");
+  // A notice's blank isn't a lease's.
+  await add.getByLabel("Text").fill("Balance: {{balance_due}}");
+  await add.getByRole("button", { name: "Save template" }).click();
+  await expect(add.getByRole("alert")).toContainText("{{balance_due}} is not a blank the PMS fills");
+  await add.getByLabel("Text").fill(
+    [
+      "Landlord: {{company_name}}",
+      "Tenants: {{tenant_names}}",
+      "Home: {{property}}, {{unit}}",
+      "From: {{lease_start}}",
+      "Rent: {{monthly_rent}}",
+      "Deposit: {{security_deposit}}",
+      "Each month also: {{monthly_charges}}",
+    ].join("\n"),
+  );
+  await add.getByRole("button", { name: "Save template" }).click();
+  await expect(page.getByText("Residential lease is saved.")).toBeVisible();
+  await expect(page.getByRole("row", { name: "Residential lease" })).toContainText("A lease to sign");
+
+  // Morgan Demo's renewal, from the template: the PDF it sends is the company's words filled in.
+  await section(page, "Draft leases");
+  await page.getByRole("button", { name: "New draft lease" }).click();
+  const panel = page.getByRole("dialog", { name: "New draft lease" });
+  await panel.getByRole("combobox", { name: "For", exact: true }).selectOption({ label: "Birch Flats, Unit A: Morgan Demo" });
+  const starts = firstOfMonthsAgo(-2);
+  await panel.getByLabel("Starts").fill(starts);
+  await panel.getByLabel("Rent a month").fill("1450.00");
+  await panel.getByLabel("Security deposit (optional)").fill("1395.00");
+  await panel.getByRole("button", { name: "Add a monthly charge" }).click();
+  await panel.getByLabel("What for").fill("Parking");
+  await panel.getByLabel("Amount").fill("40.00");
+  await panel.getByLabel("The lease").selectOption({ label: "One of your lease templates, filled in" });
+  await expect(panel.getByRole("combobox", { name: "Lease template", exact: true })).toHaveValue(/.+/);
+  await panel.getByLabel("Who signs, one a line: Name, email").fill("Morgan Demo, morgan.lease-templates@example.com");
+  await panel.getByRole("button", { name: "Save draft" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Renewal for Birch Flats, Unit A" })).toBeVisible();
+  const pdf = await page.request.get(
+    (await page.getByRole("link", { name: "Residential lease (PDF)" }).getAttribute("href")) ?? "",
+  );
+  expect(pdf.status()).toBe(200);
+  const body = await pdf.body();
+  expect(body.subarray(0, 5).toString()).toBe("%PDF-");
+  const read = pdfText(body);
+  for (const words of [
+    "Landlord: Demo Property Management",
+    "Tenants: Morgan Demo",
+    "Home: Birch Flats, Unit A",
+    `From: ${us(starts)}`,
+    "Rent: $1,450.00",
+    "Deposit: $1,395.00",
+    "Each month also: Parking, $40.00 a month",
+  ]) {
+    expect(read).toContain(words);
+  }
+});
+
+test("staff set a property's deposit interest, credit a lease's interest against its rent and see it in Reports", async ({
+  page,
+}) => {
+  const people = seed.features["deposit-interest"]!;
+  await joinAsStaff(page, people.manager);
+  // Birch Flats' deposits earn 2% a year from two months ago, when Morgan Demo's came over.
+  const from = firstOfMonthsAgo(2);
+  await openProperty(page, "Birch Flats");
+  await expect(page.getByTestId("deposit-interest")).toHaveText("No deposit interest");
+  const terms = await setupPanel(page, "Set deposit interest");
+  await terms.getByLabel("Deposits earn from").fill(from);
+  await terms.getByLabel("Percent a year").fill("2");
+  await terms.getByRole("button", { name: "Set deposit interest" }).click();
+  await expect(page.getByTestId("deposit-interest")).toHaveText(`2% a year (from ${us(from)})`);
+
+  // On Morgan Demo's lease: what the deposit earned through today, credited against the rent.
+  await openLease(page, "Birch Flats, Unit A");
+  const panel = await leasePanel(page, "Deposit interest");
+  await expect(panel.getByTestId("interest-rate")).toHaveText(`2% a year (from ${us(from)})`);
+  await expect(panel.getByRole("list", { name: "Deposits" })).toContainText("Morgan Demo: $1,395.00 held, $");
+  const due = panel.getByTestId("interest-due");
+  await expect(due).toContainText(` to ${us(today())}: $`);
+  const amount = ((await due.textContent()) ?? "").split(": ")[1]!;
+  expect(amount).not.toBe("$0.00");
+  await expect(panel.getByLabel("Pay it as")).toHaveValue("rent_credit");
+  await panel.getByRole("button", { name: "Pay interest" }).click();
+  await expect(page.getByText(`${amount} credited against the rent, `, { exact: false }).first()).toBeVisible();
+  await page.getByRole("tab", { name: "Ledger" }).click();
+  await expect(page.getByRole("main")).toContainText(`Security deposit interest, `);
+
+  // Paid through today: nothing more is due, and Reports lists the lease from tomorrow.
+  const again = await leasePanel(page, "Deposit interest");
+  await expect(again.getByRole("list", { name: "Interest paid" })).toContainText(`${amount} credited against the rent`);
+  await again.getByRole("button", { name: "Close" }).click();
+  await section(page, "Reports");
+  await page.getByRole("list", { name: "Financial" }).getByRole("link", { name: "Deposit interest" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Deposit interest" })).toBeVisible();
+  const report = page.getByRole("table", { name: "Deposit interest" });
+  await expect(report).toContainText("Unit A");
+  await expect(report).toContainText("Morgan Demo");
   // The saved toasts sit over the page's corner until they go.
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
 });

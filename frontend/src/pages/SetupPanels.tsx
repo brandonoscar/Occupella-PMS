@@ -292,6 +292,35 @@ export function NsfFeePanel({ panel, propertyId }: { panel: Panel; propertyId: s
   );
 }
 
+// The yearly rate a property's security deposits earn from a day, as the law the company follows
+// sets it (migration 0122): the PMS builds in no state's rate; 0 earns none from that day.
+export function DepositInterestPanel({ panel, propertyId }: { panel: Panel; propertyId: string }) {
+  const { error, save } = useSave(panel);
+  const [from, setFrom] = useState(day(new Date()));
+  const [percent, setPercent] = useState("");
+  return (
+    <SidePanel title="Set deposit interest" onClose={panel.close}>
+      <Form className="flex flex-col gap-3" onSubmit={(event) => {
+        event.preventDefault();
+        return save("deposit-interest",
+          { property_id: propertyId, starts_on: from, annual_percent: percent.trim() },
+          () => `Deposits earn ${percent.trim()}% a year from ${usDate(from)}.`);
+      }}>
+        <Field label="Deposits earn from" id="interest-from" type="date" required value={from}
+          onChange={(e) => setFrom(e.target.value)} />
+        <Field label="Percent a year" id="interest-percent" inputMode="decimal" required value={percent}
+          onChange={(e) => setPercent(e.target.value)} />
+        <p className="text-sm text-ink-muted">
+          Each day&apos;s deposit earns the day&apos;s rate. Pay it from the lease&apos;s page, when the law you
+          follow says to: as a credit against the rent, or added to the deposit.
+        </p>
+        <div><Button type="submit">Set deposit interest</Button></div>
+        <Notice tone="error">{error}</Notice>
+      </Form>
+    </SidePanel>
+  );
+}
+
 // The lease-break fee leases starting from a day break under: a flat fee and months of rent,
 // charged only when staff end such a lease before its end date and tick it.
 export function LeaseBreakFeePanel({ panel, propertyId }: { panel: Panel; propertyId: string }) {

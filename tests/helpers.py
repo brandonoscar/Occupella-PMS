@@ -306,6 +306,28 @@ def return_deposit(connection, pmc_id, lease_id, request_key, event_at, owner_ac
     )
 
 
+def pay_deposit_interest(
+    connection, pmc_id, lease_id, through, paid_as, request_key, event_at, owner_account=None
+) -> Decimal:
+    """Pay a lease's deposit interest through a day, as a rent credit or added to its deposits
+    (migration 0122)."""
+    return _one(
+        connection,
+        "SELECT trust_pay_deposit_interest(%s, %s, %s, %s, %s, %s, %s)",
+        (pmc_id, lease_id, through, paid_as, owner_account, request_key, event_at),
+    )
+
+
+def deposit_interest_terms(connection, pmc_id, property_id, starts_on, percent) -> UUID:
+    """A property's yearly rate on deposits from a day (migration 0122)."""
+    return _one(
+        connection,
+        "INSERT INTO trust_deposit_interest_terms (pmc_id, property_id, starts_on, annual_percent)"
+        " VALUES (%s, %s, %s, %s) RETURNING id",
+        (pmc_id, property_id, starts_on, Decimal(percent)),
+    )
+
+
 def end_lease(connection, pmc_id, lease_id, ends_on) -> None:
     connection.execute("SELECT trust_end_lease(%s, %s, %s)", (pmc_id, lease_id, ends_on))
 

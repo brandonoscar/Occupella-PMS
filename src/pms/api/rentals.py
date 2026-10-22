@@ -195,10 +195,11 @@ class Property(BaseModel):
     # now, any from a later day hold from then.
     ownership: list[Ownership]
     units: list[UnitLine]
-    # The late fee, NSF fee and lease-break fee terms in force today, if any.
+    # The late fee, NSF fee, lease-break fee and deposit interest terms in force today, if any.
     late_fees: setup.LateFees | None
     nsf_fee: setup.NsfFee | None
     lease_break_fee: setup.LeaseBreakFee | None
+    deposit_interest: setup.DepositInterestTerms | None
 
 
 # A lease's (on l) tenants: their names, and their ids in the same order.
@@ -337,7 +338,7 @@ def property_page(request: Request, session: Staff, conn: Conn, property_id: UUI
         ).shares.append(Share(account=account, owner=owner, percent=exports.text(percent)))
     fees = conn.execute(
         "SELECT f.starts_on, f.grace_days, f.flat_fee, f.percent, f.maximum, s.starts_on, s.fee,"
-        " b.starts_on, b.flat_fee, b.rent_months"
+        " b.starts_on, b.flat_fee, b.rent_months, i.starts_on, i.annual_percent"
         " FROM (SELECT 1) AS one"
         " LEFT JOIN LATERAL (SELECT * FROM trust_late_fee_policies AS f"
         "   WHERE f.property_id = %(property)s AND f.starts_on <= %(day)s"
@@ -347,12 +348,15 @@ def property_page(request: Request, session: Staff, conn: Conn, property_id: UUI
         "   ORDER BY s.starts_on DESC LIMIT 1) AS s ON true"
         " LEFT JOIN LATERAL (SELECT * FROM trust_lease_break_fees AS b"
         "   WHERE b.property_id = %(property)s AND b.starts_on <= %(day)s"
-        "   ORDER BY b.starts_on DESC LIMIT 1) AS b ON true",
+        "   ORDER BY b.starts_on DESC LIMIT 1) AS b ON true"
+        " LEFT JOIN LATERAL (SELECT * FROM trust_deposit_interest_terms AS i"
+        "   WHERE i.property_id = %(property)s AND i.starts_on <= %(day)s"
+        "   ORDER BY i.starts_on DESC LIMIT 1) AS i ON true",
         {"property": property_id, "day": day},
     ).fetchone()
     assert fees is not None
     late_starts, grace, flat_fee, percent, maximum, nsf_starts, nsf = fees[:7]
-    break_starts, break_flat, break_months = fees[7:]
+    break_starts, break_flat, break_months, interest_starts, interest = fees[7:]
     # Each unit's lease in effect today, or else the soonest to start (a unit has one lease at a
     # time, so at most one is in effect).
     leases: dict[UUID, LeaseLine] = {}
@@ -403,6 +407,11 @@ def property_page(request: Request, session: Staff, conn: Conn, property_id: UUI
             starts_on=break_starts,
             flat_fee=exports.text(break_flat),
             rent_months=exports.text(break_months),
+        ),
+        deposit_interest=None
+        if interest_starts is None
+        else setup.DepositInterestTerms(
+            starts_on=interest_starts, annual_percent=exports.text(interest.normalize())
         ),
     )
 
