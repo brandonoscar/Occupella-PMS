@@ -90,7 +90,14 @@ def column(headers: list[str], names: tuple[str, ...]) -> int | None:
 
 
 def read_csv(content: str) -> Statement:
-    rows = list(csv.reader(io.StringIO(content.lstrip("\ufeff"))))
+    # newline="": the csv module itself reads \r\n, \n and a bare \r as the end of a row.
+    reader = csv.reader(io.StringIO(content.lstrip("\ufeff"), newline=""))
+    try:
+        rows = list(reader)
+    except csv.Error as bad:
+        raise StatementError(
+            f"line {reader.line_num}: this isn't CSV the PMS can read ({bad})"
+        ) from None
     rows = [row for row in rows if any(cell.strip() for cell in row)]
     if not rows:
         raise StatementError("the file is empty")

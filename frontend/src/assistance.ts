@@ -1,5 +1,6 @@
 import type { BadgeTone } from "./components/Badge";
 import { money, sumMoney, usDate } from "./money";
+import type { PaymentMethod } from "./rent";
 
 // A housing authority's part of a lease's rent (migration 0095, the founder's review q034;
 // src/pms/api/assistance.py): the authority pays its part of each month's rent, the tenant the
@@ -24,7 +25,8 @@ export type AuthorityCharge = {
   authority_id: string;
   due_on: string;
   memo: string;
-  source: "rent" | "staff";
+  // "late fee": the authority's late payment fee on a rent's part (migration 0116).
+  source: "rent" | "staff" | "late fee";
   charged: string;
   // What a lease's end or staff's credits added to it or took off it (signed).
   adjusted: string;
@@ -97,9 +99,39 @@ export type AssistedLease = {
   contract: string | null;
   owed: string;
   open_charges: AuthorityCharge[];
+  // A payment hold on the lease in force today (an eviction filed): from when, and why.
+  hold_since: string | null;
+  hold_reason: string | null;
 };
 
-export type AuthorityPage = { id: string; name: string; leases: AssistedLease[]; owed: string };
+// The authority's late payment fee in force today (migration 0116, q034).
+export type AuthorityLateFee = { starts_on: string; grace_days: number; flat_fee: string };
+
+// One of the authority's payments, and the day the bank returned it, once it bounced.
+export type AuthorityPayment = {
+  transfer_id: string;
+  received_on: string;
+  amount: string;
+  reference: string | null;
+  method: PaymentMethod | null;
+  bounced_on: string | null;
+};
+
+export type AuthorityPage = {
+  id: string;
+  name: string;
+  leases: AssistedLease[];
+  owed: string;
+  late_fee: AuthorityLateFee | null;
+  payments: AuthorityPayment[];
+};
+
+// "$25.00 when its part of a rent is still open 5 days after it was due", or none.
+export function lateFeeLine(fee: AuthorityLateFee | null): string {
+  if (fee === null) return "No late payment fee.";
+  const days = fee.grace_days === 1 ? "1 day" : `${fee.grace_days} days`;
+  return `A late payment fee of ${money(fee.flat_fee)} when its part of a rent is still open ${days} after it was due (from ${usDate(fee.starts_on)}).`;
+}
 
 // "From 11/01/2026: Synthetic Housing Authority pays $800.00 a month (contract HAP-0001)".
 export function termsLine(terms: AssistanceTerms): string {

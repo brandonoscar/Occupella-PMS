@@ -293,7 +293,8 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
           {open === "terms" && (
             <TermsPanel panel={panel} accounts={property.owners
               .map((o) => ({ account: o.account, label: `${o.owner}, ${property.name}` }))
-              .sort((a, b) => (a.account === account ? -1 : b.account === account ? 1 : 0))} />
+              .sort((a, b) => (a.account === account ? -1 : b.account === account ? 1 : 0))}
+              everyOwnerOf={property.owners.length > 1 ? property.name : undefined} />
           )}
         </>
       )}

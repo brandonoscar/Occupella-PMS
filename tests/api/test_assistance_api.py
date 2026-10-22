@@ -139,7 +139,14 @@ def test_staff_add_the_companys_housing_authorities(client, staff):
         {"id": first, "name": HA, "leases": 0, "owed": "0.00"},
     ]
     page = ok(client.get(f"/api/assistance/authorities/{first}"), 200)
-    assert page == {"id": first, "name": HA, "leases": [], "owed": "0.00"}
+    assert page == {
+        "id": first,
+        "name": HA,
+        "leases": [],
+        "owed": "0.00",
+        "late_fee": None,
+        "payments": [],
+    }
 
 
 def test_an_authority_is_on_file_once_and_has_a_name(client, staff):
@@ -659,6 +666,157 @@ def test_records_are_of_a_lease_with_assistance_on_file_of_the_company(client, c
     refused(certify(client, elsewhere), 404)
     refused(inspect(client, elsewhere), 404)
     assert page_of(client, lease)["compliance"] == NONE_ON_FILE
+
+
+# --- late fees, returned payments and holds (migration 0116, q034) ----------------------------
+
+
+def late_fee(client, authority, starts_on=STARTED, grace_days=5, flat_fee="25.00"):
+    return post(
+        client,
+        f"/api/assistance/authorities/{authority}/late-fees",
+        starts_on=starts_on,
+        grace_days=grace_days,
+        flat_fee=flat_fee,
+    )
+
+
+def test_an_authoritys_late_fee_is_set_from_a_day_and_the_run_charges_it(
+    client, conn, pmc, staff, lease
+):
+    authority = add_authority(client)
+    ok(terms(client, lease, authority, "800.00"))
+    charge_rent_due(conn, pmc.pmc_id, FIRST)
+    ok(late_fee(client, authority, grace_days=0))
+    refused(late_fee(client, authority, grace_days=0), 409, "from that day already")
+
+    page = ok(client.get(f"/api/assistance/authorities/{authority}"), 200)
+    assert page["late_fee"] == {"starts_on": str(STARTED), "grace_days": 0, "flat_fee": "25.00"}
+    # Run rent now, as of today: this month's part is past its last grace day once today is past
+    # the first; on the first itself it is not late yet.
+    ran = ok(
+        client.post("/api/rent/run", json={"due_on": str(FIRST), "late_fees_as_of": str(TODAY)}),
+        200,
+    )
+    assert ran["authority_late_fees"] == (1 if TODAY > FIRST else 0)
+    sources = [c["source"] for c in page_of(client, lease)["charges"]]
+    assert sources == (["rent", "late fee"] if TODAY > FIRST else ["rent"])
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"starts_on": "2026-10-01", "grace_days": 61, "flat_fee": "5.00"},
+        {"starts_on": "2026-10-01", "grace_days": -1, "flat_fee": "5.00"},
+        {"starts_on": "2026-10-01", "grace_days": 5, "flat_fee": "-1.00"},
+        {"starts_on": "2026-10-01", "grace_days": 5, "flat_fee": "1.001"},
+        {"starts_on": "someday", "grace_days": 5, "flat_fee": "5.00"},
+    ],
+)
+def test_late_fee_terms_refuse_bad_input(client, staff, body):
+    authority = add_authority(client)
+    refused(client.post(f"/api/assistance/authorities/{authority}/late-fees", json=body), 422)
+
+
+def test_an_authority_of_another_company_takes_no_late_fee(client, conn, staff):
+    other = make_pmc(conn)
+    elsewhere = conn.execute(
+        "INSERT INTO trust_housing_authorities (pmc_id, name) VALUES (%s, %s) RETURNING id",
+        (other.pmc_id, HA),
+    ).fetchone()[0]
+    refused(late_fee(client, elsewhere), 404)
+
+
+def test_an_authority_payment_that_bounced_moves_back_and_is_owed_again(
+    client, conn, pmc, staff, lease
+):
+    authority = add_authority(client)
+    ok(terms(client, lease, authority, "800.00"))
+    charge_rent_due(conn, pmc.pmc_id, FIRST)
+    before = balance(conn, pmc.owners[0].account)
+    paid = ok(pay(client, authority, [{"lease_id": lease, "amount": "800.00"}], reference="HAP 7"))
+    payments = ok(client.get(f"/api/assistance/authorities/{authority}"), 200)["payments"]
+    assert [(p["amount"], p["reference"], p["bounced_on"]) for p in payments] == [
+        ("800.00", "HAP 7", None)
+    ]
+
+    back = ok(post(client, f"/api/assistance/payments/{paid['transfers'][0]}/bounce", on=TODAY))
+    # Sent again, it records nothing new; a bounce of another day is refused.
+    again = ok(post(client, f"/api/assistance/payments/{paid['transfers'][0]}/bounce", on=TODAY))
+    if TODAY > FIRST:
+        other = post(
+            client,
+            f"/api/assistance/payments/{paid['transfers'][0]}/bounce",
+            on=TODAY - timedelta(days=1),
+        )
+        refused(other, 422)
+
+    assert back["amount"] == "800.00" and again == back
+    assert balance(conn, pmc.owners[0].account) == before
+    assert page_of(client, lease)["owed"] == "800.00"
+    assert page_of(client, lease)["charges"][0]["paid"] == "0.00"
+    payments = ok(client.get(f"/api/assistance/authorities/{authority}"), 200)["payments"]
+    assert payments[0]["bounced_on"] == str(TODAY)
+
+
+def test_a_bounce_names_an_authoritys_payment_on_or_after_its_day(client, conn, pmc, staff, lease):
+    authority = add_authority(client)
+    ok(terms(client, lease, authority, "800.00"))
+    charge_rent_due(conn, pmc.pmc_id, FIRST)
+    paid = ok(pay(client, authority, [{"lease_id": lease, "amount": "800.00"}]))
+    first = paid["transfers"][0]
+
+    refused(post(client, "/api/assistance/payments/pglt_nope/bounce", on=TODAY), 404)
+    refused(
+        post(client, f"/api/assistance/payments/{first}/bounce", on=TODAY - timedelta(days=1)),
+        422,
+        "on or after the day it was received",
+    )
+    refused(
+        post(client, f"/api/assistance/payments/{first}/bounce", on=TODAY + timedelta(days=1)),
+        422,
+    )
+    refused(post(client, f"/api/assistance/payments/{first}/bounce", on="someday"), 422)
+
+
+def test_an_authority_payment_in_a_payment_hold_is_taken_only_past_the_hold(
+    client, conn, pmc, staff, lease
+):
+    authority = add_authority(client)
+    ok(terms(client, lease, authority, "800.00"))
+    charge_rent_due(conn, pmc.pmc_id, FIRST)
+    conn.execute(
+        "INSERT INTO trust_payment_holds (pmc_id, lease_id, starts_on, reason)"
+        " VALUES (%s, %s, %s, 'Eviction filed')",
+        (pmc.pmc_id, lease, STARTED),
+    )
+    lines = [{"lease_id": lease, "amount": "800.00"}]
+
+    refused(pay(client, authority, lines), 409, "is on a payment hold from")
+    page = ok(client.get(f"/api/assistance/authorities/{authority}"), 200)
+    assert (page["leases"][0]["hold_since"], page["leases"][0]["hold_reason"]) == (
+        str(STARTED),
+        "Eviction filed",
+    )
+    paid = ok(pay(client, authority, lines, past_hold=True))
+
+    assert page_of(client, lease)["owed"] == "0.00"
+    assert conn.execute(
+        "SELECT allowed_by FROM trust_payment_hold_allowances WHERE transfer_id = %s",
+        (paid["transfers"][0],),
+    ).fetchone() == ("Staff 1",)
+
+
+def test_late_fees_and_bounces_take_staff(client, other_client, conn, app_conn, pmc, lease):
+    authority = conn.execute(
+        "INSERT INTO trust_housing_authorities (pmc_id, name) VALUES (%s, %s) RETURNING id",
+        (pmc.pmc_id, HA),
+    ).fetchone()[0]
+    assert late_fee(client, authority).status_code == 401
+    assert post(client, "/api/assistance/payments/pglt_x/bounce", on=TODAY).status_code == 401
+    join_as_owner(other_client, app_conn, pmc)
+    assert late_fee(other_client, authority).status_code == 403
+    assert post(other_client, "/api/assistance/payments/pglt_x/bounce", on=TODAY).status_code == 403
 
 
 # --- who may ------------------------------------------------------------------------------------

@@ -19,13 +19,24 @@ import time
 import tomllib
 import urllib.parse
 import urllib.request
+import uuid
 from datetime import UTC, date, datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from helpers import add_agreement, add_staff, contribute, enter_bill, make_pmc
+from helpers import (
+    add_agreement,
+    add_staff,
+    add_unit,
+    contribute,
+    enter_bill,
+    make_pmc,
+    open_lease,
+)
 
 from pms import accounts, email, email_html, notices
+from pms.api import rent
 
 pytestmark = pytest.mark.mailpit
 
@@ -144,7 +155,8 @@ def trusted(mailpit, monkeypatch):
 
 
 def turn_on_statements(conn, pmc_id):
-    settings = {**dict.fromkeys(notices.FIELDS), "owner_statement_day": 5}
+    """Monthly statements and payment receipts on."""
+    settings = {**dict.fromkeys(notices.FIELDS), "owner_statement_day": 5, "payment_receipts": True}
     for flag in ("late_notices", "work_order_notices", "adverse_action_notices", "reserve_alerts"):
         settings[flag] = bool(settings[flag])
     conn.execute(
@@ -239,6 +251,26 @@ def test_each_kind_of_email_arrives_as_its_text_and_html_over_starttls(conn, app
         )
         == 1
     )
+    # A tenant's payment receipt, at their contact email.
+    tenant = conn.execute(
+        "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
+        (pmc.prepaid_rent,),
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO trust_contacts (pmc_id, tenant_id, email) VALUES (%s, %s, %s)",
+        (pmc.pmc_id, tenant, f"receipt.{tag}@example.com"),
+    )
+    unit = add_unit(conn, pmc.pmc_id, first.property_id, name="Unit 4")
+    lease = open_lease(conn, pmc.pmc_id, unit, date(2026, 9, 1), None, "900.00", [tenant])
+    paid_on, amount = date(2026, 10, 3), Decimal("125.00")
+    with conn.transaction():
+        payment = rent.record_payment(conn, pmc.pmc_id, lease, uuid.uuid4(), amount, paid_on)
+    assert (
+        notices.write_payment_receipts(
+            app_conn, pmc.pmc_id, lease, payment.transfers[0], amount, paid_on
+        )
+        == 1
+    )
     written = outbox(conn, pmc)
 
     done = email.deliver_pending(app_conn, trusted.sender(), limit=1000)
@@ -257,7 +289,13 @@ def test_each_kind_of_email_arrives_as_its_text_and_html_over_starttls(conn, app
         assert got["HTML"].replace("\r\n", "\n") == email_html.render(
             text, kind, subject, company, ADDRESS
         )
-        assert got["Attachments"] == [] and got["Inline"] == []
+        # A statement and a receipt carry their PDF (q045, q029); nothing else carries a file.
+        files = [(a["FileName"], a["ContentType"]) for a in got["Attachments"]]
+        assert files == {
+            "owner_statement": [("owner-statement-2026-09-01-2026-09-30.pdf", "application/pdf")],
+            "payment_receipt": [("receipt-2026-10-03.pdf", "application/pdf")],
+        }.get(kind, [])
+        assert got["Inline"] == []
     assert sorted(kind for kind, *_ in written) == [
         "admin_alert",
         "bill_approval",
@@ -265,6 +303,7 @@ def test_each_kind_of_email_arrives_as_its_text_and_html_over_starttls(conn, app
         "message",
         "owner_statement",
         "owner_statement",
+        "payment_receipt",
         "reserve_low",
     ]
     (invited,) = trusted.to(f"invite.{tag}@example.com")

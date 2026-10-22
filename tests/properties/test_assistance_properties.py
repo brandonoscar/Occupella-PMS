@@ -14,6 +14,12 @@ never more than the amount) and the tenant's rest. After every step:
   - a tenant's payment pays the tenant's part alone and leaves what the authority owes alone;
   - the income statement counts both as rent collected;
   - every trust bank account ties out.
+Since migration 0116 (q034) it also, now and then, has the authority's payment bounce and charges
+the authority's late payment fees:
+  - a bounce moves each payment's money back out of the owner's account and opens each charge it
+    paid by what it paid of it, leaving what the tenant owes alone;
+  - each part of a rent still open after the grace days gets one late fee, on the authority, once,
+    and a late fee paid is a late fee on the income statement, not rent.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
@@ -51,6 +57,8 @@ def lease_terms(draw):
 
 STEP = st.one_of(
     st.tuples(st.just("authority pays"), st.integers(min_value=1, max_value=120)),
+    st.tuples(st.just("authority bounced"), st.integers(min_value=0, max_value=3)),
+    st.tuples(st.just("late fees"), st.integers(min_value=0, max_value=10)),
     st.tuples(
         st.just("tenant pays"), st.integers(min_value=1, max_value=600_000).map(lambda c: c * CENT)
     ),
@@ -118,7 +126,8 @@ def check(conn, app, terms, steps):
         ).fetchall()
         aid_rows = conn.execute(
             "SELECT date_trunc('month', a.due_on::timestamp)::date, a.kind, a.amount"
-            " FROM trust_assistance_charges AS a WHERE a.lease_id = %s",
+            " FROM trust_assistance_charges AS a WHERE a.lease_id = %s"
+            " AND a.source <> 'late fee'",
             (lease,),
         ).fetchall()
         months = {first: [ZERO, ZERO] for first in MONTHS}
@@ -141,6 +150,12 @@ def check(conn, app, terms, steps):
     assert books() == model(ends)
     paid_by_authority = ZERO
     paid_by_tenant = ZERO
+    # The authority's payments: (first transfer, amount, what it paid of each charge), and the
+    # late fee charges, by the rent part each is for.
+    payments: list[tuple[str, Decimal, dict]] = []
+    late: dict = {}
+    late_paid = ZERO
+    grace = None
     for step, value in steps:
         before = balance(conn, owner)
         if step == "authority pays":
@@ -166,18 +181,82 @@ def check(conn, app, terms, steps):
                 event("authority paid more than it owed: refused")
                 continue
             with app.transaction():
-                assistance.record_payment(session, app, new)
+                made = assistance.record_payment(session, app, new)
             # The model: oldest first, each charge up to what is open of it.
-            left, want = amount, []
+            left, want, pieces = amount, [], {}
             for charge, day, still in opens:
                 piece = min(left, max(still, ZERO))
                 left -= piece
                 want.append((charge, day, still - piece))
+                if piece:
+                    pieces[charge] = piece
             assert authority_open() == want
             assert balance(conn, owner) == before + amount
             assert tenant_owed() == owed_before
-            paid_by_authority += amount
+            fees = sum((p for c, p in pieces.items() if c in late.values()), ZERO)
+            paid_by_authority += amount - fees
+            late_paid += fees
+            payments.append((made.transfers[0], amount, pieces))
             event("authority paid all it owed" if amount == owing else "authority paid some")
+        elif step == "authority bounced":
+            if not payments:
+                continue
+            transfer, amount, pieces = payments.pop(value % len(payments))
+            opens, owed_before = authority_open(), tenant_owed()
+            with app.transaction():
+                assistance.bounce(session, app, transfer, assistance.AuthorityReturn(on=PAID_ON))
+            assert authority_open() == [
+                (charge, day, still + pieces.get(charge, ZERO)) for charge, day, still in opens
+            ]
+            assert balance(conn, owner) == before - amount
+            assert tenant_owed() == owed_before
+            fees = sum((p for c, p in pieces.items() if c in late.values()), ZERO)
+            paid_by_authority -= amount - fees
+            late_paid -= fees
+            event("authority's payment bounced")
+        elif step == "late fees":
+            if grace is None:
+                grace = value
+                conn.execute(
+                    "INSERT INTO trust_authority_late_fees (pmc_id, housing_authority_id,"
+                    " starts_on, grace_days, flat_fee) VALUES (%s, %s, '2025-12-01', %s, 25.00)",
+                    (pmc.pmc_id, authority, grace),
+                )
+            # As of the day before the payments' day: every month's grace has ended by then,
+            # and no payment came by the end of it, so each part of the rent the authority owes
+            # gets one fee, once.
+            months = model(ends)
+            parts = {
+                charge: due_on
+                for charge, due_on, _ in authority_open()
+                if charge not in late and charge not in late.values()
+            }
+            owing_parts = [
+                charge
+                for charge, due_on in parts.items()
+                if months[due_on.replace(day=1)][1] > 0
+                and conn.execute(
+                    "SELECT source FROM trust_assistance_charges WHERE id = %s", (charge,)
+                ).fetchone()[0]
+                == "rent"
+            ]
+            opens, owed_before = authority_open(), tenant_owed()
+            made = app.execute(
+                "SELECT trust_assess_authority_late_fees(%s, %s)",
+                (pmc.pmc_id, date(2026, 6, 24)),
+            ).fetchone()[0]
+            assert made == len(owing_parts)
+            for charge, fee_for, amount in conn.execute(
+                "SELECT id, late_for_id, amount FROM trust_assistance_charges"
+                " WHERE lease_id = %s AND source = 'late fee'",
+                (lease,),
+            ).fetchall():
+                assert amount == Decimal("25.00")
+                late[fee_for] = charge
+            assert set(late) >= set(owing_parts)
+            assert len(authority_open()) == len(opens) + made
+            assert tenant_owed() == owed_before
+            event(f"{made} late fees")
         elif step == "tenant pays":
             opens, owed_before = authority_open(), tenant_owed()
             paid = rent.record_payment(app, pmc.pmc_id, lease, uuid.uuid4(), value, PAID_ON)
@@ -202,6 +281,7 @@ def check(conn, app, terms, steps):
         ).fetchall()
     )
     assert statement.get("income: rent", ZERO) == paid_by_authority + paid_by_tenant
+    assert statement.get("income: late fees", ZERO) == late_paid
 
 
 def test_the_rent_splits_between_tenant_and_authority_to_the_cent(database_url):

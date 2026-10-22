@@ -292,6 +292,15 @@ test("staff draft a lease with a deposit and a monthly charge and send it, void 
   // The lease owes the pet rent every month from its first day.
   await page.getByRole("link", { name: "Open the lease" }).click();
   await expect(page.getByRole("main")).toContainText("Pet rent");
+  // Asking a deposit held nothing: the lease says what its signed offer asked and is still to
+  // receive, and Record deposit starts from it (q036).
+  const asked = page.getByTestId("deposit-asked");
+  await expect(asked).toContainText("The signed lease asked $1,000.00: $0.00 held, $1,000.00 still to receive");
+  await page.locator("section", { has: asked }).getByRole("button", { name: "Record deposit" }).click();
+  const received = page.getByRole("dialog", { name: "Record deposit" });
+  await expect(received.getByLabel("Deposit received", { exact: true })).toHaveValue("1000.00");
+  await received.getByRole("button", { name: "Record deposit" }).click();
+  await expect(asked).toContainText("The signed lease asked $1,000.00: all held");
 
   // A renewal kept as a draft, then voided: it is never sent.
   panel = await newDraft("E2E Property 3, E2E Unit 3: Renewer E2E");
@@ -572,7 +581,7 @@ test("staff charge a tenant's damage at move-out, return the rest of the deposit
   expect(statement.headers()["content-type"]).toBe("application/pdf");
 });
 
-test("staff keep an owner's document and the owner downloads it from the portal", async ({ page, browser }) => {
+test("staff keep an owner's document and a property's, and the owner downloads them from the portal", async ({ page, browser }) => {
   await page.goto(`/invite#${seed.documents_invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
   await page.getByLabel("The same password again").fill(PASSWORD);
@@ -596,6 +605,17 @@ test("staff keep an owner's document and the owner downloads it from the portal"
   await expect(kept).toContainText("Owner E2E");
   await expect(kept).toContainText("Owner document");
 
+  // A file about one of the owner's properties (q046): the owner reads it too.
+  await page.getByRole("button", { name: "Upload" }).click();
+  const another = page.getByRole("dialog", { name: "Upload" });
+  await another.getByLabel("File").setInputFiles({ name: "roof-inspection.pdf", mimeType: "application/pdf", buffer: pdf });
+  await another.getByLabel("Name").fill("Roof inspection");
+  await another.getByRole("combobox", { name: "Attached to" }).selectOption("Property");
+  await another.getByRole("combobox", { name: "Property" }).selectOption({ label: "E2E Property 1" });
+  await expect(another.getByRole("combobox", { name: "Category" })).toHaveValue("property_document");
+  await another.getByRole("button", { name: "Upload" }).click();
+  await expect(page.getByText("Uploaded Roof inspection.")).toBeVisible();
+
   // The owner, who joined in the first test, signs in on their own and downloads it.
   const owner = await (await browser.newContext()).newPage();
   await owner.goto(`/sign-in?pmc=${seed.pmc_id}`);
@@ -608,6 +628,11 @@ test("staff keep an owner's document and the owner downloads it from the portal"
   expect(file.headers()["content-type"]).toBe("application/pdf");
   expect(file.headers()["content-disposition"]).toBe('attachment; filename="Management-agreement-2026.pdf"');
   expect(Buffer.from(await file.body()).equals(pdf)).toBe(true);
+  const theirs = owner.getByRole("list", { name: "Your documents" });
+  await expect(theirs).toContainText("E2E Property 1");
+  const roof = await owner.request.get((await theirs.getByRole("link", { name: "Roof inspection" }).getAttribute("href")) ?? "");
+  expect(roof.status()).toBe(200);
+  expect(roof.headers()["content-type"]).toBe("application/pdf");
   await owner.context().close();
 });
 

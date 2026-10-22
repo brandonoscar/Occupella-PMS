@@ -388,19 +388,40 @@ def file_name(title: str, content_type: str) -> str:
     return f"{stem}.{EXTENSION[content_type]}"
 
 
+# What an owner sees of the documents (d) in the portal (the founder's review q046): their own
+# owner documents, the documents of each property they hold an account for and of its units, and
+# the receipts of the bills of their accounts. Never a tenant's, a lease's or a vendor's.
+OWNER_SEES = """
+(   (d.kind = 'owner_document' AND d.owner_id = %(owner)s)
+ OR (d.kind = 'property_document' AND d.property_id IN (
+        SELECT a.property_id FROM trust_ledger_accounts AS a
+        WHERE a.kind = 'owner_property' AND a.owner_id = %(owner)s))
+ OR (d.kind = 'unit_document' AND d.unit_id IN (
+        SELECT u.id FROM trust_units AS u
+        JOIN trust_ledger_accounts AS a ON a.property_id = u.property_id
+        WHERE a.kind = 'owner_property' AND a.owner_id = %(owner)s))
+ OR (d.kind = 'receipt' AND d.bill_id IN (
+        SELECT b.id FROM trust_bills AS b
+        JOIN trust_ledger_accounts AS a ON a.ledger_account_id = b.ledger_account_id
+        WHERE a.kind = 'owner_property' AND a.owner_id = %(owner)s)))
+"""
+
+
+SERVED = f"""
+SELECT d.title, d.content_type, f.content FROM trust_documents AS d
+JOIN trust_document_files AS f ON f.document_id = d.id
+WHERE d.pmc_id = %(pmc)s AND d.id = %(document)s
+  AND (%(owner)s::uuid IS NULL OR {OWNER_SEES})
+  AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)
+"""  # noqa: S608
+
+
 def served(
     conn: psycopg.Connection[Any], pmc_id: UUID, document_id: UUID, owner: UUID | None
 ) -> Response:
     """A document's file as a download, or 404: another PMC's, removed, or (for an owner) not
-    one of their own documents."""
-    row = conn.execute(
-        "SELECT d.title, d.content_type, f.content FROM trust_documents AS d"
-        " JOIN trust_document_files AS f ON f.document_id = d.id"
-        " WHERE d.pmc_id = %s AND d.id = %s"
-        " AND (%s::uuid IS NULL OR (d.kind = 'owner_document' AND d.owner_id = %s::uuid))"
-        " AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)",
-        (pmc_id, document_id, owner, owner),
-    ).fetchone()
+    one they see (OWNER_SEES)."""
+    row = conn.execute(SERVED, {"pmc": pmc_id, "document": document_id, "owner": owner}).fetchone()
     if row is None:
         raise HTTPException(404, "no such document")
     title, content_type, content = row

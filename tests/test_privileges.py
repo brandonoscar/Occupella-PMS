@@ -193,6 +193,7 @@ TABLES = {
     # A lease's rent due day from a month: staff record it with an insert (migration 0081).
     "trust_rent_due_days": {"SELECT", "INSERT"},
     "trust_management_fee_settings": {"SELECT", "INSERT"},
+    "trust_prepaid_rent_settings": {"SELECT", "INSERT"},
     "trust_owner_fees": {"SELECT"},  # written only by trust_take_owner_fee
     # One invoice shared across properties: staff enter it and its parts with inserts, and a
     # markup on a bill too; the markup taken is written only by trust_set_aside_bill
@@ -212,6 +213,10 @@ TABLES = {
     "trust_rent_assistance": {"SELECT", "INSERT"},
     "trust_assistance_charges": {"SELECT", "INSERT"},
     "trust_assistance_payments": {"SELECT"},
+    # An authority's late fee terms, inserted by staff; its returned payments, written only by
+    # trust_reverse_assistance_payment (migration 0116).
+    "trust_authority_late_fees": {"SELECT", "INSERT"},
+    "trust_assistance_payment_reversals": {"SELECT"},
     # Utility billing (migration 0096): staff record units' square feet, a property's plans and
     # which utilities a lease is billed for; bills and their shares are written only by
     # trust_bill_back_utility, with the lease charges they make.
@@ -381,6 +386,9 @@ FUNCTIONS = {
     "trust_assistance_part(numeric,numeric,numeric)": {"trust_app"},
     "trust_assistance_open(uuid)": {"trust_app"},
     "trust_apply_assistance_payment(uuid,uuid,text,numeric)": {"trust_app"},
+    "trust_reverse_assistance_payment(uuid,uuid,text,text,numeric)": {"trust_app"},
+    "trust_assistance_open_at(uuid,timestamptz)": {"trust_app"},
+    "trust_assess_authority_late_fees(uuid,date)": {"trust_app"},
     # Whether a signing link still signs (migration 0097).
     "trust_signing_link_open(uuid)": {"trust_app"},
     # Utility billing (migration 0096): what holds on a day, a bill's shares (a preview writes
@@ -439,6 +447,7 @@ FUNCTIONS = {
     # Helpers the fee, draw and bill functions call as the owner: nobody else.
     "trust_lock_owner_account(uuid,text)": set(),
     "trust_agreement_on(text,date)": set(),
+    "trust_management_fee_collected(text,timestamptz,timestamptz)": set(),
     "trust_post_fee(trust_ledger_accounts,numeric,timestamptz,text)": set(),
     "trust_lock_bill(uuid,uuid)": set(),
     "trust_lock_journal_entry(uuid,uuid)": set(),
@@ -508,6 +517,7 @@ FUNCTIONS = {
     "trust_report_owner_year_end(uuid,uuid,integer)": {"trust_app", "trust_ai_agent"},
     "trust_report_income_statement(uuid,uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_income_statement_accrual(uuid,uuid,date,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_income_statement_all_owners(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_owner_balance_sheet(uuid,uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_balance_sheet(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_budget_vs_actual(uuid,uuid,date,date)": {"trust_app", "trust_ai_agent"},
@@ -613,6 +623,7 @@ SECURITY_DEFINER = {
     "trust_end_lease(uuid,uuid,date)",
     "trust_apply_payment(uuid,uuid,text,numeric)",
     "trust_apply_assistance_payment(uuid,uuid,text,numeric)",  # an authority's payment (0095)
+    "trust_reverse_assistance_payment(uuid,uuid,text,text,numeric)",  # and its bounce (0116)
     "trust_bill_back_utility(uuid,uuid,text,date,date,numeric,date,text,numeric,jsonb,uuid)",
     "trust_reverse_payment(uuid,uuid,text,text,numeric)",
     "trust_post_management_fee(uuid,text,date,date,timestamptz)",

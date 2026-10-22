@@ -172,27 +172,49 @@ class OwnerDocument(BaseModel):
     content_type: str
     size: int
     uploaded_at: datetime
+    # What it is about: the owner's own, a property's (or one of its units'), or a bill's receipt.
+    about: Literal["owner", "property", "bill"]
+    # Its property, unit or bill in words; None for the owner's own.
+    about_name: str | None
+
+
+DOCUMENTS = f"""
+SELECT d.id, d.title, d.content_type, d.size, d.created_at,
+       CASE d.kind WHEN 'owner_document' THEN 'owner' WHEN 'receipt' THEN 'bill'
+                   ELSE 'property' END,
+       CASE d.kind
+           WHEN 'property_document' THEN p.display_name
+           WHEN 'unit_document' THEN up.display_name || ', ' || u.display_name
+           WHEN 'receipt' THEN 'Bill ' || b.reference || ', ' || v.display_name
+       END
+FROM trust_documents AS d
+LEFT JOIN trust_properties AS p ON p.id = d.property_id
+LEFT JOIN trust_units AS u ON u.id = d.unit_id
+LEFT JOIN trust_properties AS up ON up.id = u.property_id
+LEFT JOIN trust_bills AS b ON b.id = d.bill_id
+LEFT JOIN trust_vendors AS v ON v.id = b.vendor_id
+WHERE d.pmc_id = %(pmc)s AND {documents.OWNER_SEES}
+  AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)
+ORDER BY d.created_at DESC, d.id
+"""  # noqa: S608
 
 
 @router.get("/documents")
 def owner_documents(session: Owner, conn: Conn) -> list[OwnerDocument]:
-    """The documents staff keep for this owner, newest first."""
-    rows = conn.execute(
-        "SELECT d.id, d.title, d.content_type, d.size, d.created_at FROM trust_documents AS d"
-        " WHERE d.pmc_id = %s AND d.kind = 'owner_document' AND d.owner_id = %s"
-        " AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)"
-        " ORDER BY d.created_at DESC, d.id",
-        (session.pmc_id, session.person_id),
-    ).fetchall()
+    """What this owner sees of the files, newest first: their own documents, their properties'
+    and units' documents, and their bills' receipts (q046)."""
+    rows = conn.execute(DOCUMENTS, {"pmc": session.pmc_id, "owner": session.person_id})
     return [
-        OwnerDocument(id=i, title=t, content_type=c, size=n, uploaded_at=at)
-        for i, t, c, n, at in rows
+        OwnerDocument(
+            id=i, title=t, content_type=c, size=n, uploaded_at=at, about=about, about_name=name
+        )
+        for i, t, c, n, at, about, name in rows.fetchall()
     ]
 
 
 @router.get("/documents/{document_id}/file")
 def owner_document_file(session: Owner, conn: Conn, document_id: UUID) -> Response:
-    """One of this owner's documents; any other reads as not found."""
+    """A document this owner sees (documents.OWNER_SEES); any other reads as not found."""
     return documents.served(conn, session.pmc_id, document_id, session.person_id)
 
 
