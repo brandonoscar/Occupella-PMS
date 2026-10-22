@@ -33,6 +33,17 @@ describe("api", () => {
     expect(refused).toMatchObject({ status: 401, detail: "the email or password is wrong" });
   });
 
+  it("keeps the whole refusal, for what it gives the page besides its words", async () => {
+    const body = { detail: "not enough money to record the bounce", short_owners: [{ owner_id: "o1", owner: "Owner 1" }] };
+    vi.stubGlobal("fetch", answer(409, body));
+
+    await expect(api.post("/api/rent/payments/t1/bounce", { on: "2026-10-20" })).rejects.toMatchObject({
+      status: 409,
+      detail: "not enough money to record the bounce",
+      body,
+    });
+  });
+
   it("says what to do about input the server couldn't read", async () => {
     vi.stubGlobal("fetch", answer(422, { detail: [{ loc: ["body", "email"] }] }));
 

@@ -3,13 +3,16 @@ review q044).
 
 Hypothesis gives Property 1 two to four owners in random shares from January 1 (each to four
 decimals, together 100), maybe new shares from May 1 between some of them, and a lease there with
-random rent, fees and credits. It takes payments in February and June, maybe bounces one, uses the
-prepaid rent and maybe returns a deposit at move-out. A model splits each amount as the shares in
-force on its day say: each owner's percent of it rounded down to the cent, the cents left over
-one each to the largest remainders, the account first by id on a tie. After every step:
+random rent, fees and credits. It takes payments in February and June, maybe bounces one (after
+paying some owners out some of what they hold), uses the prepaid rent and maybe returns a deposit
+at move-out. A model splits each amount as the shares in force on its day say: each owner's
+percent of it rounded down to the cent, the cents left over one each to the largest remainders,
+the account first by id on a tie. After every step:
   - each owner's account moved by exactly the model's part of what went to the owners, and the
     parts come to it, each within a cent of the owner's exact share;
-  - a bounce takes back from each owner exactly what the payment gave them;
+  - a bounce takes back from each owner exactly what the payment gave them; one an owner was
+    paid out of since is refused, moving nothing, naming each owner short by exactly what their
+    account lacks, and goes through once each puts that back;
   - what went to the owners is what the lease owed, matched to its charges, the rest prepaid rent;
   - the deposit kept at move-out goes to the owners by their shares on that day, piece by piece;
   - every trust bank account ties out.
@@ -19,7 +22,7 @@ Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 
 import uuid
 from datetime import UTC, date, datetime
-from decimal import Decimal
+from decimal import ROUND_DOWN, Decimal
 
 import psycopg
 from helpers import (
@@ -28,6 +31,8 @@ from helpers import (
     bank_sums,
     charge,
     co_own,
+    contribute,
+    draw_owner,
     make_pmc,
     open_lease,
     set_ownership,
@@ -37,10 +42,12 @@ from hypothesis import event, given
 from hypothesis import strategies as st
 
 from pms.api import rent
+from pms.api.deps import RefusedWith
 
 JAN_1, MAY_1, JUN_30 = date(2026, 1, 1), date(2026, 5, 1), date(2026, 6, 30)
 PAID_ON = [date(2026, 2, 10), date(2026, 6, 10)]
 USED_ON = date(2026, 6, 20)
+DRAWN_ON = date(2026, 6, 15)
 RETURNED = datetime(2026, 7, 5, 12, tzinfo=UTC)
 MONEY = st.integers(min_value=1, max_value=200_000).map(lambda c: Decimal(c) / 100)
 WHOLE = 1_000_000  # 100% in ten-thousandths of a percent
@@ -100,9 +107,15 @@ def owed(app, lease):
     ),
     payments=st.lists(st.tuples(MONEY, st.sampled_from(PAID_ON)), max_size=3),
     bounce=st.one_of(st.none(), st.integers(min_value=0, max_value=2)),
+    # Before the bounce, the percent of what each owner holds paid out to them (0: none).
+    paid_out=st.lists(
+        st.one_of(st.just(0), st.just(100), st.integers(min_value=1, max_value=99)),
+        min_size=4,
+        max_size=4,
+    ),
     deposit=st.one_of(st.just(Decimal(0)), MONEY),
 )
-def check(conn, app, owned, charges, payments, bounce, deposit):
+def check(conn, app, owned, charges, payments, bounce, paid_out, deposit):
     count, first, later = owned
     pmc = make_pmc(conn, owners=count)
     # Owner 1's account at Property 1, and each other owner's as a co-owner of it.
@@ -120,6 +133,10 @@ def check(conn, app, owned, charges, payments, bounce, deposit):
 
     def held():
         return {a: balance(conn, a) for a in accounts}
+
+    # Each account's owner, and its name as a refusal sorts it (Owner 1, Owner 2...).
+    owner_of = {a: pmc.owners[n].owner_id for n, a in enumerate(accounts)}
+    names = {a: f"Owner {n + 1}" for n, a in enumerate(accounts)}
 
     def gave(before, after):
         return {a: after[a] - before[a] for a in accounts if after[a] != before[a]}
@@ -170,9 +187,30 @@ def check(conn, app, owned, charges, payments, bounce, deposit):
         recorded.append((paid, parts, day))
     event(f"{len(payments)} payments")
 
-    # A bounce takes back from each owner what the payment gave them.
+    # A bounce takes back from each owner what the payment gave them. Paid out since, it is
+    # refused, moving nothing, naming each owner short by what their account lacks; once each
+    # puts that back, it goes through.
     if bounce is not None and bounce < len(recorded):
         paid, parts, day = recorded[bounce]
+        for n, (account, percent) in enumerate(zip(accounts, paid_out, strict=False)):
+            out = (balance(conn, account) * percent / 100).quantize(Decimal("0.01"), ROUND_DOWN)
+            if out > 0:
+                draw_owner(conn, pmc.pmc_id, account, f"draw-{n}", out, at(DRAWN_ON))
+        lacks = {a: part - balance(conn, a) for a, part in parts.items() if balance(conn, a) < part}
+        if lacks:
+            before, owing = held(), owed(app, lease)
+            try:
+                rent.bounce(app, pmc.pmc_id, paid.transfers[0], USED_ON)
+                raise AssertionError("a bounce took an owner's account below zero")
+            except RefusedWith as refused:
+                assert refused.status_code == 409
+                assert [(s["owner_id"], s["short"]) for s in refused.more["short_owners"]] == [
+                    (owner_of[a], f"{lacks[a]:.2f}") for a in sorted(lacks, key=lambda a: names[a])
+                ]
+            assert (held(), owed(app, lease)) == (before, owing)
+            for a, short in lacks.items():
+                contribute(conn, pmc.pmc_id, a, f"back-{a}", short, at(DRAWN_ON))
+            event("refused until the owners put it back")
         before, owing = held(), owed(app, lease)
         returned = rent.bounce(app, pmc.pmc_id, paid.transfers[0], USED_ON)
         assert gave(before, held()) == {a: -part for a, part in parts.items()}

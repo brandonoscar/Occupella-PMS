@@ -138,6 +138,22 @@ export function bounceSummary(amount: string, bounce: Bounce): string {
   return `The ${money(amount)} payment bounced and is undone${fee}.`;
 }
 
+// An owner whose account holds less than a bounce takes back (the money was paid out since): a
+// refused bounce names each (POST /api/rent/payments/{id}/bounce's short_owners), so the lease
+// page can open their Financials, where Record contribution puts the money back.
+export type ShortOwner = { owner_id: string; owner: string; property: string; short: string };
+
+export function shortOwners(refused: unknown): ShortOwner[] {
+  if (!refused || typeof refused !== "object" || !("short_owners" in refused)) return [];
+  const named = (refused as { short_owners: unknown }).short_owners;
+  if (!Array.isArray(named)) return [];
+  return named.filter(
+    (s): s is ShortOwner =>
+      !!s && typeof s === "object" &&
+      ["owner_id", "owner", "property", "short"].every((k) => typeof (s as Record<string, unknown>)[k] === "string"),
+  );
+}
+
 // What a recorded payment did, in a line.
 export function paymentSummary(payment: Payment): string {
   const parts = [];

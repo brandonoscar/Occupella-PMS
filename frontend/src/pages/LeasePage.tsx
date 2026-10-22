@@ -26,7 +26,9 @@ import {
   insuranceLine,
   moveHome,
   rentChangeLine,
+  shortOwners,
 } from "../rent";
+import type { ShortOwner } from "../rent";
 import type { LeaseDetail, LeasePerson, Ledger } from "../rentals";
 import { LEASE_STATUS, LEDGER_KIND, PORTAL, rentLabel, termLabel } from "../rentals";
 import { AssistanceCard } from "./AssistanceCard";
@@ -99,7 +101,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
   const [panel, setPanel] = useState<Panel | null>(null);
   // The tenant the remove panel takes off the lease.
   const [leaving, setLeaving] = useState<LeasePerson | null>(null);
-  const { said, error: refused, record } = useRecord(refresh);
+  const { said, error: refused, refused: refusal, record } = useRecord(refresh);
 
   // The lease the page shows. An answer is kept only while it is still that lease's: a move to
   // another unit refreshes the lease it left as it opens the new one, and that answer can come
@@ -208,6 +210,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
       <Said>{said}</Said>
       {/* A side panel's refusal shows in the panel, once. */}
       {panel === null && <Notice tone="error">{refused}</Notice>}
+      {panel === null && <ShortOwnerLinks owners={shortOwners(refusal)} />}
       <div>
         <Tabs label="Lease" tabs={TABS} value={tab} onChange={setTab} />
         {tab === "summary" && <Summary lease={lease} record={record} />}
@@ -246,6 +249,22 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
         </SidePanel>
       )}
     </Shell>
+  );
+}
+
+// A bounce refused because the money it takes back was paid out since (an owner draw, a bill):
+// each owner short, to their Financials, where Record contribution puts it back. The refusal's
+// words say how much and why; nothing here moves money.
+function ShortOwnerLinks({ owners }: { owners: ShortOwner[] }) {
+  if (owners.length === 0) return null;
+  return (
+    <p className="flex flex-wrap gap-x-4 gap-y-1 text-sm" data-testid="short-owners">
+      {owners.map((o, n) => (
+        <GoLink key={`${o.owner_id}-${n}`} href={`/owners/${o.owner_id}?tab=financials`} className={LINK}>
+          {`Record a contribution of ${money(o.short)} from ${o.owner} (${o.property})`}
+        </GoLink>
+      ))}
+    </p>
   );
 }
 

@@ -390,8 +390,98 @@ def test_a_payment_the_owner_was_paid_out_of_cannot_bounce_into_the_negative(
 
     answer = call(client, f"payments/{payment}/bounce", on=TODAY)
 
-    refused(answer, 409, "not enough money: the owner's account would be $1,500.00 short")
+    # The bank took the money back; the words say whose account is short, by how much, and how
+    # to put it back, without an internal id, and the page gets the owner to open.
+    refused(
+        answer,
+        409,
+        "not enough money to record the bounce: Owner 1's account for Property 1 holds $0.00 of"
+        " the $1,500.00 it takes back, $1,500.00 short. Record a contribution of $1,500.00 from"
+        " Owner 1 (the owner's page, Financials, Record contribution), or wait for rent to bring"
+        " it in, then record the bounce again.",
+    )
+    assert answer.json()["short_owners"] == [
+        {
+            "owner_id": str(home.pmc.owners[0].owner_id),
+            "owner": "Owner 1",
+            "property": "Property 1",
+            "short": "1500.00",
+        }
+    ]
+    # Nothing was recorded: the payment still pays the rent, and the owner's account is empty.
     assert lease_row(client, home)["owed"] == "0.00"
+    assert lease_row(client, home)["payments"][0]["bounced"] is False
+    assert balance(conn, home.owner) == Decimal(0)
+
+
+def test_a_bounce_refused_for_a_draw_goes_through_once_the_owner_puts_the_money_back(
+    client, conn, staff, home
+):
+    home.charge(conn, START)
+    payment = ok(pay(client, home, "1500.00", received_on=TODAY - DAY))["transfers"][0]
+    draw_owner(conn, home.pmc.pmc_id, home.owner, "draw-1", "1100.00", datetime.now(UTC))
+
+    short = call(client, f"payments/{payment}/bounce", on=TODAY)
+    contributed = client.post(
+        "/api/payables/contributions",
+        json={
+            "request_id": str(uuid.uuid4()),
+            "account": home.owner,
+            "amount": short.json()["short_owners"][0]["short"],
+            "on": str(TODAY),
+        },
+    )
+    returned = ok(call(client, f"payments/{payment}/bounce", on=TODAY))
+
+    refused(short, 409)
+    assert short.json()["detail"].startswith(
+        "not enough money to record the bounce: Owner 1's account for Property 1 holds $400.00"
+        " of the $1,500.00 it takes back, $1,100.00 short. Record a contribution of $1,100.00"
+        " from Owner 1"
+    )
+    assert contributed.status_code == 201, contributed.text
+    assert len(returned["transfers"]) == 1
+    assert lease_row(client, home)["owed"] == "1500.00"
+    assert balance(conn, home.owner) == Decimal(0)
+
+
+def test_a_bounce_of_prepaid_rent_used_since_says_so(client, conn, staff, home):
+    ok(pay(client, home, "300.00", received_on=TODAY - DAY))  # nothing owed: all prepaid rent
+    payment = lease_row(client, home)["payments"][0]["transfer_id"]
+    home.charge(conn, START + 30 * DAY, "300.00")
+    ok(call(client, f"leases/{home.lease}/use-prepaid", request_id=uuid.uuid4(), on=TODAY))
+
+    answer = call(client, f"payments/{payment}/bounce", on=TODAY)
+
+    refused(
+        answer,
+        409,
+        "not enough money to record the bounce: Tenant 1's prepaid rent holds $0.00 of the"
+        " $300.00 it takes back, $300.00 short. The prepaid rent this payment held has paid the"
+        " lease's charges since, so the bounce can't take it back from there.",
+    )
+    assert answer.json()["short_owners"] == []
+
+
+def test_a_bounce_short_in_prepaid_rent_too_offers_no_contribution(client, conn, staff, home):
+    home.charge(conn, START, "1200.00")
+    payment = ok(pay(client, home, "1500.00", received_on=TODAY - DAY))["transfers"][0]
+    home.charge(conn, START + 30 * DAY, "300.00")
+    ok(call(client, f"leases/{home.lease}/use-prepaid", request_id=uuid.uuid4(), on=TODAY))
+    draw_owner(conn, home.pmc.pmc_id, home.owner, "draw-1", None, datetime.now(UTC))
+
+    answer = call(client, f"payments/{payment}/bounce", on=TODAY)
+
+    # A contribution would not let it through: the owner is not offered one.
+    refused(
+        answer,
+        409,
+        "not enough money to record the bounce: Owner 1's account for Property 1 holds $0.00 of"
+        " the $1,200.00 it takes back, $1,200.00 short; Tenant 1's prepaid rent holds $0.00 of the"
+        " $300.00 it takes back, $300.00 short. The prepaid rent this payment held has paid the"
+        " lease's charges since, so the bounce can't take it back from there.",
+    )
+    assert answer.json()["short_owners"] == []
 
 
 def test_only_a_tenant_payment_bounces(client, staff, home):

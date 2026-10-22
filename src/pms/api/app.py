@@ -100,7 +100,7 @@ from pms.api import (
     work_orders,
     year_close,
 )
-from pms.api.deps import COOKIE, Conn, Current, Staff, download, refusal
+from pms.api.deps import COOKIE, Conn, Current, RefusedWith, Staff, download, refusal
 from pms.leasing import screening
 
 HEALTH_TIMEOUT = 2.0  # seconds to wait for a database connection before answering 503
@@ -320,6 +320,13 @@ def create_app(settings: Settings) -> FastAPI:
             accounts.CodeNeeded: 401,
         }.get(type(error), 422)
         return JSONResponse({"detail": str(error)}, status)
+
+    @app.exception_handler(RefusedWith)
+    async def refused_with(request: Request, error: RefusedWith) -> JSONResponse:
+        # A refusal in words, with what the page needs to help (the transaction is rolled back).
+        return JSONResponse(
+            jsonable_encoder({"detail": error.detail, **error.more}), error.status_code
+        )
 
     @app.exception_handler(RequestValidationError)
     async def invalid(request: Request, error: RequestValidationError) -> Response:

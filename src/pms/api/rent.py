@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field, StringConstraints
 
 from pms import exports, notices
 from pms.api import outbox
-from pms.api.deps import Conn, Staff, refusal
+from pms.api.deps import Conn, RefusedWith, Staff, refusal
 
 router = APIRouter(prefix="/api/rent")
 
@@ -584,6 +584,79 @@ class Returned:
     nsf_fee: Decimal | None  # the NSF fee charged for it, if the property's terms charge one
 
 
+@dataclass(frozen=True)
+class Shortfall:
+    """An account a bounce would take back more from than it holds: an owner's account whose
+    money was paid out since (a draw, a bill), or a tenant's prepaid rent used since."""
+
+    owner_id: UUID | None  # an owner's account; None for a tenant's prepaid rent
+    name: str  # the owner's or the tenant's
+    place: str | None  # the owner's account's property
+    held: Decimal
+    needed: Decimal
+
+    @property
+    def short(self) -> Decimal:
+        return self.needed - self.held
+
+
+def usd(amount: Decimal) -> str:
+    return f"${amount:,.2f}"
+
+
+def shortfalls(
+    conn: psycopg.Connection[Any], transfers: list[tuple[str, str, Decimal]]
+) -> list[Shortfall]:
+    """The accounts the transfers would take below zero: what each holds now against what the
+    transfers take from it. The owners' first, by name and property, then tenants'."""
+    needed: dict[str, Decimal] = {}
+    for source, _, amount in transfers:
+        needed[source] = needed.get(source, ZERO) + amount
+    held = balances(conn, list(needed))
+    return [
+        Shortfall(owner_id, owner or tenant, prop, held.get(account, ZERO), needed[account])
+        for account, owner_id, owner, prop, tenant in conn.execute(
+            "SELECT a.ledger_account_id, a.owner_id, o.display_name, p.display_name,"
+            " t.display_name FROM trust_ledger_accounts AS a"
+            " LEFT JOIN trust_owners AS o ON o.id = a.owner_id"
+            " LEFT JOIN trust_properties AS p ON p.id = a.property_id"
+            " LEFT JOIN trust_tenants AS t ON t.id = a.tenant_id"
+            " WHERE a.ledger_account_id = ANY(%s) AND a.kind IN ('owner_property', 'prepaid_rent')"
+            ' ORDER BY a.owner_id IS NULL, o.display_name COLLATE "C", p.display_name COLLATE "C",'
+            ' t.display_name COLLATE "C", a.ledger_account_id',
+            (list(needed),),
+        ).fetchall()
+        if held.get(account, ZERO) < needed[account]
+    ]
+
+
+def short_words(short: list[Shortfall]) -> str:
+    """Why a bounce can't be recorded yet, and what staff do about it, in words: whose money
+    falls short, by how much, and where to put it back."""
+    each = "; ".join(
+        (
+            f"{s.name}'s account for {s.place}"
+            if s.owner_id is not None
+            else f"{s.name}'s prepaid rent"
+        )
+        + f" holds {usd(s.held)} of the {usd(s.needed)} it takes back, {usd(s.short)} short"
+        for s in short
+    )
+    words = f"not enough money to record the bounce: {each}."
+    if any(s.owner_id is None for s in short):
+        # The prepaid rent the payment held has paid the lease's charges since: nothing staff
+        # record puts it back where the bounce would take it from.
+        return (
+            words + " The prepaid rent this payment held has paid the lease's charges since, so"
+            " the bounce can't take it back from there."
+        )
+    contributions = " and ".join(f"of {usd(s.short)} from {s.name}" for s in short)
+    return (
+        words + f" Record a contribution {contributions} (the owner's page, Financials, Record"
+        " contribution), or wait for rent to bring it in, then record the bounce again."
+    )
+
+
 def bounce(conn: psycopg.Connection[Any], pmc_id: UUID, transfer_id: str, on: date) -> Returned:
     """A payment the bank returned: its transfers move back to cash, their matches to charges
     are reversed (trust_reverse_payment), and the lease is charged the property's NSF fee
@@ -614,7 +687,28 @@ def bounce(conn: psycopg.Connection[Any], pmc_id: UUID, transfer_id: str, on: da
         "memo": f"Returned payment – {lease_memo(conn, lease_id)}",
     }
     transfers = [(to, frm, Decimal(amount)) for _, frm, to, amount, _, _ in rows]
-    posted = post(conn, pmc_id, key, transfers, on, metadata)
+    try:
+        posted = post(conn, pmc_id, key, transfers, on, metadata)
+    except psycopg.errors.CheckViolation:  # rolled back to post's savepoint: nothing was posted
+        short = shortfalls(conn, transfers)
+        if not short:
+            raise  # a closed period, say: the route words it
+        # The owners to open, each to put back what their account lacks; none when prepaid rent
+        # used since is short too, which no contribution puts back.
+        owners = [] if any(s.owner_id is None for s in short) else short
+        raise RefusedWith(
+            409,
+            short_words(short),
+            short_owners=[
+                {
+                    "owner_id": s.owner_id,
+                    "owner": s.name,
+                    "property": s.place,
+                    "short": cents(s.short),
+                }
+                for s in owners
+            ],
+        ) from None
     if posted is None:
         raise HTTPException(409, "this payment bounced already")
     for (payment, *_), reversal in zip(rows, posted, strict=True):
@@ -1629,11 +1723,13 @@ class Bounced(Posted):
 def bounced(session: Staff, conn: Conn, transfer_id: str, returned: Day) -> Bounced:
     """Records a returned payment: its money leaves the owner's account (and prepaid rent)
     back to cash, what it paid of each charge is owed again, and the lease is charged the
-    property's NSF fee in force that day."""
+    property's NSF fee in force that day. Money paid out since (an owner draw, a bill) is
+    refused in words: whose account is short, by how much, and where to put it back; the
+    answer's short_owners names each owner short, for the page to open their Financials."""
     not_after_today(returned.on)
     try:
         done = bounce(conn, session.pmc_id, transfer_id, returned.on)
-    except psycopg.errors.CheckViolation as refused:  # the owner's account would go negative
+    except psycopg.errors.CheckViolation as refused:  # a closed period, say
         raise HTTPException(409, refusal(refused)) from None
     return Bounced(
         transfers=done.transfers, nsf_fee=None if done.nsf_fee is None else cents(done.nsf_fee)

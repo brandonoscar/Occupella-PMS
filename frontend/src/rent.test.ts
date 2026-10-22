@@ -21,6 +21,7 @@ import {
   recurringLabel,
   rentRunSummary,
   requestId,
+  shortOwners,
 } from "./rent";
 
 describe("moves", () => {
@@ -112,6 +113,15 @@ describe("rent", () => {
     expect(bounceSummary("1500.00", { transfers: ["r", "s"], nsf_fee: "35.00" })).toBe(
       "The $1,500.00 payment bounced and is undone; a $35.00 NSF fee is charged.",
     );
+  });
+  it("reads the owners a refused bounce names as short, and nothing from any other refusal", () => {
+    const owner = { owner_id: "o1", owner: "Owner 1", property: "Property 1", short: "1500.00" };
+    expect(shortOwners({ detail: "not enough money to record the bounce", short_owners: [owner] })).toEqual([owner]);
+    expect(shortOwners({ detail: "this payment bounced already" })).toEqual([]);
+    expect(shortOwners({ detail: "x", short_owners: "o1" })).toEqual([]);
+    expect(shortOwners({ detail: "x", short_owners: [null, { owner_id: "o2" }, owner] })).toEqual([owner]);
+    expect(shortOwners(null)).toEqual([]);
+    expect(shortOwners("not enough money")).toEqual([]);
   });
   it("reads an open charge", () => {
     const rent: OpenCharge = {

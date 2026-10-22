@@ -365,6 +365,36 @@ describe("LeasePage", () => {
     expect(posted(fetch)).toEqual([["/api/rent/payments/tr1/bounce", { on: "2026-09-05" }]]);
   });
 
+  it("links each owner a refused bounce names as short to their Financials, and nothing for other refusals", async () => {
+    const words = "not enough money to record the bounce: Owner 1's account for Property 1 holds $0.00 of the"
+      + " $1,500.00 it takes back, $1,500.00 short. Record a contribution of $1,500.00 from Owner 1 (the"
+      + " owner's page, Financials, Record contribution), or wait for rent to bring it in, then record the bounce again.";
+    const reads = server();
+    let refusal: unknown = {
+      detail: words, short_owners: [{ owner_id: "o1", owner: "Owner 1", property: "Property 1", short: "1500.00" }],
+    };
+    vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) =>
+      init?.method === "POST" ? new Response(JSON.stringify(refusal), { status: 409 }) : reads(path, init)));
+    await open();
+    fireEvent.click(screen.getByRole("tab", { name: "Ledger" }));
+    const received = screen.getByRole("table", { name: "Payments received" });
+    fireEvent.click(within(received).getByRole("button", { name: "Actions for 09/01/2026 payment of $1,500.00" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "It bounced" }));
+    fireEvent.click(within(received).getByRole("button", { name: "Record the $1,500.00 bounce" }));
+
+    expect((await screen.findAllByText(words)).length).toBeGreaterThan(0);
+    const link = screen.getByRole("link", { name: "Record a contribution of $1,500.00 from Owner 1 (Property 1)" });
+    expect(link.getAttribute("href")).toBe("/owners/o1?tab=financials");
+    fireEvent.click(link);
+    expect(window.location.pathname + window.location.search).toBe("/owners/o1?tab=financials");
+
+    // Another refusal names no owner: no link.
+    refusal = { detail: "this payment bounced already" };
+    fireEvent.click(within(received).getByRole("button", { name: "Record the $1,500.00 bounce" }));
+    expect((await screen.findAllByText("this payment bounced already")).length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("short-owners")).toBeNull();
+  });
+
   it("sends Record NSF to the ledger, and Renew lease and Move out to their pages", async () => {
     server();
     await open();

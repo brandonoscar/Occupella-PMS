@@ -10,7 +10,15 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from helpers import add_unit, balance, charge, co_own, open_lease, transfer_batch
+from helpers import (
+    add_unit,
+    balance,
+    charge,
+    co_own,
+    draw_owner,
+    open_lease,
+    transfer_batch,
+)
 from people import join_as_owner, join_as_staff, tenant_of
 
 TODAY = datetime.now(UTC).date()
@@ -206,6 +214,35 @@ def test_a_bounced_split_payment_takes_back_each_owners_part(
 
     assert (balance(conn, owners[0]), balance(conn, owners[1])) == (Decimal(0), Decimal(0))
     assert ok(client.get(f"/api/leases/{lease}"), 200)["owed"] == "500.00"
+
+
+def test_a_split_payment_paid_out_since_names_each_owner_short(
+    client, conn, staff, pmc, owners, lease
+):
+    charge(conn, pmc.pmc_id, lease, TODAY - timedelta(days=5), "500.00", "rent", "Rent")
+    ok(own(client, pmc, owners, "60", "40"))
+    done = ok(pay(client, lease, "500.00"))
+    draw_owner(conn, pmc.pmc_id, owners[0], "draw-1", "100.00", datetime.now(UTC))
+    draw_owner(conn, pmc.pmc_id, owners[1], "draw-2", None, datetime.now(UTC))
+
+    answer = post(client, f"/api/rent/payments/{done['transfers'][0]}/bounce", on=TODAY)
+
+    assert answer.status_code == 409, answer.text
+    assert answer.json()["detail"] == (
+        "not enough money to record the bounce: Owner 1's account for Property 1 holds $200.00"
+        " of the $300.00 it takes back, $100.00 short; Owner 2's account for Property 1 holds"
+        " $0.00 of the $200.00 it takes back, $200.00 short. Record a contribution of $100.00"
+        " from Owner 1 and of $200.00 from Owner 2 (the owner's page, Financials, Record"
+        " contribution), or wait for rent to bring it in, then record the bounce again."
+    )
+    assert [(s["owner"], s["short"]) for s in answer.json()["short_owners"]] == [
+        ("Owner 1", "100.00"),
+        ("Owner 2", "200.00"),
+    ]
+    assert (balance(conn, owners[0]), balance(conn, owners[1])) == (
+        Decimal("200.00"),
+        Decimal(0),
+    )
 
 
 def test_prepaid_rent_used_pays_the_owners_by_their_shares(client, conn, staff, pmc, owners, lease):

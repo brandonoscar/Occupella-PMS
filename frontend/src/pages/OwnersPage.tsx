@@ -158,6 +158,13 @@ const OWNER_TABS: { value: OwnerTab; label: string }[] = [
   { value: "files", label: "Files" },
 ];
 
+// The tab an owner's page opens on: Summary, or the one its link names (?tab=financials, from a
+// bounce refused because the owner's money was paid out since).
+export function ownerTabFrom(search: string): OwnerTab {
+  const named = new URLSearchParams(search).get("tab");
+  return OWNER_TABS.find((t) => t.value === named)?.value ?? "summary";
+}
+
 // An owner (ADR 0006): Summary (contact details, portal login, the agreements' terms), Properties
 // (what each account holds, keeps back and may pay out), Financials (their statement, and a
 // contribution recorded), Statements (each month's, and the year's income statement) and Files.
@@ -165,7 +172,7 @@ export function OwnerPage({ me, id }: { me: Me; id: string }) {
   const [owner, setOwner] = useState<Owner | null>(null);
   const [said, setSaid] = useState("");
   const [error, setError] = useState("");
-  const [tab, setTab] = useState<OwnerTab>("summary");
+  const [tab, setTab] = useState<OwnerTab>(() => ownerTabFrom(window.location.search));
 
   function refresh(keep: Keep = keepAll) {
     api.get<Owner>(`/api/owners/${id}`).then(keep(setOwner)).catch(keep((why) => setError(detail(why))));

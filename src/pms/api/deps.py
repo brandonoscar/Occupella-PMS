@@ -64,6 +64,16 @@ def dollars(amount: str) -> str:
     return f"${Decimal(amount):,.2f}"
 
 
+class RefusedWith(HTTPException):
+    """A refusal in words that also gives the page what it needs to help, such as whose page to
+    open (src/pms/api/app.py answers it as {"detail": words, **more}). Raised, it rolls the
+    request's transaction back like any refusal."""
+
+    def __init__(self, status: int, detail: str, **more: Any) -> None:
+        super().__init__(status, detail)
+        self.more = more
+
+
 def refusal(error: psycopg.Error) -> str:
     """A database refusal as the API says it: its first line, without the "trust: " every
     trust_* refusal starts with, and the ledger's refusals about money in words."""

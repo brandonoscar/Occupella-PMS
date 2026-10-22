@@ -8,6 +8,8 @@ export class ApiError extends Error {
   constructor(
     readonly status: number,
     readonly detail: string,
+    // The whole answer: a refusal may carry what the page needs to help (whose page to open).
+    readonly body: unknown = null,
   ) {
     super(detail);
   }
@@ -42,7 +44,7 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   }
   const data: unknown = await response.json().catch(() => null);
   if (!response.ok) {
-    throw new ApiError(response.status, detailOf(data) ?? `the server answered ${response.status}`);
+    throw new ApiError(response.status, detailOf(data) ?? `the server answered ${response.status}`, data);
   }
   return data as T;
 }

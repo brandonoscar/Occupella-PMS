@@ -5,7 +5,7 @@ import type { Owner, OwnerRow } from "../directory";
 import { holdBack } from "../holdBack";
 import type { OwnerMoney } from "../payables";
 import type { Paged } from "../rentals";
-import { OwnerPage, OwnersPage, agreementLine, lastTwelveMonths } from "./OwnersPage";
+import { OwnerPage, OwnersPage, agreementLine, lastTwelveMonths, ownerTabFrom } from "./OwnersPage";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -283,6 +283,18 @@ describe("OwnerPage", () => {
     const [[path, body]] = posted(fetch) as [[string, Record<string, unknown>]];
     expect(path).toBe("/api/payables/contributions");
     expect(body).toMatchObject({ account: "a2", amount: "75.00", memo: "Roof" });
+  });
+
+  it("opens on the tab its link names (a refused bounce's link opens Financials), else on Summary", async () => {
+    expect(ownerTabFrom("?tab=financials")).toBe("financials");
+    expect(ownerTabFrom("?tab=ledger")).toBe("summary");
+    expect(ownerTabFrom("")).toBe("summary");
+    server();
+    window.history.pushState(null, "", "/owners/o1?tab=financials");
+    render(<OwnerPage me={ME} id="o1" />);
+
+    expect((await screen.findByRole("tab", { name: "Financials" })).getAttribute("aria-selected")).toBe("true");
+    expect(screen.getByRole("button", { name: "Record contribution" })).toBeTruthy();
   });
 
   it("shows the statement from the day picked now, even when an earlier day's answer comes back last", async () => {
