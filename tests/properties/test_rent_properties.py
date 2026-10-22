@@ -39,6 +39,7 @@ from hypothesis.stateful import (
 )
 
 from pms.api import rent
+from pms.api.deps import RefusedWith
 
 TODAY = datetime.now(UTC).date()
 START = TODAY - timedelta(days=400)
@@ -172,9 +173,15 @@ class RentMachine(RuleBasedStateMachine):
         paid = data.draw(st.sampled_from([p for p in self.payments if not p.bounced]))
         if self.in_owner < paid.to_owner or self.in_prepaid < paid.to_prepaid:
             event("bounce: refused, the money was used")
-            refused = pytest.raises(psycopg.errors.CheckViolation, match="below zero")
-            with refused, self.conn.transaction():
+            refused = pytest.raises(RefusedWith, match="not enough money to record the bounce")
+            with refused as raised, self.conn.transaction():
                 rent.bounce(self.conn, self.pmc_id, paid.transfers[0], TODAY)
+            # In words, naming the owner short by exactly what their account lacks; no owner to
+            # open when the prepaid rent the payment held was used since (no contribution helps).
+            owner_short = paid.to_owner - self.in_owner
+            assert [o["short"] for o in raised.value.more["short_owners"]] == (
+                [] if self.in_prepaid < paid.to_prepaid else [rent.cents(owner_short)]
+            )
             return
         event("bounce: taken back")
         with self.conn.transaction():
