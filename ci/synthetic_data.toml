@@ -22,3 +22,8 @@ reason = "Oregon Administrative Rule 863-025-0027 (trust accounts), cited in the
 path = "docs/law.md"
 value = "863-025-0025"
 reason = "Oregon Administrative Rule 863-025-0025 (clients' trust accounts), cited in the legal basis; a rule number, not a phone number."
+
+[[allow]]
+path = "docs/research/state-rules-2026-10-23.md"
+value = "863-025-0028"
+reason = "Oregon Administrative Rule 863-025-0028 (trust account reconciliation), cited in the research; a rule number, not a phone number."
