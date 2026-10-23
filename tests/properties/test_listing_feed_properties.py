@@ -214,7 +214,7 @@ def test_any_text_reads_back_but_what_xml_cannot_carry(text):
     kept = listing_feeds.text(text)
     assert back.text == (kept or None)
     assert back.get("a") == kept
-    assert not listing_feeds.NOT_XML.search(kept)
+    assert not {ord(c) for c in kept} & listing_feeds.NOT_XML
     event("left something out" if len(kept) < len(text) else "kept it all")
 
 

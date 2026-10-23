@@ -23,7 +23,6 @@ How the formats are used:
 
 from __future__ import annotations
 
-import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -32,9 +31,13 @@ from uuid import UUID
 from xml.etree import ElementTree
 
 CENT = Decimal("0.01")
-# What XML 1.0 can't carry: control characters but tab and line breaks, lone surrogates and the
-# two non-characters. A description with one would make the whole file unreadable to a site.
-NOT_XML = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff￾￿]")
+# The code points XML 1.0 can't carry: control characters but tab and line breaks, lone
+# surrogates and the two non-characters. A description with one would make the whole file
+# unreadable to a site.
+NOT_XML = frozenset(
+    [*range(0x00, 0x09), 0x0B, 0x0C, *range(0x0E, 0x20), *range(0xD800, 0xE000), 0xFFFE, 0xFFFF]
+)
+LEFT_OUT = dict.fromkeys(NOT_XML)
 DECLARATION = b'<?xml version="1.0" encoding="UTF-8"?>\n'
 
 
@@ -119,7 +122,7 @@ class Feed:
 def text(value: str) -> str:
     """Text as XML 1.0 carries it: what it can't is left out, and a line ends in a line feed (a
     reader turns a carriage return into one anyway)."""
-    return NOT_XML.sub("", value.replace("\r\n", "\n").replace("\r", "\n"))
+    return value.replace("\r\n", "\n").replace("\r", "\n").translate(LEFT_OUT)
 
 
 def ident(value: UUID) -> str:
