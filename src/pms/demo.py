@@ -73,6 +73,7 @@ from pms.api import (
     signers,
     signing,
     staff,
+    unit_details,
     vendors,
     work_orders,
 )
@@ -546,6 +547,18 @@ def harbor_rent(unit: str) -> D:
     return D("1050.00") + D("25.00") * int(unit.split()[1][0])
 
 
+def harbor_details(unit: str) -> unit_details.NewUnitDetails:
+    """Harbor Tower's units by their place on the floor: studios, one and two bedrooms, each
+    asking a little more than its rent today."""
+    bedrooms = (int(unit.split()[1][1:]) - 1) % 3
+    return unit_details.NewUnitDetails(
+        bedrooms=bedrooms,
+        bathrooms=D("1.5") if bedrooms == 2 else D(1),
+        square_feet=450 + 250 * bedrooms,
+        market_rent=harbor_rent(unit) + D("75.00"),
+    )
+
+
 class _Request:
     """What the leasing and signing routes read off a request: the server's settings and its
     screening partner, here the fake the demo screens with; no address or browser."""
@@ -628,6 +641,7 @@ def showcase(conn: psycopg.Connection[Any], demo: Demo, today: date, public_url:
                 units[unit] = uid(
                     setup.add_unit(s, conn, setup.NewUnit(property_id=harbor, name=unit))
                 )
+                unit_details.change_details(s, conn, units[unit], harbor_details(unit))
         for unit in units:
             if unit in HARBOR_VACANT:
                 continue

@@ -28,6 +28,7 @@ import { LeaseFinder } from "./LeaseFinder";
 import { GoLink } from "./NeedsAttention";
 import { PaymentForm } from "./LeaseForms";
 import { STAFF_NAV } from "./staffNav";
+import { MarketRent, UnitSize } from "./UnitDetailsCard";
 import { useRecord } from "./useRecord";
 
 function detail(failed: unknown): string {
@@ -118,6 +119,7 @@ export function RentPage({ me }: { me: Me }) {
                   <th className="text-left">Lease end</th>
                   <th className="text-right">Days left</th>
                   <th className="text-right">Rent</th>
+                  <th className="text-right">Market rent</th>
                   <th className="text-right">Deposit</th>
                   <th className="text-right">Balance</th>
                 </tr>
@@ -131,12 +133,14 @@ export function RentPage({ me }: { me: Me }) {
                       <GoLink href={`/leases/${row.id}`} className="font-medium text-iris hover:text-iris-hover hover:underline">
                         {row.unit.name}
                       </GoLink>
+                      <UnitSize details={row.details} />
                     </td>
                     <td onClick={(event) => event.stopPropagation()}><TenantLinks people={row.people} /></td>
                     <td className="whitespace-nowrap">{usDate(row.starts_on)}</td>
                     <td className="whitespace-nowrap">{row.ends_on ? usDate(row.ends_on) : "Month to month"}</td>
                     <td className="text-right">{row.days_left ?? ""}</td>
                     <td className="text-right">{money(row.monthly_rent)}</td>
+                    <td className="text-right"><MarketRent details={row.details} /></td>
                     <td className="text-right">{money(row.deposit)}</td>
                     <td data-testid="balance" className={"text-right " + (Number(row.owed) > 0 ? "text-danger" : "")}>
                       {money(row.owed)}

@@ -199,7 +199,8 @@ def test_a_lease_ending_on_the_day_keeps_its_unit_occupied_that_day(conn, pmc):
 
     assert rows_where(conn, "trust_report_vacancy", pmc.pmc_id, (DAY,), 1, "vacant") == []
     (vacant,) = rows_where(conn, "trust_report_vacancy", pmc.pmc_id, (DAY + ONE,), 1, "vacant")
-    assert vacant[3:] == ("Unit 1", DAY + ONE, 1, Decimal("900.00"), None)
+    # Through next_lease_starts; the unit's details (migration 0124) are tested on their own.
+    assert vacant[3:8] == ("Unit 1", DAY + ONE, 1, Decimal("900.00"), None)
     assert report(conn, "trust_report_vacancy", pmc.pmc_id, DAY + ONE)[-1][2] == (
         "1 units: 0 occupied, 1 vacant (0.0% occupied)"
     )
@@ -228,7 +229,8 @@ def test_a_unit_never_leased_is_vacant_since_it_was_added(conn, pmc):
     ).fetchone()[0]
     open_lease(conn, pmc.pmc_id, units["Unit 1"], DAY + 10 * ONE, None, "900.00", [tenant])
 
-    rows = [row[1:] for row in report(conn, "trust_report_vacancy", pmc.pmc_id, DAY)][2:-1]
+    # Through next_lease_starts; the unit's details (migration 0124) are tested on their own.
+    rows = [row[1:8] for row in report(conn, "trust_report_vacancy", pmc.pmc_id, DAY)][2:-1]
 
     assert rows == [
         ("vacant", "Property 1", "Unit 1", date(2026, 3, 1), 31, None, DAY + 10 * ONE),
@@ -245,7 +247,7 @@ def test_a_unit_never_leased_is_vacant_since_it_was_added(conn, pmc):
         ),
     ]
     # On the lease's first day Unit 1 is let; Unit 2, added by then, is vacant since it was.
-    later = [row[1:] for row in report(conn, "trust_report_vacancy", pmc.pmc_id, DAY + 10 * ONE)]
+    later = [row[1:8] for row in report(conn, "trust_report_vacancy", pmc.pmc_id, DAY + 10 * ONE)]
     assert later[2:-1] == [
         ("vacant", "Property 1", "Unit 2", date(2026, 4, 1), 10, None, None),
         ("never leased", "vacant since it was added to the PMS", "Unit 2", None, None, None, None),

@@ -1,7 +1,8 @@
 """Staff's bills and owners' money: vendor bills (entered, maybe split across expense accounts
 and with the vendor's invoice, approved by the owner when over the agreement's limit, set aside
 from the owner's account, paid, several at once by Pay bills), a bill's own page, monthly
-recurring bills (each month's entered by the nightly run, src/pms/nightly.py), the PMC's
+recurring bills (each month's entered by the nightly run, src/pms/nightly.py, and any already
+due when one is added), the PMC's
 management and leasing fees (the management fees maybe taken each month by the nightly run, as the
 company chooses), other fees taken from an owner, owner draws and owner contributions, and the
 company's earned fees taken out of trust.
@@ -1148,6 +1149,10 @@ def recurring(session: Staff, conn: Conn) -> list[Recurring]:
     ]
 
 
+class AddedRecurring(Created):
+    entered: int  # the months already due, entered as it was added
+
+
 class NewRecurring(BaseModel):
     vendor_id: UUID
     account: Account
@@ -1162,8 +1167,9 @@ class NewRecurring(BaseModel):
 
 
 @router.post("/recurring", status_code=201)
-def add_recurring(session: Staff, conn: Conn, new: NewRecurring) -> Created:
-    """A bill that comes every month on a day (1 to 28), from a first day."""
+def add_recurring(session: Staff, conn: Conn, new: NewRecurring) -> AddedRecurring:
+    """A bill that comes every month on a day (1 to 28), from a first day. The months already
+    due through today are entered at once, as the nightly run would enter them."""
     vendor_of(conn, session.pmc_id, new.vendor_id)
     owner_account(conn, session.pmc_id, new.account)
     if new.expense_account_id is not None:
@@ -1193,7 +1199,26 @@ def add_recurring(session: Staff, conn: Conn, new: NewRecurring) -> Created:
         ) from None
     if new.expense_account_id is not None:
         recurring_put_in(conn, session.pmc_id, recurring.id, new.expense_account_id)
-    return recurring
+    entered = enter_recurring_bills(conn, session.pmc_id, today(), outbox.PUBLIC_URL.get())
+    return AddedRecurring(id=recurring.id, entered=entered)
+
+
+def enter_recurring_bills(
+    conn: psycopg.Connection[Any], pmc_id: UUID, through: date, public_url: str
+) -> int:
+    """Enters each recurring bill's months due through a day (trust_enter_recurring_bills, each
+    month once), each with its email to an owner whose approval it waits for; how many."""
+    entered = conn.execute(
+        "SELECT trust_enter_recurring_bills(%s, %s)", (pmc_id, through)
+    ).fetchone()
+    assert entered is not None
+    # The bills this transaction entered: their created_at is its start, now().
+    for (bill,) in conn.execute(
+        "SELECT id FROM trust_bills WHERE pmc_id = %s AND created_at = now() ORDER BY id",
+        (pmc_id,),
+    ).fetchall():
+        email.write_bill_approval(conn, pmc_id, bill, public_url)
+    return int(entered[0])
 
 
 def recurring_of(conn: psycopg.Connection[Any], pmc_id: UUID, recurring: UUID) -> None:

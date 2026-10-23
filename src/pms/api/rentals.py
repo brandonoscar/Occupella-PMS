@@ -19,7 +19,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, StringConstraints
 
 from pms import exports
-from pms.api import addresses, rent, scope, setup
+from pms.api import addresses, rent, scope, setup, unit_details
 from pms.api.deps import Conn, Staff, refusal
 from pms.api.setup import Name
 
@@ -177,6 +177,8 @@ class UnitLine(BaseModel):
     id: UUID
     name: str
     archived: bool
+    # Its bedrooms, bathrooms, square feet and market rent (migration 0124).
+    details: unit_details.UnitDetails
     # The lease in effect on the day, or else the next one to start; None when vacant.
     lease: LeaseLine | None
 
@@ -371,13 +373,15 @@ def property_page(request: Request, session: Staff, conn: Conn, property_id: UUI
         key=lambda found: (found[1].status != "current", found[1].starts_on),
     ):
         leases.setdefault(unit, lease)
+    rows = conn.execute(
+        "SELECT u.id, u.display_name, trust_is_archived(NULL, u.id) FROM trust_units AS u"
+        ' WHERE u.property_id = %s ORDER BY u.display_name COLLATE "C", u.id',
+        (property_id,),
+    ).fetchall()
+    details = unit_details.details_of(conn, [u for u, _, _ in rows])
     units = [
-        UnitLine(id=u, name=n, archived=a, lease=leases.get(u))
-        for u, n, a in conn.execute(
-            "SELECT u.id, u.display_name, trust_is_archived(NULL, u.id) FROM trust_units AS u"
-            ' WHERE u.property_id = %s ORDER BY u.display_name COLLATE "C", u.id',
-            (property_id,),
-        ).fetchall()
+        UnitLine(id=u, name=n, archived=a, details=details[u], lease=leases.get(u))
+        for u, n, a in rows
     ]
     return Property(
         id=property_id,
@@ -481,6 +485,8 @@ class Unit(BaseModel):
     name: str
     archived: bool
     property: Ref
+    # Its bedrooms, bathrooms, square feet and market rent (migration 0124).
+    details: unit_details.UnitDetails
     leases: list[LeaseLine]
 
 
@@ -501,6 +507,7 @@ def unit_page(session: Staff, conn: Conn, unit_id: UUID) -> Unit:
         name=row[0],
         archived=row[1],
         property=Ref(id=row[2], name=row[3]),
+        details=unit_details.details_of(conn, [unit_id])[unit_id],
         leases=[lease for _, lease in leases],
     )
 
@@ -525,6 +532,8 @@ class RentRollRow(BaseModel):
     id: UUID
     property: Ref
     unit: Ref
+    # The unit's bedrooms, bathrooms, square feet and market rent (migration 0124).
+    details: unit_details.UnitDetails
     tenants: list[str]
     people: list[Ref]
     starts_on: date
@@ -546,11 +555,12 @@ SELECT l.id, p.id, p.display_name, u.id, u.display_name, {TENANT_NAMES},
                    ON a.tenant_id = lt.tenant_id AND a.kind = 'tenant_deposit'
                  JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
                  WHERE lt.lease_id = l.id), 0),
-       count(*) OVER ()
+       {unit_details.COLUMNS}, count(*) OVER ()
 FROM trust_leases AS l
 JOIN trust_units AS u ON u.id = l.unit_id
 JOIN trust_properties AS p ON p.id = u.property_id
 CROSS JOIN LATERAL (SELECT {rent.OWED} AS owed) AS x
+{unit_details.LATEST}
 WHERE l.pmc_id = %(pmc)s
   AND {scope.within("p.id")}
   AND (%(like)s::text IS NULL OR p.display_name ILIKE %(like)s OR u.display_name ILIKE %(like)s
@@ -602,6 +612,7 @@ def rent_roll(
                 id=i,
                 property=Ref(id=p, name=pn),
                 unit=Ref(id=u, name=un),
+                details=unit_details.shown(beds, half_baths, size, market),
                 tenants=tenants,
                 people=[Ref(id=t, name=n) for t, n in zip(ids, tenants, strict=True)],
                 starts_on=starts,
@@ -614,7 +625,25 @@ def rent_roll(
                 deposit=rent.cents(Decimal(deposit)),
                 owed=rent.cents(Decimal(owed)),
             )
-            for i, p, pn, u, un, tenants, ids, starts, ends, monthly, owed, deposit, _ in rows
+            for (
+                i,
+                p,
+                pn,
+                u,
+                un,
+                tenants,
+                ids,
+                starts,
+                ends,
+                monthly,
+                owed,
+                deposit,
+                beds,
+                half_baths,
+                size,
+                market,
+                _,
+            ) in rows
         ],
         total=rows[0][-1] if rows else 0,
         page=page,
