@@ -41,8 +41,12 @@ deletes: archive) and contact details the AI never reads. Since 2026-10-16
 groups first; rent, recurring charges, late fees and recurring bills to post by themselves each
 night; fees still move only when staff ask, unless a company turns on taking its monthly
 management fees by itself, the founder's amendment of 2026-10-18). Since 2026-10-22 (founder,
-split with the other session): a deposit's return deadline and statement (q040, q039), filling a
-company's own lease, deposit interest (q041) and HUD forms (q143); the strictest deposit rules
+split between two sessions): an email to an owner whose property account falls below its reserve
+(q054; online owner payments stay on hold), emails to a company's admins when its nightly run
+fails or emails keep failing, with a written support process (q149, `docs/support.md`), two-step
+sign-in for owners and tenants, and state rules as warnings where staff set terms (q142; no
+attorney has reviewed them); and a deposit's return deadline and statement (q040, q039), filling
+a company's own lease, deposit interest (q041) and HUD forms (q143); the strictest deposit rules
 found are in `docs/law.md`. Since 2026-10-23 (`docs/adr/0009-buildium-parity.md`, the founder's
 rule: what Buildium has, we have): rent, owners' money and application fees paid online through
 a payments provider (each company's own keys, or the hosted version's Stripe Connect), autopay,
@@ -153,6 +157,16 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   statement the whole month's statement as a PDF (`src/pms/attachments.py`, q045, q055), made when
   the email is handed to the sender from what the database holds then (the outbox keeps no file);
   one whose file can't be made is a failed delivery saying why.
+  Since migration 0150 (the founder, 2026-10-22) they also look at each owner's property account
+  for a company that turned on its low balance alerts (`reserve_alerts`): one that fell below the
+  reserve of the agreement in force since the last look is a drop (`trust_reserve_events`: drops
+  and returns, one after the other, append-only; the AI role reads them), and its owner is emailed
+  once per drop (`reserve_low`, q054). And each of a company's admins with an active login is
+  emailed what failed (`email.write_admin_alert`, `trust_admin_alerts`, once per admin, kind and
+  day; the AI role never reads them; q149): its nightly run (`nightly.run_all`, after logging it)
+  or an email given up on after its fifth failed attempt (`email.deliver_pending`; an alert's own
+  email aside). No setting turns those off; nothing is written while the server sends no email.
+  Who looks, where the logs are and how to restore: `docs/support.md`.
 - Announcements and to-dos (migration 20261023000203, `src/pms/api/announcements.py`,
   `src/pms/api/todos.py`): Communication, Announcements (`/announcements`, area 'email') writes
   one announcement to every tenant living at, or every owner of, a property, a property group or
