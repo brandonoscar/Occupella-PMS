@@ -126,6 +126,7 @@ if server_has preloaded; then
   step "PL/pgSQL lint" env COVERAGE_FILE=coverage/lint.coverage coverage run -m tools.sql_lint
   for shard in 1 2; do
     step "tests, shard $shard of 2, with coverage" env PMS_TEST_SHARD="$shard/2" \
+      PMS_TEST_SHARD_TIMES=ci/property-times.toml \
       PMS_SQL_COVERAGE_OUT="coverage/sql-raw-$shard.json" \
       COVERAGE_FILE="coverage/tests-$shard.coverage" coverage run -m pytest -q -p no:cacheprovider
   done
