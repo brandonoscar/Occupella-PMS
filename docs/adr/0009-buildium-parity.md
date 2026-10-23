@@ -90,6 +90,9 @@ Still out of scope:
 - CLAUDE.md's out-of-scope line now lists only those.
 - Each lane answers its readiness questions as it merges: q026, q027, q048, q054, q058, q059 and
   q078 (lane 1); q068, q091 and q142 (lane 2); q077 (lane 3).
-- State rules carry legal risk. A rule enters the rules table only from a statute's text, read,
-  cited and dated. Where a law has exceptions the PMS can't see, the screens warn rather than
-  decide. An attorney's review before launch is still advised.
+- State rules are the company's to confirm (the founder, 2026-10-23: the property management
+  company answers for the rules it follows, not the PMS). A rule enters the rules table only from
+  a statute's text, read, cited and dated; each screen shows a rule as cited information with the
+  day it was checked, never as a guarantee, and asks the company to confirm it. Where a law has
+  exceptions the PMS can't see, the screens warn rather than refuse. The hosted version's terms
+  of service say so.
