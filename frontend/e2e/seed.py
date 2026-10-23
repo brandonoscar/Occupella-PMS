@@ -509,6 +509,7 @@ FEATURES = (
     "recurring-work-orders",
     "vendor-links",
     "listing-photos",
+    "listing-feeds",
     "leads",
     "screening-criteria",
     "lease-transfers",

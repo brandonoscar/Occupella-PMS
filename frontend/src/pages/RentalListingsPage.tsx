@@ -19,6 +19,7 @@ import { Wide } from "../components/Wide";
 import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
 import { latest } from "../latest";
 import type { ListingPhoto, OpenUnit } from "../leasing";
+import { feedStanding } from "../leasing";
 import { money, usDate } from "../money";
 import type { Paged } from "../rentals";
 import { scopeParams, useScope } from "../scope";
@@ -51,8 +52,9 @@ export function publicPage(pmcId: string, origin = window.location.origin): stri
 // Leasing → Listings (ADR 0006, Buildium's): each unit coming free within 90 days (or with an open
 // application link), when, at what rent, and whether it is on the public vacancy page and for how
 // many days; List puts it there (opening its link if it has none) and Unlist takes it off. Photos
-// keeps the unit's photos the public page shows (migration 0087). Its ⋯ menu opens a link to post
-// elsewhere, or closes the open one. Nothing is sent to listing sites.
+// keeps the unit's photos the public page shows (migration 0087). Its ⋯ menu sends a listing to
+// listing sites through the company's feeds or stops sending it (migration 0250; the sites fetch
+// the feeds, Settings, Listing feeds), opens a link to post elsewhere, or closes the open one.
 export function RentalListingsPage({ me }: { me: Me }) {
   const [scope, setScope] = useScope();
   const [number, setNumber] = useState(1);
@@ -94,6 +96,7 @@ export function RentalListingsPage({ me }: { me: Me }) {
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="secondary" onClick={() => void copy()}>Copy public page link</Button>
           <LinkButton href={`/listings?pmc=${me.pmc_id}`}>Public page</LinkButton>
+          <LinkButton href="/settings/listing-feeds">Listing feeds</LinkButton>
         </div>
       } />
       <ListBar scope={scope} onScope={(next) => { setScope(next); setNumber(1); }} />
@@ -115,6 +118,7 @@ export function RentalListingsPage({ me }: { me: Me }) {
                   <th className="text-right">Market rent</th>
                   <th className="text-right">Applications</th>
                   <th className="text-left">Public page</th>
+                  <th className="text-left">Listing sites</th>
                   <th className="text-right">Days listed</th>
                   <th className="text-right">Photos</th>
                   <th><span className="sr-only">List</span></th>
@@ -125,9 +129,18 @@ export function RentalListingsPage({ me }: { me: Me }) {
                 {page.items.map((unit) => {
                   const name = `${unit.property}, ${unit.unit}`;
                   const rent = unit.link_rent ?? unit.last_rent;
-                  const actions: RowAction[] = [
-                    { label: "Open an application link", onSelect: () => setPanel({ kind: "link", unit }) },
-                  ];
+                  const actions: RowAction[] = [];
+                  const standing = feedStanding(unit);
+                  if (unit.listing_id) {
+                    const listing = unit.listing_id;
+                    const send = !unit.in_feed;
+                    actions.push({
+                      label: send ? "Send to listing sites" : "Stop sending to listing sites",
+                      onSelect: () => record(`/api/leasing/listings/${listing}/feed`, { in_feed: send },
+                        () => send ? `Sent ${name} to the listing sites' feeds.` : `Took ${name} out of the listing sites' feeds.`),
+                    });
+                  }
+                  actions.push({ label: "Open an application link", onSelect: () => setPanel({ kind: "link", unit }) });
                   if (unit.link_id) {
                     const link = unit.link_id;
                     actions.push({
@@ -153,6 +166,16 @@ export function RentalListingsPage({ me }: { me: Me }) {
                         {unit.listing_id
                           ? <Badge tone="positive" data-testid="listed">Listed</Badge>
                           : <Badge data-testid="listed">Not listed</Badge>}
+                      </td>
+                      <td>
+                        {unit.listing_id ? (
+                          <div className="flex flex-col items-start gap-1">
+                            <Badge tone={standing.tone} data-testid="feed">{standing.label}</Badge>
+                            {unit.feed_needs.length > 0 && (
+                              <span className="text-xs text-ink-subtle">Needs {unit.feed_needs.join(", ")}</span>
+                            )}
+                          </div>
+                        ) : ""}
                       </td>
                       <td className="text-right whitespace-nowrap">{daysListed(unit.days_listed)}</td>
                       <td className="text-right">

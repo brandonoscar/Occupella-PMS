@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Application } from "./leasing";
+import type { Application, OpenUnit } from "./leasing";
 import {
   againstScreening,
   applicantNames,
@@ -8,6 +8,8 @@ import {
   applyVia,
   incomeMultiple,
   latestScreening,
+  feedPhone,
+  feedStanding,
   needsNotice,
   recommendationLabel,
 } from "./leasing";
@@ -91,5 +93,30 @@ describe("applyVia", () => {
     expect(applyVia("?listing=v1", "#token")).toEqual({ listing: "v1" });
     expect(applyVia("", "#token-1")).toEqual({ token: "token-1" });
     expect(applyVia("?other=x", "#token-1")).toEqual({ token: "token-1" });
+  });
+});
+
+describe("listing feeds", () => {
+  const unit = (extra: Partial<OpenUnit>): OpenUnit => ({
+    unit_id: "u1", property_id: "p1", property: "Property 1", unit: "Unit 1", available_on: null,
+    last_rent: null, link_id: "k1", link_rent: "1500.00", applications: 0, listing_id: "s1",
+    description: null, listed_at: null, days_listed: null, photos: 0,
+    details: { bedrooms: 1, bathrooms: "1", square_feet: null, market_rent: null },
+    in_feed: false, feed_needs: [], ...extra,
+  });
+
+  it("says where a unit stands with the listing sites", () => {
+    expect(feedStanding(unit({ in_feed: true }))).toEqual({ tone: "positive", label: "Sent" });
+    expect(feedStanding(unit({}))).toEqual({ tone: "neutral", label: "Not sent" });
+    expect(feedStanding(unit({ feed_needs: ["the unit's bedrooms"] }))).toEqual({ tone: "neutral", label: "Not sent" });
+    // Sent, but its details cleared since: the feeds leave it out until it has them again.
+    expect(feedStanding(unit({ in_feed: true, feed_needs: ["the unit's bedrooms"] }))).toEqual({
+      tone: "caution", label: "Held back",
+    });
+  });
+
+  it("reads a phone of ten digits as a phone, and leaves anything else as it is", () => {
+    expect(feedPhone("2025550142")).toBe("(202) 555-0142");
+    expect(feedPhone("555-0142")).toBe("555-0142");
   });
 });

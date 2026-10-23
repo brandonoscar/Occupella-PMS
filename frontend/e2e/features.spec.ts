@@ -3680,7 +3680,7 @@ test("staff add photos to a listed unit, which its public listing shows; a remov
   await listing.getByLabel("Rent a month").fill("1240.00");
   await listing.getByRole("button", { name: "List it" }).click();
   await expect(page.getByText("Listed Aspen Row, Unit 2 at $1,240.00.")).toBeVisible();
-  await expect(unit.getByRole("cell").nth(6)).toHaveText("1 day");
+  await expect(unit.getByRole("cell").nth(7)).toHaveText("1 day");
 
   // Two photos from the unit's row.
   await unit.getByRole("button", { name: "Photos, Aspen Row, Unit 2" }).click();
@@ -3693,7 +3693,7 @@ test("staff add photos to a listed unit, which its public listing shows; a remov
   await expect(photos.getByText("Added Porch.")).toBeVisible();
   await expect(photos.getByRole("img")).toHaveCount(2);
   await photos.getByRole("button", { name: "Close" }).click();
-  await expect(unit.getByRole("cell").nth(7)).toHaveText("2");
+  await expect(unit.getByRole("cell").nth(8)).toHaveText("2");
 
   // Anyone sees them on the public page, in the order they were added.
   const visitor = await (await browser.newContext()).newPage();
@@ -3710,6 +3710,106 @@ test("staff add photos to a listed unit, which its public listing shows; a remov
   await visitor.reload();
   await expect(shown).toHaveCount(1);
   await visitor.close();
+});
+
+test("staff send a listed unit to the listing sites; its feeds, Zillow's and MITS's, carry it until staff stop sending it", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["listing-feeds"]!;
+  await joinAsStaff(page, people.manager);
+  // The feeds list nothing until the company has its mailing address and a leasing contact.
+  await settings(page, "Listing feeds");
+  await expect(page.getByText(/The feeds list nothing until the company has the company's mailing address/)).toBeVisible();
+  const feeds = page.getByRole("list", { name: "Feeds" });
+  await expect(feeds.getByRole("listitem")).toHaveCount(2);
+  const zillowUrl = (await feeds.getByRole("link").first().getAttribute("href")) ?? "";
+  const mitsUrl = (await feeds.getByRole("link").nth(1).getAttribute("href")) ?? "";
+  expect(zillowUrl).toMatch(new RegExp(`/api/listings/${people.pmc_id}/feeds/zillow\\.xml$`));
+  expect(mitsUrl).toMatch(/\/feeds\/mits\.xml$/);
+  await page.getByLabel("Name (optional)").fill("Leasing office");
+  await page.getByLabel("Email").fill("leasing@example.com");
+  await page.getByLabel("Phone").fill("(202) 555-0142");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved the leasing contact.")).toBeVisible();
+  await settings(page, "Company setup");
+  await page.getByRole("button", { name: "Edit company" }).click();
+  const editing = page.getByRole("dialog", { name: "Edit company" });
+  await editing.getByLabel("Street address").fill("100 Example Street");
+  await editing.getByLabel("City").fill("Sampletown");
+  await editing.getByLabel("State").fill("CA");
+  await editing.getByLabel("ZIP code").fill("00000");
+  await editing.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText(/^Saved /)).toBeVisible();
+
+  // Listed, Aspen Row's Unit 2 lacks what the sites ask: the street address, bedrooms and baths.
+  await section(page, "Listings");
+  const unit = page.getByRole("row", { name: "Aspen Row, Unit 2" });
+  await unit.getByRole("button", { name: "List", exact: true }).click();
+  const listing = page.getByRole("dialog", { name: "List on the public page" });
+  await listing.getByLabel("Rent a month").fill("1240.00");
+  await listing.getByRole("button", { name: "List it" }).click();
+  await expect(page.getByText("Listed Aspen Row, Unit 2 at $1,240.00.")).toBeVisible();
+  await expect(unit.getByTestId("feed")).toHaveText("Not sent");
+  await expect(unit).toContainText("Needs the property's street address, the unit's bedrooms, the unit's bathrooms");
+  await unit.getByRole("button", { name: "Actions for Aspen Row, Unit 2" }).click();
+  await page.getByRole("menuitem", { name: "Send to listing sites" }).click();
+  await expect(page.getByText(/the listing sites ask the property's street address/).first()).toBeVisible();
+
+  // The property's street address, and the unit's bedrooms and bathrooms.
+  await openProperty(page, "Aspen Row");
+  const address = part(page, "Address");
+  await address.getByRole("button", { name: "Add address" }).click();
+  const adding = page.getByRole("dialog", { name: "Add address" });
+  await adding.getByLabel("Street").fill("200 Synthetic Way");
+  await adding.getByLabel("City").fill("Demo City");
+  await adding.getByLabel("State (two letters)").fill("CA");
+  await adding.getByLabel("ZIP code").fill("00001");
+  await adding.getByRole("button", { name: "Save address" }).click();
+  await expect(page.getByText("Address saved.")).toBeVisible();
+  await page.getByRole("table").filter({ hasText: "Unit 2" }).getByRole("link", { name: "Unit 2", exact: true }).click();
+  const details = await setupPanel(page, "Edit details");
+  await details.getByLabel("Bedrooms").fill("2");
+  await details.getByLabel("Bathrooms").fill("1.5");
+  await details.getByLabel("Square feet").fill("900");
+  await details.getByRole("button", { name: "Save details" }).click();
+  await expect(page.getByText("Details saved.")).toBeVisible();
+
+  // Sent: both feeds carry it, to anyone who fetches them.
+  await section(page, "Listings");
+  await unit.getByRole("button", { name: "Actions for Aspen Row, Unit 2" }).click();
+  await page.getByRole("menuitem", { name: "Send to listing sites" }).click();
+  await expect(page.getByText("Sent Aspen Row, Unit 2 to the listing sites' feeds.")).toBeVisible();
+  await expect(unit.getByTestId("feed")).toHaveText("Sent");
+  const site = (await browser.newContext()).request;
+  const zillow = await site.get(zillowUrl);
+  expect(zillow.status()).toBe(200);
+  expect(zillow.headers()["content-type"]).toBe("application/xml; charset=utf-8");
+  const zillowXml = await zillow.text();
+  expect(zillowXml).toContain('<hotPadsItems version="2.1">');
+  expect(zillowXml).toContain('<street hide="false">200 Synthetic Way</street>');
+  expect(zillowXml).toContain("<unitNumber>Unit 2</unitNumber>");
+  expect(zillowXml).toContain("<lowPrice>1240.00</lowPrice>");
+  expect(zillowXml).toContain("<numFullBaths>1</numFullBaths>");
+  expect(zillowXml).toContain("<numHalfBaths>1</numHalfBaths>");
+  expect(zillowXml).toContain("<contactPhone>2025550142</contactPhone>");
+  const mits = await (await site.get(mitsUrl)).text();
+  expect(mits).toContain("<MarketingName>Aspen Row, Unit 2</MarketingName>");
+  expect(mits).toContain("<UnitBathrooms>1.5</UnitBathrooms>");
+  expect(mits).toContain("<StandardRent>1240.00</StandardRent>");
+  await settings(page, "Listing feeds");
+  await expect(page.getByText(/Now in the feeds: 1 listing\./)).toBeVisible();
+
+  // Stopped, it leaves both feeds; it stays on the public page.
+  await section(page, "Listings");
+  await unit.getByRole("button", { name: "Actions for Aspen Row, Unit 2" }).click();
+  await page.getByRole("menuitem", { name: "Stop sending to listing sites" }).click();
+  await expect(page.getByText("Took Aspen Row, Unit 2 out of the listing sites' feeds.")).toBeVisible();
+  await expect(unit.getByTestId("feed")).toHaveText("Not sent");
+  await expect(unit.getByTestId("listed")).toHaveText("Listed");
+  expect(await (await site.get(zillowUrl)).text()).not.toContain("Unit 2");
+  expect(await (await site.get(mitsUrl)).text()).not.toContain("<Property ");
+  await site.dispose();
 });
 
 test("staff add a lead who asked about a unit, show it to them, record how it went and close the lead when they apply", async ({

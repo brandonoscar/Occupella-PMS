@@ -284,6 +284,10 @@ TABLES = {
     # A unit's details (migration 0124): bedrooms, bathrooms, square feet and market rent, which
     # staff record; the latest row holds.
     "trust_unit_details": {"SELECT", "INSERT"},
+    # Listing syndication (migration 0250): staff's choice per listing that it goes to listing
+    # sites, and the leasing contact the feeds name; each the latest row holding.
+    "trust_listing_feed_choices": {"SELECT", "INSERT"},
+    "trust_listing_feed_contacts": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -305,6 +309,9 @@ COLUMN_UPDATES = {
 # their credentials, and rental applicants with their consumer report results, are no business
 # of the role behind Occupella's key.
 AI_NEVER_READS = {
+    # The company's leasing contact for its listing feeds (migration 0250), kept from the AI as
+    # the company's profile is.
+    "trust_listing_feed_contacts",
     # A notice made for a lease, as filled in (migration 0119): like a document's file.
     "trust_notices",
     "trust_screening_criteria",
@@ -654,6 +661,10 @@ FUNCTIONS = {
     "trust_check_lease_offer_void()": {"PUBLIC"},
     "trust_check_lease_offer_not_void()": {"PUBLIC"},
     "trust_open_lease_offer_charges()": {"PUBLIC"},
+    # Whether a listing goes to listing sites now (migration 0250), and the trigger that makes
+    # each choice change it.
+    "trust_listing_in_feed(uuid)": {"trust_app"},
+    "trust_check_listing_feed_choice()": {"PUBLIC"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.

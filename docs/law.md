@@ -875,3 +875,33 @@ statute's text and the IRS's Publication 1099 figures are NOT VERIFIED here.)
 **Left to the company.** Whether a vendor gets a 1099 at all (a corporation usually doesn't; the
 W-9 says), the year's adjusted threshold from 2027, and filing: the PMS files nothing and keeps
 no tax ID.
+
+## Sending listings to listing sites (migration 0250)
+
+**The rule.**
+- The federal Fair Housing Act, which applies in every state, forbids publishing any notice,
+  statement or advertisement for renting a dwelling that indicates a preference, limitation or
+  discrimination based on a protected class (42 U.S.C. 3604(c); 24 CFR 100.75), and that covers
+  an advertisement a site publishes for the company as much as its own page. A listing in the
+  feeds says what the public page says (above, migration 0087), with the street address.
+- Advertised rent and fees (the strictest found): Colorado, from January 1, 2026 (HB25-1090),
+  asks every advertised rent to show one total price that includes every mandatory charge but
+  government ones, more prominently than any other price; a $1,200 rent with a mandatory $50
+  trash fee is advertised at $1,250. Connecticut, Massachusetts, Virginia and Washington passed
+  fee transparency rules of their own. (From law firms' summaries of HB25-1090 and an industry
+  overview; the statutes' and regulations' texts are NOT VERIFIED here.)
+- A site's own terms are its business with the company: Zillow, for one, takes a feed only after
+  its team approves it, and asks that the person listing chose to send each listing to it (its
+  Rental Listing Bulk Feed Guide of 2026-08-13).
+
+**What the PMS does.**
+- A listing goes to the sites only when staff send it, one at a time, from Listings, and leaves
+  them when they stop sending it or take it off the public page, naming who chose each time.
+- The feeds carry the rent the listing asks as staff typed it, the unit's bedrooms, bathrooms and
+  size, the description and photos staff gave it, the day it comes free and its apply page; never
+  its market rent, a tenant or anything about one.
+- The PMS signs in to no site and sends nothing: each site fetches the feed's address.
+
+**Left to the company.** Signing up with each site and its terms; what its photos and words say;
+and where a law asks the total of every mandatory monthly charge (Colorado's), listing the unit at
+that total, or saying each fee in its description.
