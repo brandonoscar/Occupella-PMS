@@ -627,7 +627,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   property account, amount, day of the month 1 to 28, first day; an end row stops it).
   `trust_enter_recurring_bills` enters each month's bill through a day, under the vendor
   reference `<prefix>-YYYY-MM`, so each month once and safe to retry; a month already entered
-  under that reference is left as it is. Entered bills follow the bill rules above.
+  under that reference is left as it is. Entered bills follow the bill rules above. Adding one
+  (`POST /api/payables/recurring`) enters the months already due at once, each with its owner's
+  approval email, as the nightly run would.
 - Maintenance requests: a tenant on a lease files one (`trust_maintenance_requests`, append-only;
   a key to `trust_lease_tenants` refuses anyone else). Staff open at most one work order for it,
   at the lease's unit (`trust_maintenance_request_work_orders`, one each way), and its status is
@@ -828,7 +830,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`trust_deposit_interest_payments`, `trust_deposit_interest_lines`) are append-only; the AI role
   reads them and `trust_report_deposit_interest` (run as the owner, so the AI calls no helper).
   Staff pay it from the lease's ⋯ menu (`src/pms/api/deposit_interest.py`,
-  `pages/DepositInterestForm.tsx`).
+  `pages/DepositInterestForm.tsx`). Added to a deposit, the cash and accrual income statements
+  count it when it moved as an expense of its own, `expense: security deposit interest`, on
+  Schedule E's line 19 (migration 0125); as a credit, it is less rent.
 - Property groups (migration 0065, ADR 0006): a PMC's named sets of its properties, a name once
   per PMC whatever its case. A group is renamed, never deleted; a property joins or leaves it by
   a row of `trust_property_group_members` (append-only, the latest for a group and property
