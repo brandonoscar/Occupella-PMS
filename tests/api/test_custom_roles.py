@@ -25,6 +25,9 @@ NOT_AN_AREA = {
     "/api/signers": "names a trust bank account's broker (admin) or its signers (the broker)",
     "/api/calendar/mine": "makes the staff member's own calendar link: theirs alone",
     "/api/calendar/mine/revoke": "takes the staff member's own calendar link back",
+    "/api/todos": "writes a to-do: any staff member's",
+    "/api/todos/{todo_id}/assign": "reassigns a to-do: any staff member's",
+    "/api/todos/{todo_id}/done": "marks a to-do done: any staff member's",
 }
 
 

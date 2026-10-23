@@ -199,6 +199,7 @@ AREA_PATHS = (
     ("/api/work-orders", "maintenance"),
     ("/api/invites", "people"),
     ("/api/emails", "email"),
+    ("/api/announcements", "email"),  # to every tenant or owner of a place
 )
 READS = ("GET", "HEAD", "OPTIONS")
 

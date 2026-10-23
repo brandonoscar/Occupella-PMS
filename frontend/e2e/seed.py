@@ -529,6 +529,8 @@ FEATURES = (
     "deposit-interest",
     "tax-credit",
     "unit-details",
+    "announcements",
+    "todos",
 )
 
 

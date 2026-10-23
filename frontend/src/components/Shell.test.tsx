@@ -39,12 +39,12 @@ describe("Shell", () => {
 
     const links = within(sections()).getAllByRole("link");
     expect(links.map((link) => link.textContent)).toEqual([
-      "Dashboard", "Properties", "Rent roll", "Payment files", "Tenants", "Owners", "Housing authorities", "Move-outs", "Listings", "Leads", "Applicants", "Draft leases", "Renewals", "Banking", "Bills", "Utility billing",
-      "General ledger", "Pay owners", "Management fees", "Budgets", "Work orders", "Vendors", "Files", "Reports", "Settings",
+      "Dashboard", "To-dos", "Properties", "Rent roll", "Payment files", "Tenants", "Owners", "Housing authorities", "Move-outs", "Listings", "Leads", "Applicants", "Draft leases", "Renewals", "Banking", "Bills", "Utility billing",
+      "General ledger", "Pay owners", "Management fees", "Budgets", "Work orders", "Vendors", "Announcements", "Files", "Reports", "Settings",
     ]);
     const groups = within(sections()).getAllByRole("group");
     expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual([
-      "Rentals", "Leasing", "Accounting", "Maintenance",
+      "Rentals", "Leasing", "Accounting", "Maintenance", "Communication",
     ]);
     const accounting = within(sections()).getByRole("group", { name: "Accounting" });
     expect(within(accounting).getAllByRole("link").map((link) => link.textContent)).toEqual([
@@ -52,7 +52,7 @@ describe("Shell", () => {
     ]);
     // Each group and each page outside one has its icon.
     expect(groups.every((group) => group.querySelector("svg"))).toBe(true);
-    for (const name of ["Dashboard", "Files", "Reports", "Settings"]) {
+    for (const name of ["Dashboard", "To-dos", "Files", "Reports", "Settings"]) {
       expect(within(sections()).getByRole("link", { name }).querySelector("svg")).toBeTruthy();
     }
     // A page of Settings is Settings shown.

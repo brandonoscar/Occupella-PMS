@@ -5,6 +5,8 @@ import {
   KeyRound,
   Landmark,
   LayoutDashboard,
+  ListTodo,
+  Megaphone,
   Settings,
   Wrench,
 } from "lucide-react";
@@ -14,6 +16,7 @@ import type { NavEntry } from "../components/Shell";
 // grouped as Buildium groups it, in Occupella's look.
 export const STAFF_NAV: NavEntry[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/todos", label: "To-dos", icon: ListTodo },
   {
     label: "Rentals",
     icon: Building2,
@@ -58,6 +61,11 @@ export const STAFF_NAV: NavEntry[] = [
       { href: "/work-orders", label: "Work orders" },
       { href: "/vendors", label: "Vendors" },
     ],
+  },
+  {
+    label: "Communication",
+    icon: Megaphone,
+    items: [{ href: "/announcements", label: "Announcements" }],
   },
   { href: "/files", label: "Files", icon: FolderOpen },
   { href: "/reports", label: "Reports", icon: BarChart3 },

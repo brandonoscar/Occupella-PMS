@@ -2,6 +2,7 @@ import { CircleCheck } from "lucide-react";
 import { EmptyState } from "../components/EmptyState";
 import { navigate } from "../router";
 import type { Today } from "../today";
+import { todoLine } from "../todos";
 import {
   applicationLine,
   billLine,
@@ -24,6 +25,8 @@ type Group = { title: string; go: string; goLabel: string; lines: string[] };
 // nothing in it is left out. It changes nothing.
 function attentionGroups(today: Today): Group[] {
   return [
+    { title: "Your to-dos", go: "/todos", goLabel: "To-dos",
+      lines: today.todos.map((todo) => todoLine(todo, today.on)) },
     { title: "Late rent", go: "/rent-roll", goLabel: "Rent roll",
       lines: today.late_rent.map((lease) => lateLine(lease, today.on)) },
     { title: "Bills due this week", go: "/bills", goLabel: "Bills",
@@ -56,7 +59,7 @@ export function NeedsAttention({ today }: { today: Today }) {
   if (groups.length === 0) {
     return (
       <EmptyState icon={CircleCheck} title="Nothing is late or waiting."
-        body="Late rent, bills due this week, month-end, applications, unsigned offers, journal entries waiting, vendor insurance running out, the company's fees left in trust, trust accounts' signers, renters insurance, security deposits still to receive and deposits due back show here." />
+        body="Your to-dos due this week, late rent, bills due this week, month-end, applications, unsigned offers, journal entries waiting, vendor insurance running out, the company's fees left in trust, trust accounts' signers, renters insurance, security deposits still to receive and deposits due back show here." />
     );
   }
   return (

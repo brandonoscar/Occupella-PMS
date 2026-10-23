@@ -1001,3 +1001,30 @@ operations = [
 browser = [
   "features.spec.ts › staff keep a unit's bedrooms, bathrooms, size and market rent; its property, the rent roll, Listings, the public page and the vacancy report show them",
 ]
+
+[[feature]]
+id = "announcements"
+statement = "Staff write one announcement to every tenant living at, or every owner of, a property, a property group or the whole company, seeing first who it goes to and who has no email on file; each person gets one email of it (once per address), signed with the staff member's name and the company's, on their Email tab as an announcement; the Announcements list shows each with how many of its emails went, and its page each email and whether it went (migration 20261023000203)."
+operations = [
+  "GET /api/announcements",
+  "GET /api/announcements/recipients",
+  "POST /api/announcements",
+  "GET /api/announcements/{announcement_id}",
+]
+browser = [
+  "features.spec.ts › staff announce to every tenant of Cedar House, seeing first who it goes to, and to every owner; each lands on the person's Email tab and the list says what went",
+]
+
+[[feature]]
+id = "todos"
+statement = "Staff keep to-dos: each written by a staff member, maybe about a property, assigned to someone on staff with a day it is due; reassigned or moved (the latest holding), marked done once; listed open (soonest first), done or all, everyone's or only mine; each staff member's own due within a week or overdue on the Dashboard. Any staff member keeps them, whatever their custom roles (migration 20261023000203)."
+operations = [
+  "GET /api/todos",
+  "POST /api/todos",
+  "POST /api/todos/{todo_id}/assign",
+  "POST /api/todos/{todo_id}/done",
+]
+browser = [
+  "features.spec.ts › staff add a to-do for themselves and another, reassign one, see theirs on the Dashboard, and mark it done",
+]
+

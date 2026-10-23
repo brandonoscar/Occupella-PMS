@@ -28,6 +28,7 @@ from pms.api import (
     reconcile,
     rent,
     signers,
+    todos,
     vendors,
 )
 from pms.api.deps import Conn, Staff
@@ -109,6 +110,9 @@ class Today(BaseModel):
     # Leases past their last day whose deposits are still held, with the day they are due back
     # by the strictest deadline found (migration 0120, docs/law.md).
     deposits_to_return: list[moveout.DueBack]
+    # The signed-in staff member's open to-dos due within a week or overdue (migration
+    # 20261023000203), soonest first.
+    todos: list[todos.Todo]
 
 
 # The leases named as the rent page names them: property, unit and every tenant on it.
@@ -225,6 +229,7 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
         ],
         deposits_to_receive=deposits,
         deposits_to_return=moveout.due_back(conn, session.pmc_id, day),
+        todos=todos.mine_soon(conn, session.pmc_id, session.person_id, day),
         renters_insurance=[
             Uninsured(
                 lease_id=lease,

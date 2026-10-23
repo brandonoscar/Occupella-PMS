@@ -4,6 +4,7 @@ import { entryTotal } from "./journal";
 import type { Application } from "./leasing";
 import { money, usDate } from "./money";
 import type { Offer } from "./offers";
+import type { Todo } from "./todos";
 import type { Bill, CompanyFees } from "./payables";
 import { companyFeesLabel } from "./payables";
 
@@ -38,6 +39,8 @@ export type Today = {
   deposits_to_receive: DepositDue[];
   // Leases past their last day whose deposits are still held, and when they are due back.
   deposits_to_return: DepositBack[];
+  // The signed-in staff member's open to-dos due within a week or overdue.
+  todos: Todo[];
 };
 export type DepositBack = {
   lease_id: string;

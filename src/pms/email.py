@@ -308,6 +308,42 @@ def write_message(
     return _write(conn, pmc_id, "message", kind, person_id, to, subject, body, sent_by)
 
 
+def write_announcement(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    kind: str,
+    person_id: UUID,
+    to: str,
+    subject: str,
+    text: str,
+    sent_by: UUID,
+    announcement_id: UUID,
+) -> UUID:
+    """Writes one person's email of an announcement, in the caller's transaction: a message from
+    the staff member who sent it, signed as write_message signs one, naming its announcement
+    (migration 20261023000203)."""
+    _, company = _names(conn, pmc_id, kind, person_id)
+    staff = conn.execute(PEOPLE["staff"][0], (pmc_id, sent_by)).fetchone()
+    if staff is None:
+        raise LookupError(f"no staff {sent_by} in PMC {pmc_id}")
+    column = PEOPLE[kind][1]
+    row = conn.execute(
+        "INSERT INTO trust_emails (pmc_id, kind, to_address, subject, body, sent_by,"  # noqa: S608
+        f" announcement_id, {column}) VALUES (%s, 'message', %s, %s, %s, %s, %s, %s) RETURNING id",
+        (
+            pmc_id,
+            to,
+            subject,
+            f"{text}\n\n{staff[0]}\n{company}\n",
+            sent_by,
+            announcement_id,
+            person_id,
+        ),
+    ).fetchone()
+    assert row is not None
+    return UUID(str(row[0]))
+
+
 # --- a bill waiting for its owner ------------------------------------------------------------
 
 Written = Literal["written", "within the limit", "no active login", "written already"]

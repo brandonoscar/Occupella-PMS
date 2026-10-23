@@ -18,7 +18,7 @@ const ME: Me = {
 const QUIET: Today = {
   on: "2026-10-13", late_rent: [], bills_due: [], unreconciled: [], applications: [], unsigned_offers: [],
   journal_waiting: [], vendor_insurance: [], company_fees: [], signers: [], renters_insurance: [],
-  deposits_to_receive: [], deposits_to_return: [],
+  deposits_to_receive: [], deposits_to_return: [], todos: [],
 };
 
 const FIGURES: Dashboard = {
@@ -178,6 +178,19 @@ describe("Dashboard", () => {
       "Unit 1, Property 1 (Tenant 1): $1,200.00 held, due back by 11/04/2026 (due in 13 days)",
     )).toBeTruthy();
     expect(within(deposits).getByRole("link", { name: "Open Move-outs" }).getAttribute("href")).toBe("/move-out");
+  });
+
+  it("lists the signed-in staff member's to-dos due this week first, overdue ones said so", async () => {
+    server({ ...QUIET, todos: [
+      { id: "t1", title: "Call the roofer", notes: null, property_id: "p1", property: "Property 1",
+        assigned_to_id: "s1", assigned_to: "Staff 1", due_on: "2026-10-10", overdue: true, written_by: "Staff 1",
+        written_at: "2026-10-01T00:00:00Z", done_by: null, done_at: null },
+    ] });
+    render(<DashboardPage me={ME} />);
+
+    const todos = await screen.findByRole("region", { name: "Your to-dos" });
+    expect(within(todos).getByText("Call the roofer (Property 1): overdue, due 10/10/2026")).toBeTruthy();
+    expect(within(todos).getByRole("link", { name: "Open To-dos" }).getAttribute("href")).toBe("/todos");
   });
 
   it("shows the company's figures, each opening the page where that work is done", async () => {

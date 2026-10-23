@@ -49,6 +49,7 @@ from pydantic import BaseModel, Field
 from pms import accounts, email, exports, geocoding, nightly
 from pms.api import (
     addresses,
+    announcements,
     assistance,
     bank_deposits,
     banking,
@@ -98,6 +99,7 @@ from pms.api import (
     tax_credit,
     tenant,
     today,
+    todos,
     unit_details,
     utilities,
     vendor_links,
@@ -573,6 +575,8 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(notes.router)
     app.include_router(notice_templates.router)
     app.include_router(emails.router)
+    app.include_router(announcements.router)
+    app.include_router(todos.router)
     app.include_router(today.router)
     app.include_router(dashboard.router)
     if settings.static_dir is not None:

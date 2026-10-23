@@ -133,6 +133,11 @@ TABLES = {
     "trust_property_group_members": {"SELECT", "INSERT"},
     # Notes (migration 0066): written once each; a correction is a new note.
     "trust_notes": {"SELECT", "INSERT"},
+    # Announcements and staff to-dos (migration 20261023000203).
+    "trust_announcements": {"SELECT", "INSERT"},
+    "trust_todos": {"SELECT", "INSERT"},
+    "trust_todo_assignments": {"SELECT", "INSERT"},
+    "trust_todo_completions": {"SELECT", "INSERT"},
     # Rent runs (migration 0067): recorded by trust_run_rent, which runs with the app's grants.
     "trust_rent_runs": {"SELECT", "INSERT"},
     # How a payout was sent (migration 0068): recorded once each, never changed.
@@ -305,6 +310,12 @@ COLUMN_UPDATES = {
 # their credentials, and rental applicants with their consumer report results, are no business
 # of the role behind Occupella's key.
 AI_NEVER_READS = {
+    # What staff wrote to tenants and owners, and their own to-dos (migration 20261023000203): as
+    # the AI reads no email and no note.
+    "trust_announcements",
+    "trust_todos",
+    "trust_todo_assignments",
+    "trust_todo_completions",
     # A notice made for a lease, as filled in (migration 0119): like a document's file.
     "trust_notices",
     "trust_screening_criteria",
@@ -488,6 +499,8 @@ FUNCTIONS = {
     "trust_check_bank_deposit_item()": set(),  # a trigger's: no one calls it
     "trust_check_charge_waiver()": set(),
     "trust_check_rent_due_day()": set(),
+    "trust_check_todo_assigned()": set(),  # a trigger's: no one calls it
+    "trust_check_todo_open()": set(),
     "trust_check_bill_reference()": set(),  # a trigger's: no one calls it
     "trust_check_shared_bill()": set(),
     "trust_check_ownership_share_line()": set(),

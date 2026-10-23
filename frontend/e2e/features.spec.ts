@@ -4710,3 +4710,90 @@ test("staff keep a unit's bedrooms, bathrooms, size and market rent; its propert
   await expect(vacancy).toContainText("1300.00");
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
 });
+
+test("staff announce to every tenant of Cedar House, seeing first who it goes to, and to every owner; each lands on the person's Email tab and the list says what went", async ({
+  page,
+}) => {
+  const people = seed.features["announcements"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Announcements");
+  await expect(page.getByText("No announcement yet.")).toBeVisible();
+
+  await page.getByRole("button", { name: "New announcement" }).click();
+  const panel = page.getByRole("dialog", { name: "New announcement" });
+  await panel.getByRole("combobox", { name: "Of", exact: true }).selectOption({ label: "Cedar House" });
+  await expect(panel.getByTestId("announce-goes-to")).toHaveText(
+    "Goes to 1 tenant, every tenant living at Cedar House. No email on file: Quinn Demo.",
+  );
+  await panel.getByLabel("Subject").fill("Water off Tuesday");
+  await panel.getByLabel("Message").fill("The water is off Tuesday from 9 to 11.");
+  await panel.getByRole("button", { name: "Send announcement" }).click();
+  await expect(page.getByText("Emailed 1 tenant. No email on file: Quinn Demo.")).toBeVisible();
+  const row = page.getByRole("row", { name: "Water off Tuesday" });
+  await expect(row).toContainText("Every tenant living at Cedar House");
+  await expect(row).toContainText(/of 1 sent/);
+
+  // To every owner of the company.
+  await page.getByRole("button", { name: "New announcement" }).click();
+  await panel.getByRole("combobox", { name: "To", exact: true }).selectOption("owners");
+  await expect(panel.getByTestId("announce-goes-to")).toContainText("every owner of the company's properties");
+  await panel.getByLabel("Subject").fill("Year-end statements are ready");
+  await panel.getByLabel("Message").fill("Your year-end statement is in the portal.");
+  await panel.getByRole("button", { name: "Send announcement" }).click();
+  await expect(page.getByText(/^Emailed \d+ owners?\./)).toBeVisible();
+
+  // Its page lists each email; the tenant's Email tab shows it as an announcement.
+  await page.getByRole("link", { name: "Water off Tuesday" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Water off Tuesday" })).toBeVisible();
+  await expect(page.getByRole("table", { name: "Emails" }).getByRole("row", { name: "Taylor Demo" })).toBeVisible();
+  const search = page.getByLabel("Search people, homes, bills, work orders and files");
+  await search.fill("taylor");
+  await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Taylor Demo/ }).click();
+  await page.getByRole("tab", { name: "Email", exact: true }).click();
+  await expect(page.getByRole("list", { name: "Email, Taylor Demo" })).toContainText("Announcement to");
+});
+
+test("staff add a to-do for themselves and another, reassign one, see theirs on the Dashboard, and mark it done", async ({
+  page,
+}) => {
+  const people = seed.features["todos"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "To-dos");
+  await expect(page.getByText("Nothing to do.")).toBeVisible();
+
+  const addTodo = async (title: string, due: string, to?: string) => {
+    await page.getByRole("button", { name: "Add to-do" }).click();
+    const panel = page.getByRole("dialog", { name: "Add to-do" });
+    await panel.getByLabel("To-do").fill(title);
+    await panel.getByLabel("Due on").fill(due);
+    if (to) await panel.getByLabel("Assign to").selectOption({ label: to });
+    await panel.getByLabel("About a property (optional)").selectOption({ label: "Cedar House" });
+    await panel.getByRole("button", { name: "Add to-do" }).click();
+    await expect(panel).toBeHidden();
+  };
+  await addTodo("Call the roofer", today());
+  await addTodo("Order furnace filters", daysFromToday(20), "Demo Bookkeeper");
+  const roofer = page.getByRole("row", { name: "Call the roofer" });
+  await expect(roofer).toContainText("Cedar House");
+  await expect(roofer).toContainText("Demo Manager");
+
+  // Reassigned to the bookkeeper and back, due tomorrow.
+  await roofer.getByRole("button", { name: "Reassign" }).click();
+  const moving = page.getByRole("dialog", { name: "Reassign: Call the roofer" });
+  await moving.getByLabel("Due on").fill(daysFromToday(1));
+  await moving.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText(`Call the roofer: Demo Manager's, due ${us(daysFromToday(1))}.`)).toBeVisible();
+
+  // The Dashboard shows the manager's own, due this week; not the bookkeeper's.
+  await section(page, "Dashboard");
+  const mine = page.getByRole("region", { name: "Your to-dos" });
+  await expect(mine).toContainText(`Call the roofer (Cedar House): due ${us(daysFromToday(1))}`);
+  await expect(mine).not.toContainText("Order furnace filters");
+
+  await section(page, "To-dos");
+  await page.getByRole("row", { name: "Call the roofer" }).getByRole("button", { name: "Done" }).click();
+  await expect(page.getByText("Done: Call the roofer.")).toBeVisible();
+  await expect(page.getByRole("row", { name: "Call the roofer" })).toHaveCount(0);
+  await page.getByRole("tab", { name: "Done" }).click();
+  await expect(page.getByRole("row", { name: "Call the roofer" })).toContainText("Done by Demo Manager");
+});

@@ -3943,6 +3943,43 @@ $$;
 
 
 --
+-- Name: trust_check_todo_assigned(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_todo_assigned() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM trust_todo_assignments AS a WHERE a.todo_id = NEW.id) THEN
+        RAISE EXCEPTION 'trust: a to-do is assigned to someone, with a day it is due'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: trust_check_todo_open(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_todo_open() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('to-do ' || NEW.todo_id, 0));
+    IF EXISTS (SELECT 1 FROM trust_todo_completions AS c WHERE c.todo_id = NEW.todo_id) THEN
+        RAISE EXCEPTION 'trust: that to-do is done already'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_transfer_scope(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -13336,6 +13373,27 @@ CREATE TABLE public.trust_adverse_actions (
 
 
 --
+-- Name: trust_announcements; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_announcements (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    audience text NOT NULL,
+    property_id uuid,
+    group_id uuid,
+    subject text NOT NULL,
+    body text NOT NULL,
+    sent_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_announcements_audience_check CHECK ((audience = ANY (ARRAY['tenants'::text, 'owners'::text]))),
+    CONSTRAINT trust_announcements_body_check CHECK (((length(body) >= 1) AND (length(body) <= 8000))),
+    CONSTRAINT trust_announcements_check CHECK (((property_id IS NULL) OR (group_id IS NULL))),
+    CONSTRAINT trust_announcements_subject_check CHECK ((((length(subject) >= 1) AND (length(subject) <= 200)) AND (subject !~ '[\r\n]'::text)))
+);
+
+
+--
 -- Name: trust_applicants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14328,6 +14386,7 @@ CREATE TABLE public.trust_emails (
     offer_id uuid,
     signer_position bigint,
     transfer_id text,
+    announcement_id uuid,
     CONSTRAINT trust_emails_body_check CHECK (((body <> ''::text) AND (length(body) <= 10000))),
     CONSTRAINT trust_emails_check CHECK (((kind = 'bill_approval'::text) = (bill_id IS NOT NULL))),
     CONSTRAINT trust_emails_subject_check CHECK (((subject <> ''::text) AND (length(subject) <= 200))),
@@ -16186,6 +16245,50 @@ CREATE TABLE public.trust_tenants (
 
 
 --
+-- Name: trust_todo_assignments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_todo_assignments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    todo_id uuid NOT NULL,
+    assigned_to uuid NOT NULL,
+    due_on date NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_todo_completions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_todo_completions (
+    todo_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    done_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_todos; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_todos (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    title text NOT NULL,
+    notes text,
+    property_id uuid,
+    recorded_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_todos_notes_check CHECK (((length(notes) >= 1) AND (length(notes) <= 4000))),
+    CONSTRAINT trust_todos_title_check CHECK (((title = btrim(title)) AND ((length(title) >= 1) AND (length(title) <= 200)) AND (title !~ '[\r\n]'::text)))
+);
+
+
+--
 -- Name: trust_unit_areas; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16505,6 +16608,22 @@ ALTER TABLE ONLY public.trust_account_signers
 
 ALTER TABLE ONLY public.trust_adverse_actions
     ADD CONSTRAINT trust_adverse_actions_pkey PRIMARY KEY (application_id);
+
+
+--
+-- Name: trust_announcements trust_announcements_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_announcements
+    ADD CONSTRAINT trust_announcements_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_announcements trust_announcements_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_announcements
+    ADD CONSTRAINT trust_announcements_pmc_id_id_key UNIQUE (pmc_id, id);
 
 
 --
@@ -17369,6 +17488,14 @@ ALTER TABLE ONLY public.trust_email_deliveries
 
 ALTER TABLE ONLY public.trust_email_settings
     ADD CONSTRAINT trust_email_settings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_emails trust_emails_announcement_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_emails
+    ADD CONSTRAINT trust_emails_announcement_check CHECK (((announcement_id IS NULL) OR ((kind = 'message'::text) AND (sent_by IS NOT NULL) AND ((tenant_id IS NOT NULL) OR (owner_id IS NOT NULL))))) NOT VALID;
 
 
 --
@@ -18987,6 +19114,38 @@ ALTER TABLE ONLY public.trust_tenants
 
 
 --
+-- Name: trust_todo_assignments trust_todo_assignments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_todo_assignments
+    ADD CONSTRAINT trust_todo_assignments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_todo_completions trust_todo_completions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_todo_completions
+    ADD CONSTRAINT trust_todo_completions_pkey PRIMARY KEY (todo_id);
+
+
+--
+-- Name: trust_todos trust_todos_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_todos
+    ADD CONSTRAINT trust_todos_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_todos trust_todos_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_todos
+    ADD CONSTRAINT trust_todos_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_unit_areas trust_unit_areas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19280,6 +19439,34 @@ CREATE INDEX trust_account_signers_changed_by ON public.trust_account_signers US
 --
 
 CREATE INDEX trust_account_signers_staff ON public.trust_account_signers USING btree (pmc_id, staff_id);
+
+
+--
+-- Name: trust_announcements_group; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_announcements_group ON public.trust_announcements USING btree (pmc_id, group_id);
+
+
+--
+-- Name: trust_announcements_listed; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_announcements_listed ON public.trust_announcements USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_announcements_property; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_announcements_property ON public.trust_announcements USING btree (pmc_id, property_id);
+
+
+--
+-- Name: trust_announcements_sent_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_announcements_sent_by ON public.trust_announcements USING btree (pmc_id, sent_by);
 
 
 --
@@ -19861,6 +20048,13 @@ CREATE INDEX trust_email_settings_recorded_by ON public.trust_email_settings USI
 --
 
 CREATE UNIQUE INDEX trust_emails_one_adverse_action ON public.trust_emails USING btree (applicant_id, application_id) WHERE (kind = 'adverse_action'::text);
+
+
+--
+-- Name: trust_emails_one_announcement; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_emails_one_announcement ON public.trust_emails USING btree (announcement_id, lower(to_address)) WHERE (announcement_id IS NOT NULL);
 
 
 --
@@ -21047,6 +21241,55 @@ CREATE INDEX trust_tenant_links_same_as ON public.trust_tenant_links USING btree
 
 
 --
+-- Name: trust_todo_assignments_assigned_to; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_todo_assignments_assigned_to ON public.trust_todo_assignments USING btree (pmc_id, assigned_to);
+
+
+--
+-- Name: trust_todo_assignments_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_todo_assignments_recorded_by ON public.trust_todo_assignments USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_todo_assignments_todo; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_todo_assignments_todo ON public.trust_todo_assignments USING btree (pmc_id, todo_id, created_at);
+
+
+--
+-- Name: trust_todo_completions_done_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_todo_completions_done_by ON public.trust_todo_completions USING btree (pmc_id, done_by);
+
+
+--
+-- Name: trust_todos_listed; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_todos_listed ON public.trust_todos USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_todos_property; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_todos_property ON public.trust_todos USING btree (pmc_id, property_id);
+
+
+--
+-- Name: trust_todos_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_todos_recorded_by ON public.trust_todos USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_unit_areas_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21310,6 +21553,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_adverse_actions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_announcements trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_announcements FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -22405,6 +22655,27 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_todo_assignments trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_todo_assignments FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_todo_completions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_todo_completions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_todos trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_todos FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_unit_areas trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22612,6 +22883,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_acco
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_adverse_actions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_announcements trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_announcements FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -23749,6 +24027,27 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_tena
 
 
 --
+-- Name: trust_todo_assignments trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_todo_assignments FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_todo_completions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_todo_completions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_todos trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_todos FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_unit_areas trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24841,6 +25140,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_tenant_links FOR 
 
 
 --
+-- Name: trust_todo_assignments trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_todo_assignments FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_unit_areas trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -25072,6 +25378,27 @@ CREATE TRIGGER trust_tenant_payment_not_assistance BEFORE INSERT ON public.trust
 
 
 --
+-- Name: trust_todos trust_todo_assigned; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_todo_assigned AFTER INSERT ON public.trust_todos DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_todo_assigned();
+
+
+--
+-- Name: trust_todo_assignments trust_todo_open; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_todo_open BEFORE INSERT ON public.trust_todo_assignments FOR EACH ROW EXECUTE FUNCTION public.trust_check_todo_open();
+
+
+--
+-- Name: trust_todo_completions trust_todo_open; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_todo_open BEFORE INSERT ON public.trust_todo_completions FOR EACH ROW EXECUTE FUNCTION public.trust_check_todo_open();
+
+
+--
 -- Name: pgledger_transfers trust_transfer_scope; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -25206,6 +25533,38 @@ ALTER TABLE ONLY public.trust_adverse_actions
 
 ALTER TABLE ONLY public.trust_adverse_actions
     ADD CONSTRAINT trust_adverse_actions_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_announcements trust_announcements_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_announcements
+    ADD CONSTRAINT trust_announcements_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_announcements trust_announcements_pmc_id_group_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_announcements
+    ADD CONSTRAINT trust_announcements_pmc_id_group_id_fkey FOREIGN KEY (pmc_id, group_id) REFERENCES public.trust_property_groups(pmc_id, id);
+
+
+--
+-- Name: trust_announcements trust_announcements_pmc_id_property_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_announcements
+    ADD CONSTRAINT trust_announcements_pmc_id_property_id_fkey FOREIGN KEY (pmc_id, property_id) REFERENCES public.trust_properties(pmc_id, id);
+
+
+--
+-- Name: trust_announcements trust_announcements_pmc_id_sent_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_announcements
+    ADD CONSTRAINT trust_announcements_pmc_id_sent_by_fkey FOREIGN KEY (pmc_id, sent_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -26670,6 +27029,14 @@ ALTER TABLE ONLY public.trust_email_settings
 
 ALTER TABLE ONLY public.trust_email_settings
     ADD CONSTRAINT trust_email_settings_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_emails trust_emails_announcement_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_announcement_id_fkey FOREIGN KEY (announcement_id) REFERENCES public.trust_announcements(id) NOT VALID;
 
 
 --
@@ -29505,6 +29872,86 @@ ALTER TABLE ONLY public.trust_tenants
 
 
 --
+-- Name: trust_todo_assignments trust_todo_assignments_pmc_id_assigned_to_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_todo_assignments
+    ADD CONSTRAINT trust_todo_assignments_pmc_id_assigned_to_fkey FOREIGN KEY (pmc_id, assigned_to) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_todo_assignments trust_todo_assignments_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_todo_assignments
+    ADD CONSTRAINT trust_todo_assignments_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_todo_assignments trust_todo_assignments_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_todo_assignments
+    ADD CONSTRAINT trust_todo_assignments_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_todo_assignments trust_todo_assignments_pmc_id_todo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_todo_assignments
+    ADD CONSTRAINT trust_todo_assignments_pmc_id_todo_id_fkey FOREIGN KEY (pmc_id, todo_id) REFERENCES public.trust_todos(pmc_id, id);
+
+
+--
+-- Name: trust_todo_completions trust_todo_completions_pmc_id_done_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_todo_completions
+    ADD CONSTRAINT trust_todo_completions_pmc_id_done_by_fkey FOREIGN KEY (pmc_id, done_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_todo_completions trust_todo_completions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_todo_completions
+    ADD CONSTRAINT trust_todo_completions_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_todo_completions trust_todo_completions_pmc_id_todo_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_todo_completions
+    ADD CONSTRAINT trust_todo_completions_pmc_id_todo_id_fkey FOREIGN KEY (pmc_id, todo_id) REFERENCES public.trust_todos(pmc_id, id);
+
+
+--
+-- Name: trust_todos trust_todos_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_todos
+    ADD CONSTRAINT trust_todos_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_todos trust_todos_pmc_id_property_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_todos
+    ADD CONSTRAINT trust_todos_pmc_id_property_id_fkey FOREIGN KEY (pmc_id, property_id) REFERENCES public.trust_properties(pmc_id, id);
+
+
+--
+-- Name: trust_todos trust_todos_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_todos
+    ADD CONSTRAINT trust_todos_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_unit_areas trust_unit_areas_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -30028,4 +30475,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000122'),
     ('20261022000123'),
     ('20261022000124'),
-    ('20261022000125');
+    ('20261022000125'),
+    ('20261023000203');

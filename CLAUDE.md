@@ -148,6 +148,18 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   statement the whole month's statement as a PDF (`src/pms/attachments.py`, q045, q055), made when
   the email is handed to the sender from what the database holds then (the outbox keeps no file);
   one whose file can't be made is a failed delivery saying why.
+- Announcements and to-dos (migration 20261023000203, `src/pms/api/announcements.py`,
+  `src/pms/api/todos.py`): Communication, Announcements (`/announcements`, area 'email') writes
+  one announcement to every tenant living at, or every owner of, a property, a property group or
+  the whole company (`trust_announcements`, naming who sent it), showing first who it goes to
+  (`/api/announcements/recipients`): each person with an email on file gets one email of it, once
+  per address (`trust_emails.announcement_id`, a staff member's message, on their Email tab as an
+  announcement), the rest named; each one's page lists its emails and whether each went. To-dos
+  (`/todos`; `trust_todos`, `trust_todo_assignments`, the latest holding, `trust_todo_completions`,
+  once): what staff write down to do, maybe about a property, assigned to someone on staff with a
+  day it is due (checked at commit), reassigned or moved until done; any staff member keeps them
+  (no custom role's area), and the Dashboard shows each person's own due within a week or
+  overdue (`today.py`'s `todos`). All append-only, audited; the AI role reads none of it.
 - The portal (`frontend/`): React 19, Vite and Tailwind v4, following Occupella's `DESIGN.md`
   and looking like Occupella's app (founder, 2026-10-14): its light theme, a full-height
   light-blue left sidebar with the wordmark, the sections (lucide icons) and Sign out, a white
