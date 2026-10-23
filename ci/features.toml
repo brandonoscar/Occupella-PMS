@@ -358,7 +358,7 @@ browser = [
 
 [[feature]]
 id = "recurring-bills"
-statement = "Staff add a bill that comes every month on Bills' Recurring tab and stop it from a day; the nightly run enters each month's once under its prefix and the month (tests/test_nightly.py: the browser run has it off)."
+statement = "Staff add a bill that comes every month on Bills' Recurring tab and stop it from a day; adding one enters the months already due at once, and the nightly run enters each month after, once, under its prefix and the month (tests/test_nightly.py: the browser run has it off)."
 operations = [
   "GET /api/payables/recurring",
   "POST /api/payables/recurring",
@@ -968,7 +968,7 @@ browser = [
 
 [[feature]]
 id = "deposit-interest"
-statement = "Interest on security deposits (the founder's review q041; migration 0122): a property's yearly rate from a day, set on its page (the PMS builds in no state's rate); each day's deposit earns that day's rate over the days in its year, to the cent per deposit. From a lease's ⋯ menu staff see what its deposits earned since the last payment through a day and pay it, once per request, as a credit against the rent (a lease in effect) or added to the deposit from the owner's account with its cash (taking the disburse role); a deposit gone back takes none. Reports, Deposit interest lists each lease with deposits held, the rate, the next payment's first day and what is due."
+statement = "Interest on security deposits (the founder's review q041; migration 0122): a property's yearly rate from a day, set on its page (the PMS builds in no state's rate); each day's deposit earns that day's rate over the days in its year, to the cent per deposit. From a lease's ⋯ menu staff see what its deposits earned since the last payment through a day and pay it, once per request, as a credit against the rent (a lease in effect) or added to the deposit from the owner's account with its cash (taking the disburse role); a deposit gone back takes none. Reports, Deposit interest lists each lease with deposits held, the rate, the next payment's first day and what is due; interest added to a deposit is an expense of its own on the owner's income statements (migration 0125)."
 operations = [
   "POST /api/setup/deposit-interest",
   "GET /api/rent/leases/{lease_id}/deposit-interest",

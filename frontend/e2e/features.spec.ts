@@ -812,6 +812,8 @@ test("staff add a fee, a credit and a monthly charge to a lease, take a deposit 
   // Each payment is listed as it came in, not only the part that paid charges.
   const received = lease.getByRole("table", { name: "Payments received" });
   await expect(received.getByRole("row", { name: /Check 501/ })).toContainText("$100.00");
+  // It downloads as PDF, CSV and Excel.
+  await downloadsEach(page, lease.getByRole("group", { name: "Download the ledger" }));
 
   // A payment when nothing is owed is all prepaid rent; it is listed with how it came (a money
   // order here), and it can bounce.
@@ -984,10 +986,16 @@ test("staff add a recurring bill and stop it, and record the decline of an owner
   await adding.getByLabel("Day of the month").fill("1");
   await adding.getByLabel("First day").fill(firstOfThisMonth());
   await adding.getByRole("button", { name: "Add recurring bill" }).click();
-  await expect(page.getByText("GUTTER is entered each month.")).toBeVisible();
-  // Each month's bill is entered by the nightly run (src/pms/nightly.py), off in this run.
+  // This month's, due on the first, is entered as it is added; the nightly run (off in this
+  // run) enters each month after.
+  await expect(page.getByText("GUTTER is entered each month; 1 bill already due is entered now.")).toBeVisible();
   const gutter = page.getByRole("row", { name: "Demo Roofing Co GUTTER" });
   await expect(gutter.getByRole("cell").nth(3)).toHaveText("$120.00");
+  await page.getByRole("tab", { name: "Unpaid", exact: true }).click();
+  const entered = billRow(page, "Demo Roofing Co", `GUTTER-${firstOfThisMonth().slice(0, 7)}`);
+  await expect(entered).toContainText("$120.00");
+  await expect(entered).toContainText("Gutter cleaning");
+  await page.getByRole("tab", { name: "Recurring" }).click();
 
   await gutter.getByRole("button", { name: "Actions for Demo Roofing Co GUTTER" }).click();
   await page.getByRole("menuitem", { name: "Stop it" }).click();
@@ -1200,6 +1208,17 @@ async function downloads(page: Page, name: string, type: string): Promise<void> 
 const PDF = "application/pdf";
 const CSV = "text/csv";
 const XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
+// A group's PDF, CSV and Excel links each download in their format.
+async function downloadsEach(page: Page, group: Locator): Promise<void> {
+  for (const [name, type] of [["PDF", PDF], ["CSV", CSV], ["Excel", XLSX]] as const) {
+    const href = (await group.getByRole("link", { name, exact: true }).getAttribute("href")) ?? "";
+    const answer = await page.request.get(href);
+    expect(answer.status(), `${name}: ${href}`).toBe(200);
+    expect(answer.headers()["content-type"]).toContain(type);
+    expect((await answer.body()).length).toBeGreaterThan(0);
+  }
+}
 
 test("an owner reads last month's statement and their year-end package, and downloads each", async ({ page }) => {
   const people = seed.features["owner-portal"]!;
@@ -4083,7 +4102,12 @@ test("staff bring a property's units, tenants, lease and unpaid charges in from 
   const units = "Property,Unit\nHarbor View,Unit 1\nHarbor View,Unit 2\nHarbor View,Unit 3\n";
   await bring("Units", units, "3 added.");
   await bring("Units", units, "0 added; 3 already here.");
-  await bring("Tenants", "Property,Tenant\nHarbor View,Reese Sample\nHarbor View,Rowan Sample\n", "2 added.");
+  // The tenants file may carry each one's contact details (q127); Rowan has none.
+  await bring("Tenants",
+    "Property,Tenant,Email,Phone,Address,City,State,ZIP\n"
+      + "Harbor View,Reese Sample,reese.sample@example.com,555-555-0150,1 Example Road,Sampletown,ZZ,00000\n"
+      + "Harbor View,Rowan Sample,,,,,,\n",
+    "2 added.");
   await bring("Leases in place",
     `Property,Unit,Tenants,Starts on,Monthly rent\nHarbor View,Unit 1,Reese Sample,${started},975.00\n`,
     "1 added; 1 already here.");
@@ -4117,6 +4141,19 @@ test("staff bring a property's units, tenants, lease and unpaid charges in from 
   await expect(charges).toContainText(`${us(owed)} Rent: $975.00 open`);
   await expect(charges).toContainText(`${us(owed)} Late fee from the old system: $40.00 open`);
   await expect((await ownerProperty(page, "Demo Owner B", "Harbor View")).getByRole("cell").nth(2)).toHaveText("$1,500.00");
+
+  // Reese's contact details came with the tenants file, onto the list and their page.
+  await section(page, "Tenants");
+  await page.getByRole("combobox", { name: "Properties shown" }).selectOption({ label: "Harbor View" });
+  const reese = page.getByRole("row", { name: "Reese Sample", exact: true });
+  await expect(reese).toContainText("reese.sample@example.com");
+  await reese.getByRole("link", { name: "Reese Sample" }).click();
+  const contact = page.getByRole("group", { name: "Contact details, Reese Sample" });
+  await expect(contact).toContainText("555-0150");
+  await expect(contact).toContainText("Sampletown, ZZ 00000");
+  await section(page, "Tenants");
+  await page.getByRole("row", { name: "Rowan Sample", exact: true }).getByRole("link", { name: "Rowan Sample" }).click();
+  await expect(page.getByRole("group", { name: "Contact details, Rowan Sample" })).toContainText("No contact details yet.");
 });
 
 test("staff bring the old system's tenant, owner and vendor history in once, and read it under Before the switch on each page", async ({
@@ -4507,6 +4544,26 @@ test("staff set a property's deposit interest, credit a lease's interest against
   const report = page.getByRole("table", { name: "Deposit interest" });
   await expect(report).toContainText("Unit A");
   await expect(report).toContainText("Morgan Demo");
+
+  // Unit B's interest, added to Jamie Sample's deposit, comes out of Demo Owner A's account: an
+  // expense of its own on the owner's income statement (migration 0125).
+  await openLease(page, "Birch Flats, Unit B");
+  const adding = await leasePanel(page, "Deposit interest");
+  const addedDue = adding.getByTestId("interest-due");
+  await expect(addedDue).toContainText(` to ${us(today())}: $`);
+  const added = ((await addedDue.textContent()) ?? "").split(": ")[1]!;
+  expect(added).not.toBe("$0.00");
+  await adding.getByLabel("Pay it as").selectOption({ label: "Added to the deposit" });
+  await adding.getByRole("button", { name: "Pay interest" }).click();
+  await expect(page.getByText(`${added} added to the deposit, `, { exact: false }).first()).toBeVisible();
+  await section(page, "Reports");
+  await page.getByRole("list", { name: "Financial" }).getByRole("link", { name: "Income statement", exact: true }).click();
+  await page.getByRole("combobox", { name: "Owner" }).selectOption({ label: "Demo Owner A" });
+  await page.getByRole("combobox", { name: "Days" }).selectOption({ label: "Year to date" });
+  const statement = page.getByRole("table", { name: "Income statement" });
+  // A report reads as it wrote it: Schedule E line 19, the amount without its dollar sign.
+  await expect(statement.getByRole("row", { name: /Birch Flats.*expense: security deposit interest/ }))
+    .toHaveText(`Birch Flatsexpense: security deposit interest19${added.slice(1)}`);
   // The saved toasts sit over the page's corner until they go.
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
 });
