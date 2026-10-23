@@ -875,3 +875,41 @@ statute's text and the IRS's Publication 1099 figures are NOT VERIFIED here.)
 **Left to the company.** Whether a vendor gets a 1099 at all (a corporation usually doesn't; the
 W-9 says), the year's adjusted threshold from 2027, and filing: the PMS files nothing and keeps
 no tax ID.
+
+## Rent paid online (migration 0150, ADR 0009)
+
+**The rules, as researched on 2026-10-23** (`docs/research/state-rules-2026-10-23.md`, from search
+excerpts, every one NOT VERIFIED against the statute):
+- No state found bans paying rent online, but several require a way to pay that is neither cash
+  nor online, or free: California Civil Code 1947.3 (at least one form of payment that is neither
+  cash nor electronic transfer, and a waiver is void), Oregon SB 1523 (from June 5, 2026: a tenant
+  may not be required to pay electronically) and ORS 90.302 (a card fee passes through only when
+  the card company allows it and the landlord takes cash or check), Illinois Public Act 103-0809
+  (a portal charging for e-checks needs a free alternative), Colorado HB25-1090 (no processing
+  charge unless a free way to pay exists).
+- Card surcharges are banned in Connecticut, Massachusetts and Maine and capped at 2% in Colorado
+  and Oklahoma; a debit card is never surcharged; Visa reportedly forbids a convenience fee on a
+  recurring payment. The PMS takes no card yet.
+- Trust money: the company is the merchant of record (the payment is its, into its trust bank
+  account), and no fee is taken out of the rent: rent is owners' trust money. No regulator
+  guidance was found on a processor keeping its fee out of what it pays into trust, or on returns
+  and disputes taken back from a trust account; that is the largest legal question left, for
+  counsel.
+
+**What the PMS does.**
+- Online payments are off until the company turns them on; staff still record checks, money
+  orders and cash, so a free way to pay is always there.
+- The company chooses who pays the processing fee on a bank payment: the company (free for
+  tenants) or the tenant, the fee shown before they pay and no more than the processor's own
+  (0.8%, at most $5.00, as Stripe published it; NOT VERIFIED against its current prices).
+- The payment is recorded at its whole amount for the owner. The processor's fee leaves trust
+  only from the company's fee account (the company's money), once that holds it; until then it
+  waits, and the company deposits what is short from its own account, never more, so its money
+  covers a cost and doesn't sit in trust. A return is recorded as a bounce, with the property's
+  NSF fee, and a tenant's fee that came back leaves the company's account the same way.
+
+**Left to the company.** Whether its state lets it pass the fee to tenants, and when a payment
+counts as received for its state's deposit deadline (a bank payment takes days to clear). Oregon
+forbids a broker's own money in trust and Iowa requires the broker to cover bank charges from its
+own: a company in Oregon should keep its fee account able to pay the processor without a deposit.
+

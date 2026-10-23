@@ -529,6 +529,7 @@ FEATURES = (
     "deposit-interest",
     "tax-credit",
     "unit-details",
+    "online-payments",
 )
 
 

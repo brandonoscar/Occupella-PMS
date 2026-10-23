@@ -46,7 +46,7 @@ from psycopg import sql
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
-from pms import accounts, email, exports, geocoding, nightly
+from pms import accounts, email, exports, geocoding, nightly, payments
 from pms.api import (
     addresses,
     assistance,
@@ -75,6 +75,7 @@ from pms.api import (
     notes,
     notice_templates,
     offers,
+    online_payments,
     outbox,
     owner,
     payables,
@@ -128,6 +129,9 @@ class Settings:
     # The geocoder that finds a property on a map (pms.geocoding): "census", "fake", or empty
     # for none.
     geocoder: str = ""
+    # The payments partner tenants pay online through (pms.payments): "stripe" (its keys from
+    # the environment), "fake", or empty for none.
+    payments: str = ""
     # The nightly run (pms.nightly): rent, late fees and recurring bills post by themselves at
     # start and every day at 06:00 UTC. On unless PMS_NIGHTLY is "off".
     nightly: bool = False
@@ -145,6 +149,7 @@ class Settings:
             screening_partner=os.environ.get("PMS_SCREENING_PARTNER", ""),
             email_sender=os.environ.get("PMS_EMAIL_SENDER", ""),
             geocoder=os.environ.get("PMS_GEOCODER", ""),
+            payments=os.environ.get("PMS_PAYMENTS", ""),
             nightly=os.environ.get("PMS_NIGHTLY", "on").lower() != "off",
         )
 
@@ -274,6 +279,8 @@ def create_app(settings: Settings) -> FastAPI:
     app.state.pool = pool
     app.state.screening = screening.partner_named(settings.screening_partner)
     app.state.geocoder = geocoding.geocoder_named(settings.geocoder)
+    # Like the SMTP settings, the partner's keys come straight from the environment.
+    app.state.payments = payments.partner_named(settings.payments, os.environ)
     # The SMTP settings come straight from the environment, so a password is never part of
     # Settings (which a log or an error could print).
     app.state.email = email.sender_named(settings.email_sender, os.environ)
@@ -535,6 +542,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(setup.router)
     app.include_router(payment_files.router)
     app.include_router(rent.router)
+    app.include_router(online_payments.router)
     app.include_router(assistance.router)
     app.include_router(addresses.router)
     app.include_router(utilities.router)

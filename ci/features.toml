@@ -13,6 +13,7 @@
 
 [outside]
 "GET /health" = "the server's health check: the self-host image and the browser run wait for it, and no person uses it"
+"POST /api/payments/webhook/{name}" = "the payments partner's server reports what the bank did; no person calls it, and the browser run uses the fake partner's page instead (tests/api/test_online_payments_api.py signs reports as Stripe does)"
 
 [[feature]]
 id = "logins"
@@ -1001,3 +1002,23 @@ operations = [
 browser = [
   "features.spec.ts › staff keep a unit's bedrooms, bathrooms, size and market rent; its property, the rent roll, Listings, the public page and the vacancy report show them",
 ]
+
+[[feature]]
+id = "online-payments"
+statement = "Rent paid online (migration 0150, ADR 0009): a company turns it on in Company setup and chooses who pays the processing fee on a bank payment (the company, from its fees in trust, or the tenant, shown before paying); a tenant pays what they choose from their lease, on the payments partner's page (the fake partner's in development and CI), never on a payment hold; the payment reaches the books, as staff record one, only once the partner says the bank paid, once however often it says so, and a return is a bounce; the processor's fee leaves trust from the company's fee account, and what that can't cover, a payment that came in during a hold and a return the owner can't cover wait on Banking for staff: accept past the hold, try again, or record the company's own deposit, never more than what waits needs."
+operations = [
+  "GET /api/payments/settings",
+  "POST /api/payments/settings",
+  "GET /api/payments/leases/{lease_id}",
+  "GET /api/payments/leases/{lease_id}/fee",
+  "POST /api/payments/leases/{lease_id}/checkout",
+  "GET /api/payments/fake/{payment_id}",
+  "POST /api/payments/fake/{payment_id}",
+  "GET /api/payments/waiting",
+  "POST /api/payments/{payment_id}/record",
+  "POST /api/payments/partner-fees/cover",
+]
+browser = [
+  "features.spec.ts › a tenant pays rent online on the payments partner's page, it reaches the books once the bank pays, staff accept one past a hold and the company covers the processor's fee",
+]
+
