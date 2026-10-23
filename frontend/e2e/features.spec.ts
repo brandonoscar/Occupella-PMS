@@ -3781,7 +3781,9 @@ test("staff send a listed unit to the listing sites; its feeds, Zillow's and MIT
   await page.getByRole("menuitem", { name: "Send to listing sites" }).click();
   await expect(page.getByText("Sent Aspen Row, Unit 2 to the listing sites' feeds.")).toBeVisible();
   await expect(unit.getByTestId("feed")).toHaveText("Sent");
-  const site = (await browser.newContext()).request;
+  // A listing site fetches the feeds as anyone would: a browser context of its own, no login.
+  const siteContext = await browser.newContext();
+  const site = siteContext.request;
   const zillow = await site.get(zillowUrl);
   expect(zillow.status()).toBe(200);
   expect(zillow.headers()["content-type"]).toBe("application/xml; charset=utf-8");
@@ -3809,7 +3811,7 @@ test("staff send a listed unit to the listing sites; its feeds, Zillow's and MIT
   await expect(unit.getByTestId("listed")).toHaveText("Listed");
   expect(await (await site.get(zillowUrl)).text()).not.toContain("Unit 2");
   expect(await (await site.get(mitsUrl)).text()).not.toContain("<Property ");
-  await site.dispose();
+  await siteContext.close();
 });
 
 test("staff add a lead who asked about a unit, show it to them, record how it went and close the lead when they apply", async ({
