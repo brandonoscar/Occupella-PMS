@@ -8,7 +8,9 @@ with its email to an owner whose approval it waits for, for a company that turne
 month's management fees from its day of the month, and the recurring work orders due by today
 (trust_open_recurring_work_orders, migration 0085). Rent and late fees go through
 trust_run_rent, which records the run; bills through trust_enter_recurring_bills; fees through
-trust_take_monthly_management_fees.
+trust_take_monthly_management_fees. Then, for a company that turned them on, the emails of the
+day (src/pms/notices.py), owners' accounts fallen below their reserve among them. A PMC whose run
+fails is left for the next run, and its admins are emailed what failed (q149).
 
 Each PMC in its own transaction, as trust_app, naming nobody (a run by hand is an admin's, at
 Rent roll, Run rent now). Each part charges or enters once per date, so a run again (a restart,
@@ -128,8 +130,8 @@ def run_all(
     sending: bool = False,
 ) -> list[Ran]:
     """Every PMC's run for a day (or only those named). One that fails is logged and left for
-    the next run; the others still run. While another run holds the lock, this one runs
-    nothing."""
+    the next run, and while the server sends email its admins are told (once a day); the others
+    still run. While another run holds the lock, this one runs nothing."""
     held = conn.execute("SELECT pg_try_advisory_lock(hashtextextended(%s, 0))", (LOCK,)).fetchone()
     conn.commit()
     if held is None or not held[0]:
@@ -143,13 +145,28 @@ def run_all(
         for pmc_id in pmcs:
             try:
                 done.append(run_pmc(conn, pmc_id, day, public_url, sending))
-            except psycopg.Error:
+            except Exception as failed:
                 log.exception("the nightly run of PMC %s failed; the next run tries again", pmc_id)
+                if sending:
+                    alert(conn, pmc_id, day, failed, public_url)
         return done
     finally:
         if not conn.closed:
             conn.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (LOCK,))
             conn.commit()
+
+
+def alert(
+    conn: psycopg.Connection[Any], pmc_id: UUID, day: date, failed: Exception, public_url: str
+) -> None:
+    """Tells the PMC's admins its run failed, in a transaction of its own; when even that fails
+    (the database down), the log is all there is."""
+    what = f"{type(failed).__name__}: {str(failed).splitlines()[0] if str(failed) else ''}"
+    try:
+        with conn.transaction():
+            email.write_admin_alert(conn, pmc_id, "nightly_failed", day, what, public_url)
+    except Exception:
+        log.exception("the admins of PMC %s could not be told its nightly run failed", pmc_id)
 
 
 def seconds_until(now: datetime, at: time = AT) -> float:

@@ -3436,6 +3436,39 @@ $$;
 
 
 --
+-- Name: trust_check_reserve_event(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_reserve_event() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_before date;
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM trust_ledger_accounts AS a
+        WHERE a.ledger_account_id = NEW.ledger_account_id AND a.kind = 'owner_property'
+    ) THEN
+        RAISE EXCEPTION 'trust: % is not an owner''s property account', NEW.ledger_account_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.number > 1 THEN
+        SELECT e.found_on INTO v_before FROM trust_reserve_events AS e
+        WHERE e.ledger_account_id = NEW.ledger_account_id AND e.number = NEW.number - 1;
+        IF v_before IS NULL OR v_before > NEW.found_on THEN
+            RAISE EXCEPTION 'trust: event % of % follows no event % on or before %',
+                NEW.number, NEW.ledger_account_id, NEW.number - 1,
+                to_char(NEW.found_on, 'MM/DD/YYYY')
+                USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_shared_bill(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -13326,6 +13359,23 @@ CREATE TABLE public.schema_migrations (
 
 
 --
+-- Name: trust_admin_alerts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_admin_alerts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    staff_id uuid NOT NULL,
+    kind text NOT NULL,
+    day date NOT NULL,
+    what text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_admin_alerts_kind_check CHECK ((kind = ANY (ARRAY['nightly_failed'::text, 'deliveries_failing'::text]))),
+    CONSTRAINT trust_admin_alerts_what_check CHECK (((what ~ '\S'::text) AND (length(what) <= 1000)))
+);
+
+
+--
 -- Name: trust_adverse_actions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14301,6 +14351,7 @@ CREATE TABLE public.trust_email_settings (
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     payment_receipts boolean DEFAULT false NOT NULL,
+    reserve_alerts boolean DEFAULT false NOT NULL,
     CONSTRAINT trust_email_settings_owner_statement_day_check CHECK (((owner_statement_day >= 1) AND (owner_statement_day <= 28))),
     CONSTRAINT trust_email_settings_rent_reminder_days_check CHECK (((rent_reminder_days >= 1) AND (rent_reminder_days <= 15)))
 );
@@ -14335,6 +14386,8 @@ CREATE TABLE public.trust_emails (
     offer_id uuid,
     signer_position bigint,
     transfer_id text,
+    reserve_event_id uuid,
+    alert_id uuid,
     CONSTRAINT trust_emails_body_check CHECK (((body <> ''::text) AND (length(body) <= 10000))),
     CONSTRAINT trust_emails_check CHECK (((kind = 'bill_approval'::text) = (bill_id IS NOT NULL))),
     CONSTRAINT trust_emails_subject_check CHECK (((subject <> ''::text) AND (length(subject) <= 200))),
@@ -15861,6 +15914,29 @@ CREATE TABLE public.trust_renters_insurance_terms (
 
 
 --
+-- Name: trust_reserve_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_reserve_events (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    ledger_account_id text NOT NULL,
+    number bigint NOT NULL,
+    kind text NOT NULL,
+    found_on date NOT NULL,
+    balance numeric NOT NULL,
+    reserve numeric NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_reserve_events_balance_check CHECK (((balance >= (0)::numeric) AND (balance = round(balance, 2)))),
+    CONSTRAINT trust_reserve_events_check CHECK (((kind = 'below'::text) = ((number % (2)::bigint) = 1))),
+    CONSTRAINT trust_reserve_events_check1 CHECK (((kind = 'below'::text) = (balance < reserve))),
+    CONSTRAINT trust_reserve_events_kind_check CHECK ((kind = ANY (ARRAY['below'::text, 'back'::text]))),
+    CONSTRAINT trust_reserve_events_number_check CHECK ((number > 0)),
+    CONSTRAINT trust_reserve_events_reserve_check CHECK (((reserve >= (0)::numeric) AND (reserve = round(reserve, 2))))
+);
+
+
+--
 -- Name: trust_screening_criteria; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16504,6 +16580,30 @@ ALTER TABLE ONLY public.schema_migrations
 
 ALTER TABLE ONLY public.trust_account_signers
     ADD CONSTRAINT trust_account_signers_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_admin_alerts trust_admin_alerts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_admin_alerts
+    ADD CONSTRAINT trust_admin_alerts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_admin_alerts trust_admin_alerts_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_admin_alerts
+    ADD CONSTRAINT trust_admin_alerts_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_admin_alerts trust_admin_alerts_pmc_id_staff_id_kind_day_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_admin_alerts
+    ADD CONSTRAINT trust_admin_alerts_pmc_id_staff_id_kind_day_key UNIQUE (pmc_id, staff_id, kind, day);
 
 
 --
@@ -17379,11 +17479,19 @@ ALTER TABLE ONLY public.trust_email_settings
 
 
 --
+-- Name: trust_emails trust_emails_alert_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_emails
+    ADD CONSTRAINT trust_emails_alert_check CHECK ((((kind = 'reserve_low'::text) = (reserve_event_id IS NOT NULL)) AND ((kind = 'reserve_low'::text) <= (owner_id IS NOT NULL)) AND ((kind = 'admin_alert'::text) = (alert_id IS NOT NULL)) AND ((kind = 'admin_alert'::text) <= (owner_id IS NULL)))) NOT VALID;
+
+
+--
 -- Name: trust_emails trust_emails_kind_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE public.trust_emails
-    ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text, 'rent_reminder'::text, 'late_notice'::text, 'owner_statement'::text, 'work_order'::text, 'adverse_action'::text, 'emergency_request'::text, 'signing_request'::text, 'payment_receipt'::text, 'deposit_statement'::text]))) NOT VALID;
+    ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text, 'rent_reminder'::text, 'late_notice'::text, 'owner_statement'::text, 'work_order'::text, 'adverse_action'::text, 'emergency_request'::text, 'signing_request'::text, 'payment_receipt'::text, 'deposit_statement'::text, 'reserve_low'::text, 'admin_alert'::text]))) NOT VALID;
 
 
 --
@@ -18722,6 +18830,30 @@ ALTER TABLE ONLY public.trust_renters_insurance_terms
 
 
 --
+-- Name: trust_reserve_events trust_reserve_events_ledger_account_id_number_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_reserve_events
+    ADD CONSTRAINT trust_reserve_events_ledger_account_id_number_key UNIQUE (ledger_account_id, number);
+
+
+--
+-- Name: trust_reserve_events trust_reserve_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_reserve_events
+    ADD CONSTRAINT trust_reserve_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_reserve_events trust_reserve_events_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_reserve_events
+    ADD CONSTRAINT trust_reserve_events_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_screening_criteria trust_screening_criteria_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19864,6 +19996,13 @@ CREATE INDEX trust_email_settings_recorded_by ON public.trust_email_settings USI
 
 
 --
+-- Name: trust_emails_one_admin_alert; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_emails_one_admin_alert ON public.trust_emails USING btree (alert_id) WHERE (kind = 'admin_alert'::text);
+
+
+--
 -- Name: trust_emails_one_adverse_action; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -19910,6 +20049,13 @@ CREATE UNIQUE INDEX trust_emails_one_per_bill_approval ON public.trust_emails US
 --
 
 CREATE UNIQUE INDEX trust_emails_one_rent_reminder ON public.trust_emails USING btree (tenant_id, lease_id, period) WHERE (kind = 'rent_reminder'::text);
+
+
+--
+-- Name: trust_emails_one_reserve_low; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_emails_one_reserve_low ON public.trust_emails USING btree (reserve_event_id) WHERE (kind = 'reserve_low'::text);
 
 
 --
@@ -21313,6 +21459,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_admin_alerts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_admin_alerts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_adverse_actions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22300,6 +22453,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_reserve_events trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_reserve_events FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_screening_criteria trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22612,6 +22772,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.pgledger_t
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_account_signers FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_admin_alerts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_admin_alerts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -23623,6 +23790,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_rent
 
 
 --
+-- Name: trust_reserve_events trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_reserve_events FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_screening_criteria trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24040,6 +24214,13 @@ CREATE TRIGGER trust_check_payment_hold BEFORE INSERT ON public.trust_payment_ho
 --
 
 CREATE TRIGGER trust_check_recurring_bill BEFORE INSERT ON public.trust_recurring_bills FOR EACH ROW EXECUTE FUNCTION public.trust_check_recurring_bill();
+
+
+--
+-- Name: trust_reserve_events trust_check_reserve_event; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_reserve_event BEFORE INSERT ON public.trust_reserve_events FOR EACH ROW EXECUTE FUNCTION public.trust_check_reserve_event();
 
 
 --
@@ -25189,6 +25370,22 @@ ALTER TABLE ONLY public.trust_account_signers
 
 ALTER TABLE ONLY public.trust_account_signers
     ADD CONSTRAINT trust_account_signers_pmc_id_staff_id_fkey FOREIGN KEY (pmc_id, staff_id) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_admin_alerts trust_admin_alerts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_admin_alerts
+    ADD CONSTRAINT trust_admin_alerts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_admin_alerts trust_admin_alerts_pmc_id_staff_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_admin_alerts
+    ADD CONSTRAINT trust_admin_alerts_pmc_id_staff_id_fkey FOREIGN KEY (pmc_id, staff_id) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -26696,6 +26893,14 @@ ALTER TABLE ONLY public.trust_emails
 
 
 --
+-- Name: trust_emails trust_emails_pmc_id_alert_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pmc_id_alert_id_fkey FOREIGN KEY (pmc_id, alert_id) REFERENCES public.trust_admin_alerts(pmc_id, id) NOT VALID;
+
+
+--
 -- Name: trust_emails trust_emails_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26757,6 +26962,14 @@ ALTER TABLE ONLY public.trust_emails
 
 ALTER TABLE ONLY public.trust_emails
     ADD CONSTRAINT trust_emails_pmc_id_request_id_fkey FOREIGN KEY (pmc_id, request_id) REFERENCES public.trust_maintenance_requests(pmc_id, id) NOT VALID;
+
+
+--
+-- Name: trust_emails trust_emails_pmc_id_reserve_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_pmc_id_reserve_event_id_fkey FOREIGN KEY (pmc_id, reserve_event_id) REFERENCES public.trust_reserve_events(pmc_id, id) NOT VALID;
 
 
 --
@@ -29064,6 +29277,22 @@ ALTER TABLE ONLY public.trust_renters_insurance_terms
 
 
 --
+-- Name: trust_reserve_events trust_reserve_events_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_reserve_events
+    ADD CONSTRAINT trust_reserve_events_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_reserve_events trust_reserve_events_pmc_id_ledger_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_reserve_events
+    ADD CONSTRAINT trust_reserve_events_pmc_id_ledger_account_id_fkey FOREIGN KEY (pmc_id, ledger_account_id) REFERENCES public.trust_ledger_accounts(pmc_id, ledger_account_id);
+
+
+--
 -- Name: trust_screening_criteria trust_screening_criteria_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -30036,4 +30265,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000123'),
     ('20261022000124'),
     ('20261022000125'),
+    ('20261022000150'),
     ('20261023000200');

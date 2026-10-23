@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 from helpers import (
+    add_agreement,
     add_unit,
     add_work_order,
     make_pmc,
@@ -29,6 +30,7 @@ OFF = {
     "work_order_notices": False,
     "adverse_action_notices": False,
     "payment_receipts": False,
+    "reserve_alerts": False,
 }
 ON = {
     "rent_reminder_days": 15,
@@ -37,6 +39,7 @@ ON = {
     "work_order_notices": True,
     "adverse_action_notices": True,
     "payment_receipts": True,
+    "reserve_alerts": True,
 }
 
 
@@ -115,6 +118,7 @@ def test_a_custom_role_without_email_may_not_change_the_settings(
         {"owner_statement_day": 29},
         {"owner_statement_day": "the fifth"},
         {"late_notices": "maybe"},
+        {"reserve_alerts": "sometimes"},
     ],
 )
 def test_bad_settings_are_refused(client, staff, body):
@@ -156,6 +160,31 @@ def test_a_rent_run_by_hand_writes_the_emails_due_today_while_the_server_sends_e
     assert [(line["kind"], line["to"], line["by"]) for line in tab] == [
         ("owner_statement", "o@example.com", None)
     ]
+
+
+def test_a_rent_run_by_hand_tells_an_owner_their_account_fell_below_its_reserve(
+    client, conn, staff, pmc
+):
+    owner = pmc.owners[0]
+    add_agreement(conn, pmc.pmc_id, owner.account, TODAY.replace(day=1), reserve="300.00")
+    ok(client.post(f"/api/owners/{owner.owner_id}/contact", json={"email": "o@example.com"}), 204)
+    ok(client.post("/api/emails/settings", json={**OFF, "reserve_alerts": True}))
+    run = {"due_on": str(TODAY.replace(day=1)), "late_fees_as_of": str(TODAY)}
+    client.app.state.email = email.FakeSender()
+
+    assert ok(client.post("/api/rent/run", json=run))["emails"] == 1  # $0.00 of $300.00
+    assert ok(client.post("/api/rent/run", json=run))["emails"] == 0  # once a drop
+    tab = ok(client.get("/api/emails", params={"about": "owner", "about_id": str(owner.owner_id)}))
+    assert [(line["kind"], line["to"], line["subject"], line["status"]) for line in tab] == [
+        ("reserve_low", "o@example.com", "Property 1: your account is below its reserve", "sent")
+    ]
+    assert "below the reserve of $300.00" in tab[0]["body"]
+    # Recorded naming who ran it.
+    assert conn.execute(
+        "SELECT a.staff_id FROM trust_audit_log AS a WHERE a.table_name = 'trust_reserve_events'"
+        " AND a.pmc_id = %s",
+        (pmc.pmc_id,),
+    ).fetchall() == [(staff.person_id,)]
 
 
 # --- a work order's step ------------------------------------------------------------------------
