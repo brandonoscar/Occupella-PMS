@@ -29,6 +29,7 @@ BUTTONS = {
     "rent_reminder": "Sign in to the tenant portal",
     "late_notice": "Sign in to the tenant portal",
     "owner_statement": "Sign in to the owner portal",
+    "reserve_low": "Sign in to the owner portal",
     "emergency_request": "Open Work orders",
 }
 
