@@ -9,8 +9,10 @@ import { Card } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Wide } from "../components/Wide";
 import { money, usDate } from "../money";
-import type { OnlinePayment, OnlineSettings } from "../onlinePayments";
-import { METHOD_WORDS, STATUS, takenLine } from "../onlinePayments";
+import type { Autopay, OnlinePayment, OnlineSettings } from "../onlinePayments";
+import { AUTOPAY_STATUS, METHOD_WORDS, STATUS, takenLine } from "../onlinePayments";
+import { Field } from "../components/Field";
+import { RowMenu } from "../components/RowMenu";
 import { useRecord } from "./useRecord";
 
 type StaffView = { processor: "fake" | "stripe" | null; settings: OnlineSettings; payments: OnlinePayment[] };
@@ -35,12 +37,16 @@ export function readView(answer: unknown): StaffView {
 // payment processor; the processor bills its fees to the company, never to the money in trust.
 export function OnlinePaymentsCard() {
   const [view, setView] = useState<StaffView | null>(null);
+  const [autopay, setAutopay] = useState<Autopay[]>([]);
   const [error, setError] = useState("");
   const [editing, setEditing] = useState(false);
+  const [stopping, setStopping] = useState<Autopay | null>(null);
   const [runs, setRuns] = useState(0);
   const { said, error: refused, record } = useRecord(() => setRuns((n) => n + 1));
   useEffect(() => {
     api.get<unknown>(PATH).then((answer) => setView(readView(answer)))
+      .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
+    api.get<unknown>("/api/rent/autopay").then((answer) => setAutopay(Array.isArray(answer) ? answer as Autopay[] : []))
       .catch((failed) => setError(failed instanceof ApiError ? failed.detail : String(failed)));
   }, [runs]);
 
@@ -91,6 +97,50 @@ export function OnlinePaymentsCard() {
               </table>
             </Wide>
           )}
+          {autopay.length > 0 && (
+            <Wide>
+              <table className="mt-4 w-full text-base" aria-label="Autopay">
+                <thead>
+                  <tr>
+                    <th className="text-left">Since</th>
+                    <th className="text-left">Tenant</th>
+                    <th className="text-left">Home</th>
+                    <th className="text-left">From</th>
+                    <th className="text-left">Autopay</th>
+                    <th><span className="sr-only">Actions</span></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {autopay.map((a) => (
+                    <tr key={a.id}>
+                      <td className="whitespace-nowrap">{usDate(a.since.slice(0, 10))}</td>
+                      <td>{a.tenant}</td>
+                      <td className="text-ink-muted">{a.home}</td>
+                      <td>{a.label ?? METHOD_WORDS[a.method]}</td>
+                      <td>
+                        <Badge tone={AUTOPAY_STATUS[a.status].tone}>{AUTOPAY_STATUS[a.status].label}</Badge>
+                        {a.reason && <span className="ml-2 text-sm text-ink-muted">{a.reason}</span>}
+                      </td>
+                      <td className="text-right">
+                        {(a.status === "on" || a.status === "started") && (
+                          <RowMenu label={`autopay of ${a.tenant}`} actions={[{ label: "Stop autopay", danger: true, onSelect: () => setStopping(a) }]} />
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Wide>
+          )}
+          {stopping && (
+            <SidePanel title="Stop autopay" onClose={() => setStopping(null)}>
+              <StopForm who={stopping.tenant} save={(reason) =>
+                record(`/api/rent/autopay/${stopping.id}/stop`, { reason }, () => `Autopay of ${stopping.tenant} is stopped.`).then((ok) => {
+                  if (ok) setStopping(null);
+                })} />
+              <Notice tone="error">{refused}</Notice>
+            </SidePanel>
+          )}
           {editing && (
             <SidePanel title="Online payments" onClose={() => setEditing(false)}>
               <SettingsForm start={view.settings} save={(body) =>
@@ -126,6 +176,20 @@ function SettingsForm({ start, save }: {
         Tenants may pay from a bank account (ACH debit)
       </label>
       <div><Button type="submit">Save</Button></div>
+    </Form>
+  );
+}
+
+function StopForm({ who, save }: { who: string; save: (reason: string) => Promise<void> }) {
+  const [reason, setReason] = useState("");
+  return (
+    <Form className="flex flex-col gap-3" onSubmit={(event) => {
+      event.preventDefault();
+      return save(reason);
+    }}>
+      <p className="text-sm text-ink-muted">{`Nothing more is charged to ${who}'s saved card or account; they pay what the lease owes themselves.`}</p>
+      <Field label="Why" id="autopay-stop-reason" required maxLength={500} value={reason} onChange={(event) => setReason(event.target.value)} />
+      <div><Button type="submit" variant="danger">Stop autopay</Button></div>
     </Form>
   );
 }

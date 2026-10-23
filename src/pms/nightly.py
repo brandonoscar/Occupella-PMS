@@ -41,7 +41,8 @@ import psycopg
 from psycopg import sql
 
 from pms import email, notices
-from pms.api import rent
+from pms.api import autopay, rent
+from pms.payments import processor
 
 log = logging.getLogger("pms.nightly")
 
@@ -71,6 +72,8 @@ class Ran:
     authority_late_fees: int = 0
     # Leases whose tenants' prepaid rent paid what they owe (migration 0117).
     prepaid_used: int = 0
+    # Payments autopay started for rent due (migration 0159).
+    autopay: int = 0
 
 
 def run_pmc(
@@ -79,9 +82,11 @@ def run_pmc(
     day: date,
     public_url: str,
     sending: bool = False,
+    payments: processor.Processor | None = None,
 ) -> Ran:
     """One PMC's run for a day, in one transaction. While the server sends email, it also writes
-    the rent reminders, late notices and owner statements the company's settings ask for."""
+    the rent reminders, late notices and owner statements the company's settings ask for. With a
+    payment processor, autopay charges what each lease on it owes once its rent is due."""
     with conn.transaction():
         made = conn.execute(
             "SELECT trust_run_rent(%s, %s, %s)", (pmc_id, day.replace(day=1), day)
@@ -105,6 +110,7 @@ def run_pmc(
         assert run is not None and entered is not None and fees is not None and opened is not None
         assert authority is not None
         prepaid = rent.use_prepaid_by_itself(conn, pmc_id, day)
+        autopays = autopay.charge_due(conn, pmc_id, day, payments)
         # The bills this transaction entered (their created_at is its start, now()), each with
         # the email to an owner whose approval it waits for.
         for (bill,) in conn.execute(
@@ -125,6 +131,7 @@ def run_pmc(
         opened[0],
         authority[0],
         prepaid,
+        autopays,
     )
 
 
@@ -134,6 +141,7 @@ def run_all(
     public_url: str,
     pmcs: Iterable[UUID] | None = None,
     sending: bool = False,
+    payments: processor.Processor | None = None,
 ) -> list[Ran]:
     """Every PMC's run for a day (or only those named). One that fails is logged and left for
     the next run; the others still run. While another run holds the lock, this one runs
@@ -150,7 +158,7 @@ def run_all(
         done = []
         for pmc_id in pmcs:
             try:
-                done.append(run_pmc(conn, pmc_id, day, public_url, sending))
+                done.append(run_pmc(conn, pmc_id, day, public_url, sending, payments))
             except psycopg.Error:
                 log.exception("the nightly run of PMC %s failed; the next run tries again", pmc_id)
         return done
@@ -183,6 +191,7 @@ class Scheduler:
         at: time = AT,
         retry: float = RETRY,
         pmcs: Sequence[UUID] | None = None,
+        payments: processor.Processor | None = None,
     ) -> None:
         self.database_url = database_url
         self.role = role
@@ -192,6 +201,7 @@ class Scheduler:
         self.at = at
         self.retry = retry
         self.pmcs = pmcs
+        self.payments = payments
         self.ran = threading.Event()  # set after each run that finished
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="pms-nightly", daemon=True)
@@ -208,7 +218,12 @@ class Scheduler:
             conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(self.role)))
             conn.commit()
             done = run_all(
-                conn, self.clock().date(), self.public_url, self.pmcs, self.sender is not None
+                conn,
+                self.clock().date(),
+                self.public_url,
+                self.pmcs,
+                self.sender is not None,
+                self.payments,
             )
             if self.sender is not None:
                 conn.autocommit = True
@@ -239,7 +254,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         conn.commit()
         # What it writes to the outbox goes out with `python -m pms.email deliver`.
         sending = bool(os.environ.get("PMS_EMAIL_SENDER"))
-        done = run_all(conn, datetime.now(UTC).date(), public_url, sending=sending)
+        payments = processor.processor_named(
+            os.environ.get("PMS_PAYMENT_PROCESSOR", ""), dict(os.environ)
+        )
+        done = run_all(
+            conn, datetime.now(UTC).date(), public_url, sending=sending, payments=payments
+        )
     rents = sum(r.rents for r in done)
     late_fees = sum(r.late_fees for r in done)
     bills = sum(r.bills for r in done)

@@ -351,20 +351,6 @@ def step(
     )
 
 
-@router.post("/api/payments/stripe/webhook")
-async def stripe_webhook(request: Request, conn: Conn) -> dict[str, int]:
-    """Stripe's events about the payments it took, signed with this endpoint's secret."""
-    found = processor_of(request)
-    if found is None or found.name != "stripe":
-        raise HTTPException(404, "this server takes no Stripe payments")
-    body = await request.body()
-    try:
-        events = found.events(body, {k.lower(): v for k, v in request.headers.items()})
-    except processors.BadSignature as bad:
-        raise HTTPException(400, str(bad)) from None
-    return {"taken": sum(take(conn, "stripe", event) for event in events)}
-
-
 @router.post("/api/tenant/online-payments/fake/{reference}", status_code=204)
 def fake_checkout(
     session: Tenant, conn: Conn, request: Request, reference: str, said: FakeOutcome

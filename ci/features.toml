@@ -1049,3 +1049,18 @@ operations = [
 browser = [
   "features.spec.ts › a tenant pays rent online by card through the test processor, and it is recorded once the processor says it came",
 ]
+
+[[feature]]
+id = "autopay"
+statement = "A tenant sets up autopay for their lease in the portal, saving a card or bank account with the payment processor (the founder, 2026-10-23; migration 0159), and once rent is due each month the nightly run or an admin's Run rent now charges what the lease owes to it, once per due date, recorded once the processor says the money came (the fake processor pays at once; Stripe's, NOT VERIFIED without keys, through its webhook); a lease owing nothing or on a payment hold is charged nothing; one autopay a lease; the tenant stops it in the portal and staff from Company setup with why; the AI reads none of it."
+operations = [
+  "GET /api/tenant/autopay",
+  "POST /api/tenant/leases/{lease_id}/autopay",
+  "POST /api/tenant/autopay/fake/{reference}",
+  "POST /api/tenant/autopay/{autopay_id}/stop",
+  "GET /api/rent/autopay",
+  "POST /api/rent/autopay/{autopay_id}/stop",
+]
+browser = [
+  "features.spec.ts › a tenant sets up autopay, rent due is paid from it when rent runs, and the tenant or staff stop it",
+]

@@ -51,6 +51,7 @@ from pms.api import (
     ach,
     addresses,
     assistance,
+    autopay,
     bank_deposits,
     bank_details,
     banking,
@@ -105,6 +106,7 @@ from pms.api import (
     utilities,
     vendor_links,
     vendors,
+    webhooks,
     work_orders,
     year_close,
 )
@@ -267,7 +269,11 @@ def create_app(settings: Settings) -> FastAPI:
         runs = None
         if settings.nightly:
             runs = nightly.Scheduler(
-                settings.database_url, settings.db_role, settings.public_url, app.state.email
+                settings.database_url,
+                settings.db_role,
+                settings.public_url,
+                app.state.email,
+                payments=app.state.payments,
             )
             runs.start()
         try:
@@ -307,6 +313,7 @@ def create_app(settings: Settings) -> FastAPI:
                 return JSONResponse({"detail": "send JSON"}, 415)
         outbox.PUBLIC_URL.set(settings.public_url)
         outbox.SENDING.set(request.app.state.email is not None)
+        processor.CURRENT.set(request.app.state.payments)
         response = await call_next(request)
         sender = request.app.state.email
         if request.method not in SAFE_METHODS and response.status_code < 400 and sender:
@@ -565,6 +572,8 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(ach.router)
     app.include_router(checks.router)
     app.include_router(online_payments.router)
+    app.include_router(autopay.router)
+    app.include_router(webhooks.router)
     app.include_router(banking.router)
     app.include_router(bank_deposits.router)
     app.include_router(journal.router)

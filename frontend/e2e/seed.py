@@ -532,6 +532,7 @@ FEATURES = (
     "bank-files",
     "checks",
     "online-payments",
+    "autopay",
 )
 
 

@@ -896,3 +896,10 @@ some states and by card networks' rules (which states, and how, is NOT VERIFIED 
 
 **Left to the company.** Setting the processor up to bill its fees apart, refunding a refused
 payment at the processor, and whether its state lets it pass any cost on to tenants.
+
+**Autopay (migration 0159).** A payment that repeats from a consumer's account needs their
+authorization, and a copy of it (the Electronic Fund Transfer Act's Regulation E, 12 CFR 1005.10(b),
+for preauthorized transfers; NACHA's rules for a recurring debit; card networks' rules for a
+stored card). The tenant gives it on the processor's own page as they save the card or account
+(Stripe shows its mandate there; NOT VERIFIED without keys); the PMS charges only what the lease
+owes once its rent is due, once a month, and the tenant stops it in the portal at any time.

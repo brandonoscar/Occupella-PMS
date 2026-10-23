@@ -29,6 +29,7 @@ from pydantic import BaseModel, Field, StringConstraints
 from pms import exports, notices
 from pms.api import outbox
 from pms.api.deps import Conn, Staff, refusal
+from pms.payments import processor
 
 router = APIRouter(prefix="/api/rent")
 
@@ -1186,6 +1187,8 @@ class RentRunDone(RentRun):
     authority_late_fees: int = 0
     # Leases whose tenants' prepaid rent paid what they owe, for a company that turned it on.
     prepaid_used: int = 0
+    # Payments autopay started for rent due (migration 0159).
+    autopay: int = 0
 
 
 class RentRunLine(RentRun):
@@ -1220,6 +1223,10 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
     ).fetchone()
     assert authority is not None
     prepaid_used = use_prepaid_by_itself(conn, session.pmc_id, today())
+    # Autopay charges what each lease on it owes once its rent is due (migration 0159).
+    from pms.api import autopay  # it builds on this module
+
+    autopays = autopay.charge_due(conn, session.pmc_id, today(), processor.CURRENT.get())
     written = (
         notices.write_scheduled(conn, session.pmc_id, today(), outbox.PUBLIC_URL.get())
         if outbox.SENDING.get()
@@ -1232,6 +1239,7 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
         emails=sum(vars(written).values()),
         authority_late_fees=authority[0],
         prepaid_used=prepaid_used,
+        autopay=autopays,
     )
 
 

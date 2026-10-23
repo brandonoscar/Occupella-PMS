@@ -4843,3 +4843,58 @@ test("a tenant pays rent online by card through the test processor, and it is re
   await expect(table.getByRole("row").nth(1)).toContainText("Paid");
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
 });
+
+test("a tenant sets up autopay, rent due is paid from it when rent runs, and the tenant or staff stop it", async ({
+  page,
+  browser,
+}) => {
+  const people = seed.features["autopay"]!;
+  await joinAsStaff(page, people.manager);
+  await settings(page, "Company setup");
+  await part(page, "Online payments").getByRole("button", { name: "Edit online payments" }).click();
+  const editing = page.getByRole("dialog", { name: "Online payments" });
+  await editing.getByLabel("Tenants may pay by card").check();
+  await editing.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("online-payments")).toHaveText("Cards only");
+
+  // The tenant saves a card on the test processor's page.
+  const tenant = await (await browser.newContext()).newPage();
+  await joinPortal(tenant, people.taylor);
+  const setUp = async () => {
+    await part(tenant, "Autopay").getByRole("button", { name: "Set up autopay" }).click();
+    await expect(tenant.getByRole("heading", { name: "Your autopay" })).toBeVisible();
+    await tenant.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(tenant.getByTestId("autopay")).toContainText("On: Card ••••4242.");
+  };
+  await setUp();
+  await expectAccessible(tenant);
+
+  // Rent runs: this month's rent is charged, and paid from the card at once (no money moves).
+  await section(page, "Rent roll");
+  await page.getByRole("button", { name: "Actions for the rent roll" }).click();
+  await page.getByRole("menuitem", { name: "Run rent now" }).click();
+  const run = page.getByRole("dialog", { name: "Run rent now" });
+  await run.getByRole("button", { name: "Run rent now" }).click();
+  await expect(run).toHaveCount(0);
+  await expect(page.getByRole("main")).toContainText("Autopay started 1 payment.");
+  await tenant.reload();
+  const payments = part(tenant, "Payments").getByRole("list", { name: "Payments" });
+  await expect(payments.getByRole("listitem").first()).toContainText("Card, online");
+
+  // The tenant stops it; set up again, staff stop it with why.
+  await part(tenant, "Autopay").getByRole("button", { name: "Stop autopay" }).click();
+  await tenant.getByRole("alertdialog").getByRole("button", { name: "Stop autopay" }).click();
+  await expect(tenant.getByText("Autopay is stopped.")).toBeVisible();
+  await setUp();
+  await tenant.close();
+  await settings(page, "Company setup");
+  const table = part(page, "Online payments").getByRole("table", { name: "Autopay" });
+  await table.getByRole("button", { name: /^Actions for autopay of / }).click();
+  await page.getByRole("menuitem", { name: "Stop autopay" }).click();
+  const stopping = page.getByRole("dialog", { name: "Stop autopay" });
+  await stopping.getByLabel("Why").fill("Card expired");
+  await stopping.getByRole("button", { name: "Stop autopay" }).click();
+  await expect(table.getByRole("row").nth(1)).toContainText("Card expired");
+  await expectAccessible(page);
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+});

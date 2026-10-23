@@ -11,11 +11,14 @@ import { navigate } from "../router";
 // as the processor would, and goes back to their page.
 export function FakeCheckoutPage({ me }: { me: Me }) {
   const reference = window.location.hash.slice(1);
+  // A reference from setting autopay up saves a card or account (migration 0159); any other pays.
+  const saving = reference.startsWith("fake_setup_");
   const [error, setError] = useState("");
-  async function say(outcome: "succeeded" | "failed") {
+  async function say(outcome: string) {
     setError("");
+    const path = saving ? "/api/tenant/autopay/fake/" : "/api/tenant/online-payments/fake/";
     try {
-      await api.post(`/api/tenant/online-payments/fake/${encodeURIComponent(reference)}`, { outcome });
+      await api.post(`${path}${encodeURIComponent(reference)}`, { outcome });
       navigate("/");
     } catch (failed) {
       setError(failed instanceof ApiError ? failed.detail : String(failed));
@@ -24,11 +27,20 @@ export function FakeCheckoutPage({ me }: { me: Me }) {
   return (
     <Shell me={me}>
       <PageHeader title="Test checkout" description="The fake payment processor: no money moves." />
-      <Card title="Your payment">
-        <p className="text-base">Say what the payment processor would say of this payment.</p>
+      <Card title={saving ? "Your autopay" : "Your payment"}>
+        <p className="text-base">Say what the payment processor would say of this {saving ? "card or account" : "payment"}.</p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <Button onClick={() => void say("succeeded")}>Pay</Button>
-          <Button variant="secondary" onClick={() => void say("failed")}>It didn't go through</Button>
+          {saving ? (
+            <>
+              <Button onClick={() => void say("saved")}>Save</Button>
+              <Button variant="secondary" onClick={() => void say("not saved")}>It wasn't saved</Button>
+            </>
+          ) : (
+            <>
+              <Button onClick={() => void say("succeeded")}>Pay</Button>
+              <Button variant="secondary" onClick={() => void say("failed")}>It didn't go through</Button>
+            </>
+          )}
         </div>
         <Notice tone="error">{error}</Notice>
       </Card>

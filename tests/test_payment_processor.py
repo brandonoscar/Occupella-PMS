@@ -131,3 +131,100 @@ def test_the_server_names_its_processor():
         processor.processor_named("stripe", {"PMS_STRIPE_SECRET_KEY": "made-up-key"})
     with pytest.raises(ValueError, match="no payment processor named"):
         processor.processor_named("paypal", {})
+
+
+def test_the_fake_saves_on_its_page_and_its_charges_pay_at_once():
+    fake = processor.FakeProcessor()
+    saving = fake.save("a1", "card", "http://pms.test/")
+    reference, paid = fake.charge("fake_saved_x", Decimal("10.00"), "card", "a1-2026-11-01", "Rent")
+
+    assert saving.url == f"/pay#{saving.reference}" and saving.reference.startswith("fake_setup_")
+    assert reference == "fake_charge_a1-2026-11-01"
+    assert paid == Event(f"fake-event-{reference}", "succeeded", reference, reference)
+
+
+def test_stripe_saves_to_a_customer_and_charges_off_the_session(monkeypatch):
+    sent = []
+    answers = iter([{"id": "cus_1"}, {"id": "cs_1", "url": "https://checkout.example/cs_1"},
+                    {"id": "pi_1"}])  # fmt: skip
+
+    def urlopen(request, timeout):
+        sent.append(request)
+        return io.BytesIO(json.dumps(next(answers)).encode())
+
+    monkeypatch.setattr(processor.urllib.request, "urlopen", urlopen)
+    stripe = StripeProcessor("made-up-key", "made-up-secret")
+
+    saving = stripe.save("a1", "bank debit", "http://pms.test/")
+    reference, immediate = stripe.charge(
+        "cus_1/pm_1", Decimal("1500.00"), "card", "a1-2026-11-01", "Rent"
+    )
+
+    assert (saving.reference, reference, immediate) == ("cs_1", "pi_1", None)
+    customer, session, intent = (dict(urllib.parse.parse_qsl(r.data.decode())) for r in sent)
+    assert [r.full_url.removeprefix(processor.STRIPE_API) for r in sent] == [
+        "/customers", "/checkout/sessions", "/payment_intents",
+    ]  # fmt: skip
+    assert [r.get_header("Idempotency-key") for r in sent] == [
+        "customer-a1", "setup-a1", "charge-a1-2026-11-01",
+    ]  # fmt: skip
+    assert customer == {"metadata[autopay_id]": "a1"}
+    assert (session["mode"], session["customer"], session["payment_method_types[0]"]) == (
+        "setup", "cus_1", "us_bank_account",
+    )  # fmt: skip
+    assert (intent["customer"], intent["payment_method"], intent["amount"]) == (
+        "cus_1",
+        "pm_1",
+        "150000",
+    )
+    assert (intent["off_session"], intent["confirm"]) == ("true", "true")
+
+
+@pytest.mark.parametrize(
+    ("item", "fetched", "expected"),
+    [
+        ({"id": "cs_1", "mode": "setup", "customer": "cus_1", "setup_intent": "seti_1"},
+         {"payment_method": {"id": "pm_1", "card": {"last4": "4242"}}},
+         Event("evt", "saved", "cs_1", "cus_1/pm_1", label="Card ••••4242")),
+        ({"id": "cs_1", "mode": "setup", "customer": "cus_1", "setup_intent": "seti_1"},
+         {"payment_method": {"id": "pm_2", "us_bank_account": {"last4": "6789"}}},
+         Event("evt", "saved", "cs_1", "cus_1/pm_2", label="Bank account ••••6789")),
+        ({"id": "cs_1", "mode": "setup", "customer": "cus_1", "setup_intent": "seti_1"},
+         {"payment_method": None},
+         Event("evt", "not saved", "cs_1", None, "nothing was saved")),
+    ],
+)  # fmt: skip
+def test_stripe_says_what_a_setup_saved(monkeypatch, item, fetched, expected):
+    monkeypatch.setattr(
+        processor.urllib.request,
+        "urlopen",
+        lambda r, timeout: io.BytesIO(json.dumps(fetched).encode()),
+    )
+    secret = secrets.token_hex(16)
+    body = json.dumps({"id": "evt", "type": "checkout.session.completed", "data": {"object": item}})
+    stripe = StripeProcessor("made-up-key", secret)
+
+    assert stripe.events(
+        body.encode(), {"stripe-signature": signed(body.encode(), secret, int(time.time()))}
+    ) == [expected]
+
+
+@pytest.mark.parametrize(
+    ("kind", "item", "expected"),
+    [
+        ("payment_intent.succeeded", {"id": "pi_1"}, Event("evt", "succeeded", "pi_1", "pi_1")),
+        ("payment_intent.payment_failed",
+         {"id": "pi_1", "last_payment_error": {"message": "Your card was declined."}},
+         Event("evt", "failed", "pi_1", None, "Your card was declined.")),
+        ("payment_intent.payment_failed", {"id": "pi_1"},
+         Event("evt", "failed", "pi_1", None, "it was declined")),
+    ],
+)  # fmt: skip
+def test_stripe_says_what_came_of_a_charge(kind, item, expected):
+    secret = secrets.token_hex(16)
+    body = json.dumps({"id": "evt", "type": kind, "data": {"object": item}}).encode()
+    stripe = StripeProcessor("made-up-key", secret)
+
+    assert stripe.events(body, {"stripe-signature": signed(body, secret, int(time.time()))}) == [
+        expected
+    ]

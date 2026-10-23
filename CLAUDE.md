@@ -1130,9 +1130,22 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   its fees to the company, never to the money in trust (`docs/law.md`). Staff turn cards and bank
   debits on in Company setup (`pages/OnlinePaymentsCard.tsx`, `src/pms/api/online_payments.py`,
   area rent: `trust_online_payment_settings`, the latest holding, naming who) and see the latest
-  online payments there. The AI role reads none of it. Not built yet: autopay and application
-  fees (next), refunds from the PMS (staff refund at the processor), and Stripe's payouts matched
-  to bank lines by themselves.
+  online payments there. The AI role reads none of it. Not built yet: application fees (next),
+  refunds from the PMS (staff refund at the processor), and Stripe's payouts matched to bank lines
+  by themselves. The Stripe webhook is `src/pms/api/webhooks.py`'s, for payments and autopay.
+- Autopay (migration 0159): a tenant still on a lease saves a card or bank account with the
+  processor for it in the portal (`pages/AutopayCard.tsx`, `src/pms/api/autopay.py`; the
+  processor's `save`, Stripe a customer and a setup Checkout Session, the fake one its `/pay` page)
+  and from then on, once a month's rent is due (the lease's due day), the nightly run or an admin's
+  Run rent now (`processor.CURRENT`, set for each request) charges what the lease owes to it (the
+  processor's `charge`, Stripe off the session; the fake one pays at once): an online payment,
+  recorded as above once the processor says the money came, once per autopay and due date
+  (`trust_autopay_charges`). A lease owing nothing, on a payment hold or ended, or a tenant who
+  left, is charged nothing. `trust_autopay` and its steps (`trust_autopay_steps`: started, then
+  saved, with what the processor keeps and how it is shown, "Card ••••4242", or failed; stopped
+  once, with why and who) are append-only and audited; a lease has one autopay saved and not
+  stopped. The tenant stops it in the portal; staff from Company setup's Online payments (area
+  rent), with why. The PMS keeps no card or account number. The AI role reads none of it.
 - Vendor insurance and inspections (migration 0058): a vendor's policies
   (`trust_vendor_insurance`: coverage, carrier, number, the days it runs, a limit; a renewal is
   a new policy), and a lease's move-in and move-out inspections (`trust_inspections`, their

@@ -41,3 +41,24 @@ export function takenLine(s: Pick<OnlineSettings, "cards" | "bank_debits">): str
   if (s.bank_debits) return "Bank debits only";
   return "Not taken";
 }
+
+// Autopay (migration 0159): a tenant's saved card or account for a lease, charged what the lease
+// owes once its rent is due.
+export type AutopayStatus = "started" | "on" | "failed" | "stopped";
+export type Autopay = {
+  id: string;
+  lease_id: string;
+  home: string;
+  tenant: string;
+  method: OnlineMethod;
+  since: string;
+  status: AutopayStatus;
+  label: string | null;
+  reason: string | null;
+};
+export const AUTOPAY_STATUS: Record<AutopayStatus, { label: string; tone: "info" | "positive" | "danger" | "neutral" }> = {
+  started: { label: "Waiting to be saved", tone: "info" },
+  on: { label: "On", tone: "positive" },
+  failed: { label: "Not saved", tone: "danger" },
+  stopped: { label: "Stopped", tone: "neutral" },
+};
