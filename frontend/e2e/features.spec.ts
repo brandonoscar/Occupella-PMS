@@ -1381,7 +1381,7 @@ test("staff list a vacant unit on the public page; someone applies from it, staf
   await visitor.getByRole("button", { name: "Send application" }).click();
   const statusUrl = new URL((await visitor.getByTestId("status-url").textContent()) ?? "");
   await page.reload();
-  await expect(page.getByRole("row", { name: "Aspen Row, Unit 2" }).getByRole("cell").nth(3)).toHaveText("1");
+  await expect(page.getByRole("row", { name: "Aspen Row, Unit 2" }).getByRole("cell").nth(4)).toHaveText("1");
 
   // It waits for a decision on the Dashboard; on Applicants staff open it, screen and approve it.
   await section(page, "Dashboard");
@@ -1435,7 +1435,7 @@ test("staff list a vacant unit on the public page; someone applies from it, staf
   await page.getByRole("menuitem", { name: "Close its link" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Close its link" }).click();
   await expect(page.getByText("Closed the link for Aspen Row, Unit 2.")).toBeVisible();
-  await expect(again.getByRole("cell").nth(3)).toHaveText("0");
+  await expect(again.getByRole("cell").nth(4)).toHaveText("0");
   await visitor.goto(opened.pathname + opened.hash);
   await expect(visitor.getByRole("alert")).toHaveText("this application link is closed or doesn't exist");
 });
@@ -3661,7 +3661,7 @@ test("staff add photos to a listed unit, which its public listing shows; a remov
   await listing.getByLabel("Rent a month").fill("1240.00");
   await listing.getByRole("button", { name: "List it" }).click();
   await expect(page.getByText("Listed Aspen Row, Unit 2 at $1,240.00.")).toBeVisible();
-  await expect(unit.getByRole("cell").nth(5)).toHaveText("1 day");
+  await expect(unit.getByRole("cell").nth(6)).toHaveText("1 day");
 
   // Two photos from the unit's row.
   await unit.getByRole("button", { name: "Photos, Aspen Row, Unit 2" }).click();
@@ -3674,7 +3674,7 @@ test("staff add photos to a listed unit, which its public listing shows; a remov
   await expect(photos.getByText("Added Porch.")).toBeVisible();
   await expect(photos.getByRole("img")).toHaveCount(2);
   await photos.getByRole("button", { name: "Close" }).click();
-  await expect(unit.getByRole("cell").nth(6)).toHaveText("2");
+  await expect(unit.getByRole("cell").nth(7)).toHaveText("2");
 
   // Anyone sees them on the public page, in the order they were added.
   const visitor = await (await browser.newContext()).newPage();
@@ -4576,5 +4576,80 @@ test("staff enter a property's tax credit income limits, make a unit a tax credi
   await expect(row).toContainText("within the limit");
   await expect(report).toContainText("1 of 1");
   await expect(report).not.toContainText("60,000");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+});
+
+test("staff keep a unit's bedrooms, bathrooms, size and market rent; its property, the rent roll, Listings, the public page and the vacancy report show them", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["unit-details"]!;
+  await joinAsStaff(page, people.manager);
+  // Aspen Row's Unit 2, vacant: two bedrooms, one bath, 900 square feet, asking $1,300.00.
+  await openProperty(page, "Aspen Row");
+  await page.getByRole("table").filter({ hasText: "Unit 2" }).getByRole("link", { name: "Unit 2", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Unit 2, Aspen Row" })).toBeVisible();
+  const card = part(page, "Details");
+  await expect(card.getByLabel("Unit details")).toContainText("Not recorded");
+  const edit = await setupPanel(page, "Edit details");
+  await edit.getByLabel("Bedrooms").fill("2");
+  await edit.getByLabel("Bathrooms").fill("1");
+  await edit.getByLabel("Square feet").fill("900");
+  await edit.getByLabel("Market rent a month").fill("1,300");
+  await edit.getByRole("button", { name: "Save details" }).click();
+  await expect(page.getByText("Details saved.")).toBeVisible();
+  await expect(card.getByLabel("Unit details")).toHaveText(/Bedrooms2Bathrooms1Square feet900Market rent\$1,300\.00/);
+  // The same again writes nothing, and says so.
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await (await setupPanel(page, "Edit details")).getByRole("button", { name: "Save details" }).click();
+  await expect(page.getByText("Nothing changed.")).toBeVisible();
+
+  // Unit 1, Drew Sample's: a studio asking $1,225.00.
+  await openProperty(page, "Aspen Row");
+  const units = page.getByRole("table").filter({ hasText: "Unit 2" });
+  await expect(units.getByRole("row", { name: "Unit 2" })).toContainText("2 beds, 1 bath, 900 sq ft");
+  await expect(units.getByRole("row", { name: "Unit 2" })).toContainText("$1,300.00");
+  await units.getByRole("link", { name: "Unit 1", exact: true }).click();
+  const studio = await setupPanel(page, "Edit details");
+  await studio.getByLabel("Bedrooms").fill("0");
+  await studio.getByLabel("Market rent a month").fill("1225.00");
+  await studio.getByRole("button", { name: "Save details" }).click();
+  await expect(page.getByText("Details saved.")).toBeVisible();
+
+  // The rent roll: the lease's rent beside the market rent, the unit's size under its name.
+  await section(page, "Rent roll");
+  const lease = page.getByRole("row", { name: "Aspen Row, Unit 1", exact: true });
+  await expect(lease.getByTestId("unit-size")).toHaveText("Studio");
+  await expect(lease).toContainText("$1,180.00");
+  await expect(lease).toContainText("$1,225.00");
+
+  // Listings, then the public page once the unit is listed: its size, never its market rent.
+  await section(page, "Listings");
+  const open = page.getByRole("row", { name: "Aspen Row, Unit 2" });
+  await expect(open.getByTestId("unit-size")).toHaveText("2 beds, 1 bath, 900 sq ft");
+  await expect(open).toContainText("$1,300.00");
+  await open.getByRole("button", { name: "Actions for Aspen Row, Unit 2" }).click();
+  await page.getByRole("menuitem", { name: "Open an application link" }).click();
+  const linking = page.getByRole("dialog", { name: "Open an application link" });
+  await linking.getByLabel("Rent a month").fill("1275.00");
+  await linking.getByRole("button", { name: "Open the link" }).click();
+  await expect(linking.getByTestId("application-link")).toContainText("/apply#");
+  await linking.getByRole("button", { name: "Close" }).click();
+  await open.getByRole("button", { name: "List", exact: true }).click();
+  await page.getByRole("dialog", { name: "List on the public page" }).getByRole("button", { name: "List it" }).click();
+  await expect(open.getByTestId("listed")).toHaveText("Listed");
+  const visitor = await (await browser.newContext()).newPage();
+  await visitor.goto(`/listings?pmc=${people.pmc_id}`);
+  const shown = visitor.getByRole("listitem", { name: "Aspen Row, Unit 2" });
+  await expect(shown).toContainText("2 beds, 1 bath, 900 sq ft");
+  await expect(shown).toContainText("$1,275.00 a month");
+  await expect(shown).not.toContainText("1,300");
+
+  // The vacancy report has them on the unit's line.
+  await section(page, "Reports");
+  await page.getByRole("list", { name: "Rentals" }).getByRole("link", { name: "Vacancy" }).click();
+  const vacancy = page.getByRole("table", { name: "Vacancy" }).getByRole("row").filter({ hasText: "Unit 2" }).first();
+  await expect(vacancy).toContainText("900");
+  await expect(vacancy).toContainText("1300.00");
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
 });

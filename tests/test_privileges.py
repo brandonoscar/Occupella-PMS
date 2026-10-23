@@ -281,6 +281,9 @@ TABLES = {
     # designation, each from a day, which staff record.
     "trust_tax_credit_limits": {"SELECT", "INSERT"},
     "trust_tax_credit_units": {"SELECT", "INSERT"},
+    # A unit's details (migration 0124): bedrooms, bathrooms, square feet and market rent, which
+    # staff record; the latest row holds.
+    "trust_unit_details": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.

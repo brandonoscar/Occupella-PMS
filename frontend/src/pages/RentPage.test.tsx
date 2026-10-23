@@ -37,6 +37,7 @@ const ROW: RentRollRow = {
   monthly_rent: "1500.00",
   deposit: "1500.00",
   owed: "1550.00",
+  details: { bedrooms: 2, bathrooms: "1", square_feet: 900, market_rent: "1575.00" },
 };
 const ROLL: Paged<RentRollRow> = { items: [ROW], total: 1, page: 1, per_page: 50 };
 const LEASE = {
@@ -84,9 +85,11 @@ describe("RentPage", () => {
 
     const row = await roll();
     expect(within(row).getAllByRole("cell").map((c) => c.textContent)).toEqual([
-      "Property 1", "Unit 1", "Tenant 1, Tenant 2", "01/01/2026", "12/31/2026", "76",
-      "$1,500.00", "$1,500.00", "$1,550.00",
+      "Property 1", "Unit 12 beds, 1 bath, 900 sq ft", "Tenant 1, Tenant 2", "01/01/2026", "12/31/2026", "76",
+      "$1,500.00", "$1,575.00", "$1,500.00", "$1,550.00",
     ]);
+    // The unit's size under its name, and the market rent beside the lease's rent (migration 0124).
+    expect(within(row).getByTestId("unit-size").textContent).toBe("2 beds, 1 bath, 900 sq ft");
     expect(within(row).getByRole("link", { name: "Unit 1" }).getAttribute("href")).toBe("/leases/l1");
     expect(within(row).getByTestId("balance").className).toContain("text-danger");
     const pages = screen.getByRole("navigation", { name: "Pages" });

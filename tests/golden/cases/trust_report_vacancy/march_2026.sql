@@ -307,4 +307,21 @@ INSERT INTO trust_document_removals (document_id, pmc_id, created_at) VALUES
 ('00000000-0000-4000-8000-000000000092', '00000000-0000-4000-8000-000000000001',
  '2026-03-20 12:00+00');
 
+-- Unit details (migration 0124), the latest recorded by the end of the day holding: Unit A's
+-- market rent and bathrooms changed in March and again after the day (not in the report); Unit C
+-- is a studio recorded in the last second of the day; Unit D has none.
+INSERT INTO trust_unit_details (
+    pmc_id, unit_id, bedrooms, bathrooms, square_feet, market_rent, created_at
+) VALUES
+('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000041',
+ 2, 1, 850, 1200.00, '2025-06-01 12:00+00'),
+('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000041',
+ 2, 1.5, 850, 1250.00, '2026-03-15 12:00+00'),
+('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000041',
+ 2, 1.5, 850, 1300.00, '2026-04-01 00:00+00'),
+('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000043',
+ 0, 1, NULL, 950.00, '2026-03-31 23:59:59+00'),
+('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000044',
+ 3, 2, 1400, 2100.00, '2025-01-02 09:00+00');
+
 SELECT * FROM trust_report_vacancy('00000000-0000-4000-8000-000000000001', '2026-03-31');

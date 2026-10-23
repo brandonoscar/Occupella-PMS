@@ -25,6 +25,7 @@ import { scopeParams, useScope } from "../scope";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
+import { MarketRent, UnitSize } from "./UnitDetailsCard";
 import { useRecord } from "./useRecord";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
@@ -111,6 +112,7 @@ export function RentalListingsPage({ me }: { me: Me }) {
                   <th className="text-left">Unit</th>
                   <th className="text-left">Available</th>
                   <th className="text-right">Rent</th>
+                  <th className="text-right">Market rent</th>
                   <th className="text-right">Applications</th>
                   <th className="text-left">Public page</th>
                   <th className="text-right">Days listed</th>
@@ -137,11 +139,15 @@ export function RentalListingsPage({ me }: { me: Me }) {
                   }
                   return (
                     <tr key={unit.unit_id} aria-label={name}>
-                      <td><GoLink href={`/units/${unit.unit_id}`} className={LINK}>{name}</GoLink></td>
+                      <td>
+                        <GoLink href={`/units/${unit.unit_id}`} className={LINK}>{name}</GoLink>
+                        <UnitSize details={unit.details} />
+                      </td>
                       <td className="whitespace-nowrap">
                         {unit.available_on ? usDate(unit.available_on) : <span className="text-ink-muted">Leased</span>}
                       </td>
                       <td className="text-right">{rent ? money(rent) : ""}</td>
+                      <td className="text-right"><MarketRent details={unit.details} /></td>
                       <td className="text-right">{unit.applications}</td>
                       <td>
                         {unit.listing_id
