@@ -6,7 +6,8 @@ fees, migration 0116), each lease's tenants' prepaid rent for what it owes for a
 turned that on (migration 0117), the recurring bills due by today, each
 with its email to an owner whose approval it waits for, for a company that turned it on, last
 month's management fees from its day of the month, and the recurring work orders due by today
-(trust_open_recurring_work_orders, migration 0085). Rent and late fees go through
+(trust_open_recurring_work_orders, migration 0085), and the PMS's state and local rules a company
+lacks (src/pms/jurisdictions.py, migration 20261023000202). Rent and late fees go through
 trust_run_rent, which records the run; bills through trust_enter_recurring_bills; fees through
 trust_take_monthly_management_fees.
 
@@ -40,7 +41,7 @@ from uuid import UUID
 import psycopg
 from psycopg import sql
 
-from pms import email, notices
+from pms import email, jurisdictions, notices
 from pms.api import payables, rent
 
 log = logging.getLogger("pms.nightly")
@@ -71,6 +72,8 @@ class Ran:
     authority_late_fees: int = 0
     # Leases whose tenants' prepaid rent paid what they owe (migration 0117).
     prepaid_used: int = 0
+    # The PMS's rules added to the company's (migration 20261023000202).
+    rules: int = 0
 
 
 def run_pmc(
@@ -104,6 +107,7 @@ def run_pmc(
         assert run is not None and fees is not None and opened is not None
         assert authority is not None
         prepaid = rent.use_prepaid_by_itself(conn, pmc_id, day)
+        rules = jurisdictions.seed(conn, pmc_id)
         written = notices.write_scheduled(conn, pmc_id, day, public_url) if sending else None
     emails = 0 if written is None else sum(vars(written).values())
     return Ran(
@@ -117,6 +121,7 @@ def run_pmc(
         opened[0],
         authority[0],
         prepaid,
+        rules,
     )
 
 

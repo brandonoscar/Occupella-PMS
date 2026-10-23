@@ -875,3 +875,53 @@ statute's text and the IRS's Publication 1099 figures are NOT VERIFIED here.)
 **Left to the company.** Whether a vendor gets a 1099 at all (a corporation usually doesn't; the
 W-9 says), the year's adjusted threshold from 2027, and filing: the PMS files nothing and keeps
 no tax ID.
+
+## State and local rules (migration 20261023000202, ADR 0009)
+
+**The rule.** The founder, 2026-10-23: state and city rules come from a property's address, and
+they are the company's to confirm, since the property management company answers for the rules it
+follows (ADR 0009). A rule enters the rules only from a statute's own text, read, cited and dated;
+a screen shows it as cited information with the day it was read, never as a guarantee, asks the
+company to confirm it, and warns rather than refuses where a law has exceptions the PMS can't see.
+Unknown is never shown as "no rule".
+
+**What the PMS does.**
+- Where a property is in the law comes with its address: Find on map keeps the state, county,
+  county subdivision, incorporated place (city, town or village) and census tract the Census
+  Bureau's geographies give for it (`/geocoder/geographies/address`, current vintage, every
+  layer), and staff confirm or correct it. A new address has none until found or said.
+- Facts some rules turn on stay unknown until staff say them: the year built, the units in the
+  building, whether an owner lives there, and whether the owner is a person or a company.
+- Each rule is a jurisdiction's (federal, state, county or city) for a kind of term: the most a
+  security deposit may be, the days to return it, the most a late fee may be and the days before
+  one, the most an NSF fee may be, the notice a rent increase needs and the most rent may rise in a
+  year. Its value is a number in a unit (maybe the lesser or greater of two, as some late fee
+  laws are), "no limit", or words where the law sets no number to check ("reasonable"). It names
+  the facts it applies to, the days it is in force, its citation and page, the day someone read
+  the statute and who, and the exceptions the PMS can't see.
+- One database function resolves the rule in force for a property on a day: the most specific
+  level that has one (city, then county, then state, then federal), then the highest precedence
+  (a narrower exception over the general rule), then the newest. A rule that turns on a fact not
+  on file leaves the answer unknown, naming the fact, rather than falling through to a wider rule
+  that might not apply.
+- The property's page lists each kind, cited and dated, confirmed or not; the late fee and NSF fee
+  terms, a deposit, a rent change and a move-out's last day show the rule beside the field and
+  warn as staff type past it. The rent cap counts from the lowest rent of the lease (and the
+  leases it renewed) in the 12 months before the change. A deposit counts every kind held for the
+  lease. Nothing refuses: the company saves either way.
+- A city's rule is taken as governing where it has one. A city whose rule is preempted by its
+  state, or that adds to the state's rather than replacing it, needs the company's own rows: the
+  PMS can't tell which from the numbers.
+
+**What the catalog holds.** Nothing yet. On 2026-10-23 every statute site tried (leginfo,
+law.cornell.edu, flsenate.gov, statutes.capitol.texas.gov and others) and the Census geocoder
+refused the build container, so no statute's text was read; lane 1's research
+(`docs/research/state-rules-2026-10-23.md`) holds leads from search excerpts, each NOT VERIFIED.
+A rule enters `src/pms/jurisdiction_rules.toml` only once read in the statute, with its section
+here. The Census geographies' answer shape is as the bureau documents it, NOT VERIFIED against a
+live answer.
+
+**Left to the company.** Confirming each rule it follows, adding the ones it reads, whether a
+law's exceptions apply to a lease, and anything a city adds that the kinds above don't cover
+(registration, relocation, just cause).
+

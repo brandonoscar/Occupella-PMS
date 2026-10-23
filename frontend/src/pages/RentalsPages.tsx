@@ -23,6 +23,7 @@ import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { Said } from "../components/Said";
 import { AddressCard } from "./AddressCard";
+import { LawCard } from "./LawCard";
 import { FilesCard } from "./FilesCard";
 import { TaxCreditLimitsCard, TaxCreditUnitCard } from "./TaxCreditCards";
 import { navigate } from "../router";
@@ -170,6 +171,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
           <Said>{said}</Said>
           <AddressCard propertyId={id} address={property.address} location={property.location}
             canLocate={property.can_locate} onChange={refresh} />
+          <LawCard propertyId={id} again={property} />
           <Card title="Owners">
             {property.owners.length === 0 ? (
               <EmptyState icon={Building2} title="No owner's account yet." />

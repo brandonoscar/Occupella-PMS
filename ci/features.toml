@@ -1001,3 +1001,22 @@ operations = [
 browser = [
   "features.spec.ts › staff keep a unit's bedrooms, bathrooms, size and market rent; its property, the rent roll, Listings, the public page and the vacancy report show them",
 ]
+
+[[feature]]
+id = "jurisdiction-rules"
+statement = "A property's place in the law comes with its address: Find on map keeps the state, county, county subdivision, city and census tract the geocoder's geographies give (PMS_GEOCODER), and staff confirm or correct it; staff keep the facts rules turn on (year built, units in the building, whether an owner lives there, whether the owner is a person or a company). Each kind of rule in force (deposit cap and return days, late fee cap and days before one, NSF fee cap, notice of a rent increase, rent cap) shows on the property's page cited, with the day it was read in the statute and whether the company confirmed it, or as unknown (never as no rule); staff add a rule they read, correct one and confirm one the PMS's catalog added. The rule stands beside the late fee and NSF fee terms, a deposit, a rent change and a move-out's last day, and warns as staff type past it, never refusing (migration 20261023000202, ADR 0009, q142)."
+operations = [
+  "GET /api/properties/{property_id}/law",
+  "POST /api/properties/{property_id}/jurisdiction",
+  "POST /api/properties/{property_id}/facts",
+  "POST /api/jurisdiction-rules",
+  "POST /api/jurisdiction-rules/{rule_id}/confirm",
+  "GET /api/law/late-fees",
+  "GET /api/law/nsf-fee",
+  "GET /api/law/deposit",
+  "GET /api/law/rent-change",
+  "GET /api/law/deposit-return",
+]
+browser = [
+  "features.spec.ts › staff find where Cedar House is in the law, keep its facts, add and confirm the rules they read, and each stands beside the field it limits, warning past it",
+]

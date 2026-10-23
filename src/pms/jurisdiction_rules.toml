@@ -1,0 +1,34 @@
+# The PMS's own state and local rules (src/pms/jurisdictions.py; migration 20261023000202; ADR
+# 0009). Each night `jurisdictions.seed` copies the ones a company lacks into its rules, where its
+# staff confirm them.
+#
+# A rule enters this file only from a statute's own text: read on the day in `checked_on` by the
+# person in `reviewed_by`, cited and linked, and written up in docs/law.md (State and local rules).
+# A value that came from a search excerpt, a summary site or memory stays out: unknown is shown as
+# unknown, never as "no rule". docs/research/state-rules-2026-10-23.md holds the leads still to
+# read. On 2026-10-23 no statute site could be opened from the build container, so this file holds
+# no rule yet.
+#
+# Each rule is a [[rule]] table: a `key` that never changes (a correction is a new rule naming the
+# old key in `supersedes`), then trust_jurisdiction_rules' columns:
+#
+#   [[rule]]
+#   key = "xx-deposit-cap-2025-01-01"  # (an example, not a rule)
+#   level = "state"                   # federal, state, county or city
+#   jurisdiction = "00"               # US; a state's FIPS; state + county FIPS; state + place FIPS
+#   jurisdiction_name = "the state's name"
+#   rule = "deposit_cap"              # deposit_cap, deposit_return_days, late_fee_cap,
+#                                     # late_fee_grace_days, nsf_fee_cap,
+#                                     # rent_increase_notice_days, rent_cap
+#   value_kind = "number"             # number, none (no limit, confirmed) or words
+#   value_number = 1
+#   value_unit = "months_of_rent"     # days, months_of_rent, percent_of_rent, percent_of_unpaid,
+#                                     # dollars, percent_a_year
+#   effective_from = 2025-01-01
+#   citation = "the code and section"
+#   url = "https://the statute's own page"
+#   checked_on = 2026-10-23
+#   reviewed_by = "who read it"
+#   exceptions = "what the law excepts that the PMS can't see"
+
+rule = []

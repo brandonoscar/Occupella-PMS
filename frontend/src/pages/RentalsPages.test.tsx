@@ -89,6 +89,10 @@ const UNIT: Unit = {
 };
 
 
+const NO_LAW = {
+  day: "2026-10-23", jurisdiction: null, has_address: false, levels: [], rules: [], note: "",
+  facts: { year_built: null, units_in_building: null, owner_occupied: null, owner_kind: null, recorded_by: null, recorded_at: null },
+};
 const NO_FILES = {
   documents: [],
   subjects: {
@@ -110,6 +114,10 @@ function server(answers: Record<string, unknown>, refuse: Record<string, string>
     // Every property's and unit's tax credit card reads its own; none here (TaxCreditCards.test.tsx).
     if (path.startsWith("/api/tax-credit/") && !(path in answers)) {
       return new Response(JSON.stringify(path.includes("/units/") ? NOT_TAX_CREDIT : []), { status: 200 });
+    }
+    // Every property's rules card reads its own (LawCard.test.tsx); nothing on file here.
+    if (/^\/api\/properties\/[^/]+\/law/.test(path) && !(path in answers)) {
+      return new Response(JSON.stringify(NO_LAW), { status: 200 });
     }
     if (!(path in answers)) return new Response(JSON.stringify({ detail: "no such page" }), { status: 404 });
     return new Response(JSON.stringify(answers[path]), { status: 200 });

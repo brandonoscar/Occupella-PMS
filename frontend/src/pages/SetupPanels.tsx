@@ -7,6 +7,8 @@ import { Notice } from "../components/Notice";
 import { Said } from "../components/Said";
 import { Select } from "../components/Select";
 import { SidePanel } from "../components/SidePanel";
+import { RulesBeside } from "../components/RulesBeside";
+import { checkQuery, useLawCheck } from "../law";
 import { day, usDate } from "../money";
 import type { OwnerAccount as PropertyOwner } from "../rentals";
 import { sharesLine, sharesTotal } from "../rentals";
@@ -252,6 +254,11 @@ export function LateFeesPanel({ panel, propertyId }: { panel: Panel; propertyId:
   const { error, save } = useSave(panel);
   const [fees, setFees] = useState({ starts_on: day(new Date()), grace_days: "5", flat_fee: "", percent: "", maximum: "" });
   const set = (key: keyof typeof fees) => (e: React.ChangeEvent<HTMLInputElement>) => setFees({ ...fees, [key]: e.target.value });
+  // The rules in force for the property beside the terms, and what goes past them as typed (q142):
+  // a warning, never a refusal.
+  const checked = useLawCheck(
+    /^\d+$/.test(fees.grace_days.trim()) ? `/api/law/late-fees?${checkQuery({ property_id: propertyId, ...fees })}` : null,
+  );
   return (
     <SidePanel title="Set late fees" onClose={panel.close}>
       <Form className="flex flex-col gap-3" onSubmit={(event) => {
@@ -266,6 +273,7 @@ export function LateFeesPanel({ panel, propertyId }: { panel: Panel; propertyId:
         <Field label="Flat fee" id="fees-flat" inputMode="decimal" value={fees.flat_fee} onChange={set("flat_fee")} />
         <Field label="Percent of unpaid" id="fees-percent" inputMode="decimal" value={fees.percent} onChange={set("percent")} />
         <Field label="Up to" id="fees-maximum" inputMode="decimal" value={fees.maximum} onChange={set("maximum")} />
+        <RulesBeside checked={checked} label="Rules for late fees" />
         <div><Button type="submit">Set late fees</Button></div>
         <Notice tone="error">{error}</Notice>
       </Form>
@@ -277,6 +285,7 @@ export function NsfFeePanel({ panel, propertyId }: { panel: Panel; propertyId: s
   const { error, save } = useSave(panel);
   const [from, setFrom] = useState(day(new Date()));
   const [fee, setFee] = useState("");
+  const checked = useLawCheck(`/api/law/nsf-fee?${checkQuery({ property_id: propertyId, starts_on: from, fee })}`);
   return (
     <SidePanel title="Set NSF fee" onClose={panel.close}>
       <Form className="flex flex-col gap-3" onSubmit={(event) => {
@@ -285,6 +294,7 @@ export function NsfFeePanel({ panel, propertyId }: { panel: Panel; propertyId: s
       }}>
         <Field label="NSF fee from" id="nsf-from" type="date" required value={from} onChange={(e) => setFrom(e.target.value)} />
         <Field label="NSF fee" id="nsf-fee" inputMode="decimal" required value={fee} onChange={(e) => setFee(e.target.value)} />
+        <RulesBeside checked={checked} label="Rules for the NSF fee" />
         <div><Button type="submit">Set NSF fee</Button></div>
         <Notice tone="error">{error}</Notice>
       </Form>

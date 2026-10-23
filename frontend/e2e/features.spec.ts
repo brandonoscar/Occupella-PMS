@@ -4710,3 +4710,123 @@ test("staff keep a unit's bedrooms, bathrooms, size and market rent; its propert
   await expect(vacancy).toContainText("1300.00");
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
 });
+
+// Adds a California rule from the property's State and local rules card, as staff read it in a
+// statute (synthetic: none is the law).
+async function addRule(page: Page, rules: Locator, kind: string, number: string, more?: (panel: Locator) => Promise<void>) {
+  await rules.getByRole("button", { name: "Add a rule" }).click();
+  const panel = page.getByRole("dialog", { name: "Add a rule" });
+  await panel.getByLabel("Of", { exact: true }).selectOption({ label: "California (state)" });
+  await panel.getByLabel("Rule", { exact: true }).selectOption({ label: kind });
+  await panel.getByLabel("Number", { exact: true }).fill(number);
+  await more?.(panel);
+  await panel.getByLabel("Citation", { exact: true }).fill(`Synthetic Code: ${kind}`);
+  await panel.getByLabel("The statute's page (https)").fill("https://example.org/synthetic-code");
+  await panel.getByLabel("Read by", { exact: true }).fill("Synthetic Reviewer");
+  await panel.getByRole("button", { name: "Add the rule" }).click();
+  await expect(panel).toBeHidden();
+}
+
+test("staff find where Cedar House is in the law, keep its facts, add and confirm the rules they read, and each stands beside the field it limits, warning past it", async ({
+  page,
+}) => {
+  const people = seed.features["jurisdiction-rules"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Properties");
+  await page.getByRole("row", { name: "Cedar House", exact: true }).getByRole("link", { name: "Cedar House" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Cedar House" })).toBeVisible();
+  const address = part(page, "Address");
+  const rules = part(page, "State and local rules");
+  await expect(rules.getByTestId("law-place")).toHaveText("Add the property's address first.");
+
+  // Its address, found on the map: where it is in the law comes with it.
+  await address.getByRole("button", { name: "Add address" }).click();
+  const add = page.getByRole("dialog", { name: "Add address" });
+  await add.getByLabel("Street").fill("100 Synthetic Way");
+  await add.getByLabel("City").fill("Demo City");
+  await add.getByLabel("State (two letters)").fill("CA");
+  await add.getByLabel("ZIP code").fill("00001");
+  await add.getByRole("button", { name: "Save address" }).click();
+  await expect(rules.getByTestId("law-place")).toContainText("isn't on file yet");
+  await address.getByRole("button", { name: "Find on map" }).click();
+  await expect(page.getByText("Found on the map.")).toBeVisible();
+  await expect(rules.getByTestId("law-place")).toContainText(/^Demo City city, County \d{3}, California, tract \d{6}$/);
+  await expect(rules).toContainText("Found by the stand-in geocoder");
+  // Nothing on file for a kind: unknown, never "no rule".
+  await expect(rules.getByRole("row", { name: "Late fee", exact: true })).toContainText(
+    "Unknown: no rule of this kind on file for Demo City city",
+  );
+  await rules.getByRole("button", { name: "Confirm where it is" }).click();
+  await expect(rules).toContainText("Confirmed by Demo Manager");
+
+  // The facts rules turn on.
+  const facts = await setupPanel(page, "Edit facts");
+  await facts.getByLabel("Year built").fill("1978");
+  await facts.getByLabel("The owner is").selectOption("person");
+  await facts.getByRole("button", { name: "Save facts" }).click();
+  await expect(page.getByText("Facts saved.")).toBeVisible();
+  await expect(rules).toContainText("Year built:1978");
+
+  // A rule from the PMS's catalog waits for the company to confirm it.
+  const nsfRow = rules.getByRole("row", { name: "Returned payment (NSF) fee" });
+  await expect(nsfRow).toContainText("At most $25.00");
+  await expect(nsfRow).toContainText("Not confirmed by your company yet");
+  await nsfRow.getByRole("button", { name: "Confirm" }).click();
+  await expect(nsfRow).toContainText("Confirmed by Demo Manager");
+
+  // Rules staff read in a statute, each confirmed as it is added.
+  await addRule(page, rules, "Late fee: the most", "50");
+  await addRule(page, rules, "Days before a late fee", "5");
+  await addRule(page, rules, "Security deposit: the most", "1");
+  await addRule(page, rules, "Notice of a rent increase", "90");
+  await addRule(page, rules, "Rent increase in a year: the most", "5");
+  await addRule(page, rules, "Deposit returned within", "21");
+  const lateRow = rules.getByRole("row", { name: "Late fee", exact: true });
+  await expect(lateRow).toContainText("At most $50.00");
+  await expect(lateRow).toContainText("Confirmed by Demo Manager");
+  await expect(lateRow.getByRole("link", { name: /^California: Synthetic Code: Late fee: the most, read / })).toHaveAttribute(
+    "href", "https://example.org/synthetic-code",
+  );
+
+  // Late fee terms past both: warned as typed, and saved all the same.
+  const late = await setupPanel(page, "Set late fees");
+  await late.getByLabel("Grace days").fill("3");
+  await late.getByLabel("Flat fee").fill("60.00");
+  const lateWarning = late.getByRole("region", { name: "Rules for late fees" }).getByRole("status");
+  await expect(lateWarning).toContainText("These terms charge one after 3 days of grace; 5 or more meets it.");
+  await expect(lateWarning).toContainText("On House's rent of $2,250.00 these terms charge up to $60.00, over $50.00.");
+  await late.getByRole("button", { name: "Set late fees" }).click();
+  await expect(page.getByText(`New late fee terms from ${today()}.`)).toBeVisible();
+
+  // An NSF fee past the catalog's rule.
+  const nsf = await setupPanel(page, "Set NSF fee");
+  await nsf.getByLabel("NSF fee", { exact: true }).fill("35.00");
+  await expect(nsf.getByRole("status")).toContainText("This fee is $35.00.");
+  await nsf.getByRole("button", { name: "Close" }).click();
+
+  // On the lease: a deposit past the most it may hold, and a rent increase past the notice and the cap.
+  await openLease(page, "Cedar House, House");
+  const deposit = await leasePanel(page, "Record deposit");
+  await deposit.getByLabel("Deposit received", { exact: true }).fill("100.00");
+  await expect(deposit.getByRole("status")).toContainText("with $2,250.00 held already, comes to $2,350.00");
+  await deposit.getByRole("button", { name: "Close" }).click();
+  const change = await leasePanel(page, "Change rent");
+  await change.getByLabel("New monthly rent").fill("2600.00");
+  await change.getByLabel("From (the first of a month)").fill(firstOfMonthsAgo(-2));
+  const changed = change.getByRole("status");
+  await expect(changed).toContainText("a rent increase needs at least 90 days of written notice");
+  await expect(changed).toContainText("From the lowest rent of the 12 months before, $2,250.00, $2,600.00 is 15.56% more.");
+  await change.getByRole("button", { name: "Close" }).click();
+
+  // At move-out, the days to return the deposits beside the lease's last day.
+  const last = daysFromToday(30);
+  await section(page, "Move-outs");
+  const moving = page.getByRole("region", { name: /^Cedar House \/ House/ });
+  await moving.getByText("Move-out for House").click();
+  await moving.getByLabel("Last day").fill(last);
+  await moving.getByRole("button", { name: "End the lease" }).click();
+  await expect(moving).toContainText(`The lease ends on ${us(last)}.`);
+  const back = moving.getByRole("region", { name: /^Rules for returning the deposits/ });
+  await expect(back).toContainText("Within 21 days after the tenancy ends");
+  await expect(back).toContainText(`For this lease, by ${us(daysFromToday(51))}`);
+});

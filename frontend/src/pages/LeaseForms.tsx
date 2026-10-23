@@ -4,6 +4,7 @@ import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Form } from "../components/Form";
 import { RowMenu } from "../components/RowMenu";
+import { RulesBeside } from "../components/RulesBeside";
 import { Select } from "../components/Select";
 import { Badge } from "../components/Badge";
 import { day, money, usDate } from "../money";
@@ -24,6 +25,7 @@ import {
 import { sharesLine } from "../rentals";
 import type { Named, Portfolio } from "../setup";
 import { ChargeTypeSelect, useChargeTypes } from "./ChargeTypes";
+import { checkQuery, useLawCheck } from "../law";
 
 // The forms of a lease's rent work (pages/LeasePage.tsx), each one thing recorded: a payment, a
 // fee or credit, one every month, a new rent, a deposit; and a payment's row, which can bounce,
@@ -268,14 +270,18 @@ export function RecurringForm({ lease, record }: { lease: RentLease; record: Rec
 }
 
 // A new monthly rent from the first of a month, after written notice of a full month. A lease
-// with an end date names the term that lets its rent change during it. A state or city may ask
-// for more notice, or cap the increase: that stays the company's to check.
+// with an end date names the term that lets its rent change during it. The notice a rent increase
+// needs and the most rent may rise in a year, where the company has the rule on file, stand beside
+// it and warn as it is typed (q142), never refusing it.
 export function RentChangeForm({ lease, record }: { lease: RentLease; record: Recorder }) {
   const [from, setFrom] = useState(earliestRentChange(new Date()));
   const [amount, setAmount] = useState("");
   const [notice, setNotice] = useState(day(new Date()));
   const [served, setServed] = useState<RentChange["served_by"]>("mail");
   const [terms, setTerms] = useState("");
+  const checked = useLawCheck(`/api/law/rent-change?${checkQuery({
+    lease_id: lease.id, effective_on: from, notice_given_on: notice, monthly_rent: amount,
+  })}`);
   return (
     <Form
       className="flex flex-wrap items-end gap-3"
@@ -310,6 +316,7 @@ export function RentChangeForm({ lease, record }: { lease: RentLease; record: Re
         <Field label="The lease term that allows it" id={`rent-change-terms-${lease.id}`} required
           maxLength={500} value={terms} onChange={(e) => setTerms(e.target.value)} />
       )}
+      <RulesBeside checked={checked} label="Rules for a rent increase" className="basis-full" />
       <Button type="submit" variant="secondary">Change rent</Button>
     </Form>
   );
@@ -361,6 +368,8 @@ export function DepositForm({ lease, record }: { lease: RentLease; record: Recor
   const [on, setOn] = useState(day(new Date()));
   const [kind, setKind] = useState<DepositKind>("security");
   const label = DEPOSIT_KINDS.find((k) => k.value === kind)?.label ?? "Deposit";
+  // The most a deposit may be, with every kind held for the lease, beside the amount (q142).
+  const checked = useLawCheck(tenant ? `/api/law/deposit?${checkQuery({ tenant_id: tenant, amount, received_on: on })}` : null);
   return (
     <Form
       className="flex flex-wrap items-end gap-3"
@@ -398,6 +407,7 @@ export function DepositForm({ lease, record }: { lease: RentLease; record: Recor
         value={amount} onChange={(e) => setAmount(e.target.value)} />
       <Field label="Deposit received on" id={`deposit-on-${lease.id}`} type="date" required value={on}
         onChange={(e) => setOn(e.target.value)} />
+      <RulesBeside checked={checked} label="Rules for a security deposit" className="basis-full" />
       <Button type="submit" variant="secondary">Record deposit</Button>
     </Form>
   );

@@ -183,6 +183,7 @@ AREA_PATHS = (
     ("/api/quickbooks/", "setup"),
     ("/api/company", "setup"),
     ("/api/properties/", "setup"),
+    ("/api/jurisdiction-rules", "setup"),  # state and local rules the company follows
     ("/api/property-groups", "setup"),
     ("/api/units/", "setup"),
     ("/api/tenants/", "setup"),

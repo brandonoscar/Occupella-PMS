@@ -1,8 +1,9 @@
 """A property's street address and where it is on a map (migration 0109; the open-source review's
 geocoding, done last as agreed). Staff keep the address on the property's page; Find on map asks
 the server's geocoder (pms.geocoding, PMS_GEOCODER) where it is, sending the property's address
-alone, and the page links to OpenStreetMap at the point. Saving the same address again writes
-nothing; a new address has no location until it is found.
+alone, and the page links to OpenStreetMap at the point. It keeps where the address is in the law
+too, when the geocoder says (migration 20261023000202, src/pms/api/jurisdictions.py). Saving the
+same address again writes nothing; a new address has no location until it is found.
 """
 
 from __future__ import annotations
@@ -191,6 +192,28 @@ def locate(request: Request, session: Staff, conn: Conn, property_id: UUID) -> L
         " VALUES (%s, %s, %s, %s, %s, %s)",
         (session.pmc_id, row[0], match.latitude, match.longitude, match.matched, geocoder.name),
     )
+    if match.place is not None:
+        # Where the address is in the law, as the geocoder found it (migration 20261023000202).
+        place = match.place
+        conn.execute(
+            "INSERT INTO trust_property_jurisdictions (pmc_id, address_id, state_fips, state_name,"
+            " county_fips, county_name, cousub_fips, cousub_name, place_fips, place_name, tract,"
+            " source) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                session.pmc_id,
+                row[0],
+                place.state_fips,
+                place.state_name,
+                place.county_fips,
+                place.county_name,
+                place.cousub_fips,
+                place.cousub_name,
+                place.place_fips,
+                place.place_name,
+                place.tract,
+                geocoder.name,
+            ),
+        )
     found = location_of(conn, property_id)
     assert found is not None
     return found
