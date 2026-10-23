@@ -53,6 +53,7 @@ import { SettingsPage } from "./pages/SettingsPage";
 import { StaffPage } from "./pages/StaffPage";
 import { SwitchPage } from "./pages/SwitchPage";
 import { TenantHome } from "./pages/TenantHome";
+import { FakeCheckoutPage } from "./pages/FakeCheckoutPage";
 import { VendorLinkPage } from "./pages/VendorLinkPage";
 import { UtilityBillingPage } from "./pages/UtilityBillingPage";
 import { VendorsPage } from "./pages/VendorsPage";
@@ -104,6 +105,8 @@ function Home({ path }: { path: string }) {
     }
     return <DashboardPage me={me} />;
   }
+  // The fake payment processor's checkout (development and CI): the tenant says what happened.
+  if (path === "/pay") return <FakeCheckoutPage me={me} />;
   return <TenantHome me={me} />;
 }
 

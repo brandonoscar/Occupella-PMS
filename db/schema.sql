@@ -3296,6 +3296,38 @@ $$;
 
 
 --
+-- Name: trust_check_online_payment_step(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_online_payment_step() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_steps text[];
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('online payment ' || NEW.payment_id, 0));
+    SELECT coalesce(array_agg(s.step), '{}') INTO v_steps
+    FROM trust_online_payment_steps AS s WHERE s.payment_id = NEW.payment_id;
+    IF NEW.step = 'started' AND v_steps <> '{}' THEN
+        RAISE EXCEPTION 'trust: an online payment starts once' USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.step IN ('succeeded', 'failed', 'refused')
+       AND (NOT 'started' = ANY (v_steps) OR v_steps && ARRAY['succeeded', 'failed', 'refused']) THEN
+        RAISE EXCEPTION 'trust: an online payment that started ends once'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.step = 'returned' AND NOT 'succeeded' = ANY (v_steps) THEN
+        RAISE EXCEPTION 'trust: only an online payment that succeeded comes back'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    NEW.created_at := clock_timestamp();
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_ownership_share_line(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -15616,6 +15648,81 @@ CREATE TABLE public.trust_on_call_staff (
 
 
 --
+-- Name: trust_online_payment_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_online_payment_settings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    cards boolean NOT NULL,
+    bank_debits boolean NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_online_payment_steps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_online_payment_steps (
+    id bigint NOT NULL,
+    pmc_id uuid NOT NULL,
+    payment_id uuid NOT NULL,
+    step text NOT NULL,
+    reference text,
+    processor_event text,
+    transfer_id text,
+    reason text,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_online_payment_steps_check CHECK (
+CASE step
+    WHEN 'started'::text THEN ((reference IS NOT NULL) AND (transfer_id IS NULL) AND (reason IS NULL))
+    WHEN 'succeeded'::text THEN ((transfer_id IS NOT NULL) AND (reason IS NULL))
+    WHEN 'returned'::text THEN ((transfer_id IS NOT NULL) AND (reason IS NULL))
+    ELSE ((transfer_id IS NULL) AND (reason IS NOT NULL))
+END),
+    CONSTRAINT trust_online_payment_steps_processor_event_check CHECK (((char_length(processor_event) >= 1) AND (char_length(processor_event) <= 255))),
+    CONSTRAINT trust_online_payment_steps_reason_check CHECK (((char_length(reason) >= 1) AND (char_length(reason) <= 500))),
+    CONSTRAINT trust_online_payment_steps_reference_check CHECK (((char_length(reference) >= 1) AND (char_length(reference) <= 255))),
+    CONSTRAINT trust_online_payment_steps_step_check CHECK ((step = ANY (ARRAY['started'::text, 'succeeded'::text, 'failed'::text, 'refused'::text, 'returned'::text])))
+);
+
+
+--
+-- Name: trust_online_payment_steps_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_online_payment_steps ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.trust_online_payment_steps_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: trust_online_payments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_online_payments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    amount numeric NOT NULL,
+    method text NOT NULL,
+    processor text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_online_payments_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_online_payments_method_check CHECK ((method = ANY (ARRAY['card'::text, 'bank debit'::text]))),
+    CONSTRAINT trust_online_payments_processor_check CHECK ((processor = ANY (ARRAY['fake'::text, 'stripe'::text])))
+);
+
+
+--
 -- Name: trust_opening_balances; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18754,6 +18861,46 @@ ALTER TABLE ONLY public.trust_on_call_staff
 
 
 --
+-- Name: trust_online_payment_settings trust_online_payment_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payment_settings
+    ADD CONSTRAINT trust_online_payment_settings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_online_payment_steps trust_online_payment_steps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payment_steps
+    ADD CONSTRAINT trust_online_payment_steps_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_online_payment_steps trust_online_payment_steps_processor_event_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payment_steps
+    ADD CONSTRAINT trust_online_payment_steps_processor_event_key UNIQUE (processor_event);
+
+
+--
+-- Name: trust_online_payments trust_online_payments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payments
+    ADD CONSTRAINT trust_online_payments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_online_payments trust_online_payments_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payments
+    ADD CONSTRAINT trust_online_payments_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_opening_balances trust_opening_balances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -21129,6 +21276,55 @@ CREATE INDEX trust_on_call_staff_staff ON public.trust_on_call_staff USING btree
 
 
 --
+-- Name: trust_online_payment_settings_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_online_payment_settings_pmc ON public.trust_online_payment_settings USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_online_payment_settings_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_online_payment_settings_recorded_by ON public.trust_online_payment_settings USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_online_payment_steps_one; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_online_payment_steps_one ON public.trust_online_payment_steps USING btree (payment_id, step);
+
+
+--
+-- Name: trust_online_payment_steps_reference; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_online_payment_steps_reference ON public.trust_online_payment_steps USING btree (reference) WHERE (step = 'started'::text);
+
+
+--
+-- Name: trust_online_payment_steps_transfer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_online_payment_steps_transfer ON public.trust_online_payment_steps USING btree (transfer_id);
+
+
+--
+-- Name: trust_online_payments_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_online_payments_lease ON public.trust_online_payments USING btree (pmc_id, lease_id, created_at);
+
+
+--
+-- Name: trust_online_payments_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_online_payments_tenant ON public.trust_online_payments USING btree (lease_id, tenant_id);
+
+
+--
 -- Name: trust_owner_draws_ledger_account_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22767,6 +22963,27 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_online_payment_settings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_online_payment_settings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_online_payment_steps trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_online_payment_steps FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_online_payments trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_online_payments FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_opening_balances trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24118,6 +24335,27 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_on_c
 
 
 --
+-- Name: trust_online_payment_settings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_online_payment_settings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_online_payment_steps trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_online_payment_steps FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_online_payments trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_online_payments FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_opening_balances trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24836,6 +25074,13 @@ CREATE TRIGGER trust_check_hold_allowance BEFORE INSERT ON public.trust_payment_
 --
 
 CREATE TRIGGER trust_check_hold_release BEFORE INSERT ON public.trust_payment_hold_releases FOR EACH ROW EXECUTE FUNCTION public.trust_check_hold_release();
+
+
+--
+-- Name: trust_online_payment_steps trust_check_online_payment_step; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_online_payment_step BEFORE INSERT ON public.trust_online_payment_steps FOR EACH ROW EXECUTE FUNCTION public.trust_check_online_payment_step();
 
 
 --
@@ -25571,6 +25816,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_notices FOR EACH 
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_on_call_staff FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_online_payment_settings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_online_payment_settings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -29315,6 +29567,70 @@ ALTER TABLE ONLY public.trust_on_call_staff
 
 
 --
+-- Name: trust_online_payment_settings trust_online_payment_settings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payment_settings
+    ADD CONSTRAINT trust_online_payment_settings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_online_payment_settings trust_online_payment_settings_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payment_settings
+    ADD CONSTRAINT trust_online_payment_settings_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_online_payment_steps trust_online_payment_steps_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payment_steps
+    ADD CONSTRAINT trust_online_payment_steps_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_online_payment_steps trust_online_payment_steps_pmc_id_payment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payment_steps
+    ADD CONSTRAINT trust_online_payment_steps_pmc_id_payment_id_fkey FOREIGN KEY (pmc_id, payment_id) REFERENCES public.trust_online_payments(pmc_id, id);
+
+
+--
+-- Name: trust_online_payment_steps trust_online_payment_steps_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payment_steps
+    ADD CONSTRAINT trust_online_payment_steps_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
+-- Name: trust_online_payments trust_online_payments_lease_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payments
+    ADD CONSTRAINT trust_online_payments_lease_id_tenant_id_fkey FOREIGN KEY (lease_id, tenant_id) REFERENCES public.trust_lease_tenants(lease_id, tenant_id);
+
+
+--
+-- Name: trust_online_payments trust_online_payments_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payments
+    ADD CONSTRAINT trust_online_payments_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_online_payments trust_online_payments_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payments
+    ADD CONSTRAINT trust_online_payments_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
 -- Name: trust_opening_balances trust_opening_balances_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -31167,4 +31483,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000123'),
     ('20261022000155'),
     ('20261022000156'),
-    ('20261022000157');
+    ('20261022000157'),
+    ('20261022000158');

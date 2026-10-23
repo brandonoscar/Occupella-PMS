@@ -361,6 +361,8 @@ def post(
 DESCRIBED = ("reference", "method", "memo")
 # How a tenant's payment came: recorded as said, nothing sent (ADR 0006).
 Method = Literal["check", "cashier's check", "money order", "EFT", "cash"]
+# Or paid online through the payment processor (migration 0158): recorded once it came.
+AnyMethod = Literal[Method, "card", "bank debit"]
 
 
 def earlier(
@@ -422,7 +424,7 @@ def record_payment(
     received_on: date,
     reference: str | None = None,
     account: str | None = None,
-    method: Method | None = None,
+    method: AnyMethod | None = None,
     past_hold_by: str | None = None,
 ) -> Recorded:
     """A tenant's payment into the operating trust bank account: the owner's account takes
@@ -707,7 +709,7 @@ class Paid(BaseModel):
     received_on: date
     amount: str
     reference: str | None
-    method: Method | None
+    method: AnyMethod | None
     bounced: bool
 
 

@@ -4791,3 +4791,55 @@ test("staff print an owner's draw by check on the company's stock, numbered from
   await expectAccessible(page);
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
 });
+
+test("a tenant pays rent online by card through the test processor, and it is recorded once the processor says it came", async ({
+  page,
+  browser,
+}) => {
+  const people = seed.features["online-payments"]!;
+  // The company takes cards and bank debits; the server's processor is the fake one (no money).
+  await joinAsStaff(page, people.manager);
+  await settings(page, "Company setup");
+  const card = part(page, "Online payments");
+  await expect(card.getByTestId("online-payments")).toHaveText("Not taken");
+  await card.getByRole("button", { name: "Edit online payments" }).click();
+  const editing = page.getByRole("dialog", { name: "Online payments" });
+  await editing.getByLabel("Tenants may pay by card").check();
+  await editing.getByLabel("Tenants may pay from a bank account (ACH debit)").check();
+  await editing.getByRole("button", { name: "Save" }).click();
+  await expect(card.getByTestId("online-payments")).toHaveText("Cards and bank debits");
+  // This month's rent is charged (Run rent now), so the tenant's lease owes it.
+  await section(page, "Rent roll");
+  await page.getByRole("button", { name: "Actions for the rent roll" }).click();
+  await page.getByRole("menuitem", { name: "Run rent now" }).click();
+  const run = page.getByRole("dialog", { name: "Run rent now" });
+  await run.getByRole("button", { name: "Run rent now" }).click();
+  await expect(run).toHaveCount(0);
+
+  // The tenant pays part of what the lease owes, on the processor's page.
+  const tenant = await (await browser.newContext()).newPage();
+  await joinPortal(tenant, people.taylor);
+  const pay = part(tenant, "Pay online");
+  await pay.getByLabel("Amount").fill("125.50");
+  await pay.getByLabel("Pay by").selectOption("card");
+  await pay.getByRole("button", { name: "Continue to payment" }).click();
+  await expect(tenant.getByRole("heading", { level: 1, name: "Test checkout" })).toBeVisible();
+  await expectAccessible(tenant);
+  await tenant.getByRole("button", { name: "Pay", exact: true }).click();
+
+  // Back home: paid, recorded as staff would record it, with its receipt.
+  const online = part(tenant, "Pay online").getByRole("list", { name: "Online payments" });
+  await expect(online.getByRole("listitem").first()).toContainText("$125.50 · Card");
+  await expect(online.getByRole("listitem").first()).toContainText("Paid");
+  const payments = part(tenant, "Payments").getByRole("list", { name: "Payments" });
+  await expect(payments.getByRole("listitem").first()).toContainText("$125.50 · Card, online");
+  await expectAccessible(tenant);
+  await tenant.close();
+
+  // Staff see it among the online payments.
+  await settings(page, "Company setup");
+  const table = part(page, "Online payments").getByRole("table", { name: "Online payments" });
+  await expect(table.getByRole("row").nth(1)).toContainText("$125.50");
+  await expect(table.getByRole("row").nth(1)).toContainText("Paid");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+});

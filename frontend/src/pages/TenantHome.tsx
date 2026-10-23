@@ -25,6 +25,7 @@ import { Form } from "../components/Form";
 import { ManagerCard } from "./ManagerCard";
 import { CalendarCard } from "./CalendarCard";
 import { MyContactCard } from "../components/ContactCard";
+import { PayOnlineCard } from "./PayOnlineCard";
 
 // What the lease charges every month: its rent, and each recurring fee or credit not stopped
 // (ends_on is the first due date it is no longer charged for).
@@ -333,6 +334,8 @@ export function TenantHome({ me }: { me: Me }) {
               </Wide>
             )}
           </Card>
+
+          {lease.in_effect && <PayOnlineCard leaseId={lease.lease_id} owed={lease.balance_due} />}
 
           <Card title="Payments">
             {lease.payments.length === 0 ? (

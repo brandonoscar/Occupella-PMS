@@ -13,6 +13,7 @@
 
 [outside]
 "GET /health" = "the server's health check: the self-host image and the browser run wait for it, and no person uses it"
+"POST /api/payments/stripe/webhook" = "Stripe's signed events about the payments it took: Stripe calls it, no person does, and the browser run's processor is the fake one; tests/api/test_online_payments_api.py sends it signed events (NOT VERIFIED against Stripe itself)"
 
 [[feature]]
 id = "logins"
@@ -1033,4 +1034,18 @@ operations = [
 ]
 browser = [
   "features.spec.ts › staff print an owner's draw by check on the company's stock, numbered from the first sheet, and void it to print it again",
+]
+
+[[feature]]
+id = "online-payments"
+statement = "A tenant pays what their lease owes online, by card or bank debit, through the server's payment processor (the founder, 2026-10-23; migration 0158): staff turn each method on in Company setup and see the online payments with how each stands; the tenant starts one in the portal and pays on the processor's page (the fake processor's in development and CI, which moves no money; Stripe's, NOT VERIFIED without keys, through its signed webhook); once the processor says the money came it is recorded as staff would record it, rent first, with its receipt, a failure records nothing, a lease on a payment hold refuses it for a refund, and a dispute lost bounces it; the processor bills its fees to the company, and the AI reads none of it."
+operations = [
+  "GET /api/rent/online-payments",
+  "POST /api/rent/online-payments/settings",
+  "GET /api/tenant/online-payments",
+  "POST /api/tenant/leases/{lease_id}/online-payments",
+  "POST /api/tenant/online-payments/fake/{reference}",
+]
+browser = [
+  "features.spec.ts › a tenant pays rent online by card through the test processor, and it is recorded once the processor says it came",
 ]

@@ -106,8 +106,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   something on every other page, the founder's seed among it (six properties, one of 48 units,
   two groups, applicants, offers, bills, work orders and files at every step; ADR 0006).
   `demo.books` is its books alone, for the feature tests.
-  Payments and a real screening partner are still out
-  (`docs/adr/0002-portals-and-exports.md`).
+  A real screening partner is still out (`docs/adr/0002-portals-and-exports.md`); tenants pay
+  online since migration 0158 (below).
 - Email (`src/pms/email.py`, migration 0042, `docs/adr/0004-email.md`): entering a bill over
   the owner's approval limit writes, in the same transaction, an email to the owner's active
   portal login (`trust_emails`, once per bill) naming the bill and linking to the portal; it
@@ -275,7 +275,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   move-out, their statement letter (migration 0120) to download; and a lease's files (q120):
   the lease as signed, its signing certificate when signed on the PMS's page, and the lease
   documents staff keep on its Files tab (move-out photos stay with staff). Both portals show the
-  manager's name, mailing address and logo (`/api/company/card`). The portal takes no payments.
+  manager's name, mailing address and logo (`/api/company/card`). Since migration 0158 a tenant
+  pays what a lease owes online there (Pay online, `pages/PayOnlineCard.tsx`).
 - Property addresses (migration 0109, `src/pms/api/addresses.py`, `src/pms/geocoding.py`): a
   property's street address, whole (street, maybe a building or unit, city, a state's USPS code,
   ZIP code), in `trust_property_addresses` (append-only, the latest holding,
@@ -1112,6 +1113,26 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   checks left out) and Void in a check's ⋯ menu. It moves nothing in the books, and someone the
   account allows signs each check by hand. The AI role reads none of it. Not built: blank stock
   with a MICR line, and a check register of checks written by hand.
+- Rent paid online (migration 0158, the founder 2026-10-23: Stripe, holding off on its keys):
+  a tenant still on a lease pays what it owes, or part of it, by card or bank debit through the
+  server's payment processor (`src/pms/payments/processor.py`; `PMS_PAYMENT_PROCESSOR`: "fake"
+  for development and CI, whose checkout is the PMS's own `/pay` page and moves no money;
+  "stripe" with `PMS_STRIPE_SECRET_KEY` and `PMS_STRIPE_WEBHOOK_SECRET` from the environment, a
+  Checkout Session per payment and its signed webhook at `/api/payments/stripe/webhook`, NOT
+  VERIFIED without keys; or none, and nothing is offered). `trust_online_payments` (the lease, the
+  tenant, the amount, the method, the processor) and its steps (`trust_online_payment_steps`:
+  started with the processor's reference, then once succeeded, failed or refused, a return only
+  after a success; each processor event once) are append-only and audited. Once the processor
+  says the money came the payment is recorded as staff record one (`rent.record_payment`, method
+  card or bank debit, rent first, its receipt emailed); a lease on a payment hold or a closed
+  period refuses it, kept for staff to refund at the processor; a dispute lost bounces it
+  (`rent.bounce`, with the NSF fee its terms charge). The tenant pays no fee: the processor bills
+  its fees to the company, never to the money in trust (`docs/law.md`). Staff turn cards and bank
+  debits on in Company setup (`pages/OnlinePaymentsCard.tsx`, `src/pms/api/online_payments.py`,
+  area rent: `trust_online_payment_settings`, the latest holding, naming who) and see the latest
+  online payments there. The AI role reads none of it. Not built yet: autopay and application
+  fees (next), refunds from the PMS (staff refund at the processor), and Stripe's payouts matched
+  to bank lines by themselves.
 - Vendor insurance and inspections (migration 0058): a vendor's policies
   (`trust_vendor_insurance`: coverage, carrier, number, the days it runs, a limit; a renewal is
   a new policy), and a lease's move-in and move-out inspections (`trust_inspections`, their

@@ -365,7 +365,8 @@ correctness, React, accessibility and vitest among them, the few off saying why)
 `frontend/knip.json`: no unused file, export or dependency). Then the API serves that build on a fresh Postgres (emails go to the fake sender's outbox,
 `PMS_EMAIL_SENDER=fake`, addresses are found on a map by the fake geocoder, which calls nothing,
 `PMS_GEOCODER=fake`, the nightly rent run is off, `PMS_NIGHTLY=off`, so rent is charged
-only when a test runs it, and bank account numbers are sealed under a `PMS_FIELD_KEY` made for
+only when a test runs it, tenants pay online through the fake processor, which moves no money and
+needs no key, `PMS_PAYMENT_PROCESSOR=fake` (no Stripe key is in any workflow), and bank account numbers are sealed under a `PMS_FIELD_KEY` made for
 that run alone with `python -m pms.sealed new-key`, never printed or stored; `tests/conftest.py`
 makes one per pytest run the same way), `frontend/e2e/seed.py` makes a synthetic PMC
 with an owner who has statements and a tenant with rent due and a maintenance request, and

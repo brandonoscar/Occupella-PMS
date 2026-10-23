@@ -14,7 +14,7 @@ export type Paid = {
   received_on: string;
   amount: string;
   reference: string | null;
-  method: PaymentMethod | null;
+  method: PaymentMethod | OnlineMethod | null;
   bounced: boolean;
 };
 // How a payment came; recorded as said, nothing sent (ADR 0006).
@@ -26,8 +26,11 @@ export const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "EFT", label: "EFT" },
   { value: "cash", label: "Cash" },
 ];
-export function methodLabel(method: PaymentMethod): string {
-  return PAYMENT_METHODS.find((m) => m.value === method)?.label ?? method;
+// Paid online through the payment processor (migration 0158).
+export type OnlineMethod = "card" | "bank debit";
+const ONLINE: Record<OnlineMethod, string> = { card: "Card, online", "bank debit": "Bank debit, online" };
+export function methodLabel(method: PaymentMethod | OnlineMethod): string {
+  return method in ONLINE ? ONLINE[method as OnlineMethod] : PAYMENT_METHODS.find((m) => m.value === method)?.label ?? method;
 }
 // A deposit's kind (migration 0092): each held apart, the security deposit first.
 export type DepositKind = "security" | "pet" | "key";

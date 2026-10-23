@@ -297,6 +297,12 @@ TABLES = {
     "trust_check_runs": {"SELECT", "INSERT"},
     "trust_checks": {"SELECT", "INSERT"},
     "trust_check_voids": {"SELECT", "INSERT"},
+    # Rent paid online (migration 0158): what a company takes, each payment a tenant started and
+    # its steps as the processor said them.
+    "trust_online_payment_settings": {"SELECT", "INSERT"},
+    "trust_online_payments": {"SELECT", "INSERT"},
+    "trust_online_payment_steps": {"SELECT", "INSERT"},
+    "trust_online_payment_steps_id_seq": set(),
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -330,6 +336,10 @@ AI_NEVER_READS = {
     "trust_check_runs",
     "trust_checks",
     "trust_check_voids",
+    # Online payments (migration 0158): who paid how, and the processor's references.
+    "trust_online_payment_settings",
+    "trust_online_payments",
+    "trust_online_payment_steps",
     # A notice made for a lease, as filled in (migration 0119): like a document's file.
     "trust_notices",
     "trust_screening_criteria",
@@ -690,6 +700,7 @@ FUNCTIONS = {
     "trust_check_check_run()": set(),  # triggers' (migration 0157): no one calls them
     "trust_check_check()": set(),
     "trust_check_check_run_whole()": set(),
+    "trust_check_online_payment_step()": set(),  # a trigger's (migration 0158)
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.

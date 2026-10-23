@@ -875,3 +875,24 @@ statute's text and the IRS's Publication 1099 figures are NOT VERIFIED here.)
 **Left to the company.** Whether a vendor gets a 1099 at all (a corporation usually doesn't; the
 W-9 says), the year's adjusted threshold from 2027, and filing: the PMS files nothing and keeps
 no tax ID.
+
+## Rent paid online (migration 0158)
+
+**The rule.** Money a tenant pays is held in trust whole. A card or bank-debit processor that
+took its fee out of each payment would land less in the trust bank account than the tenant paid,
+so the books would hold more than the bank, and the company's cost of taking the payment would
+be paid with clients' money; a convenience fee charged to the tenant is limited or forbidden in
+some states and by card networks' rules (which states, and how, is NOT VERIFIED here).
+
+**What the PMS does.**
+- The tenant pays the amount and no fee. The processor is to bill its fees to the company apart
+  (Stripe can take them from another account of the company's); the payment is recorded in trust
+  at its whole amount once the processor says the money came, rent first, as staff record one.
+- A payment the lease no longer takes (a payment hold, an eviction filed; a closed period) is not
+  recorded: it is kept as refused, for staff to refund at the processor, so the bank doesn't hold
+  money the books don't.
+- A bank debit that comes back, or a card dispute the company loses, bounces the payment as a
+  returned check does.
+
+**Left to the company.** Setting the processor up to bill its fees apart, refunding a refused
+payment at the processor, and whether its state lets it pass any cost on to tenants.

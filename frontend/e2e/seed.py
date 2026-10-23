@@ -531,6 +531,7 @@ FEATURES = (
     "bank-accounts",
     "bank-files",
     "checks",
+    "online-payments",
 )
 
 

@@ -78,6 +78,7 @@ from pms.api import (
     notes,
     notice_templates,
     offers,
+    online_payments,
     outbox,
     owner,
     payables,
@@ -109,6 +110,7 @@ from pms.api import (
 )
 from pms.api.deps import COOKIE, Conn, Current, Staff, download, refusal
 from pms.leasing import screening
+from pms.payments import processor
 
 HEALTH_TIMEOUT = 2.0  # seconds to wait for a database connection before answering 503
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
@@ -124,6 +126,9 @@ class Settings:
     static_dir: Path | None = None
     # The tenant screening partner (pms.leasing.screening): "fake", or empty for none.
     screening_partner: str = ""
+    # The payment processor tenants pay online through (pms.payments.processor): "fake",
+    # "stripe" (its keys from the environment), or empty for none.
+    payment_processor: str = ""
     # The email sender (pms.email): "fake", "smtp" (its settings from the environment), or
     # empty for none.
     email_sender: str = ""
@@ -145,6 +150,7 @@ class Settings:
             if "PMS_STATIC_DIR" in os.environ
             else None,
             screening_partner=os.environ.get("PMS_SCREENING_PARTNER", ""),
+            payment_processor=os.environ.get("PMS_PAYMENT_PROCESSOR", ""),
             email_sender=os.environ.get("PMS_EMAIL_SENDER", ""),
             geocoder=os.environ.get("PMS_GEOCODER", ""),
             nightly=os.environ.get("PMS_NIGHTLY", "on").lower() != "off",
@@ -275,6 +281,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.state.settings = settings
     app.state.pool = pool
     app.state.screening = screening.partner_named(settings.screening_partner)
+    app.state.payments = processor.processor_named(settings.payment_processor, dict(os.environ))
     app.state.geocoder = geocoding.geocoder_named(settings.geocoder)
     # The SMTP settings come straight from the environment, so a password is never part of
     # Settings (which a log or an error could print).
@@ -557,6 +564,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(bank_details.router)
     app.include_router(ach.router)
     app.include_router(checks.router)
+    app.include_router(online_payments.router)
     app.include_router(banking.router)
     app.include_router(bank_deposits.router)
     app.include_router(journal.router)

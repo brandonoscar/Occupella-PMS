@@ -28,6 +28,8 @@ HOW = {
     "money order": "Money order",
     "EFT": "EFT",
     "cash": "Cash",
+    "card": "Card, online",
+    "bank debit": "Bank debit, online",
 }
 
 
