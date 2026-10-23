@@ -41,6 +41,7 @@ export type Payout = {
   payee_id: string;
   name: string;
   what: string;
+  memo: string;
   amount: string;
   bank_account: string | null;
 };

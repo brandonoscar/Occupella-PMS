@@ -4730,3 +4730,64 @@ test("staff send an owner's EFT draw to the bank in an ACH file, download it, an
   await expectAccessible(page);
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
 });
+
+test("staff print an owner's draw by check on the company's stock, numbered from the first sheet, and void it to print it again", async ({
+  page,
+}) => {
+  const people = seed.features["checks"]!;
+  await joinAsStaff(page, people.manager);
+  await recordContribution(page, "Demo Owner A", "Elm Court", "400.00");
+  await section(page, "Pay owners");
+  const elm = page.getByRole("row", { name: "Demo Owner A, Elm Court", exact: true });
+  await elm.getByLabel("Pay Demo Owner A, Elm Court").check();
+  await elm.getByLabel("Amount to pay Demo Owner A, Elm Court").fill("125.50");
+  await page.getByLabel("Sent by").selectOption("check");
+  await page.getByRole("button", { name: "Pay $125.50" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByRole("main")).toContainText("1 payout of $125.50 recorded, by check.");
+
+  // The operating account's Checks: where they sit on the stock, then the draw printed.
+  await section(page, "Banking");
+  await page.getByRole("row", { name: "Demo operating trust account", exact: true }).getByRole("link").click();
+  await page.getByRole("tab", { name: "Checks", exact: true }).click();
+  await expect(page.getByTestId("check-settings")).toHaveText("Check at the top of the page");
+  await page.getByRole("button", { name: "Change where checks print" }).click();
+  const where = page.getByRole("dialog", { name: "Where checks print" });
+  await where.getByLabel("Check on the page").selectOption("middle");
+  await where.getByLabel("Move down (points, − for up)").fill("-3");
+  await where.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByTestId("check-settings")).toHaveText("Check in the middle of the page, printing moved 3 pt up");
+
+  const waiting = page.getByRole("list", { name: "Payouts by check waiting" });
+  await waiting.getByLabel("Owner draw, Elm Court, Demo Owner A: $125.50", { exact: false }).check();
+  await page.getByLabel("First check number").fill("5001");
+  await page.getByRole("button", { name: "Print 1 check of $125.50" }).click();
+  const asked = page.getByRole("alertdialog");
+  await expect(asked).toContainText("Print 1 check of $125.50, numbered 5001? Load the stock with check 5001 first.");
+  await asked.getByRole("button", { name: "Print checks" }).click();
+  await expect(page.getByText("Checks 5001 to 5001 ready to print: $125.50.")).toBeVisible();
+
+  // Its PDF: the check and two stubs on the page, the amount in words.
+  const printed = page.getByRole("table", { name: "Printed checks" });
+  const href = await printed.getByRole("link", { name: "PDF" }).getAttribute("href");
+  const pdf = await page.request.get(href ?? "");
+  expect(pdf.status()).toBe(200);
+  expect(pdf.headers()["content-type"]).toBe("application/pdf");
+
+  // Jammed in the printer: voided, its number stays used, and the draw waits for a new check.
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await printed.getByRole("button", { name: "Actions for check 5001" }).click();
+  await page.getByRole("menuitem", { name: "Void" }).click();
+  const voiding = page.getByRole("dialog", { name: "Void check 5001" });
+  await voiding.getByLabel("Why").fill("Jammed in the printer");
+  await voiding.getByRole("button", { name: "Void check" }).click();
+  await expect(page.getByText("Check 5001 is void; its payout waits for a new check.")).toBeVisible();
+  await expect(printed.getByRole("row", { name: "Check 5001" })).toContainText("Void: Jammed in the printer");
+  await expect(page.getByLabel("First check number")).toHaveValue("5002");
+  await waiting.getByLabel("Owner draw, Elm Court, Demo Owner A: $125.50", { exact: false }).check();
+  await page.getByRole("button", { name: "Print 1 check of $125.50" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Print checks" }).click();
+  await expect(page.getByText("Checks 5002 to 5002 ready to print: $125.50.")).toBeVisible();
+  await expectAccessible(page);
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+});

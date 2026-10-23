@@ -50,7 +50,7 @@ export function cashOf(bills: Bill[], chosen: Set<string>, owners: OwnerMoney[])
 // each property's owner account holds and what it would hold after. Staff say how and when they
 // were sent and pay them all at once: each set aside from its owner's money if it wasn't and paid,
 // every one or none. The PMS records the payments and sends no money; those sent by EFT go to the
-// bank in a bank file made on the trust bank account's Bank files tab.
+// bank in a bank file, and those by check are printed, from the trust bank account's own page.
 export function PayBillsPage({ me }: { me: Me }) {
   const [scope, setScope] = useScope();
   const [bills, setBills] = useState<Bill[] | null>(null);

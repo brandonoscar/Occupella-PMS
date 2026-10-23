@@ -29,7 +29,8 @@ const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 // maybe of one group or property, with what it holds, keeps back and may pay out today. Staff
 // choose the owners, change an amount, say how and when it was sent, and pay them all at once:
 // every draw or none, each at most what is available. The PMS records the payouts and sends no
-// money; those sent by EFT go to the bank in a bank file made on the account's Bank files tab.
+// money; those sent by EFT go to the bank in a bank file, and those by check are printed, from
+// the trust bank account's own page.
 export function PayOwnersPage({ me }: { me: Me }) {
   const [scope, setScope] = useScope();
   const [owners, setOwners] = useState<OwnerMoney[] | null>(null);

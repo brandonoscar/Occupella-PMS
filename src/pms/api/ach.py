@@ -12,7 +12,7 @@ take disburse. Nothing here moves money: each payout has moved in the books alre
 
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Annotated, Any, Literal
 from uuid import UUID
@@ -22,25 +22,19 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field, StringConstraints
 
-from pms import ach, exports, sealed
-from pms.api import bank_details
+from pms import ach, sealed
+from pms.api import bank_details, payouts
 from pms.api.deps import Conn, Staff, download, refusal
+from pms.api.payouts import Payout, cents
 
 router = APIRouter(prefix="/api/bank-files")
 
-CENT = Decimal("0.01")
-# EFT payouts recorded within these days wait for a file; older ones were sent some other way.
-WAITING_DAYS = 30
 NO_KEY = "this server has no key to open bank account numbers with (PMS_FIELD_KEY)"
 
 Name = Annotated[
     str,
     StringConstraints(strip_whitespace=True, pattern=r"^[A-Za-z0-9][A-Za-z0-9 .,&'/()#-]*$"),
 ]
-
-
-def cents(value: Decimal) -> str:
-    return exports.text(Decimal(value).quantize(CENT))
 
 
 class Settings(BaseModel):
@@ -63,18 +57,6 @@ class NewSettings(BaseModel):
     company_id: Annotated[
         str, StringConstraints(strip_whitespace=True, pattern=r"^[A-Za-z0-9]{1,10}$")
     ]
-
-
-class Payout(BaseModel):
-    transfer_id: str
-    paid_on: date
-    payee: Literal["vendor", "owner"]
-    payee_id: UUID
-    name: str
-    what: str
-    amount: str
-    # The payee's bank account on file, as staff see it ("Checking ••••6789"), or None.
-    bank_account: str | None
 
 
 class Item(BaseModel):
@@ -162,35 +144,6 @@ def settings_row(
     )
 
 
-# Each EFT payout of the account recorded since a time and in no file not voided, oldest first:
-# whom it paid and what it was.
-WAITING = """
-SELECT m.transfer_id, p.paid_at, p.vendor_id, p.owner_id, p.amount,
-       coalesce(v.display_name, o.display_name),
-       CASE WHEN p.owner_id IS NOT NULL THEN 'Owner draw, ' || pr.display_name
-            ELSE 'Bill ' || b.reference END
-FROM trust_payout_methods AS m
-CROSS JOIN LATERAL trust_payout(m.pmc_id, m.transfer_id) AS p
-LEFT JOIN trust_vendors AS v ON v.pmc_id = m.pmc_id AND v.id = p.vendor_id
-LEFT JOIN trust_owners AS o ON o.pmc_id = m.pmc_id AND o.id = p.owner_id
-LEFT JOIN trust_owner_draws AS d ON d.pmc_id = m.pmc_id AND d.transfer_id = m.transfer_id
-LEFT JOIN trust_ledger_accounts AS la
-    ON la.pmc_id = d.pmc_id AND la.ledger_account_id = d.ledger_account_id
-LEFT JOIN trust_properties AS pr ON pr.pmc_id = la.pmc_id AND pr.id = la.property_id
-LEFT JOIN trust_bill_payments AS bp
-    ON bp.pmc_id = m.pmc_id AND bp.transfer_id = m.transfer_id AND bp.step = 'paid'
-LEFT JOIN trust_bills AS b ON b.pmc_id = bp.pmc_id AND b.id = bp.bill_id
-WHERE m.pmc_id = %(pmc)s AND m.method = 'EFT' AND p.bank_account_id = %(bank)s
-  AND m.created_at >= %(since)s
-  AND NOT EXISTS (
-      SELECT 1 FROM trust_ach_file_items AS i
-      WHERE i.transfer_id = m.transfer_id
-        AND NOT EXISTS (SELECT 1 FROM trust_ach_file_voids AS x WHERE x.file_id = i.file_id)
-  )
-ORDER BY p.paid_at, m.transfer_id
-"""
-
-
 def account_line(account: bank_details.BankAccount) -> str:
     kind = "Checking" if account.account_type == "checking" else "Savings"
     return f"{kind} ••••{account.account_last4}"
@@ -200,31 +153,17 @@ Found = tuple[Payout, tuple[bank_details.BankAccount, bytes] | None]
 
 
 def waiting(conn: psycopg.Connection[Any], pmc_id: UUID, bank_account_id: UUID) -> list[Found]:
-    since = datetime.now(UTC) - timedelta(days=WAITING_DAYS)
-    rows = conn.execute(WAITING, {"pmc": pmc_id, "bank": bank_account_id, "since": since})
+    """The EFT payouts waiting for a file, each with its payee's bank account on file."""
     found: list[Found] = []
     on_file: dict[tuple[str, UUID], tuple[bank_details.BankAccount, bytes] | None] = {}
-    for transfer, paid_at, vendor, owner, amount, name, what in rows.fetchall():
-        payee: Literal["vendor", "owner"] = "vendor" if vendor is not None else "owner"
-        person = vendor if vendor is not None else owner
-        if (payee, person) not in on_file:
-            on_file[(payee, person)] = bank_details.latest(conn, pmc_id, payee, person)
-        account = on_file[(payee, person)]
-        found.append(
-            (
-                Payout(
-                    transfer_id=transfer,
-                    paid_on=paid_at.astimezone(UTC).date(),
-                    payee=payee,
-                    payee_id=person,
-                    name=name,
-                    what=what,
-                    amount=cents(amount),
-                    bank_account=None if account is None else account_line(account[0]),
-                ),
-                account,
-            )
-        )
+    for payout in payouts.waiting(conn, pmc_id, bank_account_id, "EFT"):
+        key = (payout.payee, payout.payee_id)
+        if key not in on_file:
+            on_file[key] = bank_details.latest(conn, pmc_id, payout.payee, payout.payee_id)
+        account = on_file[key]
+        if account is not None:
+            payout.bank_account = account_line(account[0])
+        found.append((payout, account))
     return found
 
 

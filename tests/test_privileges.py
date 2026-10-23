@@ -291,6 +291,12 @@ TABLES = {
     "trust_ach_file_items": {"SELECT", "INSERT"},
     "trust_ach_file_items_id_seq": set(),
     "trust_ach_file_voids": {"SELECT", "INSERT"},
+    # Checks (migration 0157): where an account's checks print, each print run, its checks and
+    # those voided.
+    "trust_check_settings": {"SELECT", "INSERT"},
+    "trust_check_runs": {"SELECT", "INSERT"},
+    "trust_checks": {"SELECT", "INSERT"},
+    "trust_check_voids": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -319,6 +325,11 @@ AI_NEVER_READS = {
     "trust_ach_files",
     "trust_ach_file_items",
     "trust_ach_file_voids",
+    # Checks (migration 0157): whom the company's checks paid, beside the bank files.
+    "trust_check_settings",
+    "trust_check_runs",
+    "trust_checks",
+    "trust_check_voids",
     # A notice made for a lease, as filled in (migration 0119): like a document's file.
     "trust_notices",
     "trust_screening_criteria",
@@ -676,6 +687,9 @@ FUNCTIONS = {
     "trust_check_ach_file_item()": set(),
     "trust_check_ach_file_whole()": set(),
     "trust_check_ach_file_void()": set(),
+    "trust_check_check_run()": set(),  # triggers' (migration 0157): no one calls them
+    "trust_check_check()": set(),
+    "trust_check_check_run_whole()": set(),
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.

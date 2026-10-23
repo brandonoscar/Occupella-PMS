@@ -2677,6 +2677,92 @@ $$;
 
 
 --
+-- Name: trust_check_check(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_check() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_payout record;
+BEGIN
+    SELECT * INTO v_payout FROM trust_payout(NEW.pmc_id, NEW.transfer_id);
+    IF NOT FOUND OR v_payout.method <> 'check' THEN
+        RAISE EXCEPTION 'trust: a check prints a payout recorded as sent by check'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF v_payout.bank_account_id <> NEW.bank_account_id THEN
+        RAISE EXCEPTION 'trust: a check prints a payout from its own trust bank account'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.amount <> v_payout.amount THEN
+        RAISE EXCEPTION 'trust: a check pays a payout''s whole amount, %', v_payout.amount
+            USING ERRCODE = 'check_violation';
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended('check payout ' || NEW.transfer_id, 0));
+    IF EXISTS (
+        SELECT 1 FROM trust_checks AS c
+        WHERE c.transfer_id = NEW.transfer_id
+          AND NOT EXISTS (SELECT 1 FROM trust_check_voids AS v WHERE v.check_id = c.id)
+    ) THEN
+        RAISE EXCEPTION 'trust: payout % is on a check already', NEW.transfer_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_check_run(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_check_run() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    NEW.created_at := clock_timestamp();
+    NEW.dated_on := (NEW.created_at AT TIME ZONE 'UTC')::date;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_check_run_whole(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_check_run_whole() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_run_id uuid;
+    v_run trust_check_runs;
+    v_count integer;
+    v_sum numeric;
+BEGIN
+    IF TG_TABLE_NAME = 'trust_check_runs' THEN
+        v_run_id := NEW.id;
+    ELSE
+        v_run_id := NEW.run_id;
+    END IF;
+    SELECT * INTO v_run FROM trust_check_runs AS r WHERE r.pmc_id = NEW.pmc_id AND r.id = v_run_id;
+    SELECT count(*), coalesce(sum(c.amount), 0) INTO v_count, v_sum
+    FROM trust_checks AS c WHERE c.pmc_id = v_run.pmc_id AND c.run_id = v_run.id;
+    IF v_count <> v_run.checks OR v_sum <> v_run.total THEN
+        RAISE EXCEPTION 'trust: check run % prints % checks of %; it says % of %',
+            v_run.id, v_count, v_sum, v_run.checks, v_run.total
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: trust_check_completion_not_withdrawn(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -14203,6 +14289,75 @@ CREATE TABLE public.trust_charge_waivers (
 
 
 --
+-- Name: trust_check_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_check_runs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    bank_account_id uuid NOT NULL,
+    dated_on date NOT NULL,
+    checks integer NOT NULL,
+    total numeric NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_check_runs_checks_check CHECK (((checks >= 1) AND (checks <= 500))),
+    CONSTRAINT trust_check_runs_total_check CHECK (((total > (0)::numeric) AND (total = round(total, 2))))
+);
+
+
+--
+-- Name: trust_check_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_check_settings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    bank_account_id uuid NOT NULL,
+    "position" text NOT NULL,
+    shift_right integer NOT NULL,
+    shift_down integer NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_check_settings_position_check CHECK (("position" = ANY (ARRAY['top'::text, 'middle'::text, 'bottom'::text]))),
+    CONSTRAINT trust_check_settings_shift_down_check CHECK (((shift_down >= '-36'::integer) AND (shift_down <= 36))),
+    CONSTRAINT trust_check_settings_shift_right_check CHECK (((shift_right >= '-36'::integer) AND (shift_right <= 36)))
+);
+
+
+--
+-- Name: trust_check_voids; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_check_voids (
+    pmc_id uuid NOT NULL,
+    check_id uuid NOT NULL,
+    reason text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_check_voids_reason_check CHECK (((reason = btrim(reason)) AND ((char_length(reason) >= 1) AND (char_length(reason) <= 500))))
+);
+
+
+--
+-- Name: trust_checks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_checks (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    bank_account_id uuid NOT NULL,
+    check_number integer NOT NULL,
+    transfer_id text NOT NULL,
+    amount numeric NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_checks_amount_check CHECK ((amount > (0)::numeric)),
+    CONSTRAINT trust_checks_check_number_check CHECK (((check_number >= 1) AND (check_number <= 99999999)))
+);
+
+
+--
 -- Name: trust_company_profiles; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17400,6 +17555,70 @@ ALTER TABLE public.trust_charges
 
 
 --
+-- Name: trust_check_runs trust_check_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_check_runs
+    ADD CONSTRAINT trust_check_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_check_runs trust_check_runs_pmc_id_id_bank_account_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_check_runs
+    ADD CONSTRAINT trust_check_runs_pmc_id_id_bank_account_id_key UNIQUE (pmc_id, id, bank_account_id);
+
+
+--
+-- Name: trust_check_runs trust_check_runs_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_check_runs
+    ADD CONSTRAINT trust_check_runs_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_check_settings trust_check_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_check_settings
+    ADD CONSTRAINT trust_check_settings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_check_voids trust_check_voids_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_check_voids
+    ADD CONSTRAINT trust_check_voids_pkey PRIMARY KEY (check_id);
+
+
+--
+-- Name: trust_checks trust_checks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_checks
+    ADD CONSTRAINT trust_checks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_checks trust_checks_pmc_id_bank_account_id_check_number_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_checks
+    ADD CONSTRAINT trust_checks_pmc_id_bank_account_id_check_number_key UNIQUE (pmc_id, bank_account_id, check_number);
+
+
+--
+-- Name: trust_checks trust_checks_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_checks
+    ADD CONSTRAINT trust_checks_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_company_profiles trust_company_profiles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20049,6 +20268,55 @@ CREATE INDEX trust_charges_work_order_id ON public.trust_charges USING btree (wo
 
 
 --
+-- Name: trust_check_runs_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_check_runs_account ON public.trust_check_runs USING btree (pmc_id, bank_account_id, created_at);
+
+
+--
+-- Name: trust_check_runs_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_check_runs_recorded_by ON public.trust_check_runs USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_check_settings_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_check_settings_account ON public.trust_check_settings USING btree (pmc_id, bank_account_id, created_at);
+
+
+--
+-- Name: trust_check_settings_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_check_settings_recorded_by ON public.trust_check_settings USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_check_voids_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_check_voids_recorded_by ON public.trust_check_voids USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_checks_run; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_checks_run ON public.trust_checks USING btree (pmc_id, run_id);
+
+
+--
+-- Name: trust_checks_transfer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_checks_transfer ON public.trust_checks USING btree (transfer_id);
+
+
+--
 -- Name: trust_company_profiles_pmc; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22002,6 +22270,34 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_check_runs trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_check_runs FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_check_settings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_check_settings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_check_voids trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_check_voids FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_checks trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_checks FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_company_profiles trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23332,6 +23628,34 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_char
 
 
 --
+-- Name: trust_check_runs trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_check_runs FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_check_settings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_check_settings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_check_voids trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_check_voids FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_checks trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_checks FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_company_profiles trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24480,6 +24804,20 @@ CREATE TRIGGER trust_check_assistance_record BEFORE INSERT ON public.trust_incom
 
 
 --
+-- Name: trust_checks trust_check_check; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_check BEFORE INSERT ON public.trust_checks FOR EACH ROW EXECUTE FUNCTION public.trust_check_check();
+
+
+--
+-- Name: trust_check_runs trust_check_check_run; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_check_run BEFORE INSERT ON public.trust_check_runs FOR EACH ROW EXECUTE FUNCTION public.trust_check_check_run();
+
+
+--
 -- Name: trust_history_lines trust_check_history_line; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24512,6 +24850,20 @@ CREATE TRIGGER trust_check_payment_hold BEFORE INSERT ON public.trust_payment_ho
 --
 
 CREATE TRIGGER trust_check_recurring_bill BEFORE INSERT ON public.trust_recurring_bills FOR EACH ROW EXECUTE FUNCTION public.trust_check_recurring_bill();
+
+
+--
+-- Name: trust_check_runs trust_check_run_whole; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_check_run_whole AFTER INSERT ON public.trust_check_runs DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_check_run_whole();
+
+
+--
+-- Name: trust_checks trust_check_run_whole; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_check_run_whole AFTER INSERT ON public.trust_checks DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_check_run_whole();
 
 
 --
@@ -24617,6 +24969,27 @@ CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_ach_settings FOR EAC
 --
 
 CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_bill_payments FOR EACH ROW WHEN ((new.step = 'paid'::text)) EXECUTE FUNCTION public.trust_check_staff_role('disburse', 'pay out money');
+
+
+--
+-- Name: trust_check_runs trust_disburse; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_check_runs FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('disburse', 'print checks');
+
+
+--
+-- Name: trust_check_settings trust_disburse; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_check_settings FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('disburse', 'change where checks print');
+
+
+--
+-- Name: trust_check_voids trust_disburse; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_check_voids FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('disburse', 'void a check');
 
 
 --
@@ -24974,6 +25347,27 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_charge_types FOR 
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_charge_waivers FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_check_runs trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_check_runs FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_check_settings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_check_settings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_check_voids trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_check_voids FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -26830,6 +27224,102 @@ ALTER TABLE ONLY public.trust_charges
 
 ALTER TABLE ONLY public.trust_charges
     ADD CONSTRAINT trust_charges_recurring_charge_fkey FOREIGN KEY (pmc_id, lease_id, recurring_charge_id, kind) REFERENCES public.trust_recurring_charges(pmc_id, lease_id, id, kind);
+
+
+--
+-- Name: trust_check_runs trust_check_runs_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_check_runs
+    ADD CONSTRAINT trust_check_runs_pmc_id_bank_account_id_fkey FOREIGN KEY (pmc_id, bank_account_id) REFERENCES public.trust_bank_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_check_runs trust_check_runs_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_check_runs
+    ADD CONSTRAINT trust_check_runs_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_check_runs trust_check_runs_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_check_runs
+    ADD CONSTRAINT trust_check_runs_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_check_settings trust_check_settings_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_check_settings
+    ADD CONSTRAINT trust_check_settings_pmc_id_bank_account_id_fkey FOREIGN KEY (pmc_id, bank_account_id) REFERENCES public.trust_bank_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_check_settings trust_check_settings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_check_settings
+    ADD CONSTRAINT trust_check_settings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_check_settings trust_check_settings_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_check_settings
+    ADD CONSTRAINT trust_check_settings_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_check_voids trust_check_voids_pmc_id_check_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_check_voids
+    ADD CONSTRAINT trust_check_voids_pmc_id_check_id_fkey FOREIGN KEY (pmc_id, check_id) REFERENCES public.trust_checks(pmc_id, id);
+
+
+--
+-- Name: trust_check_voids trust_check_voids_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_check_voids
+    ADD CONSTRAINT trust_check_voids_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_check_voids trust_check_voids_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_check_voids
+    ADD CONSTRAINT trust_check_voids_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_checks trust_checks_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_checks
+    ADD CONSTRAINT trust_checks_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_checks trust_checks_pmc_id_run_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_checks
+    ADD CONSTRAINT trust_checks_pmc_id_run_id_bank_account_id_fkey FOREIGN KEY (pmc_id, run_id, bank_account_id) REFERENCES public.trust_check_runs(pmc_id, id, bank_account_id);
+
+
+--
+-- Name: trust_checks trust_checks_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_checks
+    ADD CONSTRAINT trust_checks_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.trust_payout_methods(transfer_id);
 
 
 --
@@ -30676,4 +31166,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000122'),
     ('20261022000123'),
     ('20261022000155'),
-    ('20261022000156');
+    ('20261022000156'),
+    ('20261022000157');

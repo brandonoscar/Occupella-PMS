@@ -530,6 +530,7 @@ FEATURES = (
     "tax-credit",
     "bank-accounts",
     "bank-files",
+    "checks",
 )
 
 

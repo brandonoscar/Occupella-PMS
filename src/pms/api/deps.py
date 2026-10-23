@@ -176,6 +176,7 @@ AREA_PATHS = (
     ("/api/payables/contributions", "owners"),
     ("/api/payables/company-fees", "owners"),
     ("/api/bank-files/", "owners"),  # payouts of owners' money to the bank in an ACH file
+    ("/api/checks/", "owners"),  # payouts of owners' money printed on checks
     ("/api/budgets", "budgets"),
     ("/api/journal", "journal"),
     ("/api/reconcile/", "month-end"),

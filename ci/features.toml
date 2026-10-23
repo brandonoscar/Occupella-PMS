@@ -1020,3 +1020,17 @@ operations = [
 browser = [
   "features.spec.ts › staff send an owner's EFT draw to the bank in an ACH file, download it, and void it to free the payout",
 ]
+
+[[feature]]
+id = "checks"
+statement = "Staff print the payouts they recorded as sent by check (owner draws and bills paid) on the company's pre-printed voucher stock (the founder, 2026-10-23; migration 0157): on an operating trust bank account's Checks tab they set where its checks sit on the page and move the printing for their printer, pick the payouts by check of the last 30 days waiting, print them numbered from the first sheet loaded after a question naming the total, download the run's PDF (only staff who may disburse; the date, payee and address, amount in figures and words, memo and two stubs), and void a spoiled check, whose number stays used, to print its payout again; nothing moves in the books, and the AI reads none of it."
+operations = [
+  "GET /api/checks/{bank_account_id}",
+  "POST /api/checks/{bank_account_id}/settings",
+  "POST /api/checks/{bank_account_id}",
+  "GET /api/checks/runs/{run_id}.pdf",
+  "POST /api/checks/{check_id}/void",
+]
+browser = [
+  "features.spec.ts › staff print an owner's draw by check on the company's stock, numbered from the first sheet, and void it to print it again",
+]

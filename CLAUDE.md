@@ -216,7 +216,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the trust bank accounts at `/banking` (Add bank account), each at `/bank-accounts/<id>` in tabs:
   its register and balance breakdown (`src/pms/api/banking.py`), its deposits, its month-end
   (`src/pms/api/reconcile.py`), its statements and, for an operating account, its bank files
-  (`src/pms/api/ach.py`), bills at `/bills` (Unpaid, Paid,
+  (`src/pms/api/ach.py`) and checks (`src/pms/api/checks.py`), bills at `/bills` (Unpaid, Paid,
   Recurring and Declined tabs, a page at a time by group, vendor and due day; Record bill, maybe
   split across expense accounts or shared across properties, with the owner's markup and its
   invoice, opens a side panel), a bill at
@@ -1094,6 +1094,24 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   the books: each payout has moved already. The AI role reads none of it. Not built: an offsetting
   debit (a balanced file), prenotes, returns and notifications of change, and holidays (a file's
   day is checked to be a weekday only).
+- Checks (migration 0157, the founder 2026-10-23): the payouts staff recorded as sent by check
+  (owner draws and bills paid) are printed on the company's pre-printed voucher stock
+  (`src/pms/checks.py`: a US letter page a check, the check in the top, middle or bottom third and
+  a stub in each other; the date, the payee and the address a window envelope shows, the amount in
+  figures and in words, the memo, and on the stubs the company, the number and what it pays; no
+  MICR line, no signature). An account's `trust_check_settings` (where the check sits, and points
+  to move the printing; the latest holding) place it; a run (`trust_check_runs`, dated the day
+  printed, UTC, its count and total) holds its checks (`trust_checks`: each a payout by check from
+  the run's account, `trust_payout`, for the whole amount, numbered from the first sheet staff
+  load, a number once per account), whole at commit; a payout is on one check not voided, and a
+  void (`trust_check_voids`, with why) frees it for a new check under a new number, its own staying
+  used. All append-only, audited, naming who, and a named staff member needs disburse. Staff work
+  it on the operating account's Checks tab (`pages/ChecksTab.tsx`, area owners): the payouts by
+  check recorded in the last 30 days waiting (`src/pms/api/payouts.py`, shared with bank files),
+  Print after a question naming the total, the run's PDF (only staff who hold disburse; voided
+  checks left out) and Void in a check's ⋯ menu. It moves nothing in the books, and someone the
+  account allows signs each check by hand. The AI role reads none of it. Not built: blank stock
+  with a MICR line, and a check register of checks written by hand.
 - Vendor insurance and inspections (migration 0058): a vendor's policies
   (`trust_vendor_insurance`: coverage, carrier, number, the days it runs, a limit; a renewal is
   a new policy), and a lease's move-in and move-out inspections (`trust_inspections`, their

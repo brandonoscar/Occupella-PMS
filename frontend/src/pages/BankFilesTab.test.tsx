@@ -21,15 +21,15 @@ const SETTINGS: AchSettings = {
 const WAITING: Payout[] = [
   {
     transfer_id: "t1", paid_on: "2026-10-22", payee: "owner", payee_id: "o1", name: "Demo Owner A",
-    what: "Owner draw, Elm Court", amount: "125.50", bank_account: "Checking ••••6789",
+    what: "Owner draw, Elm Court", memo: "Owner draw", amount: "125.50", bank_account: "Checking ••••6789",
   },
   {
     transfer_id: "t2", paid_on: "2026-10-22", payee: "vendor", payee_id: "v1", name: "Demo Roofing Co",
-    what: "Bill ROOF-17", amount: "1000.00", bank_account: "Checking ••••5501",
+    what: "Bill ROOF-17", memo: "Roof repair", amount: "1000.00", bank_account: "Checking ••••5501",
   },
   {
     transfer_id: "t3", paid_on: "2026-10-22", payee: "vendor", payee_id: "v2", name: "Demo Lawn Co",
-    what: "Bill LAWN-3", amount: "80.00", bank_account: null,
+    what: "Bill LAWN-3", memo: "Mowing", amount: "80.00", bank_account: null,
   },
 ];
 
