@@ -62,7 +62,7 @@ function server(answers: Record<string, unknown> = {}, refuse: Record<string, st
       return new Response(JSON.stringify(read), { status: 200 });
     }
     if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
-    return new Response(JSON.stringify(answers[path] ?? {}), { status: 201 });
+    return new Response(JSON.stringify(answers[`POST ${path}`] ?? answers[path] ?? {}), { status: 201 });
   });
   vi.stubGlobal("fetch", fetch);
   return fetch;
@@ -187,7 +187,8 @@ describe("BillsPage", () => {
   });
 
   it("lists recurring bills, adds one and stops one, each in a side panel", async () => {
-    const fetch = server();
+    // Adding one enters the months already due (two here).
+    const fetch = server({ "POST /api/payables/recurring": { id: "r2", entered: 2 } });
     render(<BillsPage me={ME} />);
     fireEvent.click(await screen.findByRole("tab", { name: "Recurring" }));
 
@@ -219,6 +220,7 @@ describe("BillsPage", () => {
     fireEvent.change(within(adding).getByLabelText("Expense account"), { target: { value: "e1" } });
     fireEvent.click(within(adding).getByRole("button", { name: "Add recurring bill" }));
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(screen.getByText("HOA is entered each month; 2 bills already due are entered now.")).toBeTruthy();
 
     expect(posted(fetch)).toEqual([
       ["/api/payables/recurring/r1/end", { ends_on: "2026-12-31" }],
