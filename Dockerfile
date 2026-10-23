@@ -17,7 +17,7 @@ RUN npm run build
 # cgo: the image uses only dbmate's Postgres driver, which is pure Go. It is built in a module of
 # its own that also asks for klauspost/compress 1.18.7: v2.37.0 pins 1.18.5, which has a high
 # vulnerability (GHSA-259r-337f-4rfw), and Go picks the higher of the two.
-FROM mirror.gcr.io/library/golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS dbmate
+FROM mirror.gcr.io/library/golang:1.27.3-bookworm@sha256:972b4110ba0f47539a975c31e52c64765e1ff19f2d74469ae4a595c6676e80a5 AS dbmate
 ENV CGO_ENABLED=0 GOFLAGS=-trimpath GOTOOLCHAIN=local
 WORKDIR /build
 RUN go mod init build \
