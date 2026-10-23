@@ -24,6 +24,9 @@ The API runs it when it starts and then every day at 06:00 UTC, unless PMS_NIGHT
 whatever starts it (two API servers, or this command while the API runs): a run holds a database
 lock while it lasts, and one that finds it held leaves the work to that run.
 
+With a payments partner (PMS_PAYMENTS), each tenant's autopay payment due starts too, after the
+rent is charged, and goes to the partner once the run commits (src/pms/autopay.py).
+
 usage: python -m pms.nightly    (DATABASE_URL and PMS_PUBLIC_URL, acting as trust_app)
 """
 
@@ -42,7 +45,7 @@ from uuid import UUID
 import psycopg
 from psycopg import sql
 
-from pms import email, notices
+from pms import autopay, email, notices, payments
 from pms.api import payables, rent
 
 log = logging.getLogger("pms.nightly")
@@ -73,6 +76,8 @@ class Ran:
     authority_late_fees: int = 0
     # Leases whose tenants' prepaid rent paid what they owe (migration 0117).
     prepaid_used: int = 0
+    # Autopay payments started (migration 0151).
+    autopay: int = 0
 
 
 def run_pmc(
@@ -81,9 +86,12 @@ def run_pmc(
     day: date,
     public_url: str,
     sending: bool = False,
+    partner: str | None = None,
 ) -> Ran:
     """One PMC's run for a day, in one transaction. While the server sends email, it also writes
-    the rent reminders, late notices and owner statements the company's settings ask for."""
+    the rent reminders, late notices and owner statements the company's settings ask for. With a
+    payments partner (its name), the autopay payments due start too, after the rent is charged
+    (src/pms/autopay.py); they go to the partner once this commits."""
     with conn.transaction():
         made = conn.execute(
             "SELECT trust_run_rent(%s, %s, %s)", (pmc_id, day.replace(day=1), day)
@@ -106,8 +114,9 @@ def run_pmc(
         assert run is not None and fees is not None and opened is not None
         assert authority is not None
         prepaid = rent.use_prepaid_by_itself(conn, pmc_id, day)
+        started = autopay.start_due(conn, pmc_id, day, partner, sending, public_url)
         written = notices.write_scheduled(conn, pmc_id, day, public_url) if sending else None
-    emails = 0 if written is None else sum(vars(written).values())
+    emails = started.emails + (0 if written is None else sum(vars(written).values()))
     return Ran(
         pmc_id,
         run[0],
@@ -119,6 +128,7 @@ def run_pmc(
         opened[0],
         authority[0],
         prepaid,
+        started.payments,
     )
 
 
@@ -128,6 +138,7 @@ def run_all(
     public_url: str,
     pmcs: Iterable[UUID] | None = None,
     sending: bool = False,
+    partner: str | None = None,
 ) -> list[Ran]:
     """Every PMC's run for a day (or only those named). One that fails is logged and left for
     the next run, and while the server sends email its admins are told (once a day); the others
@@ -144,7 +155,7 @@ def run_all(
         done = []
         for pmc_id in pmcs:
             try:
-                done.append(run_pmc(conn, pmc_id, day, public_url, sending))
+                done.append(run_pmc(conn, pmc_id, day, public_url, sending, partner))
             except Exception as failed:
                 log.exception("the nightly run of PMC %s failed; the next run tries again", pmc_id)
                 if sending:
@@ -192,6 +203,7 @@ class Scheduler:
         at: time = AT,
         retry: float = RETRY,
         pmcs: Sequence[UUID] | None = None,
+        payments: payments.Partner | None = None,
     ) -> None:
         self.database_url = database_url
         self.role = role
@@ -201,6 +213,7 @@ class Scheduler:
         self.at = at
         self.retry = retry
         self.pmcs = pmcs
+        self.payments = payments
         self.ran = threading.Event()  # set after each run that finished
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="pms-nightly", daemon=True)
@@ -217,10 +230,17 @@ class Scheduler:
             conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(self.role)))
             conn.commit()
             done = run_all(
-                conn, self.clock().date(), self.public_url, self.pmcs, self.sender is not None
+                conn,
+                self.clock().date(),
+                self.public_url,
+                self.pmcs,
+                self.sender is not None,
+                None if self.payments is None else self.payments.name,
             )
+            conn.autocommit = True
+            if self.payments is not None:
+                autopay.submit_waiting(conn, self.payments, now=self.clock())
             if self.sender is not None:
-                conn.autocommit = True
                 email.deliver_pending(conn, self.sender)
         self.ran.set()
         return done
@@ -248,16 +268,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         conn.commit()
         # What it writes to the outbox goes out with `python -m pms.email deliver`.
         sending = bool(os.environ.get("PMS_EMAIL_SENDER"))
-        done = run_all(conn, datetime.now(UTC).date(), public_url, sending=sending)
+        partner = payments.partner_named(os.environ.get("PMS_PAYMENTS", ""), os.environ)
+        done = run_all(
+            conn,
+            datetime.now(UTC).date(),
+            public_url,
+            sending=sending,
+            partner=None if partner is None else partner.name,
+        )
+        if partner is not None:
+            conn.autocommit = True
+            autopay.submit_waiting(conn, partner)
     rents = sum(r.rents for r in done)
     late_fees = sum(r.late_fees for r in done)
     bills = sum(r.bills for r in done)
     emails = sum(r.emails for r in done)
     fees = sum(r.management_fees for r in done)
     orders = sum(r.work_orders for r in done)
+    autopays = sum(r.autopay for r in done)
     print(
         f"{len(done)} companies: {rents} rents, {late_fees} late fees, {bills} bills,"
-        f" {emails} emails, {fees} management fees, {orders} work orders"
+        f" {emails} emails, {fees} management fees, {orders} work orders,"
+        f" {autopays} autopay payments"
     )
     return 0
 

@@ -26,7 +26,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, StringConstraints
 
-from pms import exports, notices
+from pms import autopay, exports, notices
 from pms.api import outbox
 from pms.api.deps import Conn, Staff, refusal
 
@@ -1187,6 +1187,9 @@ class RentRunDone(RentRun):
     authority_late_fees: int = 0
     # Leases whose tenants' prepaid rent paid what they owe, for a company that turned it on.
     prepaid_used: int = 0
+    # Autopay payments started (src/pms/autopay.py); they go to the payments partner once the
+    # run is in the books.
+    autopay: int = 0
 
 
 class RentRunLine(RentRun):
@@ -1205,7 +1208,7 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
     late fee for each rent still open after its grace days as of a day. Each once per lease (or
     recurring charge, or rent) and date, so running it again charges nothing new. While the
     server sends email, it also writes today's emails the company's settings ask for, as the
-    nightly run does."""
+    nightly run does, and starts the autopay payments due by today (src/pms/autopay.py)."""
     if run.late_fees_as_of > today():
         raise HTTPException(422, "late fees are assessed as of today or an earlier day")
     made = conn.execute(
@@ -1221,6 +1224,14 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
     ).fetchone()
     assert authority is not None
     prepaid_used = use_prepaid_by_itself(conn, session.pmc_id, today())
+    started = autopay.start_due(
+        conn,
+        session.pmc_id,
+        today(),
+        outbox.PARTNER.get(),
+        outbox.SENDING.get(),
+        outbox.PUBLIC_URL.get(),
+    )
     written = (
         notices.write_scheduled(conn, session.pmc_id, today(), outbox.PUBLIC_URL.get())
         if outbox.SENDING.get()
@@ -1230,9 +1241,10 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
         rents=row[0],
         recurring=row[1],
         late_fees=row[2],
-        emails=sum(vars(written).values()),
+        emails=started.emails + sum(vars(written).values()),
         authority_late_fees=authority[0],
         prepaid_used=prepaid_used,
+        autopay=started.payments,
     )
 
 

@@ -16,6 +16,9 @@ PUBLIC_URL: ContextVar[str] = ContextVar("pms_public_url", default="http://local
 # Whether the server sends email (PMS_EMAIL_SENDER is set): the emails the PMS writes by itself
 # (src/pms/notices.py) are written only while it does. Code that calls a route itself sends none.
 SENDING: ContextVar[bool] = ContextVar("pms_sending", default=False)
+# The server's payments partner's name (PMS_PAYMENTS), for what starts autopay payments (an
+# admin's Run rent now); None for none. Code that calls a route itself starts none.
+PARTNER: ContextVar[str | None] = ContextVar("pms_payments_partner", default=None)
 
 
 def deliver(pool: ConnectionPool[Any], sender: email.Sender) -> None:

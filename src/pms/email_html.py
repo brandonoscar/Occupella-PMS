@@ -31,6 +31,9 @@ BUTTONS = {
     "owner_statement": "Sign in to the owner portal",
     "reserve_low": "Sign in to the owner portal",
     "emergency_request": "Open Work orders",
+    "autopay_payment": "Sign in to the tenant portal",
+    "autopay_not_sent": "Sign in to the tenant portal",
+    "autopay_stopped": "Sign in to the tenant portal",
 }
 
 WEB_ADDRESS = re.compile(r"https?://[^\s<>\"']+")

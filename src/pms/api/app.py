@@ -50,6 +50,7 @@ from pms import accounts, email, exports, geocoding, nightly, payments
 from pms.api import (
     addresses,
     assistance,
+    autopay,
     bank_deposits,
     banking,
     budgets,
@@ -264,7 +265,11 @@ def create_app(settings: Settings) -> FastAPI:
         runs = None
         if settings.nightly:
             runs = nightly.Scheduler(
-                settings.database_url, settings.db_role, settings.public_url, app.state.email
+                settings.database_url,
+                settings.db_role,
+                settings.public_url,
+                app.state.email,
+                payments=app.state.payments,
             )
             runs.start()
         try:
@@ -305,14 +310,26 @@ def create_app(settings: Settings) -> FastAPI:
                 return JSONResponse({"detail": "send JSON"}, 415)
         outbox.PUBLIC_URL.set(settings.public_url)
         outbox.SENDING.set(request.app.state.email is not None)
+        outbox.PARTNER.set(
+            None if request.app.state.payments is None else request.app.state.payments.name
+        )
         response = await call_next(request)
         sender = request.app.state.email
-        if request.method not in SAFE_METHODS and response.status_code < 400 and sender:
-            # After the answer is sent, so after the request's transaction committed: what it
-            # wrote to the outbox exists, and goes out.
-            delivery = BackgroundTasks()
-            delivery.add_task(outbox.deliver, pool, sender)
-            response.background = delivery
+        partner = request.app.state.payments
+        if (
+            request.method not in SAFE_METHODS
+            and response.status_code < 400
+            and (sender or partner)
+        ):
+            # After the answer is sent, so after the request's transaction committed: the autopay
+            # payments it started go to the payments partner, and what it wrote to the outbox
+            # exists, and goes out.
+            after = BackgroundTasks()
+            if partner:
+                after.add_task(autopay.submit, pool, partner)
+            if sender:
+                after.add_task(outbox.deliver, pool, sender)
+            response.background = after
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
@@ -543,6 +560,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(payment_files.router)
     app.include_router(rent.router)
     app.include_router(online_payments.router)
+    app.include_router(autopay.router)
     app.include_router(assistance.router)
     app.include_router(addresses.router)
     app.include_router(utilities.router)

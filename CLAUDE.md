@@ -749,6 +749,27 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and what the company's fee account can't (Record the company's deposit, never more than what
   waits needs, area rent). Each posting has a key of its own (`metadata ->> 'key'`, indexed), so
   a partner reporting twice moves nothing twice. The AI role reads these tables; it moves no money.
+- Autopay (migration 0151, `src/pms/autopay.py`, `src/pms/api/autopay.py`, ADR 0009): a tenant
+  sets up autopay of a lease from the portal (Autopay), a fixed amount each month or the balance
+  due up to an amount they set (`trust_autopay`), and saves the bank account it pays from on the
+  partner's page (`trust_autopay_accounts`: the partner's references and a label, never a number;
+  the fake partner's `/pay/fake-save#<id>`). From the next rent due day after it is saved, the
+  nightly run (and an admin's Run rent now) starts its payment once per due date, as a payment
+  online with an id made from the autopay and the date, or records why none (a payment hold on
+  the due date, nothing owed, payments online off) (`trust_autopay_runs`); a balance autopay pays
+  what is open by the due date less what is on its way from payments online not yet in the books.
+  Once that commits, each payment goes to the partner (`trust_autopay_submissions`), which finds
+  one it took before under the same id rather than take two; one it can't take now is tried at
+  the next run, for three days, and none is sent once something was reported of it or its autopay
+  stopped. One never sent is given up at the next run a day after that, or once its autopay
+  stopped: marked expired (`pms-not-sent`), so it is no longer on its way, and the tenant is
+  emailed (`autopay_not_sent`); a report that the bank paid it still counts. While the server
+  sends email, the tenant is emailed of each payment before the bank is debited. It stops (`trust_autopay_stops`, once) when the tenant or
+  staff turn it off (Lease page, Autopay; area rent, naming who), when a new one replaces it, and
+  by itself, with an email, when the lease ended, the tenant left it, or two payments in a row
+  didn't go through or came back. The AI role never reads the saved accounts (`AI_NEVER_READS`).
+  An online payment, autopay's or by hand, waits for staff during a payment hold even when it
+  would all be prepaid rent.
 - Rent work (`src/pms/api/rent.py`): a tenant's payment recorded by staff pays the owner's
   account no more than the lease owes, matched to what is open of its charges rent first
   (`trust_open_charges`, so a credit counts), and the rest is

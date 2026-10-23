@@ -2068,6 +2068,74 @@ $$;
 
 
 --
+-- Name: trust_check_autopay(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_autopay() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtext('trust_autopay'), hashtext(NEW.lease_id::text || '/' || NEW.tenant_id::text)
+    );
+    IF EXISTS (
+        SELECT a.id FROM trust_autopay AS a
+        WHERE a.lease_id = NEW.lease_id AND a.tenant_id = NEW.tenant_id
+          AND NOT EXISTS (SELECT 1 FROM trust_autopay_stops AS s WHERE s.autopay_id = a.id)
+    ) THEN
+        RAISE EXCEPTION 'trust: the tenant has an autopay of this lease already; stop it first'
+            USING ERRCODE = 'unique_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_autopay_run(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_autopay_run() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_autopay trust_autopay;
+    v_payment trust_online_payments;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtext('trust_autopay_stops'), hashtext(NEW.autopay_id::text));
+    SELECT * INTO v_autopay FROM trust_autopay WHERE id = NEW.autopay_id;
+    IF EXISTS (SELECT 1 FROM trust_autopay_stops AS s WHERE s.autopay_id = NEW.autopay_id) THEN
+        RAISE EXCEPTION 'trust: autopay % is stopped', NEW.autopay_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM trust_autopay_accounts AS a
+        WHERE a.autopay_id = NEW.autopay_id AND a.saved_at::date <= NEW.due_on
+    ) THEN
+        RAISE EXCEPTION 'trust: autopay % had no bank account saved by %', NEW.autopay_id,
+            NEW.due_on
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.payment_id IS NOT NULL THEN
+        SELECT * INTO v_payment FROM trust_online_payments WHERE id = NEW.payment_id;
+        IF v_payment.lease_id IS DISTINCT FROM v_autopay.lease_id
+            OR v_payment.tenant_id IS DISTINCT FROM v_autopay.tenant_id
+            OR v_payment.partner IS DISTINCT FROM v_autopay.partner
+            OR v_payment.amount > v_autopay.amount
+            OR (v_autopay.rule = 'fixed' AND v_payment.amount <> v_autopay.amount)
+        THEN
+            RAISE EXCEPTION 'trust: autopay % pays its own lease, by its own rule', NEW.autopay_id
+                USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_bank_deposit_item(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -5067,6 +5135,21 @@ CREATE FUNCTION public.trust_lock_application_link() RETURNS trigger
     AS $$
 BEGIN
     PERFORM pg_advisory_xact_lock(hashtextextended('application link ' || NEW.link_id, 0));
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_lock_autopay_stop(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_lock_autopay_stop() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtext('trust_autopay_stops'), hashtext(NEW.autopay_id::text));
     RETURN NEW;
 END;
 $$;
@@ -13680,6 +13763,94 @@ CREATE TABLE public.trust_authority_late_fees (
 
 
 --
+-- Name: trust_autopay; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_autopay (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    rule text NOT NULL,
+    amount numeric NOT NULL,
+    partner text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_autopay_amount_check CHECK (((amount > (0)::numeric) AND (amount <= (100000)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_autopay_partner_check CHECK ((partner = ANY (ARRAY['fake'::text, 'stripe'::text]))),
+    CONSTRAINT trust_autopay_rule_check CHECK ((rule = ANY (ARRAY['fixed'::text, 'balance'::text])))
+);
+
+
+--
+-- Name: trust_autopay_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_autopay_accounts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    autopay_id uuid NOT NULL,
+    partner_customer text NOT NULL,
+    partner_method text NOT NULL,
+    partner_mandate text,
+    label text NOT NULL,
+    partner_event text NOT NULL,
+    saved_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_autopay_accounts_label_check CHECK (((length(label) >= 1) AND (length(label) <= 80))),
+    CONSTRAINT trust_autopay_accounts_partner_customer_check CHECK (((length(partner_customer) >= 1) AND (length(partner_customer) <= 200))),
+    CONSTRAINT trust_autopay_accounts_partner_event_check CHECK (((length(partner_event) >= 1) AND (length(partner_event) <= 200))),
+    CONSTRAINT trust_autopay_accounts_partner_mandate_check CHECK (((length(partner_mandate) >= 1) AND (length(partner_mandate) <= 200))),
+    CONSTRAINT trust_autopay_accounts_partner_method_check CHECK (((length(partner_method) >= 1) AND (length(partner_method) <= 200)))
+);
+
+
+--
+-- Name: trust_autopay_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_autopay_runs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    autopay_id uuid NOT NULL,
+    due_on date NOT NULL,
+    payment_id uuid,
+    skipped text,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_autopay_runs_check CHECK ((num_nonnulls(payment_id, skipped) = 1)),
+    CONSTRAINT trust_autopay_runs_skipped_check CHECK ((skipped = ANY (ARRAY['payment hold'::text, 'nothing owed'::text, 'online payments off'::text])))
+);
+
+
+--
+-- Name: trust_autopay_stops; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_autopay_stops (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    autopay_id uuid NOT NULL,
+    why text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_autopay_stops_check CHECK (((why = 'staff'::text) = (recorded_by IS NOT NULL))),
+    CONSTRAINT trust_autopay_stops_why_check CHECK ((why = ANY (ARRAY['tenant'::text, 'staff'::text, 'lease ended'::text, 'tenant left'::text, 'failed twice'::text, 'replaced'::text])))
+);
+
+
+--
+-- Name: trust_autopay_submissions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_autopay_submissions (
+    payment_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    partner_ref text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_autopay_submissions_partner_ref_check CHECK (((length(partner_ref) >= 1) AND (length(partner_ref) <= 200)))
+);
+
+
+--
 -- Name: trust_bank_deposit_items; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14429,6 +14600,7 @@ CREATE TABLE public.trust_emails (
     transfer_id text,
     reserve_event_id uuid,
     alert_id uuid,
+    autopay_id uuid,
     CONSTRAINT trust_emails_body_check CHECK (((body <> ''::text) AND (length(body) <= 10000))),
     CONSTRAINT trust_emails_check CHECK (((kind = 'bill_approval'::text) = (bill_id IS NOT NULL))),
     CONSTRAINT trust_emails_subject_check CHECK (((subject <> ''::text) AND (length(subject) <= 200))),
@@ -16925,6 +17097,94 @@ ALTER TABLE ONLY public.trust_authority_late_fees
 
 
 --
+-- Name: trust_autopay_accounts trust_autopay_accounts_autopay_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay_accounts
+    ADD CONSTRAINT trust_autopay_accounts_autopay_id_key UNIQUE (autopay_id);
+
+
+--
+-- Name: trust_autopay_accounts trust_autopay_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay_accounts
+    ADD CONSTRAINT trust_autopay_accounts_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_autopay trust_autopay_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay
+    ADD CONSTRAINT trust_autopay_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_autopay trust_autopay_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay
+    ADD CONSTRAINT trust_autopay_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_autopay_runs trust_autopay_runs_autopay_id_due_on_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay_runs
+    ADD CONSTRAINT trust_autopay_runs_autopay_id_due_on_key UNIQUE (autopay_id, due_on);
+
+
+--
+-- Name: trust_autopay_runs trust_autopay_runs_payment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay_runs
+    ADD CONSTRAINT trust_autopay_runs_payment_id_key UNIQUE (payment_id);
+
+
+--
+-- Name: trust_autopay_runs trust_autopay_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay_runs
+    ADD CONSTRAINT trust_autopay_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_autopay_runs trust_autopay_runs_pmc_id_payment_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay_runs
+    ADD CONSTRAINT trust_autopay_runs_pmc_id_payment_id_key UNIQUE (pmc_id, payment_id);
+
+
+--
+-- Name: trust_autopay_stops trust_autopay_stops_autopay_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay_stops
+    ADD CONSTRAINT trust_autopay_stops_autopay_id_key UNIQUE (autopay_id);
+
+
+--
+-- Name: trust_autopay_stops trust_autopay_stops_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay_stops
+    ADD CONSTRAINT trust_autopay_stops_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_autopay_submissions trust_autopay_submissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay_submissions
+    ADD CONSTRAINT trust_autopay_submissions_pkey PRIMARY KEY (payment_id);
+
+
+--
 -- Name: trust_bank_accounts trust_bank_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -17593,7 +17853,7 @@ ALTER TABLE public.trust_emails
 --
 
 ALTER TABLE public.trust_emails
-    ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text, 'rent_reminder'::text, 'late_notice'::text, 'owner_statement'::text, 'work_order'::text, 'adverse_action'::text, 'emergency_request'::text, 'signing_request'::text, 'payment_receipt'::text, 'deposit_statement'::text, 'reserve_low'::text, 'admin_alert'::text]))) NOT VALID;
+    ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text, 'rent_reminder'::text, 'late_notice'::text, 'owner_statement'::text, 'work_order'::text, 'adverse_action'::text, 'emergency_request'::text, 'signing_request'::text, 'payment_receipt'::text, 'deposit_statement'::text, 'reserve_low'::text, 'admin_alert'::text, 'autopay_payment'::text, 'autopay_stopped'::text, 'autopay_not_sent'::text]))) NOT VALID;
 
 
 --
@@ -17631,8 +17891,11 @@ CASE kind
     WHEN 'signing_request'::text THEN ((offer_id IS NOT NULL) AND (signer_position IS NOT NULL) AND (num_nonnulls(tenant_id, owner_id, vendor_id, staff_id) = 0))
     WHEN 'payment_receipt'::text THEN ((tenant_id IS NOT NULL) AND (lease_id IS NOT NULL) AND (transfer_id IS NOT NULL) AND (num_nonnulls(owner_id, vendor_id, staff_id) = 0))
     WHEN 'deposit_statement'::text THEN ((tenant_id IS NOT NULL) AND (lease_id IS NOT NULL) AND (num_nonnulls(owner_id, vendor_id, staff_id) = 0))
+    WHEN 'autopay_payment'::text THEN ((tenant_id IS NOT NULL) AND (lease_id IS NOT NULL) AND (autopay_id IS NOT NULL) AND (period IS NOT NULL) AND (num_nonnulls(owner_id, vendor_id, staff_id) = 0))
+    WHEN 'autopay_not_sent'::text THEN ((tenant_id IS NOT NULL) AND (lease_id IS NOT NULL) AND (autopay_id IS NOT NULL) AND (period IS NOT NULL) AND (num_nonnulls(owner_id, vendor_id, staff_id) = 0))
+    WHEN 'autopay_stopped'::text THEN ((tenant_id IS NOT NULL) AND (lease_id IS NOT NULL) AND (autopay_id IS NOT NULL) AND (num_nonnulls(owner_id, vendor_id, staff_id) = 0))
     ELSE ((tenant_id IS NULL) AND (vendor_id IS NULL) AND (staff_id IS NULL))
-END AND ((kind = 'message'::text) = (sent_by IS NOT NULL)) AND ((kind = ANY (ARRAY['invite'::text, 'password_reset'::text, 'signing_request'::text])) = needs_link) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'late_notice'::text, 'payment_receipt'::text, 'deposit_statement'::text])) = (lease_id IS NOT NULL)) AND ((kind = 'late_notice'::text) = (charge_id IS NOT NULL)) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'owner_statement'::text])) = (period IS NOT NULL)) AND ((kind = 'owner_statement'::text) <= (period = (date_trunc('month'::text, (period)::timestamp with time zone))::date)) AND ((kind = 'work_order'::text) = (work_order_step_id IS NOT NULL)) AND ((kind = 'adverse_action'::text) = ((application_id IS NOT NULL) AND (applicant_id IS NOT NULL))) AND ((kind = 'emergency_request'::text) = (request_id IS NOT NULL)) AND ((kind = 'signing_request'::text) = ((offer_id IS NOT NULL) OR (signer_position IS NOT NULL))) AND ((kind = 'payment_receipt'::text) = (transfer_id IS NOT NULL)))) NOT VALID;
+END AND ((kind = 'message'::text) = (sent_by IS NOT NULL)) AND ((kind = ANY (ARRAY['invite'::text, 'password_reset'::text, 'signing_request'::text])) = needs_link) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'late_notice'::text, 'payment_receipt'::text, 'deposit_statement'::text, 'autopay_payment'::text, 'autopay_stopped'::text, 'autopay_not_sent'::text])) = (lease_id IS NOT NULL)) AND ((kind = 'late_notice'::text) = (charge_id IS NOT NULL)) AND ((kind = ANY (ARRAY['rent_reminder'::text, 'owner_statement'::text, 'autopay_payment'::text, 'autopay_not_sent'::text])) = (period IS NOT NULL)) AND ((kind = 'owner_statement'::text) <= (period = (date_trunc('month'::text, (period)::timestamp with time zone))::date)) AND ((kind = 'work_order'::text) = (work_order_step_id IS NOT NULL)) AND ((kind = 'adverse_action'::text) = ((application_id IS NOT NULL) AND (applicant_id IS NOT NULL))) AND ((kind = 'emergency_request'::text) = (request_id IS NOT NULL)) AND ((kind = 'signing_request'::text) = ((offer_id IS NOT NULL) OR (signer_position IS NOT NULL))) AND ((kind = 'payment_receipt'::text) = (transfer_id IS NOT NULL)) AND ((kind = ANY (ARRAY['autopay_payment'::text, 'autopay_stopped'::text, 'autopay_not_sent'::text])) = (autopay_id IS NOT NULL)))) NOT VALID;
 
 
 --
@@ -19740,6 +20003,27 @@ CREATE INDEX trust_authority_late_fees_recorded_by ON public.trust_authority_lat
 
 
 --
+-- Name: trust_autopay_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_autopay_lease ON public.trust_autopay USING btree (pmc_id, lease_id, created_at);
+
+
+--
+-- Name: trust_autopay_stops_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_autopay_stops_recorded_by ON public.trust_autopay_stops USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_autopay_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_autopay_tenant ON public.trust_autopay USING btree (lease_id, tenant_id);
+
+
+--
 -- Name: trust_bank_deposit_items_deposit; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20157,6 +20441,27 @@ CREATE UNIQUE INDEX trust_emails_one_admin_alert ON public.trust_emails USING bt
 --
 
 CREATE UNIQUE INDEX trust_emails_one_adverse_action ON public.trust_emails USING btree (applicant_id, application_id) WHERE (kind = 'adverse_action'::text);
+
+
+--
+-- Name: trust_emails_one_autopay_not_sent; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_emails_one_autopay_not_sent ON public.trust_emails USING btree (autopay_id, period) WHERE (kind = 'autopay_not_sent'::text);
+
+
+--
+-- Name: trust_emails_one_autopay_payment; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_emails_one_autopay_payment ON public.trust_emails USING btree (autopay_id, period) WHERE (kind = 'autopay_payment'::text);
+
+
+--
+-- Name: trust_emails_one_autopay_stopped; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_emails_one_autopay_stopped ON public.trust_emails USING btree (autopay_id) WHERE (kind = 'autopay_stopped'::text);
 
 
 --
@@ -21749,6 +22054,41 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_autopay trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_autopay FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_autopay_accounts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_autopay_accounts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_autopay_runs trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_autopay_runs FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_autopay_stops trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_autopay_stops FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_autopay_submissions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_autopay_submissions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_bank_deposit_items trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23076,6 +23416,41 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_assi
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_authority_late_fees FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_autopay trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_autopay FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_autopay_accounts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_autopay_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_autopay_runs trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_autopay_runs FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_autopay_stops trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_autopay_stops FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_autopay_submissions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_autopay_submissions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -24409,6 +24784,20 @@ CREATE TRIGGER trust_check_assistance_record BEFORE INSERT ON public.trust_incom
 
 
 --
+-- Name: trust_autopay trust_check_autopay; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_autopay BEFORE INSERT ON public.trust_autopay FOR EACH ROW EXECUTE FUNCTION public.trust_check_autopay();
+
+
+--
+-- Name: trust_autopay_runs trust_check_autopay_run; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_autopay_run BEFORE INSERT ON public.trust_autopay_runs FOR EACH ROW EXECUTE FUNCTION public.trust_check_autopay_run();
+
+
+--
 -- Name: trust_history_lines trust_check_history_line; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24689,6 +25078,13 @@ CREATE TRIGGER trust_lease_offer_void_open BEFORE INSERT ON public.trust_lease_o
 
 
 --
+-- Name: trust_autopay_stops trust_lock_autopay_stop; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_lock_autopay_stop BEFORE INSERT ON public.trust_autopay_stops FOR EACH ROW EXECUTE FUNCTION public.trust_lock_autopay_stop();
+
+
+--
 -- Name: pgledger_accounts trust_no_negative_balance; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24819,6 +25215,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_assistance_inspec
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_authority_late_fees FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_autopay_stops trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_autopay_stops FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -26022,6 +26425,78 @@ ALTER TABLE ONLY public.trust_authority_late_fees
 
 
 --
+-- Name: trust_autopay_accounts trust_autopay_accounts_pmc_id_autopay_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay_accounts
+    ADD CONSTRAINT trust_autopay_accounts_pmc_id_autopay_id_fkey FOREIGN KEY (pmc_id, autopay_id) REFERENCES public.trust_autopay(pmc_id, id);
+
+
+--
+-- Name: trust_autopay trust_autopay_lease_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay
+    ADD CONSTRAINT trust_autopay_lease_id_tenant_id_fkey FOREIGN KEY (lease_id, tenant_id) REFERENCES public.trust_lease_tenants(lease_id, tenant_id);
+
+
+--
+-- Name: trust_autopay trust_autopay_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay
+    ADD CONSTRAINT trust_autopay_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_autopay trust_autopay_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay
+    ADD CONSTRAINT trust_autopay_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_autopay_runs trust_autopay_runs_pmc_id_autopay_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay_runs
+    ADD CONSTRAINT trust_autopay_runs_pmc_id_autopay_id_fkey FOREIGN KEY (pmc_id, autopay_id) REFERENCES public.trust_autopay(pmc_id, id);
+
+
+--
+-- Name: trust_autopay_runs trust_autopay_runs_pmc_id_payment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay_runs
+    ADD CONSTRAINT trust_autopay_runs_pmc_id_payment_id_fkey FOREIGN KEY (pmc_id, payment_id) REFERENCES public.trust_online_payments(pmc_id, id);
+
+
+--
+-- Name: trust_autopay_stops trust_autopay_stops_pmc_id_autopay_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay_stops
+    ADD CONSTRAINT trust_autopay_stops_pmc_id_autopay_id_fkey FOREIGN KEY (pmc_id, autopay_id) REFERENCES public.trust_autopay(pmc_id, id);
+
+
+--
+-- Name: trust_autopay_stops trust_autopay_stops_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay_stops
+    ADD CONSTRAINT trust_autopay_stops_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_autopay_submissions trust_autopay_submissions_pmc_id_payment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_autopay_submissions
+    ADD CONSTRAINT trust_autopay_submissions_pmc_id_payment_id_fkey FOREIGN KEY (pmc_id, payment_id) REFERENCES public.trust_autopay_runs(pmc_id, payment_id);
+
+
+--
 -- Name: trust_bank_accounts trust_bank_accounts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -27123,6 +27598,14 @@ ALTER TABLE ONLY public.trust_email_settings
 
 ALTER TABLE ONLY public.trust_emails
     ADD CONSTRAINT trust_emails_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.trust_applicants(id) NOT VALID;
+
+
+--
+-- Name: trust_emails trust_emails_autopay; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_autopay FOREIGN KEY (pmc_id, autopay_id) REFERENCES public.trust_autopay(pmc_id, id) NOT VALID;
 
 
 --
@@ -30555,4 +31038,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000124'),
     ('20261022000125'),
     ('20261022000150'),
-    ('20261023000150');
+    ('20261023000150'),
+    ('20261023000151');

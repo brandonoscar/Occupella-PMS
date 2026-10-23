@@ -1,6 +1,6 @@
 // Rent paid online as the API sends it (src/pms/api/online_payments.py), and how it reads.
 import type { BadgeTone } from "./components/Badge";
-import { money } from "./money";
+import { money, usDate } from "./money";
 
 export type FeePayer = "company" | "tenant";
 export type OnlineStatus = "started" | "paid" | "failed" | "returned" | "expired";
@@ -87,4 +87,64 @@ export function waitingLine(item: Waiting): string {
     case "fee refund":
       return `The tenant's ${money(item.company_owes)} fee came back; the company's fee account holds ${money(item.company_holds)}`;
   }
+}
+
+// Autopay (src/pms/api/autopay.py): a lease's rent paid each month from a bank account the tenant
+// saved at the payments partner.
+export type AutopayRule = "fixed" | "balance";
+export type AutopayRun = {
+  due_on: string;
+  amount: string | null;
+  tenant_fee: string | null;
+  status: OnlineStatus | "skipped";
+  skipped: string | null;
+};
+export type Autopay = {
+  id: string;
+  tenant: string;
+  rule: AutopayRule;
+  amount: string;
+  account: string | null;
+  started_at: string;
+  stopped_at: string | null;
+  stopped: string | null;
+  runs: AutopayRun[];
+};
+export type AutopayView = {
+  available: boolean;
+  why_not: string | null;
+  fee_payer: FeePayer;
+  next_due: string | null;
+  autopays: Autopay[];
+};
+
+// Why an autopay is off, in words.
+const AUTOPAY_STOPPED: Record<string, string> = {
+  tenant: "Turned off by the tenant",
+  staff: "Turned off by the manager",
+  "lease ended": "Stopped: the lease ended",
+  "tenant left": "Stopped: the tenant left the lease",
+  "failed twice": "Stopped: two payments in a row didn't go through",
+  replaced: "Replaced by a newer autopay",
+};
+
+// What an autopay pays: "your balance due, up to $1,500.00" or "$1,200.00".
+export function autopayRule(autopay: Pick<Autopay, "rule" | "amount">): string {
+  return autopay.rule === "balance" ? `the balance due, up to ${money(autopay.amount)}` : money(autopay.amount);
+}
+
+// "On: pays the balance due, up to $1,500.00, on each rent due day, from Test bank ••••0000", or
+// that it waits for its account, or why it is off.
+export function autopayLine(autopay: Autopay): string {
+  if (autopay.stopped) return AUTOPAY_STOPPED[autopay.stopped] ?? `Off: ${autopay.stopped}`;
+  if (autopay.account === null) return `Waiting for a bank account to be saved: pays ${autopayRule(autopay)}`;
+  const pays = autopayRule(autopay) + (autopay.rule === "balance" ? "," : "");
+  return `On: pays ${pays} on each rent due day, from ${autopay.account}`;
+}
+
+// A due date autopay came to: "11/01/2026 · $1,200.00" with its status, or why it paid nothing.
+export function autopayRunLine(run: AutopayRun): string {
+  if (run.status === "skipped") return `${usDate(run.due_on)} · Nothing taken: ${run.skipped}`;
+  const fee = run.tenant_fee && run.tenant_fee !== "0.00" ? ` + ${money(run.tenant_fee)} fee` : "";
+  return `${usDate(run.due_on)} · ${money(run.amount ?? "0.00")}${fee}`;
 }

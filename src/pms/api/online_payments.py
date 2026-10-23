@@ -540,6 +540,32 @@ def apply(conn: psycopg.Connection[Any], event: payments.Event, partner: str) ->
     return True
 
 
+def record_saved(conn: psycopg.Connection[Any], saved: payments.Saved, partner: str) -> bool:
+    """Records the bank account the partner saved for an autopay (migration 0151), once. False
+    when the autopay isn't one this partner was asked to save an account for."""
+    row = conn.execute(
+        "SELECT pmc_id, partner FROM trust_autopay WHERE id = %s", (saved.autopay_id,)
+    ).fetchone()
+    if row is None or row[1] != partner:
+        return False
+    conn.execute(
+        "INSERT INTO trust_autopay_accounts (pmc_id, autopay_id, partner_customer, partner_method,"
+        " partner_mandate, label, partner_event, saved_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
+        " ON CONFLICT (autopay_id) DO NOTHING",
+        (
+            row[0],
+            saved.autopay_id,
+            saved.account.customer,
+            saved.account.method,
+            saved.account.mandate,
+            saved.label,
+            saved.event_id,
+            saved.happened_at,
+        ),
+    )
+    return True
+
+
 class Received(BaseModel):
     recorded: bool
 
@@ -567,6 +593,8 @@ def webhook(
         raise HTTPException(502, "the payments partner didn't answer: send it again") from None
     if event is None:
         return Received(recorded=False)
+    if isinstance(event, payments.Saved):
+        return Received(recorded=record_saved(conn, event, partner.name))
     return Received(recorded=apply(conn, event, partner.name))
 
 

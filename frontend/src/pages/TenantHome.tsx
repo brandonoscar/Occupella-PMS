@@ -23,6 +23,7 @@ import { useRecord } from "./useRecord";
 import { Said } from "../components/Said";
 import { Form } from "../components/Form";
 import { ManagerCard } from "./ManagerCard";
+import { TenantAutopayCard } from "./AutopayCards";
 import { PayOnlineCard } from "./PayOnlineCard";
 import { CalendarCard } from "./CalendarCard";
 import { MyContactCard } from "../components/ContactCard";
@@ -336,6 +337,7 @@ export function TenantHome({ me }: { me: Me }) {
           </Card>
 
           <PayOnlineCard leaseId={lease.lease_id} />
+          <TenantAutopayCard leaseId={lease.lease_id} />
 
           <Card title="Payments">
             {lease.payments.length === 0 ? (

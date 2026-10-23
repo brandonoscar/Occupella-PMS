@@ -19,7 +19,7 @@ from helpers import (
     open_lease,
 )
 
-from pms import accounts, email, nightly
+from pms import accounts, autopay, email, nightly, payments
 from pms.api import app as api_app
 
 URL = "http://localhost:8000"
@@ -145,7 +145,9 @@ def test_a_run_lets_go_of_the_lock_when_a_company_fails(conn, app_conn, database
 def test_every_company_runs_when_none_is_named(conn, app_conn, pmc, monkeypatch):
     ran = []
     monkeypatch.setattr(
-        nightly, "run_pmc", lambda c, pmc_id, day, url, sending: ran.append((pmc_id, sending))
+        nightly,
+        "run_pmc",
+        lambda c, pmc_id, day, url, sending, partner: ran.append((pmc_id, sending)),
     )
 
     nightly.run_all(app_conn, OCT_16, URL)
@@ -203,8 +205,8 @@ def test_a_scheduler_that_cannot_reach_the_database_tries_again(caplog):
 def test_the_command_runs_every_company_once(monkeypatch, capsys, database_url):
     seen = []
 
-    def run_all(conn, day, url, sending):
-        seen.append((day, url, sending))
+    def run_all(conn, day, url, sending, partner=None):
+        seen.append((day, url, sending, partner))
         return [
             nightly.Ran(
                 pmc_id=None,
@@ -222,17 +224,23 @@ def test_the_command_runs_every_company_once(monkeypatch, capsys, database_url):
     monkeypatch.setenv("DATABASE_URL", database_url)
     monkeypatch.setenv("PMS_PUBLIC_URL", "https://pms.example.com")
     monkeypatch.delenv("PMS_EMAIL_SENDER", raising=False)
+    monkeypatch.delenv("PMS_PAYMENTS", raising=False)
 
     assert nightly.main([]) == 0
-    assert seen == [(datetime.now(UTC).date(), "https://pms.example.com", False)]
+    assert seen == [(datetime.now(UTC).date(), "https://pms.example.com", False, None)]
     assert capsys.readouterr().out == (
-        "1 companies: 2 rents, 1 late fees, 3 bills, 4 emails, 5 management fees, 6 work orders\n"
+        "1 companies: 2 rents, 1 late fees, 3 bills, 4 emails, 5 management fees, 6 work orders,"
+        " 0 autopay payments\n"
     )
     assert nightly.main(["now"]) == 2
     # A server that sends email writes the automatic emails too; `pms.email deliver` sends them.
     monkeypatch.setenv("PMS_EMAIL_SENDER", "fake")
     assert nightly.main([]) == 0
     assert seen[-1][2] is True
+    # A server with a payments partner starts the autopay payments due, and sends them to it.
+    monkeypatch.setenv("PMS_PAYMENTS", "fake")
+    assert nightly.main([]) == 0
+    assert seen[-1][3] == "fake"
 
 
 def test_the_api_runs_the_scheduler_unless_told_not_to(monkeypatch, database_url):
@@ -241,7 +249,7 @@ def test_the_api_runs_the_scheduler_unless_told_not_to(monkeypatch, database_url
     started = []
 
     class Fake:
-        def __init__(self, url, role, public_url, sender):
+        def __init__(self, url, role, public_url, sender, payments=None):
             started.append(("made", role, public_url))
 
         def start(self):
@@ -261,3 +269,50 @@ def test_the_api_runs_the_scheduler_unless_told_not_to(monkeypatch, database_url
     assert api_app.Settings.from_env().nightly is True
     monkeypatch.setenv("PMS_NIGHTLY", "off")
     assert api_app.Settings.from_env().nightly is False
+
+
+def test_a_night_starts_the_autopay_payments_due_and_sends_them_to_the_partner(
+    conn, database_url, pmc
+):
+    """With a payments partner, the run starts each autopay's payment for this month's due date
+    after the rent is charged, and once that commits sends it to the partner (pms.autopay)."""
+    lease = lease_since(conn, pmc, date(2026, 9, 1))
+    tenant = conn.execute(
+        "SELECT tenant_id FROM trust_lease_tenants WHERE lease_id = %s", (lease,)
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO trust_payment_settings (pmc_id, online, ach_fee_payer)"
+        " VALUES (%s, true, 'company')",
+        (pmc.pmc_id,),
+    )
+    autopay_id = conn.execute(
+        "INSERT INTO trust_autopay (pmc_id, lease_id, tenant_id, rule, amount, partner)"
+        " VALUES (%s, %s, %s, 'balance', 5000, 'fake') RETURNING id",
+        (pmc.pmc_id, lease, tenant),
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO trust_autopay_accounts (pmc_id, autopay_id, partner_customer, partner_method,"
+        " label, partner_event, saved_at) VALUES (%s, %s, 'fake_cus', 'fake_pm', 'Test bank',"
+        " 'evt_n', '2026-09-15T00:00:00Z')",
+        (pmc.pmc_id, autopay_id),
+    )
+    clock = lambda: datetime(2026, 10, 16, 6, 0, tzinfo=UTC)  # noqa: E731
+    runs = nightly.Scheduler(
+        database_url,
+        "trust_app",
+        URL,
+        None,
+        clock,
+        pmcs=[pmc.pmc_id],
+        payments=payments.FakePartner(),
+    )
+    (ran,) = runs.run_once()
+    assert (ran.rents, ran.autopay) == (1, 1)
+    payment = autopay.payment_id_for(autopay_id, date(2026, 10, 1))
+    assert conn.execute(
+        "SELECT p.amount::text, s.partner_ref FROM trust_online_payments AS p"
+        " JOIN trust_autopay_submissions AS s ON s.payment_id = p.id WHERE p.id = %s",
+        (payment,),
+    ).fetchone() == ("1000.00", f"fake_pi_{payment.hex}")
+    (again,) = runs.run_once()
+    assert again.autopay == 0

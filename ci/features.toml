@@ -1022,3 +1022,20 @@ browser = [
   "features.spec.ts › a tenant pays rent online on the payments partner's page, it reaches the books once the bank pays, staff accept one past a hold and the company covers the processor's fee",
 ]
 
+[[feature]]
+id = "autopay"
+statement = "Autopay (migration 0151, ADR 0009): a tenant sets up autopay of their lease, a fixed amount each month or the balance due up to an amount they set, and saves the bank account it pays from on the payments partner's page (the fake partner's in development and CI); from the next rent due day after that, the nightly run (or an admin's Run rent now) starts its payment once per due date, or records why none (a payment hold, nothing owed), emails the tenant before the bank is debited, and sends it to the partner once; the payment reaches the books as any payment online; the tenant or staff turn it off, and it stops by itself when the lease ends, the tenant leaves or two payments in a row don't go through."
+operations = [
+  "GET /api/payments/leases/{lease_id}/autopay",
+  "POST /api/payments/leases/{lease_id}/autopay",
+  "POST /api/payments/leases/{lease_id}/autopay/stop",
+  "GET /api/payments/autopay",
+  "POST /api/payments/autopay/{autopay_id}/stop",
+  "GET /api/payments/fake-save/{autopay_id}",
+  "POST /api/payments/fake-save/{autopay_id}",
+  "GET /api/payments/fake",
+]
+browser = [
+  "features.spec.ts › a tenant sets up autopay and saves a bank account, Run rent now starts its payment, the bank pays it, and staff turn it off",
+]
+
