@@ -8772,6 +8772,14 @@ BEGIN
         JOIN pgledger_transfers AS tr ON tr.id = f.transfer_id
         WHERE f.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
     ),
+    -- Interest on tenants' deposits the owner's account paid into them (migration 0122), when it
+    -- moved; interest paid as a rent credit moves no money and is less rent, as a credit is.
+    interest AS (
+        SELECT l.owner_account AS account, l.amount
+        FROM trust_deposit_interest_lines AS l
+        JOIN pgledger_transfers AS tr ON tr.id = l.transfer_id
+        WHERE l.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
+    ),
     -- Each bill's expense account: its latest row.
     categorized AS (
         SELECT DISTINCT ON (x.bill_id) x.id, x.bill_id, x.expense_account_id
@@ -8827,6 +8835,12 @@ BEGIN
         JOIN accounts AS a ON a.account = s.account
         LEFT JOIN trust_expense_accounts AS ea ON ea.id = s.expense
         GROUP BY s.account, ea.id, ea.name, ea.schedule_e_line
+        UNION ALL
+        -- Deposit interest, on Schedule E's line 19 (Other), once some was paid.
+        SELECT d.account, 3, 19, 'expense: security deposit interest', 19, sum(d.amount)
+        FROM interest AS d
+        JOIN accounts AS a ON a.account = d.account
+        GROUP BY d.account
     ),
     sums AS (
         SELECT i.account,
@@ -9051,6 +9065,14 @@ BEGIN
         FROM trust_bill_markups AS m
         JOIN entered AS b ON b.id = m.bill_id
     ),
+    -- Interest on tenants' deposits the owner's account paid into them (migration 0122), when it
+    -- moved; interest paid as a rent credit moves no money and is less rent, as a credit is.
+    interest AS (
+        SELECT l.owner_account AS account, l.amount
+        FROM trust_deposit_interest_lines AS l
+        JOIN pgledger_transfers AS tr ON tr.id = l.transfer_id
+        WHERE l.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
+    ),
     -- Each bill's expense account: its latest row.
     categorized AS (
         SELECT DISTINCT ON (x.bill_id) x.id, x.bill_id, x.expense_account_id
@@ -9103,6 +9125,12 @@ BEGIN
         JOIN accounts AS a ON a.account = s.account
         LEFT JOIN trust_expense_accounts AS ea ON ea.id = s.expense
         GROUP BY s.account, ea.id, ea.name, ea.schedule_e_line
+        UNION ALL
+        -- Deposit interest, on Schedule E's line 19 (Other), once some was paid.
+        SELECT d.account, 3, 19, 'expense: security deposit interest', 19, sum(d.amount)
+        FROM interest AS d
+        JOIN accounts AS a ON a.account = d.account
+        GROUP BY d.account
     ),
     sums AS (
         SELECT i.account,
@@ -29999,4 +30027,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000121'),
     ('20261022000122'),
     ('20261022000123'),
-    ('20261022000124');
+    ('20261022000124'),
+    ('20261022000125');
