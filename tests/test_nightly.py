@@ -147,7 +147,7 @@ def test_every_company_runs_when_none_is_named(conn, app_conn, pmc, monkeypatch)
     monkeypatch.setattr(
         nightly,
         "run_pmc",
-        lambda c, pmc_id, day, url, sending, payments: ran.append((pmc_id, sending)),
+        lambda c, pmc_id, day, url, sending, payments, texting: ran.append((pmc_id, sending)),
     )
 
     nightly.run_all(app_conn, OCT_16, URL)
@@ -205,8 +205,8 @@ def test_a_scheduler_that_cannot_reach_the_database_tries_again(caplog):
 def test_the_command_runs_every_company_once(monkeypatch, capsys, database_url):
     seen = []
 
-    def run_all(conn, day, url, sending, payments):
-        seen.append((day, url, sending, payments))
+    def run_all(conn, day, url, sending, payments, texting):
+        seen.append((day, url, sending, payments, texting))
         return [
             nightly.Ran(
                 pmc_id=None,
@@ -224,9 +224,10 @@ def test_the_command_runs_every_company_once(monkeypatch, capsys, database_url):
     monkeypatch.setenv("DATABASE_URL", database_url)
     monkeypatch.setenv("PMS_PUBLIC_URL", "https://pms.example.com")
     monkeypatch.delenv("PMS_EMAIL_SENDER", raising=False)
+    monkeypatch.delenv("PMS_TEXT_SENDER", raising=False)
 
     assert nightly.main([]) == 0
-    assert seen == [(datetime.now(UTC).date(), "https://pms.example.com", False, None)]
+    assert seen == [(datetime.now(UTC).date(), "https://pms.example.com", False, None, False)]
     assert capsys.readouterr().out == (
         "1 companies: 2 rents, 1 late fees, 3 bills, 4 emails, 5 management fees, 6 work orders\n"
     )
@@ -235,6 +236,10 @@ def test_the_command_runs_every_company_once(monkeypatch, capsys, database_url):
     monkeypatch.setenv("PMS_EMAIL_SENDER", "fake")
     assert nightly.main([]) == 0
     assert seen[-1][2] is True
+    # A server that sends texts writes the automatic texts too; `pms.texts deliver` sends them.
+    monkeypatch.setenv("PMS_TEXT_SENDER", "fake")
+    assert nightly.main([]) == 0
+    assert seen[-1][4] is True
 
 
 def test_the_api_runs_the_scheduler_unless_told_not_to(monkeypatch, database_url):
@@ -243,8 +248,8 @@ def test_the_api_runs_the_scheduler_unless_told_not_to(monkeypatch, database_url
     started = []
 
     class Fake:
-        def __init__(self, url, role, public_url, sender, payments):
-            started.append(("made", role, public_url, payments))
+        def __init__(self, url, role, public_url, sender, payments, texting):
+            started.append(("made", role, public_url, payments, texting))
 
         def start(self):
             started.append("started")
@@ -255,7 +260,10 @@ def test_the_api_runs_the_scheduler_unless_told_not_to(monkeypatch, database_url
     monkeypatch.setattr(nightly, "Scheduler", Fake)
     settings = api_app.Settings(database_url=database_url, nightly=True)
     with TestClient(api_app.create_app(settings)):
-        assert started == [("made", "trust_app", "http://localhost:8000", None), "started"]
+        assert started == [
+            ("made", "trust_app", "http://localhost:8000", None, False),
+            "started",
+        ]
     assert started[-1] == "stopped"
 
     monkeypatch.setenv("DATABASE_URL", database_url)

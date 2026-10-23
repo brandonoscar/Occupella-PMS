@@ -26,7 +26,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, StringConstraints
 
-from pms import exports, notices
+from pms import exports, notices, texts
 from pms.api import outbox
 from pms.api.deps import Conn, Staff, refusal
 from pms.payments import processor
@@ -1189,6 +1189,8 @@ class RentRunDone(RentRun):
     prepaid_used: int = 0
     # Payments autopay started for rent due (migration 0159).
     autopay: int = 0
+    # Rent reminders and late notices texted to tenants who agreed (migration 0161).
+    texts: int = 0
 
 
 class RentRunLine(RentRun):
@@ -1232,6 +1234,7 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
         if outbox.SENDING.get()
         else notices.Written()
     )
+    texted = texts.write_scheduled(conn, session.pmc_id, today()) if texts.TEXTING.get() else 0
     return RentRunDone(
         rents=row[0],
         recurring=row[1],
@@ -1240,6 +1243,7 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
         authority_late_fees=authority[0],
         prepaid_used=prepaid_used,
         autopay=autopays,
+        texts=texted,
     )
 
 

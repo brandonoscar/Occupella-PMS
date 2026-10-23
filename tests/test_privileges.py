@@ -314,6 +314,13 @@ TABLES = {
     "trust_application_fees": {"SELECT", "INSERT"},
     "trust_application_fee_steps": {"SELECT", "INSERT"},
     "trust_application_fee_steps_id_seq": set(),
+    # Texts (migration 0161): each person's word on being texted, which texts the PMS writes by
+    # itself, the outbox and each attempt to hand a text over.
+    "trust_text_consents": {"SELECT", "INSERT"},
+    "trust_text_settings": {"SELECT", "INSERT"},
+    "trust_texts": {"SELECT", "INSERT"},
+    "trust_text_deliveries": {"SELECT", "INSERT"},
+    "trust_text_deliveries_id_seq": set(),
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -358,6 +365,10 @@ AI_NEVER_READS = {
     "trust_application_fee_settings",
     "trust_application_fees",
     "trust_application_fee_steps",
+    # Texts (migration 0161): people's mobile numbers and what was texted them, as email.
+    "trust_text_consents",
+    "trust_texts",
+    "trust_text_deliveries",
     # A notice made for a lease, as filled in (migration 0119): like a document's file.
     "trust_notices",
     "trust_screening_criteria",
@@ -722,6 +733,10 @@ FUNCTIONS = {
     "trust_check_autopay_step()": set(),  # triggers' (migration 0159)
     "trust_check_autopay_charge()": set(),
     "trust_check_application_fee_step()": set(),  # a trigger's (migration 0160)
+    # A person's latest word on texts (migration 0161), and its triggers'.
+    "trust_text_consent_of(uuid,uuid,uuid,uuid)": {"trust_app"},
+    "trust_check_text_consent()": set(),
+    "trust_check_text()": set(),
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.

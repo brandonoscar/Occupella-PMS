@@ -35,13 +35,16 @@ FEB = datetime(2026, 2, 1, tzinfo=UTC)
 # the transfer row says it all; password hashes and authenticator secrets must never be copied
 # into a log (the login, its invites and sessions are audited); a document's bytes, a W-9's
 # tax ID among them, whose document row is audited with their SHA-256; and emails to owners and
-# their deliveries, which hold people's addresses (ADR 0004).
+# their deliveries, which hold people's addresses (ADR 0004), and texts with theirs (migration
+# 0161).
 NOT_AUDITED = {
     "trust_audit_log",
     "trust_login_secrets",
     "trust_document_files",
     "trust_emails",
     "trust_email_deliveries",
+    "trust_texts",
+    "trust_text_deliveries",
     "trust_idempotency_keys",
     "pgledger_accounts",
     "pgledger_entries",

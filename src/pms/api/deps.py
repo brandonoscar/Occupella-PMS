@@ -203,6 +203,7 @@ AREA_PATHS = (
     ("/api/work-orders", "maintenance"),
     ("/api/invites", "people"),
     ("/api/emails", "email"),
+    ("/api/texts", "email"),
 )
 READS = ("GET", "HEAD", "OPTIONS")
 

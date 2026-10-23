@@ -4965,3 +4965,65 @@ test("staff ask each applicant an application fee; an applicant pays it on the t
   await page.getByRole("tab", { name: "Transactions" }).click();
   await expect(page.getByRole("table", { name: "Register" }).getByRole("row", { name: /Application fee/ })).toContainText("$45.00");
 });
+
+test("staff record a tenant's word on texts and text them; the tenant says no in the portal; the company texts rent reminders by itself", async ({
+  page,
+  browser,
+}) => {
+  const people = seed.features.texts!;
+  await joinAsStaff(page, people.manager);
+
+  // From the tenant's Texts tab: their word, as they gave it in writing, then a text.
+  const search = page.getByLabel("Search people, homes, bills, work orders and files");
+  await search.fill("taylor");
+  await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Taylor Demo/ }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Taylor Demo" })).toBeVisible();
+  await page.getByRole("tab", { name: "Texts", exact: true }).click();
+  await expect(page.getByTestId("text-consent")).toHaveText("No word on texts yet");
+  await page.getByRole("button", { name: "Record their word" }).click();
+  const word = page.getByRole("dialog", { name: "Taylor Demo's word on texts" });
+  await word.getByLabel("Mobile number").fill("(202) 555-0167");
+  await word.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Taylor Demo agreed to texts.")).toBeVisible();
+  await expect(page.getByTestId("text-consent")).toContainText("Agreed to texts at (202) 555-0167 in writing");
+  await page.getByRole("button", { name: "Write text" }).click();
+  const writing = page.getByRole("dialog", { name: "Text Taylor Demo" });
+  await writing.getByLabel("Text").fill("The water is off Tuesday from 9 to 11.");
+  await expectAccessible(page);
+  await writing.getByRole("button", { name: "Send text" }).click();
+  await expect(page.getByText("Text sent to (202) 555-0167.")).toBeVisible();
+  // Sent by the server's (fake) sender after the request: read again, it says so.
+  await page.reload();
+  await page.getByRole("tab", { name: "Texts", exact: true }).click();
+  const sent = page.getByRole("list", { name: "Texts, Taylor Demo" }).getByRole("listitem").first();
+  await expect(sent).toContainText("The water is off Tuesday from 9 to 11.");
+  await expect(sent).toContainText("Sent");
+  await expectAccessible(page);
+
+  // The tenant sees their word in the portal and says no.
+  const tenant = await (await browser.newContext()).newPage();
+  await joinPortal(tenant, people.taylor);
+  const mine = part(tenant, "Texts");
+  await expect(mine.getByTestId("my-text-consent")).toContainText("Agreed to texts at (202) 555-0167 in writing");
+  await expectAccessible(tenant);
+  await mine.getByRole("button", { name: "Stop texting me" }).click();
+  await expect(tenant.getByText("No more texts.")).toBeVisible();
+  await tenant.close();
+  await page.reload();
+  await page.getByRole("tab", { name: "Texts", exact: true }).click();
+  await expect(page.getByTestId("text-consent")).toContainText("Said no to texts at (202) 555-0167 in the portal");
+  await expect(page.getByRole("button", { name: "Write text" })).toHaveCount(0);
+
+  // The company texts rent reminders by itself, to the tenants who agreed.
+  await settings(page, "Company setup");
+  const auto = page.getByLabel("Automatic texts", { exact: true });
+  await expect(auto).toContainText("Rent reminders by textOff");
+  await page.getByRole("button", { name: "Edit automatic texts" }).click();
+  const editing = page.getByRole("dialog", { name: "Automatic texts" });
+  await editing.getByLabel("Rent reminders by text").check();
+  await editing.getByLabel("Days before rent is due").selectOption("5");
+  await editing.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved the automatic texts.")).toBeVisible();
+  await expect(auto).toContainText("Rent reminders by text5 days before rent is due");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+});

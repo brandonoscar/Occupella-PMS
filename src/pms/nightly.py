@@ -40,7 +40,7 @@ from uuid import UUID
 import psycopg
 from psycopg import sql
 
-from pms import email, notices
+from pms import email, notices, texts
 from pms.api import autopay, rent
 from pms.payments import processor
 
@@ -74,6 +74,8 @@ class Ran:
     prepaid_used: int = 0
     # Payments autopay started for rent due (migration 0159).
     autopay: int = 0
+    # Rent reminders and late notices texted to tenants who agreed (migration 0161).
+    texts: int = 0
 
 
 def run_pmc(
@@ -83,10 +85,12 @@ def run_pmc(
     public_url: str,
     sending: bool = False,
     payments: processor.Processor | None = None,
+    texting: bool = False,
 ) -> Ran:
     """One PMC's run for a day, in one transaction. While the server sends email, it also writes
-    the rent reminders, late notices and owner statements the company's settings ask for. With a
-    payment processor, autopay charges what each lease on it owes once its rent is due."""
+    the rent reminders, late notices and owner statements the company's settings ask for, and
+    while it sends texts, the texts they ask for. With a payment processor, autopay charges what
+    each lease on it owes once its rent is due."""
     with conn.transaction():
         made = conn.execute(
             "SELECT trust_run_rent(%s, %s, %s)", (pmc_id, day.replace(day=1), day)
@@ -119,6 +123,7 @@ def run_pmc(
         ).fetchall():
             email.write_bill_approval(conn, pmc_id, bill, public_url)
         written = notices.write_scheduled(conn, pmc_id, day, public_url) if sending else None
+        texted = texts.write_scheduled(conn, pmc_id, day) if texting else 0
     emails = 0 if written is None else sum(vars(written).values())
     return Ran(
         pmc_id,
@@ -132,6 +137,7 @@ def run_pmc(
         authority[0],
         prepaid,
         autopays,
+        texted,
     )
 
 
@@ -142,6 +148,7 @@ def run_all(
     pmcs: Iterable[UUID] | None = None,
     sending: bool = False,
     payments: processor.Processor | None = None,
+    texting: bool = False,
 ) -> list[Ran]:
     """Every PMC's run for a day (or only those named). One that fails is logged and left for
     the next run; the others still run. While another run holds the lock, this one runs
@@ -158,7 +165,7 @@ def run_all(
         done = []
         for pmc_id in pmcs:
             try:
-                done.append(run_pmc(conn, pmc_id, day, public_url, sending, payments))
+                done.append(run_pmc(conn, pmc_id, day, public_url, sending, payments, texting))
             except psycopg.Error:
                 log.exception("the nightly run of PMC %s failed; the next run tries again", pmc_id)
         return done
@@ -192,6 +199,7 @@ class Scheduler:
         retry: float = RETRY,
         pmcs: Sequence[UUID] | None = None,
         payments: processor.Processor | None = None,
+        texting: bool = False,
     ) -> None:
         self.database_url = database_url
         self.role = role
@@ -202,6 +210,7 @@ class Scheduler:
         self.retry = retry
         self.pmcs = pmcs
         self.payments = payments
+        self.texting = texting
         self.ran = threading.Event()  # set after each run that finished
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="pms-nightly", daemon=True)
@@ -224,6 +233,7 @@ class Scheduler:
                 self.pmcs,
                 self.sender is not None,
                 self.payments,
+                self.texting,
             )
             if self.sender is not None:
                 conn.autocommit = True
@@ -257,8 +267,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         payments = processor.processor_named(
             os.environ.get("PMS_PAYMENT_PROCESSOR", ""), dict(os.environ)
         )
+        # Its texts go out with `python -m pms.texts deliver`, once their time comes.
+        texting = bool(os.environ.get("PMS_TEXT_SENDER"))
         done = run_all(
-            conn, datetime.now(UTC).date(), public_url, sending=sending, payments=payments
+            conn,
+            datetime.now(UTC).date(),
+            public_url,
+            sending=sending,
+            payments=payments,
+            texting=texting,
         )
     rents = sum(r.rents for r in done)
     late_fees = sum(r.late_fees for r in done)

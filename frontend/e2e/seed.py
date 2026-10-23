@@ -534,6 +534,7 @@ FEATURES = (
     "online-payments",
     "autopay",
     "application-fees",
+    "texts",
 )
 
 

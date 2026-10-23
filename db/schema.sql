@@ -4352,6 +4352,65 @@ $$;
 
 
 --
+-- Name: trust_check_text(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_text() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_consent trust_text_consents%ROWTYPE;
+BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended('texts of ' || coalesce(NEW.tenant_id, NEW.owner_id, NEW.vendor_id), 0)
+    );
+    SELECT * INTO v_consent FROM trust_text_consents AS c
+    WHERE c.id = trust_text_consent_of(NEW.pmc_id, NEW.tenant_id, NEW.owner_id, NEW.vendor_id);
+    IF v_consent.id IS DISTINCT FROM NEW.consent_id OR NOT v_consent.consented
+       OR v_consent.phone <> NEW.to_phone THEN
+        RAISE EXCEPTION 'trust: a text goes only to the number its person last agreed to be texted at'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    NEW.created_at := clock_timestamp();
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_text_consent(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_text_consent() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_latest trust_text_consents%ROWTYPE;
+BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtextextended('texts of ' || coalesce(NEW.tenant_id, NEW.owner_id, NEW.vendor_id), 0)
+    );
+    NEW.created_at := clock_timestamp();
+    NEW.recorded_by := CASE
+        WHEN NEW.how IN ('in writing', 'verbally')
+            THEN nullif(current_setting('trust.staff_id', true), '')::uuid
+    END;
+    IF NEW.how = 'start reply' THEN
+        SELECT * INTO v_latest FROM trust_text_consents AS c
+        WHERE c.id = trust_text_consent_of(NEW.pmc_id, NEW.tenant_id, NEW.owner_id, NEW.vendor_id);
+        IF v_latest.how IS DISTINCT FROM 'stop reply' OR v_latest.phone <> NEW.phone THEN
+            RAISE EXCEPTION 'trust: a START reply takes back only a STOP from the same number'
+                USING ERRCODE = 'check_violation';
+        END IF;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_transfer_scope(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -13111,6 +13170,24 @@ $$;
 
 
 --
+-- Name: trust_text_consent_of(uuid, uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_text_consent_of(p_pmc_id uuid, p_tenant_id uuid, p_owner_id uuid, p_vendor_id uuid) RETURNS uuid
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT c.id FROM trust_text_consents AS c
+    WHERE c.pmc_id = p_pmc_id
+      AND c.tenant_id IS NOT DISTINCT FROM p_tenant_id
+      AND c.owner_id IS NOT DISTINCT FROM p_owner_id
+      AND c.vendor_id IS NOT DISTINCT FROM p_vendor_id
+    ORDER BY c.created_at DESC, c.id DESC
+    LIMIT 1
+$$;
+
+
+--
 -- Name: trust_transfer_lease(uuid, uuid, uuid, date, date, numeric, text, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -16989,6 +17066,109 @@ CREATE TABLE public.trust_tenants (
 
 
 --
+-- Name: trust_text_consents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_text_consents (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    tenant_id uuid,
+    owner_id uuid,
+    vendor_id uuid,
+    phone text NOT NULL,
+    consented boolean NOT NULL,
+    how text NOT NULL,
+    by_person boolean DEFAULT false NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_text_consents_check CHECK ((num_nonnulls(tenant_id, owner_id, vendor_id) = 1)),
+    CONSTRAINT trust_text_consents_check1 CHECK (((how = 'portal'::text) = by_person)),
+    CONSTRAINT trust_text_consents_check2 CHECK (((NOT by_person) OR (vendor_id IS NULL))),
+    CONSTRAINT trust_text_consents_check3 CHECK (((how <> 'stop reply'::text) OR (NOT consented))),
+    CONSTRAINT trust_text_consents_check4 CHECK (((how <> 'start reply'::text) OR consented)),
+    CONSTRAINT trust_text_consents_how_check CHECK ((how = ANY (ARRAY['portal'::text, 'in writing'::text, 'verbally'::text, 'stop reply'::text, 'start reply'::text]))),
+    CONSTRAINT trust_text_consents_phone_check CHECK ((phone ~ '^[+]1[2-9][0-9]{2}[2-9][0-9]{6}$'::text))
+);
+
+
+--
+-- Name: trust_text_deliveries; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_text_deliveries (
+    id bigint NOT NULL,
+    text_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    sender text NOT NULL,
+    provider_id text,
+    error text,
+    attempted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_text_deliveries_check CHECK (((error IS NULL) OR (provider_id IS NULL))),
+    CONSTRAINT trust_text_deliveries_error_check CHECK (((error IS NULL) OR ((error <> ''::text) AND (char_length(error) <= 1000)))),
+    CONSTRAINT trust_text_deliveries_provider_id_check CHECK (((char_length(provider_id) >= 1) AND (char_length(provider_id) <= 100))),
+    CONSTRAINT trust_text_deliveries_sender_check CHECK ((sender = ANY (ARRAY['fake'::text, 'twilio'::text])))
+);
+
+
+--
+-- Name: trust_text_deliveries_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_text_deliveries ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.trust_text_deliveries_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: trust_text_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_text_settings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    rent_reminder_days integer,
+    late_notices boolean NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_text_settings_rent_reminder_days_check CHECK (((rent_reminder_days >= 1) AND (rent_reminder_days <= 15)))
+);
+
+
+--
+-- Name: trust_texts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_texts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    kind text NOT NULL,
+    tenant_id uuid,
+    owner_id uuid,
+    vendor_id uuid,
+    consent_id uuid NOT NULL,
+    to_phone text NOT NULL,
+    body text NOT NULL,
+    sent_by uuid,
+    lease_id uuid,
+    period date,
+    charge_id uuid,
+    not_before timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_texts_body_check CHECK (((char_length(body) >= 1) AND (char_length(body) <= 480))),
+    CONSTRAINT trust_texts_check CHECK ((num_nonnulls(tenant_id, owner_id, vendor_id) = 1)),
+    CONSTRAINT trust_texts_check1 CHECK (((kind = 'message'::text) = (sent_by IS NOT NULL))),
+    CONSTRAINT trust_texts_check2 CHECK (((kind <> 'rent_reminder'::text) OR ((tenant_id IS NOT NULL) AND (lease_id IS NOT NULL) AND (period IS NOT NULL)))),
+    CONSTRAINT trust_texts_check3 CHECK (((kind <> 'late_notice'::text) OR ((tenant_id IS NOT NULL) AND (lease_id IS NOT NULL) AND (charge_id IS NOT NULL)))),
+    CONSTRAINT trust_texts_kind_check CHECK ((kind = ANY (ARRAY['message'::text, 'rent_reminder'::text, 'late_notice'::text])))
+);
+
+
+--
 -- Name: trust_unit_areas; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -20041,6 +20221,46 @@ ALTER TABLE ONLY public.trust_tenants
 
 
 --
+-- Name: trust_text_consents trust_text_consents_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_consents
+    ADD CONSTRAINT trust_text_consents_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_text_consents trust_text_consents_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_consents
+    ADD CONSTRAINT trust_text_consents_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_text_deliveries trust_text_deliveries_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_deliveries
+    ADD CONSTRAINT trust_text_deliveries_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_text_settings trust_text_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_settings
+    ADD CONSTRAINT trust_text_settings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_texts trust_texts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_texts
+    ADD CONSTRAINT trust_texts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_unit_areas trust_unit_areas_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22345,6 +22565,139 @@ CREATE INDEX trust_tenant_links_same_as ON public.trust_tenant_links USING btree
 
 
 --
+-- Name: trust_text_consents_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_text_consents_owner ON public.trust_text_consents USING btree (pmc_id, owner_id, created_at);
+
+
+--
+-- Name: trust_text_consents_phone; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_text_consents_phone ON public.trust_text_consents USING btree (phone, created_at);
+
+
+--
+-- Name: trust_text_consents_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_text_consents_recorded_by ON public.trust_text_consents USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_text_consents_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_text_consents_tenant ON public.trust_text_consents USING btree (pmc_id, tenant_id, created_at);
+
+
+--
+-- Name: trust_text_consents_vendor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_text_consents_vendor ON public.trust_text_consents USING btree (pmc_id, vendor_id, created_at);
+
+
+--
+-- Name: trust_text_deliveries_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_text_deliveries_pmc ON public.trust_text_deliveries USING btree (pmc_id);
+
+
+--
+-- Name: trust_text_deliveries_text; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_text_deliveries_text ON public.trust_text_deliveries USING btree (text_id, attempted_at);
+
+
+--
+-- Name: trust_text_settings_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_text_settings_pmc ON public.trust_text_settings USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_text_settings_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_text_settings_recorded_by ON public.trust_text_settings USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_texts_charge; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_texts_charge ON public.trust_texts USING btree (pmc_id, charge_id);
+
+
+--
+-- Name: trust_texts_consent; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_texts_consent ON public.trust_texts USING btree (pmc_id, consent_id);
+
+
+--
+-- Name: trust_texts_late_notice; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_texts_late_notice ON public.trust_texts USING btree (charge_id, tenant_id) WHERE (kind = 'late_notice'::text);
+
+
+--
+-- Name: trust_texts_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_texts_lease ON public.trust_texts USING btree (pmc_id, lease_id);
+
+
+--
+-- Name: trust_texts_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_texts_owner ON public.trust_texts USING btree (pmc_id, owner_id, created_at);
+
+
+--
+-- Name: trust_texts_rent_reminder; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_texts_rent_reminder ON public.trust_texts USING btree (lease_id, tenant_id, period) WHERE (kind = 'rent_reminder'::text);
+
+
+--
+-- Name: trust_texts_sent_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_texts_sent_by ON public.trust_texts USING btree (pmc_id, sent_by);
+
+
+--
+-- Name: trust_texts_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_texts_tenant ON public.trust_texts USING btree (pmc_id, tenant_id, created_at);
+
+
+--
+-- Name: trust_texts_vendor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_texts_vendor ON public.trust_texts USING btree (pmc_id, vendor_id, created_at);
+
+
+--
+-- Name: trust_texts_waiting; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_texts_waiting ON public.trust_texts USING btree (not_before, created_at);
+
+
+--
 -- Name: trust_unit_areas_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -23829,6 +24182,34 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_text_consents trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_text_consents FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_text_deliveries trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_text_deliveries FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_text_settings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_text_settings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_texts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_texts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_unit_areas trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -25292,6 +25673,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_tena
 
 
 --
+-- Name: trust_text_consents trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_text_consents FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_text_settings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_text_settings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_unit_areas trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -25660,6 +26055,20 @@ CREATE TRIGGER trust_check_tenant_link BEFORE INSERT ON public.trust_tenant_link
 --
 
 CREATE TRIGGER trust_check_tenant_login BEFORE INSERT ON public.trust_logins FOR EACH ROW WHEN ((new.tenant_id IS NOT NULL)) EXECUTE FUNCTION public.trust_check_tenant_login();
+
+
+--
+-- Name: trust_texts trust_check_text; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_text BEFORE INSERT ON public.trust_texts FOR EACH ROW EXECUTE FUNCTION public.trust_check_text();
+
+
+--
+-- Name: trust_text_consents trust_check_text_consent; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_text_consent BEFORE INSERT ON public.trust_text_consents FOR EACH ROW EXECUTE FUNCTION public.trust_check_text_consent();
 
 
 --
@@ -26563,6 +26972,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_tax_credit_units 
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_tenant_links FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_text_settings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_text_settings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -31655,6 +32071,142 @@ ALTER TABLE ONLY public.trust_tenants
 
 
 --
+-- Name: trust_text_consents trust_text_consents_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_consents
+    ADD CONSTRAINT trust_text_consents_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_text_consents trust_text_consents_pmc_id_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_consents
+    ADD CONSTRAINT trust_text_consents_pmc_id_owner_id_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id);
+
+
+--
+-- Name: trust_text_consents trust_text_consents_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_consents
+    ADD CONSTRAINT trust_text_consents_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_text_consents trust_text_consents_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_consents
+    ADD CONSTRAINT trust_text_consents_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
+
+
+--
+-- Name: trust_text_consents trust_text_consents_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_consents
+    ADD CONSTRAINT trust_text_consents_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
+-- Name: trust_text_deliveries trust_text_deliveries_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_deliveries
+    ADD CONSTRAINT trust_text_deliveries_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_text_deliveries trust_text_deliveries_text_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_deliveries
+    ADD CONSTRAINT trust_text_deliveries_text_id_fkey FOREIGN KEY (text_id) REFERENCES public.trust_texts(id);
+
+
+--
+-- Name: trust_text_settings trust_text_settings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_settings
+    ADD CONSTRAINT trust_text_settings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_text_settings trust_text_settings_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_text_settings
+    ADD CONSTRAINT trust_text_settings_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_texts trust_texts_pmc_id_charge_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_texts
+    ADD CONSTRAINT trust_texts_pmc_id_charge_id_fkey FOREIGN KEY (pmc_id, charge_id) REFERENCES public.trust_charges(pmc_id, id);
+
+
+--
+-- Name: trust_texts trust_texts_pmc_id_consent_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_texts
+    ADD CONSTRAINT trust_texts_pmc_id_consent_id_fkey FOREIGN KEY (pmc_id, consent_id) REFERENCES public.trust_text_consents(pmc_id, id);
+
+
+--
+-- Name: trust_texts trust_texts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_texts
+    ADD CONSTRAINT trust_texts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_texts trust_texts_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_texts
+    ADD CONSTRAINT trust_texts_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_texts trust_texts_pmc_id_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_texts
+    ADD CONSTRAINT trust_texts_pmc_id_owner_id_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id);
+
+
+--
+-- Name: trust_texts trust_texts_pmc_id_sent_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_texts
+    ADD CONSTRAINT trust_texts_pmc_id_sent_by_fkey FOREIGN KEY (pmc_id, sent_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_texts trust_texts_pmc_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_texts
+    ADD CONSTRAINT trust_texts_pmc_id_tenant_id_fkey FOREIGN KEY (pmc_id, tenant_id) REFERENCES public.trust_tenants(pmc_id, id);
+
+
+--
+-- Name: trust_texts trust_texts_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_texts
+    ADD CONSTRAINT trust_texts_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
 -- Name: trust_unit_areas trust_unit_areas_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -32158,4 +32710,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000157'),
     ('20261022000158'),
     ('20261022000159'),
-    ('20261022000160');
+    ('20261022000160'),
+    ('20261022000161');

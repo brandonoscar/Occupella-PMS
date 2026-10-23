@@ -46,7 +46,7 @@ from psycopg import sql
 from psycopg_pool import ConnectionPool
 from pydantic import BaseModel, Field
 
-from pms import accounts, email, exports, geocoding, nightly
+from pms import accounts, email, exports, geocoding, nightly, texts
 from pms.api import (
     ach,
     addresses,
@@ -111,10 +111,15 @@ from pms.api import (
     work_orders,
     year_close,
 )
+from pms.api import (
+    texts as texts_api,
+)
 from pms.api.deps import COOKIE, Conn, Current, Staff, download, refusal
 from pms.leasing import screening
 from pms.payments import processor
 
+# Where Twilio posts the replies to texts, as a signed form.
+TWILIO_WEBHOOK = "/api/twilio/webhook"
 HEALTH_TIMEOUT = 2.0  # seconds to wait for a database connection before answering 503
 SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
@@ -138,6 +143,9 @@ class Settings:
     # The geocoder that finds a property on a map (pms.geocoding): "census", "fake", or empty
     # for none.
     geocoder: str = ""
+    # The text sender (pms.texts): "fake", "twilio" (its keys from the environment), or empty
+    # for none.
+    text_sender: str = ""
     # The nightly run (pms.nightly): rent, late fees and recurring bills post by themselves at
     # start and every day at 06:00 UTC. On unless PMS_NIGHTLY is "off".
     nightly: bool = False
@@ -156,6 +164,7 @@ class Settings:
             payment_processor=os.environ.get("PMS_PAYMENT_PROCESSOR", ""),
             email_sender=os.environ.get("PMS_EMAIL_SENDER", ""),
             geocoder=os.environ.get("PMS_GEOCODER", ""),
+            text_sender=os.environ.get("PMS_TEXT_SENDER", ""),
             nightly=os.environ.get("PMS_NIGHTLY", "on").lower() != "off",
         )
 
@@ -275,13 +284,21 @@ def create_app(settings: Settings) -> FastAPI:
                 settings.public_url,
                 app.state.email,
                 payments=app.state.payments,
+                texting=app.state.texts is not None,
             )
             runs.start()
+        # The PMS's own texts wait for the afternoon (texts.WINDOW): this hands them over then.
+        deliverer = None
+        if app.state.texts is not None:
+            deliverer = texts.Deliverer(pool, app.state.texts)
+            deliverer.start()
         try:
             yield
         finally:
             if runs is not None:
                 runs.stop()
+            if deliverer is not None:
+                deliverer.stop()
             pool.close()
 
     app = FastAPI(title="Occupella PMS", lifespan=lifespan, docs_url=None, redoc_url=None)
@@ -293,6 +310,8 @@ def create_app(settings: Settings) -> FastAPI:
     # The SMTP settings come straight from the environment, so a password is never part of
     # Settings (which a log or an error could print).
     app.state.email = email.sender_named(settings.email_sender, os.environ)
+    # The same for the text provider's keys.
+    app.state.texts = texts.sender_named(settings.text_sender, os.environ)
 
     https = urlsplit(settings.public_url).scheme == "https"
 
@@ -308,20 +327,27 @@ def create_app(settings: Settings) -> FastAPI:
             origin = request.headers.get("origin")
             if fetched_from in CROSS_SITE or (origin is not None and origin != settings.origin):
                 return JSONResponse({"detail": "this request came from another site"}, 403)
-            if request.headers.get("content-type", "").split(";")[0].strip() != (
-                "application/json"
+            # Twilio posts a reply as a form, signed (src/pms/api/texts.py); nothing else may.
+            if (
+                request.headers.get("content-type", "").split(";")[0].strip()
+                != ("application/json")
+                and request.url.path != TWILIO_WEBHOOK
             ):
                 return JSONResponse({"detail": "send JSON"}, 415)
         outbox.PUBLIC_URL.set(settings.public_url)
         outbox.SENDING.set(request.app.state.email is not None)
         processor.CURRENT.set(request.app.state.payments)
+        texts.TEXTING.set(request.app.state.texts is not None)
         response = await call_next(request)
-        sender = request.app.state.email
-        if request.method not in SAFE_METHODS and response.status_code < 400 and sender:
+        sender, texter = request.app.state.email, request.app.state.texts
+        if request.method not in SAFE_METHODS and response.status_code < 400 and (sender or texter):
             # After the answer is sent, so after the request's transaction committed: what it
-            # wrote to the outbox exists, and goes out.
+            # wrote to the outboxes exists, and goes out (a text due now; the PMS's own wait).
             delivery = BackgroundTasks()
-            delivery.add_task(outbox.deliver, pool, sender)
+            if sender:
+                delivery.add_task(outbox.deliver, pool, sender)
+            if texter:
+                delivery.add_task(texts.deliver, pool, texter)
             response.background = delivery
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -576,6 +602,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(autopay.router)
     app.include_router(application_fees.router)
     app.include_router(webhooks.router)
+    app.include_router(texts_api.router)
     app.include_router(banking.router)
     app.include_router(bank_deposits.router)
     app.include_router(journal.router)
