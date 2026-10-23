@@ -43,9 +43,14 @@ night; fees still move only when staff ask, unless a company turns on taking its
 management fees by itself, the founder's amendment of 2026-10-18). Since 2026-10-22 (founder,
 split with the other session): a deposit's return deadline and statement (q040, q039), filling a
 company's own lease, deposit interest (q041) and HUD forms (q143); the strictest deposit rules
-found are in `docs/law.md`. Still out of scope: Stripe and online payments, text messages, bank files (ACH, check
-printing), 1099 filing, and state rules beyond the no-negative rule and those `docs/law.md`
-records. If one of these looks needed, stop and ask the founder.
+found are in `docs/law.md`. Since 2026-10-23 (`docs/adr/0009-buildium-parity.md`, the founder's
+rule: what Buildium has, we have): rent, owners' money and application fees paid online through
+a payments provider (each company's own keys, or the hosted version's Stripe Connect), autopay,
+owners and vendors paid by ACH file and printed check, state and city rules from a property's
+address, balance notices, announcements, staff to-dos, texts, listing syndication and homeowner
+associations, built in three lanes with their own migration numbers (the ADR). Still out of
+scope: 1099 filing, a mailing service, selling renters insurance, reporting rent to credit
+bureaus, and the AI moving money. If one of these looks needed, stop and ask the founder.
 
 ## The standing rule: tests come with the code
 
