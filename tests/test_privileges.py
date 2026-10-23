@@ -321,6 +321,8 @@ TABLES = {
     "trust_texts": {"SELECT", "INSERT"},
     "trust_text_deliveries": {"SELECT", "INSERT"},
     "trust_text_deliveries_id_seq": set(),
+    # 1099 forms (migration 0162): the taxpayer IDs from W-9s and the company's own, sealed.
+    "trust_taxpayer_ids": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -369,6 +371,8 @@ AI_NEVER_READS = {
     "trust_text_consents",
     "trust_texts",
     "trust_text_deliveries",
+    # Taxpayer IDs (migration 0162): sealed or not, no business of the AI's.
+    "trust_taxpayer_ids",
     # A notice made for a lease, as filled in (migration 0119): like a document's file.
     "trust_notices",
     "trust_screening_criteria",

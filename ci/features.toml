@@ -1094,3 +1094,16 @@ operations = [
 browser = [
   "features.spec.ts › staff record a tenant's word on texts and text them; the tenant says no in the portal; the company texts rent reminders by itself",
 ]
+
+[[feature]]
+id = "tax-forms"
+statement = "1099 forms (the founder, 2026-10-23; migration 0162): for a year, staff see who gets a 1099-NEC (vendors marked for one and paid the year's threshold) and a 1099-MISC (owners whose rents came to it, unless marked exempt) with box 1 and what each form still needs; they keep the taxpayer ID from each W-9 and the company's EIN, sealed by the app (the last four digits shown); they download each recipient's copy (Copy B, the recipient's number cut to its last four digits) and an admin the filing list with whole numbers, laid out for the IRS's IRIS portal, NOT VERIFIED against its template; the PMS files nothing and the AI reads none of it."
+operations = [
+  "GET /api/tax-forms",
+  "POST /api/tax-forms/taxpayer-id",
+  "GET /api/tax-forms/{year}/copies.pdf",
+  "GET /api/tax-forms/{year}/filing.csv",
+]
+browser = [
+  "features.spec.ts › staff keep the taxpayer IDs and addresses a 1099 needs, then download each recipient's copy and, as an admin, the filing list",
+]

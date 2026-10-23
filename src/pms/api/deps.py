@@ -185,6 +185,7 @@ AREA_PATHS = (
     ("/api/setup/", "setup"),
     ("/api/tax-credit/", "setup"),  # a property's income limits and a unit's designation
     ("/api/quickbooks/", "setup"),
+    ("/api/tax-forms/", "setup"),  # taxpayer IDs from W-9s
     ("/api/company", "setup"),
     ("/api/properties/", "setup"),
     ("/api/property-groups", "setup"),

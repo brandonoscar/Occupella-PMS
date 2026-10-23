@@ -873,8 +873,32 @@ statute's text and the IRS's Publication 1099 figures are NOT VERIFIED here.)
 - It counts what the old system paid a vendor in the cutover's year.
 
 **Left to the company.** Whether a vendor gets a 1099 at all (a corporation usually doesn't; the
-W-9 says), the year's adjusted threshold from 2027, and filing: the PMS files nothing and keeps
-no tax ID.
+W-9 says), the year's adjusted threshold from 2027, and filing: the PMS files nothing. Since
+migration 0162 it keeps the taxpayer IDs the forms need, sealed (below).
+
+### The 1099 forms themselves (migration 0162)
+
+**The rule.** A payer gives each recipient their copy of a 1099 by January 31 and files the
+IRS's copies (on paper by February 28, electronically by March 31; a payer with 10 or more
+information returns in a year files electronically, through the IRS's IRIS portal or FIRE). A
+substitute statement for the recipient follows Publication 1179, and the recipient's copy may show
+only the last four digits of their taxpayer ID. A property manager files a 1099-MISC for the rents
+it collects for an owner as the owner's agent (Treas. Reg. 1.6041-1(e)), and a 1099-NEC for what
+it pays a vendor for services. Dates, the 10-return rule and Publication 1179's layout are from
+the IRS's instructions as we know them: NOT VERIFIED against this year's text.
+
+**What the PMS does.**
+- Box 1 of each form is what the 1099 summary and the owner year-end package count, at the year's
+  threshold; an owner can be marked exempt.
+- Taxpayer IDs are sealed by the app before they reach the database; staff see the last four
+  digits, each recipient's copy shows only those, and only an admin downloads the filing list,
+  which holds them whole.
+- The copy is a plain substitute statement (Copy B) with the IRS's legend; the filing list is a CSV
+  laid out for IRIS (NOT VERIFIED against its current template).
+
+**Left to the company.** Collecting W-9s, checking each name and number (the IRS's TIN matching),
+filing by the deadlines through IRIS or a filing service, state copies where a state asks, backup
+withholding, corrections, and checking the copy against Publication 1179 before mailing it.
 
 ## Rent paid online (migration 0158)
 

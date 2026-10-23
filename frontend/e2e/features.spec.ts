@@ -5027,3 +5027,73 @@ test("staff record a tenant's word on texts and text them; the tenant says no in
   await expect(auto).toContainText("Rent reminders by text5 days before rent is due");
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
 });
+
+test("staff keep the taxpayer IDs and addresses a 1099 needs, then download each recipient's copy and, as an admin, the filing list", async ({
+  page,
+}) => {
+  const people = seed.features["tax-forms"]!;
+  const year = new Date().getUTCFullYear() - 1;
+  await joinAsStaff(page, people.manager);
+
+  // The company's mailing address, in Company setup.
+  await settings(page, "Company setup");
+  await page.getByRole("button", { name: "Edit company" }).click();
+  const company = page.getByRole("dialog", { name: "Edit company" });
+  await company.getByLabel("Street address").fill("100 Example Street");
+  await company.getByLabel("City").fill("Sampletown");
+  await company.getByLabel("State").fill("ZZ");
+  await company.getByLabel("ZIP code").fill("00000");
+  await company.getByRole("button", { name: "Save" }).click();
+  await expect(company).toHaveCount(0);
+
+  // Owner A's, on their page.
+  await section(page, "Owners");
+  await page.getByRole("link", { name: "Demo Owner A", exact: true }).click();
+  const details = page.getByRole("group", { name: "Contact details, Demo Owner A" });
+  await details.getByRole("button", { name: "Edit contact details" }).click();
+  await details.getByLabel("Street address").fill("200 Example Street");
+  await details.getByLabel("City").fill("Sampletown");
+  await details.getByLabel("State").fill("ZZ");
+  await details.getByLabel("ZIP code").fill("00000");
+  await details.getByRole("button", { name: "Save contact details" }).click();
+  await expect(details).toContainText("200 Example Street");
+
+  // Last year's 1099s: the company's EIN, then Owner A's number from their W-9.
+  await section(page, "1099 forms");
+  await expect(page.getByLabel("Tax year")).toHaveValue(String(year));
+  await expect(page.getByTestId("payer-ready")).toHaveText("Needs a taxpayer ID");
+  await page.getByRole("button", { name: "Set the company's EIN" }).click();
+  const ein = page.getByRole("dialog", { name: "The company's EIN" });
+  await ein.getByLabel("Name (W-9 line 1)").fill("Demo Property Management LLC");
+  await ein.getByLabel("Taxpayer ID").fill("00-1234567");
+  await ein.getByRole("button", { name: "Keep it" }).click();
+  await expect(page.getByText("Kept the taxpayer ID of the company.")).toBeVisible();
+  await expect(page.getByTestId("payer-ready")).toHaveText("Ready");
+  const owners = page.getByRole("table", { name: "1099-MISC: owners' rents" });
+  const ownerA = owners.getByRole("row", { name: /Demo Owner A/ });
+  await expect(ownerA).toContainText("Needs a taxpayer ID");
+  await ownerA.getByRole("button", { name: "Taxpayer ID of Demo Owner A" }).click();
+  const tin = page.getByRole("dialog", { name: "Taxpayer ID of Demo Owner A" });
+  await tin.getByLabel("Taxpayer ID").fill("000-12-1234");
+  await expectAccessible(page);
+  await tin.getByRole("button", { name: "Keep it" }).click();
+  await expect(ownerA).toContainText("Demo Owner A, XXX-XX-1234");
+  await expect(ownerA).toContainText("Ready");
+  await expectAccessible(page);
+
+  // Each recipient's copy, and the filing list with whole numbers for the admin.
+  const card = part(page, "1099-MISC: owners' rents");
+  const copies = await page.request.get(
+    (await card.getByRole("link", { name: "Recipient copies (PDF)" }).getAttribute("href")) ?? "",
+  );
+  expect(copies.status()).toBe(200);
+  expect(copies.headers()["content-type"]).toBe("application/pdf");
+  const listed = await page.request.get(
+    (await card.getByRole("link", { name: "Filing list (CSV)" }).getAttribute("href")) ?? "",
+  );
+  expect(listed.status()).toBe(200);
+  const text = await listed.text();
+  expect(text).toContain(`1099-MISC,${year},EIN,00-1234567,Demo Property Management LLC,100 Example Street`);
+  expect(text).toContain("SSN,000-12-1234,Demo Owner A,200 Example Street");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+});

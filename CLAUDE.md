@@ -942,7 +942,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   nothing). A default changes no property already there. The AI role never reads it.
 - Vendor payments: `trust_report_vendor_payments` lists what each vendor was paid through
   `trust_pay_bill` in a calendar year (UTC), for 1099 preparation. It files nothing and holds no
-  tax IDs. Since migration 0113 (q060) it is the 1099 summary: a vendor whose latest profile marks
+  tax IDs (the 1099 forms keep them apart, below). Since migration 0113 (q060) it is the 1099 summary: a vendor whose latest profile marks
   them for a 1099 and was paid the IRS's threshold or more (600.00 through 2025, 2000.00 from
   2026; the inflation adjustment from 2027 is not known to it, and its line says so) is on it and
   in its total, one paid less is under the threshold, one with no profile is listed apart (no
@@ -950,6 +950,20 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   before it (`trust_vendor_payments_carried_over`, migration 0038, once per vendor and year; a
   January 1 cutover carries over the year before) is added to the vendor's year, on a line of
   its own.
+- 1099 forms (migration 0162, the founder 2026-10-23; `src/pms/tax_forms.py`,
+  `src/pms/api/tax_forms.py`, Accounting, 1099 forms at `/tax-forms`): for a year, a 1099-NEC for
+  each vendor the 1099 summary counts at the threshold (marked for one, bills paid and what was
+  carried over) and a 1099-MISC for each owner whose year-end rents reach it, unless their
+  taxpayer ID marks them exempt (a corporation), box 1 each. A form needs the recipient's name and
+  taxpayer ID from their W-9 (`trust_taxpayer_ids`: EIN, SSN or ITIN, sealed by the app under
+  `PMS_FIELD_KEY` with the person or the company as its context, its last four digits shown;
+  append-only and audited, the latest holding; area setup) and their contact mailing address, and
+  the company's own EIN and Company setup address as the payer; one missing any is listed with
+  what it needs and left out. Staff download each recipient's copy (`copies.pdf`: Copy B, a page
+  each, the recipient's number cut to XXX-XX-1234, the payer's whole) and an admin the filing list
+  (`filing.csv`: payer, recipient and box 1 with whole numbers, never a formula, laid out for the
+  IRS's IRIS portal, NOT VERIFIED against its template). The PMS files nothing and moves no money;
+  the AI reads none of it.
 - Lease expirations (migration 0046): `trust_report_lease_expirations` lists the leases whose
   last day is the as-of day or one of the 90 after it, in groups of 0-30, 31-60 and 61-90 days
   left, each with its renewal status as of the end of the day (UTC): none, drafted, sent,

@@ -49,6 +49,7 @@ export const STAFF_NAV: NavEntry[] = [
       { href: "/owner-draws", label: "Pay owners" },
       { href: "/management-fees", label: "Management fees" },
       { href: "/budgets", label: "Budgets" },
+      { href: "/tax-forms", label: "1099 forms" },
     ],
   },
   {

@@ -456,6 +456,10 @@ def main() -> None:
         seeded["features"]["year-close"] = feature_pmc(
             app, tag, "year-close", today=date(datetime.now(UTC).year, 1, 1)
         )
+        # 1099 forms: last year's whole, whatever the day today.
+        seeded["features"]["tax-forms"] = feature_pmc(
+            app, tag, "tax-forms", today=date(datetime.now(UTC).year, 1, 1)
+        )
     print(json.dumps(seeded))
 
 

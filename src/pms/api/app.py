@@ -102,6 +102,7 @@ from pms.api import (
     staff,
     switching,
     tax_credit,
+    tax_forms,
     tenant,
     today,
     utilities,
@@ -603,6 +604,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(application_fees.router)
     app.include_router(webhooks.router)
     app.include_router(texts_api.router)
+    app.include_router(tax_forms.router)
     app.include_router(banking.router)
     app.include_router(bank_deposits.router)
     app.include_router(journal.router)

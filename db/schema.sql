@@ -17038,6 +17038,32 @@ CREATE TABLE public.trust_tax_credit_units (
 
 
 --
+-- Name: trust_taxpayer_ids; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_taxpayer_ids (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    vendor_id uuid,
+    owner_id uuid,
+    tin_type text NOT NULL,
+    tin_sealed bytea NOT NULL,
+    tin_last4 text NOT NULL,
+    legal_name text NOT NULL,
+    exempt boolean DEFAULT false NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_taxpayer_ids_check CHECK ((num_nonnulls(vendor_id, owner_id) <= 1)),
+    CONSTRAINT trust_taxpayer_ids_check1 CHECK (((NOT exempt) OR (owner_id IS NOT NULL))),
+    CONSTRAINT trust_taxpayer_ids_check2 CHECK (((vendor_id IS NOT NULL) OR (owner_id IS NOT NULL) OR (tin_type = 'EIN'::text))),
+    CONSTRAINT trust_taxpayer_ids_legal_name_check CHECK (((legal_name = btrim(legal_name)) AND ((char_length(legal_name) >= 1) AND (char_length(legal_name) <= 80)))),
+    CONSTRAINT trust_taxpayer_ids_tin_last4_check CHECK ((tin_last4 ~ '^[0-9]{4}$'::text)),
+    CONSTRAINT trust_taxpayer_ids_tin_sealed_check CHECK (((octet_length(tin_sealed) >= 30) AND (octet_length(tin_sealed) <= 200))),
+    CONSTRAINT trust_taxpayer_ids_tin_type_check CHECK ((tin_type = ANY (ARRAY['EIN'::text, 'SSN'::text, 'ITIN'::text])))
+);
+
+
+--
 -- Name: trust_tenant_links; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -20197,6 +20223,14 @@ ALTER TABLE ONLY public.trust_tax_credit_units
 
 
 --
+-- Name: trust_taxpayer_ids trust_taxpayer_ids_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_taxpayer_ids
+    ADD CONSTRAINT trust_taxpayer_ids_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_tenant_links trust_tenant_links_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -22551,6 +22585,34 @@ CREATE INDEX trust_tax_credit_units_recorded_by ON public.trust_tax_credit_units
 
 
 --
+-- Name: trust_taxpayer_ids_company; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_taxpayer_ids_company ON public.trust_taxpayer_ids USING btree (pmc_id, created_at) WHERE ((vendor_id IS NULL) AND (owner_id IS NULL));
+
+
+--
+-- Name: trust_taxpayer_ids_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_taxpayer_ids_owner ON public.trust_taxpayer_ids USING btree (pmc_id, owner_id, created_at);
+
+
+--
+-- Name: trust_taxpayer_ids_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_taxpayer_ids_recorded_by ON public.trust_taxpayer_ids USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_taxpayer_ids_vendor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_taxpayer_ids_vendor ON public.trust_taxpayer_ids USING btree (pmc_id, vendor_id, created_at);
+
+
+--
 -- Name: trust_tenant_links_recorded_by; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -24175,6 +24237,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_taxpayer_ids trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_taxpayer_ids FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_tenant_links trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -25659,6 +25728,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_tax_
 
 
 --
+-- Name: trust_taxpayer_ids trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_taxpayer_ids FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_tenant_links trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26965,6 +27041,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_tax_credit_limits
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_tax_credit_units FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_taxpayer_ids trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_taxpayer_ids FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -32023,6 +32106,38 @@ ALTER TABLE ONLY public.trust_tax_credit_units
 
 
 --
+-- Name: trust_taxpayer_ids trust_taxpayer_ids_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_taxpayer_ids
+    ADD CONSTRAINT trust_taxpayer_ids_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_taxpayer_ids trust_taxpayer_ids_pmc_id_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_taxpayer_ids
+    ADD CONSTRAINT trust_taxpayer_ids_pmc_id_owner_id_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id);
+
+
+--
+-- Name: trust_taxpayer_ids trust_taxpayer_ids_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_taxpayer_ids
+    ADD CONSTRAINT trust_taxpayer_ids_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_taxpayer_ids trust_taxpayer_ids_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_taxpayer_ids
+    ADD CONSTRAINT trust_taxpayer_ids_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
 -- Name: trust_tenant_links trust_tenant_links_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -32711,4 +32826,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000158'),
     ('20261022000159'),
     ('20261022000160'),
-    ('20261022000161');
+    ('20261022000161'),
+    ('20261022000162');
