@@ -1006,3 +1006,17 @@ operations = [
 browser = [
   "features.spec.ts › staff keep where a vendor and an owner are paid by bank transfer, see only the last four digits, and only staff who may disburse change it",
 ]
+
+[[feature]]
+id = "bank-files"
+statement = "Staff send the payouts they recorded as sent by EFT (owner draws and bills paid) to the bank in an ACH file (the founder, 2026-10-23; migration 0156): on an operating trust bank account's Bank files tab they keep its ACH settings from its bank, pick the EFT payouts of the last 30 days waiting for a file (each with its payee's bank account on file), make a NACHA file for a weekday after a question naming the total, download it (only staff who may disburse: it carries whole account numbers, opened with the server's key), and void one the bank didn't take, which frees its payouts; nothing moves in the books, and the AI reads none of it."
+operations = [
+  "GET /api/bank-files/{bank_account_id}",
+  "POST /api/bank-files/{bank_account_id}/settings",
+  "POST /api/bank-files/{bank_account_id}",
+  "GET /api/bank-files/files/{file_id}.ach",
+  "POST /api/bank-files/files/{file_id}/void",
+]
+browser = [
+  "features.spec.ts › staff send an owner's EFT draw to the bank in an ACH file, download it, and void it to free the payout",
+]

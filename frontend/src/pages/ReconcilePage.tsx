@@ -19,6 +19,7 @@ import { RowMenu } from "../components/RowMenu";
 import { SidePanel } from "../components/SidePanel";
 import { CompanyFeesForm } from "./CompanyFeesForm";
 import { BreakdownTab, DepositsTab, RegisterTab } from "./BankAccountTabs";
+import { BankFilesTab } from "./BankFilesTab";
 import { Tabs } from "../components/Tabs";
 import type { BankBooks, OpenItem, OpenLine, OpenTransfer, Worksheet } from "../reconcile";
 import {
@@ -186,19 +187,22 @@ const KIND: Record<BankBooks["kind"], string> = {
   security_deposit: "Security deposits",
 };
 
-type AccountTab = "transactions" | "deposits" | "reconciliations" | "breakdown" | "statements";
+type AccountTab = "transactions" | "deposits" | "reconciliations" | "breakdown" | "statements" | "files";
 const ACCOUNT_TABS: { value: AccountTab; label: string }[] = [
   { value: "transactions", label: "Transactions" },
   { value: "deposits", label: "Deposits" },
   { value: "reconciliations", label: "Reconciliations" },
   { value: "breakdown", label: "Balance breakdown" },
   { value: "statements", label: "Statements" },
+  // Owners' draws and bills paid leave an operating account, so only it makes bank files.
+  { value: "files", label: "Bank files" },
 ];
 
 // A trust bank account's own page (ADR 0006): Transactions (its register), Reconciliations (its
 // month-end: match the statements' lines to the transfers in the books, and once the books lack
 // no line one staff member prepares the period and another, who may approve, approves it),
-// Balance breakdown and Statements (imported files and Import statement). A month waiting for
+// Balance breakdown, Statements (imported files and Import statement) and, for an operating
+// account, Bank files (ACH files of its EFT payouts, BankFilesTab.tsx). A month waiting for
 // approval opens on Reconciliations. The PMS compares what the bank says with the books; it moves
 // no money.
 export function ReconcilePage({ me, id }: { me: Me; id: string }) {
@@ -250,7 +254,8 @@ export function ReconcilePage({ me, id }: { me: Me; id: string }) {
           </p>
           <Notice tone="error">{error}</Notice>
           <div>
-            <Tabs label="Trust bank account" tabs={ACCOUNT_TABS} value={shown} onChange={setTab} />
+            <Tabs label="Trust bank account" value={shown} onChange={setTab}
+              tabs={bank.kind === "operating" ? ACCOUNT_TABS : ACCOUNT_TABS.filter((t) => t.value !== "files")} />
             {shown === "transactions" && <RegisterTab bankId={bank.id} />}
             {shown === "deposits" && <DepositsTab bankId={bank.id} />}
             {shown === "reconciliations" && (
@@ -264,6 +269,7 @@ export function ReconcilePage({ me, id }: { me: Me; id: string }) {
             )}
             {shown === "breakdown" && <BreakdownTab bankId={bank.id} />}
             {shown === "statements" && <StatementsCard bank={bank} refresh={refresh} />}
+            {shown === "files" && <BankFilesTab bankId={bank.id} />}
           </div>
         </>
       )}

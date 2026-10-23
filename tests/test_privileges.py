@@ -284,6 +284,13 @@ TABLES = {
     # Where a vendor or an owner is paid by bank transfer (migration 0155): the account number
     # sealed by the app, which the AI never reads.
     "trust_payee_bank_accounts": {"SELECT", "INSERT"},
+    # Bank files (migration 0156): a trust bank account's ACH settings, the files of EFT payouts
+    # made for its bank, what each carries and those set aside.
+    "trust_ach_settings": {"SELECT", "INSERT"},
+    "trust_ach_files": {"SELECT", "INSERT"},
+    "trust_ach_file_items": {"SELECT", "INSERT"},
+    "trust_ach_file_items_id_seq": set(),
+    "trust_ach_file_voids": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -307,6 +314,11 @@ COLUMN_UPDATES = {
 AI_NEVER_READS = {
     # A payee's bank account (migration 0155): where money goes is no business of the AI's.
     "trust_payee_bank_accounts",
+    # Bank files (migration 0156): what is paid into whose account, beside where money goes.
+    "trust_ach_settings",
+    "trust_ach_files",
+    "trust_ach_file_items",
+    "trust_ach_file_voids",
     # A notice made for a lease, as filled in (migration 0119): like a document's file.
     "trust_notices",
     "trust_screening_criteria",
@@ -658,6 +670,12 @@ FUNCTIONS = {
     "trust_open_lease_offer_charges()": {"PUBLIC"},
     # Whether nine digits make a routing number (migration 0155), for the app's check.
     "trust_aba_routing_ok(text)": {"trust_app"},
+    # A payout's method, account, payee and amount (migration 0156), for bank files and checks.
+    "trust_payout(uuid,text)": {"trust_app"},
+    "trust_check_ach_file()": set(),  # triggers' (migration 0156): no one calls them
+    "trust_check_ach_file_item()": set(),
+    "trust_check_ach_file_whole()": set(),
+    "trust_check_ach_file_void()": set(),
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.

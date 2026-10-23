@@ -48,6 +48,7 @@ from pydantic import BaseModel, Field
 
 from pms import accounts, email, exports, geocoding, nightly
 from pms.api import (
+    ach,
     addresses,
     assistance,
     bank_deposits,
@@ -553,6 +554,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(reconcile.router)
     app.include_router(year_close.router)
     app.include_router(bank_details.router)
+    app.include_router(ach.router)
     app.include_router(banking.router)
     app.include_router(bank_deposits.router)
     app.include_router(journal.router)

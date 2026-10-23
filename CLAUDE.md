@@ -215,7 +215,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   their renewal status at `/renewals` (`src/pms/api/renewals.py`, the expirations report's rows). Accounting:
   the trust bank accounts at `/banking` (Add bank account), each at `/bank-accounts/<id>` in tabs:
   its register and balance breakdown (`src/pms/api/banking.py`), its deposits, its month-end
-  (`src/pms/api/reconcile.py`) and its statements, bills at `/bills` (Unpaid, Paid,
+  (`src/pms/api/reconcile.py`), its statements and, for an operating account, its bank files
+  (`src/pms/api/ach.py`), bills at `/bills` (Unpaid, Paid,
   Recurring and Declined tabs, a page at a time by group, vendor and due day; Record bill, maybe
   split across expense accounts or shared across properties, with the owner's markup and its
   invoice, opens a side panel), a bill at
@@ -1074,6 +1075,25 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   `src/pms/api/bank_details.py`, area setup), and a named staff member changes one only with
   disburse (a trigger), as it decides where money goes. It moves no money. The AI role reads none
   of it (`AI_NEVER_READS`).
+- Bank files (migration 0156, the founder 2026-10-23): the payouts staff recorded as sent by EFT
+  (owner draws and bills paid, `trust_payout_methods`) go to the bank in an ACH file
+  (`src/pms/ach.py`: NACHA's 94-character records, owners' draws as PPD and vendors' bills as CCD,
+  credits only, padded to blocks of ten, lines ending CR LF). A trust bank account's ACH settings
+  from its bank (`trust_ach_settings`: its routing number and name, the immediate origin, the
+  company's name and identification; the latest holding) make each file
+  (`trust_ach_files`: for a weekday not before the day it is made, UTC, the day's modifiers A to Z
+  then 0 to 9, its count and total) of its EFT payouts (`trust_ach_file_items`: each into its
+  payee's latest bank account, for the whole amount, `trust_payout`), which come to its count
+  and total at commit; a payout is in one file not voided, and a void (`trust_ach_file_voids`,
+  with why) frees them. All append-only, audited, naming who, and a named staff member needs
+  disburse. The file is written again from those rows each time it is downloaded, opening the
+  sealed numbers with the server's key, and only staff who hold disburse download it. Staff work
+  it on the operating account's Bank files tab (`pages/BankFilesTab.tsx`, `src/pms/api/ach.py`,
+  area owners): the EFT payouts recorded in the last 30 days waiting for a file, Make bank file
+  after a question naming the total, Download, and Void in a file's ⋯ menu. It moves nothing in
+  the books: each payout has moved already. The AI role reads none of it. Not built: an offsetting
+  debit (a balanced file), prenotes, returns and notifications of change, and holidays (a file's
+  day is checked to be a weekday only).
 - Vendor insurance and inspections (migration 0058): a vendor's policies
   (`trust_vendor_insurance`: coverage, carrier, number, the days it runs, a limit; a renewal is
   a new policy), and a lease's move-in and move-out inspections (`trust_inspections`, their

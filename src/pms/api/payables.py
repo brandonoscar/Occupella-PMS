@@ -988,7 +988,8 @@ def set_aside(session: Staff, conn: Conn, bill_id: UUID, step: Day) -> Moved:
 
 class Paying(BaseModel):
     on: date
-    # How it was sent; recorded, nothing sent (the PMS writes no bank file).
+    # How it was sent; recorded, nothing sent (an EFT goes to the bank in a bank file staff make
+    # on the trust bank account's Bank files tab, src/pms/api/ach.py).
     method: PayoutMethod = "check"
 
 
@@ -1022,7 +1023,7 @@ def pay(session: Staff, conn: Conn, bill_id: UUID, step: Paying) -> Moved:
 
 class PayBills(BaseModel):
     on: date
-    # How they were sent; recorded, nothing sent (the PMS writes no bank file).
+    # How they were sent; recorded, nothing sent (an EFT goes in a bank file, src/pms/api/ach.py).
     method: PayoutMethod
     bill_ids: Annotated[list[UUID], Field(min_length=1, max_length=200)]
 
@@ -1615,7 +1616,7 @@ class PayOwners(BaseModel):
     # Made by the page once per payout run, so sending it again pays nothing twice.
     request_id: UUID
     on: date
-    # How the payouts were sent; recorded, nothing sent (the PMS writes no bank file).
+    # How the payouts were sent; recorded, nothing sent (an EFT goes in a bank file, ach.py).
     method: PayoutMethod
     payouts: Annotated[list[Payout], Field(min_length=1, max_length=500)]
 

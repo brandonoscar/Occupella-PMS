@@ -28,8 +28,8 @@ const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 // Accounting → Pay owners (ADR 0006, Buildium's owner draw): every owner's property account,
 // maybe of one group or property, with what it holds, keeps back and may pay out today. Staff
 // choose the owners, change an amount, say how and when it was sent, and pay them all at once:
-// every draw or none, each at most what is available. The PMS records the payouts; it sends no
-// money and writes no bank file.
+// every draw or none, each at most what is available. The PMS records the payouts and sends no
+// money; those sent by EFT go to the bank in a bank file made on the account's Bank files tab.
 export function PayOwnersPage({ me }: { me: Me }) {
   const [scope, setScope] = useScope();
   const [owners, setOwners] = useState<OwnerMoney[] | null>(null);

@@ -1699,6 +1699,164 @@ $$;
 
 
 --
+-- Name: trust_check_ach_file(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_ach_file() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_latest uuid;
+    v_made integer;
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('ach files of ' || NEW.bank_account_id, 0));
+    NEW.created_at := clock_timestamp();
+    NEW.created_on := (NEW.created_at AT TIME ZONE 'UTC')::date;
+    SELECT s.id INTO v_latest
+    FROM trust_ach_settings AS s
+    WHERE s.pmc_id = NEW.pmc_id AND s.bank_account_id = NEW.bank_account_id
+    ORDER BY s.created_at DESC, s.id DESC
+    LIMIT 1;
+    IF v_latest IS DISTINCT FROM NEW.settings_id THEN
+        RAISE EXCEPTION 'trust: a bank file is made under its account''s latest ACH settings'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.effective_on < NEW.created_on THEN
+        RAISE EXCEPTION 'trust: a bank file''s effective day is not before the day it is made'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF extract(isodow FROM NEW.effective_on) > 5 THEN
+        RAISE EXCEPTION 'trust: a bank file''s effective day is a weekday, when banks settle'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT count(*) INTO v_made
+    FROM trust_ach_files AS f
+    WHERE f.pmc_id = NEW.pmc_id AND f.bank_account_id = NEW.bank_account_id
+      AND f.created_on = NEW.created_on;
+    IF v_made >= 36 THEN
+        RAISE EXCEPTION 'trust: a bank account makes at most 36 bank files a day'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    NEW.modifier := substr('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', v_made + 1, 1);
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_ach_file_item(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_ach_file_item() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_file trust_ach_files;
+    v_payout record;
+    v_latest uuid;
+BEGIN
+    SELECT * INTO v_file FROM trust_ach_files AS f
+    WHERE f.pmc_id = NEW.pmc_id AND f.id = NEW.file_id;
+    SELECT * INTO v_payout FROM trust_payout(NEW.pmc_id, NEW.transfer_id);
+    IF NOT FOUND OR v_payout.method <> 'EFT' THEN
+        RAISE EXCEPTION 'trust: a bank file carries payouts recorded as sent by EFT'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF v_payout.bank_account_id <> v_file.bank_account_id THEN
+        RAISE EXCEPTION 'trust: a bank file carries payouts from its own trust bank account'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.amount <> v_payout.amount THEN
+        RAISE EXCEPTION 'trust: a bank file pays a payout''s whole amount, %', v_payout.amount
+            USING ERRCODE = 'check_violation';
+    END IF;
+    SELECT b.id INTO v_latest
+    FROM trust_payee_bank_accounts AS b
+    WHERE b.pmc_id = NEW.pmc_id
+      AND (b.vendor_id = v_payout.vendor_id OR b.owner_id = v_payout.owner_id)
+      AND NOT b.removed
+      AND NOT EXISTS (
+          SELECT 1 FROM trust_payee_bank_accounts AS later
+          WHERE later.pmc_id = b.pmc_id
+            AND (later.vendor_id = v_payout.vendor_id OR later.owner_id = v_payout.owner_id)
+            AND (later.created_at, later.id) > (b.created_at, b.id)
+      );
+    IF v_latest IS DISTINCT FROM NEW.payee_bank_account_id THEN
+        RAISE EXCEPTION 'trust: a bank file pays into the payee''s bank account on file'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    PERFORM pg_advisory_xact_lock(hashtextextended('ach payout ' || NEW.transfer_id, 0));
+    IF EXISTS (
+        SELECT 1 FROM trust_ach_file_items AS i
+        WHERE i.transfer_id = NEW.transfer_id AND i.file_id <> NEW.file_id
+          AND NOT EXISTS (SELECT 1 FROM trust_ach_file_voids AS v WHERE v.file_id = i.file_id)
+    ) THEN
+        RAISE EXCEPTION 'trust: payout % is in a bank file already', NEW.transfer_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_ach_file_void(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_ach_file_void() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_account uuid;
+BEGIN
+    SELECT f.bank_account_id INTO v_account FROM trust_ach_files AS f
+    WHERE f.pmc_id = NEW.pmc_id AND f.id = NEW.file_id;
+    PERFORM pg_advisory_xact_lock(hashtextextended('ach files of ' || v_account, 0));
+    NEW.created_at := clock_timestamp();
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: trust_check_ach_file_whole(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_ach_file_whole() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_file_id uuid;
+    v_file trust_ach_files;
+    v_count integer;
+    v_sum numeric;
+    v_last integer;
+BEGIN
+    IF TG_TABLE_NAME = 'trust_ach_files' THEN
+        v_file_id := NEW.id;
+    ELSE
+        v_file_id := NEW.file_id;
+    END IF;
+    SELECT * INTO v_file FROM trust_ach_files AS f
+    WHERE f.pmc_id = NEW.pmc_id AND f.id = v_file_id;
+    SELECT count(*), coalesce(sum(i.amount), 0), coalesce(max(i.sequence), 0)
+    INTO v_count, v_sum, v_last
+    FROM trust_ach_file_items AS i WHERE i.file_id = v_file.id;
+    IF v_count <> v_file.entries OR v_sum <> v_file.total OR v_last <> v_count THEN
+        RAISE EXCEPTION 'trust: bank file % carries % payouts of %, numbered to %; it says % of %',
+            v_file.id, v_count, v_sum, v_last, v_file.entries, v_file.total
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: trust_check_adverse_action(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6116,6 +6274,34 @@ CREATE FUNCTION public.trust_pay_rank(p_charge public.trust_charges) RETURNS int
         ) THEN 1
         ELSE 2
     END
+$$;
+
+
+--
+-- Name: trust_payout(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_payout(p_pmc_id uuid, p_transfer_id text) RETURNS TABLE(method text, bank_account_id uuid, vendor_id uuid, owner_id uuid, amount numeric, paid_at timestamp with time zone)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT m.method, a.bank_account_id, NULL::uuid, a.owner_id, t.amount, t.event_at
+    FROM trust_payout_methods AS m
+    JOIN trust_owner_draws AS d ON d.pmc_id = m.pmc_id AND d.transfer_id = m.transfer_id
+    JOIN trust_ledger_accounts AS a
+        ON a.pmc_id = d.pmc_id AND a.ledger_account_id = d.ledger_account_id
+    JOIN pgledger_transfers AS t ON t.id = m.transfer_id
+    WHERE m.pmc_id = p_pmc_id AND m.transfer_id = p_transfer_id
+    UNION ALL
+    SELECT m.method, a.bank_account_id, b.vendor_id, NULL::uuid, t.amount, t.event_at
+    FROM trust_payout_methods AS m
+    JOIN trust_bill_payments AS p
+        ON p.pmc_id = m.pmc_id AND p.transfer_id = m.transfer_id AND p.step = 'paid'
+    JOIN trust_bills AS b ON b.pmc_id = p.pmc_id AND b.id = p.bill_id
+    JOIN trust_ledger_accounts AS a
+        ON a.pmc_id = b.pmc_id AND a.ledger_account_id = b.ledger_account_id
+    JOIN pgledger_transfers AS t ON t.id = m.transfer_id
+    WHERE m.pmc_id = p_pmc_id AND m.transfer_id = p_transfer_id
 $$;
 
 
@@ -13292,6 +13478,97 @@ CREATE TABLE public.schema_migrations (
 
 
 --
+-- Name: trust_ach_file_items; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_ach_file_items (
+    id bigint NOT NULL,
+    pmc_id uuid NOT NULL,
+    file_id uuid NOT NULL,
+    sequence integer NOT NULL,
+    transfer_id text NOT NULL,
+    payee_bank_account_id uuid NOT NULL,
+    amount numeric NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_ach_file_items_amount_check CHECK ((amount > (0)::numeric)),
+    CONSTRAINT trust_ach_file_items_sequence_check CHECK (((sequence >= 1) AND (sequence <= 9999)))
+);
+
+
+--
+-- Name: trust_ach_file_items_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_ach_file_items ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.trust_ach_file_items_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: trust_ach_file_voids; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_ach_file_voids (
+    pmc_id uuid NOT NULL,
+    file_id uuid NOT NULL,
+    reason text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_ach_file_voids_reason_check CHECK (((reason = btrim(reason)) AND ((char_length(reason) >= 1) AND (char_length(reason) <= 500))))
+);
+
+
+--
+-- Name: trust_ach_files; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_ach_files (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    bank_account_id uuid NOT NULL,
+    settings_id uuid NOT NULL,
+    effective_on date NOT NULL,
+    entries integer NOT NULL,
+    total numeric NOT NULL,
+    created_on date NOT NULL,
+    modifier text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_ach_files_entries_check CHECK (((entries >= 1) AND (entries <= 9999))),
+    CONSTRAINT trust_ach_files_modifier_check CHECK ((modifier ~ '^[A-Z0-9]$'::text)),
+    CONSTRAINT trust_ach_files_total_check CHECK (((total > (0)::numeric) AND (total = round(total, 2))))
+);
+
+
+--
+-- Name: trust_ach_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_ach_settings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    bank_account_id uuid NOT NULL,
+    bank_routing text NOT NULL,
+    bank_name text NOT NULL,
+    origin text NOT NULL,
+    company_name text NOT NULL,
+    company_id text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_ach_settings_bank_name_check CHECK ((bank_name ~ '^[A-Za-z0-9][A-Za-z0-9 .,&''/()#-]{0,22}$'::text)),
+    CONSTRAINT trust_ach_settings_bank_routing_check CHECK (public.trust_aba_routing_ok(bank_routing)),
+    CONSTRAINT trust_ach_settings_company_id_check CHECK ((company_id ~ '^[A-Za-z0-9]{1,10}$'::text)),
+    CONSTRAINT trust_ach_settings_company_name_check CHECK ((company_name ~ '^[A-Za-z0-9][A-Za-z0-9 .,&''/()#-]{0,15}$'::text)),
+    CONSTRAINT trust_ach_settings_origin_check CHECK ((origin ~ '^[A-Za-z0-9]{9,10}$'::text))
+);
+
+
+--
 -- Name: trust_adverse_actions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -16483,6 +16760,78 @@ ALTER TABLE ONLY public.trust_account_signers
 
 
 --
+-- Name: trust_ach_file_items trust_ach_file_items_file_id_sequence_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_file_items
+    ADD CONSTRAINT trust_ach_file_items_file_id_sequence_key UNIQUE (file_id, sequence);
+
+
+--
+-- Name: trust_ach_file_items trust_ach_file_items_file_id_transfer_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_file_items
+    ADD CONSTRAINT trust_ach_file_items_file_id_transfer_id_key UNIQUE (file_id, transfer_id);
+
+
+--
+-- Name: trust_ach_file_items trust_ach_file_items_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_file_items
+    ADD CONSTRAINT trust_ach_file_items_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_ach_file_voids trust_ach_file_voids_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_file_voids
+    ADD CONSTRAINT trust_ach_file_voids_pkey PRIMARY KEY (file_id);
+
+
+--
+-- Name: trust_ach_files trust_ach_files_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_files
+    ADD CONSTRAINT trust_ach_files_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_ach_files trust_ach_files_pmc_id_bank_account_id_created_on_modifier_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_files
+    ADD CONSTRAINT trust_ach_files_pmc_id_bank_account_id_created_on_modifier_key UNIQUE (pmc_id, bank_account_id, created_on, modifier);
+
+
+--
+-- Name: trust_ach_files trust_ach_files_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_files
+    ADD CONSTRAINT trust_ach_files_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_ach_settings trust_ach_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_settings
+    ADD CONSTRAINT trust_ach_settings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_ach_settings trust_ach_settings_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_settings
+    ADD CONSTRAINT trust_ach_settings_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_adverse_actions trust_adverse_actions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -19266,6 +19615,55 @@ CREATE INDEX trust_account_signers_staff ON public.trust_account_signers USING b
 
 
 --
+-- Name: trust_ach_file_items_payee; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_ach_file_items_payee ON public.trust_ach_file_items USING btree (payee_bank_account_id);
+
+
+--
+-- Name: trust_ach_file_items_transfer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_ach_file_items_transfer ON public.trust_ach_file_items USING btree (transfer_id);
+
+
+--
+-- Name: trust_ach_file_voids_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_ach_file_voids_recorded_by ON public.trust_ach_file_voids USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_ach_files_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_ach_files_recorded_by ON public.trust_ach_files USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_ach_files_settings; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_ach_files_settings ON public.trust_ach_files USING btree (pmc_id, settings_id);
+
+
+--
+-- Name: trust_ach_settings_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_ach_settings_account ON public.trust_ach_settings USING btree (pmc_id, bank_account_id, created_at);
+
+
+--
+-- Name: trust_ach_settings_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_ach_settings_recorded_by ON public.trust_ach_settings USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_application_links_unit_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21219,6 +21617,20 @@ CREATE TRIGGER trust_account_in_its_bank BEFORE INSERT ON public.trust_ledger_ac
 
 
 --
+-- Name: trust_ach_file_items trust_ach_file_whole; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_ach_file_whole AFTER INSERT ON public.trust_ach_file_items DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_ach_file_whole();
+
+
+--
+-- Name: trust_ach_files trust_ach_file_whole; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE CONSTRAINT TRIGGER trust_ach_file_whole AFTER INSERT ON public.trust_ach_files DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION public.trust_check_ach_file_whole();
+
+
+--
 -- Name: trust_custom_role_areas trust_admin; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -21293,6 +21705,34 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.p
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_account_signers FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_ach_file_items trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_ach_file_items FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_ach_file_voids trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_ach_file_voids FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_ach_files trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_ach_files FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_ach_settings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_ach_settings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -22595,6 +23035,34 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.pgledger_t
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_account_signers FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_ach_file_items trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_ach_file_items FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_ach_file_voids trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_ach_file_voids FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_ach_files trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_ach_files FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_ach_settings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_ach_settings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -23977,6 +24445,27 @@ CREATE TRIGGER trust_charge_waiver_fits BEFORE INSERT ON public.trust_charge_wai
 
 
 --
+-- Name: trust_ach_files trust_check_ach_file; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_ach_file BEFORE INSERT ON public.trust_ach_files FOR EACH ROW EXECUTE FUNCTION public.trust_check_ach_file();
+
+
+--
+-- Name: trust_ach_file_items trust_check_ach_file_item; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_ach_file_item BEFORE INSERT ON public.trust_ach_file_items FOR EACH ROW EXECUTE FUNCTION public.trust_check_ach_file_item();
+
+
+--
+-- Name: trust_ach_file_voids trust_check_ach_file_void; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_ach_file_void BEFORE INSERT ON public.trust_ach_file_voids FOR EACH ROW EXECUTE FUNCTION public.trust_check_ach_file_void();
+
+
+--
 -- Name: trust_assistance_inspections trust_check_assistance_record; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24100,6 +24589,27 @@ CREATE TRIGGER trust_decision_override BEFORE INSERT ON public.trust_application
 --
 
 CREATE TRIGGER trust_deduction_receipt BEFORE INSERT ON public.trust_deduction_receipts FOR EACH ROW EXECUTE FUNCTION public.trust_check_deduction_receipt();
+
+
+--
+-- Name: trust_ach_file_voids trust_disburse; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_ach_file_voids FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('disburse', 'void a bank file');
+
+
+--
+-- Name: trust_ach_files trust_disburse; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_ach_files FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('disburse', 'make a bank file');
+
+
+--
+-- Name: trust_ach_settings trust_disburse; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_ach_settings FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('disburse', 'change a bank account''s ACH settings');
 
 
 --
@@ -24359,6 +24869,27 @@ CREATE CONSTRAINT TRIGGER trust_payment_file_posting AFTER INSERT ON public.trus
 --
 
 CREATE TRIGGER trust_payout_method BEFORE INSERT ON public.trust_payout_methods FOR EACH ROW EXECUTE FUNCTION public.trust_check_payout_method();
+
+
+--
+-- Name: trust_ach_file_voids trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_ach_file_voids FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_ach_files trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_ach_files FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_ach_settings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_ach_settings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -25179,6 +25710,118 @@ ALTER TABLE ONLY public.trust_account_signers
 
 ALTER TABLE ONLY public.trust_account_signers
     ADD CONSTRAINT trust_account_signers_pmc_id_staff_id_fkey FOREIGN KEY (pmc_id, staff_id) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_ach_file_items trust_ach_file_items_payee_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_file_items
+    ADD CONSTRAINT trust_ach_file_items_payee_bank_account_id_fkey FOREIGN KEY (payee_bank_account_id) REFERENCES public.trust_payee_bank_accounts(id);
+
+
+--
+-- Name: trust_ach_file_items trust_ach_file_items_pmc_id_file_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_file_items
+    ADD CONSTRAINT trust_ach_file_items_pmc_id_file_id_fkey FOREIGN KEY (pmc_id, file_id) REFERENCES public.trust_ach_files(pmc_id, id);
+
+
+--
+-- Name: trust_ach_file_items trust_ach_file_items_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_file_items
+    ADD CONSTRAINT trust_ach_file_items_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_ach_file_items trust_ach_file_items_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_file_items
+    ADD CONSTRAINT trust_ach_file_items_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.trust_payout_methods(transfer_id);
+
+
+--
+-- Name: trust_ach_file_voids trust_ach_file_voids_pmc_id_file_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_file_voids
+    ADD CONSTRAINT trust_ach_file_voids_pmc_id_file_id_fkey FOREIGN KEY (pmc_id, file_id) REFERENCES public.trust_ach_files(pmc_id, id);
+
+
+--
+-- Name: trust_ach_file_voids trust_ach_file_voids_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_file_voids
+    ADD CONSTRAINT trust_ach_file_voids_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_ach_file_voids trust_ach_file_voids_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_file_voids
+    ADD CONSTRAINT trust_ach_file_voids_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_ach_files trust_ach_files_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_files
+    ADD CONSTRAINT trust_ach_files_pmc_id_bank_account_id_fkey FOREIGN KEY (pmc_id, bank_account_id) REFERENCES public.trust_bank_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_ach_files trust_ach_files_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_files
+    ADD CONSTRAINT trust_ach_files_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_ach_files trust_ach_files_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_files
+    ADD CONSTRAINT trust_ach_files_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_ach_files trust_ach_files_pmc_id_settings_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_files
+    ADD CONSTRAINT trust_ach_files_pmc_id_settings_id_fkey FOREIGN KEY (pmc_id, settings_id) REFERENCES public.trust_ach_settings(pmc_id, id);
+
+
+--
+-- Name: trust_ach_settings trust_ach_settings_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_settings
+    ADD CONSTRAINT trust_ach_settings_pmc_id_bank_account_id_fkey FOREIGN KEY (pmc_id, bank_account_id) REFERENCES public.trust_bank_accounts(pmc_id, id);
+
+
+--
+-- Name: trust_ach_settings trust_ach_settings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_settings
+    ADD CONSTRAINT trust_ach_settings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_ach_settings trust_ach_settings_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_ach_settings
+    ADD CONSTRAINT trust_ach_settings_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -30032,4 +30675,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000121'),
     ('20261022000122'),
     ('20261022000123'),
-    ('20261022000155');
+    ('20261022000155'),
+    ('20261022000156');

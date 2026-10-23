@@ -4649,3 +4649,84 @@ test("staff keep where a vendor and an owner are paid by bank transfer, see only
   await bookkeeper.close();
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
 });
+
+test("staff send an owner's EFT draw to the bank in an ACH file, download it, and void it to free the payout", async ({
+  page,
+}) => {
+  const people = seed.features["bank-files"]!;
+  await joinAsStaff(page, people.manager);
+  // Where the owner is paid, then a draw recorded as sent by EFT.
+  await openOwner(page, "Demo Owner A");
+  const card = page.getByRole("group", { name: "Bank account, Demo Owner A" });
+  await card.getByRole("button", { name: "Add bank account" }).click();
+  const adding = page.getByRole("dialog", { name: "Add bank account" });
+  await adding.getByLabel("Routing number").fill("002000008");
+  await adding.getByLabel("Account number", { exact: true }).fill("0000777701");
+  await adding.getByLabel("Account number again").fill("0000777701");
+  await adding.getByRole("button", { name: "Add bank account" }).click();
+  await expect(card.getByTestId("bank-account")).toContainText("Checking ••••7701");
+  await recordContribution(page, "Demo Owner A", "Elm Court", "400.00");
+  await section(page, "Pay owners");
+  const elm = page.getByRole("row", { name: "Demo Owner A, Elm Court", exact: true });
+  await elm.getByLabel("Pay Demo Owner A, Elm Court").check();
+  await elm.getByLabel("Amount to pay Demo Owner A, Elm Court").fill("125.50");
+  await page.getByLabel("Sent by").selectOption("EFT");
+  await page.getByRole("button", { name: "Pay $125.50" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByRole("main")).toContainText("1 payout of $125.50 recorded, by EFT.");
+
+  // The operating account's Bank files: its bank's ACH details first.
+  await section(page, "Banking");
+  await page.getByRole("row", { name: "Demo operating trust account", exact: true }).getByRole("link").click();
+  await page.getByRole("tab", { name: "Bank files", exact: true }).click();
+  await page.getByRole("button", { name: "Add ACH settings" }).click();
+  const settings = page.getByRole("dialog", { name: "ACH settings" });
+  await settings.getByLabel("Bank's routing number").fill("001000009");
+  await settings.getByLabel("Bank's name").fill("Demo Trust Bank");
+  await settings.getByLabel("Immediate origin").fill("1000000001");
+  await settings.getByLabel("Company name").fill("Demo Property Co");
+  await settings.getByLabel("Company ID").fill("1000000001");
+  await settings.getByRole("button", { name: "Save ACH settings" }).click();
+  await expect(page.getByTestId("ach-settings")).toHaveText(
+    "Demo Trust Bank, routing 001000009; Demo Property Co, company ID 1000000001, origin 1000000001",
+  );
+
+  // The draw waits for a file; made after a question naming the total.
+  const waiting = page.getByRole("list", { name: "EFT payouts waiting" });
+  const draw = waiting.getByRole("listitem").filter({ hasText: "Owner draw, Elm Court, Demo Owner A: $125.50" });
+  await expect(draw).toContainText("Checking ••••7701");
+  await draw.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Make bank file of $125.50" }).click();
+  const asked = page.getByRole("alertdialog");
+  await expect(asked).toContainText("Make a bank file paying $125.50 to 1 payee");
+  await asked.getByRole("button", { name: "Make bank file" }).click();
+  await expect(page.getByText("Bank file A made: 1 payout, $125.50.")).toBeVisible();
+  await expect(page.getByText("No EFT payout of the last 30 days waits for a bank file.")).toBeVisible();
+
+  // Downloaded, it is the file the bank takes: 94-character records, the owner's account in full.
+  const files = page.getByRole("table", { name: "Bank files" });
+  const href = await files.getByRole("link", { name: "Download" }).getAttribute("href");
+  const got = await page.request.get(href ?? "");
+  expect(got.status()).toBe(200);
+  const lines = (await got.text()).split("\r\n").slice(0, -1);
+  expect(lines).toHaveLength(10);
+  expect(lines.every((line) => line.length === 94)).toBe(true);
+  const entry = lines.find((line) => line.startsWith("6"))!;
+  expect([entry.slice(3, 12), entry.slice(12, 29).trim(), entry.slice(29, 39)]).toEqual([
+    "002000008", "0000777701", "0000012550",
+  ]);
+  await expect(page.getByRole("main")).not.toContainText("0000777701");
+
+  // The bank didn't take it: voided with why, the draw waits for another file.
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await files.getByRole("button", { name: "Actions for file A" }).click();
+  await page.getByRole("menuitem", { name: "Void" }).click();
+  const voiding = page.getByRole("dialog", { name: "Void bank file A" });
+  await voiding.getByLabel("Why").fill("The bank refused the file");
+  await voiding.getByRole("button", { name: "Void bank file" }).click();
+  await expect(page.getByText("Bank file A is void; its payouts wait for another.")).toBeVisible();
+  await expect(files).toContainText("Void: The bank refused the file");
+  await expect(draw).toBeVisible();
+  await expectAccessible(page);
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+});
