@@ -2865,6 +2865,31 @@ $$;
 
 
 --
+-- Name: trust_check_jurisdiction_rule(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_jurisdiction_rule() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NEW.supersedes IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM trust_jurisdiction_rules AS r
+        WHERE r.id = NEW.supersedes AND r.pmc_id = NEW.pmc_id AND r.level = NEW.level
+          AND r.jurisdiction = NEW.jurisdiction AND r.rule = NEW.rule
+    ) THEN
+        RAISE EXCEPTION 'trust: a correction is of a rule of the same jurisdiction and kind'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    NEW.created_at := clock_timestamp();
+    NEW.recorded_by := CASE WHEN NEW.source = 'staff'
+        THEN nullif(current_setting('trust.staff_id', true), '')::uuid END;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_lead_open(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4895,6 +4920,191 @@ $$;
 
 
 --
+-- Name: trust_jurisdiction_candidates(uuid, text, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_jurisdiction_candidates(p_property_id uuid, p_rule text, p_day date) RETURNS TABLE(rank bigint, rule_id uuid, matches boolean, needs text[])
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    WITH place AS (
+        SELECT j.pmc_id, j.state_fips,
+               j.state_fips || j.county_fips AS county,
+               j.state_fips || j.place_fips AS city
+        FROM trust_property_jurisdiction(p_property_id) AS j
+    ),
+    facts AS (
+        SELECT f.* FROM trust_property_facts AS f
+        WHERE f.property_id = p_property_id
+        ORDER BY f.created_at DESC, f.id DESC
+        LIMIT 1
+    )
+    SELECT row_number() OVER (
+               ORDER BY CASE r.level WHEN 'city' THEN 0 WHEN 'county' THEN 1
+                                     WHEN 'state' THEN 2 ELSE 3 END,
+                        r.precedence DESC, r.created_at DESC, r.id DESC
+           ),
+           r.id,
+           (r.built_before IS NULL OR f.year_built < r.built_before)
+           AND (r.built_on_or_after IS NULL OR f.year_built >= r.built_on_or_after)
+           AND (r.units_at_least IS NULL OR f.units_in_building >= r.units_at_least)
+           AND (r.units_at_most IS NULL OR f.units_in_building <= r.units_at_most)
+           AND (r.owner_occupied IS NULL OR f.owner_occupied = r.owner_occupied)
+           AND (r.owner_kind IS NULL OR f.owner_kind = r.owner_kind),
+           array_remove(ARRAY[
+               CASE WHEN (r.built_before IS NOT NULL OR r.built_on_or_after IS NOT NULL)
+                         AND f.year_built IS NULL THEN 'year_built' END,
+               CASE WHEN (r.units_at_least IS NOT NULL OR r.units_at_most IS NOT NULL)
+                         AND f.units_in_building IS NULL THEN 'units_in_building' END,
+               CASE WHEN r.owner_occupied IS NOT NULL AND f.owner_occupied IS NULL
+                    THEN 'owner_occupied' END,
+               CASE WHEN r.owner_kind IS NOT NULL AND f.owner_kind IS NULL THEN 'owner_kind' END
+           ], NULL)
+    FROM trust_jurisdiction_rules AS r
+    JOIN place AS p ON p.pmc_id = r.pmc_id
+    LEFT JOIN facts AS f ON true
+    WHERE r.rule = p_rule
+      AND (
+          (r.level = 'federal' AND r.jurisdiction = 'US')
+          OR (r.level = 'state' AND r.jurisdiction = p.state_fips)
+          OR (r.level = 'county' AND r.jurisdiction = p.county)
+          OR (r.level = 'city' AND r.jurisdiction = p.city)
+      )
+      AND r.effective_from <= p_day AND (r.effective_to IS NULL OR p_day < r.effective_to)
+      AND NOT EXISTS (SELECT 1 FROM trust_jurisdiction_rules AS s WHERE s.supersedes = r.id)
+$$;
+
+
+--
+-- Name: trust_jurisdiction_rules; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_jurisdiction_rules (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    level text NOT NULL,
+    jurisdiction text NOT NULL,
+    jurisdiction_name text NOT NULL,
+    rule text NOT NULL,
+    value_kind text NOT NULL,
+    value_number numeric,
+    value_unit text,
+    combine text,
+    also_number numeric,
+    also_unit text,
+    value_words text,
+    built_before integer,
+    built_on_or_after integer,
+    units_at_least integer,
+    units_at_most integer,
+    owner_occupied boolean,
+    owner_kind text,
+    precedence integer DEFAULT 0 NOT NULL,
+    effective_from date NOT NULL,
+    effective_to date,
+    citation text NOT NULL,
+    url text NOT NULL,
+    checked_on date NOT NULL,
+    reviewed_by text NOT NULL,
+    exceptions text,
+    supersedes uuid,
+    source text NOT NULL,
+    catalog_key text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_jurisdiction_rules_also_number_check CHECK ((also_number >= (0)::numeric)),
+    CONSTRAINT trust_jurisdiction_rules_also_unit_check CHECK ((also_unit = ANY (ARRAY['days'::text, 'months_of_rent'::text, 'percent_of_rent'::text, 'percent_of_unpaid'::text, 'dollars'::text, 'percent_a_year'::text]))),
+    CONSTRAINT trust_jurisdiction_rules_built CHECK (((built_before IS NULL) OR (built_on_or_after IS NULL) OR (built_before > built_on_or_after))),
+    CONSTRAINT trust_jurisdiction_rules_built_before_check CHECK (((built_before >= 1600) AND (built_before <= 2200))),
+    CONSTRAINT trust_jurisdiction_rules_built_on_or_after_check CHECK (((built_on_or_after >= 1600) AND (built_on_or_after <= 2200))),
+    CONSTRAINT trust_jurisdiction_rules_catalog CHECK (((source = 'pms'::text) = (catalog_key IS NOT NULL))),
+    CONSTRAINT trust_jurisdiction_rules_catalog_key_check CHECK ((catalog_key ~ '^[a-z0-9][a-z0-9_.-]{0,99}$'::text)),
+    CONSTRAINT trust_jurisdiction_rules_checked_on_check CHECK ((checked_on >= '2020-01-01'::date)),
+    CONSTRAINT trust_jurisdiction_rules_citation_check CHECK (((length(citation) >= 1) AND (length(citation) <= 300))),
+    CONSTRAINT trust_jurisdiction_rules_code CHECK (
+CASE level
+    WHEN 'federal'::text THEN (jurisdiction = 'US'::text)
+    WHEN 'state'::text THEN (jurisdiction ~ '^[0-9]{2}$'::text)
+    WHEN 'county'::text THEN (jurisdiction ~ '^[0-9]{5}$'::text)
+    ELSE (jurisdiction ~ '^[0-9]{7}$'::text)
+END),
+    CONSTRAINT trust_jurisdiction_rules_combine_check CHECK ((combine = ANY (ARRAY['lesser'::text, 'greater'::text]))),
+    CONSTRAINT trust_jurisdiction_rules_days CHECK (((effective_to IS NULL) OR (effective_to > effective_from))),
+    CONSTRAINT trust_jurisdiction_rules_exceptions_check CHECK (((length(exceptions) >= 1) AND (length(exceptions) <= 1000))),
+    CONSTRAINT trust_jurisdiction_rules_jurisdiction_name_check CHECK (((length(jurisdiction_name) >= 1) AND (length(jurisdiction_name) <= 100))),
+    CONSTRAINT trust_jurisdiction_rules_level_check CHECK ((level = ANY (ARRAY['federal'::text, 'state'::text, 'county'::text, 'city'::text]))),
+    CONSTRAINT trust_jurisdiction_rules_owner_kind_check CHECK ((owner_kind = ANY (ARRAY['person'::text, 'company'::text]))),
+    CONSTRAINT trust_jurisdiction_rules_precedence_check CHECK (((precedence >= 0) AND (precedence <= 100))),
+    CONSTRAINT trust_jurisdiction_rules_reviewed_by_check CHECK (((length(reviewed_by) >= 1) AND (length(reviewed_by) <= 100))),
+    CONSTRAINT trust_jurisdiction_rules_rule_check CHECK ((rule = ANY (ARRAY['deposit_cap'::text, 'deposit_return_days'::text, 'late_fee_cap'::text, 'late_fee_grace_days'::text, 'nsf_fee_cap'::text, 'rent_increase_notice_days'::text, 'rent_cap'::text]))),
+    CONSTRAINT trust_jurisdiction_rules_second CHECK ((((combine IS NULL) = (also_number IS NULL)) AND ((combine IS NULL) = (also_unit IS NULL)))),
+    CONSTRAINT trust_jurisdiction_rules_second_of_number CHECK (((combine IS NULL) OR (value_kind = 'number'::text))),
+    CONSTRAINT trust_jurisdiction_rules_source_check CHECK ((source = ANY (ARRAY['pms'::text, 'staff'::text]))),
+    CONSTRAINT trust_jurisdiction_rules_staff CHECK (((source = 'staff'::text) OR (recorded_by IS NULL))),
+    CONSTRAINT trust_jurisdiction_rules_unit_count CHECK (((units_at_most IS NULL) OR (units_at_least IS NULL) OR (units_at_most >= units_at_least))),
+    CONSTRAINT trust_jurisdiction_rules_units CHECK (((value_unit IS NULL) OR
+CASE rule
+    WHEN 'deposit_cap'::text THEN ((value_unit = ANY (ARRAY['months_of_rent'::text, 'dollars'::text])) AND COALESCE((also_unit = ANY (ARRAY['months_of_rent'::text, 'dollars'::text])), true))
+    WHEN 'late_fee_cap'::text THEN ((value_unit = ANY (ARRAY['dollars'::text, 'percent_of_rent'::text, 'percent_of_unpaid'::text])) AND COALESCE((also_unit = ANY (ARRAY['dollars'::text, 'percent_of_rent'::text, 'percent_of_unpaid'::text])), true))
+    WHEN 'nsf_fee_cap'::text THEN ((value_unit = 'dollars'::text) AND (also_unit IS NULL))
+    WHEN 'rent_cap'::text THEN ((value_unit = 'percent_a_year'::text) AND (also_unit IS NULL))
+    ELSE ((value_unit = 'days'::text) AND (also_unit IS NULL))
+END)),
+    CONSTRAINT trust_jurisdiction_rules_units_at_least_check CHECK ((units_at_least >= 1)),
+    CONSTRAINT trust_jurisdiction_rules_units_at_most_check CHECK ((units_at_most >= 1)),
+    CONSTRAINT trust_jurisdiction_rules_url_check CHECK (((url ~ '^https://[^[:space:]]+$'::text) AND (length(url) <= 500))),
+    CONSTRAINT trust_jurisdiction_rules_value CHECK (
+CASE value_kind
+    WHEN 'number'::text THEN ((value_number IS NOT NULL) AND (value_unit IS NOT NULL) AND (value_words IS NULL))
+    WHEN 'none'::text THEN ((value_number IS NULL) AND (value_unit IS NULL) AND (value_words IS NULL))
+    ELSE ((value_number IS NULL) AND (value_unit IS NULL) AND (value_words IS NOT NULL))
+END),
+    CONSTRAINT trust_jurisdiction_rules_value_kind_check CHECK ((value_kind = ANY (ARRAY['number'::text, 'none'::text, 'words'::text]))),
+    CONSTRAINT trust_jurisdiction_rules_value_number_check CHECK ((value_number >= (0)::numeric)),
+    CONSTRAINT trust_jurisdiction_rules_value_unit_check CHECK ((value_unit = ANY (ARRAY['days'::text, 'months_of_rent'::text, 'percent_of_rent'::text, 'percent_of_unpaid'::text, 'dollars'::text, 'percent_a_year'::text]))),
+    CONSTRAINT trust_jurisdiction_rules_value_words_check CHECK (((length(value_words) >= 1) AND (length(value_words) <= 1000)))
+);
+
+
+--
+-- Name: trust_jurisdiction_rule(uuid, text, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_jurisdiction_rule(p_property_id uuid, p_rule text, p_day date) RETURNS SETOF public.trust_jurisdiction_rules
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT r.* FROM trust_jurisdiction_rules AS r
+    JOIN (
+        SELECT c.rule_id, c.matches
+        FROM trust_jurisdiction_candidates(p_property_id, p_rule, p_day) AS c
+        WHERE c.matches IS NOT false
+        ORDER BY c.rank
+        LIMIT 1
+    ) AS first ON first.rule_id = r.id
+    WHERE first.matches
+$$;
+
+
+--
+-- Name: trust_jurisdiction_rule_needs(uuid, text, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_jurisdiction_rule_needs(p_property_id uuid, p_rule text, p_day date) RETURNS text[]
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT coalesce((
+        SELECT CASE WHEN c.matches IS NULL THEN c.needs ELSE '{}'::text[] END
+        FROM trust_jurisdiction_candidates(p_property_id, p_rule, p_day) AS c
+        WHERE c.matches IS NOT false
+        ORDER BY c.rank
+        LIMIT 1
+    ), '{}'::text[])
+$$;
+
+
+--
 -- Name: trust_lease_billed(uuid, text, date); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -6665,6 +6875,59 @@ CREATE FUNCTION public.trust_property_address(p_property_id uuid) RETURNS SETOF 
     SELECT a.* FROM trust_property_addresses AS a
     WHERE a.property_id = p_property_id
     ORDER BY a.created_at DESC, a.id DESC
+    LIMIT 1
+$$;
+
+
+--
+-- Name: trust_property_jurisdictions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_property_jurisdictions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    address_id uuid NOT NULL,
+    state_fips text NOT NULL,
+    state_name text NOT NULL,
+    county_fips text,
+    county_name text,
+    cousub_fips text,
+    cousub_name text,
+    place_fips text,
+    place_name text,
+    tract text,
+    source text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_property_jurisdictions_check CHECK (((county_fips IS NULL) = (county_name IS NULL))),
+    CONSTRAINT trust_property_jurisdictions_check1 CHECK (((cousub_fips IS NULL) = (cousub_name IS NULL))),
+    CONSTRAINT trust_property_jurisdictions_check2 CHECK (((place_fips IS NULL) = (place_name IS NULL))),
+    CONSTRAINT trust_property_jurisdictions_check3 CHECK (((cousub_fips IS NULL) OR (county_fips IS NOT NULL))),
+    CONSTRAINT trust_property_jurisdictions_check4 CHECK (((tract IS NULL) OR (county_fips IS NOT NULL))),
+    CONSTRAINT trust_property_jurisdictions_county_fips_check CHECK ((county_fips ~ '^[0-9]{3}$'::text)),
+    CONSTRAINT trust_property_jurisdictions_county_name_check CHECK (((length(county_name) >= 1) AND (length(county_name) <= 100))),
+    CONSTRAINT trust_property_jurisdictions_cousub_fips_check CHECK ((cousub_fips ~ '^[0-9]{5}$'::text)),
+    CONSTRAINT trust_property_jurisdictions_cousub_name_check CHECK (((length(cousub_name) >= 1) AND (length(cousub_name) <= 100))),
+    CONSTRAINT trust_property_jurisdictions_place_fips_check CHECK ((place_fips ~ '^[0-9]{5}$'::text)),
+    CONSTRAINT trust_property_jurisdictions_place_name_check CHECK (((length(place_name) >= 1) AND (length(place_name) <= 100))),
+    CONSTRAINT trust_property_jurisdictions_source_check CHECK ((source = ANY (ARRAY['census'::text, 'fake'::text, 'staff'::text]))),
+    CONSTRAINT trust_property_jurisdictions_state_fips_check CHECK ((state_fips ~ '^[0-9]{2}$'::text)),
+    CONSTRAINT trust_property_jurisdictions_state_name_check CHECK (((length(state_name) >= 1) AND (length(state_name) <= 100))),
+    CONSTRAINT trust_property_jurisdictions_tract_check CHECK ((tract ~ '^[0-9]{6}$'::text))
+);
+
+
+--
+-- Name: trust_property_jurisdiction(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_property_jurisdiction(p_property_id uuid) RETURNS SETOF public.trust_property_jurisdictions
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT j.* FROM trust_property_address(p_property_id) AS a
+    JOIN trust_property_jurisdictions AS j ON j.address_id = a.id
+    ORDER BY j.created_at DESC, j.id DESC
     LIMIT 1
 $$;
 
@@ -14540,6 +14803,18 @@ CREATE TABLE public.trust_journal_entry_lines (
 
 
 --
+-- Name: trust_jurisdiction_rule_confirmations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_jurisdiction_rule_confirmations (
+    rule_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    confirmed_by uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
 -- Name: trust_late_fee_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15523,6 +15798,26 @@ CREATE TABLE public.trust_properties (
     display_name text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_properties_display_name_check CHECK ((display_name <> ''::text))
+);
+
+
+--
+-- Name: trust_property_facts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_property_facts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    property_id uuid NOT NULL,
+    year_built integer,
+    units_in_building integer,
+    owner_occupied boolean,
+    owner_kind text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_property_facts_owner_kind_check CHECK ((owner_kind = ANY (ARRAY['person'::text, 'company'::text]))),
+    CONSTRAINT trust_property_facts_units_in_building_check CHECK (((units_in_building >= 1) AND (units_in_building <= 100000))),
+    CONSTRAINT trust_property_facts_year_built_check CHECK (((year_built >= 1600) AND (year_built <= 2200)))
 );
 
 
@@ -17595,6 +17890,46 @@ ALTER TABLE ONLY public.trust_journal_entry_lines
 
 
 --
+-- Name: trust_jurisdiction_rule_confirmations trust_jurisdiction_rule_confirmations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_jurisdiction_rule_confirmations
+    ADD CONSTRAINT trust_jurisdiction_rule_confirmations_pkey PRIMARY KEY (rule_id);
+
+
+--
+-- Name: trust_jurisdiction_rules trust_jurisdiction_rules_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_jurisdiction_rules
+    ADD CONSTRAINT trust_jurisdiction_rules_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_jurisdiction_rules trust_jurisdiction_rules_pmc_id_catalog_key_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_jurisdiction_rules
+    ADD CONSTRAINT trust_jurisdiction_rules_pmc_id_catalog_key_key UNIQUE (pmc_id, catalog_key);
+
+
+--
+-- Name: trust_jurisdiction_rules trust_jurisdiction_rules_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_jurisdiction_rules
+    ADD CONSTRAINT trust_jurisdiction_rules_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_jurisdiction_rules trust_jurisdiction_rules_supersedes_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_jurisdiction_rules
+    ADD CONSTRAINT trust_jurisdiction_rules_supersedes_key UNIQUE (supersedes);
+
+
+--
 -- Name: trust_late_fee_policies trust_late_fee_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18483,6 +18818,14 @@ ALTER TABLE ONLY public.trust_property_addresses
 
 
 --
+-- Name: trust_property_facts trust_property_facts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_facts
+    ADD CONSTRAINT trust_property_facts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_property_group_members trust_property_group_members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18504,6 +18847,14 @@ ALTER TABLE ONLY public.trust_property_groups
 
 ALTER TABLE ONLY public.trust_property_groups
     ADD CONSTRAINT trust_property_groups_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_property_jurisdictions trust_property_jurisdictions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_jurisdictions
+    ADD CONSTRAINT trust_property_jurisdictions_pkey PRIMARY KEY (id);
 
 
 --
@@ -20004,6 +20355,27 @@ CREATE UNIQUE INDEX trust_inspection_items_room ON public.trust_inspection_items
 
 
 --
+-- Name: trust_jurisdiction_rule_confirmations_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_jurisdiction_rule_confirmations_by ON public.trust_jurisdiction_rule_confirmations USING btree (pmc_id, confirmed_by);
+
+
+--
+-- Name: trust_jurisdiction_rules_lookup; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_jurisdiction_rules_lookup ON public.trust_jurisdiction_rules USING btree (pmc_id, rule, level, jurisdiction);
+
+
+--
+-- Name: trust_jurisdiction_rules_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_jurisdiction_rules_recorded_by ON public.trust_jurisdiction_rules USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_late_fees_policy_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20641,6 +21013,20 @@ CREATE INDEX trust_property_addresses_recorded_by ON public.trust_property_addre
 
 
 --
+-- Name: trust_property_facts_property; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_property_facts_property ON public.trust_property_facts USING btree (pmc_id, property_id, created_at);
+
+
+--
+-- Name: trust_property_facts_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_property_facts_recorded_by ON public.trust_property_facts USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_property_group_members_group; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20666,6 +21052,20 @@ CREATE INDEX trust_property_group_members_recorded_by ON public.trust_property_g
 --
 
 CREATE UNIQUE INDEX trust_property_groups_name ON public.trust_property_groups USING btree (pmc_id, lower(display_name));
+
+
+--
+-- Name: trust_property_jurisdictions_address; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_property_jurisdictions_address ON public.trust_property_jurisdictions USING btree (pmc_id, address_id, created_at);
+
+
+--
+-- Name: trust_property_jurisdictions_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_property_jurisdictions_recorded_by ON public.trust_property_jurisdictions USING btree (pmc_id, recorded_by);
 
 
 --
@@ -21775,6 +22175,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_jurisdiction_rule_confirmations trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_jurisdiction_rule_confirmations FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_jurisdiction_rules trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_jurisdiction_rules FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_late_fee_policies trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22167,10 +22581,24 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_property_facts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_property_facts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_property_group_members trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_property_group_members FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_property_jurisdictions trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_property_jurisdictions FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -23056,6 +23484,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_jour
 
 
 --
+-- Name: trust_jurisdiction_rule_confirmations trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_jurisdiction_rule_confirmations FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_jurisdiction_rules trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_jurisdiction_rules FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_late_fee_policies trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23483,6 +23925,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_prop
 
 
 --
+-- Name: trust_property_facts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_property_facts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_property_group_members trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23494,6 +23943,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_prop
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_property_groups FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_property_jurisdictions trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_property_jurisdictions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -24019,6 +24475,13 @@ CREATE TRIGGER trust_check_hold_allowance BEFORE INSERT ON public.trust_payment_
 --
 
 CREATE TRIGGER trust_check_hold_release BEFORE INSERT ON public.trust_payment_hold_releases FOR EACH ROW EXECUTE FUNCTION public.trust_check_hold_release();
+
+
+--
+-- Name: trust_jurisdiction_rules trust_check_jurisdiction_rule; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_jurisdiction_rule BEFORE INSERT ON public.trust_jurisdiction_rules FOR EACH ROW EXECUTE FUNCTION public.trust_check_jurisdiction_rule();
 
 
 --
@@ -24708,10 +25171,24 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_property_addresse
 
 
 --
+-- Name: trust_property_facts trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_property_facts FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_property_group_members trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_property_group_members FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_property_jurisdictions trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_property_jurisdictions FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -27049,6 +27526,54 @@ ALTER TABLE ONLY public.trust_journal_entry_lines
 
 
 --
+-- Name: trust_jurisdiction_rule_confirmations trust_jurisdiction_rule_confirmations_pmc_id_confirmed_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_jurisdiction_rule_confirmations
+    ADD CONSTRAINT trust_jurisdiction_rule_confirmations_pmc_id_confirmed_by_fkey FOREIGN KEY (pmc_id, confirmed_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_jurisdiction_rule_confirmations trust_jurisdiction_rule_confirmations_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_jurisdiction_rule_confirmations
+    ADD CONSTRAINT trust_jurisdiction_rule_confirmations_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_jurisdiction_rule_confirmations trust_jurisdiction_rule_confirmations_pmc_id_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_jurisdiction_rule_confirmations
+    ADD CONSTRAINT trust_jurisdiction_rule_confirmations_pmc_id_rule_id_fkey FOREIGN KEY (pmc_id, rule_id) REFERENCES public.trust_jurisdiction_rules(pmc_id, id);
+
+
+--
+-- Name: trust_jurisdiction_rules trust_jurisdiction_rules_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_jurisdiction_rules
+    ADD CONSTRAINT trust_jurisdiction_rules_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_jurisdiction_rules trust_jurisdiction_rules_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_jurisdiction_rules
+    ADD CONSTRAINT trust_jurisdiction_rules_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_jurisdiction_rules trust_jurisdiction_rules_pmc_id_supersedes_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_jurisdiction_rules
+    ADD CONSTRAINT trust_jurisdiction_rules_pmc_id_supersedes_fkey FOREIGN KEY (pmc_id, supersedes) REFERENCES public.trust_jurisdiction_rules(pmc_id, id);
+
+
+--
 -- Name: trust_late_fee_policies trust_late_fee_policies_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -28617,6 +29142,30 @@ ALTER TABLE ONLY public.trust_property_addresses
 
 
 --
+-- Name: trust_property_facts trust_property_facts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_facts
+    ADD CONSTRAINT trust_property_facts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_property_facts trust_property_facts_pmc_id_property_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_facts
+    ADD CONSTRAINT trust_property_facts_pmc_id_property_id_fkey FOREIGN KEY (pmc_id, property_id) REFERENCES public.trust_properties(pmc_id, id);
+
+
+--
+-- Name: trust_property_facts trust_property_facts_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_facts
+    ADD CONSTRAINT trust_property_facts_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_property_group_members trust_property_group_members_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -28654,6 +29203,30 @@ ALTER TABLE ONLY public.trust_property_group_members
 
 ALTER TABLE ONLY public.trust_property_groups
     ADD CONSTRAINT trust_property_groups_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_property_jurisdictions trust_property_jurisdictions_pmc_id_address_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_jurisdictions
+    ADD CONSTRAINT trust_property_jurisdictions_pmc_id_address_id_fkey FOREIGN KEY (pmc_id, address_id) REFERENCES public.trust_property_addresses(pmc_id, id);
+
+
+--
+-- Name: trust_property_jurisdictions trust_property_jurisdictions_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_jurisdictions
+    ADD CONSTRAINT trust_property_jurisdictions_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_property_jurisdictions trust_property_jurisdictions_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_property_jurisdictions
+    ADD CONSTRAINT trust_property_jurisdictions_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -30028,4 +30601,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000122'),
     ('20261022000123'),
     ('20261022000124'),
-    ('20261022000125');
+    ('20261022000125'),
+    ('20261023000202');

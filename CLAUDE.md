@@ -285,6 +285,29 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   and the card links to OpenStreetMap at the point. A location counts only for the address it
   was found for (`trust_property_location`). The Properties list shows each address and finds a
   property by it, as `/api/search` does. The AI role reads both tables.
+- State and local rules (migration 20261023000202, `src/pms/jurisdictions.py`,
+  `src/pms/api/jurisdictions.py`, ADR 0009, q142; `docs/law.md`, State and local rules): Find on
+  map also keeps where the address is in the law (`trust_property_jurisdictions`: the state,
+  county, county subdivision, city and census tract the Census geocoder's geographies give, or
+  as staff confirm or correct them; the latest for the address now holding,
+  `trust_property_jurisdiction`), and staff keep the facts rules turn on
+  (`trust_property_facts`: year built, units in the building, owner living there, owner a person
+  or a company; each unknown until said). A rule (`trust_jurisdiction_rules`, each company's own:
+  the PMS's catalog, `src/pms/jurisdiction_rules.toml`, copied in nightly under each key, and
+  those staff add) is a jurisdiction's (federal, state, county, city) number for a kind of term
+  (deposit cap and return days, late fee cap and days before one, NSF fee cap, notice of a rent
+  increase, rent cap; maybe the lesser or greater of two; "no limit"; or words), for the facts it
+  names, in force over days, with its citation, URL, the day someone read the statute's text and
+  who, and exceptions in words; a correction supersedes a row. `trust_jurisdiction_rule` resolves
+  the one in force for a property on a day: the most specific level, then precedence, then the
+  newest; a fact it turns on not on file leaves it unknown (`trust_jurisdiction_rule_needs`), and
+  none is unknown, never "no rule". Staff confirm a rule the company follows
+  (`trust_jurisdiction_rule_confirmations`, once; one they add is confirmed by them). The
+  property's page shows each (`pages/LawCard.tsx`, area setup), and `/api/law/*` puts the rule
+  beside the late fee and NSF fee terms, a deposit, a rent change and a move-out's last day
+  (`components/RulesBeside.tsx`), warning as staff type past it, never refusing. No AI decides a
+  legal value; the catalog holds only rules read in a statute's text (none yet). All
+  append-only, audited; the AI role reads the four tables.
 - Leasing (`src/pms/api/leasing.py`, `src/pms/leasing/`): applicants have no login. They apply
   through a link staff open for a unit (`/apply#<token>`) and follow it with a status link;
   both tokens travel in JSON bodies and are kept only as SHA-256. Screening goes through

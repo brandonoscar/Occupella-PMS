@@ -256,6 +256,12 @@ TABLES = {
     # A property's street address and where it is (migration 0109); the AI reads both.
     "trust_property_addresses": {"SELECT", "INSERT"},
     "trust_property_locations": {"SELECT", "INSERT"},
+    # State and local rules (migration 20261023000202): where a property is in the law, the facts
+    # rules turn on, the rules and the company's confirmations of them. The AI role reads them.
+    "trust_property_jurisdictions": {"SELECT", "INSERT"},
+    "trust_property_facts": {"SELECT", "INSERT"},
+    "trust_jurisdiction_rules": {"SELECT", "INSERT"},
+    "trust_jurisdiction_rule_confirmations": {"SELECT", "INSERT"},
     # A bank's or lockbox's payment files (migration 0118): what each line says, and the payment
     # it became or why staff set it aside. The money moves through rent.record_payment.
     "trust_payment_files": {"SELECT", "INSERT"},
@@ -552,6 +558,11 @@ FUNCTIONS = {
     "trust_inspection_standing(text,date,date)": {"trust_app"},
     "trust_property_address(uuid)": {"trust_app"},
     "trust_property_location(uuid)": {"trust_app"},
+    "trust_property_jurisdiction(uuid)": {"trust_app"},
+    "trust_jurisdiction_candidates(uuid,text,date)": {"trust_app"},
+    "trust_jurisdiction_rule(uuid,text,date)": {"trust_app"},
+    "trust_jurisdiction_rule_needs(uuid,text,date)": {"trust_app"},
+    "trust_check_jurisdiction_rule()": set(),  # a trigger's: no one calls it
     "trust_report_vendor_payments(uuid,integer)": {"trust_app", "trust_ai_agent"},
     "trust_report_bank_reconciliation(uuid,uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_cutover(uuid,uuid)": {"trust_app", "trust_ai_agent"},

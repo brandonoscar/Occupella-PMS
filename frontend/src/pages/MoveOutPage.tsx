@@ -30,6 +30,8 @@ import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 import { Said } from "../components/Said";
 import { Form } from "../components/Form";
+import { RulesBeside } from "../components/RulesBeside";
+import { useLawCheck } from "../law";
 
 // Staff's move-outs: end the lease, inspect it on the way in and out, charge what the tenants
 // owe for cleaning or damage with its receipts, and return their deposits by the day they are
@@ -88,6 +90,9 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
   const ended = hasEnded(lease, today);
   const status = moveOutStatus(lease, today);
   const due = returnBy(lease, today);
+  // The days the law the company keeps to gives to return the deposits, beside the due-back day
+  // (q142): once the lease has a last day.
+  const returnRule = useLawCheck(lease.ends_on ? `/api/law/deposit-return?lease_id=${id}` : null, lease);
   // The end and a damage charge: in view once the lease has ended, folded away while it runs.
   const endAndCharge = (
     <>
@@ -139,6 +144,7 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
           {Number(lease.carried) > 0 && ` and ${money(lease.carried)} at the home they moved from`} ·
           deposits held {money(lease.held)}
         </p>
+        <RulesBeside checked={returnRule} label={`Rules for returning the deposits, ${leaseLabel(lease)}`} />
         <InspectionsPanel leaseId={id} label={leaseLabel(lease)} />
         {lease.fees.length > 0 && <FeeReceipts lease={lease} record={record} />}
         {lease.settled ? (

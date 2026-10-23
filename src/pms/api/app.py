@@ -67,6 +67,7 @@ from pms.api import (
     household,
     inspections,
     journal,
+    jurisdictions,
     leads,
     leasing,
     listings,
@@ -537,6 +538,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(rent.router)
     app.include_router(assistance.router)
     app.include_router(addresses.router)
+    app.include_router(jurisdictions.router)
     app.include_router(utilities.router)
     app.include_router(receipts.router)
     app.include_router(rentals.router)

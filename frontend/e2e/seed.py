@@ -24,7 +24,7 @@ from typing import Any
 
 import psycopg
 
-from pms import accounts, demo
+from pms import accounts, demo, jurisdictions
 
 
 def main() -> None:
@@ -451,6 +451,11 @@ def main() -> None:
             },
         }
         seeded["features"] = {name: feature_pmc(app, tag, name) for name in FEATURES}
+        # State and local rules: one rule from a stand-in for the PMS's catalog, in California,
+        # for staff to confirm (synthetic: no rule here is the law).
+        jurisdictions.seed(
+            app, uuid.UUID(seeded["features"]["jurisdiction-rules"]["pmc_id"]), [SYNTHETIC_RULE]
+        )
         # Year close: books as of this year's first day, so last year's November is approved and
         # its December waits for approval in each trust bank account, whatever the day today.
         seeded["features"]["year-close"] = feature_pmc(
@@ -529,7 +534,25 @@ FEATURES = (
     "deposit-interest",
     "tax-credit",
     "unit-details",
+    "jurisdiction-rules",
 )
+
+# A rule as the PMS's catalog (src/pms/jurisdiction_rules.toml) would hold one: synthetic.
+SYNTHETIC_RULE = {
+    "key": "synthetic-nsf-fee-cap",
+    "level": "state",
+    "jurisdiction": "06",
+    "jurisdiction_name": "California",
+    "rule": "nsf_fee_cap",
+    "value_kind": "number",
+    "value_number": 25,
+    "value_unit": "dollars",
+    "effective_from": date(2020, 1, 1),
+    "citation": "Synthetic Code 2",
+    "url": "https://example.org/synthetic-code-2",
+    "checked_on": date(2026, 10, 23),
+    "reviewed_by": "Synthetic Reviewer",
+}
 
 
 def feature_pmc(
