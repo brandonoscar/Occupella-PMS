@@ -2566,7 +2566,7 @@ test("staff email a tenant from their page and every tenant of a property, an ow
   await expect(owner).toContainText("Password reset");
 });
 
-test("staff turn on the emails the PMS writes by itself, and a run of rent sends each owner last month's statement onto their Email tab, its PDF attached; a payment sends its tenant the receipt", async ({
+test("staff turn on the emails the PMS writes by itself, and a run of rent sends each owner last month's statement onto their Email tab, its PDF attached, and tells an owner whose account fell below its reserve; a payment sends its tenant the receipt", async ({
   page,
 }) => {
   const people = seed.features["automatic-email"]!;
@@ -2581,20 +2581,32 @@ test("staff turn on the emails the PMS writes by itself, and a run of rent sends
   await editing.getByLabel("Monthly statements to owners").check();
   await editing.getByLabel("Day of the month they go").selectOption("1");
   await editing.getByLabel("Work orders to vendors").check();
+  await editing.getByLabel("Low balance alerts to owners").check();
   await editing.getByLabel("Payment receipts to tenants").check();
   await editing.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Saved the automatic emails.")).toBeVisible();
   await expect(editing).toHaveCount(0);
   await expect(shown).toContainText("Last month's, from the 1st of each month");
   await expect(shown).toContainText("Work orders to vendorsOn");
+  await expect(shown).toContainText("Low balance alerts to ownersOn");
   await expect(shown).toContainText("Payment receipts to tenantsOn, the PDF attached");
+
+  // Elm Court's reserve raised to $400.00 from today: its $250.00 is now below it (q054).
+  await openProperty(page, "Elm Court");
+  const owners = page.getByRole("table", { name: "Owners" });
+  const terms = await setupPanel(page, "Set terms", "Set management terms", owners.getByRole("row", { name: "Demo Owner A" }));
+  await terms.getByLabel("In force from").fill(today());
+  await terms.getByLabel("Reserve").fill("400.00");
+  await terms.getByRole("button", { name: "Set terms" }).click();
+  await expect(owners.getByRole("row", { name: "Demo Owner A" })).toContainText(`from ${us(today())}`);
 
   // What runs every night, run by hand: each owner with an email gets last month's statement.
   await section(page, "Rent roll");
   await page.getByRole("button", { name: "Actions for the rent roll" }).click();
   await page.getByRole("menuitem", { name: "Run rent now" }).click();
   await page.getByRole("dialog", { name: "Run rent now" }).getByRole("button", { name: "Run rent now" }).click();
-  await expect(page.getByRole("main")).toContainText(/charged\. 2 emails written\./);
+  // Each owner's statement, and Elm Court's drop below its reserve.
+  await expect(page.getByRole("main")).toContainText(/charged\. 3 emails written\./);
 
   const last = new Date();
   last.setUTCDate(1);
@@ -2606,6 +2618,8 @@ test("staff turn on the emails the PMS writes by itself, and a run of rent sends
   const owner = page.getByRole("list", { name: "Email, Demo Owner A" });
   await expect(owner).toContainText(`Your statement for ${month}`);
   await expect(owner).toContainText(`Monthly statement to ${people.emails.owner_a}`);
+  await expect(owner).toContainText("Elm Court: your account is below its reserve");
+  await expect(owner).toContainText(`Below its reserve to ${people.emails.owner_a}`);
   await expect(owner).toContainText("The month's statement attached (PDF)");
 
   // A payment recorded: its tenant gets the receipt, its PDF attached (q029).
