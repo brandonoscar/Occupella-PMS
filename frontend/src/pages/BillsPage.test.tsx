@@ -6,6 +6,15 @@ import type { Bill, Recurring } from "../payables";
 import type { Portfolio } from "../setup";
 import { BillsPage } from "./BillsPage";
 
+// A side panel closed: it is gone, and the page behind it, which React Aria hides from screen
+// readers while it is open, is shown again. React Aria lifts that a moment after the panel goes,
+// so a test that clicks on the page at once can miss it on a busy machine.
+const closed = () =>
+  vi.waitFor(() => {
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.querySelector("body > [aria-hidden='true']")).toBeNull();
+  });
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -114,14 +123,14 @@ describe("BillsPage", () => {
     fireEvent.change(within(panel).getByLabelText("Approved by"), { target: { value: "Owner 1, by phone" } });
     fireEvent.change(within(panel).getByLabelText("Approved on"), { target: { value: "2026-10-02" } });
     fireEvent.click(within(panel).getByRole("button", { name: "Record approval" }));
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await closed();
     expect(screen.getByText("The owner's approval of INV-1 is recorded.")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Actions for Vendor 1 INV-2" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Set aside" }));
     fireEvent.change(within(screen.getByRole("dialog", { name: "Set aside" })).getByLabelText("Set aside on"), { target: { value: "2026-10-03" } });
     fireEvent.click(within(screen.getByRole("dialog", { name: "Set aside" })).getByRole("button", { name: "Set aside" }));
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await closed();
 
     fireEvent.click(screen.getByRole("button", { name: "Actions for Vendor 1 INV-3" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Pay" }));
@@ -132,7 +141,7 @@ describe("BillsPage", () => {
     const confirm = screen.getByRole("alertdialog");
     expect(confirm.textContent).toContain("Pay $900.00 to Vendor 1 for INV-3 by EFT on 10/04/2026?");
     fireEvent.click(within(confirm).getByRole("button", { name: "Confirm" }));
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await closed();
 
     expect(posted(fetch)).toEqual([
       ["/api/payables/bills/b1/approval", { approved_on: "2026-10-02", approved_by: "Owner 1, by phone" }],
@@ -175,7 +184,7 @@ describe("BillsPage", () => {
     expect(within(panel).getByTestId("lines-total").textContent).toBe("Lines come to $300.00 of $300.00.");
     fireEvent.click(within(panel).getByRole("button", { name: "Record bill" }));
 
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await closed();
     expect(posted(fetch)).toEqual([[
       "/api/payables/bills",
       {
@@ -201,14 +210,14 @@ describe("BillsPage", () => {
     const stop = screen.getByRole("dialog", { name: "Stop recurring bill" });
     fireEvent.change(within(stop).getByLabelText("Last day"), { target: { value: "2026-12-31" } });
     fireEvent.click(within(stop).getByRole("button", { name: "Stop it" }));
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await closed();
 
     fireEvent.click(within(screen.getByRole("row", { name: "Vendor 2 LAWN" })).getByRole("button", { name: "Actions for Vendor 2 LAWN" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Change expense account" }));
     const moving = screen.getByRole("dialog", { name: "Expense account" });
     fireEvent.change(within(moving).getByLabelText("Expense account"), { target: { value: "e2" } });
     fireEvent.click(within(moving).getByRole("button", { name: "Save" }));
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await closed();
     expect(screen.getByText("LAWN is entered in Water from now on.")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Add recurring bill" }));
@@ -219,7 +228,7 @@ describe("BillsPage", () => {
     fireEvent.change(within(adding).getByLabelText("First day"), { target: { value: "2026-11-01" } });
     fireEvent.change(within(adding).getByLabelText("Expense account"), { target: { value: "e1" } });
     fireEvent.click(within(adding).getByRole("button", { name: "Add recurring bill" }));
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await closed();
     expect(screen.getByText("HOA is entered each month; 2 bills already due are entered now.")).toBeTruthy();
 
     expect(posted(fetch)).toEqual([
