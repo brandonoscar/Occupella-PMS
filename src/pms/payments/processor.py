@@ -37,6 +37,8 @@ from decimal import Decimal
 from typing import Any, Literal, Protocol
 
 Method = Literal["card", "bank debit"]
+# What a checkout pays: a lease's rent, or an application's fee (migration 20261022000160).
+Kind = Literal["rent", "fee"]
 Outcome = Literal["succeeded", "failed", "returned", "saved", "not saved"]
 
 
@@ -77,6 +79,7 @@ class Processor(Protocol):
         method: Method,
         description: str,
         return_url: str,
+        kind: Kind = "rent",
     ) -> Checkout: ...
 
     def events(self, body: bytes, headers: dict[str, str]) -> list[Event]: ...
@@ -101,8 +104,10 @@ class FakeProcessor:
         method: Method,
         description: str,
         return_url: str,
+        kind: Kind = "rent",
     ) -> Checkout:
-        reference = f"fake_{secrets.token_urlsafe(18)}"
+        # An application fee's page is public (applicants have no login): its reference says so.
+        reference = f"fake_{'fee_' if kind == 'fee' else ''}{secrets.token_urlsafe(18)}"
         return Checkout(reference=reference, url=f"/pay#{reference}")
 
     def events(self, body: bytes, headers: dict[str, str]) -> list[Event]:
@@ -142,8 +147,10 @@ class StripeProcessor:
         method: Method,
         description: str,
         return_url: str,
+        kind: Kind = "rent",
     ) -> Checkout:
         form = {
+            "metadata[kind]": kind,
             "mode": "payment",
             "client_reference_id": payment_id,
             "metadata[payment_id]": payment_id,

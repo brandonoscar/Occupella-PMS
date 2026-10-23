@@ -903,3 +903,26 @@ for preauthorized transfers; NACHA's rules for a recurring debit; card networks'
 stored card). The tenant gives it on the processor's own page as they save the card or account
 (Stripe shows its mandate there; NOT VERIFIED without keys); the PMS charges only what the lease
 owes once its rent is due, once a month, and the tenant stops it in the portal at any time.
+
+## Application fees (migration 0160)
+
+**The rule.** Many states limit what a landlord or its manager may ask someone applying to rent.
+Found, all NOT VERIFIED against the statutes' current text: some forbid an application fee
+altogether (Massachusetts, Vermont); some cap it (New York: $20 or the cost of the background and
+credit check, whichever is less; California: a screening fee capped by an amount adjusted each year
+for inflation, with an itemized receipt, and returned when no screening is done; Wisconsin, $25 for
+a credit report; Delaware and Virginia have their own caps); others ask that it be no more than
+the screening's cost, or that unused fees be returned. A fee paid is the company's own money, so
+held in trust it is commingled until taken out.
+
+**What the PMS does.**
+- The company sets one fee per applicant (0 asks none, at most $1,000); an application owes the
+  fee in force when it came times its applicants, paid once, online, at its whole amount.
+- Once the processor says the money came it is recorded as the company's fee in the trust bank
+  account the unit's owners use, so the owners page and the Dashboard show it among the fees to
+  take out of trust by their day (25 days, the strictest deadline found).
+- A second payment of a paid fee is kept as failed, for staff to refund at the processor.
+
+**Left to the company.** Whether its state allows a fee and how much (the PMS checks no cap),
+receipts and refunds a state asks (the PMS refunds nothing), and passing on a portable screening
+report where a state lets an applicant bring one instead.

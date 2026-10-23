@@ -1965,6 +1965,45 @@ $$;
 
 
 --
+-- Name: trust_check_application_fee_step(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_application_fee_step() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_application uuid;
+    v_steps text[];
+BEGIN
+    SELECT f.application_id INTO v_application FROM trust_application_fees AS f
+    WHERE f.pmc_id = NEW.pmc_id AND f.id = NEW.fee_id;
+    PERFORM pg_advisory_xact_lock(hashtextextended('application fee ' || v_application, 0));
+    SELECT coalesce(array_agg(s.step), '{}') INTO v_steps
+    FROM trust_application_fee_steps AS s WHERE s.fee_id = NEW.fee_id;
+    IF NEW.step = 'started' AND v_steps <> '{}' THEN
+        RAISE EXCEPTION 'trust: a fee payment starts once' USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.step <> 'started'
+       AND (NOT 'started' = ANY (v_steps) OR v_steps && ARRAY['succeeded', 'failed']) THEN
+        RAISE EXCEPTION 'trust: a fee payment that started ends once'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.step = 'succeeded' AND EXISTS (
+        SELECT 1 FROM trust_application_fees AS f
+        JOIN trust_application_fee_steps AS s ON s.fee_id = f.id AND s.step = 'succeeded'
+        WHERE f.application_id = v_application
+    ) THEN
+        RAISE EXCEPTION 'trust: this application''s fee is paid already'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    NEW.created_at := clock_timestamp();
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_application_not_withdrawn(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -13815,6 +13854,79 @@ CREATE TABLE public.trust_application_decisions (
 
 
 --
+-- Name: trust_application_fee_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_application_fee_settings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    per_applicant numeric NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_application_fee_settings_per_applicant_check CHECK (((per_applicant >= (0)::numeric) AND (per_applicant <= (1000)::numeric) AND (per_applicant = round(per_applicant, 2))))
+);
+
+
+--
+-- Name: trust_application_fee_steps; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_application_fee_steps (
+    id bigint NOT NULL,
+    pmc_id uuid NOT NULL,
+    fee_id uuid NOT NULL,
+    step text NOT NULL,
+    reference text,
+    processor_event text,
+    transfer_id text,
+    reason text,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_application_fee_steps_check CHECK (
+CASE step
+    WHEN 'started'::text THEN ((reference IS NOT NULL) AND (transfer_id IS NULL) AND (reason IS NULL))
+    WHEN 'succeeded'::text THEN ((transfer_id IS NOT NULL) AND (reason IS NULL))
+    ELSE ((transfer_id IS NULL) AND (reason IS NOT NULL))
+END),
+    CONSTRAINT trust_application_fee_steps_processor_event_check CHECK (((char_length(processor_event) >= 1) AND (char_length(processor_event) <= 255))),
+    CONSTRAINT trust_application_fee_steps_reason_check CHECK (((char_length(reason) >= 1) AND (char_length(reason) <= 500))),
+    CONSTRAINT trust_application_fee_steps_reference_check CHECK (((char_length(reference) >= 1) AND (char_length(reference) <= 255))),
+    CONSTRAINT trust_application_fee_steps_step_check CHECK ((step = ANY (ARRAY['started'::text, 'succeeded'::text, 'failed'::text])))
+);
+
+
+--
+-- Name: trust_application_fee_steps_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_application_fee_steps ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.trust_application_fee_steps_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
+-- Name: trust_application_fees; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_application_fees (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    application_id uuid NOT NULL,
+    amount numeric NOT NULL,
+    method text NOT NULL,
+    processor text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_application_fees_amount_check CHECK (((amount > (0)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_application_fees_method_check CHECK ((method = ANY (ARRAY['card'::text, 'bank debit'::text]))),
+    CONSTRAINT trust_application_fees_processor_check CHECK ((processor = ANY (ARRAY['fake'::text, 'stripe'::text])))
+);
+
+
+--
 -- Name: trust_application_link_closings; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17298,6 +17410,46 @@ ALTER TABLE ONLY public.trust_application_decisions
 
 
 --
+-- Name: trust_application_fee_settings trust_application_fee_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_fee_settings
+    ADD CONSTRAINT trust_application_fee_settings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_application_fee_steps trust_application_fee_steps_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_fee_steps
+    ADD CONSTRAINT trust_application_fee_steps_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_application_fee_steps trust_application_fee_steps_processor_event_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_fee_steps
+    ADD CONSTRAINT trust_application_fee_steps_processor_event_key UNIQUE (processor_event);
+
+
+--
+-- Name: trust_application_fees trust_application_fees_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_fees
+    ADD CONSTRAINT trust_application_fees_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_application_fees trust_application_fees_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_fees
+    ADD CONSTRAINT trust_application_fees_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_application_link_closings trust_application_link_closings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20226,6 +20378,48 @@ CREATE INDEX trust_ach_settings_recorded_by ON public.trust_ach_settings USING b
 
 
 --
+-- Name: trust_application_fee_settings_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_application_fee_settings_pmc ON public.trust_application_fee_settings USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_application_fee_settings_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_application_fee_settings_recorded_by ON public.trust_application_fee_settings USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_application_fee_steps_one; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_application_fee_steps_one ON public.trust_application_fee_steps USING btree (fee_id, step);
+
+
+--
+-- Name: trust_application_fee_steps_reference; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_application_fee_steps_reference ON public.trust_application_fee_steps USING btree (reference) WHERE (step = 'started'::text);
+
+
+--
+-- Name: trust_application_fee_steps_transfer; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_application_fee_steps_transfer ON public.trust_application_fee_steps USING btree (transfer_id);
+
+
+--
+-- Name: trust_application_fees_application; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_application_fees_application ON public.trust_application_fees USING btree (pmc_id, application_id, created_at);
+
+
+--
 -- Name: trust_application_links_unit_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -22459,6 +22653,27 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_application_fee_settings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_application_fee_settings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_application_fee_steps trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_application_fee_steps FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_application_fees trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_application_fees FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_application_link_closings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23856,6 +24071,27 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_appl
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_application_decisions FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_application_fee_settings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_application_fee_settings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_application_fee_steps trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_application_fee_steps FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_application_fees trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_application_fees FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -25308,6 +25544,13 @@ CREATE TRIGGER trust_check_ach_file_void BEFORE INSERT ON public.trust_ach_file_
 
 
 --
+-- Name: trust_application_fee_steps trust_check_application_fee_step; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_application_fee_step BEFORE INSERT ON public.trust_application_fee_steps FOR EACH ROW EXECUTE FUNCTION public.trust_check_application_fee_step();
+
+
+--
 -- Name: trust_assistance_inspections trust_check_assistance_record; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -25802,6 +26045,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_ach_files FOR EAC
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_ach_settings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_application_fee_settings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_application_fee_settings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -26834,6 +27084,62 @@ ALTER TABLE ONLY public.trust_application_decisions
 
 ALTER TABLE ONLY public.trust_application_decisions
     ADD CONSTRAINT trust_application_decisions_pmc_id_screening_id_fkey FOREIGN KEY (pmc_id, screening_id) REFERENCES public.trust_screenings(pmc_id, id);
+
+
+--
+-- Name: trust_application_fee_settings trust_application_fee_settings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_fee_settings
+    ADD CONSTRAINT trust_application_fee_settings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_application_fee_settings trust_application_fee_settings_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_fee_settings
+    ADD CONSTRAINT trust_application_fee_settings_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_application_fee_steps trust_application_fee_steps_pmc_id_fee_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_fee_steps
+    ADD CONSTRAINT trust_application_fee_steps_pmc_id_fee_id_fkey FOREIGN KEY (pmc_id, fee_id) REFERENCES public.trust_application_fees(pmc_id, id);
+
+
+--
+-- Name: trust_application_fee_steps trust_application_fee_steps_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_fee_steps
+    ADD CONSTRAINT trust_application_fee_steps_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_application_fee_steps trust_application_fee_steps_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_fee_steps
+    ADD CONSTRAINT trust_application_fee_steps_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
+-- Name: trust_application_fees trust_application_fees_pmc_id_application_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_fees
+    ADD CONSTRAINT trust_application_fees_pmc_id_application_id_fkey FOREIGN KEY (pmc_id, application_id) REFERENCES public.trust_applications(pmc_id, id);
+
+
+--
+-- Name: trust_application_fees trust_application_fees_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_application_fees
+    ADD CONSTRAINT trust_application_fees_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
 
 
 --
@@ -31851,4 +32157,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000156'),
     ('20261022000157'),
     ('20261022000158'),
-    ('20261022000159');
+    ('20261022000159'),
+    ('20261022000160');

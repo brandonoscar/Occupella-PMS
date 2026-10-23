@@ -1,6 +1,7 @@
 """The payment processor's webhook (migrations 20261022000158 and 20261022000159): Stripe's
-signed events about the payments it took (src/pms/api/online_payments.py) and the cards and
-accounts it saved for autopay (src/pms/api/autopay.py), each taken once. No session: the
+signed events about the payments it took (src/pms/api/online_payments.py), the application fees
+paid (src/pms/api/application_fees.py) and the cards and accounts it saved for autopay
+(src/pms/api/autopay.py), each taken once. No session: the
 signature, made with the endpoint's secret from the server's environment, is what lets it in.
 NOT VERIFIED against Stripe itself, which needs keys.
 """
@@ -9,7 +10,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
-from pms.api import autopay, online_payments
+from pms.api import application_fees, autopay, online_payments
 from pms.api.deps import Conn
 from pms.payments import processor as processors
 
@@ -32,5 +33,7 @@ async def stripe_webhook(request: Request, conn: Conn) -> dict[str, int]:
         if event.outcome in ("saved", "not saved"):
             taken += autopay.take_saved(conn, "stripe", event)
         else:
-            taken += online_payments.take(conn, "stripe", event)
+            taken += online_payments.take(conn, "stripe", event) or application_fees.take(
+                conn, "stripe", event
+            )
     return {"taken": taken}

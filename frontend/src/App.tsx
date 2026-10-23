@@ -71,6 +71,9 @@ export function App() {
   if (path === "/sign") return <SignPage />;
   // A vendor's work orders; their link carries what lets them in.
   if (path === "/vendor") return <VendorLinkPage />;
+  // The fake payment processor's checkout (development and CI); an applicant paying their
+  // application's fee reaches it with no login.
+  if (path === "/pay") return <FakeCheckoutPage />;
   if (path === "/sign-in") return <SignInPage />;
   if (path === "/forgot-password") return <ForgotPasswordPage />;
   return <Home path={path} />;
@@ -105,8 +108,6 @@ function Home({ path }: { path: string }) {
     }
     return <DashboardPage me={me} />;
   }
-  // The fake payment processor's checkout (development and CI): the tenant says what happened.
-  if (path === "/pay") return <FakeCheckoutPage me={me} />;
   return <TenantHome me={me} />;
 }
 

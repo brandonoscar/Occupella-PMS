@@ -17,6 +17,7 @@ import { AutomaticEmailsCard } from "./AutomaticEmailsCard";
 import { AutomaticFeesCard } from "./AutomaticFeesCard";
 import { AutomaticPrepaidCard } from "./AutomaticPrepaidCard";
 import { OnlinePaymentsCard } from "./OnlinePaymentsCard";
+import { ApplicationFeeCard } from "./ApplicationFeeCard";
 import { ScreeningCriteriaCard } from "./ScreeningCriteriaCard";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
@@ -83,6 +84,7 @@ export function SetupPage({ me }: { me: Me }) {
           <OnlinePaymentsCard />
           <AutomaticEmailsCard />
           <ScreeningCriteriaCard />
+          <ApplicationFeeCard />
           {open === "company" && (
             <SidePanel title="Edit company" onClose={close}>
               <CompanyForm company={company} save={(body, done) => record("/api/company", body, () => done).then((ok) => { if (ok) close(); })} />

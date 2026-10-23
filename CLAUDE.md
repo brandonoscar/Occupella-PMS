@@ -1130,8 +1130,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   its fees to the company, never to the money in trust (`docs/law.md`). Staff turn cards and bank
   debits on in Company setup (`pages/OnlinePaymentsCard.tsx`, `src/pms/api/online_payments.py`,
   area rent: `trust_online_payment_settings`, the latest holding, naming who) and see the latest
-  online payments there. The AI role reads none of it. Not built yet: application fees (next),
-  refunds from the PMS (staff refund at the processor), and Stripe's payouts matched to bank lines
+  online payments there. The AI role reads none of it. Not built yet: refunds from the PMS (staff refund at the processor), and Stripe's payouts matched to bank lines
   by themselves. The Stripe webhook is `src/pms/api/webhooks.py`'s, for payments and autopay.
 - Autopay (migration 0159): a tenant still on a lease saves a card or bank account with the
   processor for it in the portal (`pages/AutopayCard.tsx`, `src/pms/api/autopay.py`; the
@@ -1146,6 +1145,20 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   once, with why and who) are append-only and audited; a lease has one autopay saved and not
   stopped. The tenant stops it in the portal; staff from Company setup's Online payments (area
   rent), with why. The PMS keeps no card or account number. The AI role reads none of it.
+- Application fees (migration 0160): a company asks each applicant a fee, 0 to 1,000, set in
+  Company setup (`pages/ApplicationFeeCard.tsx`, `src/pms/api/application_fees.py`, area leasing;
+  `trust_application_fee_settings`, the latest holding, naming who), and an application owes the
+  fee in force when it came times its applicants. They pay it once, online, from the status page
+  (`/application`, its token in JSON bodies) by the methods Online payments takes, on the
+  processor's page (`kind="fee"`; the fake one's `/pay`, which needs no login), coming back to
+  `/application` without the token (the tab keeps it; the processor never sees it). Once the
+  processor says the money came, it is the company's fee in trust: from the cash of the trust bank
+  account the unit's owners keep their money in to its fee account (`trust_post_transfers`, key
+  `application-fee/<fee>`), taken out of trust as every company fee is. `trust_application_fees`
+  and its steps (`trust_application_fee_steps`: started, then succeeded or failed once, one
+  success per application; a second payment is kept as failed, to refund at the processor) are
+  append-only and audited. Staff see it paid on the applicant's page and in the register. No
+  state's cap is checked (`docs/law.md`); the AI role reads none of it.
 - Vendor insurance and inspections (migration 0058): a vendor's policies
   (`trust_vendor_insurance`: coverage, carrier, number, the days it runs, a limit; a renewal is
   a new policy), and a lease's move-in and move-out inspections (`trust_inspections`, their

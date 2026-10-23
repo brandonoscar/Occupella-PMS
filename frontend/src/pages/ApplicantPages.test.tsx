@@ -106,6 +106,8 @@ describe("ApplicantPage", () => {
     const summary = screen.getByLabelText("Summary");
     expect(summary.textContent).toContain("Income to rent2.6x");
     expect(within(summary).getByRole("link", { name: "Unit 2" }).getAttribute("href")).toBe("/units/u1");
+    // No fee paid online: no fee line.
+    expect(summary.textContent).not.toContain("Application fee");
     expect(within(screen.getByRole("list", { name: "Applicants" })).getAllByRole("listitem").map((l) => l.textContent))
       .toEqual(["Applicant A, a@example.com", "Applicant B, b@example.com"]);
     expect(screen.getByRole("list", { name: "Screenings" }).textContent).toContain("Recommends conditions: Income below 3x rent");
@@ -228,6 +230,12 @@ describe("ApplicantPage", () => {
     expect(screen.getByTestId("status").textContent).toBe("Withdrawn");
     expect(screen.queryByRole("button", { name: "Screen" })).toBeNull();
     expect(screen.queryByRole("button", { name: /^Actions for/ })).toBeNull();
+  });
+
+  it("shows the application fee its applicants paid online", async () => {
+    server({ ...APPLICATION, fee_paid: "90.00" });
+    render(<ApplicantPage me={ME} id="a1" />);
+    expect((await screen.findByLabelText("Summary")).textContent).toContain("Application fee$90.00 paid online");
   });
 
   it("links a leased application to its lease", async () => {

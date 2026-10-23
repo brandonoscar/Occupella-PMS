@@ -136,6 +136,8 @@ def test_an_applicant_applies_and_follows_the_application(client, conn, listing)
         "notice": notices.notice_text(
             "conditional", "A deposit of one more month", reasons, agency, given_on
         ),
+        # The company asks no application fee (migration 0160).
+        "fee": {"due": None, "paid": None, "methods": []},
     }
     assert last["notice"].startswith(
         "Your application was approved on conditions: A deposit of one more month"

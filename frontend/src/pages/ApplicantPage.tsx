@@ -110,6 +110,7 @@ export function ApplicantPage({ me, id }: { me: Me; id: string }) {
           <Item label="Household income a month">{money(found.monthly_income)}</Item>
           <Item label="Income to rent">{incomeMultiple(found.monthly_income, found.monthly_rent)}</Item>
           <Item label="Applied">{when(found.submitted_at)}</Item>
+          {found.fee_paid && <Item label="Application fee">{`${money(found.fee_paid)} paid online`}</Item>}
         </dl>
       </Card>
       <Card title="Applicants">

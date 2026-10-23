@@ -86,7 +86,7 @@ describe("FakeCheckoutPage saving a card", () => {
     window.history.replaceState(null, "", "/pay#fake_setup_abc");
     const fetch = vi.fn(async (_path: string, _init?: RequestInit) => new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetch);
-    render(<FakeCheckoutPage me={{ kind: "tenant", name: "Taylor Demo", pmc_name: "Demo PMC" } as never} />);
+    render(<FakeCheckoutPage />);
 
     expect(screen.getByRole("heading", { name: "Your autopay" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Save" }));

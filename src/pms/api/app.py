@@ -50,6 +50,7 @@ from pms import accounts, email, exports, geocoding, nightly
 from pms.api import (
     ach,
     addresses,
+    application_fees,
     assistance,
     autopay,
     bank_deposits,
@@ -573,6 +574,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(checks.router)
     app.include_router(online_payments.router)
     app.include_router(autopay.router)
+    app.include_router(application_fees.router)
     app.include_router(webhooks.router)
     app.include_router(banking.router)
     app.include_router(bank_deposits.router)

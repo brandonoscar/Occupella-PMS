@@ -79,7 +79,7 @@ describe("FakeCheckoutPage", () => {
     window.history.replaceState(null, "", "/pay#fake_abc");
     const fetch = vi.fn(async (_path: string, _init?: RequestInit) => new Response(null, { status: 204 }));
     vi.stubGlobal("fetch", fetch);
-    render(<FakeCheckoutPage me={{ kind: "tenant", name: "Taylor Demo", pmc_name: "Demo PMC" } as never} />);
+    render(<FakeCheckoutPage />);
 
     fireEvent.click(screen.getByRole("button", { name: "Pay" }));
     await vi.waitFor(() => expect(window.location.pathname).toBe("/"));
@@ -87,4 +87,19 @@ describe("FakeCheckoutPage", () => {
       ["/api/tenant/online-payments/fake/fake_abc", { outcome: "succeeded" }],
     ]);
   });
+
+  it("takes an applicant paying their application's fee back to their application", async () => {
+    window.history.replaceState(null, "", "/pay#fake_fee_abc");
+    const fetch = vi.fn(async (_path: string, _init?: RequestInit) => new Response(null, { status: 204 }));
+    vi.stubGlobal("fetch", fetch);
+    render(<FakeCheckoutPage />);
+
+    expect(screen.getByRole("heading", { name: "Your application fee" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Pay" }));
+    await vi.waitFor(() => expect(window.location.pathname).toBe("/application"));
+    expect(fetch.mock.calls.map(([path, init]) => [path, JSON.parse(String(init?.body))])).toEqual([
+      ["/api/application/fee/fake/fake_fee_abc", { outcome: "succeeded" }],
+    ]);
+  });
 });
+

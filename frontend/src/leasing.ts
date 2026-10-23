@@ -39,7 +39,11 @@ export type ApplicantStatus = {
   conditions: string | null;
   // The adverse action notice of a decision that rests on a screening (q080).
   notice?: string | null;
+  // Its application fee (migration 0160): what is still due, what was paid, how it may be paid now.
+  fee?: ApplicationFee | null;
 };
+
+export type ApplicationFee = { due: string | null; paid: string | null; methods: ("card" | "bank debit")[] };
 
 export type Applicant = { name: string; email: string };
 
@@ -96,6 +100,8 @@ export type Application = {
   withdrawal: Withdrawal | null;
   // The lease made of it, once an offer of it became one.
   lease_id: string | null;
+  // The application fee its applicants paid online (migration 0160), or null.
+  fee_paid?: string | null;
 };
 
 // An application's status as staff read it, in a badge.

@@ -533,6 +533,7 @@ FEATURES = (
     "checks",
     "online-payments",
     "autopay",
+    "application-fees",
 )
 
 

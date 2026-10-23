@@ -4898,3 +4898,70 @@ test("a tenant sets up autopay, rent due is paid from it when rent runs, and the
   await expectAccessible(page);
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
 });
+
+test("staff ask each applicant an application fee; an applicant pays it on the test processor's page, and it is the company's fee in trust", async ({
+  page,
+  browser,
+}) => {
+  const people = seed.features["application-fees"]!;
+  // The company takes cards online and asks each applicant $45.00.
+  await joinAsStaff(page, people.manager);
+  await settings(page, "Company setup");
+  const online = part(page, "Online payments");
+  await online.getByRole("button", { name: "Edit online payments" }).click();
+  const editing = page.getByRole("dialog", { name: "Online payments" });
+  await editing.getByLabel("Tenants may pay by card").check();
+  await editing.getByRole("button", { name: "Save" }).click();
+  await expect(online.getByTestId("online-payments")).toHaveText("Cards only");
+  const fee = part(page, "Application fee");
+  await expect(fee.getByTestId("application-fee-setting")).toHaveText("No application fee");
+  await fee.getByRole("button", { name: "Edit application fee" }).click();
+  const setting = page.getByRole("dialog", { name: "Application fee" });
+  await setting.getByLabel("Each applicant pays").fill("45");
+  await setting.getByRole("button", { name: "Save" }).click();
+  await expect(fee.getByTestId("application-fee-setting")).toHaveText("$45.00 from each applicant");
+
+  // A link for a vacant unit; someone applies through it.
+  await section(page, "Listings");
+  const unit = page.getByRole("row", { name: "Aspen Row, Unit 2" });
+  await unit.getByRole("button", { name: "Actions for Aspen Row, Unit 2" }).click();
+  await page.getByRole("menuitem", { name: "Open an application link" }).click();
+  const linking = page.getByRole("dialog", { name: "Open an application link" });
+  await linking.getByLabel("Rent a month").fill("1240.00");
+  await linking.getByRole("button", { name: "Open the link" }).click();
+  const opened = new URL((await linking.getByTestId("application-link").textContent()) ?? "");
+  await linking.getByRole("button", { name: "Close" }).click();
+  const applicant = await (await browser.newContext()).newPage();
+  await applicant.goto(opened.pathname + opened.hash);
+  await applicant.getByLabel("Move-in day").fill(new Date(Date.now() + 20 * 86_400_000).toISOString().slice(0, 10));
+  await applicant.getByLabel("Monthly income of everyone applying, together").fill("5200");
+  await applicant.getByLabel("Full name").fill("Applicant Fee");
+  await applicant.getByLabel("Email").fill("applicant.fee@example.com");
+  await applicant.getByRole("button", { name: "Send application" }).click();
+  const statusUrl = new URL((await applicant.getByTestId("status-url").textContent()) ?? "");
+
+  // From the status link they pay it on the processor's page (no login), and come back to it paid.
+  await applicant.goto(statusUrl.pathname + statusUrl.hash);
+  await expect(applicant.getByTestId("application-fee")).toHaveText("$45.00 to pay");
+  await expect(applicant.getByRole("button", { name: "Pay from a bank account" })).toHaveCount(0);
+  await expectAccessible(applicant);
+  await applicant.getByRole("button", { name: "Pay by card" }).click();
+  await expect(applicant.getByRole("heading", { level: 1, name: "Test checkout" })).toBeVisible();
+  await expect(applicant.getByRole("heading", { name: "Your application fee" })).toBeVisible();
+  await expectAccessible(applicant);
+  await applicant.getByRole("button", { name: "Pay", exact: true }).click();
+  await expect(applicant.getByTestId("application-fee")).toHaveText("Paid $45.00. Thank you.");
+  await expect(applicant.getByTestId("application-status")).toContainText("Received");
+  // The link they keep is back in the address bar; the processor never saw it.
+  expect(new URL(applicant.url()).hash).toBe(statusUrl.hash);
+  await applicant.close();
+
+  // Staff see it paid on the application, and in the register as the company's fee.
+  await section(page, "Applicants");
+  await page.getByRole("row", { name: "Application from Applicant Fee" }).click();
+  await expect(page.getByLabel("Summary")).toContainText("Application fee$45.00 paid online");
+  await section(page, "Banking");
+  await page.getByRole("row", { name: "Demo operating trust account", exact: true }).getByRole("link").click();
+  await page.getByRole("tab", { name: "Transactions" }).click();
+  await expect(page.getByRole("table", { name: "Register" }).getByRole("row", { name: /Application fee/ })).toContainText("$45.00");
+});

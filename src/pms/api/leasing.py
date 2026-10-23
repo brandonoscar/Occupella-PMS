@@ -26,7 +26,7 @@ from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from pms import accounts, exports, notices
-from pms.api import outbox, scope, screening_criteria
+from pms.api import application_fees, outbox, scope, screening_criteria
 from pms.api.deps import Conn, Staff, download, refusal
 from pms.api.listings import NewListing
 from pms.api.rentals import Page, Paged, PerPage
@@ -112,6 +112,8 @@ class Status(BaseModel):
     # The adverse action notice of a decision that rests on a screening, as its PDF and email say
     # it (the founder's review, q080).
     notice: str | None = None
+    # Its application fee (migration 0160): what is due, what was paid, how it may be paid.
+    fee: application_fees.FeeState | None = None
 
 
 def open_link(conn: psycopg.Connection[Any], via: LinkToken) -> tuple[Any, ...]:
@@ -209,7 +211,8 @@ def apply(request: Request, conn: Conn, application: ApplicationIn) -> Submitted
 def application_status(conn: Conn, asked: StatusToken) -> Status:
     """Where an application stands, for whoever holds its status token."""
     row = conn.execute(
-        "SELECT p.display_name, u.display_name, a.submitted_at, d.decision, d.conditions,"
+        "SELECT a.pmc_id, a.id, p.display_name, u.display_name, a.submitted_at, d.decision,"
+        " d.conditions,"
         " EXISTS (SELECT 1 FROM trust_screenings AS s WHERE s.application_id = a.id),"
         " EXISTS (SELECT 1 FROM trust_application_withdrawals AS w"
         "   WHERE w.application_id = a.id),"
@@ -225,7 +228,8 @@ def application_status(conn: Conn, asked: StatusToken) -> Status:
     ).fetchone()
     if row is None:
         raise HTTPException(404, "no application has this link")
-    prop, unit, submitted, decision, conditions, screened, withdrawn, reasons, agency, given = row
+    (pmc_id, application_id, prop, unit, submitted, decision, conditions, screened, withdrawn,
+     reasons, agency, given) = row  # fmt: skip
     status: StatusName = (
         "withdrawn" if withdrawn else decision or ("in review" if screened else "received")
     )
@@ -238,6 +242,7 @@ def application_status(conn: Conn, asked: StatusToken) -> Status:
         notice=None
         if reasons is None
         else notices.notice_text(decision, conditions, list(reasons), agency, given),
+        fee=application_fees.state(conn, pmc_id, application_id),
     )
 
 
@@ -331,6 +336,8 @@ class ApplicationOut(BaseModel):
     withdrawal: Withdrawal | None
     # The lease made of it, once an offer of it became one.
     lease_id: UUID | None
+    # The application fee its applicants paid online (migration 0160), or None.
+    fee_paid: str | None = None
 
 
 @router.post("/api/leasing/links", status_code=201)
@@ -480,6 +487,15 @@ def applications_of(
                 reported_at=at,
             )
         )
+    fees: dict[UUID, str] = {
+        application: exports.text(amount)
+        for application, amount in conn.execute(
+            "SELECT f.application_id, f.amount FROM trust_application_fees AS f"
+            " JOIN trust_application_fee_steps AS s ON s.fee_id = f.id AND s.step = 'succeeded'"
+            " WHERE f.application_id = ANY(%s)",
+            (ids,),
+        ).fetchall()
+    }
     found = [
         ApplicationOut(
             id=i,
@@ -510,6 +526,7 @@ def applications_of(
             if withdrawn
             else None,
             lease_id=lease,
+            fee_paid=fees.get(i),
         )
         for (
             i,

@@ -1064,3 +1064,16 @@ operations = [
 browser = [
   "features.spec.ts › a tenant sets up autopay, rent due is paid from it when rent runs, and the tenant or staff stop it",
 ]
+
+[[feature]]
+id = "application-fees"
+statement = "A company asks each applicant an application fee (the founder, 2026-10-23; migration 0160), set in Company setup (area leasing), which applies to applications that come in after it: the applicants pay it once, online, from their application's status link (no login) by the methods Online payments takes, on the processor's page (the fake processor's in development and CI, which moves no money; Stripe's, NOT VERIFIED without keys, through its signed webhook), coming back to their status page without the processor ever seeing their link; once the processor says the money came it is recorded as the company's fee in the trust bank account the unit's owners keep their money in, a second payment of a paid fee is kept as failed for a refund, staff see it on the application and in the register, no state's cap is checked, and the AI reads none of it."
+operations = [
+  "GET /api/leasing/application-fee",
+  "POST /api/leasing/application-fee",
+  "POST /api/application/fee",
+  "POST /api/application/fee/fake/{reference}",
+]
+browser = [
+  "features.spec.ts › staff ask each applicant an application fee; an applicant pays it on the test processor's page, and it is the company's fee in trust",
+]

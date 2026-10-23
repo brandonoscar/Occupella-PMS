@@ -51,6 +51,7 @@ TYPE = """
            WHEN m.metadata ->> 'kind' = 'tenant payment' THEN 'Rent payment'
            WHEN m.metadata ->> 'kind' = 'security deposit' THEN 'Security deposit'
            WHEN m.metadata ->> 'kind' = 'bounced payment' THEN 'Returned payment'
+           WHEN m.metadata ->> 'kind' = 'application fee' THEN 'Application fee'
            WHEN EXISTS (SELECT 1 FROM trust_owner_draws AS d WHERE d.transfer_id = m.transfer_id)
                THEN 'Owner draw'
            WHEN EXISTS (SELECT 1 FROM trust_owner_contributions AS c
