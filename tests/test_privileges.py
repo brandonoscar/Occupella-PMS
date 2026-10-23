@@ -287,6 +287,13 @@ TABLES = {
     # Balance notices (migration 20261023000201): each send, and its notice for each lease.
     "trust_balance_notice_runs": {"SELECT", "INSERT"},
     "trust_balance_notices": {"SELECT", "INSERT"},
+    # Texts (migration 20261023000204): each person's word on being texted, which texts the PMS
+    # writes by itself, the outbox and each attempt to hand a text over.
+    "trust_text_consents": {"SELECT", "INSERT"},
+    "trust_text_settings": {"SELECT", "INSERT"},
+    "trust_texts": {"SELECT", "INSERT"},
+    "trust_text_deliveries": {"SELECT", "INSERT"},
+    "trust_text_deliveries_id_seq": set(),
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -308,6 +315,10 @@ COLUMN_UPDATES = {
 # their credentials, and rental applicants with their consumer report results, are no business
 # of the role behind Occupella's key.
 AI_NEVER_READS = {
+    # Texts (migration 20261023000204): people's mobile numbers and what was texted them, as email.
+    "trust_text_consents",
+    "trust_texts",
+    "trust_text_deliveries",
     # A notice made for a lease, as filled in (migration 0119): like a document's file.
     "trust_notices",
     # Balance notices (migration 20261023000201): notices to tenants, as trust_notices.
@@ -661,6 +672,10 @@ FUNCTIONS = {
     "trust_check_lease_offer_not_void()": {"PUBLIC"},
     "trust_open_lease_offer_charges()": {"PUBLIC"},
     "trust_check_balance_notice()": set(),  # a trigger's (migration 20261023000201)
+    # A person's latest word on texts (migration 20261023000204), and its triggers'.
+    "trust_text_consent_of(uuid,uuid,uuid,uuid)": {"trust_app"},
+    "trust_check_text_consent()": set(),
+    "trust_check_text()": set(),
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.

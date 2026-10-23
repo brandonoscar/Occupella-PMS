@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Query
 from psycopg import sql
 from pydantic import BaseModel, Field, StringConstraints
 
-from pms import notices
+from pms import notices, texts
 from pms.api import outbox
 from pms.api.deps import Conn, Staff, refusal
 
@@ -290,6 +290,9 @@ def record_step(session: Staff, conn: Conn, work_order_id: UUID, step: Step) -> 
     assert found is not None
     if outbox.SENDING.get():
         notices.write_work_order(conn, session.pmc_id, found[0])
+    if step.step == "scheduled":
+        # The visit texted to the home's tenants who agreed (migration 20261023000204).
+        texts.write_visit(conn, session.pmc_id, found[0])
 
 
 # --- who is on call ---------------------------------------------------------------------------

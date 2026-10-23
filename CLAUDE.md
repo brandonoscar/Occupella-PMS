@@ -164,6 +164,33 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   tenant's written consent where a statute allows it (Florida, Texas from 1/1/2026, Michigan;
   `EMAIL_WITH_CONSENT`, NOT VERIFIED; `docs/law.md`). Area 'email'. A mailing service is a later
   add-on. The AI reads none of it.
+- Texts (`src/pms/texts.py`, migration 20261023000204, the founder 2026-10-23, ADR 0009): a tenant,
+  owner or vendor is texted only at a US mobile number they agreed to (+1 and ten digits), while
+  their latest word
+  says yes: `trust_text_consents` (append-only and audited, the latest holding) keeps it, given in
+  the portal by the tenant (`pages/TextMeCard.tsx`, `GET`/`POST /api/tenant/texts`, `by_person`),
+  in writing or by word of mouth to staff (the person's Texts tab, `components/TextsCard.tsx`,
+  naming who recorded it), or by a reply: STOP says no for everyone texted at that number, START
+  after a STOP yes again (`texts.reply`). The outbox (`trust_texts`) takes a text only under the
+  person's latest word, to its number, while it says yes (a trigger; the word and the text wait
+  for each other): what staff write (`POST /api/texts`, at most 300 characters, as "<company>:
+  <text> - <staff>. Reply STOP to stop.", 480 at most) and, once a company turns them on in
+  Company setup (`trust_text_settings`, `pages/AutomaticTextsCard.tsx`), a rent reminder some days
+  before rent is due and a late notice when a late fee is charged, each once, which the nightly
+  run and Run rent now write, and a work order's visit texted to the home's tenants once it is set
+  (by staff or the vendor's link); staff sending balance notices may text a reminder of each too
+  (`text` on `POST /api/balance-notices`). The PMS's own texts keep quiet hours: they wait for 9 am
+  to 8 pm where the home is, in every time zone its state spans (`texts.ZONES`, from the address;
+  the continental US's without one). Texts are written only while the server sends them
+  (`PMS_SMS_SENDER`: "fake", which keeps them in the outbox, for development and CI; "twilio"
+  with `PMS_TWILIO_ACCOUNT_SID`, `PMS_TWILIO_AUTH_TOKEN` and `PMS_TWILIO_FROM`, NOT VERIFIED
+  without an account; none by default). They go after the request commits and, for the PMS's
+  own, from a thread every five minutes (`texts.Deliverer`; `python -m pms.texts deliver`); each
+  attempt is recorded (`trust_text_deliveries`, the provider's id or why not, at most five), and
+  one whose person said stop since, or a day past its time, is given up. Twilio's replies come to
+  `POST /api/twilio/webhook`, a form signed with the account's token (the one write that isn't
+  JSON). Writing texts is the custom roles' area 'email'. Texts and their deliveries are not
+  audited; the AI reads none of it but the settings.
 - The portal (`frontend/`): React 19, Vite and Tailwind v4, following Occupella's `DESIGN.md`
   and looking like Occupella's app (founder, 2026-10-14): its light theme, a full-height
   light-blue left sidebar with the wordmark, the sections (lucide icons) and Sign out, a white
@@ -655,7 +682,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   urgent with the tenant's word on entry copied, and each staff member on call
   (`trust_on_call_staff`: append-only, the latest row holding, naming who changed it; Work orders,
   On call, `/api/maintenance/on-call`, area maintenance) is emailed at their login's email while
-  the server sends email (`emergency_request`, once per request and staff member; no texts), the
+  the server sends email (`emergency_request`, once per request and staff member; no texts to staff), the
   work order naming whom. A schedule step may name a visit window ("8-10 am",
   `trust_work_order_steps.visit_window`), which the tenant sees with the day and the vendor's email
   gives; work orders count their days open. Since migration 0085 a tenant is charged for a work

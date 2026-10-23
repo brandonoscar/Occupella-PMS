@@ -200,6 +200,7 @@ AREA_PATHS = (
     ("/api/invites", "people"),
     ("/api/emails", "email"),
     ("/api/balance-notices", "email"),  # each a reminder emailed to a lease's tenants
+    ("/api/texts", "email"),  # what staff text, and the texts the PMS sends by itself
 )
 READS = ("GET", "HEAD", "OPTIONS")
 

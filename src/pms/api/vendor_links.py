@@ -21,7 +21,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, StringConstraints
 
-from pms import accounts, notices
+from pms import accounts, notices, texts
 from pms.api.deps import Conn, Staff, refusal
 from pms.api.leasing import new_token, public_url
 from pms.api.work_orders import WORK_ORDERS, Priority, query, rows_of
@@ -241,4 +241,7 @@ def vendor_step(conn: Conn, work_order_id: UUID, step: VendorStep) -> VendorView
         # A step out of order (a schedule after the work is done...).
         raise HTTPException(409, refusal(refused)) from None
     assert made is not None
+    if step.step == "scheduled":
+        # The visit texted to the home's tenants who agreed (migration 20261023000204).
+        texts.write_visit(conn, pmc_id, made[0])
     return vendor_work_orders(conn, Through(token=step.token))

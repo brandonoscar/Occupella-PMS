@@ -71,9 +71,12 @@ jobs:
           # The fake email sender keeps each email in the outbox and sends it nowhere.
           # The nightly rent run is off: the tests charge rent when they mean to (Run rent now).
           # The fake geocoder calls nothing: it lands each address on a point of its own.
+          # The fake text sender keeps each text in the outbox and sends it nowhere; no texting
+          # provider's key is in any workflow.
           PYTHONPATH=src PMS_STATIC_DIR=frontend/dist PMS_PORT=8123 \
             PMS_PUBLIC_URL=http://127.0.0.1:8123 PMS_COOKIE_SECURE=false \
             PMS_SCREENING_PARTNER=fake PMS_EMAIL_SENDER=fake PMS_GEOCODER=fake PMS_NIGHTLY=off \
+            PMS_SMS_SENDER=fake \
             nohup python -m pms.api > "$RUNNER_TEMP/api.log" 2>&1 &
           for _ in $(seq 30); do curl -fsS http://127.0.0.1:8123/health && break; sleep 1; done
           PYTHONPATH=src python frontend/e2e/seed.py > frontend/e2e/.seed.json

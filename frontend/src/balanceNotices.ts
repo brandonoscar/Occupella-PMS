@@ -26,6 +26,8 @@ export type Sent = {
   owed: string;
   emailed: Tenant[];
   without_email: string[];
+  // Tenants texted a reminder of it (who agreed to texts, when staff asked).
+  texted?: string[];
   delivery: Delivery;
 };
 
@@ -38,7 +40,9 @@ export function sentLine(run: Run): string {
   const people = (n: number) => `${n} tenant${n === 1 ? "" : "s"}`;
   const leases = `${run.sent.length} lease${run.sent.length === 1 ? "" : "s"}`;
   const missing = without === 0 ? "" : `; ${people(without)} ${without === 1 ? "has" : "have"} no email on file`;
-  return `Made ${run.sent.length === 1 ? "a balance notice" : "balance notices"} for ${leases}: emailed ${people(emailed)}${missing}.`;
+  const texted = run.sent.reduce((n, s) => n + (s.texted?.length ?? 0), 0);
+  const texts = texted === 0 ? "" : `; texted ${people(texted)} a reminder`;
+  return `Made ${run.sent.length === 1 ? "a balance notice" : "balance notices"} for ${leases}: emailed ${people(emailed)}${missing}${texts}.`;
 }
 
 // The states the leases are in whose legal notice must go by mail, posting or hand, once each.

@@ -28,7 +28,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, Field
 
-from pms import email, notice_letters, notices
+from pms import email, notice_letters, notices, texts
 from pms.api import notice_templates, rent, scope
 from pms.api.deps import Conn, Staff, download
 
@@ -185,6 +185,9 @@ class NewRun(BaseModel):
     template_id: UUID
     dated_on: date
     lease_ids: Annotated[list[UUID], Field(min_length=1, max_length=500)]
+    # Text a reminder of it, too, to each tenant who agreed to texts (while the server sends
+    # texts; migration 20261023000204).
+    text: bool = False
 
 
 class Sent(BaseModel):
@@ -196,6 +199,8 @@ class Sent(BaseModel):
     emailed: list[Tenant]
     # Tenants with no email on file: their notice is to print and deliver.
     without_email: list[str]
+    # Tenants texted a reminder of it (those who agreed to texts, when staff asked).
+    texted: list[str] = []
     delivery: Delivery
 
 
@@ -233,7 +238,8 @@ def send(session: Staff, conn: Conn, asked: NewRun) -> Run:
         (session.pmc_id, template.version_id, asked.dated_on),
     ).fetchone()
     assert run is not None
-    sent = [one_notice(conn, session, run[0], template, lease, asked.dated_on)
+    text = asked.text and texts.TEXTING.get()
+    sent = [one_notice(conn, session, run[0], template, lease, asked.dated_on, text)
             for lease in asked.lease_ids]  # fmt: skip
     return Run(id=run[0], sent=sent)
 
@@ -245,6 +251,7 @@ def one_notice(
     template: notice_templates.Template,
     lease_id: UUID,
     dated_on: date,
+    text: bool = False,
 ) -> Sent:
     found = owing(conn, session.pmc_id, rent.today(), lease_id=lease_id)
     if not found:
@@ -285,6 +292,11 @@ def one_notice(
             conn, session.pmc_id, tenant.id, tenant.email, subject, body, session.person_id,
             notice[0],
         )  # fmt: skip
+    texted = [
+        t.name
+        for t in lease.tenants
+        if text and texts.write_balance_notice(conn, session.pmc_id, notice[0], lease_id, t.id)
+    ]
     return Sent(
         lease_id=lease_id,
         notice_id=notice[0],
@@ -293,6 +305,7 @@ def one_notice(
         owed=lease.owed,
         emailed=emailed,
         without_email=[t.name for t in lease.tenants if t.email is None],
+        texted=texted,
         delivery=lease.delivery,
     )
 

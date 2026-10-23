@@ -145,7 +145,9 @@ def test_a_run_lets_go_of_the_lock_when_a_company_fails(conn, app_conn, database
 def test_every_company_runs_when_none_is_named(conn, app_conn, pmc, monkeypatch):
     ran = []
     monkeypatch.setattr(
-        nightly, "run_pmc", lambda c, pmc_id, day, url, sending: ran.append((pmc_id, sending))
+        nightly,
+        "run_pmc",
+        lambda c, pmc_id, day, url, sending, texting: ran.append((pmc_id, sending)),
     )
 
     nightly.run_all(app_conn, OCT_16, URL)
@@ -203,8 +205,8 @@ def test_a_scheduler_that_cannot_reach_the_database_tries_again(caplog):
 def test_the_command_runs_every_company_once(monkeypatch, capsys, database_url):
     seen = []
 
-    def run_all(conn, day, url, sending):
-        seen.append((day, url, sending))
+    def run_all(conn, day, url, sending, texting):
+        seen.append((day, url, sending, texting))
         return [
             nightly.Ran(
                 pmc_id=None,
@@ -222,9 +224,10 @@ def test_the_command_runs_every_company_once(monkeypatch, capsys, database_url):
     monkeypatch.setenv("DATABASE_URL", database_url)
     monkeypatch.setenv("PMS_PUBLIC_URL", "https://pms.example.com")
     monkeypatch.delenv("PMS_EMAIL_SENDER", raising=False)
+    monkeypatch.delenv("PMS_SMS_SENDER", raising=False)
 
     assert nightly.main([]) == 0
-    assert seen == [(datetime.now(UTC).date(), "https://pms.example.com", False)]
+    assert seen == [(datetime.now(UTC).date(), "https://pms.example.com", False, False)]
     assert capsys.readouterr().out == (
         "1 companies: 2 rents, 1 late fees, 3 bills, 4 emails, 5 management fees, 6 work orders\n"
     )
@@ -233,6 +236,10 @@ def test_the_command_runs_every_company_once(monkeypatch, capsys, database_url):
     monkeypatch.setenv("PMS_EMAIL_SENDER", "fake")
     assert nightly.main([]) == 0
     assert seen[-1][2] is True
+    # A server that sends texts writes the automatic texts too; `pms.texts deliver` sends them.
+    monkeypatch.setenv("PMS_SMS_SENDER", "fake")
+    assert nightly.main([]) == 0
+    assert seen[-1][3] is True
 
 
 def test_the_api_runs_the_scheduler_unless_told_not_to(monkeypatch, database_url):
@@ -241,8 +248,8 @@ def test_the_api_runs_the_scheduler_unless_told_not_to(monkeypatch, database_url
     started = []
 
     class Fake:
-        def __init__(self, url, role, public_url, sender):
-            started.append(("made", role, public_url))
+        def __init__(self, url, role, public_url, sender, texting):
+            started.append(("made", role, public_url, texting))
 
         def start(self):
             started.append("started")
@@ -253,7 +260,7 @@ def test_the_api_runs_the_scheduler_unless_told_not_to(monkeypatch, database_url
     monkeypatch.setattr(nightly, "Scheduler", Fake)
     settings = api_app.Settings(database_url=database_url, nightly=True)
     with TestClient(api_app.create_app(settings)):
-        assert started == [("made", "trust_app", "http://localhost:8000"), "started"]
+        assert started == [("made", "trust_app", "http://localhost:8000", False), "started"]
     assert started[-1] == "stopped"
 
     monkeypatch.setenv("DATABASE_URL", database_url)

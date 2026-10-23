@@ -13,6 +13,7 @@ import { day, money } from "../money";
 import type { NoticeTemplate, Templates } from "../notices";
 import type { Scope } from "../scope";
 import { scopeParams } from "../scope";
+import type { TextSettings } from "../texts";
 
 // Send balance notices (migration 20261023000201), from the rent roll or the delinquency report:
 // the leases that owe in the page's scope, all picked to start, one of the company's notice
@@ -32,6 +33,13 @@ export function BalanceNoticesPanel({ scope, onClose, onSent }: {
   const [on, setOn] = useState(() => day(new Date()));
   const [error, setError] = useState("");
   const [run, setRun] = useState<Run | null>(null);
+  // Whether the server sends texts, and whether staff want a reminder texted too (migration
+  // 20261023000204): only to tenants who agreed to texts.
+  const [texting, setTexting] = useState(false);
+  const [text, setText] = useState(false);
+  useEffect(() => {
+    api.get<TextSettings>("/api/texts/settings").then((found) => setTexting(found.sending)).catch(() => setTexting(false));
+  }, []);
   useEffect(() => {
     const query = new URLSearchParams(scopeParams(scope));
     api.get<Owing[]>(`/api/balance-notices/owing?${query}`).then((found) => {
@@ -93,6 +101,7 @@ export function BalanceNoticesPanel({ scope, onClose, onSent }: {
               template_id: template,
               dated_on: on,
               lease_ids: owing.filter((o) => picked.has(o.lease_id)).map((o) => o.lease_id),
+              text: texting && text,
             });
             setRun(answer);
             onSent?.(sentLine(answer));
@@ -141,6 +150,12 @@ export function BalanceNoticesPanel({ scope, onClose, onSent }: {
               {[...new Map(owing.filter((o) => picked.has(o.lease_id) && o.delivery.email_may_count !== false)
                 .map((o) => [o.delivery.words, o.delivery.state])).keys()].map((words) => <li key={words}>{words}</li>)}
             </ul>
+          )}
+          {texting && (
+            <label className="flex items-center gap-2 text-sm text-ink">
+              <input type="checkbox" checked={text} onChange={(e) => setText(e.target.checked)} />
+              Also text a reminder to each tenant who agreed to texts (sent between 9 am and 8 pm there)
+            </label>
           )}
           <Notice tone="error">{error}</Notice>
           <div><Button type="submit" disabled={picked.size === 0}>{`Send ${picked.size} balance notice${picked.size === 1 ? "" : "s"}`}</Button></div>

@@ -364,8 +364,9 @@ React app. The lint is oxlint (MIT; `frontend/.oxlintrc.json`: every rule it cou
 correctness, React, accessibility and vitest among them, the few off saying why) and knip (ISC;
 `frontend/knip.json`: no unused file, export or dependency). Then the API serves that build on a fresh Postgres (emails go to the fake sender's outbox,
 `PMS_EMAIL_SENDER=fake`, addresses are found on a map by the fake geocoder, which calls nothing,
-`PMS_GEOCODER=fake`, and the nightly rent run is off, `PMS_NIGHTLY=off`, so rent is charged
-only when a test runs it), `frontend/e2e/seed.py` makes a synthetic PMC
+`PMS_GEOCODER=fake`, texts go to the fake sender's outbox, `PMS_SMS_SENDER=fake` (no texting
+provider's key is in any workflow), and the nightly rent run is off, `PMS_NIGHTLY=off`, so rent is
+charged only when a test runs it), `frontend/e2e/seed.py` makes a synthetic PMC
 with an owner who has statements and a tenant with rent due and a maintenance request, and
 Playwright, in its pinned image, drives Chromium (`frontend/e2e/portal.spec.ts`): the owner
 reads a statement, the tenant reads what is due and asks for a repair, staff enroll an

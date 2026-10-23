@@ -14,6 +14,7 @@ import { MAX_BYTES, toBase64, typeOf } from "../documents";
 import { money } from "../money";
 import { lateFeeSummary, nsfFeeSummary } from "../setup";
 import { AutomaticEmailsCard } from "./AutomaticEmailsCard";
+import { AutomaticTextsCard } from "./AutomaticTextsCard";
 import { AutomaticFeesCard } from "./AutomaticFeesCard";
 import { AutomaticPrepaidCard } from "./AutomaticPrepaidCard";
 import { ScreeningCriteriaCard } from "./ScreeningCriteriaCard";
@@ -80,6 +81,7 @@ export function SetupPage({ me }: { me: Me }) {
           <AutomaticFeesCard />
           <AutomaticPrepaidCard />
           <AutomaticEmailsCard />
+          <AutomaticTextsCard />
           <ScreeningCriteriaCard />
           {open === "company" && (
             <SidePanel title="Edit company" onClose={close}>

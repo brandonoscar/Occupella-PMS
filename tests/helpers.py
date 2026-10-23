@@ -3,6 +3,7 @@
 Every fixture is synthetic: no real names, addresses, bank numbers or tax IDs.
 """
 
+import itertools
 import os
 import shutil
 import struct
@@ -1429,3 +1430,14 @@ def png(width=40, height=20):
         + chunk(b"IDAT", zlib.compress(rows))
         + chunk(b"IEND", b"")
     )
+
+
+_phones = itertools.count()
+
+
+def fresh_phone() -> str:
+    """A fictional US mobile number (555-0100 to 555-0199, under an area code from 300 up) that
+    no other test of this run uses, so a STOP reply to it reaches only the test's own people.
+    The numbers tests write out are under 202."""
+    n = next(_phones)
+    return f"+1{300 + n // 100 % 699}55501{n % 100:02d}"

@@ -911,3 +911,35 @@ policy). NOT VERIFIED against the statutes' text.
 template on the lease's page; any written consent to email and its copies and proof of sending; a
 mailing service (a later add-on).
 
+## Text messages (migration 20261023000204)
+
+**The rule.** The Telephone Consumer Protection Act (47 U.S.C. 227) forbids texting a mobile
+number with an automatic system without the person's prior express consent, and its rules (47 CFR
+64.1200) let a person take consent back by any reasonable means; the carriers' rules (CTIA's
+messaging principles, and registering the company's number and use, "10DLC") ask the sender to
+name itself, to honor STOP and its like at once, and to text only those who opted in. Some states'
+own laws (Florida's, Oklahoma's and others) limit texts by hour; mostly for selling, which the
+PMS's texts are not. All of this is NOT VERIFIED against the current text of each rule.
+
+**What the PMS does.**
+- A text goes only to a number its person agreed to be texted at, while their latest word says
+  yes: the database refuses any other. Their word is kept with how they gave it (in the portal,
+  in writing, by word of mouth to a named staff member, or a reply) and when.
+- A reply of STOP (or STOPALL, UNSUBSCRIBE, CANCEL, END, QUIT, REVOKE, OPTOUT) says no for every
+  company on the server that texted that number, and a text written before it is not sent; START
+  (or YES, UNSTOP) after a STOP says yes again.
+- Every text names the company and ends "Reply STOP to stop."
+- The PMS's own texts (rent reminders, late notices, a balance notice's reminder and a work
+  order's visit) keep quiet hours: they wait for 9 am to 8 pm where the home is, in every time
+  zone its state spans (a home in a state of two zones waits until it is daytime in both), and
+  across the continental US for a home with no address on file. That sits inside the 8 am to 9 pm
+  the TCPA's rules set for calls that sell (47 CFR 64.1200(c)(1), NOT VERIFIED against its current
+  text), which the PMS's texts don't. What staff write goes when they send it.
+- A balance notice's text says it is a reminder and not a legal notice, as its email does.
+- Texts are about the person's rent and home: the PMS sends no marketing.
+
+**Left to the company.** Getting consent the way its state and its carriers ask, registering its
+number and use with the carriers through its provider, its provider account (Twilio's, NOT
+VERIFIED here) and what that provider charges, and any state's rule on hours stricter than 9 am
+to 8 pm.
+

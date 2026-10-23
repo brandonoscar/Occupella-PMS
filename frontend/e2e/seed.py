@@ -530,6 +530,7 @@ FEATURES = (
     "tax-credit",
     "unit-details",
     "balance-notices",
+    "texts",
 )
 
 

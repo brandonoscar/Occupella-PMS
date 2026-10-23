@@ -30,11 +30,16 @@ const RUN: Run = {
     emailed: [{ id: "t2", name: "Reese Sample", email: "reese@example.com" }], without_email: ["Avery Sample"] }],
 };
 
-function server(owing: Owing[] = OWING, templates = TEMPLATES, refuse = "") {
+function server(owing: Owing[] = OWING, templates = TEMPLATES, refuse = "", texting = false) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method === "POST") {
       if (refuse) return new Response(JSON.stringify({ detail: refuse }), { status: 422 });
-      return new Response(JSON.stringify(RUN), { status: 201 });
+      const asked = JSON.parse(String(init.body));
+      const run = asked.text ? { ...RUN, sent: RUN.sent.map((s) => ({ ...s, texted: ["Reese Sample"] })) } : RUN;
+      return new Response(JSON.stringify(run), { status: 201 });
+    }
+    if (path === "/api/texts/settings") {
+      return new Response(JSON.stringify({ rent_reminder_days: null, late_notices: false, visits: false, sending: texting }));
     }
     if (path.startsWith("/api/balance-notices/owing")) return new Response(JSON.stringify(owing));
     return new Response(JSON.stringify(templates));
@@ -66,9 +71,24 @@ describe("BalanceNoticesPanel", () => {
     expect(screen.getByRole("list", { name: "No email on file" }).textContent).toBe("Property 1, 1A: Avery Sample");
     expect(screen.getByRole("link", { name: "Print the notices (PDF)" }).getAttribute("href")).toBe("/api/balance-notices/runs/r1/pdf");
     expect(sent).toHaveBeenCalledWith("Made a balance notice for 1 lease: emailed 1 tenant; 1 tenant has no email on file.");
-    expect(fetch.mock.calls[0]![0]).toBe("/api/balance-notices/owing?group=g1");
+    expect(fetch.mock.calls.map(([path]) => path)).toContain("/api/balance-notices/owing?group=g1");
     const post = fetch.mock.calls.find(([, init]) => init?.method === "POST");
-    expect(JSON.parse(String(post?.[1]?.body))).toEqual({ template_id: "n1", dated_on: "2026-10-24", lease_ids: ["l1"] });
+    expect(JSON.parse(String(post?.[1]?.body))).toEqual({ template_id: "n1", dated_on: "2026-10-24", lease_ids: ["l1"], text: false });
+    // No text is offered while the server sends none.
+    expect(screen.queryByLabelText(/Also text a reminder/)).toBeNull();
+  });
+
+  it("texts a reminder too, to tenants who agreed, while the server sends texts", async () => {
+    const fetch = server(OWING, TEMPLATES, "", true);
+    render(<BalanceNoticesPanel scope={{ group: "", property: "" }} onClose={vi.fn()} />);
+    fireEvent.click(await screen.findByLabelText(/Also text a reminder to each tenant who agreed to texts/));
+    fireEvent.click(screen.getByLabelText("Send to Property 2, 2A"));
+    fireEvent.click(screen.getByRole("button", { name: "Send 1 balance notice" }));
+    expect((await screen.findByTestId("balance-notices-sent")).textContent).toBe(
+      "Made a balance notice for 1 lease: emailed 1 tenant; 1 tenant has no email on file; texted 1 tenant a reminder.",
+    );
+    const post = fetch.mock.calls.find(([, init]) => init?.method === "POST");
+    expect(JSON.parse(String(post?.[1]?.body)).text).toBe(true);
   });
 
   it("picks none and all, and shows a refusal", async () => {

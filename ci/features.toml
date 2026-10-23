@@ -13,6 +13,7 @@
 
 [outside]
 "GET /health" = "the server's health check: the self-host image and the browser run wait for it, and no person uses it"
+"POST /api/twilio/webhook" = "Twilio's signed replies to texts (STOP and START): Twilio calls it, no person does, and the browser run's text sender is the fake one; tests/api/test_texts_api.py sends it signed replies (NOT VERIFIED against Twilio itself)"
 
 [[feature]]
 id = "logins"
@@ -1014,3 +1015,18 @@ browser = [
   "features.spec.ts › staff send a balance notice from their own template to leases that owe, from the delinquency report or the rent roll, and print them; each tenant's Email tab shows it",
 ]
 
+[[feature]]
+id = "texts"
+statement = "Text messages (the founder, 2026-10-23, ADR 0009, q068 and q091; migration 20261023000204): a tenant, owner or vendor is texted only at a US mobile number they agreed to, while their latest word says yes (the database refuses any other): staff record the word a person gave them in writing or by word of mouth, the tenant gives or takes back their own in the portal, and a STOP reply says no and START yes again; staff text a person who agreed from their Texts tab and see every text with whether it went; the company turns on rent reminders and late notices by text, which the nightly run and Run rent now write, and a work order's visit texted to the home's tenants once it is set; staff sending balance notices text a reminder too to those who agreed; the PMS's own texts keep quiet hours, going between 9 am and 8 pm where the home is in every time zone its state spans; each text names the company and says how to stop; the server's sender is the fake one in development and CI and Twilio's, NOT VERIFIED without an account, through its signed webhook; the AI reads none of it but the settings."
+operations = [
+  "GET /api/texts",
+  "POST /api/texts",
+  "POST /api/texts/consent",
+  "GET /api/texts/settings",
+  "POST /api/texts/settings",
+  "GET /api/tenant/texts",
+  "POST /api/tenant/texts",
+]
+browser = [
+  "features.spec.ts › staff record a tenant's word on texts and text them; the company texts reminders and a work order's visit by itself; the tenant says no in the portal",
+]

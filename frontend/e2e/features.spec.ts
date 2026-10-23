@@ -4782,3 +4782,94 @@ test("staff send a balance notice from their own template to leases that owe, fr
   await expect(sent).toContainText("It is not a notice to pay rent or quit");
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
 });
+
+test("staff record a tenant's word on texts and text them; the company texts reminders and a work order's visit by itself; the tenant says no in the portal", async ({
+  page,
+  browser,
+}) => {
+  const people = seed.features.texts!;
+  await joinAsStaff(page, people.manager);
+
+  // From the tenant's Texts tab: their word, as they gave it in writing, then a text.
+  const search = page.getByLabel("Search people, homes, bills, work orders and files");
+  await search.fill("taylor");
+  await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Taylor Demo/ }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Taylor Demo" })).toBeVisible();
+  await page.getByRole("tab", { name: "Texts", exact: true }).click();
+  await expect(page.getByTestId("text-consent")).toHaveText("No word on texts yet");
+  await page.getByRole("button", { name: "Record their word" }).click();
+  const word = page.getByRole("dialog", { name: "Taylor Demo's word on texts" });
+  await word.getByLabel("Mobile number").fill("(202) 555-0167");
+  await word.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Taylor Demo agreed to texts.")).toBeVisible();
+  await expect(page.getByTestId("text-consent")).toContainText("Agreed to texts at (202) 555-0167 in writing");
+  await page.getByRole("button", { name: "Write text" }).click();
+  const writing = page.getByRole("dialog", { name: "Text Taylor Demo" });
+  await writing.getByLabel("Text").fill("The water is off Tuesday from 9 to 11.");
+  await expectAccessible(page);
+  await writing.getByRole("button", { name: "Send text" }).click();
+  await expect(page.getByText("Text sent to (202) 555-0167.")).toBeVisible();
+  // Sent by the server's (fake) sender after the request: read again, it says so.
+  await page.reload();
+  await page.getByRole("tab", { name: "Texts", exact: true }).click();
+  const sent = page.getByRole("list", { name: "Texts, Taylor Demo" }).getByRole("listitem").first();
+  await expect(sent).toContainText("The water is off Tuesday from 9 to 11.");
+  await expect(sent).toContainText("Sent");
+  await expectAccessible(page);
+
+  // The company texts rent reminders and work order visits by itself, to the tenants who agreed.
+  await settings(page, "Company setup");
+  const auto = page.getByLabel("Automatic texts", { exact: true });
+  await expect(auto).toContainText("Rent reminders by textOff");
+  await page.getByRole("button", { name: "Edit automatic texts" }).click();
+  const editing = page.getByRole("dialog", { name: "Automatic texts" });
+  await editing.getByLabel("Rent reminders by text").check();
+  await editing.getByLabel("Days before rent is due").selectOption("5");
+  await editing.getByLabel("Work order visits by text, to the home's tenants").check();
+  await editing.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("Saved the automatic texts.")).toBeVisible();
+  await expect(auto).toContainText("Rent reminders by text5 days before rent is due");
+  await expect(auto).toContainText("Work order visits by textOn");
+
+  // A visit set for a work order at Taylor's home is texted to them, for daytime there.
+  await section(page, "Work orders");
+  await page.getByRole("button", { name: "New work order" }).click();
+  const order = page.getByRole("dialog", { name: "New work order" });
+  await order.getByRole("combobox", { name: "Property", exact: true }).selectOption({ label: "Cedar House" });
+  await order.getByRole("combobox", { name: "Unit", exact: true }).selectOption({ label: "House" });
+  await order.getByLabel("Title").fill("Dripping tap");
+  await order.getByRole("button", { name: "Open work order" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: /Dripping tap$/ })).toBeVisible();
+  await page.getByRole("button", { name: "Next step" }).click();
+  let next = page.getByRole("dialog", { name: "Next step" });
+  await next.getByRole("combobox", { name: "Vendor", exact: true }).selectOption({ label: "Demo Roofing Co" });
+  await next.getByRole("button", { name: "Record" }).click();
+  await expect(page.getByText("Assigned to Demo Roofing Co.")).toBeVisible();
+  await page.getByRole("button", { name: "Next step" }).click();
+  next = page.getByRole("dialog", { name: "Next step" });
+  await next.getByRole("combobox", { name: "What happens next" }).selectOption({ label: "Schedule the visit" });
+  await next.getByLabel("Visit on").fill(daysFromToday(2));
+  await next.getByRole("button", { name: "Record" }).click();
+  await expect(page.getByText(`Scheduled for ${us(daysFromToday(2))}.`)).toBeVisible();
+  await search.fill("taylor");
+  await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Taylor Demo/ }).click();
+  await page.getByRole("tab", { name: "Texts", exact: true }).click();
+  const visit = page.getByRole("list", { name: "Texts, Taylor Demo" }).getByRole("listitem").first();
+  await expect(visit).toContainText("Visit");
+  await expect(visit).toContainText(`(Dripping tap) at Cedar House, House is set for ${us(daysFromToday(2))}.`);
+
+  // The tenant sees their word in the portal and says no.
+  const tenant = await (await browser.newContext()).newPage();
+  await joinPortal(tenant, people.taylor);
+  const mine = part(tenant, "Texts");
+  await expect(mine.getByTestId("my-text-consent")).toContainText("Agreed to texts at (202) 555-0167 in writing");
+  await expectAccessible(tenant);
+  await mine.getByRole("button", { name: "Stop texting me" }).click();
+  await expect(tenant.getByText("No more texts.")).toBeVisible();
+  await tenant.close();
+  await page.reload();
+  await page.getByRole("tab", { name: "Texts", exact: true }).click();
+  await expect(page.getByTestId("text-consent")).toContainText("Said no to texts at (202) 555-0167 in the portal");
+  await expect(page.getByRole("button", { name: "Write text" })).toHaveCount(0);
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+});

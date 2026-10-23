@@ -19,6 +19,7 @@ import { LEASE_STATUS, PORTAL, termLabel } from "../rentals";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import { EmailsCard } from "../components/EmailsCard";
+import { TextsCard } from "../components/TextsCard";
 import { NotesCard } from "../components/NotesCard";
 import { FilesCard } from "./FilesCard";
 import { PortalCard } from "./PortalCard";
@@ -104,11 +105,12 @@ export function TenantsPage({ me }: { me: Me }) {
   );
 }
 
-type TenantTab = "summary" | "leases" | "email" | "notes" | "files";
+type TenantTab = "summary" | "leases" | "email" | "texts" | "notes" | "files";
 const TENANT_TABS: { value: TenantTab; label: string }[] = [
   { value: "summary", label: "Summary" },
   { value: "leases", label: "Leases" },
   { value: "email", label: "Email" },
+  { value: "texts", label: "Texts" },
   { value: "files", label: "Files" },
   { value: "notes", label: "Notes" },
 ];
@@ -163,6 +165,7 @@ export function TenantPage({ me, id }: { me: Me; id: string }) {
             {tab === "files" && <FilesCard kind="tenant_document" aboutId={id} name={tenant.name} />}
             {tab === "notes" && <NotesCard about="tenant" aboutId={id} name={tenant.name} />}
             {tab === "email" && <EmailsCard about="tenant" aboutId={id} name={tenant.name} emailOn={me.email_on} />}
+            {tab === "texts" && <TextsCard about="tenant" aboutId={id} name={tenant.name} />}
             {tab === "leases" && (
               <div className="flex flex-col gap-6">
               <Card title="Leases">
