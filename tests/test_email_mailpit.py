@@ -157,7 +157,7 @@ def trusted(mailpit, monkeypatch):
 def turn_on_statements(conn, pmc_id):
     """Monthly statements and payment receipts on."""
     settings = {**dict.fromkeys(notices.FIELDS), "owner_statement_day": 5, "payment_receipts": True}
-    for flag in ("late_notices", "work_order_notices", "adverse_action_notices"):
+    for flag in ("late_notices", "work_order_notices", "adverse_action_notices", "reserve_alerts"):
         settings[flag] = bool(settings[flag])
     conn.execute(
         f"INSERT INTO trust_email_settings (pmc_id, {', '.join(settings)})"  # noqa: S608
@@ -226,6 +226,31 @@ def test_each_kind_of_email_arrives_as_its_text_and_html_over_starttls(conn, app
     # One to each owner: the first at their contact email, the second at their login's, with
     # the portal's link.
     assert notices.write_owner_statements(app_conn, pmc.pmc_id, date(2026, 10, 5), 5, URL) == 2
+    # The first owner's account below its reserve (q054), told at their contact email.
+    add_agreement(conn, pmc.pmc_id, first.account, date(2026, 1, 1), reserve="1000.00")
+    assert notices.write_reserve_alerts(app_conn, pmc.pmc_id, date(2026, 10, 5), URL) == 1
+    # The company's admin told the nightly run failed (q149), at their login's email.
+    conn.execute(
+        "INSERT INTO trust_staff_roles (pmc_id, staff_id, role, granted)"
+        " VALUES (%s, %s, 'admin', true)",
+        (pmc.pmc_id, staff),
+    )
+    made = conn.execute(
+        "INSERT INTO trust_logins (pmc_id, kind, staff_id, email)"
+        " VALUES (%s, 'staff', %s, %s) RETURNING id",
+        (pmc.pmc_id, staff, f"admin.{tag}@example.com"),
+    ).fetchone()[0]
+    conn.execute(
+        "INSERT INTO trust_login_secrets (login_id, pmc_id, password_hash)"
+        " VALUES (%s, %s, '$argon2id$synthetic')",
+        (made, pmc.pmc_id),
+    )
+    assert (
+        email.write_admin_alert(
+            app_conn, pmc.pmc_id, "nightly_failed", date(2026, 10, 5), "Broken: synthetic", URL
+        )
+        == 1
+    )
     # A tenant's payment receipt, at their contact email.
     tenant = conn.execute(
         "SELECT tenant_id FROM trust_ledger_accounts WHERE ledger_account_id = %s",
@@ -272,12 +297,14 @@ def test_each_kind_of_email_arrives_as_its_text_and_html_over_starttls(conn, app
         }.get(kind, [])
         assert got["Inline"] == []
     assert sorted(kind for kind, *_ in written) == [
+        "admin_alert",
         "bill_approval",
         "invite",
         "message",
         "owner_statement",
         "owner_statement",
         "payment_receipt",
+        "reserve_low",
     ]
     (invited,) = trusted.to(f"invite.{tag}@example.com")
     assert invite.token in invited["Text"] and f'<a href="{link}"' in invited["HTML"]
