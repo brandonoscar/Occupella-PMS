@@ -5,7 +5,7 @@ here is synthetic."""
 
 import psycopg
 import pytest
-from helpers import add_staff, add_unit, make_pmc, open_application_link
+from helpers import acting_as, add_staff, add_unit, make_pmc, open_application_link
 
 
 @pytest.fixture
@@ -29,12 +29,12 @@ def listing(conn, pmc, staff):
 
 
 def choose(conn, pmc_id, listing_id, in_feed, staff_id=None):
-    if staff_id is not None:
-        conn.execute("SELECT set_config('trust.staff_id', %s, true)", (str(staff_id),))
-    conn.execute(
-        "INSERT INTO trust_listing_feed_choices (pmc_id, listing_id, in_feed) VALUES (%s, %s, %s)",
-        (pmc_id, listing_id, in_feed),
-    )
+    with acting_as(conn, staff_id):
+        conn.execute(
+            "INSERT INTO trust_listing_feed_choices (pmc_id, listing_id, in_feed)"
+            " VALUES (%s, %s, %s)",
+            (pmc_id, listing_id, in_feed),
+        )
 
 
 def in_feed(conn, listing_id):
@@ -114,11 +114,12 @@ def test_choices_and_contacts_are_never_rewritten(conn, pmc, staff, listing, tab
             conn.execute(statement)
 
 
-def test_the_ai_role_reads_the_choices_but_not_the_contact(conn, pmc, staff, listing):
+def test_the_ai_role_reads_the_choices_but_not_the_contact(conn, ai_conn, pmc, staff, listing):
     choose(conn, pmc.pmc_id, listing, True, staff)
     contact(conn, pmc.pmc_id)
-    conn.execute("SET LOCAL ROLE trust_ai_agent")
 
-    assert conn.execute("SELECT count(*) FROM trust_listing_feed_choices").fetchone() == (1,)
+    assert ai_conn.execute(
+        "SELECT count(*) FROM trust_listing_feed_choices WHERE listing_id = %s", (listing,)
+    ).fetchone() == (1,)
     with pytest.raises(psycopg.errors.InsufficientPrivilege):
-        conn.execute("SELECT count(*) FROM trust_listing_feed_contacts")
+        ai_conn.execute("SELECT count(*) FROM trust_listing_feed_contacts")

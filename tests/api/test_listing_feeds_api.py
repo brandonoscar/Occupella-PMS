@@ -256,17 +256,18 @@ def test_a_listing_leaves_the_feeds_when_staff_stop_or_it_leaves_the_page(
 
     stopped = ok(send(client, kept, False))
     again = ok(send(client, kept, False))
-    ok(client.post(f"/api/leasing/listings/{removed}/remove", json={}))
-    refused = send(client, removed)
+    ok(client.post(f"/api/leasing/listings/{removed}/remove", json={}), 204)
 
     assert stopped == {"in_feed": False, "changed": True}
     assert again == {"in_feed": False, "changed": False}
+    # Off the public page, the removed one leaves the feeds though staff still send it.
     assert fetched(other_client, pmc, "zillow").findall("listing") == []
     assert fetched(other_client, pmc, "mits").findall("Property") == []
+    # Staff may still stop sending it; sending one off the page again is refused.
+    assert ok(send(client, removed, False)) == {"in_feed": False, "changed": True}
+    refused = send(client, removed)
     assert refused.status_code == 409
     assert refused.json()["detail"] == "this listing is off the public page; list the unit again"
-    # Staff may still take a listing off the page out of the feeds.
-    assert ok(send(client, removed, False)) == {"in_feed": False, "changed": True}
     assert conn.execute(
         "SELECT count(*) FROM trust_listing_feed_choices WHERE pmc_id = %s", (pmc.pmc_id,)
     ).fetchone() == (4,)

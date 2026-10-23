@@ -2996,6 +2996,26 @@ $$;
 
 
 --
+-- Name: trust_check_listing_feed_choice(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_listing_feed_choice() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(hashtextextended('listing feed of ' || NEW.listing_id, 0));
+    IF trust_listing_in_feed(NEW.listing_id) = NEW.in_feed THEN
+        RAISE EXCEPTION 'trust: this listing is % in the feed',
+            CASE WHEN NEW.in_feed THEN 'already' ELSE 'not' END
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_notice_template_version(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -4973,6 +4993,23 @@ CREATE FUNCTION public.trust_lease_people(p_lease_id uuid, p_day date) RETURNS i
             SELECT 1 FROM trust_lease_household_removals AS r WHERE r.occupant_id = o.id
         )
     )::integer
+$$;
+
+
+--
+-- Name: trust_listing_in_feed(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_listing_in_feed(p_listing_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    SELECT coalesce((
+        SELECT c.in_feed FROM trust_listing_feed_choices AS c
+        WHERE c.listing_id = p_listing_id
+        ORDER BY c.created_at DESC, c.id DESC
+        LIMIT 1
+    ), false)
 $$;
 
 
@@ -14951,6 +14988,38 @@ CREATE TABLE public.trust_leasing_fees (
 
 
 --
+-- Name: trust_listing_feed_choices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_listing_feed_choices (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    listing_id uuid NOT NULL,
+    in_feed boolean NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_listing_feed_contacts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_listing_feed_contacts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    contact_name text,
+    email text NOT NULL,
+    phone text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_listing_feed_contacts_contact_name_check CHECK (((contact_name = btrim(contact_name)) AND ((length(contact_name) >= 1) AND (length(contact_name) <= 100)))),
+    CONSTRAINT trust_listing_feed_contacts_email_check CHECK (((email ~ '^[^@[:space:]]+@[^@[:space:]]+\.[^@[:space:]]+$'::text) AND (char_length(email) <= 254))),
+    CONSTRAINT trust_listing_feed_contacts_phone_check CHECK ((phone ~ '^[0-9]{10}$'::text))
+);
+
+
+--
 -- Name: trust_listing_removals; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -17947,6 +18016,22 @@ ALTER TABLE ONLY public.trust_ledger_accounts
 
 
 --
+-- Name: trust_listing_feed_choices trust_listing_feed_choices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_listing_feed_choices
+    ADD CONSTRAINT trust_listing_feed_choices_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_listing_feed_contacts trust_listing_feed_contacts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_listing_feed_contacts
+    ADD CONSTRAINT trust_listing_feed_contacts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_listing_removals trust_listing_removals_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20319,6 +20404,41 @@ CREATE INDEX trust_ledger_accounts_pmc_id ON public.trust_ledger_accounts USING 
 
 
 --
+-- Name: trust_listing_feed_choices_listing; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_listing_feed_choices_listing ON public.trust_listing_feed_choices USING btree (listing_id, created_at DESC, id DESC);
+
+
+--
+-- Name: trust_listing_feed_choices_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_listing_feed_choices_pmc ON public.trust_listing_feed_choices USING btree (pmc_id);
+
+
+--
+-- Name: trust_listing_feed_choices_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_listing_feed_choices_recorded_by ON public.trust_listing_feed_choices USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_listing_feed_contacts_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_listing_feed_contacts_pmc ON public.trust_listing_feed_contacts USING btree (pmc_id, created_at DESC, id DESC);
+
+
+--
+-- Name: trust_listing_feed_contacts_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_listing_feed_contacts_recorded_by ON public.trust_listing_feed_contacts USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_maintenance_requests_lease_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21936,6 +22056,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_listing_feed_choices trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_listing_feed_choices FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_listing_feed_contacts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_listing_feed_contacts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_listing_removals trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23224,6 +23358,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_ledg
 
 
 --
+-- Name: trust_listing_feed_choices trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_listing_feed_choices FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_listing_feed_contacts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_listing_feed_contacts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_listing_removals trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24267,6 +24415,13 @@ CREATE TRIGGER trust_lease_offer_void_open BEFORE INSERT ON public.trust_lease_o
 
 
 --
+-- Name: trust_listing_feed_choices trust_listing_feed_choice; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_listing_feed_choice BEFORE INSERT ON public.trust_listing_feed_choices FOR EACH ROW EXECUTE FUNCTION public.trust_check_listing_feed_choice();
+
+
+--
 -- Name: pgledger_accounts trust_no_negative_balance; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24600,6 +24755,20 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_utilities F
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_vehicles FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_listing_feed_choices trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_listing_feed_choices FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_listing_feed_contacts trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_listing_feed_contacts FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -27737,6 +27906,46 @@ ALTER TABLE ONLY public.trust_ledger_accounts
 
 
 --
+-- Name: trust_listing_feed_choices trust_listing_feed_choices_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_listing_feed_choices
+    ADD CONSTRAINT trust_listing_feed_choices_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_listing_feed_choices trust_listing_feed_choices_pmc_id_listing_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_listing_feed_choices
+    ADD CONSTRAINT trust_listing_feed_choices_pmc_id_listing_id_fkey FOREIGN KEY (pmc_id, listing_id) REFERENCES public.trust_listings(pmc_id, id);
+
+
+--
+-- Name: trust_listing_feed_choices trust_listing_feed_choices_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_listing_feed_choices
+    ADD CONSTRAINT trust_listing_feed_choices_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_listing_feed_contacts trust_listing_feed_contacts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_listing_feed_contacts
+    ADD CONSTRAINT trust_listing_feed_contacts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_listing_feed_contacts trust_listing_feed_contacts_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_listing_feed_contacts
+    ADD CONSTRAINT trust_listing_feed_contacts_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_listing_removals trust_listing_removals_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -30028,4 +30237,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000122'),
     ('20261022000123'),
     ('20261022000124'),
-    ('20261022000125');
+    ('20261022000125'),
+    ('20261023000250');
