@@ -27,3 +27,8 @@ reason = "Oregon Administrative Rule 863-025-0025 (clients' trust accounts), cit
 path = "tests/test_texts.py"
 value = "(202) 155-0123"
 reason = "An exchange starting with 1 is never issued in the North American plan, so this is no one's number: the test checks the PMS refuses it."
+
+[[allow]]
+path = "docs/research/state-rules-2026-10-23.md"
+value = "863-025-0028"
+reason = "Oregon Administrative Rule 863-025-0028 (trust account reconciliation), cited in the research; a rule number, not a phone number."
