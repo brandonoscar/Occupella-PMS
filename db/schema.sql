@@ -2068,6 +2068,30 @@ $$;
 
 
 --
+-- Name: trust_check_balance_notice(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_balance_notice() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM trust_notices AS n
+        JOIN trust_balance_notice_runs AS r ON r.id = NEW.run_id
+        WHERE n.id = NEW.notice_id AND n.pmc_id = NEW.pmc_id AND n.lease_id = NEW.lease_id
+          AND n.template_version_id = r.template_version_id AND n.dated_on = r.dated_on
+    ) THEN
+        RAISE EXCEPTION 'trust: a balance notice is its run''s notice for its lease'
+            USING ERRCODE = 'check_violation';
+    END IF;
+    NEW.created_at := clock_timestamp();
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_bank_deposit_item(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -13582,6 +13606,35 @@ CREATE TABLE public.trust_authority_late_fees (
 
 
 --
+-- Name: trust_balance_notice_runs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_balance_notice_runs (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    template_version_id uuid NOT NULL,
+    dated_on date NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
+-- Name: trust_balance_notices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_balance_notices (
+    notice_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    run_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    owed numeric NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_balance_notices_owed_check CHECK (((owed > (0)::numeric) AND (owed = round(owed, 2))))
+);
+
+
+--
 -- Name: trust_bank_deposit_items; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -14328,6 +14381,7 @@ CREATE TABLE public.trust_emails (
     offer_id uuid,
     signer_position bigint,
     transfer_id text,
+    notice_id uuid,
     CONSTRAINT trust_emails_body_check CHECK (((body <> ''::text) AND (length(body) <= 10000))),
     CONSTRAINT trust_emails_check CHECK (((kind = 'bill_approval'::text) = (bill_id IS NOT NULL))),
     CONSTRAINT trust_emails_subject_check CHECK (((subject <> ''::text) AND (length(subject) <= 200))),
@@ -16716,6 +16770,38 @@ ALTER TABLE ONLY public.trust_authority_late_fees
 
 
 --
+-- Name: trust_balance_notice_runs trust_balance_notice_runs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_balance_notice_runs
+    ADD CONSTRAINT trust_balance_notice_runs_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_balance_notice_runs trust_balance_notice_runs_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_balance_notice_runs
+    ADD CONSTRAINT trust_balance_notice_runs_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_balance_notices trust_balance_notices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_balance_notices
+    ADD CONSTRAINT trust_balance_notices_pkey PRIMARY KEY (notice_id);
+
+
+--
+-- Name: trust_balance_notices trust_balance_notices_run_id_lease_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_balance_notices
+    ADD CONSTRAINT trust_balance_notices_run_id_lease_id_key UNIQUE (run_id, lease_id);
+
+
+--
 -- Name: trust_bank_accounts trust_bank_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -17377,6 +17463,14 @@ ALTER TABLE ONLY public.trust_email_settings
 
 ALTER TABLE public.trust_emails
     ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text, 'rent_reminder'::text, 'late_notice'::text, 'owner_statement'::text, 'work_order'::text, 'adverse_action'::text, 'emergency_request'::text, 'signing_request'::text, 'payment_receipt'::text, 'deposit_statement'::text]))) NOT VALID;
+
+
+--
+-- Name: trust_emails trust_emails_notice_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_emails
+    ADD CONSTRAINT trust_emails_notice_check CHECK (((notice_id IS NULL) OR ((kind = 'message'::text) AND (tenant_id IS NOT NULL)))) NOT VALID;
 
 
 --
@@ -19451,6 +19545,34 @@ CREATE INDEX trust_authority_late_fees_recorded_by ON public.trust_authority_lat
 
 
 --
+-- Name: trust_balance_notice_runs_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_balance_notice_runs_pmc ON public.trust_balance_notice_runs USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_balance_notice_runs_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_balance_notice_runs_recorded_by ON public.trust_balance_notice_runs USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_balance_notice_runs_version; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_balance_notice_runs_version ON public.trust_balance_notice_runs USING btree (pmc_id, template_version_id);
+
+
+--
+-- Name: trust_balance_notices_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_balance_notices_lease ON public.trust_balance_notices USING btree (pmc_id, lease_id, created_at);
+
+
+--
 -- Name: trust_bank_deposit_items_deposit; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -19861,6 +19983,13 @@ CREATE INDEX trust_email_settings_recorded_by ON public.trust_email_settings USI
 --
 
 CREATE UNIQUE INDEX trust_emails_one_adverse_action ON public.trust_emails USING btree (applicant_id, application_id) WHERE (kind = 'adverse_action'::text);
+
+
+--
+-- Name: trust_emails_one_balance_notice; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_emails_one_balance_notice ON public.trust_emails USING btree (notice_id, tenant_id) WHERE (notice_id IS NOT NULL);
 
 
 --
@@ -21404,6 +21533,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_balance_notice_runs trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_balance_notice_runs FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_balance_notices trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_balance_notices FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_bank_deposit_items trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22696,6 +22839,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_assi
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_authority_late_fees FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_balance_notice_runs trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_balance_notice_runs FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_balance_notices trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_balance_notices FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -24001,6 +24158,13 @@ CREATE TRIGGER trust_check_assistance_record BEFORE INSERT ON public.trust_incom
 
 
 --
+-- Name: trust_balance_notices trust_check_balance_notice; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_balance_notice BEFORE INSERT ON public.trust_balance_notices FOR EACH ROW EXECUTE FUNCTION public.trust_check_balance_notice();
+
+
+--
 -- Name: trust_history_lines trust_check_history_line; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24397,6 +24561,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_assistance_inspec
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_authority_late_fees FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_balance_notice_runs trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_balance_notice_runs FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -25577,6 +25748,62 @@ ALTER TABLE ONLY public.trust_authority_late_fees
 
 
 --
+-- Name: trust_balance_notice_runs trust_balance_notice_runs_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_balance_notice_runs
+    ADD CONSTRAINT trust_balance_notice_runs_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_balance_notice_runs trust_balance_notice_runs_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_balance_notice_runs
+    ADD CONSTRAINT trust_balance_notice_runs_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_balance_notice_runs trust_balance_notice_runs_pmc_id_template_version_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_balance_notice_runs
+    ADD CONSTRAINT trust_balance_notice_runs_pmc_id_template_version_id_fkey FOREIGN KEY (pmc_id, template_version_id) REFERENCES public.trust_notice_template_versions(pmc_id, id);
+
+
+--
+-- Name: trust_balance_notices trust_balance_notices_notice_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_balance_notices
+    ADD CONSTRAINT trust_balance_notices_notice_id_fkey FOREIGN KEY (notice_id) REFERENCES public.trust_notices(id);
+
+
+--
+-- Name: trust_balance_notices trust_balance_notices_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_balance_notices
+    ADD CONSTRAINT trust_balance_notices_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_balance_notices trust_balance_notices_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_balance_notices
+    ADD CONSTRAINT trust_balance_notices_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_balance_notices trust_balance_notices_pmc_id_run_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_balance_notices
+    ADD CONSTRAINT trust_balance_notices_pmc_id_run_id_fkey FOREIGN KEY (pmc_id, run_id) REFERENCES public.trust_balance_notice_runs(pmc_id, id);
+
+
+--
 -- Name: trust_bank_accounts trust_bank_accounts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -26678,6 +26905,14 @@ ALTER TABLE ONLY public.trust_email_settings
 
 ALTER TABLE ONLY public.trust_emails
     ADD CONSTRAINT trust_emails_applicant_id_fkey FOREIGN KEY (applicant_id) REFERENCES public.trust_applicants(id) NOT VALID;
+
+
+--
+-- Name: trust_emails trust_emails_notice_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_emails
+    ADD CONSTRAINT trust_emails_notice_id_fkey FOREIGN KEY (notice_id) REFERENCES public.trust_balance_notices(notice_id) NOT VALID;
 
 
 --
@@ -30028,4 +30263,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000122'),
     ('20261022000123'),
     ('20261022000124'),
-    ('20261022000125');
+    ('20261022000125'),
+    ('20261023000201');

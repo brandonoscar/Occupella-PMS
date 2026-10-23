@@ -50,6 +50,7 @@ from pms import accounts, email, exports, geocoding, nightly
 from pms.api import (
     addresses,
     assistance,
+    balance_notices,
     bank_deposits,
     banking,
     budgets,
@@ -572,6 +573,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(company.router)
     app.include_router(notes.router)
     app.include_router(notice_templates.router)
+    app.include_router(balance_notices.router)
     app.include_router(emails.router)
     app.include_router(today.router)
     app.include_router(dashboard.router)

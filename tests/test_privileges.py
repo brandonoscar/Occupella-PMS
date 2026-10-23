@@ -284,6 +284,9 @@ TABLES = {
     # A unit's details (migration 0124): bedrooms, bathrooms, square feet and market rent, which
     # staff record; the latest row holds.
     "trust_unit_details": {"SELECT", "INSERT"},
+    # Balance notices (migration 20261023000201): each send, and its notice for each lease.
+    "trust_balance_notice_runs": {"SELECT", "INSERT"},
+    "trust_balance_notices": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -307,6 +310,9 @@ COLUMN_UPDATES = {
 AI_NEVER_READS = {
     # A notice made for a lease, as filled in (migration 0119): like a document's file.
     "trust_notices",
+    # Balance notices (migration 20261023000201): notices to tenants, as trust_notices.
+    "trust_balance_notice_runs",
+    "trust_balance_notices",
     "trust_screening_criteria",
     "trust_leads",
     "trust_lead_closings",
@@ -654,6 +660,7 @@ FUNCTIONS = {
     "trust_check_lease_offer_void()": {"PUBLIC"},
     "trust_check_lease_offer_not_void()": {"PUBLIC"},
     "trust_open_lease_offer_charges()": {"PUBLIC"},
+    "trust_check_balance_notice()": set(),  # a trigger's (migration 20261023000201)
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.

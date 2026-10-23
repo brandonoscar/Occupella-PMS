@@ -4710,3 +4710,75 @@ test("staff keep a unit's bedrooms, bathrooms, size and market rent; its propert
   await expect(vacancy).toContainText("1300.00");
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
 });
+
+test("staff send a balance notice from their own template to leases that owe, from the delinquency report or the rent roll, and print them; each tenant's Email tab shows it", async ({
+  page,
+}) => {
+  const people = seed.features["balance-notices"]!;
+  await joinAsStaff(page, people.manager);
+
+  // The company's own words, with what is open listed where it says.
+  await settings(page, "Notice templates");
+  await page.getByRole("button", { name: "Add template" }).click();
+  const add = page.getByRole("dialog", { name: "Add a notice template" });
+  await expect(add.getByRole("region", { name: "Blanks the PMS fills" })).toContainText("{{open_charges}}");
+  await add.getByLabel("Name").fill("Balance reminder");
+  await add.getByLabel("Text").fill(
+    "Dear {{tenant_names}},\n\nYour account for {{property}} {{unit}} shows {{balance_due}} open.\n\n{{open_charges}}\n\n{{company_name}}",
+  );
+  await add.getByRole("button", { name: "Save template" }).click();
+  await expect(page.getByText("Balance reminder is saved.")).toBeVisible();
+
+  // This month's rent is charged, so leases owe it.
+  await section(page, "Rent roll");
+  await page.getByRole("button", { name: "Actions for the rent roll" }).click();
+  await page.getByRole("menuitem", { name: "Run rent now" }).click();
+  const run = page.getByRole("dialog", { name: "Run rent now" });
+  await run.getByRole("button", { name: "Run rent now" }).click();
+  await expect(run).toHaveCount(0);
+
+  // From the delinquency report: every lease that owes, all picked.
+  await section(page, "Reports");
+  await page.getByRole("list", { name: "Rentals" }).getByRole("link", { name: "Delinquency" }).click();
+  await page.getByRole("button", { name: "Send balance notices" }).click();
+  const offered = page.getByRole("dialog", { name: "Send balance notices" });
+  const leases = offered.getByRole("table", { name: "Leases that owe" });
+  await expect(leases.getByRole("row", { name: /Cedar House, House/ })).toBeVisible();
+  await expect(leases.getByRole("checkbox", { checked: false })).toHaveCount(0);
+  await expectAccessible(page);
+  await page.keyboard.press("Escape");
+  await expect(offered).toHaveCount(0);
+
+  // From the rent roll, one lease picked: Taylor Demo has an email on file, Quinn Demo none.
+  await section(page, "Rent roll");
+  await page.getByRole("button", { name: "Send balance notices" }).click();
+  const sending = page.getByRole("dialog", { name: "Send balance notices" });
+  await sending.getByRole("button", { name: "Pick none" }).click();
+  await sending.getByLabel("Send to Cedar House, House").check();
+  await sending.getByRole("button", { name: "Send 1 balance notice" }).click();
+  const done = page.getByRole("dialog", { name: "Balance notices sent" });
+  await expect(done.getByTestId("balance-notices-sent")).toHaveText(
+    "Made a balance notice for 1 lease: emailed 1 tenant; 1 tenant has no email on file.",
+  );
+  await expect(done.getByRole("list", { name: "No email on file" })).toHaveText("Cedar House, House: Quinn Demo");
+  await expectAccessible(page);
+  const pdf = await page.request.get(
+    (await done.getByRole("link", { name: "Print the notices (PDF)" }).getAttribute("href")) ?? "",
+  );
+  expect(pdf.status()).toBe(200);
+  expect((await pdf.body()).subarray(0, 5).toString()).toBe("%PDF-");
+  await page.keyboard.press("Escape");
+
+  // On Taylor Demo's Email tab: the balance notice, saying it is a reminder.
+  const search = page.getByLabel("Search people, homes, bills, work orders and files");
+  await search.fill("taylor");
+  await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Taylor Demo/ }).click();
+  await page.getByRole("tab", { name: "Email", exact: true }).click();
+  const sent = page.getByRole("list", { name: "Email, Taylor Demo" }).getByRole("listitem").first();
+  await expect(sent).toContainText("Balance reminder: Cedar House, House");
+  await expect(sent).toContainText("Balance notice to");
+  await sent.getByText("Show the email").click();
+  await expect(sent).toContainText("What is open on the account:");
+  await expect(sent).toContainText("It is not a notice to pay rent or quit");
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+});

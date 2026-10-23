@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
-import { LinkButton } from "../components/Button";
+import { Button, LinkButton } from "../components/Button";
 import { Field } from "../components/Field";
 import { ListBar } from "../components/ListBar";
 import { Notice } from "../components/Notice";
@@ -13,6 +13,7 @@ import { PRESETS, columnLabel, defaultFilters, presetDays, reportArgs, reportHre
 import { useScope } from "../scope";
 import type { Portfolio } from "../setup";
 import { GoLink } from "./NeedsAttention";
+import { BalanceNoticesPanel } from "./BalanceNoticesPanel";
 import { STAFF_NAV } from "./staffNav";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
@@ -43,6 +44,8 @@ function Report({ me, spec }: { me: Me; spec: ReportSpec }) {
   const [byOwner, setByOwner] = useState("");
   const [preview, setPreview] = useState<Preview | null>(null);
   const [error, setError] = useState("");
+  // Send balance notices, from the delinquency report (migration 20261023000201).
+  const [notices, setNotices] = useState(false);
   const needsOwner = spec.args.includes("owner");
   const ranged = spec.args.includes("from") || spec.args.includes("periodStart");
   const args = reportArgs(spec, filters);
@@ -82,12 +85,18 @@ function Report({ me, spec }: { me: Me; spec: ReportSpec }) {
   return (
     <Shell me={me} nav={STAFF_NAV}>
       <PageHeader title={spec.label} actions={args && (
-        <div className="flex flex-wrap gap-2" aria-label="Export">
-          <LinkButton href={reportHref(spec, args, scope, "pdf", byOwner)}>PDF</LinkButton>
-          <LinkButton href={reportHref(spec, args, scope, "xlsx", byOwner)}>Excel</LinkButton>
-          <LinkButton href={reportHref(spec, args, scope, "csv", byOwner)}>CSV</LinkButton>
+        <div className="flex flex-wrap gap-2">
+          {spec.name === "delinquency" && (
+            <Button variant="secondary" onClick={() => setNotices(true)}>Send balance notices</Button>
+          )}
+          <div className="flex flex-wrap gap-2" aria-label="Export">
+            <LinkButton href={reportHref(spec, args, scope, "pdf", byOwner)}>PDF</LinkButton>
+            <LinkButton href={reportHref(spec, args, scope, "xlsx", byOwner)}>Excel</LinkButton>
+            <LinkButton href={reportHref(spec, args, scope, "csv", byOwner)}>CSV</LinkButton>
+          </div>
         </div>
       )} />
+      {notices && <BalanceNoticesPanel scope={scope} onClose={() => setNotices(false)} />}
       <p className="text-base text-ink-muted"><GoLink href="/reports" className={LINK}>Reports</GoLink></p>
       <div className="flex flex-wrap items-end gap-3" aria-label="Filters">
         {spec.byProperty && <ListBar scope={scope} onScope={setScope} />}

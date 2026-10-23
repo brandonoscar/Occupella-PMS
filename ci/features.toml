@@ -1001,3 +1001,16 @@ operations = [
 browser = [
   "features.spec.ts › staff keep a unit's bedrooms, bathrooms, size and market rent; its property, the rent roll, Listings, the public page and the vacancy report show them",
 ]
+
+[[feature]]
+id = "balance-notices"
+statement = "Balance notices (the founder, 2026-10-23; migration 20261023000201): from the rent roll or the delinquency report, staff pick the leases that owe (all picked to start) and one of the company's own notice templates, and each lease gets a notice listing what is open by charge (the {{open_charges}} blank, or a list after the text), emailed to each of its tenants with an email on file and shown on their Email tab as a balance notice; each ends saying it is a reminder, not a notice to pay rent or quit, and a template with pay-or-quit or eviction words is refused for it; the panel says how the legal notice for nonpayment goes in each property's state (by mail, posting or hand, or email only with written consent where a statute allows it, NOT VERIFIED) and the send prints as one PDF; the AI reads none of it."
+operations = [
+  "GET /api/balance-notices/owing",
+  "POST /api/balance-notices",
+  "GET /api/balance-notices/runs/{run_id}/pdf",
+]
+browser = [
+  "features.spec.ts › staff send a balance notice from their own template to leases that owe, from the delinquency report or the rent roll, and print them; each tenant's Email tab shows it",
+]
+

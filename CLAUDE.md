@@ -148,6 +148,22 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   statement the whole month's statement as a PDF (`src/pms/attachments.py`, q045, q055), made when
   the email is handed to the sender from what the database holds then (the outbox keeps no file);
   one whose file can't be made is a failed delivery saying why.
+- Balance notices (migration 20261023000201, `src/pms/api/balance_notices.py`, the founder
+  2026-10-23): from the rent roll or the delinquency report (Send balance notices,
+  `pages/BalanceNoticesPanel.tsx`) staff pick leases that owe today in the page's scope (all
+  picked to start), one of the company's notice templates and a day, and each lease gets a
+  notice (`trust_notices`, as filled in) listing what is open by charge (the `{{open_charges}}`
+  blank, or a list after the text), rent first, and its total; `trust_balance_notice_runs` and
+  `trust_balance_notices` (what the lease owed) record the send. Each tenant on the lease with
+  an email on file gets it as a staff member's message that names its notice
+  (`trust_emails.notice_id`, once per notice and tenant), shown on their Email tab as a balance
+  notice; a tenant without one is named, and the whole send prints as one PDF. It is a
+  reminder, not the legal notice for nonpayment: every one ends saying so, and a template with
+  pay-or-quit or eviction words is refused for it. The panel says how the legal notice goes in
+  each property's state (its address): by mail, posting or hand, or by email only with the
+  tenant's written consent where a statute allows it (Florida, Texas from 1/1/2026, Michigan;
+  `EMAIL_WITH_CONSENT`, NOT VERIFIED; `docs/law.md`). Area 'email'. A mailing service is a later
+  add-on. The AI reads none of it.
 - The portal (`frontend/`): React 19, Vite and Tailwind v4, following Occupella's `DESIGN.md`
   and looking like Occupella's app (founder, 2026-10-14): its light theme, a full-height
   light-blue left sidebar with the wordmark, the sections (lucide icons) and Sign out, a white

@@ -21,6 +21,7 @@ FIELDS: dict[str, str] = {
     "unit": "the unit's name",
     "monthly_rent": "the rent in force on the notice's day, as $1,395.00",
     "balance_due": "what the lease owes now, as $1,550.00",
+    "open_charges": "what is open of each charge now, a line each with its due day, and the total",
     "lease_start": "the lease's first day, as 01/01/2026",
     "lease_end": 'the lease\'s last day, or "month to month"',
     "notice_date": "the day the notice is dated, as 10/21/2026",
@@ -95,12 +96,23 @@ class _Pdf(FPDF):
 
 def render(letter: Letter, generated: datetime) -> bytes:
     """The notice as a letter: the company's letterhead, the day, the title, then its text."""
+    return render_all([letter], generated)
+
+
+def render_all(letters: list[Letter], generated: datetime) -> bytes:
+    """Notices to print together, each a letter starting on a page of its own."""
     pdf = _Pdf(orientation="portrait", unit="pt", format="letter")
     pdf.set_creation_date(generated.astimezone(UTC))
-    pdf.set_title(_latin1(letter.title))
+    pdf.set_title(_latin1(letters[0].title))
     pdf.set_author("Occupella PMS")
     pdf.set_margins(60, 54, 60)
     pdf.set_auto_page_break(True, margin=54)
+    for letter in letters:
+        _letter(pdf, letter)
+    return bytes(pdf.output())
+
+
+def _letter(pdf: FPDF, letter: Letter) -> None:
     pdf.add_page()
     pdf.set_font("Helvetica", style="B", size=10)
     pdf.multi_cell(0, 13, _latin1(letter.letterhead), new_x="LMARGIN", new_y="NEXT")
@@ -113,4 +125,3 @@ def render(letter: Letter, generated: datetime) -> bytes:
     pdf.ln(8)
     pdf.set_font("Helvetica", size=10)
     pdf.multi_cell(0, 14, _latin1(letter.body), new_x="LMARGIN", new_y="NEXT")
-    return bytes(pdf.output())

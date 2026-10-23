@@ -95,7 +95,8 @@ def address_of(
 
 
 EMAILS = f"""
-SELECT e.id, e.kind, e.to_address, e.subject, e.body, e.created_at, s.display_name,
+SELECT e.id, CASE WHEN e.notice_id IS NULL THEN e.kind ELSE 'balance_notice' END, e.to_address,
+       e.subject, e.body, e.created_at, s.display_name,
        CASE WHEN EXISTS (SELECT 1 FROM trust_email_deliveries AS d
                          WHERE d.email_id = e.id AND d.error IS NULL) THEN 'sent'
             WHEN (SELECT count(*) FROM trust_email_deliveries AS d WHERE d.email_id = e.id)

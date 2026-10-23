@@ -27,6 +27,7 @@ import type { Recorder } from "./LeaseForms";
 import { LeaseFinder } from "./LeaseFinder";
 import { GoLink } from "./NeedsAttention";
 import { PaymentForm } from "./LeaseForms";
+import { BalanceNoticesPanel } from "./BalanceNoticesPanel";
 import { STAFF_NAV } from "./staffNav";
 import { MarketRent, UnitSize } from "./UnitDetailsCard";
 import { useRecord } from "./useRecord";
@@ -60,6 +61,7 @@ export function RentPage({ me }: { me: Me }) {
   const [number, setNumber] = useState(1);
   const [error, setError] = useState("");
   const [panel, setPanel] = useState<"payment" | "run" | null>(null);
+  const [notices, setNotices] = useState(false);
   // Counts what was recorded here, so the list shows it.
   const [changes, setChanges] = useState(0);
   const { said, error: refused, record } = useRecord(() => setChanges((n) => n + 1));
@@ -87,6 +89,7 @@ export function RentPage({ me }: { me: Me }) {
       <PageHeader title="Rent roll" actions={
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={() => setPanel("payment")}>Receive payment</Button>
+          <Button variant="secondary" onClick={() => setNotices(true)}>Send balance notices</Button>
           <Button variant="secondary" onClick={() => navigate("/payment-files")}>Payment files</Button>
           {admin && (
             <RowMenu label="the rent roll" actions={[{ label: "Run rent now", onSelect: () => setPanel("run") }]} />
@@ -102,6 +105,7 @@ export function RentPage({ me }: { me: Me }) {
       </div>
       <Said>{said}</Said>
       {panel === null && <Notice tone="error">{refused}</Notice>}
+      {notices && <BalanceNoticesPanel scope={scope} onClose={() => setNotices(false)} />}
       {page === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : page.items.length === 0 ? (

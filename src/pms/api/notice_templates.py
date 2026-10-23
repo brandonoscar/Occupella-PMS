@@ -223,6 +223,23 @@ def dollars(amount: Decimal | None) -> str:
     return "" if amount is None else f"${amount:,.2f}"
 
 
+CHARGE_WORDS = {"rent": "Rent", "fee": "Fee", "credit": "Credit"}
+
+
+def open_lines(conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID) -> str:
+    """What is open of each of a lease's charges now, a line each (due day, what it is, what is
+    open), rent first as money pays them, and the total; or that nothing is open."""
+    rows = rent.charges_open(conn, pmc_id, lease_id)
+    if not rows:
+        return "Nothing is open on the account."
+    lines = [
+        f"  {notice_letters.us(due_on)}  {memo or CHARGE_WORDS[kind]}  {dollars(Decimal(left))}"
+        for _, _, due_on, kind, memo, _, left in rows
+    ]
+    total = sum((Decimal(row[6]) for row in rows), Decimal(0))
+    return "\n".join(["What is open on the account:", *lines, f"  Total  {dollars(total)}"])
+
+
 def filled(
     conn: psycopg.Connection[Any], pmc_id: UUID, staff_id: UUID, asked: NewNotice
 ) -> tuple[Template, Filled]:
@@ -241,6 +258,7 @@ def filled(
         "unit": unit,
         "monthly_rent": dollars(monthly),
         "balance_due": dollars(rent.owed(conn, asked.lease_id)),
+        "open_charges": open_lines(conn, pmc_id, asked.lease_id),
         "lease_start": notice_letters.us(starts_on),
         "lease_end": "month to month" if ends_on is None else notice_letters.us(ends_on),
         "notice_date": notice_letters.us(asked.dated_on),

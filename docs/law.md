@@ -875,3 +875,39 @@ statute's text and the IRS's Publication 1099 figures are NOT VERIFIED here.)
 **Left to the company.** Whether a vendor gets a 1099 at all (a corporation usually doesn't; the
 W-9 says), the year's adjusted threshold from 2027, and filing: the PMS files nothing and keeps
 no tax ID.
+
+## Balance notices (migration 20261023000201)
+
+**The rule.** Before a landlord may file for possession for unpaid rent, nearly every state asks
+for a written notice for nonpayment (pay or quit, a demand for possession), with its own wording,
+period and delivery: most states accept only mail, posting at the home or delivery by hand. Email
+counts only where a statute allows it, and then only with the tenant's written consent:
+- Florida, Fla. Stat. 83.505 (from July 1, 2025): notices under Part II of chapter 83 by email if
+  both sign an addendum agreeing to it and give email addresses; the addendum says the election is
+  voluntary and may be revoked; a copy and proof of sending are kept.
+- Texas, Tex. Prop. Code 24.005 as amended by S.B. 38 (89th Legislature), for petitions filed on or
+  after January 1, 2026: a notice to vacate may be delivered by electronic communication if the
+  parties agreed to it in writing; posting on the outside of the door no longer counts.
+- Michigan, Mich. Comp. Laws 600.5718(1)(d) (from 2015 H.B. 4038, in force 90 days after it was
+  enacted): a demand may be served electronically if the tenant specifically consented in writing,
+  with the consent confirmed by electronic transmission; a landlord may not refuse a lease to
+  someone who declines.
+These come from search excerpts quoting the statutes and bill texts; the official pages could not
+be opened from where this was written (their hosts are blocked by the build environment's network
+policy). NOT VERIFIED against the statutes' text.
+
+**What the PMS does.**
+- A balance notice is a reminder of what is open, made from the company's own template and
+  emailed; it is never the legal notice. Each one ends: "This is a reminder of the balance on your
+  account. It is not a notice to pay rent or quit, a notice of default or a notice of eviction."
+- A template whose words belong to the legal notice (quit, vacate, evict, possession, terminate,
+  unlawful detainer, forcible, court, lawsuit, legal action, notice to pay) is refused for it.
+- The page says, for each property's state, how the legal notice goes: by mail, posting or hand,
+  or, in Florida, Texas (from 2026) and Michigan, by email only with the tenant's written consent,
+  which the PMS does not record. A property with no address on file is told the same as most
+  states. Every send prints as one PDF to deliver.
+
+**Left to the company.** The legal notice itself: its words, period and delivery, made from its own
+template on the lease's page; any written consent to email and its copies and proof of sending; a
+mailing service (a later add-on).
+

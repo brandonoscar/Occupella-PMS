@@ -308,6 +308,27 @@ def write_message(
     return _write(conn, pmc_id, "message", kind, person_id, to, subject, body, sent_by)
 
 
+def write_notice(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    tenant_id: UUID,
+    to: str,
+    subject: str,
+    body: str,
+    sent_by: UUID,
+    notice_id: UUID,
+) -> UUID:
+    """Writes a balance notice a staff member sent to one of its lease's tenants, in the caller's
+    transaction: a message of theirs that names its notice (migration 20261023000201)."""
+    row = conn.execute(
+        "INSERT INTO trust_emails (pmc_id, kind, tenant_id, to_address, subject, body, sent_by,"
+        " notice_id) VALUES (%s, 'message', %s, %s, %s, %s, %s, %s) RETURNING id",
+        (pmc_id, tenant_id, to, subject, body, sent_by, notice_id),
+    ).fetchone()
+    assert row is not None
+    return UUID(str(row[0]))
+
+
 # --- a bill waiting for its owner ------------------------------------------------------------
 
 Written = Literal["written", "within the limit", "no active login", "written already"]
