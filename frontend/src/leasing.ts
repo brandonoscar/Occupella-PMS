@@ -1,5 +1,6 @@
 // Rental applications as the API sends them (src/pms/api/leasing.py), and how they read.
 import type { BadgeTone } from "./components/Badge";
+import type { UnitDetails } from "./unitDetails";
 
 export type Listing = {
   pmc: string;
@@ -20,6 +21,10 @@ export type Vacancy = {
   listed_at: string;
   // The unit's listing photos, oldest first (migration 0087).
   photos: string[];
+  // What the unit has (migration 0124); its market rent stays with staff.
+  bedrooms: number | null;
+  bathrooms: string | null;
+  square_feet: number | null;
 };
 export type Vacancies = { pmc: string; listings: Vacancy[] };
 
@@ -124,6 +129,8 @@ export function latestScreening(application: Application): string {
 // A unit on Leasing, Listings: coming free within 90 days, or with an open application link.
 export type OpenUnit = {
   unit_id: string;
+  // Its bedrooms, bathrooms, square feet and market rent (migration 0124).
+  details: UnitDetails;
   property_id: string;
   property: string;
   unit: string;

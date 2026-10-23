@@ -18,11 +18,12 @@ const VACANT: OpenUnit = {
   unit_id: "u1", property_id: "pr1", property: "Property 1", unit: "Unit 1", available_on: "2026-11-01",
   last_rent: "1400.00", link_id: null, link_rent: null, applications: 0, listing_id: null, description: null,
   listed_at: null, days_listed: null, photos: 0,
+  details: { bedrooms: 0, bathrooms: "1", square_feet: 450, market_rent: "1450.00" },
 };
 const LISTED: OpenUnit = {
   ...VACANT, unit_id: "u2", unit: "Unit 2", available_on: null, link_id: "k2", link_rent: "1550.00",
   applications: 3, listing_id: "s2", description: "Corner unit.", listed_at: "2026-10-09T15:00:00Z",
-  days_listed: 10, photos: 2,
+  days_listed: 10, photos: 2, details: { bedrooms: null, bathrooms: null, square_feet: null, market_rent: null },
 };
 const LINKED: OpenUnit = { ...VACANT, unit_id: "u3", unit: "Unit 3", link_id: "k3", link_rent: "1600.00" };
 
@@ -50,13 +51,13 @@ describe("RentalListingsPage", () => {
     render(<RentalListingsPage me={ME} />);
 
     const rows = await screen.findAllByRole("row", { name: /^Property 1, Unit/ });
-    expect(rows.map((row) => within(row).getAllByRole("cell").slice(0, 5).map((c) => c.textContent))).toEqual([
-      ["Property 1, Unit 1", "11/01/2026", "$1,400.00", "0", "Not listed"],
-      ["Property 1, Unit 2", "Leased", "$1,550.00", "3", "Listed"],
-      ["Property 1, Unit 3", "11/01/2026", "$1,600.00", "0", "Not listed"],
+    expect(rows.map((row) => within(row).getAllByRole("cell").slice(0, 6).map((c) => c.textContent))).toEqual([
+      ["Property 1, Unit 1Studio, 1 bath, 450 sq ft", "11/01/2026", "$1,400.00", "$1,450.00", "0", "Not listed"],
+      ["Property 1, Unit 2", "Leased", "$1,550.00", "", "3", "Listed"],
+      ["Property 1, Unit 3Studio, 1 bath, 450 sq ft", "11/01/2026", "$1,600.00", "$1,450.00", "0", "Not listed"],
     ]);
     // How long each listing has been up, and how many photos its unit has.
-    expect(rows.map((row) => within(row).getAllByRole("cell").slice(5, 7).map((c) => c.textContent))).toEqual([
+    expect(rows.map((row) => within(row).getAllByRole("cell").slice(6, 8).map((c) => c.textContent))).toEqual([
       ["", "0"], ["10 days", "2"], ["", "0"],
     ]);
     expect(screen.getByRole("link", { name: "Property 1, Unit 1" }).getAttribute("href")).toBe("/units/u1");

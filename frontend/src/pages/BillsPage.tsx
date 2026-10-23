@@ -302,7 +302,11 @@ function NewRecurringForm({ books, record }: { books: Portfolio; record: Recorde
         day_of_month: Number(dayOfMonth), starts_on: starts,
         ...(expense ? { expense_account_id: expense } : {}),
       };
-      void record("/api/payables/recurring", body, () => `${prefix} is entered each month.`);
+      // The months already due are entered as it is added; the nightly run enters the rest.
+      void record<{ entered: number }>("/api/payables/recurring", body, ({ entered }) =>
+        `${prefix} is entered each month${entered === 0 ? ""
+          : entered === 1 ? "; 1 bill already due is entered now"
+            : `; ${entered} bills already due are entered now`}.`);
     }}>
       <Select label="Vendor" id="recurring-vendor" value={vendor} onChange={(e) => setVendor(e.target.value)}>
         {books.vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}

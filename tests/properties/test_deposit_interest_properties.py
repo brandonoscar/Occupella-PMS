@@ -10,7 +10,10 @@ interest out exactly; the database must agree:
     refused and leaves the next one where it was;
   - added to a deposit, it comes out of the owner's account with its cash and then earns interest
     itself; as a credit, it is the lease's credit and moves no money;
-  - every trust bank account ties out, and the same request again pays nothing more.
+  - every trust bank account ties out, and the same request again pays nothing more;
+  - the cash and accrual income statements count what was added to the deposits as an expense of
+    its own (migration 20261022000125), on Schedule E's line 19, and nothing else for it; a
+    credit is less rent on the accrual basis and no line at all on the cash basis.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
@@ -176,6 +179,33 @@ def check(conn, app, tenants, terms, moves, runs):
         (lease,),
     ).fetchone() == (credited,)
     assert balance(conn, owner) == Decimal(100_000) - added
+
+    # Nothing but interest moved the owner's account, so it is all either statement holds: added
+    # to deposits, an expense of its own; credited, less rent charged (accrual) and nothing
+    # collected (cash).
+    for report, rent in (
+        ("trust_report_income_statement", Decimal(0)),
+        ("trust_report_income_statement_accrual", -credited),
+    ):
+        lines = {
+            (item, schedule): amount
+            for _, place, item, schedule, amount in conn.execute(
+                f"SELECT * FROM {report}(%s, %s, %s, %s)",
+                (pmc.pmc_id, pmc.owners[0].owner_id, START, START + timedelta(days=5000)),
+            ).fetchall()
+            if place is not None and not item.startswith("all properties") and amount is not None
+        }
+        interest_lines = {k: v for k, v in lines.items() if "interest" in k[0] or k[1] == 19}
+        if added:
+            assert interest_lines == {
+                ("expense: security deposit interest", 19): added,
+                ("Schedule E line 19: Other", 19): added,
+            }
+        else:
+            assert interest_lines == {}
+        assert lines[("income: rent", 3)] == rent
+        assert lines[("total expenses", None)] == added
+        assert lines[("net income", None)] == rent - added
 
 
 def test_deposit_interest_is_each_days_deposit_at_its_rate_paid_once(database_url):

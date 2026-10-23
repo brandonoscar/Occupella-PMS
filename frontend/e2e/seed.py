@@ -528,6 +528,7 @@ FEATURES = (
     "lease-templates",
     "deposit-interest",
     "tax-credit",
+    "unit-details",
 )
 
 

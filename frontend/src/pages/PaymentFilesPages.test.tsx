@@ -44,6 +44,7 @@ const ROW: RentRollRow = {
   id: "l2", property: { id: "p1", name: "Birch Flats" }, unit: { id: "u1", name: "3C" }, tenants: ["Rowan Demo"],
   people: [{ id: "t1", name: "Rowan Demo" }], starts_on: "2026-01-01", ends_on: null, status: "current",
   days_left: null, monthly_rent: "900.00", deposit: "0.00", owed: "900.00",
+  details: { bedrooms: null, bathrooms: null, square_feet: null, market_rent: null },
 };
 const LEASE = {
   id: "l2", property: "Birch Flats", unit: "3C", tenants: [{ id: "t1", name: "Rowan Demo" }],

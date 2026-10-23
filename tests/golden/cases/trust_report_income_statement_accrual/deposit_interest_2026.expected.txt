@@ -1,0 +1,30 @@
+line	property	item	schedule_e	amount
+1	Golden PMC	PMC	NULL	NULL
+2	Owner 1	owner	NULL	NULL
+3	2026-01-01 to 2026-12-31 UTC, accrual basis	period	NULL	NULL
+4	Property 1	income: rent	3	0.00
+5	Property 1	income: recurring charges	3	0.00
+6	Property 1	income: late fees	3	0.00
+7	Property 1	income: NSF fees	3	0.00
+8	Property 1	income: other charges	3	0.00
+9	Property 1	total income	NULL	0.00
+10	Property 1	expense: management fees	11	0.00
+11	Property 1	expense: leasing fees	8	0.00
+12	Property 1	expense: security deposit interest	19	4.44
+13	Property 1	total expenses	NULL	4.44
+14	Property 1	net income	NULL	-4.44
+15	Property 1	Schedule E line 3: Rents received	3	0.00
+16	Property 1	Schedule E line 19: Other	19	4.44
+17	NULL	all properties: income: rent	3	0.00
+18	NULL	all properties: income: recurring charges	3	0.00
+19	NULL	all properties: income: late fees	3	0.00
+20	NULL	all properties: income: NSF fees	3	0.00
+21	NULL	all properties: income: other charges	3	0.00
+22	NULL	all properties: total income	NULL	0.00
+23	NULL	all properties: expense: management fees	11	0.00
+24	NULL	all properties: expense: leasing fees	8	0.00
+25	NULL	all properties: expense: security deposit interest	19	4.44
+26	NULL	all properties: total expenses	NULL	4.44
+27	NULL	all properties: net income	NULL	-4.44
+28	NULL	all properties: Schedule E line 3: Rents received	3	0.00
+29	NULL	all properties: Schedule E line 19: Other	19	4.44

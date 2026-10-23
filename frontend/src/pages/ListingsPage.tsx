@@ -7,6 +7,7 @@ import { Notice } from "../components/Notice";
 import { PageHeader, Wordmark } from "../components/Shell";
 import type { Vacancies } from "../leasing";
 import { money } from "../money";
+import { sizeLine } from "../unitDetails";
 
 // A PMC's public vacancy page: /listings?pmc=<PMC id>, the units its staff listed, each with a
 // way to apply. No login, and nothing here is sent to listing sites.
@@ -53,6 +54,7 @@ export function ListingsPage() {
                     </p>
                     <p className="text-ink-muted">{money(listing.monthly_rent)} a month</p>
                   </div>
+                  {sizeLine(listing) && <p className="text-ink-secondary">{sizeLine(listing)}</p>}
                   {listing.photos.length > 0 && (
                     <ul className="flex gap-2 overflow-x-auto" aria-label={`Photos, ${listing.property}, ${listing.unit}`}>
                       {listing.photos.map((photo, n) => (

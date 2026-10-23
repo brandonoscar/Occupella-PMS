@@ -43,7 +43,7 @@ import psycopg
 from psycopg import sql
 
 from pms import email, notices
-from pms.api import rent
+from pms.api import payables, rent
 
 log = logging.getLogger("pms.nightly")
 
@@ -92,9 +92,8 @@ def run_pmc(
         run = conn.execute(
             "SELECT rents, recurring, late_fees FROM trust_rent_runs WHERE id = %s", (made[0],)
         ).fetchone()
-        entered = conn.execute(
-            "SELECT trust_enter_recurring_bills(%s, %s)", (pmc_id, day)
-        ).fetchone()
+        # The recurring bills due, each with the email to an owner whose approval it waits for.
+        entered = payables.enter_recurring_bills(conn, pmc_id, day, public_url)
         fees = conn.execute(
             "SELECT trust_take_monthly_management_fees(%s, %s)", (pmc_id, day)
         ).fetchone()
@@ -104,16 +103,9 @@ def run_pmc(
         authority = conn.execute(
             "SELECT trust_assess_authority_late_fees(%s, %s)", (pmc_id, day)
         ).fetchone()
-        assert run is not None and entered is not None and fees is not None and opened is not None
+        assert run is not None and fees is not None and opened is not None
         assert authority is not None
         prepaid = rent.use_prepaid_by_itself(conn, pmc_id, day)
-        # The bills this transaction entered (their created_at is its start, now()), each with
-        # the email to an owner whose approval it waits for.
-        for (bill,) in conn.execute(
-            "SELECT id FROM trust_bills WHERE pmc_id = %s AND created_at = now() ORDER BY id",
-            (pmc_id,),
-        ).fetchall():
-            email.write_bill_approval(conn, pmc_id, bill, public_url)
         written = notices.write_scheduled(conn, pmc_id, day, public_url) if sending else None
     emails = 0 if written is None else sum(vars(written).values())
     return Ran(
@@ -121,7 +113,7 @@ def run_pmc(
         run[0],
         run[1],
         run[2],
-        entered[0],
+        entered,
         emails,
         fees[0],
         opened[0],

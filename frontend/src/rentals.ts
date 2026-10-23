@@ -4,6 +4,7 @@ import { money, usDate } from "./money";
 import type { Hold, RentLease } from "./rent";
 import type { DepositInterestTerms } from "./depositInterest";
 import type { Agreement, LateFees, LeaseBreakFee, NsfFee } from "./setup";
+import type { UnitDetails } from "./unitDetails";
 
 export type Paged<T> = { items: T[]; total: number; page: number; per_page: number };
 export type Ref = { id: string; name: string };
@@ -31,7 +32,8 @@ export type LeaseLine = {
   owed: string;
   status: LeaseStatus;
 };
-export type UnitLine = { id: string; name: string; archived: boolean; lease: LeaseLine | null };
+// Its bedrooms, bathrooms, square feet and market rent (migration 0124).
+export type UnitLine = { id: string; name: string; archived: boolean; details: UnitDetails; lease: LeaseLine | null };
 export type OwnerAccount = {
   owner_id: string;
   owner: string;
@@ -87,12 +89,16 @@ export type Property = {
   lease_break_fee: LeaseBreakFee | null;
   deposit_interest: DepositInterestTerms | null;
 };
-export type Unit = { id: string; name: string; archived: boolean; property: Ref; leases: LeaseLine[] };
+export type Unit = {
+  id: string; name: string; archived: boolean; property: Ref; details: UnitDetails; leases: LeaseLine[];
+};
 
 export type RentRollRow = {
   id: string;
   property: Ref;
   unit: Ref;
+  // The unit's bedrooms, bathrooms, square feet and market rent (migration 0124).
+  details: UnitDetails;
   tenants: string[];
   people: Ref[];
   starts_on: string;

@@ -285,6 +285,9 @@ TABLES = {
     # the ledger is; what failed, told to the company's admins, which it never reads.
     "trust_reserve_events": {"SELECT", "INSERT"},
     "trust_admin_alerts": {"SELECT", "INSERT"},
+    # A unit's details (migration 0124): bedrooms, bathrooms, square feet and market rent, which
+    # staff record; the latest row holds.
+    "trust_unit_details": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.

@@ -713,6 +713,20 @@ test("staff import last month's statement, match it to the books and prepare it;
   await page.getByRole("button", { name: "Match these" }).click();
   await expect(page.getByText("Matched.")).toBeVisible();
 
+  // The day's bank reconciliation downloads as PDF, CSV and Excel.
+  const files = page.getByRole("group", { name: "Download the reconciliation" });
+  for (const [name, type] of [
+    ["PDF", "application/pdf"],
+    ["CSV", "text/csv"],
+    ["Excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+  ] as const) {
+    const href = (await files.getByRole("link", { name, exact: true }).getAttribute("href")) ?? "";
+    expect(href).toContain(iso(last));
+    const answer = await page.request.get(href);
+    expect(answer.status(), `${name}: ${href}`).toBe(200);
+    expect(answer.headers()["content-type"]).toContain(type);
+  }
+
   await prepare.click();
   await expect(page.getByLabel("Prepared")).toContainText(
     `Prepared through ${us(iso(last))} by Month-end E2E: bank $4,700.00, books $4,700.00.`,

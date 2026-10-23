@@ -198,8 +198,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`src/pms/api/today.py`: read only, each part the work page's own answer). Rentals
   (`src/pms/api/rentals.py`): properties a page at a time at `/properties`, each at
   `/properties/<id>` (its owners' money, its units and their leases), a unit at `/units/<id>`
-  (every lease it had), the rent roll at `/rent-roll` (every lease a page at a time, current,
-  to come, ended or owing, with days left, rent, deposits and balance; Receive payment, and an
+  (its details, `src/pms/api/unit_details.py`, and every lease it had), the rent roll at
+  `/rent-roll` (every lease a page at a time, current,
+  to come, ended or owing, with days left, rent, market rent, deposits and balance; Receive payment, and an
   admin's Run rent now) and a lease at `/leases/<id>` (ADR 0006: its balance due on top, Receive payment, Enter
   charge and the ⋯ menu's rent work in side panels, `src/pms/api/rent.py`; tabs Summary, Ledger
   with the running balance of `trust_report_tenant_ledger`'s lines, Tenants with their portal
@@ -640,7 +641,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   property account, amount, day of the month 1 to 28, first day; an end row stops it).
   `trust_enter_recurring_bills` enters each month's bill through a day, under the vendor
   reference `<prefix>-YYYY-MM`, so each month once and safe to retry; a month already entered
-  under that reference is left as it is. Entered bills follow the bill rules above.
+  under that reference is left as it is. Entered bills follow the bill rules above. Adding one
+  (`POST /api/payables/recurring`) enters the months already due at once, each with its owner's
+  approval email, as the nightly run would.
 - Maintenance requests: a tenant on a lease files one (`trust_maintenance_requests`, append-only;
   a key to `trust_lease_tenants` refuses anyone else). Staff open at most one work order for it,
   at the lease's unit (`trust_maintenance_request_work_orders`, one each way), and its status is
@@ -841,7 +844,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   (`trust_deposit_interest_payments`, `trust_deposit_interest_lines`) are append-only; the AI role
   reads them and `trust_report_deposit_interest` (run as the owner, so the AI calls no helper).
   Staff pay it from the lease's ⋯ menu (`src/pms/api/deposit_interest.py`,
-  `pages/DepositInterestForm.tsx`).
+  `pages/DepositInterestForm.tsx`). Added to a deposit, the cash and accrual income statements
+  count it when it moved as an expense of its own, `expense: security deposit interest`, on
+  Schedule E's line 19 (migration 0125); as a credit, it is less rent.
 - Property groups (migration 0065, ADR 0006): a PMC's named sets of its properties, a name once
   per PMC whatever its case. A group is renamed, never deleted; a property joins or leaves it by
   a row of `trust_property_group_members` (append-only, the latest for a group and property
@@ -1003,6 +1008,14 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   left as it was writes nothing. `trust_report_budget_vs_actual` lays an owner's
   budget for the months that start within some days beside their income statement. A budget
   moves no money.
+- Unit details (migration 0124, the founder's regroup of 10/22): a unit's bedrooms, bathrooms (in
+  halves), square feet and market rent, in `trust_unit_details` (append-only, the latest row
+  holding, naming who recorded it; the same again writes nothing, and an empty save clears them),
+  kept on the unit's page (area setup) and brought over by a units file when switching. Its
+  property's page, the rent roll and Listings show its size and market rent; the public vacancy
+  page shows its size, never its market rent; the vacancy report has them as recorded by the end
+  of its day (UTC). They decide nothing and move no money; a tax credit unit's bedrooms stay its
+  designation's. The AI role reads them.
 - Vendor profiles (migration 0073, ADR 0006): a vendor's trade, whether they are a 1099 vendor
   and how they are paid (check or EFT), in `trust_vendor_profiles` (append-only, the latest row
   holding, naming who recorded it; the same again writes nothing). No tax ID is kept: it stays on

@@ -20,8 +20,14 @@ describe("ListingsPage", () => {
     const fetch = server({
       pmc: "Synthetic PMC",
       listings: [
-        { id: "v1", property: "Property 1", unit: "Unit 1", monthly_rent: "1250.50", description: null, listed_at: "2026-10-13T00:00:00Z", photos: [] },
-        { id: "v2", property: "Property 1", unit: "Unit 2", monthly_rent: "1500.00", description: "Two bedrooms,\nsunny.", listed_at: "2026-10-13T00:00:00Z", photos: ["d1", "d2"] },
+        {
+          id: "v1", property: "Property 1", unit: "Unit 1", monthly_rent: "1250.50", description: null,
+          listed_at: "2026-10-13T00:00:00Z", photos: [], bedrooms: null, bathrooms: null, square_feet: null,
+        },
+        {
+          id: "v2", property: "Property 1", unit: "Unit 2", monthly_rent: "1500.00", description: "Two bedrooms,\nsunny.",
+          listed_at: "2026-10-13T00:00:00Z", photos: ["d1", "d2"], bedrooms: 2, bathrooms: "1.5", square_feet: 1100,
+        },
       ],
     });
     render(<ListingsPage />);
@@ -30,6 +36,8 @@ describe("ListingsPage", () => {
     const second = screen.getByRole("listitem", { name: "Property 1, Unit 2" });
     expect(within(second).getByText("$1,500.00 a month")).toBeTruthy();
     expect(within(second).getByText(/Two bedrooms/)).toBeTruthy();
+    // What the home has (migration 0124); one with nothing recorded says nothing of it.
+    expect(within(second).getByText("2 beds, 1.5 baths, 1,100 sq ft")).toBeTruthy();
     expect(within(second).getByRole("link", { name: "Apply" }).getAttribute("href")).toBe("/apply?listing=v2");
     const first = screen.getByRole("listitem", { name: "Property 1, Unit 1" });
     expect(within(first).getByRole("link", { name: "Apply" }).getAttribute("href")).toBe("/apply?listing=v1");
@@ -40,6 +48,7 @@ describe("ListingsPage", () => {
       ["Property 1, Unit 2, 2 of 2", "/api/listings/p1/photos/d2"],
     ]);
     expect(within(first).queryByRole("list")).toBeNull();
+    expect(within(first).queryByText(/sq ft|beds?\b|Studio/)).toBeNull();
     expect(fetch.mock.calls[0]?.[0]).toBe("/api/listings/p1");
   });
 

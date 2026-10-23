@@ -30,6 +30,7 @@ import { agreementSummary, lateFeeSummary, leaseBreakFeeSummary, nsfFeeSummary }
 import { rateLine } from "../depositInterest";
 import { day, usDate } from "../money";
 import type { Panel } from "./SetupPanels";
+import { MarketRent, UnitDetailsCard, UnitSize } from "./UnitDetailsCard";
 import {
   AddLeasePanel,
   AddOwnerPanel,
@@ -254,6 +255,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
                       <th className="text-left">State</th>
                       <th className="text-left">Tenants</th>
                       <th className="text-right">Rent</th>
+                      <th className="text-right">Market rent</th>
                       <th className="text-right">Owes</th>
                       <th><span className="sr-only">Actions</span></th>
                     </tr>
@@ -261,10 +263,14 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
                   <tbody>
                     {property.units.map((unit) => (
                       <tr key={unit.id} aria-label={unit.name}>
-                        <td><RecordLink href={`/units/${unit.id}`}>{unit.name}</RecordLink></td>
+                        <td>
+                          <RecordLink href={`/units/${unit.id}`}>{unit.name}</RecordLink>
+                          <UnitSize details={unit.details} />
+                        </td>
                         <td><Badge tone={unitState(unit).tone}>{unitState(unit).word}</Badge></td>
                         <td>{unit.lease && <TenantLinks people={unit.lease.people} />}</td>
                         <td className="text-right">{unit.lease && money(unit.lease.monthly_rent)}</td>
+                        <td className="text-right"><MarketRent details={unit.details} /></td>
                         <td className="text-right">{unit.lease && money(unit.lease.owed)}</td>
                         <td className="text-right">
                           {unit.lease && <RecordLink href={`/leases/${unit.lease.id}`}>Open lease</RecordLink>}
@@ -386,6 +392,7 @@ export function UnitPage({ me, id }: { me: Me; id: string }) {
             <RecordLink href={`/properties/${unit.property.id}`}>{unit.property.name}</RecordLink>
           </p>
           <Said>{said}</Said>
+          <UnitDetailsCard unitId={id} details={unit.details} refresh={refresh} />
           <Card title="Leases">
             {unit.leases.length === 0 ? (
               <EmptyState icon={Building2} title="No lease yet." body="A new tenant's lease comes through Leasing, Draft leases." />
