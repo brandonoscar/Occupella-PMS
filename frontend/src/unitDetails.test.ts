@@ -19,5 +19,6 @@ describe("unit details", () => {
       bedrooms: "3", bathrooms: null, square_feet: "1100", market_rent: "1325.50",
     });
     expect(detailsBody(detailsForm(NONE))).toEqual(NONE);
+    expect(detailsBody({ ...detailsForm(NONE), market_rent: "$$1,325" }).market_rent).toBe("1325");
   });
 });

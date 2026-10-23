@@ -34,7 +34,7 @@ export function detailsForm(details: UnitDetails): DetailsForm {
 }
 
 export function detailsBody(form: DetailsForm) {
-  const text = (value: string) => value.replaceAll(",", "").replace("$", "").trim() || null;
+  const text = (value: string) => value.replace(/[$,]/g, "").trim() || null;
   return {
     bedrooms: text(form.bedrooms),
     bathrooms: text(form.bathrooms),
