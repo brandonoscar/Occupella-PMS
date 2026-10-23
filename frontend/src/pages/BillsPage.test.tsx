@@ -186,6 +186,25 @@ describe("BillsPage", () => {
     ]]);
   });
 
+  it("enters the recurring bills due now, as the nightly run would, and says what it did", async () => {
+    const fetch = server({ "/api/payables/recurring/enter": { entered: 1, emails: 0 } });
+    render(<BillsPage me={ME} />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Recurring" }));
+
+    fireEvent.click(await screen.findByRole("button", { name: "Enter bills due now" }));
+
+    expect(await screen.findByText("Entered 1 bill.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/payables/recurring/enter", {}]]);
+    cleanup();
+
+    // With no recurring bill there is nothing to enter, and no button.
+    server({ "/api/payables/recurring": [] });
+    render(<BillsPage me={ME} />);
+    fireEvent.click(await screen.findByRole("tab", { name: "Recurring" }));
+    await screen.findByTestId("empty-state");
+    expect(screen.queryByRole("button", { name: "Enter bills due now" })).toBeNull();
+  });
+
   it("lists recurring bills, adds one and stops one, each in a side panel", async () => {
     const fetch = server();
     render(<BillsPage me={ME} />);

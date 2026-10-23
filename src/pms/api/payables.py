@@ -1250,6 +1250,40 @@ def end_recurring(session: Staff, conn: Conn, recurring_id: UUID, end: End) -> N
         raise HTTPException(409, "this recurring bill has ended already") from None
 
 
+def enter_recurring_bills(
+    conn: psycopg.Connection[Any], pmc_id: UUID, day: date, public_url: str
+) -> tuple[int, int]:
+    """Enters each recurring bill's months due by a day (trust_enter_recurring_bills: each month
+    once, under its reference), with the email to an owner whose approval a bill waits for, in
+    the caller's transaction, as the nightly run does (pms.nightly). (bills entered, emails
+    written.)"""
+    row = conn.execute("SELECT trust_enter_recurring_bills(%s, %s)", (pmc_id, day)).fetchone()
+    assert row is not None
+    # The bills this transaction entered: their created_at is its start, now().
+    bills = conn.execute(
+        "SELECT id FROM trust_bills WHERE pmc_id = %s AND created_at = now() ORDER BY id",
+        (pmc_id,),
+    ).fetchall()
+    emails = sum(
+        email.write_bill_approval(conn, pmc_id, bill, public_url) == "written" for (bill,) in bills
+    )
+    return int(row[0]), emails
+
+
+class Entered(BaseModel):
+    entered: int
+    emails: int
+
+
+@router.post("/recurring/enter")
+def enter_recurring(session: Staff, conn: Conn) -> Entered:
+    """Enters now the recurring bills due by today (UTC) that the nightly run would enter
+    tonight: staff's catch-up after adding one, as Run rent now is for rent. Entering again
+    enters nothing new."""
+    entered, emails = enter_recurring_bills(conn, session.pmc_id, today(), outbox.PUBLIC_URL.get())
+    return Entered(entered=entered, emails=emails)
+
+
 # --- owners' money ----------------------------------------------------------------------------
 
 

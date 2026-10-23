@@ -11,6 +11,7 @@ import {
   lastMonthPeriod,
   nextStep,
   recurringLabel,
+  enteredWords,
   billBadge,
   billsPaidSummary,
   linesNote,
@@ -163,5 +164,14 @@ describe("shared bills and markups", () => {
   it("says a bill's markup and the owner's percent, or nothing", () => {
     expect(markupLabel({ markup: "25.00", markup_percent: "10" })).toBe("$25.00 (10% in the owner's terms)");
     expect(markupLabel({ markup: null, markup_percent: null })).toBeNull();
+  });
+});
+
+describe("enteredWords", () => {
+  it("says what entering the recurring bills due now did", () => {
+    expect(enteredWords({ entered: 0, emails: 0 })).toBe("No recurring bill is due to enter: each month's is in already.");
+    expect(enteredWords({ entered: 1, emails: 0 })).toBe("Entered 1 bill.");
+    expect(enteredWords({ entered: 3, emails: 1 })).toBe("Entered 3 bills; emailed 1 owner to approve one.");
+    expect(enteredWords({ entered: 2, emails: 2 })).toBe("Entered 2 bills; emailed 2 owners to approve one.");
   });
 });

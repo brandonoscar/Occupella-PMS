@@ -21,7 +21,7 @@ import { Wide } from "../components/Wide";
 import { latest } from "../latest";
 import { day, money, usDate } from "../money";
 import type { Bill, Recurring } from "../payables";
-import { billBadge } from "../payables";
+import { billBadge, enteredWords } from "../payables";
 import type { Paged } from "../rentals";
 import { navigate } from "../router";
 import { scopeParams, useScope } from "../scope";
@@ -134,7 +134,7 @@ export function BillsPage({ me }: { me: Me }) {
         <Said>{said}</Said>
         {panel === null && <Notice tone="error">{refused}</Notice>}
         {show === "recurring" ? (
-          <RecurringTab recurring={recurring} error={error} books={books} onPanel={setPanel} />
+          <RecurringTab recurring={recurring} error={error} books={books} onPanel={setPanel} record={record} />
         ) : page === null ? (
           <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
         ) : page.items.length === 0 ? (
@@ -223,17 +223,28 @@ function BillsTable({ bills, onPanel }: { bills: Bill[]; onPanel: (panel: Panel)
 
 // Recurring: each bill that comes every month, entered each month by the nightly run under its
 // prefix and the month; Add recurring bill, and Stop or a new expense account in its ⋯ menu.
-function RecurringTab({ recurring, error, books, onPanel }: {
+// Enter bills due now enters what the nightly run would enter tonight, as Run rent now does rent.
+function RecurringTab({ recurring, error, books, onPanel, record }: {
   recurring: Recurring[] | null;
   error: string;
   books: Portfolio | null;
   onPanel: (panel: Panel) => void;
+  record: Recorder;
 }) {
   return (
     <div className="flex flex-col gap-4">
-      {books && books.vendors.length > 0 && books.accounts.length > 0 && (
-        <div><Button variant="secondary" onClick={() => onPanel({ kind: "add-recurring" })}>Add recurring bill</Button></div>
-      )}
+      <div className="flex flex-wrap items-center gap-2">
+        {books && books.vendors.length > 0 && books.accounts.length > 0 && (
+          <Button variant="secondary" onClick={() => onPanel({ kind: "add-recurring" })}>Add recurring bill</Button>
+        )}
+        {recurring !== null && recurring.length > 0 && (
+          <Button variant="secondary" onClick={() => {
+            void record<{ entered: number; emails: number }>("/api/payables/recurring/enter", {}, enteredWords);
+          }}>
+            Enter bills due now
+          </Button>
+        )}
+      </div>
       {recurring === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : recurring.length === 0 ? (

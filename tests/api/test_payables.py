@@ -704,6 +704,69 @@ def test_recurring_bills_over_the_limit_email_their_owner(client, conn, app_conn
     assert {(e["to"], e["status"]) for e in emailed} == {(to, "waiting")}
 
 
+def test_staff_enter_the_recurring_bills_due_now_as_the_nightly_run_would(
+    client, conn, app_conn, staff, pmc
+):
+    """Enter bills due now (Bills, Recurring) enters what the nightly run would enter tonight:
+    each month's bill due by today once, under its reference, with the email to an owner whose
+    approval it waits for. Entering again, or the night after, enters nothing new."""
+    to = owner_signs_in(conn, pmc)
+    add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 400 * DAY, approval_limit="500")
+    for prefix, amount in (("HOA", "600.00"), ("LAWN", "75.00")):
+        ok(
+            call(
+                client,
+                "recurring",
+                vendor_id=pmc.vendor_id,
+                account=pmc.owners[0].account,
+                reference_prefix=prefix,
+                amount=amount,
+                memo=f"{prefix} each month",
+                day_of_month=1,
+                starts_on=TODAY.replace(day=1),
+            )
+        )
+
+    first = ok(call(client, "recurring/enter"), 200)
+    again = ok(call(client, "recurring/enter"), 200)
+    tonight = nightly.run_pmc(app_conn, pmc.pmc_id, TODAY, "http://pms.test").bills
+
+    month = TODAY.strftime("%Y-%m")
+    assert first == {"entered": 2, "emails": 1}
+    assert again == {"entered": 0, "emails": 0} and tonight == 0
+    assert sorted(statuses(client)) == [f"HOA-{month}", f"LAWN-{month}"]
+    bills = ok(client.get("/api/payables/bills"), 200)["items"]
+    emailed = {b["reference"]: ok(client.get(f"/api/payables/bills/{b['id']}"), 200)["email"]
+               for b in bills}  # fmt: skip
+    assert emailed[f"LAWN-{month}"] is None
+    assert (emailed[f"HOA-{month}"]["to"], emailed[f"HOA-{month}"]["status"]) == (to, "waiting")
+    # The staff member's write, named in the audit log.
+    assert conn.execute(
+        "SELECT count(*) FROM trust_audit_log WHERE table_name = 'trust_bills'"
+        " AND staff_id = %s AND pmc_id = %s",
+        (staff.person_id, pmc.pmc_id),
+    ).fetchone() == (2,)
+
+
+def test_with_no_recurring_bill_due_nothing_is_entered(client, staff, pmc):
+    ok(
+        call(
+            client,
+            "recurring",
+            vendor_id=pmc.vendor_id,
+            account=pmc.owners[0].account,
+            reference_prefix="LATER",
+            amount="75.00",
+            memo="Starts next year",
+            day_of_month=1,
+            starts_on=TODAY.replace(day=1) + 400 * DAY,
+        )
+    )
+
+    assert ok(call(client, "recurring/enter"), 200) == {"entered": 0, "emails": 0}
+    assert statuses(client) == {}
+
+
 def test_an_email_given_up_on_shows_as_failed_with_why(client, conn, staff, pmc):
     owner_signs_in(conn, pmc)
     add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 60 * DAY, approval_limit="500")
@@ -737,6 +800,7 @@ ENDPOINTS = [
     ("get", "/api/payables/recurring"),
     ("post", "/api/payables/recurring"),
     ("post", f"/api/payables/recurring/{uuid.uuid4()}/end"),
+    ("post", "/api/payables/recurring/enter"),
     ("get", "/api/payables/owners"),
     ("get", f"/api/payables/bills/{uuid.uuid4()}"),
     ("post", "/api/payables/bills/pay"),

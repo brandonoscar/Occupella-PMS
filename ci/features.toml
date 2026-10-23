@@ -172,7 +172,7 @@ browser = [
 
 [[feature]]
 id = "rent-work"
-statement = "On a lease's own page (its balance due at the top, then Summary, Ledger, Tenants, Files and Notes), staff add a fee, a credit or a monthly charge to it and stop one; record a tenant's payment (what the lease owes to the owner, the rest prepaid rent), use prepaid rent, take a security, pet or key deposit (each held apart, the lease showing each kind; migration 0092), and record a bounce, which undoes the payment and charges the NSF fee; and read its ledger, each charge, payment and bounce with the balance after it."
+statement = "On a lease's own page (its balance due at the top, then Summary, Ledger, Tenants, Files and Notes), staff add a fee, a credit or a monthly charge to it and stop one; download its ledger as PDF, CSV or Excel; record a tenant's payment (what the lease owes to the owner, the rest prepaid rent), use prepaid rent, take a security, pet or key deposit (each held apart, the lease showing each kind; migration 0092), and record a bounce, which undoes the payment and charges the NSF fee; and read its ledger, each charge, payment and bounce with the balance after it."
 operations = [
   "GET /api/leases/{lease_id}",
   "GET /api/leases/{lease_id}/ledger",
@@ -358,11 +358,12 @@ browser = [
 
 [[feature]]
 id = "recurring-bills"
-statement = "Staff add a bill that comes every month on Bills' Recurring tab and stop it from a day; the nightly run enters each month's once under its prefix and the month (tests/test_nightly.py: the browser run has it off)."
+statement = "Staff add a bill that comes every month on Bills' Recurring tab and stop it from a day; the nightly run enters each month's once under its prefix and the month, and Enter bills due now enters by hand what it would enter tonight (the browser run has the nightly run off), again entering nothing new."
 operations = [
   "GET /api/payables/recurring",
   "POST /api/payables/recurring",
   "POST /api/payables/recurring/{recurring_id}/end",
+  "POST /api/payables/recurring/enter",
 ]
 browser = [
   "features.spec.ts › staff add a recurring bill and stop it, and record the decline of an owner with no login",
@@ -411,7 +412,7 @@ browser = [
 
 [[feature]]
 id = "month-end"
-statement = "Staff import a bank statement, match its lines to the books (the sure ones at once), undo a match, prepare the month when nothing is missing, and another staff member who may approve approves it, closing the account through it."
+statement = "Staff import a bank statement, download the day's bank reconciliation as PDF, CSV or Excel, match its lines to the books (the sure ones at once), undo a match, prepare the month when nothing is missing, and another staff member who may approve approves it, closing the account through it."
 operations = [
   "GET /api/reconcile",
   "POST /api/reconcile/statements",
@@ -429,7 +430,7 @@ browser = [
 
 [[feature]]
 id = "switching"
-statement = "Staff bring a company over from another system: import its roster, open an account with its old balances and the checks not cleared, sign off the tie-out, match the opening to the first statement, carry over what the old system paid each vendor this year, and the bills it had not paid, which draws hold back."
+statement = "Staff bring a company over from another system: import its roster (tenants, owners and vendors with the old system's contact details when it has them, q127), open an account with its old balances and the checks not cleared, sign off the tie-out, match the opening to the first statement, carry over what the old system paid each vendor this year, and the bills it had not paid, which draws hold back."
 operations = [
   "GET /api/switching",
   "POST /api/switching/import",

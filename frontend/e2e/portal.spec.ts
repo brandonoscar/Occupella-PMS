@@ -690,6 +690,19 @@ test("staff import last month's statement, match it to the books and prepare it;
   await expect(page.getByText(`Imported 3 lines, ${us(iso(first))} to ${us(iso(last))}.`)).toBeVisible();
 
   await page.getByRole("tab", { name: "Reconciliations" }).click();
+  // The day's bank reconciliation downloads in each format, the CSV with the statement's day.
+  const files = page.getByRole("group", { name: "Download the reconciliation" });
+  for (const [name, type] of [
+    ["PDF", "application/pdf"],
+    ["CSV", "text/csv"],
+    ["Excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+  ] as const) {
+    const href = (await files.getByRole("link", { name, exact: true }).getAttribute("href")) ?? "";
+    const answer = await page.request.get(href);
+    expect(answer.status(), `${name}: ${href}`).toBe(200);
+    expect(answer.headers()["content-type"]).toContain(type);
+    if (name === "CSV") expect((await answer.body()).toString("utf8")).toContain(iso(last));
+  }
   await page.getByRole("button", { name: "Match the sure ones" }).click();
   await expect(page.getByText("2 lines matched.")).toBeVisible();
   const prepare = page.getByRole("button", { name: `Prepare through ${us(iso(last))}` });

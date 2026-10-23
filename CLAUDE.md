@@ -626,7 +626,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   property account, amount, day of the month 1 to 28, first day; an end row stops it).
   `trust_enter_recurring_bills` enters each month's bill through a day, under the vendor
   reference `<prefix>-YYYY-MM`, so each month once and safe to retry; a month already entered
-  under that reference is left as it is. Entered bills follow the bill rules above.
+  under that reference is left as it is. Entered bills follow the bill rules above. The nightly
+  run enters them; staff enter the ones due by today by hand from Bills, Recurring (Enter bills
+  due now, `POST /api/payables/recurring/enter`, area bills: `payables.enter_recurring_bills`,
+  which the nightly run calls too, with the owners' approval emails), as Run rent now does rent.
 - Maintenance requests: a tenant on a lease files one (`trust_maintenance_requests`, append-only;
   a key to `trust_lease_tenants` refuses anyone else). Staff open at most one work order for it,
   at the lease's unit (`trust_maintenance_request_work_orders`, one each way), and its status is

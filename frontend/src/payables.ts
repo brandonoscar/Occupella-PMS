@@ -256,3 +256,12 @@ export function companyFeesDue(fees: CompanyFees, on: string): { word: string; l
     ? { word: `take out: past ${usDate(fees.take_by)}`, late: true }
     : { word: `take out by ${usDate(fees.take_by)}`, late: false };
 }
+
+// What entering the recurring bills due now did (POST /api/payables/recurring/enter), in words.
+export function enteredWords(done: { entered: number; emails: number }): string {
+  if (done.entered === 0) return "No recurring bill is due to enter: each month's is in already.";
+  const bills = `Entered ${done.entered} bill${done.entered === 1 ? "" : "s"}`;
+  return done.emails === 0
+    ? `${bills}.`
+    : `${bills}; emailed ${done.emails} owner${done.emails === 1 ? "" : "s"} to approve one.`;
+}

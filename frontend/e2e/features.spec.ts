@@ -807,6 +807,11 @@ test("staff add a fee, a credit and a monthly charge to a lease, take a deposit 
   await leaseTab(page, "Ledger");
   const ledger = lease.getByRole("table", { name: "Ledger" });
   await expect(ledger).toContainText("Key replacement");
+  // It downloads as of today in each format (the lease ledger report), the CSV with its lines.
+  const ledgerFiles = lease.getByRole("group", { name: "Download the ledger" });
+  await downloads(page, "PDF", PDF, ledgerFiles);
+  await downloads(page, "Excel", XLSX, ledgerFiles);
+  expect(await downloads(page, "CSV", CSV, ledgerFiles)).toContain("Key replacement");
   await expect(ledger.getByRole("row", { name: /Credit/ })).toContainText("($10.00)");
   await expect(ledger.getByRole("row", { name: /Check 501/ })).toContainText("$15.00");
   // Each payment is listed as it came in, not only the part that paid charges.
@@ -985,9 +990,21 @@ test("staff add a recurring bill and stop it, and record the decline of an owner
   await adding.getByLabel("First day").fill(firstOfThisMonth());
   await adding.getByRole("button", { name: "Add recurring bill" }).click();
   await expect(page.getByText("GUTTER is entered each month.")).toBeVisible();
-  // Each month's bill is entered by the nightly run (src/pms/nightly.py), off in this run.
   const gutter = page.getByRole("row", { name: "Demo Roofing Co GUTTER" });
   await expect(gutter.getByRole("cell").nth(3)).toHaveText("$120.00");
+  // Each month's bill is entered by the nightly run (src/pms/nightly.py), off in this run: staff
+  // enter what it would enter tonight by hand, as Run rent now does rent. Again, nothing new.
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await page.getByRole("button", { name: "Enter bills due now" }).click();
+  await expect(page.getByText("Entered 1 bill.")).toBeVisible();
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await page.getByRole("button", { name: "Enter bills due now" }).click();
+  await expect(page.getByText("No recurring bill is due to enter: each month's is in already.")).toBeVisible();
+  await page.getByRole("tab", { name: "Unpaid" }).click();
+  const entered = page.getByRole("row", { name: new RegExp(`GUTTER-${today().slice(0, 7)}`) });
+  await expect(entered).toContainText("$120.00");
+  await expect(entered).toContainText("Gutter cleaning");
+  await page.getByRole("tab", { name: "Recurring" }).click();
 
   await gutter.getByRole("button", { name: "Actions for Demo Roofing Co GUTTER" }).click();
   await page.getByRole("menuitem", { name: "Stop it" }).click();
@@ -1188,13 +1205,16 @@ test("only staff holding a role do its work: an admin grants pay-out and adds st
   await expect(page.getByRole("alert")).toHaveText("the email or password is wrong");
 });
 
-// A link's file downloads with the media type it says.
-async function downloads(page: Page, name: string, type: string): Promise<void> {
-  const href = (await page.getByRole("link", { name, exact: true }).first().getAttribute("href")) ?? "";
+// A link's file (on the page, or within a part of it) downloads with the media type it says;
+// its text, for a CSV to read.
+async function downloads(page: Page, name: string, type: string, scope: Page | Locator = page): Promise<string> {
+  const href = (await scope.getByRole("link", { name, exact: true }).first().getAttribute("href")) ?? "";
   const answer = await page.request.get(href);
   expect(answer.status(), `${name}: ${href}`).toBe(200);
   expect(answer.headers()["content-type"]).toContain(type);
-  expect((await answer.body()).length).toBeGreaterThan(0);
+  const body = await answer.body();
+  expect(body.length).toBeGreaterThan(0);
+  return body.toString("utf8");
 }
 
 const PDF = "application/pdf";
@@ -4083,7 +4103,14 @@ test("staff bring a property's units, tenants, lease and unpaid charges in from 
   const units = "Property,Unit\nHarbor View,Unit 1\nHarbor View,Unit 2\nHarbor View,Unit 3\n";
   await bring("Units", units, "3 added.");
   await bring("Units", units, "0 added; 3 already here.");
-  await bring("Tenants", "Property,Tenant\nHarbor View,Reese Sample\nHarbor View,Rowan Sample\n", "2 added.");
+  // Tenants and vendors may come with the old system's contact details (q127): each lands on the
+  // person's page; a row without them leaves none.
+  await bring("Tenants",
+    "Property,Tenant,Email,Phone,Address,City,State,ZIP\n"
+      + "Harbor View,Reese Sample,reese.sample@example.com,(555) 555-0171,2 Example Road,Sampletown,ZZ,00000\n"
+      + "Harbor View,Rowan Sample,,,,,,\n",
+    "2 added.");
+  await bring("Vendors", "Name,Email,Phone\nHarbor Plumbing Co,plumbing@example.com,(555) 555-0172\n", "1 added.");
   await bring("Leases in place",
     `Property,Unit,Tenants,Starts on,Monthly rent\nHarbor View,Unit 1,Reese Sample,${started},975.00\n`,
     "1 added; 1 already here.");
@@ -4117,6 +4144,18 @@ test("staff bring a property's units, tenants, lease and unpaid charges in from 
   await expect(charges).toContainText(`${us(owed)} Rent: $975.00 open`);
   await expect(charges).toContainText(`${us(owed)} Late fee from the old system: $40.00 open`);
   await expect((await ownerProperty(page, "Demo Owner B", "Harbor View")).getByRole("cell").nth(2)).toHaveText("$1,500.00");
+
+  // The contact details the files brought: on the tenant's page and in the vendors list.
+  await section(page, "Tenants");
+  await page.getByRole("row", { name: "Reese Sample", exact: true }).getByRole("link", { name: "Reese Sample" }).click();
+  const reese = page.getByRole("group", { name: "Contact details, Reese Sample" });
+  await expect(reese).toContainText("reese.sample@example.com");
+  await expect(reese).toContainText("Sampletown, ZZ 00000");
+  await section(page, "Tenants");
+  await page.getByRole("row", { name: "Rowan Sample", exact: true }).getByRole("link", { name: "Rowan Sample" }).click();
+  await expect(page.getByRole("group", { name: "Contact details, Rowan Sample" })).toContainText("No contact details yet.");
+  await section(page, "Vendors");
+  await expect(page.getByRole("row", { name: "Harbor Plumbing Co", exact: true })).toContainText("plumbing@example.com");
 });
 
 test("staff bring the old system's tenant, owner and vendor history in once, and read it under Before the switch on each page", async ({
