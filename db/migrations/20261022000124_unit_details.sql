@@ -15,9 +15,11 @@ CREATE TABLE trust_unit_details (
     id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
     pmc_id uuid NOT NULL REFERENCES trust_pmcs (pmc_id),
     unit_id uuid NOT NULL,
+    -- squawk-ignore prefer-bigint-over-int
     bedrooms integer CHECK (bedrooms BETWEEN 0 AND 20),
     -- A half bath counts as a half: 1.5, 2.5.
     bathrooms numeric CHECK (bathrooms BETWEEN 0 AND 20 AND bathrooms * 2 = trunc(bathrooms * 2)),
+    -- squawk-ignore prefer-bigint-over-int
     square_feet integer CHECK (square_feet BETWEEN 1 AND 100000),
     market_rent numeric CHECK (
         market_rent >= 0 AND market_rent <= 10000000 AND market_rent = round(market_rent, 2)
