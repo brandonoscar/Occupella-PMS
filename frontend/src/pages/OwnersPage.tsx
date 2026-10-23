@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Button, LinkButton } from "../components/Button";
+import { BankAccountCard } from "../components/BankAccountCard";
 import { ContactCard } from "../components/ContactCard";
 import { EmptyState } from "../components/EmptyState";
 import { Field } from "../components/Field";
@@ -215,6 +216,7 @@ function OwnerSummary({ owner, refresh }: { owner: Owner; refresh: () => void })
   return (
     <div className="flex flex-col gap-6">
       <ContactCard path={`/api/owners/${owner.id}`} contact={owner.contact} refresh={refresh} name={owner.name} />
+      <BankAccountCard path={`/api/owners/${owner.id}/bank-account`} name={owner.name} />
       <PortalCard kind="owner" personId={owner.id} name={owner.name} portal={owner.portal}
         loginEmail={owner.login_email} email={owner.contact.email} refresh={refresh} />
       <Card title="Management agreements">

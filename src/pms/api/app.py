@@ -51,6 +51,7 @@ from pms.api import (
     addresses,
     assistance,
     bank_deposits,
+    bank_details,
     banking,
     budgets,
     calendar,
@@ -551,6 +552,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(payables.router)
     app.include_router(reconcile.router)
     app.include_router(year_close.router)
+    app.include_router(bank_details.router)
     app.include_router(banking.router)
     app.include_router(bank_deposits.router)
     app.include_router(journal.router)

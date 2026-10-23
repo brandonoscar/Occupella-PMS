@@ -4578,3 +4578,74 @@ test("staff enter a property's tax credit income limits, make a unit a tax credi
   await expect(report).not.toContainText("60,000");
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
 });
+
+test("staff keep where a vendor and an owner are paid by bank transfer, see only the last four digits, and only staff who may disburse change it", async ({
+  page,
+  browser,
+}) => {
+  const people = seed.features["bank-accounts"]!;
+  await joinAsStaff(page, people.manager);
+  await section(page, "Vendors");
+  await page.getByRole("row", { name: "Demo Roofing Co", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Demo Roofing Co" })).toBeVisible();
+  const card = page.getByRole("group", { name: "Bank account, Demo Roofing Co" });
+  await expect(card).toContainText("No bank account on file.");
+
+  // Added with its number typed twice; a wrong check digit is refused in words first.
+  await card.getByRole("button", { name: "Add bank account" }).click();
+  let panel = page.getByRole("dialog", { name: "Add bank account" });
+  await panel.getByLabel("Routing number").fill("001000008");
+  await panel.getByLabel("Account number", { exact: true }).fill("000123456789");
+  await panel.getByLabel("Account number again").fill("000123456789");
+  await panel.getByRole("button", { name: "Add bank account" }).click();
+  await expect(panel.getByRole("alert")).toHaveText("that routing number's check digit is wrong: look at it again");
+  await panel.getByLabel("Routing number").fill("001000009");
+  await panel.getByRole("button", { name: "Add bank account" }).click();
+  await expect(page.getByText("Demo Roofing Co's bank account is set: ••••6789.")).toBeVisible();
+  await expect(card.getByTestId("bank-account")).toHaveText(
+    "Checking ••••6789, routing 001000009, in the name of Demo Roofing Co",
+  );
+  await expect(page.getByRole("main")).not.toContainText("000123456789");
+
+  // Changed to savings, then removed after a question.
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await card.getByRole("button", { name: "Change bank account" }).click();
+  panel = page.getByRole("dialog", { name: "Change bank account" });
+  await panel.getByLabel("Routing number").fill("001000009");
+  await panel.getByLabel("Account type").selectOption("savings");
+  await panel.getByLabel("Account number", { exact: true }).fill("0000555501");
+  await panel.getByLabel("Account number again").fill("0000555501");
+  await panel.getByRole("button", { name: "Change bank account" }).click();
+  await expect(card.getByTestId("bank-account")).toHaveText(
+    "Savings ••••5501, routing 001000009, in the name of Demo Roofing Co",
+  );
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+  await card.getByRole("button", { name: "Remove" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Remove" }).click();
+  await expect(card).toContainText("No bank account on file.");
+
+  // An owner's too, from their page.
+  await openOwner(page, "Demo Owner A");
+  const owner = page.getByRole("group", { name: "Bank account, Demo Owner A" });
+  await owner.getByRole("button", { name: "Add bank account" }).click();
+  panel = page.getByRole("dialog", { name: "Add bank account" });
+  await panel.getByLabel("Routing number").fill("001000009");
+  await panel.getByLabel("Account number", { exact: true }).fill("0000777701");
+  await panel.getByLabel("Account number again").fill("0000777701");
+  await panel.getByRole("button", { name: "Add bank account" }).click();
+  await expect(owner.getByTestId("bank-account")).toContainText("Checking ••••7701");
+
+  // The bookkeeper, who may not disburse, sees it and may not change it.
+  const bookkeeper = await (await browser.newContext()).newPage();
+  await joinAsStaff(bookkeeper, people.bookkeeper);
+  await openOwner(bookkeeper, "Demo Owner A");
+  const seen = bookkeeper.getByRole("group", { name: "Bank account, Demo Owner A" });
+  await expect(seen.getByTestId("bank-account")).toContainText("Checking ••••7701");
+  await seen.getByRole("button", { name: "Remove" }).click();
+  await bookkeeper.getByRole("alertdialog").getByRole("button", { name: "Remove" }).click();
+  await expect(seen.getByRole("alert")).toContainText("disburse");
+  await expect(seen.getByTestId("bank-account")).toContainText("Checking ••••7701");
+  await expectAccessible(bookkeeper);
+  await bookkeeper.close();
+  await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
+});

@@ -3,6 +3,7 @@ import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
+import { BankAccountCard } from "../components/BankAccountCard";
 import { ContactCard } from "../components/ContactCard";
 import { Field } from "../components/Field";
 import { Form } from "../components/Form";
@@ -108,6 +109,7 @@ export function VendorPage({ me, id }: { me: Me; id: string }) {
             </dl>
           </Card>
           <ContactCard path={`/api/vendors/${id}`} contact={vendor.contact} refresh={refresh} name={vendor.name} />
+          <BankAccountCard path={`/api/vendors/${id}/bank-account`} name={vendor.name} />
         </>
       )}
       {tab === "insurance" && (

@@ -71,6 +71,10 @@ jobs:
           # The fake email sender keeps each email in the outbox and sends it nowhere.
           # The nightly rent run is off: the tests charge rent when they mean to (Run rent now).
           # The fake geocoder calls nothing: it lands each address on a point of its own.
+          # Bank account numbers are sealed with a key made for this run alone, in a file only
+          # the runner reads; it is never printed and never stored (CLAUDE.md hard rule 5).
+          PYTHONPATH=src python -m pms.sealed new-key "$RUNNER_TEMP/field.key"
+          PMS_FIELD_KEY="$(cat "$RUNNER_TEMP/field.key")" \
           PYTHONPATH=src PMS_STATIC_DIR=frontend/dist PMS_PORT=8123 \
             PMS_PUBLIC_URL=http://127.0.0.1:8123 PMS_COOKIE_SECURE=false \
             PMS_SCREENING_PARTNER=fake PMS_EMAIL_SENDER=fake PMS_GEOCODER=fake PMS_NIGHTLY=off \

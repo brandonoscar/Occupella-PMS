@@ -991,3 +991,18 @@ operations = [
 browser = [
   "features.spec.ts › staff enter a property's tax credit income limits, make a unit a tax credit unit, certify its household and see the compliance report",
 ]
+
+[[feature]]
+id = "bank-accounts"
+statement = "Staff keep where a vendor or an owner is paid by bank transfer on their page (the founder, 2026-10-23; migration 0155): the name on the account, the routing number (its ABA check digit checked), checking or savings and the account number, typed twice and sealed by the server with its PMS_FIELD_KEY before it reaches the database; staff see only its last four digits, change it or remove it after a question, and only staff who may disburse change it (the database checks); the AI reads none of it."
+operations = [
+  "GET /api/vendors/{vendor_id}/bank-account",
+  "POST /api/vendors/{vendor_id}/bank-account",
+  "POST /api/vendors/{vendor_id}/bank-account/remove",
+  "GET /api/owners/{owner_id}/bank-account",
+  "POST /api/owners/{owner_id}/bank-account",
+  "POST /api/owners/{owner_id}/bank-account/remove",
+]
+browser = [
+  "features.spec.ts › staff keep where a vendor and an owner are paid by bank transfer, see only the last four digits, and only staff who may disburse change it",
+]

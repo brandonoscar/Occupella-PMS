@@ -441,6 +441,25 @@ $$;
 
 
 --
+-- Name: trust_aba_routing_ok(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_aba_routing_ok(p_routing text) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $_$
+    SELECT p_routing ~ '^[0-9]{9}$' AND (
+        3 * (substr(p_routing, 1, 1)::int + substr(p_routing, 4, 1)::int
+             + substr(p_routing, 7, 1)::int)
+        + 7 * (substr(p_routing, 2, 1)::int + substr(p_routing, 5, 1)::int
+               + substr(p_routing, 8, 1)::int)
+        + (substr(p_routing, 3, 1)::int + substr(p_routing, 6, 1)::int
+           + substr(p_routing, 9, 1)::int)
+    ) % 10 = 0
+$_$;
+
+
+--
 -- Name: trust_management_agreements; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15279,6 +15298,37 @@ CREATE TABLE public.trust_ownership_shares (
 
 
 --
+-- Name: trust_payee_bank_accounts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payee_bank_accounts (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    vendor_id uuid,
+    owner_id uuid,
+    removed boolean DEFAULT false NOT NULL,
+    holder_name text,
+    routing_number text,
+    account_type text,
+    account_number_sealed bytea,
+    account_last4 text,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_payee_bank_accounts_account_last4_check CHECK ((account_last4 ~ '^[0-9]{4}$'::text)),
+    CONSTRAINT trust_payee_bank_accounts_account_number_sealed_check CHECK (((octet_length(account_number_sealed) >= 30) AND (octet_length(account_number_sealed) <= 200))),
+    CONSTRAINT trust_payee_bank_accounts_account_type_check CHECK ((account_type = ANY (ARRAY['checking'::text, 'savings'::text]))),
+    CONSTRAINT trust_payee_bank_accounts_check CHECK ((num_nonnulls(vendor_id, owner_id) = 1)),
+    CONSTRAINT trust_payee_bank_accounts_check1 CHECK (
+CASE
+    WHEN removed THEN (num_nonnulls(holder_name, routing_number, account_type, account_number_sealed, account_last4) = 0)
+    ELSE (num_nonnulls(holder_name, routing_number, account_type, account_number_sealed, account_last4) = 5)
+END),
+    CONSTRAINT trust_payee_bank_accounts_holder_name_check CHECK (((holder_name = btrim(holder_name)) AND ((char_length(holder_name) >= 1) AND (char_length(holder_name) <= 22)))),
+    CONSTRAINT trust_payee_bank_accounts_routing_number_check CHECK (public.trust_aba_routing_ok(routing_number))
+);
+
+
+--
 -- Name: trust_payment_file_lines; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -18232,6 +18282,14 @@ ALTER TABLE ONLY public.trust_ownership_shares
 
 
 --
+-- Name: trust_payee_bank_accounts trust_payee_bank_accounts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payee_bank_accounts
+    ADD CONSTRAINT trust_payee_bank_accounts_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_payment_file_lines trust_payment_file_lines_file_id_line_no_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -20461,6 +20519,27 @@ CREATE INDEX trust_ownership_shares_recorded_by ON public.trust_ownership_shares
 
 
 --
+-- Name: trust_payee_bank_accounts_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payee_bank_accounts_owner ON public.trust_payee_bank_accounts USING btree (pmc_id, owner_id, created_at);
+
+
+--
+-- Name: trust_payee_bank_accounts_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payee_bank_accounts_recorded_by ON public.trust_payee_bank_accounts USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_payee_bank_accounts_vendor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payee_bank_accounts_vendor ON public.trust_payee_bank_accounts USING btree (pmc_id, vendor_id, created_at);
+
+
+--
 -- Name: trust_payment_file_lines_lease; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21994,6 +22073,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_payee_bank_accounts trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payee_bank_accounts FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_payment_file_lines trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23289,6 +23375,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_owne
 
 
 --
+-- Name: trust_payee_bank_accounts trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payee_bank_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_payment_file_lines trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24045,6 +24138,13 @@ CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_owner_fees FOR EACH 
 
 
 --
+-- Name: trust_payee_bank_accounts trust_disburse; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_disburse BEFORE INSERT ON public.trust_payee_bank_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_check_staff_role('disburse', 'change where money is paid');
+
+
+--
 -- Name: trust_pmc_fee_withdrawals trust_disburse; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -24560,6 +24660,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_owner_fees FOR EA
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_ownership_shares FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_payee_bank_accounts trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payee_bank_accounts FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -28227,6 +28334,38 @@ ALTER TABLE ONLY public.trust_ownership_shares
 
 
 --
+-- Name: trust_payee_bank_accounts trust_payee_bank_accounts_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payee_bank_accounts
+    ADD CONSTRAINT trust_payee_bank_accounts_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_payee_bank_accounts trust_payee_bank_accounts_pmc_id_owner_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payee_bank_accounts
+    ADD CONSTRAINT trust_payee_bank_accounts_pmc_id_owner_id_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id);
+
+
+--
+-- Name: trust_payee_bank_accounts trust_payee_bank_accounts_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payee_bank_accounts
+    ADD CONSTRAINT trust_payee_bank_accounts_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_payee_bank_accounts trust_payee_bank_accounts_pmc_id_vendor_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payee_bank_accounts
+    ADD CONSTRAINT trust_payee_bank_accounts_pmc_id_vendor_id_fkey FOREIGN KEY (pmc_id, vendor_id) REFERENCES public.trust_vendors(pmc_id, id);
+
+
+--
 -- Name: trust_payment_file_lines trust_payment_file_lines_pmc_id_file_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29892,4 +30031,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000120'),
     ('20261022000121'),
     ('20261022000122'),
-    ('20261022000123');
+    ('20261022000123'),
+    ('20261022000155');

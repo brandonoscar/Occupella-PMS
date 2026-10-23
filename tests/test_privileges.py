@@ -281,6 +281,9 @@ TABLES = {
     # designation, each from a day, which staff record.
     "trust_tax_credit_limits": {"SELECT", "INSERT"},
     "trust_tax_credit_units": {"SELECT", "INSERT"},
+    # Where a vendor or an owner is paid by bank transfer (migration 0155): the account number
+    # sealed by the app, which the AI never reads.
+    "trust_payee_bank_accounts": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -302,6 +305,8 @@ COLUMN_UPDATES = {
 # their credentials, and rental applicants with their consumer report results, are no business
 # of the role behind Occupella's key.
 AI_NEVER_READS = {
+    # A payee's bank account (migration 0155): where money goes is no business of the AI's.
+    "trust_payee_bank_accounts",
     # A notice made for a lease, as filled in (migration 0119): like a document's file.
     "trust_notices",
     "trust_screening_criteria",
@@ -651,6 +656,8 @@ FUNCTIONS = {
     "trust_check_lease_offer_void()": {"PUBLIC"},
     "trust_check_lease_offer_not_void()": {"PUBLIC"},
     "trust_open_lease_offer_charges()": {"PUBLIC"},
+    # Whether nine digits make a routing number (migration 0155), for the app's check.
+    "trust_aba_routing_ok(text)": {"trust_app"},
 }
 MONEY_FUNCTIONS = [signature for signature, callers in FUNCTIONS.items() if "PUBLIC" not in callers]
 # Run as the table owner, so trust_app needs no write grant of its own.

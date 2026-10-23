@@ -31,10 +31,15 @@ import pytest
 from hypothesis import HealthCheck, Phase, settings
 from psycopg import sql
 
+from pms import sealed
 from tools import sql_coverage
 from tools.run_rules import marker_problems, outcome_problems, shard
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# The key that seals bank account numbers (src/pms/sealed.py): a new one each run, made here, so
+# no key is ever stored (CLAUDE.md hard rule 5). A test without it unsets it itself.
+os.environ.setdefault(sealed.ENV, sealed.new_key())
 
 _properties = tomllib.loads((ROOT / "ci/thresholds.toml").read_text())["properties"]
 _common = {

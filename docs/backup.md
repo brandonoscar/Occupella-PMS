@@ -112,6 +112,23 @@ docker compose run --rm --no-deps -T -v "$PWD/scripts:/scripts:ro" \
   db dump - | age -r age1yourpublickey >pms.dump.age
 ```
 
+## The key to bank account numbers
+
+Payees' bank account numbers (where a vendor or an owner is paid by bank transfer) are sealed by
+the app under the server's `PMS_FIELD_KEY` before they reach the database (CLAUDE.md, Payees' bank
+accounts). The key is never in the database, so it is in no backup of it: keep it yourself.
+
+- Make it once, on the server, into a file only the app's user reads:
+  `python -m pms.sealed new-key /etc/pms/field.key`. It never overwrites a key and never prints
+  one. Give the app its contents as `PMS_FIELD_KEY` (an env file of the server's, never the
+  command line or `compose.yaml` in the repo).
+- Keep a copy apart from the database backups (a password manager or a safe, for example), so
+  whoever takes a backup doesn't take the key with it, and a lost server doesn't take the key away.
+- Restore a backup with the same key. A server with another key, or none, opens no number: the
+  vendor's and owner's pages still show the last four digits, and staff enter each number again.
+- Changing the key isn't built yet: a new key opens nothing sealed under the old one, so staff
+  would enter every number again.
+
 ## Getting the books back
 
 1. Stop the app (`docker compose stop app`), so nothing is posted while you restore.

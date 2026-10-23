@@ -43,9 +43,12 @@ night; fees still move only when staff ask, unless a company turns on taking its
 management fees by itself, the founder's amendment of 2026-10-18). Since 2026-10-22 (founder,
 split with the other session): a deposit's return deadline and statement (q040, q039), filling a
 company's own lease, deposit interest (q041) and HUD forms (q143); the strictest deposit rules
-found are in `docs/law.md`. Still out of scope: Stripe and online payments, text messages, bank files (ACH, check
-printing), 1099 filing, and state rules beyond the no-negative rule and those `docs/law.md`
-records. If one of these looks needed, stop and ask the founder.
+found are in `docs/law.md`. Since 2026-10-23 (founder): bank files (ACH) and check printing, with
+payees' bank account numbers kept encrypted, then Stripe and online payments (a stand-in until the
+founder gives keys), text messages, 1099 forms and other systems' own export files, in that order.
+Still out of scope: a real screening partner (until the founder picks one) and state rules beyond
+the no-negative rule and those `docs/law.md` records. If one of these looks needed, stop and ask
+the founder.
 
 ## The standing rule: tests come with the code
 
@@ -1058,6 +1061,19 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   takes a portal login; `trust_tenant_records` gives a person's records, and the tenant portal,
   receipts, calendar, renewals and emails read every one of them (a request or a policy filed
   under a lease is the record on it). The AI role reads the links.
+- Payees' bank accounts (migration 0155, the founder 2026-10-23): where a vendor or an owner is
+  paid by bank transfer (`trust_payee_bank_accounts`: the name on the account, at most 22
+  characters as an ACH file holds it, a routing number whose ABA check digit holds
+  (`trust_aba_routing_ok`), checking or savings, the account number sealed and its last four
+  digits; or a removal; append-only, the latest row holding, naming who). The app seals the number
+  before it reaches the database (`src/pms/sealed.py`: AES-GCM under the server's `PMS_FIELD_KEY`,
+  bound to the company, the kind of payee and the person, so a copy on another row doesn't open),
+  so the database, its backups and the audit log hold no whole number; a server without the key
+  keeps none (503), and `docs/backup.md` says how to keep the key. Staff see the last four digits
+  alone, on a vendor's or an owner's Summary (`components/BankAccountCard.tsx`,
+  `src/pms/api/bank_details.py`, area setup), and a named staff member changes one only with
+  disburse (a trigger), as it decides where money goes. It moves no money. The AI role reads none
+  of it (`AI_NEVER_READS`).
 - Vendor insurance and inspections (migration 0058): a vendor's policies
   (`trust_vendor_insurance`: coverage, carrier, number, the days it runs, a limit; a renewal is
   a new policy), and a lease's move-in and move-out inspections (`trust_inspections`, their
