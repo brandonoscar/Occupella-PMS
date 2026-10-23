@@ -4716,8 +4716,8 @@ test("staff keep a unit's bedrooms, bathrooms, size and market rent; its propert
 async function addRule(page: Page, rules: Locator, kind: string, number: string, more?: (panel: Locator) => Promise<void>) {
   await rules.getByRole("button", { name: "Add a rule" }).click();
   const panel = page.getByRole("dialog", { name: "Add a rule" });
-  await panel.getByLabel("Of", { exact: true }).selectOption({ label: "California (state)" });
-  await panel.getByLabel("Rule", { exact: true }).selectOption({ label: kind });
+  await panel.getByRole("combobox", { name: "Of", exact: true }).selectOption({ label: "California (state)" });
+  await panel.getByRole("combobox", { name: "Rule", exact: true }).selectOption({ label: kind });
   await panel.getByLabel("Number", { exact: true }).fill(number);
   await more?.(panel);
   await panel.getByLabel("Citation", { exact: true }).fill(`Synthetic Code: ${kind}`);
