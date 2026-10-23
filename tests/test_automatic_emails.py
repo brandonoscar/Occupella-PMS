@@ -52,7 +52,13 @@ def pmc(conn):
 
 def turn_on(conn, pmc_id, by=None, **wanted):
     settings = {**dict.fromkeys(notices.FIELDS), **wanted}
-    flags = ("late_notices", "work_order_notices", "adverse_action_notices", "payment_receipts")
+    flags = (
+        "late_notices",
+        "work_order_notices",
+        "adverse_action_notices",
+        "payment_receipts",
+        "reserve_alerts",
+    )
     for flag in flags:
         settings[flag] = bool(settings[flag])
     with acting_as(conn, by):

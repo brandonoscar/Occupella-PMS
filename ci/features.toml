@@ -757,13 +757,13 @@ browser = [
 
 [[feature]]
 id = "automatic-email"
-statement = "Staff turn on, in Company setup, the emails the PMS writes by itself while the server sends email: rent reminders some days before the first, a notice when a late fee is charged, each owner's statement for last month from a day of the month, a vendor's work order when assigned or scheduled, and each applicant's adverse action notice. Each is written once, in the run or the change that causes it, and kept on the person's Email tab with whether it went (docs/adr/0007-email.md)."
+statement = "Staff turn on, in Company setup, the emails the PMS writes by itself while the server sends email: rent reminders some days before the first, a notice when a late fee is charged, each owner's statement for last month from a day of the month, a vendor's work order when assigned or scheduled, each applicant's adverse action notice, each tenant's receipt of a payment staff record (q029), and an owner's note when one of their accounts falls below its reserve (once a drop; q054). Each is written once, in the run or the change that causes it, and kept on the person's Email tab with whether it went (docs/adr/0007-email.md)."
 operations = [
   "GET /api/emails/settings",
   "POST /api/emails/settings",
 ]
 browser = [
-  "features.spec.ts › staff turn on the emails the PMS writes by itself, and a run of rent sends each owner last month's statement onto their Email tab, its PDF attached; a payment sends its tenant the receipt",
+  "features.spec.ts › staff turn on the emails the PMS writes by itself, and a run of rent sends each owner last month's statement onto their Email tab, its PDF attached, and tells an owner whose account fell below its reserve; a payment sends its tenant the receipt",
 ]
 
 [[feature]]

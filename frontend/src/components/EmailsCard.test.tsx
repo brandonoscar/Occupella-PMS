@@ -121,15 +121,16 @@ describe("EmailsCard", () => {
       line("c", "owner_statement", "Your statement for September 2026"),
       line("d", "work_order", "Work order #1 at Property 1: Gate stuck"),
       line("e", "payment_receipt", "Your receipt: $100.00 received 10/27/2026"),
+      line("f", "reserve_low", "Property 1: your account is below its reserve"),
     ]);
     render(<EmailsCard about="tenant" aboutId="t1" name="Tenant 1" />);
     const items = within(await screen.findByRole("list", { name: "Email, Tenant 1" })).getAllByRole("listitem");
     expect(items.map((item) => item.querySelectorAll("p")[1]?.textContent?.split(" to ")[0])).toEqual([
-      "Rent reminder", "Late fee notice", "Monthly statement", "Work order", "Payment receipt",
+      "Rent reminder", "Late fee notice", "Monthly statement", "Work order", "Payment receipt", "Below its reserve",
     ]);
     // A statement and a receipt each say the PDF they carry; no other email carries one.
     expect(items.map((item) => item.textContent?.match(/The [a-z' ]+ attached \(PDF\)/)?.[0] ?? null)).toEqual([
-      null, null, "The month's statement attached (PDF)", null, "The receipt attached (PDF)",
+      null, null, "The month's statement attached (PDF)", null, "The receipt attached (PDF)", null,
     ]);
   });
 
