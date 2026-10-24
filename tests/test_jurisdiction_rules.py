@@ -5,7 +5,9 @@ a fact a rule turns on that isn't on file leaves the rule unknown. The API's sid
 tests/api/test_jurisdictions_api.py; a model of the resolver in
 tests/properties/test_jurisdiction_properties.py. Every rule here is synthetic: none is the law."""
 
+from dataclasses import replace
 from datetime import date
+from decimal import Decimal
 
 import psycopg
 import pytest
@@ -364,3 +366,12 @@ def test_the_nightly_run_copies_the_catalog_in_once(app_conn, pmc, monkeypatch):
     # As the app's role, as the nightly run is.
     assert nightly.run_pmc(app_conn, pmc.pmc_id, DAY, "http://testserver").rules == 1
     assert nightly.run_pmc(app_conn, pmc.pmc_id, DAY, "http://testserver").rules == 0
+
+
+def test_unknown_rules_never_warn():
+    """A rule not known (no row, or a fact not on file) never warns: unknown is not "no limit"."""
+    unknown = jurisdictions.Found("deposit_cap", None, (), "unknown")
+    assert jurisdictions.deposit_warnings(unknown, Decimal(0), Decimal("99999"), None) == []
+    assert (
+        jurisdictions.nsf_fee_warnings(replace(unknown, kind="nsf_fee_cap"), Decimal("999")) == []
+    )
