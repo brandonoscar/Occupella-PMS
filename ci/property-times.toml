@@ -1,0 +1,91 @@
+# Each property test's seconds at the PR profile (200 examples), and the plan the nightly
+# property jobs follow (.github/workflows/ledger-invariants.yml, `nightly`): night n (days since
+# 1970) runs part n mod `rotations` + 1 of the tests, dealt by these seconds into `shards` jobs
+# for each of two seeds (tools/run_rules.py part_of), each stopped at `job_minutes`. So every
+# property gets its nightly run once every `rotations` nights. The coverage job deals its two
+# shards' property tests by these seconds too (.github/workflows/coverage.yml).
+# tests/tools/test_property_times.py checks that every property test is here and that each job's
+# tests, times `nightly_factor`, fit in three quarters of `job_minutes`.
+#
+# nightly_factor: a test's nightly time (3,000 examples) over its PR time (200). It is not 15:
+# Hypothesis starts with small examples and grows them, so the first 200 are the cheap ones.
+# Measured on 2026-10-23 on one 4-core machine: the audit property took about 3 minutes for 200
+# and was about 2,100 examples into 3,000 when stopped at 100 minutes, some 50 times its PR time.
+#
+# Refresh the seconds with `python -m tools.property_times` (its docstring says how).
+rotations = 4
+shards = 4
+job_minutes = 270
+nightly_factor = 60
+
+[seconds]
+"tests/properties/test_archival_properties.py::test_a_record_is_archived_only_while_nothing_is_open_on_it" = 6.1
+"tests/properties/test_assistance_compliance_properties.py::test_the_compliance_report_says_where_each_assisted_lease_stands_on_any_day" = 8.3
+"tests/properties/test_assistance_properties.py::test_the_rent_splits_between_tenant_and_authority_to_the_cent" = 16.0
+"tests/properties/test_audit_properties.py::test_audit_invariants_hold_under_random_writes_by_random_staff" = 169.9
+"tests/properties/test_automatic_email_properties.py::test_each_automatic_email_is_written_once_exactly_when_its_settings_and_day_call_for_it" = 9.5
+"tests/properties/test_balance_notice_properties.py::test_a_balance_notice_lists_what_its_lease_owes_to_each_tenant_with_an_email" = 11.9
+"tests/properties/test_bank_deposit_properties.py::test_a_deposit_holds_exactly_money_in_by_its_day_each_once" = 5.7
+"tests/properties/test_bank_matching_properties.py::test_bank_matching_invariants_hold_under_random_statements_matches_and_approvals" = 56.9
+"tests/properties/test_bill_markup_properties.py::test_markups_and_shared_bills_follow_the_rules_and_tie_out" = 56.1
+"tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws" = 37.6
+"tests/properties/test_calendar_properties.py::test_only_a_persons_latest_link_answers_and_only_while_they_can_sign_in" = 16.1
+"tests/properties/test_company_profile_properties.py::test_the_company_is_its_latest_save_and_a_new_property_starts_with_its_defaults" = 11.6
+"tests/properties/test_custom_roles_properties.py::test_custom_roles_decide_what_each_staff_member_may_change" = 60.9
+"tests/properties/test_cutover_bills_properties.py::test_unpaid_bills_carried_over_hold_back_draws_and_wait_for_their_owner" = 9.4
+"tests/properties/test_cutover_matching_properties.py::test_cutover_invariants_hold_under_random_items_statements_matches_and_approvals" = 36.6
+"tests/properties/test_cutover_properties.py::test_cutover_invariants_hold_under_random_openings_postings_and_reconciliations" = 51.5
+"tests/properties/test_deduction_receipt_properties.py::test_a_deposit_is_due_back_14_days_after_the_last_day_or_10_owing_nothing" = 0.2
+"tests/properties/test_deduction_receipt_properties.py::test_a_receipt_is_a_lease_document_of_its_fees_lease_listed_until_removed" = 8.3
+"tests/properties/test_departure_properties.py::test_a_leaving_tenants_deposit_moves_whole_and_someone_always_stays" = 8.8
+"tests/properties/test_deposit_interest_properties.py::test_deposit_interest_is_each_days_deposit_at_its_rate_paid_once" = 13.4
+"tests/properties/test_deposit_kind_properties.py::test_each_kind_of_deposit_is_held_moved_and_returned_as_the_model_says" = 20.7
+"tests/properties/test_deposit_return_properties.py::test_a_deposit_return_keeps_what_is_owed_and_gives_back_the_rest" = 15.9
+"tests/properties/test_document_properties.py::test_documents_are_their_files_and_their_bytes_stay_out_of_the_log" = 42.8
+"tests/properties/test_export_properties.py::test_csv_holds_every_cell" = 1.9
+"tests/properties/test_export_properties.py::test_excel_holds_every_value_and_no_formula" = 2.5
+"tests/properties/test_export_properties.py::test_the_pdf_always_builds" = 2.0
+"tests/properties/test_history_properties.py::test_history_holds_each_files_lines_once_under_their_person_and_moves_nothing" = 10.8
+"tests/properties/test_id_helpers.py::test_malformed_ulid_is_refused" = 0.2
+"tests/properties/test_id_helpers.py::test_ulid_text_sorts_like_the_uuid_bytes" = 0.4
+"tests/properties/test_id_helpers.py::test_uuid_to_ulid_and_back_is_exact" = 0.6
+"tests/properties/test_journal_properties.py::test_journal_entries_move_money_only_when_another_approver_posts_them" = 185.1
+"tests/properties/test_lease_offer_properties.py::test_lease_offer_invariants_hold_under_random_offers_signatures_and_completions" = 44.1
+"tests/properties/test_lease_offer_properties.py::test_signing_on_the_page_holds_under_random_steps_through_the_links" = 35.5
+"tests/properties/test_lease_transfer_properties.py::test_a_moved_tenant_s_money_pays_each_owner_what_was_owed_to_them" = 20.8
+"tests/properties/test_leasing_properties.py::test_leasing_invariants_hold_under_random_links_applications_and_decisions" = 59.0
+"tests/properties/test_ledger_properties.py::test_ledger_invariants_hold_under_random_postings" = 119.9
+"tests/properties/test_note_properties.py::test_a_records_notes_are_exactly_those_written_about_it_newest_first" = 10.3
+"tests/properties/test_owner_fee_properties.py::test_owner_fees_follow_the_rules_and_the_books_tie_out" = 22.8
+"tests/properties/test_ownership_properties.py::test_a_co_owned_propertys_money_splits_by_its_shares_to_the_cent" = 23.6
+"tests/properties/test_payables_properties.py::test_payables_invariants_hold_under_random_bills_contributions_and_draws" = 119.8
+"tests/properties/test_payment_files_properties.py::test_payment_files_record_each_line_once_to_the_lease_it_names" = 144.1
+"tests/properties/test_prepaid_by_itself_properties.py::test_prepaid_rent_used_by_itself_follows_the_setting_holds_and_days" = 28.3
+"tests/properties/test_property_address_properties.py::test_a_property_is_where_its_latest_address_was_last_found" = 12.8
+"tests/properties/test_property_group_properties.py::test_a_group_holds_exactly_the_properties_that_joined_and_did_not_leave" = 5.8
+"tests/properties/test_quickbooks_properties.py::test_the_journal_moves_quickbooks_balances_as_the_ledger_moves" = 7.6
+"tests/properties/test_recurring_work_order_properties.py::test_recurring_work_orders_open_on_their_days_once" = 16.3
+"tests/properties/test_rent_change_properties.py::test_the_rent_in_force_is_charged_each_month_and_changes_follow_the_rules" = 46.7
+"tests/properties/test_rent_due_day_properties.py::test_rent_is_charged_on_its_due_day_once_a_month" = 64.4
+"tests/properties/test_rent_properties.py::test_rent_invariants_hold_under_random_charges_payments_and_bounces" = 131.4
+"tests/properties/test_rent_roll_properties.py::test_rent_roll_invariants_hold_under_random_leases_charges_and_payments" = 77.1
+"tests/properties/test_rent_roll_properties.py::test_the_model_counts_a_charge_paid_twice_by_then_as_the_database_does" = 0.1
+"tests/properties/test_rent_run_properties.py::test_the_nightly_run_charges_what_the_three_runs_charge_and_once" = 15.3
+"tests/properties/test_renters_insurance_properties.py::test_the_policy_running_last_counts_against_the_terms_in_force" = 5.4
+"tests/properties/test_reserve_alert_properties.py::test_an_owner_hears_once_per_drop_below_the_reserve_whatever_moves_and_whenever_it_runs" = 12.2
+"tests/properties/test_signers_properties.py::test_only_the_broker_and_its_signers_pay_out_once_a_broker_is_on_file" = 41.9
+"tests/properties/test_staff_roles_properties.py::test_roles_decide_who_pays_out_and_who_approves" = 51.1
+"tests/properties/test_tax_credit_properties.py::test_a_tax_credit_units_limits_and_certifications_follow_the_tables_in_force" = 6.5
+"tests/properties/test_template_use_properties.py::test_a_lease_templates_blanks_are_all_filled" = 0.6
+"tests/properties/test_template_use_properties.py::test_a_notice_and_an_offer_each_come_from_a_template_for_their_use" = 7.6
+"tests/properties/test_tenant_record_properties.py::test_a_person_is_one_record_a_property_and_signs_in_once_as_their_first" = 9.6
+"tests/properties/test_unit_details_properties.py::test_a_save_writes_only_what_changes_and_the_unit_reads_the_last" = 5.7
+"tests/properties/test_unit_details_properties.py::test_the_vacancy_report_has_the_details_recorded_by_the_end_of_its_day" = 6.6
+"tests/properties/test_utility_properties.py::test_a_utility_bill_shares_to_the_cent_and_never_past_the_bill" = 8.9
+"tests/properties/test_vendor_archival_properties.py::test_a_vendor_is_archived_exactly_while_nothing_is_open_with_them" = 7.4
+"tests/properties/test_vendor_insurance_properties.py::test_a_vendors_coverage_is_the_policy_running_on_the_day_else_the_latest_to_run_out" = 4.5
+"tests/properties/test_vendor_insurance_properties.py::test_an_inspection_report_lays_the_latest_of_each_kind_side_by_side" = 6.1
+"tests/properties/test_vendor_profile_properties.py::test_a_vendors_profile_is_the_last_change_saved_by_its_own_companys_staff" = 9.7
+"tests/properties/test_waiver_properties.py::test_a_waiver_comes_off_its_own_charge_and_never_past_it" = 8.6
+"tests/properties/test_work_order_properties.py::test_a_work_orders_steps_follow_in_order_and_no_lapsed_vendor_is_assigned" = 5.0
+"tests/properties/test_year_close_properties.py::test_a_closed_year_takes_no_charge_or_bill_and_closes_only_when_approved" = 10.5

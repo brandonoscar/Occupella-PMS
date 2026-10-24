@@ -180,10 +180,19 @@ built yet. A PR can't drop an entry or one of its tests, unless a founder's deci
 what the entry guarded: then a `[[retired]]` row names it, the decision record in `docs/adr/` and
 the entry, with tests, that replaced it (the in-house e-signing of ADR 0008 retired signing
 through a partner). PRs run 200 examples per property. Nightly runs 3,000 examples per property, each
-property twice with a seed of its own: 16 jobs, the tests shared out over 8 shards
-(`PMS_TEST_SHARD`), 2 seeds each. Until 10/19 every job ran every property; at 3,000 examples
-that is some 290 minutes a job, and every nightly job from 10/11 to 10/18 was cancelled at its
-90-minute limit with nothing checked (runs 68 to 246, measured on GitHub). A failing case is
+property twice with a seed of its own, and the properties rotate: night n (days since 1970)
+takes part n mod 4 + 1 of them, dealt into 4 shards by each test's measured PR seconds
+(`ci/property-times.toml`, `PMS_TEST_ROTATION`, `PMS_TEST_SHARD_TIMES`), so 8 jobs a night and
+every property's nightly run once every 4 nights. 3,000 examples cost some 50 times 200, not 15:
+Hypothesis grows its examples as it goes, so the first 200 are the cheap ones (the audit property
+took about 3 minutes for 200 and was some 2,100 examples into 3,000 at 100 minutes, measured
+10/23). Every nightly job from 10/11 to 10/23 was cancelled at its 90-minute limit with nothing
+checked (measured on GitHub). A job now stops itself at `job_minutes` with an interrupt,
+so a night that runs long fails and says how far it got instead of being cancelled, and
+`tests/tools/test_property_times.py` checks that each job's tests, at `nightly_factor` times
+their PR seconds, fit in three quarters of that, and that every property test has its time
+(`python -m tools.property_times` adds a new one's). Run one part by hand from Actions
+(ledger-invariants, Run workflow, `rotation`). A failing case is
 uploaded as an artifact with the seed and the shortest failing sequence. Nightly also runs every `@pytest.mark.timing` test (threads, lock waits, timeouts) 50
 times on GitHub's runners. One failure fails the job, because a flaky test teaches everyone to
 ignore red. Measured before adding it: 100 of 100 local runs passed, 50 of them with every CPU
@@ -196,7 +205,10 @@ app's own OpenAPI schema and sends every operation its boundary cases and reques
 makes up, valid and broken, as a signed-in staff member. None may get a server error (5xx): what
 the API can't take is refused in words. Every PR sends `[fuzz] pr_examples` per operation with
 the other tests (measured: about 10,400 requests in 2 min 40 s locally, none a 5xx); nightly
-sends `nightly_examples` with a new seed. A route made to raise on a long name failed it within
+sends `nightly_examples` with a new seed, in 4 jobs that each take the operations a hash of
+`METHOD /path` gives them (`PMS_FUZZ_SHARD`), each stopped at 50 minutes so a run too long
+fails instead of being cancelled (in one job, every night from 10/11 to 10/23 was cancelled at
+its hour). A route made to raise on a long name failed it within
 seconds. Those counts are floors in `ci/thresholds.toml`.
 
 The portal has its own property tests (`frontend/src/properties.test.ts`, fast-check, MIT): for
@@ -290,9 +302,11 @@ Then it measures coverage, and fails when:
 Untested money code is where shortages hide.
 
 The suite runs in two shards side by side, to take half the time: after the lint, the job
-`coverage tests 1/2` runs every other test from the first (`PMS_TEST_SHARD=1/2`, see
-`tests/conftest.py`) and `coverage tests 2/2` the rest, each with its own Python and PL/pgSQL
-coverage data. Then the `coverage` job adds them up (`coverage combine`, and
+`coverage tests 1/2` runs half the tests (`PMS_TEST_SHARD=1/2`, see `tests/conftest.py`) and
+`coverage tests 2/2` the rest, each with its own Python and PL/pgSQL coverage data. The property
+tests, the slow ones, are dealt to the two by their times in `ci/property-times.toml`
+(`PMS_TEST_SHARD_TIMES`), longest first to the shard with less so far; every other test goes
+to them in turn. Then the `coverage` job adds them up (`coverage combine`, and
 `tools/sql_coverage.py` `merge()` for the PL/pgSQL) and applies the gates. A shard's PL/pgSQL
 branches are counted from its statements, the way plpgsql_check counts them, and checked against
 plpgsql_check's own figure for every function before the shards are added up, so the sum is
@@ -505,8 +519,12 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
   coverage's two test shards after its lint (a job of about a minute, by when
   `deps-and-secrets`, a job of seconds, has finished), so a PR never has more than 8 jobs
   running at once.
-- Nightly runs are staggered so they don't overlap:
-  - 03:17 UTC ledger-invariants (16 property jobs, then timing, API fuzz and many-staff jobs);
+- Nightly runs are staggered, though the property jobs now run into the later ones' hours:
+  - 03:17 UTC ledger-invariants (8 property jobs of up to 4.5 hours; 4 API fuzz jobs, timing,
+    many-staff and speed, all done within the hour: 15 at first, 8 after 04:17). The property
+    jobs overlap mutation (2 to 3 hours from 04:17, measured 10/21 to 10/23), so up to 18 jobs
+    run at once, and on a Monday the security jobs can bring that to 22: GitHub queues what is
+    past 20 until one ends, and a PR's checks then wait too;
   - 04:17 mutation (8 SQL shards and 1 Python job, then 1 scoring job);
   - 05:17 selfhost (1);
   - Mondays 06:17 security (codeql, gitleaks history, pip-audit, scorecard: 4);
