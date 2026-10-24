@@ -89,6 +89,8 @@ export function PayOwnersPage({ me }: { me: Me }) {
   const methodOf = (account: string): PayoutMethod =>
     sentBy !== "each" ? sentBy : (owners ?? []).find((o) => o.account === account)?.payout_method
       ?? drawRun?.lines.find((l) => l.account === account)?.method ?? "check";
+  // How an owner is paid now, which is how a prepared draw is paid too.
+  const currentWay = (account: string) => (owners ?? []).find((o) => o.account === account)?.payout_method;
   const payouts = Object.entries(chosen).map(([account, amount]) => ({ account, amount, method: methodOf(account) }));
   const methods = [...new Set(payouts.map((p) => p.method))];
   const total = sumMoney(payouts.map((p) => p.amount || "0"));
@@ -127,7 +129,7 @@ export function PayOwnersPage({ me }: { me: Me }) {
           <ul className="mt-2 flex flex-col gap-1 text-base" aria-label="Owner draws ready">
             {drawRun.lines.map((l) => (
               <li key={l.account}>
-                {l.owner}, {l.property}: {money(l.amount)} by {methodWord(l.method)}
+                {l.owner}, {l.property}: {money(l.amount)} by {methodWord(currentWay(l.account) ?? l.method)}
                 {Number(l.available_now) < Number(l.amount) && (
                   <span className="text-ink-muted"> (has {money(l.available_now)} available now)</span>
                 )}
@@ -207,7 +209,12 @@ export function PayOwnersPage({ me }: { me: Me }) {
                           className="h-8 w-28 rounded-sm border border-line-strong bg-sunken px-2 text-right text-sm text-ink" />
                       )}
                     </td>
-                    <td>{methodWord(row.payout_method)}</td>
+                    <td>
+                      {methodWord(row.payout_method)}
+                      {row.payout_method === "EFT" && row.bank_on_file === false && (
+                        <span className="block text-sm text-danger">No bank account: an ACH file can't pay them</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>

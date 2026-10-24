@@ -233,8 +233,10 @@ export type OwnerMoney = {
   unpaid_bills: string;
   available: string;
   has_agreement: boolean;
-  // How the owner is paid: a check unless they chose ACH.
+  // How the owner is paid: a check unless they chose ACH; and whether an ACH file has a bank
+  // account of theirs to pay into.
   payout_method: PayoutMethod;
+  bank_on_file?: boolean;
 };
 export type Fee = {
   account: string;

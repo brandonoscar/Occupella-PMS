@@ -115,6 +115,17 @@ describe("PayOwnersPage", () => {
       expect(fetch.mock.calls.filter(([path]) => path === "/api/payouts/runs?kind=owners").length).toBeGreaterThan(1));
   });
 
+  it("says when an owner paid by ACH has no bank account an ACH file could pay", async () => {
+    server({ "/api/payables/owners": [
+      { ...line(1, "900.00"), payout_method: "EFT" as const, bank_on_file: false },
+      { ...line(2, "250.50"), payout_method: "EFT" as const, bank_on_file: true },
+    ] });
+    render(<PayOwnersPage me={ME} />);
+    const first = await screen.findByRole("row", { name: "Owner 1, Property 1" });
+    expect(within(first).getAllByRole("cell").at(-1)?.textContent).toBe("ACHNo bank account: an ACH file can't pay them");
+    expect(within(screen.getByRole("row", { name: "Owner 2, Property 2" })).getAllByRole("cell").at(-1)?.textContent).toBe("ACH");
+  });
+
   it("chooses the draws prepared on the draw day, each at most what it has now, and pays them as that run", async () => {
     const run: DrawRun = {
       id: "dr1", month: "2026-10-01", prepared_on: "2026-10-15", total: "1150.50",

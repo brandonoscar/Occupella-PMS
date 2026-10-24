@@ -5023,10 +5023,11 @@ test("staff set the draw day and how owners and vendors are paid, keep the bank'
   await expect(page.getByTestId("next-check")).toHaveText("Number 5001");
   await expect(part(page, "Payout files")).toContainText("No payout file made yet.");
 
-  // Pay owners: the prepared draws, Demo Owner A's by ACH and Demo Owner B's by check, with their files.
+  // Pay owners: the prepared draws, each the way its owner is paid now (Demo Owner A's by ACH, Demo
+  // Owner B's by check), with their files.
   await section(page, "Pay owners");
   await expect(page.getByRole("list", { name: "Owner draws ready" })).toHaveText([
-    "Demo Owner A, Birch Flats: $400.00 by Check",
+    "Demo Owner A, Birch Flats: $400.00 by ACH",
     "Demo Owner B, Aspen Row: $300.00 by Check",
   ].join(""));
   await page.getByRole("button", { name: "Use these draws" }).click();

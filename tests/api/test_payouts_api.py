@@ -209,6 +209,23 @@ def test_an_owners_bank_account_is_sealed_and_only_its_last_four_come_back(
     assert ACCOUNT.encode() not in bytes(stored[0]) and stored[1] == "6789"
 
 
+def test_pay_owners_lists_how_each_owner_is_paid_and_whether_an_ach_file_can_pay_them(
+    client, staff, pmc
+):
+    def listed():
+        return {
+            row["owner_id"]: (row["payout_method"], row["bank_on_file"])
+            for row in ok(client.get("/api/payables/owners"))
+        }
+
+    first, second = (str(o.owner_id) for o in pmc.owners)
+    assert listed() == {first: ("check", False), second: ("check", False)}
+    ok(send(client, f"payouts/owners/{first}/method", method="EFT"))
+    assert listed()[first] == ("EFT", False)
+    owner_bank(client, pmc)
+    assert listed() == {first: ("EFT", True), second: ("check", False)}
+
+
 def test_a_vendors_bank_account_is_kept_as_an_owners(client, conn, staff, pmc):
     shown = ok(
         send(

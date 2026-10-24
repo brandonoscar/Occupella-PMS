@@ -1679,8 +1679,10 @@ class OwnerMoney(BaseModel):
     # What a draw may take today: the balance less the reserve and unpaid bills, at least 0.
     available: str
     has_agreement: bool
-    # How the owner is paid (a check unless they chose ACH; src/pms/api/payouts.py).
+    # How the owner is paid (a check unless they chose ACH; src/pms/api/payouts.py), and whether
+    # an ACH file has a bank account of theirs to pay into.
     payout_method: PayoutMethod = "check"
+    bank_on_file: bool = False
 
 
 OWNERS = """
@@ -1702,7 +1704,9 @@ SELECT a.ledger_account_id, o.id, o.display_name, p.id, p.display_name, b.displa
        g.id IS NOT NULL,
        coalesce((SELECT m.method FROM trust_owner_payout_methods AS m
                  WHERE m.pmc_id = a.pmc_id AND m.owner_id = o.id
-                 ORDER BY m.created_at DESC, m.id DESC LIMIT 1), 'check')
+                 ORDER BY m.created_at DESC, m.id DESC LIMIT 1), 'check'),
+       EXISTS (SELECT 1 FROM trust_payee_bank_accounts AS k
+               WHERE k.pmc_id = a.pmc_id AND k.owner_id = o.id)
 FROM trust_ledger_accounts AS a
 JOIN trust_owners AS o ON o.id = a.owner_id
 JOIN trust_properties AS p ON p.id = a.property_id
@@ -1768,6 +1772,7 @@ def owner_money(
             available=cents(max(row[6] - row[7] - row[8], Decimal(0))),
             has_agreement=row[9],
             payout_method=row[10],
+            bank_on_file=row[11],
         )
         for row in rows
     ]
