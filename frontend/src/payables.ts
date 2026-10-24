@@ -102,7 +102,15 @@ export type BillPageData = {
   history: { on: string; what: string }[];
 };
 // One bill of Pay bills, as recorded.
-export type BillPaid = { bill_id: string; vendor: string; reference: string; amount: string; transfer_id: string };
+export type BillPaid = {
+  bill_id: string;
+  vendor: string;
+  reference: string;
+  amount: string;
+  transfer_id: string;
+  // The payout run whose file it is in, when the PMS writes one.
+  run_id?: string | null;
+};
 // A bill already entered for the vendor under the same reference but for case and punctuation.
 export type SimilarBill = { id: string; reference: string; bill_date: string; amount: string; status: BillStatus };
 
@@ -225,6 +233,8 @@ export type OwnerMoney = {
   unpaid_bills: string;
   available: string;
   has_agreement: boolean;
+  // How the owner is paid: a check unless they chose ACH.
+  payout_method: PayoutMethod;
 };
 export type Fee = {
   account: string;
@@ -236,14 +246,24 @@ export type Fee = {
 // A management fee for a period: taken already, or what Collect fees would take, or why not.
 export type FeeDue = Fee & { taken: boolean };
 // One payout of Pay owners, as recorded.
-export type OwnerPaid = { account: string; owner: string; property: string; amount: string; transfer_id: string };
+export type OwnerPaid = {
+  account: string;
+  owner: string;
+  property: string;
+  amount: string;
+  transfer_id: string;
+  run_id?: string | null;
+};
 export type PayoutMethod = "check" | "EFT";
 
-// What Pay owners did, in a line.
-export function paidSummary(paid: OwnerPaid[], method: PayoutMethod): string {
+// What Pay owners did, in a line: how many payouts, their total and how they went (ACH, check,
+// or both when each went its owner's way).
+export function paidSummary(paid: OwnerPaid[], method: PayoutMethod | PayoutMethod[]): string {
   const total = sumMoney(paid.map((p) => p.amount));
   const owners = `${paid.length} payout${paid.length === 1 ? "" : "s"}`;
-  return `${owners} of ${money(total)} recorded, by ${method}.`;
+  const ways = [...new Set(Array.isArray(method) ? method : [method])].sort();
+  const how = ways.map((m) => (m === "EFT" ? "ACH" : "check")).join(" and ");
+  return `${owners} of ${money(total)} recorded, by ${how}.`;
 }
 
 

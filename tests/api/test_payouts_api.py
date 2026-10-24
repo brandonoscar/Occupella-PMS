@@ -324,6 +324,11 @@ def test_owners_paid_by_ach_get_one_file_their_bank_takes(client, conn, staff, p
     assert [(r["id"], r["method"], r["payouts"], r["total"]) for r in listed] == [
         (run, "EFT", 1, "125.50")
     ]
+    # A trust bank account's Payouts tab lists its own runs only.
+    of = "/api/payouts/runs?bank_account_id="
+    assert [r["id"] for r in ok(client.get(f"{of}{pmc.operating_bank_id}"))] == [run]
+    assert ok(client.get(f"{of}{pmc.deposit_bank_id}")) == []
+    refused(client.get(f"{of}not-an-id"), 422)
     answer = client.get(f"/api/payouts/runs/{run}/ach")
     assert answer.status_code == 200, answer.text
     lines = answer.content.decode("ascii").splitlines()

@@ -506,6 +506,7 @@ LEFT JOIN pgledger_transfers AS t ON t.id = i.transfer_id
 LEFT JOIN trust_staff AS st ON st.id = r.recorded_by
 WHERE r.pmc_id = %(pmc)s AND (%(kind)s::text IS NULL OR r.kind = %(kind)s)
   AND (%(run)s::uuid IS NULL OR r.id = %(run)s)
+  AND (%(bank)s::uuid IS NULL OR r.bank_account_id = %(bank)s)
 GROUP BY r.id, b.display_name, st.display_name
 ORDER BY r.created_at DESC, r.id DESC
 LIMIT 20
@@ -513,7 +514,11 @@ LIMIT 20
 
 
 def runs_of(
-    conn: psycopg.Connection[Any], pmc_id: UUID, kind: Kind | None = None, run: UUID | None = None
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    kind: Kind | None = None,
+    run: UUID | None = None,
+    bank: UUID | None = None,
 ) -> list[RunShown]:
     return [
         RunShown(
@@ -529,14 +534,18 @@ def runs_of(
             recorded_at=row[9],
             downloads=row[10],
         )
-        for row in conn.execute(RUNS, {"pmc": pmc_id, "kind": kind, "run": run}).fetchall()
+        for row in conn.execute(
+            RUNS, {"pmc": pmc_id, "kind": kind, "run": run, "bank": bank}
+        ).fetchall()
     ]
 
 
 @router.get("/runs")
-def runs(session: Staff, conn: Conn, kind: Kind | None = None) -> list[RunShown]:
-    """The latest runs that made a payout file, newest first."""
-    return runs_of(conn, session.pmc_id, kind)
+def runs(
+    session: Staff, conn: Conn, kind: Kind | None = None, bank_account_id: UUID | None = None
+) -> list[RunShown]:
+    """The latest runs that made a payout file, newest first, maybe of one trust bank account."""
+    return runs_of(conn, session.pmc_id, kind, bank=bank_account_id)
 
 
 @dataclass(frozen=True)

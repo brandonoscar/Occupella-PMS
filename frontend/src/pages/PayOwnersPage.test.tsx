@@ -3,7 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import { holdBack } from "../holdBack";
 import type { OwnerMoney } from "../payables";
-import { PayOwnersPage } from "./PayOwnersPage";
+import type { DrawRun } from "../payouts";
+import { drawChoices, PayOwnersPage } from "./PayOwnersPage";
 
 afterEach(() => {
   cleanup();
@@ -18,14 +19,18 @@ const ME: Me = {
 const line = (n: number, available: string): OwnerMoney => ({
   account: `a${n}`, owner_id: `o${n}`, owner: `Owner ${n}`, property_id: `pr${n}`, property: `Property ${n}`,
   bank_account: "Operating", balance: "1000.00", reserve: "100.00", unpaid_bills: "0.00", available,
-  has_agreement: true,
+  has_agreement: true, payout_method: "check",
 });
 const OWNERS = [line(1, "900.00"), line(2, "250.50"), line(3, "0.00")];
 
 function server(answers: Record<string, unknown> = {}, refuse: Record<string, string> = {}) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method !== "POST") {
-      const read = path in answers ? answers[path] : path.startsWith("/api/payables/owners") ? OWNERS : { groups: [], properties: [] };
+      const read = path in answers ? answers[path]
+        : path.startsWith("/api/payables/owners") ? OWNERS
+        : path === "/api/payouts/draw-runs/waiting" ? null
+        : path.startsWith("/api/payouts/runs") ? []
+        : { groups: [], properties: [] };
       return new Response(JSON.stringify(read), { status: 200 });
     }
     if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
@@ -41,7 +46,7 @@ const posted = (fetch: ReturnType<typeof server>) =>
     .map(([path, init]) => [path, JSON.parse(String(init?.body))]);
 
 describe("PayOwnersPage", () => {
-  it("pays the owners chosen, each what is available unless changed, by check or EFT, after asking", async () => {
+  it("pays the owners chosen, each what is available unless changed, by check or ACH, after asking", async () => {
     const fetch = server({
       "/api/payables/draws/batch": [
         { account: "a1", owner: "Owner 1", property: "Property 1", amount: "900.00", transfer_id: "t1" },
@@ -60,19 +65,91 @@ describe("PayOwnersPage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Pay $1,100.25" }));
 
     const confirm = screen.getByRole("alertdialog");
-    expect(confirm.textContent).toContain("Pay $1,100.25 to 2 owner accounts by EFT on 10/16/2026?");
-    fireEvent.click(within(confirm).getByRole("button", { name: "Confirm" }));
+    expect(confirm.textContent).toContain("Pay $1,100.25 to 2 owner accounts by ACH on 10/16/2026?");
+    expect(confirm.textContent).not.toContain("The PMS");
+    fireEvent.click(within(confirm).getByRole("button", { name: "Pay" }));
 
-    expect(await screen.findByText("2 payouts of $1,100.25 recorded, by EFT.")).toBeTruthy();
+    expect(await screen.findByText("2 payouts of $1,100.25 recorded, by ACH.")).toBeTruthy();
     const [[path, body]] = posted(fetch) as [[string, Record<string, unknown>]];
     expect(path).toBe("/api/payables/draws/batch");
     expect(body).toMatchObject({
       on: "2026-10-16",
       method: "EFT",
-      payouts: [{ account: "a1", amount: "900.00" }, { account: "a2", amount: "200.25" }],
+      payouts: [{ account: "a1", amount: "900.00", method: "EFT" }, { account: "a2", amount: "200.25", method: "EFT" }],
+      output: "record",
     });
+    expect(body).not.toHaveProperty("draw_run_id");
     // Paid, the choice clears, and the next run is a new request.
     expect(screen.getByRole("button", { name: "Choose owners to pay" })).toBeTruthy();
+  });
+
+  it("pays each owner their own way unless told otherwise, and writes the files when asked", async () => {
+    const owners = [{ ...line(1, "900.00"), payout_method: "EFT" as const }, line(2, "250.50")];
+    const fetch = server({
+      "/api/payables/owners": owners,
+      "/api/payables/draws/batch": [
+        { account: "a1", owner: "Owner 1", property: "Property 1", amount: "900.00", transfer_id: "t1", run_id: "r1" },
+        { account: "a2", owner: "Owner 2", property: "Property 2", amount: "250.50", transfer_id: "t2", run_id: "r2" },
+      ],
+    });
+    render(<PayOwnersPage me={ME} />);
+    const first = await screen.findByRole("row", { name: "Owner 1, Property 1" });
+    expect(within(first).getAllByRole("cell").at(-1)?.textContent).toBe("ACH");
+    fireEvent.click(screen.getByLabelText("Choose every owner with money available"));
+    fireEvent.change(screen.getByLabelText("Payout file"), { target: { value: "file" } });
+    fireEvent.click(screen.getByRole("button", { name: "Pay $1,150.50" }));
+
+    const confirm = screen.getByRole("alertdialog");
+    expect(confirm.textContent).toContain("by ACH and check on");
+    expect(confirm.textContent).toContain("The PMS writes the ACH file and prints the checks; the bank moves the money.");
+    fireEvent.click(within(confirm).getByRole("button", { name: "Pay" }));
+
+    expect(await screen.findByText("2 payouts of $1,150.50 recorded, by ACH and check. Their files are under Payout files below.")).toBeTruthy();
+    const [[, body]] = posted(fetch) as [[string, Record<string, unknown>]];
+    expect(body).toMatchObject({
+      output: "file",
+      payouts: [{ account: "a1", method: "EFT" }, { account: "a2", method: "check" }],
+    });
+    // The owners' files are listed below, read again after paying.
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.filter(([path]) => path === "/api/payouts/runs?kind=owners").length).toBeGreaterThan(1));
+  });
+
+  it("chooses the draws prepared on the draw day, each at most what it has now, and pays them as that run", async () => {
+    const run: DrawRun = {
+      id: "dr1", month: "2026-10-01", prepared_on: "2026-10-15", total: "1150.50",
+      lines: [
+        { account: "a1", owner_id: "o1", owner: "Owner 1", property: "Property 1", amount: "1000.00", available_now: "900.00", method: "EFT" },
+        { account: "a2", owner_id: "o2", owner: "Owner 2", property: "Property 2", amount: "150.50", available_now: "250.50", method: "check" },
+      ],
+    };
+    expect(drawChoices(run)).toEqual({ a1: "900.00", a2: "150.50" });
+    expect(drawChoices({ ...run, lines: [{ ...run.lines[0]!, available_now: "0.00" }] })).toEqual({});
+    // Owner 1 is paid by ACH now, as they were on the draw day.
+    const fetch = server({
+      "/api/payouts/draw-runs/waiting": run,
+      "/api/payables/owners": [{ ...line(1, "900.00"), payout_method: "EFT" as const }, line(2, "250.50")],
+      "/api/payables/draws/batch": [],
+    });
+    render(<PayOwnersPage me={ME} />);
+
+    const ready = await screen.findByRole("list", { name: "Owner draws ready" });
+    expect(screen.getByTestId("draws-ready").textContent).toBe("Prepared 10/15/2026 for 2 owner accounts, $1,150.50.");
+    expect(within(ready).getAllByRole("listitem").map((li) => li.textContent)).toEqual([
+      "Owner 1, Property 1: $1,000.00 by ACH (has $900.00 available now)",
+      "Owner 2, Property 2: $150.50 by Check",
+    ]);
+    fireEvent.click(screen.getByRole("button", { name: "Use these draws" }));
+    expect((screen.getByLabelText("Amount to pay Owner 1, Property 1") as HTMLInputElement).value).toBe("900.00");
+    expect((screen.getByLabelText("Amount to pay Owner 2, Property 2") as HTMLInputElement).value).toBe("150.50");
+    fireEvent.click(screen.getByRole("button", { name: "Pay $1,050.50" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Pay" }));
+
+    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(1));
+    expect(posted(fetch)[0]?.[1]).toMatchObject({
+      draw_run_id: "dr1",
+      payouts: [{ account: "a1", amount: "900.00", method: "EFT" }, { account: "a2", amount: "150.50", method: "check" }],
+    });
   });
 
   it("chooses and unchooses one owner, and narrows to a property", async () => {
@@ -100,7 +177,7 @@ describe("PayOwnersPage", () => {
     await screen.findByRole("row", { name: "Owner 2, Property 2" });
     fireEvent.click(screen.getByLabelText("Pay Owner 2, Property 2"));
     fireEvent.click(screen.getByRole("button", { name: "Pay $250.50" }));
-    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Confirm" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Pay" }));
 
     expect((await screen.findByRole("alert")).textContent).toBe("Owner 2, Property 2: only $250.50 is available to draw");
     expect(screen.getByRole("button", { name: "Pay $250.50" })).toBeTruthy();

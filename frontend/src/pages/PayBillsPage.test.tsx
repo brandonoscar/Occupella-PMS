@@ -30,7 +30,7 @@ const BILLS = [
 ];
 const owner = (account: string, property: string, balance: string): OwnerMoney => ({
   account, owner_id: "o1", owner: "Owner 1", property_id: "pr1", property, bank_account: "Operating", balance,
-  reserve: "0.00", unpaid_bills: "0.00", available: balance, has_agreement: true,
+  reserve: "0.00", unpaid_bills: "0.00", available: balance, has_agreement: true, payout_method: "check",
 });
 const OWNERS = [owner("a1", "Property 1", "150.00"), owner("a2", "Property 2", "500.00")];
 
@@ -38,7 +38,9 @@ function server(refuse: Record<string, string> = {}, bills: Bill[] = BILLS) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
     if (init?.method !== "POST") {
       const read = path.startsWith("/api/payables/bills") ? { items: bills, total: bills.length, page: 1, per_page: 200 }
-        : path.startsWith("/api/payables/owners") ? OWNERS : { groups: [], properties: [] };
+        : path.startsWith("/api/payables/owners") ? OWNERS
+        : path.startsWith("/api/payouts/runs") ? []
+        : { groups: [], properties: [] };
       return new Response(JSON.stringify(read), { status: 200 });
     }
     if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
@@ -115,9 +117,41 @@ describe("PayBillsPage", () => {
     expect(await screen.findByText("2 bills of $350.00 paid, by ACH.")).toBeTruthy();
     const [[path, init]] = fetch.mock.calls.filter(([, i]) => i?.method === "POST") as [[string, RequestInit]];
     expect([path, JSON.parse(String(init.body))]).toEqual([
-      "/api/payables/bills/pay", { on: "2026-10-16", method: "EFT", bill_ids: ["b1", "b2"], check_numbers: {} },
+      "/api/payables/bills/pay",
+      { on: "2026-10-16", method: "EFT", bill_ids: ["b1", "b2"], check_numbers: {}, output: "record", request_id: expect.any(String) },
     ]);
     expect(screen.getByRole("button", { name: "Choose bills to pay" })).toBeTruthy();
+  });
+
+  it("prints the checks when asked: no check numbers to type, the request keyed, its file listed below", async () => {
+    const fetch = server();
+    render(<PayBillsPage me={ME} />);
+    await screen.findByRole("row", { name: "Vendor 1 INV-1" });
+    fireEvent.click(screen.getByLabelText("Pay Vendor 1 INV-1"));
+    expect(screen.getByLabelText("Check number, Vendor 1 INV-1")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Payout file"), { target: { value: "file" } });
+    expect(screen.queryByLabelText("Check number, Vendor 1 INV-1")).toBeNull();
+    expect(within(screen.getByLabelText("Payout file")).getByRole("option", { name: "Checks to print" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Pay $200.00" }));
+    const confirm = screen.getByRole("alertdialog");
+    expect(confirm.textContent).toContain("The PMS prints the checks; the bank moves the money.");
+    fireEvent.click(within(confirm).getByRole("button", { name: "Pay" }));
+
+    expect(await screen.findByText("2 bills of $350.00 paid, by check. Their file is under Payout files below.")).toBeTruthy();
+    const posts = fetch.mock.calls.filter(([, i]) => i?.method === "POST").map(([, i]) => JSON.parse(String(i?.body)));
+    expect(posts[0]).toMatchObject({ method: "check", output: "file", check_numbers: {} });
+    await vi.waitFor(() =>
+      expect(fetch.mock.calls.filter(([path]) => path === "/api/payouts/runs?kind=bills").length).toBeGreaterThan(1));
+    // The next payment is a new request.
+    fireEvent.click(screen.getByLabelText("Pay Vendor 1 INV-1"));
+    fireEvent.change(screen.getByLabelText("Sent by"), { target: { value: "EFT" } });
+    expect(within(screen.getByLabelText("Payout file")).getByRole("option", { name: "ACH file" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Pay $200.00" }));
+    expect(screen.getByRole("alertdialog").textContent).toContain("The PMS writes the ACH file");
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Pay" }));
+    await vi.waitFor(() => expect(fetch.mock.calls.filter(([, i]) => i?.method === "POST")).toHaveLength(2));
+    const second = JSON.parse(String(fetch.mock.calls.filter(([, i]) => i?.method === "POST")[1]?.[1]?.body));
+    expect(second.request_id).not.toBe(posts[0].request_id);
   });
 
   it("chooses every bill and none, and says why a payment was refused", async () => {
@@ -156,6 +190,7 @@ describe("PayBillsPage", () => {
       const bills = group === "g1" ? [bill(1, "200.00", "ready to pay")] : group === "g2" ? [bill(4, "50.00", "ready to pay", "a2")] : [];
       const read = path.startsWith("/api/payables/bills") ? { items: bills, total: bills.length, page: 1, per_page: 200 }
         : path.startsWith("/api/payables/owners") ? (group === "g1" ? [OWNERS[0]] : group === "g2" ? [OWNERS[1]] : [])
+        : path.startsWith("/api/payouts/runs") ? []
         : groups;
       return new Response(JSON.stringify(read), { status: 200 });
     }));

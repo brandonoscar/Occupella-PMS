@@ -1679,6 +1679,8 @@ class OwnerMoney(BaseModel):
     # What a draw may take today: the balance less the reserve and unpaid bills, at least 0.
     available: str
     has_agreement: bool
+    # How the owner is paid (a check unless they chose ACH; src/pms/api/payouts.py).
+    payout_method: PayoutMethod = "check"
 
 
 OWNERS = """
@@ -1697,7 +1699,10 @@ SELECT a.ledger_account_id, o.id, o.display_name, p.id, p.display_name, b.displa
                    AND NOT EXISTS (
                        SELECT 1 FROM trust_bill_declines AS d
                        WHERE d.bill_id = x.id AND d.declined_on <= %(today)s)), 0),
-       g.id IS NOT NULL
+       g.id IS NOT NULL,
+       coalesce((SELECT m.method FROM trust_owner_payout_methods AS m
+                 WHERE m.pmc_id = a.pmc_id AND m.owner_id = o.id
+                 ORDER BY m.created_at DESC, m.id DESC LIMIT 1), 'check')
 FROM trust_ledger_accounts AS a
 JOIN trust_owners AS o ON o.id = a.owner_id
 JOIN trust_properties AS p ON p.id = a.property_id
@@ -1751,19 +1756,20 @@ def owner_money(
     ).fetchall()
     return [
         OwnerMoney(
-            account=account,
-            owner_id=owner_id,
-            owner=name,
-            property_id=property_id,
-            property=prop,
-            bank_account=bank,
-            balance=cents(held),
-            reserve=cents(reserve),
-            unpaid_bills=cents(bills_),
-            available=cents(max(held - reserve - bills_, Decimal(0))),
-            has_agreement=agreed,
+            account=row[0],
+            owner_id=row[1],
+            owner=row[2],
+            property_id=row[3],
+            property=row[4],
+            bank_account=row[5],
+            balance=cents(row[6]),
+            reserve=cents(row[7]),
+            unpaid_bills=cents(row[8]),
+            available=cents(max(row[6] - row[7] - row[8], Decimal(0))),
+            has_agreement=row[9],
+            payout_method=row[10],
         )
-        for account, owner_id, name, property_id, prop, bank, held, reserve, bills_, agreed in rows
+        for row in rows
     ]
 
 
