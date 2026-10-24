@@ -37,7 +37,10 @@ from hypothesis.stateful import (
     run_state_machine_as_test,
 )
 
-TODAY = datetime.now(UTC).date()
+# One moment for the whole run: a run that crosses midnight (UTC) still pays out on the day its
+# bonds are counted from.
+NOW = datetime.now(UTC)
+TODAY = NOW.date()
 STAFF = ("Staff A", "Staff B", "Staff C")
 BONDS = st.none() | st.integers(min_value=-3, max_value=40)  # None: licensed; else days to run
 
@@ -48,7 +51,7 @@ class SignersMachine(RuleBasedStateMachine):
         self.conn = conn
         pmc = make_pmc(conn)
         self.pmc, self.bank, self.owner = pmc.pmc_id, pmc.operating_bank_id, pmc.owners[0].account
-        transfer_batch(conn, [(pmc.operating_cash, self.owner, "10000.00")], datetime.now(UTC))
+        transfer_batch(conn, [(pmc.operating_cash, self.owner, "10000.00")], NOW)
         self.admin = admin_of(conn, self.pmc)
         self.staff = {name: staff_named(conn, self.pmc, name, ["disburse"]) for name in STAFF}
         # Model
@@ -199,7 +202,7 @@ class SignersMachine(RuleBasedStateMachine):
         key = f"draw-{self.draws}"
         if self.may_pay(name):
             with acting_as(self.conn, self.staff[name]):
-                draw_owner(self.conn, self.pmc, self.owner, key, "1.00", datetime.now(UTC))
+                draw_owner(self.conn, self.pmc, self.owner, key, "1.00", NOW)
             event("paid out")
             self.held -= Decimal("1.00")
         else:
@@ -207,7 +210,7 @@ class SignersMachine(RuleBasedStateMachine):
                 pytest.raises(psycopg.errors.InsufficientPrivilege),
                 acting_as(self.conn, self.staff[name]),
             ):
-                draw_owner(self.conn, self.pmc, self.owner, key, "1.00", datetime.now(UTC))
+                draw_owner(self.conn, self.pmc, self.owner, key, "1.00", NOW)
             event("refused: not a signer, or the bond ran out")
 
     @invariant()
