@@ -29,14 +29,21 @@ SET LOCAL statement_timeout = '60s';
 
 -- --- bills paid in parts -------------------------------------------------------------------------
 
+-- A bill's payments are numbered from 1; a bill never comes near an int's limit of parts.
+-- squawk-ignore prefer-bigint-over-int
 ALTER TABLE trust_bill_payments ADD COLUMN part integer NOT NULL DEFAULT 1;
 ALTER TABLE trust_bill_payments ADD COLUMN request_key text;
 ALTER TABLE trust_bill_payments ADD CONSTRAINT trust_bill_payments_part_check
 CHECK (part >= 1 AND (step = 'paid' OR part = 1)) NOT VALID;
+-- The checks below validate columns just added, which every row holds as their default (1, null,
+-- false), on tables of a few rows a bill; each reads its table once, under this migration's
+-- lock_timeout.
+-- squawk-ignore constraint-missing-not-valid
 ALTER TABLE trust_bill_payments VALIDATE CONSTRAINT trust_bill_payments_part_check;
 ALTER TABLE trust_bill_payments ADD CONSTRAINT trust_bill_payments_request_key_check
 CHECK (request_key IS NULL OR (step = 'paid' AND request_key ~ '\S' AND length(request_key) <= 200))
 NOT VALID;
+-- squawk-ignore constraint-missing-not-valid
 ALTER TABLE trust_bill_payments VALIDATE CONSTRAINT trust_bill_payments_request_key_check;
 -- One set-aside per bill, and its payments numbered from 1.
 -- squawk-ignore ban-drop-constraint
@@ -54,6 +61,7 @@ WHERE request_key IS NOT NULL;
 ALTER TABLE trust_payout_methods ADD COLUMN check_number text;
 ALTER TABLE trust_payout_methods ADD CONSTRAINT trust_payout_methods_check_number_check
 CHECK (check_number IS NULL OR (method = 'check' AND check_number ~ '^[0-9]{1,15}$')) NOT VALID;
+-- squawk-ignore constraint-missing-not-valid
 ALTER TABLE trust_payout_methods VALIDATE CONSTRAINT trust_payout_methods_check_number_check;
 
 -- --- voids ---------------------------------------------------------------------------------------
@@ -63,10 +71,12 @@ ALTER TABLE trust_bill_declines ADD COLUMN void boolean NOT NULL DEFAULT false;
 ALTER TABLE trust_bill_declines ADD COLUMN recorded_by uuid;
 ALTER TABLE trust_bill_declines ADD CONSTRAINT trust_bill_declines_pmc_id_recorded_by_fkey
 FOREIGN KEY (pmc_id, recorded_by) REFERENCES trust_staff (pmc_id, id) NOT VALID;
+-- squawk-ignore constraint-missing-not-valid
 ALTER TABLE trust_bill_declines VALIDATE CONSTRAINT trust_bill_declines_pmc_id_recorded_by_fkey;
 -- A void is staff's, never the owner's in the portal, and names who.
 ALTER TABLE trust_bill_declines ADD CONSTRAINT trust_bill_declines_void_check
 CHECK (NOT void OR (owner_id IS NULL AND recorded_by IS NOT NULL)) NOT VALID;
+-- squawk-ignore constraint-missing-not-valid
 ALTER TABLE trust_bill_declines VALIDATE CONSTRAINT trust_bill_declines_void_check;
 -- squawk-ignore require-concurrent-index-creation
 CREATE INDEX trust_bill_declines_recorded_by ON trust_bill_declines (pmc_id, recorded_by);
