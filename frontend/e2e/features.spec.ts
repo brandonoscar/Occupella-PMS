@@ -4798,3 +4798,65 @@ test("a tenant pays rent online on the payments partner's page, it reaches the b
   await expect(part(page, "Online payments waiting")).toHaveCount(0);
 });
 
+
+test("a tenant sets up autopay, saves a bank account and turns it off, Run rent now starts a payment, the bank pays it, and staff turn it off", async ({
+  browser,
+  page,
+}) => {
+  const people = seed.features["autopay"]!;
+
+  // The tenant sets up autopay of their balance, up to $3,000.00, and saves a bank account on
+  // the (fake) partner's page; it pays from the next rent due day.
+  const tenant = await (await browser.newContext()).newPage();
+  await joinPortal(tenant, people.taylor);
+  const card = part(tenant, "Autopay");
+  await card.getByLabel("Up to", { exact: true }).fill("3000.00");
+  await card.getByRole("button", { name: "Save a bank account and turn on autopay" }).click();
+  await expect(tenant.getByTestId("fake-save")).toHaveText("Taylor Demo saves a bank account to pay from.");
+  await tenant.getByRole("button", { name: "Save this bank account" }).click();
+  await expect(tenant.getByTestId("fake-save")).toHaveText("Saved: Test bank ••••0000.");
+  await tenant.getByRole("link", { name: "Back to the portal" }).click();
+  await expect(tenant.getByRole("heading", { name: "Autopay is set up" })).toBeVisible();
+  await tenant.getByRole("link", { name: "Back to your lease" }).click();
+  await expect(part(tenant, "Autopay").getByTestId("autopay")).toHaveText(
+    "On: pays the balance due, up to $3,000.00, on each rent due day, from Test bank ••••0000",
+  );
+  // The tenant turns it off again: nothing more is taken, and the card offers to set it up.
+  await part(tenant, "Autopay").getByRole("button", { name: "Turn off autopay" }).click();
+  await tenant.getByRole("alertdialog").getByRole("button", { name: "Turn it off" }).click();
+  await expect(part(tenant, "Autopay")).toContainText("Autopay is off.");
+  await expect(
+    part(tenant, "Autopay").getByRole("button", { name: "Save a bank account and turn on autopay" }),
+  ).toBeVisible();
+  await tenant.close();
+
+  // Drew's autopay, saved before this month's due day: an admin's Run rent now starts its payment.
+  await joinAsStaff(page, people.manager);
+  await section(page, "Rent roll");
+  await page.getByRole("button", { name: "Actions for the rent roll" }).click();
+  await page.getByRole("menuitem", { name: "Run rent now" }).click();
+  const run = page.getByRole("dialog", { name: "Run rent now" });
+  await run.getByRole("button", { name: "Run rent now" }).click();
+  await expect(run).toHaveCount(0);
+  await expect(page.getByRole("main")).toContainText(/\d+ autopay payments? started\./);
+
+  // The bank pays it, on the fake partner's page.
+  await page.goto("/pay/fake");
+  await page.getByRole("link", { name: /^Drew Sample, Aspen Row Unit 1 · / }).click();
+  await expect(page.getByTestId("fake-total")).toBeVisible();
+  await page.getByRole("button", { name: "The bank paid it" }).click();
+  await expect(page.getByText("Paid", { exact: true })).toBeVisible();
+
+  // Staff see it on the lease, and turn the autopay off, naming who did.
+  await page.goto("/");
+  await openLease(page, "Aspen Row, Unit 1");
+  const autopay = part(page, "Autopay");
+  await expect(autopay).toContainText(
+    "Drew Sample: On: pays the balance due, up to $2,000.00, on each rent due day, from Test bank ••••0000",
+  );
+  await expect(autopay).toContainText(`Last: ${firstOfThisMonth().slice(5, 7)}/01/${firstOfThisMonth().slice(0, 4)} · $`);
+  await autopay.getByRole("button", { name: "Turn off" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Turn it off" }).click();
+  await expect(page.getByRole("main")).toContainText("Turned off Drew Sample's autopay.");
+  await expect(autopay).toContainText("Drew Sample: Turned off by the manager");
+});

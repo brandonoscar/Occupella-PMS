@@ -7,6 +7,7 @@ import hmac
 import io
 import json
 import urllib.error
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -282,3 +283,147 @@ def test_an_answer_from_stripe_missing_what_the_pms_needs_is_the_partner_failing
         stripe.checkout(UUID(int=7), [("Rent", Decimal("10.00"))], "http://testserver/pay/done")
     with pytest.raises(payments.PartnerFailed, match="without its fee"):
         stripe.fee_of("pi_1")
+
+
+# --- autopay: saving an account and charging it ---------------------------------------------
+
+
+def test_stripe_saves_an_autopays_account_on_a_customer_of_its_own():
+    autopay = uuid4()
+    stripe = Stripe(
+        {
+            ("POST", "/customers"): {"id": "cus_1"},
+            ("POST", "/checkout/sessions"): {"id": "cs_s", "url": "https://checkout.test/s"},
+        }
+    )
+    page = stripe.save_account(autopay, "https://pms.test/pay/done")
+    assert (page.ref, page.url) == ("cs_s", "https://checkout.test/s")
+    (_, _, customer, customer_key), (_, _, form, session_key) = stripe.calls
+    assert customer == [("metadata[autopay_id]", str(autopay))]
+    assert (customer_key, session_key) == (f"customer-{autopay}", f"setup-{autopay}")
+    assert dict(form) == {
+        "mode": "setup",
+        "currency": "usd",
+        "customer": "cus_1",
+        "payment_method_types[0]": "us_bank_account",
+        "success_url": "https://pms.test/pay/done?autopay=1",
+        "cancel_url": "https://pms.test/pay/done?cancelled=1",
+        "client_reference_id": str(autopay),
+        "metadata[autopay_id]": str(autopay),
+        "setup_intent_data[metadata][autopay_id]": str(autopay),
+    }
+
+
+def test_stripe_charges_a_saved_account_once_finding_the_payment_it_made_before():
+    payment = uuid4()
+    account = payments.Account("cus_1", "pm_1", "mandate_1")
+    stripe = Stripe(
+        {
+            ("GET", "/payment_intents"): {"data": [{"id": "pi_other", "metadata": {}}]},
+            ("POST", "/payment_intents"): {"id": "pi_new"},
+        }
+    )
+    assert stripe.charge(payment, Decimal("1204.03"), "Rent – Cedar House, House", account) == (
+        "pi_new"
+    )
+    (_, _, listed, _), (_, _, form, key) = stripe.calls
+    assert listed == [("customer", "cus_1"), ("limit", "100")]
+    assert key == f"autopay-{payment}"
+    assert dict(form) == {
+        "amount": "120403",
+        "currency": "usd",
+        "customer": "cus_1",
+        "payment_method": "pm_1",
+        "payment_method_types[0]": "us_bank_account",
+        "confirm": "true",
+        "off_session": "true",
+        "description": "Rent – Cedar House, House",
+        "metadata[payment_id]": str(payment),
+        "mandate": "mandate_1",
+    }
+    # Asked again (a run that stopped halfway): the one made before, and nothing new.
+    stripe.answers[("GET", "/payment_intents")] = {
+        "data": [{"id": "pi_new", "metadata": {"payment_id": str(payment)}}]
+    }
+    stripe.calls.clear()
+    assert stripe.charge(payment, Decimal("1204.03"), "Rent", account) == "pi_new"
+    assert [c[:2] for c in stripe.calls] == [("GET", "/payment_intents")]
+
+
+def test_stripe_answering_an_autopay_without_what_the_pms_needs_is_the_partner_failing():
+    autopay, payment = uuid4(), uuid4()
+    account = payments.Account("cus_1", "pm_1", None)
+    no_customer = Stripe({("POST", "/customers"): {}})
+    with pytest.raises(payments.PartnerFailed, match="customer came without"):
+        no_customer.save_account(autopay, "https://pms.test/pay/done")
+    no_page = Stripe(
+        {("POST", "/customers"): {"id": "cus_1"}, ("POST", "/checkout/sessions"): {"id": "cs_1"}}
+    )
+    with pytest.raises(payments.PartnerFailed, match="session came without"):
+        no_page.save_account(autopay, "https://pms.test/pay/done")
+    no_payment = Stripe(
+        {("GET", "/payment_intents"): {"data": []}, ("POST", "/payment_intents"): {"status": "x"}}
+    )
+    with pytest.raises(payments.PartnerFailed, match="payment came without"):
+        no_payment.charge(payment, Decimal("1.00"), "Rent", account)
+
+
+def test_stripe_reports_an_autopay_payment_by_its_own_events():
+    payment = uuid4()
+    stripe = Stripe(
+        {("GET", "/payment_intents/pi_7"): {"latest_charge": {"balance_transaction": {"fee": 80}}}}
+    )
+    subject = {"object": "payment_intent", "id": "pi_7", "metadata": {"payment_id": str(payment)}}
+    paid = stripe.event(*report("payment_intent.succeeded", subject))
+    assert (paid.payment_id, paid.kind, paid.fee) == (payment, "paid", Decimal("0.80"))
+    failed = stripe.event(*report("payment_intent.payment_failed", subject))
+    assert (failed.payment_id, failed.kind, failed.fee) == (payment, "failed", None)
+
+
+def test_stripe_reports_a_saved_account_only_once_it_is_verified():
+    autopay = uuid4()
+    intent = {
+        "status": "succeeded",
+        "customer": "cus_1",
+        "mandate": None,
+        "metadata": {"autopay_id": str(autopay)},
+        "payment_method": {
+            "id": "pm_1",
+            "us_bank_account": {"bank_name": "A BANK", "last4": "1234"},
+        },
+    }
+    stripe = Stripe({("GET", "/setup_intents/seti_1"): intent})
+    saved = stripe.event(
+        *report(
+            "setup_intent.succeeded", {"id": "seti_1", "metadata": {"autopay_id": str(autopay)}}
+        )
+    )
+    assert saved == payments.Saved(
+        autopay,
+        payments.Account("cus_1", "pm_1", None),
+        "A BANK ••••1234",
+        "evt_9",
+        saved.happened_at,
+    )
+    stripe.answers[("GET", "/setup_intents/seti_1")] = intent | {"status": "processing"}
+    session = {"id": "cs_1", "mode": "setup", "setup_intent": "seti_1"}
+    assert stripe.event(*report("checkout.session.completed", session)) is None
+    assert (
+        stripe.event(*report("checkout.session.completed", session | {"setup_intent": None}))
+        is None
+    )
+    # A setup intent the PMS didn't ask for, and one that can't be read.
+    assert stripe.event(*report("setup_intent.succeeded", {"id": "seti_2", "metadata": {}})) is None
+    stripe.answers[("GET", "/setup_intents/seti_1")] = {"status": "succeeded"}
+    with pytest.raises(payments.PartnerFailed):
+        stripe.event(*report("checkout.session.completed", session))
+
+
+def test_the_fake_partner_saves_a_made_up_account_and_charges_it():
+    autopay, payment = uuid4(), uuid4()
+    fake = payments.FakePartner()
+    page = fake.save_account(autopay, "https://pms.test/pay/done")
+    assert page.url == f"https://pms.test/pay/fake-save#{autopay}"
+    saved = payments.fake_saved(autopay, datetime(2026, 10, 1, tzinfo=UTC))
+    assert saved.label == "Test bank ••••0000" and saved.account.customer.startswith("fake_cus_")
+    assert fake.charge(payment, Decimal("1.00"), "Rent", saved.account) == f"fake_pi_{payment.hex}"

@@ -913,3 +913,24 @@ counts as received for its state's deposit deadline (a bank payment takes days t
 forbids a broker's own money in trust and Iowa requires the broker to cover bank charges from its
 own: a company in Oregon should keep its fee account able to pay the processor without a deposit.
 
+
+## Autopay (migration 0151, ADR 0009)
+
+**The rules, as researched** (every one NOT VERIFIED against the rule's text):
+- NACHA's rules for a recurring debit from a consumer's account (a "PPD"/"WEB" entry) need the
+  consumer's written authorization, which the payments partner's page takes and keeps (Stripe
+  calls it the mandate), and a way to revoke it. When the amount varies, the consumer is to be told
+  the amount and the day ahead of each debit (reportedly 10 days), unless they agreed to a range.
+- California Civil Code 1947.3 and the other states that require a way to pay that isn't
+  electronic (see Rent paid online) apply to autopay as to any payment online: it is never the
+  only way.
+
+**What the PMS does.** A balance autopay asks the tenant for the most it may take, so the range
+is agreed when they set it up; a fixed one takes the same each month. The tenant is emailed of
+each payment, its amount and due date, when it starts, before the bank is debited (the server must
+send email). The tenant turns it off whenever they like, and it stops by itself after two payments
+in a row didn't go through. A payment hold stops it for that month.
+
+**Left to the company.** Whether its partner's authorization text meets NACHA's rules and its
+state's, and whether an email the day a debit starts is notice enough for a varying amount where
+the tenant expects more lead time.

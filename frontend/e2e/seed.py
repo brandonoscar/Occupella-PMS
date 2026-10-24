@@ -451,12 +451,41 @@ def main() -> None:
             },
         }
         seeded["features"] = {name: feature_pmc(app, tag, name) for name in FEATURES}
+        autopay_saved_before(app, seeded["features"]["autopay"]["pmc_id"])
         # Year close: books as of this year's first day, so last year's November is approved and
         # its December waits for approval in each trust bank account, whatever the day today.
         seeded["features"]["year-close"] = feature_pmc(
             app, tag, "year-close", today=date(datetime.now(UTC).year, 1, 1)
         )
     print(json.dumps(seeded))
+
+
+def autopay_saved_before(app: psycopg.Connection[Any], pmc_id: str) -> None:
+    """The autopay feature's PMC takes payments online, and Drew Sample's autopay of their lease
+    (the balance due, up to $2,000.00) had its bank account saved 40 days ago, so this month's
+    rent due day falls after it and Run rent now starts its payment."""
+    app.execute(
+        "INSERT INTO trust_payment_settings (pmc_id, online, ach_fee_payer)"
+        " VALUES (%s, true, 'company')",
+        (pmc_id,),
+    )
+    lease, tenant = app.execute(
+        "SELECT lt.lease_id, lt.tenant_id FROM trust_lease_tenants AS lt"
+        " JOIN trust_tenants AS t ON t.id = lt.tenant_id"
+        " WHERE t.pmc_id = %s AND t.display_name = 'Drew Sample'",
+        (pmc_id,),
+    ).fetchone()
+    autopay = app.execute(
+        "INSERT INTO trust_autopay (pmc_id, lease_id, tenant_id, rule, amount, partner)"
+        " VALUES (%s, %s, %s, 'balance', 2000, 'fake') RETURNING id",
+        (pmc_id, lease, tenant),
+    ).fetchone()[0]
+    app.execute(
+        "INSERT INTO trust_autopay_accounts (pmc_id, autopay_id, partner_customer, partner_method,"
+        " label, partner_event, saved_at) VALUES (%s, %s, 'fake_cus_seed', 'fake_pm_seed',"
+        " 'Test bank ••••0000', 'fake_saved_seed', %s)",
+        (pmc_id, autopay, datetime.now(UTC) - timedelta(days=40)),
+    )
 
 
 # The feature tests (frontend/e2e/features.spec.ts), each on a demo PMC of its own.
@@ -530,6 +559,7 @@ FEATURES = (
     "tax-credit",
     "unit-details",
     "online-payments",
+    "autopay",
 )
 
 

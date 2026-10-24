@@ -8,6 +8,10 @@ their bank account, so the PMS never sees an account number, and it reports back
 (`event`): paid, with the partner's fee; failed; or returned after it was paid. The PMS records
 what it reports (src/pms/api/online_payments.py); the partner moves the money.
 
+For autopay (migration 0151, src/pms/autopay.py) the partner's page saves the tenant's bank account
+instead (`save_account`), reported back as `Saved` with the partner's references and a label, and
+the PMS later asks it to take a payment from that account (`charge`), reported like any other.
+
 Bank (ACH) payments only for now. What Stripe calls each thing (Checkout Sessions with
 us_bank_account, its webhook events and signature, a charge's balance transaction) was written from
 its API as known in 2026 and not checked against a live account: NOT VERIFIED.
@@ -59,6 +63,28 @@ class Event:
     fee: Decimal | None = None
 
 
+@dataclass(frozen=True)
+class Account:
+    """A bank account the partner saved, as the partner names it: never an account number."""
+
+    customer: str
+    method: str
+    # The tenant's authorization to debit it, when the partner keeps one apart.
+    mandate: str | None = None
+
+
+@dataclass(frozen=True)
+class Saved:
+    """The partner's report that it saved a tenant's bank account for an autopay."""
+
+    autopay_id: UUID
+    account: Account
+    # What the tenant sees of it: the bank's name and the account's last four digits.
+    label: str
+    event_id: str
+    happened_at: datetime
+
+
 class PartnerFailed(Exception):
     """The partner could not be reached or answered with something it shouldn't."""
 
@@ -74,7 +100,11 @@ class Partner(Protocol):
         self, payment_id: UUID, lines: list[tuple[str, Decimal]], done_url: str
     ) -> Checkout: ...
 
-    def event(self, body: bytes, headers: Mapping[str, str]) -> Event | None: ...
+    def save_account(self, autopay_id: UUID, done_url: str) -> Checkout: ...
+
+    def charge(self, payment_id: UUID, amount: Decimal, memo: str, account: Account) -> str: ...
+
+    def event(self, body: bytes, headers: Mapping[str, str]) -> Event | Saved | None: ...
 
 
 def ach_fee(total: Decimal) -> Decimal:
@@ -105,8 +135,28 @@ class FakePartner:
         base = done_url.split("/pay/", 1)[0]
         return Checkout(ref=f"fake_{payment_id.hex}", url=f"{base}/pay/fake#{payment_id}")
 
-    def event(self, body: bytes, headers: Mapping[str, str]) -> Event | None:
+    def save_account(self, autopay_id: UUID, done_url: str) -> Checkout:
+        base = done_url.split("/pay/", 1)[0]
+        url = f"{base}/pay/fake-save#{autopay_id}"
+        return Checkout(ref=f"fake_setup_{autopay_id.hex}", url=url)
+
+    def charge(self, payment_id: UUID, amount: Decimal, memo: str, account: Account) -> str:
+        return f"fake_pi_{payment_id.hex}"
+
+    def event(self, body: bytes, headers: Mapping[str, str]) -> Event | Saved | None:
         raise NotTheirs("the fake partner reports through its own page, not a webhook")
+
+
+def fake_saved(autopay_id: UUID, happened_at: datetime) -> Saved:
+    """What the fake partner's page reports when the tenant saves a bank account: made-up
+    references, and a label like a real one's."""
+    return Saved(
+        autopay_id,
+        Account(f"fake_cus_{autopay_id.hex[:12]}", f"fake_pm_{autopay_id.hex[:12]}", None),
+        "Test bank ••••0000",
+        f"fake_saved_{autopay_id.hex}",
+        happened_at,
+    )
 
 
 class StripePartner:
@@ -151,7 +201,75 @@ class StripePartner:
         except (KeyError, TypeError) as failed:
             raise PartnerFailed(f"Stripe's session came without {failed}") from None
 
-    def event(self, body: bytes, headers: Mapping[str, str]) -> Event | None:
+    def save_account(self, autopay_id: UUID, done_url: str) -> Checkout:
+        """A customer for the autopay, then a Checkout Session in setup mode on it: Stripe's page
+        saves the tenant's bank account and their authorization to debit it."""
+        customer = self._call(
+            "POST",
+            "/customers",
+            [("metadata[autopay_id]", str(autopay_id))],
+            key=f"customer-{autopay_id}",
+        )
+        try:
+            customer_id = str(customer["id"])
+        except (KeyError, TypeError) as failed:
+            raise PartnerFailed(f"Stripe's customer came without {failed}") from None
+        session = self._call(
+            "POST",
+            "/checkout/sessions",
+            setup_form(autopay_id, customer_id, done_url),
+            key=f"setup-{autopay_id}",
+        )
+        try:
+            return Checkout(ref=str(session["id"]), url=str(session["url"]))
+        except (KeyError, TypeError) as failed:
+            raise PartnerFailed(f"Stripe's session came without {failed}") from None
+
+    def charge(self, payment_id: UUID, amount: Decimal, memo: str, account: Account) -> str:
+        """A payment from the saved account, confirmed off session. Asked again for the same
+        payment (a run that stopped halfway, say), it finds the one made before instead of making a
+        second: Stripe forgets a retry key after a day, so the customer's payments are looked at
+        first."""
+        listed = self._call(
+            "GET", "/payment_intents", [("customer", account.customer), ("limit", "100")]
+        )
+        for intent in listed.get("data", []) if isinstance(listed, dict) else []:
+            if (intent.get("metadata") or {}).get("payment_id") == str(payment_id):
+                return str(intent["id"])
+        made = self._call(
+            "POST",
+            "/payment_intents",
+            charge_form(payment_id, amount, memo, account),
+            key=f"autopay-{payment_id}",
+        )
+        try:
+            return str(made["id"])
+        except (KeyError, TypeError) as failed:
+            raise PartnerFailed(f"Stripe's payment came without {failed}") from None
+
+    def saved(self, setup_intent: str, event_id: str, happened: datetime) -> Saved | None:
+        """The bank account a setup intent saved, once it succeeded; None before."""
+        intent = self._call(
+            "GET", f"/setup_intents/{setup_intent}", [("expand[]", "payment_method")]
+        )
+        try:
+            if intent.get("status") != "succeeded":
+                return None  # the account is still being verified; setup_intent.succeeded follows
+            autopay = (intent.get("metadata") or {}).get("autopay_id")
+            method = intent["payment_method"]
+            bank = method.get("us_bank_account") or {}
+            label = f"{bank.get('bank_name') or 'Bank account'} ••••{bank.get('last4') or '????'}"
+            return Saved(
+                UUID(str(autopay)),
+                Account(str(intent["customer"]), str(method["id"]), intent.get("mandate")),
+                label[:80],
+                event_id,
+                happened,
+            )
+        except (KeyError, TypeError, ValueError, AttributeError) as failed:
+            raise PartnerFailed(f"Stripe's saved account can't be read: {failed}") from None
+
+    def event(self, body: bytes, headers: Mapping[str, str]) -> Event | Saved | None:
         verify_signature(body, headers.get("stripe-signature", ""), self._webhook_secret)
         try:
             report = json.loads(body)
@@ -161,6 +279,14 @@ class StripePartner:
             event_id = str(report["id"])
         except (KeyError, TypeError, ValueError) as failed:
             raise NotTheirs(f"Stripe's report can't be read: {failed}") from None
+        if kind_of == "checkout.session.completed" and subject.get("mode") == "setup":
+            if not subject.get("setup_intent"):
+                return None
+            return self.saved(str(subject["setup_intent"]), event_id, happened)
+        if kind_of == "setup_intent.succeeded":
+            if not (subject.get("metadata") or {}).get("autopay_id"):
+                return None  # not an account the PMS asked to save
+            return self.saved(str(subject["id"]), event_id, happened)
         kind = STRIPE_KINDS.get(kind_of)
         if kind is None:
             return None
@@ -173,7 +299,12 @@ class StripePartner:
         payment = payment_of(subject, intent)
         if payment is None:
             return None  # not a payment the PMS started
-        fee = self.fee_of(subject["payment_intent"]) if kind == "paid" else None
+        if kind == "paid":
+            # A payment's own report names itself; a session's names its payment.
+            is_intent = subject.get("object") == "payment_intent"
+            fee = self.fee_of(subject["id"] if is_intent else subject["payment_intent"])
+        else:
+            fee = None
         return Event(payment, kind, event_id, happened, fee)
 
     def fee_of(self, payment_intent: str) -> Decimal:
@@ -195,6 +326,10 @@ STRIPE_KINDS: dict[str, Kind] = {
     "checkout.session.completed": "paid",
     "checkout.session.async_payment_succeeded": "paid",
     "checkout.session.async_payment_failed": "failed",
+    # An autopay's payment, made without a session (and a session's payment too, reported twice;
+    # each kind counts once).
+    "payment_intent.succeeded": "paid",
+    "payment_intent.payment_failed": "failed",
     # A bank payment that comes back after it succeeded (NOT VERIFIED: Stripe's word for an ACH
     # return after success).
     "charge.dispute.created": "returned",
@@ -224,6 +359,41 @@ def checkout_form(
             (f"line_items[{n}][price_data][unit_amount]", str(int(amount * 100))),
             (f"line_items[{n}][price_data][product_data][name]", label[:200]),
         ]
+    return form
+
+
+def setup_form(autopay_id: UUID, customer: str, done_url: str) -> list[tuple[str, str]]:
+    """A Checkout Session that saves a bank account for an autopay, on its customer."""
+    return [
+        ("mode", "setup"),
+        ("currency", "usd"),
+        ("customer", customer),
+        ("payment_method_types[0]", "us_bank_account"),
+        ("success_url", f"{done_url}?autopay=1"),
+        ("cancel_url", f"{done_url}?cancelled=1"),
+        ("client_reference_id", str(autopay_id)),
+        ("metadata[autopay_id]", str(autopay_id)),
+        ("setup_intent_data[metadata][autopay_id]", str(autopay_id)),
+    ]
+
+
+def charge_form(
+    payment_id: UUID, amount: Decimal, memo: str, account: Account
+) -> list[tuple[str, str]]:
+    """A payment from a saved bank account, confirmed now, the tenant not there (off session)."""
+    form = [
+        ("amount", str(int(amount * 100))),
+        ("currency", "usd"),
+        ("customer", account.customer),
+        ("payment_method", account.method),
+        ("payment_method_types[0]", "us_bank_account"),
+        ("confirm", "true"),
+        ("off_session", "true"),
+        ("description", memo[:200]),
+        ("metadata[payment_id]", str(payment_id)),
+    ]
+    if account.mandate:
+        form.append(("mandate", account.mandate))
     return form
 
 

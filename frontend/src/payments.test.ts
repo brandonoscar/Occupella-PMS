@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PaymentSettings, Waiting } from "./payments";
-import { feeLine, payable, settingsLine, waitingLine } from "./payments";
+import { autopayLine, autopayRunLine, feeLine, payable, settingsLine, waitingLine } from "./payments";
 
 const SETTINGS: PaymentSettings = { online: true, ach_fee_payer: "company", partner: "fake", changed_at: null };
 const WAITING: Waiting = {
@@ -46,5 +46,26 @@ describe("online payments", () => {
     );
     expect(waitingLine({ ...WAITING, what: "payment", company_owes: null })).toContain("payment hold");
     expect(waitingLine({ ...WAITING, what: "return", company_owes: null })).toContain("owner's account");
+  });
+});
+
+describe("autopay wording", () => {
+  const base = {
+    id: "a1", tenant: "T", rule: "fixed" as const, amount: "1200.00", account: "Bank ••••1234",
+    started_at: "2026-10-01T00:00:00Z", stopped_at: null, stopped: null, runs: [],
+  };
+  it("says what it pays, from where, or why it is off", () => {
+    expect(autopayLine(base)).toBe("On: pays $1,200.00 on each rent due day, from Bank ••••1234");
+    expect(autopayLine({ ...base, account: null, rule: "balance" })).toBe(
+      "Waiting for a bank account to be saved: pays the balance due, up to $1,200.00",
+    );
+    expect(autopayLine({ ...base, stopped: "failed twice" })).toBe("Stopped: two payments in a row didn't go through");
+    expect(autopayLine({ ...base, stopped: "something new" })).toBe("Off: something new");
+  });
+  it("reads a due date's payment with any fee, or why it took nothing", () => {
+    expect(autopayRunLine({ due_on: "2026-11-01", amount: "1200.00", tenant_fee: "5.00", status: "started", skipped: null }))
+      .toBe("11/01/2026 · $1,200.00 + $5.00 fee");
+    expect(autopayRunLine({ due_on: "2026-11-01", amount: null, tenant_fee: null, status: "skipped", skipped: "payment hold" }))
+      .toBe("11/01/2026 · Nothing taken: payment hold");
   });
 });
