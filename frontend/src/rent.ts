@@ -14,7 +14,7 @@ export type Paid = {
   received_on: string;
   amount: string;
   reference: string | null;
-  method: PaymentMethod | null;
+  method: PaymentMethod | "online" | null;
   bounced: boolean;
 };
 // How a payment came; recorded as said, nothing sent (ADR 0006).
@@ -26,7 +26,9 @@ export const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "EFT", label: "EFT" },
   { value: "cash", label: "Cash" },
 ];
-export function methodLabel(method: PaymentMethod): string {
+export function methodLabel(method: PaymentMethod | "online"): string {
+  // A payment the tenant made online, through the payments partner (never one staff record).
+  if (method === "online") return "Paid online (bank)";
   return PAYMENT_METHODS.find((m) => m.value === method)?.label ?? method;
 }
 // A deposit's kind (migration 0092): each held apart, the security deposit first.

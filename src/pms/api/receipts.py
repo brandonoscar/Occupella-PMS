@@ -28,6 +28,7 @@ HOW = {
     "money order": "Money order",
     "EFT": "EFT",
     "cash": "Cash",
+    "online": "Paid online (bank)",
 }
 
 

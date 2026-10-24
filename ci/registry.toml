@@ -1434,3 +1434,17 @@ tests = [
   "tests/api/test_payment_files_api.py::test_a_file_records_each_line_to_the_lease_it_names_and_the_rest_wait",
   "tests/api/test_payment_files_api.py::test_a_lease_on_a_payment_hold_waits_until_staff_accept_it_past_the_hold",
 ]
+
+
+[[invariant]]
+id = "online-payments-recorded-once-trust-whole"
+statement = "Rent paid online (migration 0150): a payment reaches the books, as Receive payment records one, only once its partner reported it paid, at most once however often reported, never a failed one; a return undoes it as a bounce only once it was paid. The partner's fee leaves trust only from the company's fee account and only once that account holds it, and a tenant's fee goes into that account and back out of it with a return: owners' money never pays for it. What the books can't take yet waits for staff, and the company's own deposit to cover it is never more than what waits needs. Every trust bank account ties out. Append-only."
+tests = [
+  "tests/properties/test_online_payment_properties.py::test_online_payments_record_what_the_partner_reports_once_and_keep_trust_whole",
+  "tests/api/test_online_payments_api.py::test_paid_is_recorded_as_staff_record_a_payment_and_only_once",
+  "tests/api/test_online_payments_api.py::test_a_failed_payment_moves_nothing",
+  "tests/api/test_online_payments_api.py::test_the_company_covers_the_partners_fee_its_account_cant",
+  "tests/api/test_online_payments_api.py::test_a_return_is_a_bounce_and_the_tenants_fee_goes_back_out",
+  "tests/api/test_online_payments_api.py::test_a_payment_paid_during_a_hold_waits_for_staff_to_accept_it",
+  "tests/api/test_online_payments_api.py::test_stripes_signed_report_records_the_payment",
+]

@@ -112,6 +112,7 @@ function server(
     if (init?.method !== "POST") {
       const body = path === "/api/reconcile" ? banks
         : path === "/api/payables/company-fees" ? (answers[path] ?? [])
+        : path === "/api/payments/waiting" ? (answers[path] ?? [])
         : path === "/api/year-close" ? (answers[path] ?? NOTHING_TO_CLOSE)
         : path.startsWith("/api/bank-accounts/") && path.includes("/register") ? (answers.register ?? NO_MOVES)
         : path.startsWith("/api/bank-accounts/") ? (answers.breakdown ?? BREAKDOWN)
@@ -498,7 +499,8 @@ describe("BankingPage", () => {
         if (reads > 1) await new Promise<void>((resolve) => { gate.open = resolve; });
         return json(reads > 1 ? after : before);
       }
-      return json(path === "/api/reconcile" ? BANKS : path === "/api/year-close" ? NOTHING_TO_CLOSE : {});
+      return json(path === "/api/reconcile" ? BANKS : path === "/api/year-close" ? NOTHING_TO_CLOSE
+        : path === "/api/payments/waiting" ? [] : {});
     }));
     render(<BankingPage me={ME} />);
     const operating = await screen.findByRole("row", { name: "Operating trust account" });

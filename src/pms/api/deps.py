@@ -164,6 +164,8 @@ AREA_PATHS = (
     ("/api/assistance/", "rent"),  # a housing authority's part of the rent
     ("/api/utilities/", "rent"),  # utility bills charged to the leases
     ("/api/bank-accounts/", "rent"),  # bank deposits of what came in
+    ("/api/payments/settings", "setup"),  # whether tenants pay online, who pays the fee
+    ("/api/payments/", "rent"),  # online payments waiting, the company's cover of the fees
     ("/api/payables/bills", "bills"),
     ("/api/payables/recurring", "bills"),
     ("/api/payables/shared-bills", "bills"),
