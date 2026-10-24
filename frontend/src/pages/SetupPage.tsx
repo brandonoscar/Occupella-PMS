@@ -16,6 +16,7 @@ import { lateFeeSummary, nsfFeeSummary } from "../setup";
 import { AutomaticEmailsCard } from "./AutomaticEmailsCard";
 import { AutomaticFeesCard } from "./AutomaticFeesCard";
 import { AutomaticPrepaidCard } from "./AutomaticPrepaidCard";
+import { OnlinePaymentsCard } from "./OnlinePaymentsCards";
 import { ScreeningCriteriaCard } from "./ScreeningCriteriaCard";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
@@ -79,6 +80,7 @@ export function SetupPage({ me }: { me: Me }) {
           </Card>
           <AutomaticFeesCard />
           <AutomaticPrepaidCard />
+          <OnlinePaymentsCard />
           <AutomaticEmailsCard />
           <ScreeningCriteriaCard />
           {open === "company" && (

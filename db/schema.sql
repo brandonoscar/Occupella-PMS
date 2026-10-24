@@ -3033,6 +3033,54 @@ $$;
 
 
 --
+-- Name: trust_check_online_payment_event(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_check_online_payment_event() RETURNS trigger
+    LANGUAGE plpgsql
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+BEGIN
+    PERFORM pg_advisory_xact_lock(
+        hashtext('trust_online_payment_events'), hashtext(NEW.payment_id::text)
+    );
+    IF NEW.kind = 'paid' AND EXISTS (
+        SELECT e.id FROM trust_online_payment_events AS e
+        WHERE e.payment_id = NEW.payment_id AND e.kind = 'failed'
+    ) THEN
+        RAISE EXCEPTION 'trust: online payment % failed; it is not paid too', NEW.payment_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.kind = 'failed' AND EXISTS (
+        SELECT e.id FROM trust_online_payment_events AS e
+        WHERE e.payment_id = NEW.payment_id AND e.kind = 'paid'
+    ) THEN
+        RAISE EXCEPTION 'trust: online payment % was paid; a payment paid comes back, it does not '
+            'fail', NEW.payment_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.kind = 'expired' AND EXISTS (
+        SELECT e.id FROM trust_online_payment_events AS e
+        WHERE e.payment_id = NEW.payment_id AND e.kind IN ('paid', 'failed')
+    ) THEN
+        RAISE EXCEPTION 'trust: online payment % reached the bank; it did not expire',
+            NEW.payment_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF NEW.kind = 'returned' AND NOT EXISTS (
+        SELECT e.id FROM trust_online_payment_events AS e
+        WHERE e.payment_id = NEW.payment_id AND e.kind = 'paid'
+    ) THEN
+        RAISE EXCEPTION 'trust: online payment % was not paid, so it can''t come back',
+            NEW.payment_id
+            USING ERRCODE = 'check_violation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: trust_check_ownership_share_line(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -15264,6 +15312,52 @@ CREATE TABLE public.trust_on_call_staff (
 
 
 --
+-- Name: trust_online_payment_events; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_online_payment_events (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    payment_id uuid NOT NULL,
+    kind text NOT NULL,
+    partner_event text NOT NULL,
+    partner_fee numeric,
+    happened_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_online_payment_events_check CHECK (((kind = 'paid'::text) = (partner_fee IS NOT NULL))),
+    CONSTRAINT trust_online_payment_events_kind_check CHECK ((kind = ANY (ARRAY['paid'::text, 'failed'::text, 'returned'::text, 'expired'::text]))),
+    CONSTRAINT trust_online_payment_events_partner_event_check CHECK (((length(partner_event) >= 1) AND (length(partner_event) <= 200))),
+    CONSTRAINT trust_online_payment_events_partner_fee_check CHECK (((partner_fee >= (0)::numeric) AND (partner_fee <= (1000)::numeric) AND (partner_fee = round(partner_fee, 2))))
+);
+
+
+--
+-- Name: trust_online_payments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_online_payments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    tenant_id uuid NOT NULL,
+    amount numeric NOT NULL,
+    tenant_fee numeric DEFAULT 0 NOT NULL,
+    fee_payer text NOT NULL,
+    method text NOT NULL,
+    partner text NOT NULL,
+    partner_ref text NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_online_payments_amount_check CHECK (((amount > (0)::numeric) AND (amount <= (100000)::numeric) AND (amount = round(amount, 2)))),
+    CONSTRAINT trust_online_payments_check CHECK (((fee_payer = 'tenant'::text) OR (tenant_fee = (0)::numeric))),
+    CONSTRAINT trust_online_payments_fee_payer_check CHECK ((fee_payer = ANY (ARRAY['company'::text, 'tenant'::text]))),
+    CONSTRAINT trust_online_payments_method_check CHECK ((method = 'ach'::text)),
+    CONSTRAINT trust_online_payments_partner_check CHECK ((partner = ANY (ARRAY['fake'::text, 'stripe'::text]))),
+    CONSTRAINT trust_online_payments_partner_ref_check CHECK (((length(partner_ref) >= 1) AND (length(partner_ref) <= 200))),
+    CONSTRAINT trust_online_payments_tenant_fee_check CHECK (((tenant_fee >= (0)::numeric) AND (tenant_fee <= (1000)::numeric) AND (tenant_fee = round(tenant_fee, 2))))
+);
+
+
+--
 -- Name: trust_opening_balances; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15507,6 +15601,21 @@ CREATE TABLE public.trust_payment_reversals (
     amount numeric NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_payment_reversals_amount_check CHECK ((amount > (0)::numeric))
+);
+
+
+--
+-- Name: trust_payment_settings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payment_settings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    online boolean NOT NULL,
+    ach_fee_payer text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_payment_settings_ach_fee_payer_check CHECK ((ach_fee_payer = ANY (ARRAY['company'::text, 'tenant'::text])))
 );
 
 
@@ -18311,6 +18420,46 @@ ALTER TABLE ONLY public.trust_on_call_staff
 
 
 --
+-- Name: trust_online_payment_events trust_online_payment_events_payment_id_kind_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payment_events
+    ADD CONSTRAINT trust_online_payment_events_payment_id_kind_key UNIQUE (payment_id, kind);
+
+
+--
+-- Name: trust_online_payment_events trust_online_payment_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payment_events
+    ADD CONSTRAINT trust_online_payment_events_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_online_payments trust_online_payments_partner_partner_ref_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payments
+    ADD CONSTRAINT trust_online_payments_partner_partner_ref_key UNIQUE (partner, partner_ref);
+
+
+--
+-- Name: trust_online_payments trust_online_payments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payments
+    ADD CONSTRAINT trust_online_payments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: trust_online_payments trust_online_payments_pmc_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payments
+    ADD CONSTRAINT trust_online_payments_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
 -- Name: trust_opening_balances trust_opening_balances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18516,6 +18665,14 @@ ALTER TABLE ONLY public.trust_payment_holds
 
 ALTER TABLE ONLY public.trust_payment_reversals
     ADD CONSTRAINT trust_payment_reversals_pkey PRIMARY KEY (charge_id, transfer_id, reversal_id);
+
+
+--
+-- Name: trust_payment_settings trust_payment_settings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_settings
+    ADD CONSTRAINT trust_payment_settings_pkey PRIMARY KEY (id);
 
 
 --
@@ -20626,6 +20783,20 @@ CREATE INDEX trust_on_call_staff_staff ON public.trust_on_call_staff USING btree
 
 
 --
+-- Name: trust_online_payments_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_online_payments_lease ON public.trust_online_payments USING btree (pmc_id, lease_id, created_at);
+
+
+--
+-- Name: trust_online_payments_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_online_payments_tenant ON public.trust_online_payments USING btree (lease_id, tenant_id);
+
+
+--
 -- Name: trust_owner_draws_ledger_account_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20735,6 +20906,20 @@ CREATE INDEX trust_payment_holds_lease_id ON public.trust_payment_holds USING bt
 --
 
 CREATE INDEX trust_payment_reversals_reversal_id ON public.trust_payment_reversals USING btree (reversal_id);
+
+
+--
+-- Name: trust_payment_settings_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payment_settings_pmc ON public.trust_payment_settings USING btree (pmc_id, created_at);
+
+
+--
+-- Name: trust_payment_settings_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payment_settings_recorded_by ON public.trust_payment_settings USING btree (pmc_id, recorded_by);
 
 
 --
@@ -21190,6 +21375,13 @@ CREATE INDEX trust_tenant_links_recorded_by ON public.trust_tenant_links USING b
 --
 
 CREATE INDEX trust_tenant_links_same_as ON public.trust_tenant_links USING btree (pmc_id, same_as);
+
+
+--
+-- Name: trust_transfers_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_transfers_key ON public.pgledger_transfers USING btree (((metadata ->> 'key'::text)));
 
 
 --
@@ -22194,6 +22386,20 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_online_payment_events trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_online_payment_events FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_online_payments trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_online_payments FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_opening_balances trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -22289,6 +22495,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_reversals FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_payment_settings trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_settings FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -23503,6 +23716,20 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_on_c
 
 
 --
+-- Name: trust_online_payment_events trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_online_payment_events FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_online_payments trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_online_payments FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_opening_balances trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -23605,6 +23832,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_paym
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_reversals FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_payment_settings trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_settings FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -24193,6 +24427,13 @@ CREATE TRIGGER trust_check_hold_allowance BEFORE INSERT ON public.trust_payment_
 --
 
 CREATE TRIGGER trust_check_hold_release BEFORE INSERT ON public.trust_payment_hold_releases FOR EACH ROW EXECUTE FUNCTION public.trust_check_hold_release();
+
+
+--
+-- Name: trust_online_payment_events trust_check_online_payment_event; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_check_online_payment_event BEFORE INSERT ON public.trust_online_payment_events FOR EACH ROW EXECUTE FUNCTION public.trust_check_online_payment_event();
 
 
 --
@@ -24865,6 +25106,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_file_skip
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_files FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_payment_settings trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_settings FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -28398,6 +28646,38 @@ ALTER TABLE ONLY public.trust_on_call_staff
 
 
 --
+-- Name: trust_online_payment_events trust_online_payment_events_pmc_id_payment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payment_events
+    ADD CONSTRAINT trust_online_payment_events_pmc_id_payment_id_fkey FOREIGN KEY (pmc_id, payment_id) REFERENCES public.trust_online_payments(pmc_id, id);
+
+
+--
+-- Name: trust_online_payments trust_online_payments_lease_id_tenant_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payments
+    ADD CONSTRAINT trust_online_payments_lease_id_tenant_id_fkey FOREIGN KEY (lease_id, tenant_id) REFERENCES public.trust_lease_tenants(lease_id, tenant_id);
+
+
+--
+-- Name: trust_online_payments trust_online_payments_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payments
+    ADD CONSTRAINT trust_online_payments_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_online_payments trust_online_payments_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_online_payments
+    ADD CONSTRAINT trust_online_payments_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
 -- Name: trust_opening_balances trust_opening_balances_pmc_id_bank_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -28731,6 +29011,22 @@ ALTER TABLE ONLY public.trust_payment_reversals
 
 ALTER TABLE ONLY public.trust_payment_reversals
     ADD CONSTRAINT trust_payment_reversals_reversal_id_fkey FOREIGN KEY (reversal_id) REFERENCES public.pgledger_transfers(id);
+
+
+--
+-- Name: trust_payment_settings trust_payment_settings_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_settings
+    ADD CONSTRAINT trust_payment_settings_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_payment_settings trust_payment_settings_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_settings
+    ADD CONSTRAINT trust_payment_settings_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -30258,4 +30554,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000123'),
     ('20261022000124'),
     ('20261022000125'),
-    ('20261022000150');
+    ('20261022000150'),
+    ('20261023000150');

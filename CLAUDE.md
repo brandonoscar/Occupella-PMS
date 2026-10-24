@@ -728,6 +728,27 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   naming who and why), after which it is never sent, signed or completed (a void and a
   completion wait for each other), the tenant no longer sees it, and the expirations report
   leaves it out. The AI role reads none of it.
+- Rent paid online (migration 0150, `src/pms/api/online_payments.py`, `src/pms/payments.py`,
+  ADR 0009, `docs/law.md`): a tenant pays from their lease in the portal (Pay online) on the
+  server's payments partner's page (`PMS_PAYMENTS`: "stripe" with the company's own keys,
+  `PMS_STRIPE_SECRET_KEY` and `PMS_STRIPE_WEBHOOK_SECRET`, from the environment; "fake" for
+  development and CI, whose own page `/pay/fake#<id>` says what the bank did; none by default),
+  by bank (ACH) only for now; the PMS never sees an account number. A company turns it on in
+  Company setup and chooses who pays the partner's fee on a bank payment
+  (`trust_payment_settings`: append-only, the latest holding, naming who; the company, from its
+  fees in trust, or the tenant, shown before they pay; the founder, 2026-10-23), and a lease on a
+  payment hold takes none. Nothing reaches the books until the partner reports the bank paid
+  (`trust_online_payment_events`: paid with the partner's fee, failed, returned once paid, or
+  expired when the tenant left the partner's page without paying, each kind once a payment; `POST /api/payments/webhook/stripe`, signed): then the payment is
+  recorded as Receive payment records one (request id the payment's, method "online"), the
+  tenant's fee goes to the company's fee account, the partner's fee leaves trust from that
+  account once it holds it (never from an owner's), a return is a bounce and the tenant's fee
+  goes back out; one the books take only after month-end closed its day goes in on the first
+  day left open. What the books can't take yet waits on Banking (Online payments waiting): a
+  payment paid during a hold (Accept past the hold), a return an owner can't cover (Try again),
+  and what the company's fee account can't (Record the company's deposit, never more than what
+  waits needs, area rent). Each posting has a key of its own (`metadata ->> 'key'`, indexed), so
+  a partner reporting twice moves nothing twice. The AI role reads these tables; it moves no money.
 - Rent work (`src/pms/api/rent.py`): a tenant's payment recorded by staff pays the owner's
   account no more than the lease owes, matched to what is open of its charges rent first
   (`trust_open_charges`, so a credit counts), and the rest is
