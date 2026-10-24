@@ -37,7 +37,7 @@ export function PayoutFiles({ query, runs = 0, title = "Payout files" }: { query
       {found === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : found.length === 0 ? (
-        <p className="text-sm text-ink-subtle">No payout file made yet. Choose "ACH file and checks" when paying to make one.</p>
+        <p className="text-sm text-ink-subtle">No payout file made yet. Pick a payout file on Pay owners or Pay bills to make one.</p>
       ) : (
         <Wide>
           <table className="w-full text-base" aria-label={title}>
