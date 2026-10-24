@@ -942,6 +942,14 @@ tests = [
   "tests/api/test_portal_pages.py::test_without_a_portal_there_are_no_pages",
 ]
 
+[[selfhost]]
+id = "demo"
+statement = "compose.demo.yaml brings the demo up in one command: the migrations, the demo PMC and the links to sign in to it, and the PMS on 127.0.0.1:8100 with the test partners; brought up again, it adds no second demo."
+tests = [
+  "tests/test_demo.py::test_the_command_prints_a_sign_in_link_for_the_manager_an_owner_and_a_tenant",
+  "tests/test_demo.py::test_if_empty_adds_no_demo_to_a_database_that_holds_a_pmc",
+]
+
 [[report]]
 id = "unpaid-bills"
 statement = "Unpaid bills as of the end of a day (UTC): every bill dated by then and not paid by then, by vendor, with what was set aside for it, its days past due and aging bucket (current, 1-30, 31-60, 61-90, over 90); a total per vendor and a grand total. Compared to a checked-in golden file."
