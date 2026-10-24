@@ -13,6 +13,8 @@ fastapi==0.149.0
 psycopg-pool==3.3.3
 pyotp==2.10.0
 uvicorn==0.54.0
+# Bank account numbers sealed with the server's key (src/pms/sealed.py; Apache-2.0 or BSD).
+cryptography==50.0.2
 # Email (src/pms/email_html.py): the HTML part of each email, from one template.
 jinja2==3.1.6
 # Calendar feeds (src/pms/api/calendar.py): iCalendar text, escaped and folded as RFC 5545
