@@ -79,5 +79,6 @@ workflow and lists the required checks.
 
 A company runs the PMS on its own server with its own Postgres 16: [docs/release.md](docs/release.md)
 says how a release reaches it and how to upgrade (fixed forward, never rolled back once money is
-posted), and [docs/backup.md](docs/backup.md) how to back up the books and restore them
-(`scripts/backup.sh`).
+posted), [docs/backup.md](docs/backup.md) how to back up the books and restore them
+(`scripts/backup.sh`), and [docs/support.md](docs/support.md) who looks when something fails and
+where.

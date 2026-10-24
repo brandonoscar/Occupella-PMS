@@ -19,7 +19,7 @@ export type EmailLine = {
   kind:
     | "message" | "invite" | "password_reset" | "bill_approval"
     | "rent_reminder" | "late_notice" | "owner_statement" | "work_order" | "adverse_action"
-    | "payment_receipt";
+    | "payment_receipt" | "reserve_low";
   to: string;
   subject: string;
   body: string;
@@ -40,6 +40,7 @@ const KIND: Record<EmailLine["kind"], string> = {
   work_order: "Work order",
   adverse_action: "Adverse action notice",
   payment_receipt: "Payment receipt",
+  reserve_low: "Below its reserve",
 };
 // The PDF an email carries, made as it is sent (src/pms/attachments.py).
 const ATTACHED: Partial<Record<EmailLine["kind"], string>> = {
