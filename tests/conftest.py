@@ -12,6 +12,11 @@ Environment knobs, all optional:
   PMS_SQL_COVERAGE_OUT   write PL/pgSQL coverage (plpgsql_check profiler) to this JSON file
   PMS_TEST_SHARD         k/n: run only shard k of n (every nth test from the kth); the
                          coverage job runs 1/2 and 2/2 side by side
+  PMS_TEST_SHARD_TIMES   a TOML file of the property tests' seconds ([seconds],
+                         ci/property-times.toml): deal the property tests to the shards by
+                         time, longest first, and the rest round robin (coverage, nightly)
+  PMS_TEST_ROTATION      r/R, with PMS_TEST_SHARD_TIMES: deal the tests into R parts by time
+                         first and shard only part r (each night's part of the nightly)
   HYPOTHESIS_PROFILE     pr (default), nightly or mutation; example counts live in
                          ci/thresholds.toml
 
@@ -32,7 +37,7 @@ from hypothesis import HealthCheck, Phase, settings
 from psycopg import sql
 
 from tools import sql_coverage
-from tools.run_rules import marker_problems, outcome_problems, shard
+from tools.run_rules import balanced_shard, marker_problems, outcome_problems, shard
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -138,9 +143,24 @@ def pytest_collection_modifyitems(config, items):
     if problems:
         raise pytest.UsageError("\n".join(problems))
     spec = os.environ.get("PMS_TEST_SHARD")
+    times = os.environ.get("PMS_TEST_SHARD_TIMES")
+    rotation = os.environ.get("PMS_TEST_ROTATION")
+    if rotation and not (spec and times):
+        raise pytest.UsageError("PMS_TEST_ROTATION needs PMS_TEST_SHARD and PMS_TEST_SHARD_TIMES")
     if spec:
         try:
-            kept, rest = shard(items, spec)
+            if times:
+                seconds = tomllib.loads((ROOT / times).read_text())["seconds"]
+                kept, rest = balanced_shard(
+                    items,
+                    spec,
+                    seconds,
+                    lambda item: item.nodeid.split("[")[0],
+                    rotation,
+                    lambda item: item.nodeid.startswith("tests/properties/"),
+                )
+            else:
+                kept, rest = shard(items, spec)
         except ValueError as error:
             raise pytest.UsageError(str(error)) from error
         config.hook.pytest_deselected(items=rest)

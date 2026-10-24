@@ -111,7 +111,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   route functions as its staff, with last month's reconciliation waiting for approval and
   something on every other page, the founder's seed among it (six properties, one of 48 units,
   two groups, applicants, offers, bills, work orders and files at every step; ADR 0006).
-  `demo.books` is its books alone, for the feature tests.
+  `demo.books` is its books alone, for the feature tests. `docker compose -f compose.demo.yaml up`
+  runs it in Docker at http://localhost:8100 with the test partners (`--if-empty`: once per volume).
   Payments and a real screening partner are still out
   (`docs/adr/0002-portals-and-exports.md`).
 - Email (`src/pms/email.py`, migration 0042, `docs/adr/0004-email.md`): entering a bill over
@@ -728,6 +729,48 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   naming who and why), after which it is never sent, signed or completed (a void and a
   completion wait for each other), the tenant no longer sees it, and the expirations report
   leaves it out. The AI role reads none of it.
+- Rent paid online (migration 0150, `src/pms/api/online_payments.py`, `src/pms/payments.py`,
+  ADR 0009, `docs/law.md`): a tenant pays from their lease in the portal (Pay online) on the
+  server's payments partner's page (`PMS_PAYMENTS`: "stripe" with the company's own keys,
+  `PMS_STRIPE_SECRET_KEY` and `PMS_STRIPE_WEBHOOK_SECRET`, from the environment; "fake" for
+  development and CI, whose own page `/pay/fake#<id>` says what the bank did; none by default),
+  by bank (ACH) only for now; the PMS never sees an account number. A company turns it on in
+  Company setup and chooses who pays the partner's fee on a bank payment
+  (`trust_payment_settings`: append-only, the latest holding, naming who; the company, from its
+  fees in trust, or the tenant, shown before they pay; the founder, 2026-10-23), and a lease on a
+  payment hold takes none. Nothing reaches the books until the partner reports the bank paid
+  (`trust_online_payment_events`: paid with the partner's fee, failed, returned once paid, or
+  expired when the tenant left the partner's page without paying, each kind once a payment; `POST /api/payments/webhook/stripe`, signed): then the payment is
+  recorded as Receive payment records one (request id the payment's, method "online"), the
+  tenant's fee goes to the company's fee account, the partner's fee leaves trust from that
+  account once it holds it (never from an owner's), a return is a bounce and the tenant's fee
+  goes back out; one the books take only after month-end closed its day goes in on the first
+  day left open. What the books can't take yet waits on Banking (Online payments waiting): a
+  payment paid during a hold (Accept past the hold), a return an owner can't cover (Try again),
+  and what the company's fee account can't (Record the company's deposit, never more than what
+  waits needs, area rent). Each posting has a key of its own (`metadata ->> 'key'`, indexed), so
+  a partner reporting twice moves nothing twice. The AI role reads these tables; it moves no money.
+- Autopay (migration 0151, `src/pms/autopay.py`, `src/pms/api/autopay.py`, ADR 0009): a tenant
+  sets up autopay of a lease from the portal (Autopay), a fixed amount each month or the balance
+  due up to an amount they set (`trust_autopay`), and saves the bank account it pays from on the
+  partner's page (`trust_autopay_accounts`: the partner's references and a label, never a number;
+  the fake partner's `/pay/fake-save#<id>`). From the next rent due day after it is saved, the
+  nightly run (and an admin's Run rent now) starts its payment once per due date, as a payment
+  online with an id made from the autopay and the date, or records why none (a payment hold on
+  the due date, nothing owed, payments online off) (`trust_autopay_runs`); a balance autopay pays
+  what is open by the due date less what is on its way from payments online not yet in the books.
+  Once that commits, each payment goes to the partner (`trust_autopay_submissions`), which finds
+  one it took before under the same id rather than take two; one it can't take now is tried at
+  the next run, for three days, and none is sent once something was reported of it or its autopay
+  stopped. One never sent is given up at the next run a day after that, or once its autopay
+  stopped: marked expired (`pms-not-sent`), so it is no longer on its way, and the tenant is
+  emailed (`autopay_not_sent`); a report that the bank paid it still counts. While the server
+  sends email, the tenant is emailed of each payment before the bank is debited. It stops (`trust_autopay_stops`, once) when the tenant or
+  staff turn it off (Lease page, Autopay; area rent, naming who), when a new one replaces it, and
+  by itself, with an email, when the lease ended, the tenant left it, or two payments in a row
+  didn't go through or came back. The AI role never reads the saved accounts (`AI_NEVER_READS`).
+  An online payment, autopay's or by hand, waits for staff during a payment hold even when it
+  would all be prepaid rent.
 - Rent work (`src/pms/api/rent.py`): a tenant's payment recorded by staff pays the owner's
   account no more than the lease owes, matched to what is open of its charges rent first
   (`trust_open_charges`, so a credit counts), and the rest is

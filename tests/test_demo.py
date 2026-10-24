@@ -519,3 +519,18 @@ def test_the_command_prints_a_sign_in_link_for_the_manager_an_owner_and_a_tenant
         " ON l.id = i.login_id WHERE l.pmc_id = %s GROUP BY kind ORDER BY kind",
         (pmc_id,),
     ).fetchall() == [("owner", 1), ("staff", 1), ("tenant", 1)]
+
+
+def test_if_empty_adds_no_demo_to_a_database_that_holds_a_pmc(
+    conn, database_url, built, monkeypatch, capsys
+):
+    # compose.demo.yaml runs the command each time it comes up: a second demo never goes in.
+    monkeypatch.setenv("DATABASE_URL", database_url)
+    before = conn.execute("SELECT count(*) FROM trust_pmcs").fetchone()
+
+    assert demo.main(["--if-empty"]) == 0
+
+    assert conn.execute("SELECT count(*) FROM trust_pmcs").fetchone() == before
+    assert capsys.readouterr().out == (
+        "This database holds a PMC already, so no demo was added (--if-empty).\n"
+    )

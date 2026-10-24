@@ -942,6 +942,14 @@ tests = [
   "tests/api/test_portal_pages.py::test_without_a_portal_there_are_no_pages",
 ]
 
+[[selfhost]]
+id = "demo"
+statement = "compose.demo.yaml brings the demo up in one command: the migrations, the demo PMC and the links to sign in to it, and the PMS on 127.0.0.1:8100 with the test partners; brought up again, it adds no second demo."
+tests = [
+  "tests/test_demo.py::test_the_command_prints_a_sign_in_link_for_the_manager_an_owner_and_a_tenant",
+  "tests/test_demo.py::test_if_empty_adds_no_demo_to_a_database_that_holds_a_pmc",
+]
+
 [[report]]
 id = "unpaid-bills"
 statement = "Unpaid bills as of the end of a day (UTC): every bill dated by then and not paid by then, by vendor, with what was set aside for it, its days past due and aging bucket (current, 1-30, 31-60, 61-90, over 90); a total per vendor and a grand total. Compared to a checked-in golden file."
@@ -1433,4 +1441,33 @@ tests = [
   "tests/test_payment_files.py::test_a_file_has_all_its_lines_at_commit_and_no_more",
   "tests/api/test_payment_files_api.py::test_a_file_records_each_line_to_the_lease_it_names_and_the_rest_wait",
   "tests/api/test_payment_files_api.py::test_a_lease_on_a_payment_hold_waits_until_staff_accept_it_past_the_hold",
+]
+
+
+[[invariant]]
+id = "online-payments-recorded-once-trust-whole"
+statement = "Rent paid online (migration 0150): a payment reaches the books, as Receive payment records one, only once its partner reported it paid, at most once however often reported, never a failed one; a return undoes it as a bounce only once it was paid. The partner's fee leaves trust only from the company's fee account and only once that account holds it, and a tenant's fee goes into that account and back out of it with a return: owners' money never pays for it. What the books can't take yet waits for staff, and the company's own deposit to cover it is never more than what waits needs. Every trust bank account ties out. Append-only."
+tests = [
+  "tests/properties/test_online_payment_properties.py::test_online_payments_record_what_the_partner_reports_once_and_keep_trust_whole",
+  "tests/api/test_online_payments_api.py::test_paid_is_recorded_as_staff_record_a_payment_and_only_once",
+  "tests/api/test_online_payments_api.py::test_a_failed_payment_moves_nothing",
+  "tests/api/test_online_payments_api.py::test_the_company_covers_the_partners_fee_its_account_cant",
+  "tests/api/test_online_payments_api.py::test_a_return_is_a_bounce_and_the_tenants_fee_goes_back_out",
+  "tests/api/test_online_payments_api.py::test_a_payment_paid_during_a_hold_waits_for_staff_to_accept_it",
+  "tests/api/test_online_payments_api.py::test_stripes_signed_report_records_the_payment",
+]
+
+[[invariant]]
+id = "autopay-each-due-date-once-by-its-rule"
+statement = "Autopay (migration 0151): each autopay comes to each rent due date at most once, starting a payment of what its rule says (a fixed amount, or what the lease owes by then less what is on its way from payments not yet in the books, never more than the amount the tenant set) or recording why none (a payment hold in force on the due date, nothing owed, payments online off); never before its bank account was saved, never after it stopped, and it stops by itself after two payments in a row didn't go through or when the lease ended or the tenant left. Each payment is sent to the partner under an id fixed by the autopay and the due date, and the partner, asked again (its answer lost, a run that stopped halfway, two runs at once), takes it once; none is sent once something was reported of it or its autopay stopped, and one never sent is given up (expired), so it is no longer on its way. The payment reaches the books only as any payment online does. Append-only."
+tests = [
+  "tests/properties/test_autopay_properties.py::test_autopay_pays_each_due_date_once_by_its_rule_and_the_partner_takes_each_once",
+  "tests/test_autopay.py::test_a_balance_autopay_pays_what_is_owed_on_the_due_day_once",
+  "tests/test_autopay.py::test_a_payment_that_came_back_before_it_was_recorded_is_not_on_its_way",
+  "tests/test_autopay.py::test_a_run_needs_a_saved_account_no_stop_and_the_autopays_own_rule",
+  "tests/test_autopay.py::test_each_payment_goes_to_the_partner_once_and_waits_while_it_is_down",
+  "tests/test_autopay.py::test_a_payment_the_partner_never_took_is_given_up_and_the_tenant_told",
+  "tests/test_autopay.py::test_a_stopped_autopays_payment_is_never_sent",
+  "tests/test_payments.py::test_stripe_charges_a_saved_account_once_finding_the_payment_it_made_before",
+  "tests/api/test_autopay_api.py::test_run_rent_now_starts_the_autopay_payment_which_goes_to_the_partner_and_the_books",
 ]

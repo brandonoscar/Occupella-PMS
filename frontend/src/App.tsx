@@ -43,6 +43,7 @@ import { DataExportPage } from "./pages/DataExportPage";
 import { QuickBooksPage } from "./pages/QuickBooksPage";
 import { NoticeTemplatesPage } from "./pages/NoticeTemplatesPage";
 import { PaymentFilePage, PaymentFilesPage } from "./pages/PaymentFilesPages";
+import { PayDonePage, PayFakePage, PayFakeSavePage } from "./pages/PayPages";
 import { RentPage } from "./pages/RentPage";
 import { LeasePage } from "./pages/LeasePage";
 import { PropertiesPage, PropertyPage, UnitPage } from "./pages/RentalsPages";
@@ -70,6 +71,10 @@ export function App() {
   if (path === "/sign") return <SignPage />;
   // A vendor's work orders; their link carries what lets them in.
   if (path === "/vendor") return <VendorLinkPage />;
+  // Back from the payments partner's page, and the fake partner's own page (development only).
+  if (path === "/pay/done") return <PayDonePage />;
+  if (path === "/pay/fake") return <PayFakePage />;
+  if (path === "/pay/fake-save") return <PayFakeSavePage />;
   if (path === "/sign-in") return <SignInPage />;
   if (path === "/forgot-password") return <ForgotPasswordPage />;
   return <Home path={path} />;

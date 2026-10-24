@@ -275,10 +275,10 @@ def failing_run(monkeypatch, failing_pmc):
     """The run of one PMC fails as a bug would, the others as they always do."""
     real = nightly.run_pmc
 
-    def run(conn, pmc_id, day, url, sending=False):
+    def run(conn, pmc_id, day, url, sending=False, partner=None):
         if pmc_id == failing_pmc:
             raise Broken("the rent run could not finish\nsecond line, left out")
-        return real(conn, pmc_id, day, url, sending)
+        return real(conn, pmc_id, day, url, sending, partner)
 
     monkeypatch.setattr(nightly, "run_pmc", run)
 
@@ -329,7 +329,9 @@ def test_a_database_error_is_told_too_and_a_company_with_no_admin_gets_none(
     real = nightly.run_pmc
     # Each company's run refused by the database (a run of no company can't be recorded).
     monkeypatch.setattr(
-        nightly, "run_pmc", lambda c, _pmc, day, url, sending=False: real(c, uuid.uuid4(), day, url)
+        nightly,
+        "run_pmc",
+        lambda c, _pmc, day, url, sending=False, partner=None: real(c, uuid.uuid4(), day, url),
     )
 
     nightly.run_all(app_conn, OCT_10, URL, [pmc.pmc_id, lonely.pmc_id], sending=True)

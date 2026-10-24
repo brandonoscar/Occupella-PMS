@@ -2,9 +2,10 @@ name: selfhost
 
 # The self-hosted build on plain Postgres 16, no Supabase-only features: build the image, apply
 # every migration, seed a synthetic 50-door PMC, post one month of rent, export a statement and
-# the ledger, check health, then start the API, ask its health endpoint and load the portal. Runs nightly, by hand, and on PRs that touch the Dockerfile, compose
-# file, requirements, migrations or the app code in src/ (db.yml calls it after its own job, so
-# PR CI stays within 8 jobs at a time).
+# the ledger, check health, then start the API, ask its health endpoint and load the portal;
+# then bring up the demo (compose.demo.yaml) and ask it the same. Runs nightly, by hand, and on
+# PRs that touch the Dockerfile, a compose file, requirements, migrations or the app code in src/
+# (db.yml calls it after its own job, so PR CI stays within 8 jobs at a time).
 on:
   workflow_call:
   schedule:
@@ -55,9 +56,24 @@ jobs:
             "import json, urllib.request as u; print(json.load(u.urlopen('http://127.0.0.1:8000/health')))"
           docker compose exec -T app python -c \
             "import urllib.request as u; page = u.urlopen('http://127.0.0.1:8000/').read(); assert b'id=\"root\"' in page, page; print('portal served')"
+      # The demo on one machine (compose.demo.yaml, README "Try the demo"): one command brings it
+      # up on its own Postgres, prints the sign-in links and publishes the PMS on 127.0.0.1:8100;
+      # brought up again, it adds no second demo.
+      - name: The demo comes up in one command, on its own port, once
+        run: |
+          docker compose -f compose.demo.yaml up -d --wait app
+          docker compose -f compose.demo.yaml logs demo | grep "Sign in as the manager"
+          curl -fsS http://127.0.0.1:8100/health
+          curl -fsS http://127.0.0.1:8100/ | grep -q 'id="root"' && echo "portal served"
+          docker compose -f compose.demo.yaml up -d --wait app
+          docker compose -f compose.demo.yaml logs demo | grep "no demo was added"
       - name: Logs
         if: failure()
-        run: docker compose logs
+        run: |
+          docker compose logs
+          docker compose -f compose.demo.yaml logs
       - name: Clean up
         if: always()
-        run: docker compose down -v
+        run: |
+          docker compose down -v
+          docker compose -f compose.demo.yaml down -v

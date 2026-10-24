@@ -14,7 +14,7 @@ export type Paid = {
   received_on: string;
   amount: string;
   reference: string | null;
-  method: PaymentMethod | null;
+  method: PaymentMethod | "online" | null;
   bounced: boolean;
 };
 // How a payment came; recorded as said, nothing sent (ADR 0006).
@@ -26,7 +26,9 @@ export const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "EFT", label: "EFT" },
   { value: "cash", label: "Cash" },
 ];
-export function methodLabel(method: PaymentMethod): string {
+export function methodLabel(method: PaymentMethod | "online"): string {
+  // A payment the tenant made online, through the payments partner (never one staff record).
+  if (method === "online") return "Paid online (bank)";
   return PAYMENT_METHODS.find((m) => m.value === method)?.label ?? method;
 }
 // A deposit's kind (migration 0092): each held apart, the security deposit first.
@@ -126,7 +128,15 @@ export type Payment = { transfers: string[]; to_owner: string; to_prepaid: strin
 export type Bounce = { transfers: string[]; nsf_fee: string | null };
 // What a rent run charged: leases their rent, recurring charges and late fees.
 // A run by hand also says how many emails it wrote (rent reminders, late notices, statements).
-export type RentRun = { rents: number; recurring: number; late_fees: number; emails?: number; prepaid_used?: number };
+export type RentRun = {
+  rents: number;
+  recurring: number;
+  late_fees: number;
+  emails?: number;
+  prepaid_used?: number;
+  // Autopay payments started (src/pms/autopay.py), on a server that takes payments online.
+  autopay?: number;
+};
 // A run as recorded: the nightly run (by null) or an admin's by hand.
 export type RentRunLine = RentRun & { at: string; due_on: string; late_fees_as_of: string; by: string | null };
 
@@ -169,7 +179,10 @@ export function rentRunSummary(run: RentRun): string {
   const charged = `${count(run.rents, "rent")}, ${count(run.recurring, "recurring charge")} and ${count(run.late_fees, "late fee")} charged.`;
   // Prepaid rent used by itself (migration 0117), for a company that turned it on.
   const prepaid = run.prepaid_used ? ` Prepaid rent paid what ${count(run.prepaid_used, "lease")} owed.` : "";
-  return run.emails ? `${charged}${prepaid} ${count(run.emails, "email")} written.` : `${charged}${prepaid}`;
+  const autopay = run.autopay ? ` ${count(run.autopay, "autopay payment")} started.` : "";
+  return run.emails
+    ? `${charged}${prepaid}${autopay} ${count(run.emails, "email")} written.`
+    : `${charged}${prepaid}${autopay}`;
 }
 
 const SERVED: Record<RentChange["served_by"], string> = {

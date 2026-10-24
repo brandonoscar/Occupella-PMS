@@ -1,3 +1,4 @@
+import { OnlinePaymentsWaiting } from "./OnlinePaymentsCards";
 import { Landmark } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
@@ -78,6 +79,7 @@ export function BankingPage({ me }: { me: Me }) {
         <Button variant="secondary" onClick={() => setAdding(true)}>Add bank account</Button>
       } />
       <Said>{said}</Said>
+      <OnlinePaymentsWaiting refresh={runs} />
       {transfer === null && <Notice tone="error">{refused}</Notice>}
       {banks === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>

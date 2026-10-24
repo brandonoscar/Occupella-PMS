@@ -288,6 +288,16 @@ TABLES = {
     # A unit's details (migration 0124): bedrooms, bathrooms, square feet and market rent, which
     # staff record; the latest row holds.
     "trust_unit_details": {"SELECT", "INSERT"},
+    # Online payments (migration 0150): a company's choices, each payment and what its partner
+    # reported. The AI role reads them: amounts, leases, references, no account number.
+    "trust_payment_settings": {"SELECT", "INSERT"},
+    "trust_online_payments": {"SELECT", "INSERT"},
+    "trust_online_payment_events": {"SELECT", "INSERT"},
+    "trust_autopay": {"SELECT", "INSERT"},
+    "trust_autopay_accounts": {"SELECT", "INSERT"},
+    "trust_autopay_stops": {"SELECT", "INSERT"},
+    "trust_autopay_runs": {"SELECT", "INSERT"},
+    "trust_autopay_submissions": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -317,6 +327,8 @@ AI_NEVER_READS = {
     "trust_showings",
     "trust_showing_outcomes",
     "trust_vendor_links",
+    # A tenant's saved bank account at the payments partner: its references are what charges it.
+    "trust_autopay_accounts",
     "trust_vendor_link_revocations",
     "trust_logins",
     "trust_invites",
@@ -494,6 +506,10 @@ FUNCTIONS = {
     "trust_check_bank_deposit_item()": set(),  # a trigger's: no one calls it
     "trust_check_charge_waiver()": set(),
     "trust_check_rent_due_day()": set(),
+    "trust_check_online_payment_event()": set(),  # a trigger's: no one calls it
+    "trust_check_autopay()": set(),  # a trigger's: no one calls it
+    "trust_check_autopay_run()": set(),  # a trigger's: no one calls it
+    "trust_lock_autopay_stop()": set(),  # a trigger's: no one calls it
     "trust_check_bill_reference()": set(),  # a trigger's: no one calls it
     "trust_check_shared_bill()": set(),
     "trust_check_ownership_share_line()": set(),
