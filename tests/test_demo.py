@@ -202,6 +202,18 @@ def test_today_lists_what_waits_on_staff(conn, app_conn, built):
     ]
     # Each trust bank account has its broker, and the bookkeeper's bond runs a while yet.
     assert waiting.signers == []
+    # The draw day came this month: tonight's run prepared the owners' draws, which wait for staff,
+    # each the way its owner is paid (Demo Owner C by ACH).
+    assert waiting.owner_draws is not None
+    assert waiting.owner_draws.prepared_on == waiting.on
+    assert all(Decimal(line.amount) > 0 for line in waiting.owner_draws.lines)
+    assert {line.method for line in waiting.owner_draws.lines if line.owner == "Demo Owner C"} <= {
+        "EFT"
+    }
+    # Nobody paid them yet.
+    assert not conn.execute(
+        "SELECT 1 FROM trust_draw_run_approvals WHERE run_id = %s", (waiting.owner_draws.id,)
+    ).fetchone()
 
 
 def test_the_company_took_the_month_before_lasts_fees_out_of_trust(conn, built):
