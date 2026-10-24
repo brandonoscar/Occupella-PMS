@@ -10071,7 +10071,8 @@ BEGIN
             (4, 'bills paid'),
             (5, 'owner draws'),
             (6, 'owner contributions'),
-            (7, 'other'),
+            (7, 'security deposit interest'),
+            (8, 'other'),
             (9, 'closing balance')
         ) AS v (part, label)
     ),
@@ -10146,6 +10147,12 @@ BEGIN
         FROM trust_owner_contributions AS c
         JOIN pgledger_transfers AS tr ON tr.id = c.transfer_id
         WHERE c.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
+        UNION ALL
+        -- 7: interest added to a tenant's security deposit from the account (migration 0122).
+        SELECT l.owner_account, 7, -l.amount
+        FROM trust_deposit_interest_lines AS l
+        JOIN pgledger_transfers AS tr ON tr.id = l.transfer_id
+        WHERE l.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
     ),
     balances AS (
         SELECT a.account, a.name,
@@ -10161,7 +10168,7 @@ BEGIN
                CASE p.part
                    WHEN 0 THEN b.opening
                    WHEN 9 THEN b.closing
-                   WHEN 7 THEN b.closing - b.opening - coalesce(
+                   WHEN 8 THEN b.closing - b.opening - coalesce(
                        (SELECT sum(m.change) FROM moved AS m WHERE m.account = b.account), 0)
                    ELSE coalesce(
                        (SELECT sum(m.change) FROM moved AS m
@@ -30258,4 +30265,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000123'),
     ('20261022000124'),
     ('20261022000125'),
-    ('20261022000150');
+    ('20261022000150'),
+    ('20261023000200');
