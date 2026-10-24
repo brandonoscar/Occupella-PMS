@@ -1,0 +1,46 @@
+# The demo on one machine, in one command (README, "Try the demo"):
+#   docker compose -f compose.demo.yaml up --build
+# It builds the self-host image, applies the migrations, adds the demo PMC (src/pms/demo.py) and
+# prints its sign-in links, then serves the PMS at http://localhost:8100 (PMS_DEMO_PORT picks
+# another port). The partners are the test ones: payments online, emails, screening and the
+# address lookup reach nobody. Its books stay in the volume until
+# `docker compose -f compose.demo.yaml down -v`; started again, it adds no second demo.
+#
+# A demo, never a company's books: Postgres trusts every connection inside this network, and
+# the PMS is published on this machine only (127.0.0.1), over plain http.
+name: pms-demo
+
+services:
+  db:
+    extends:
+      file: compose.yaml
+      service: db
+    volumes:
+      - books:/var/lib/postgresql/data
+
+  demo:
+    extends:
+      file: compose.yaml
+      service: migrate
+    command: ["sh", "-c", "dbmate --wait up && python -m pms.demo --if-empty"]
+    environment:
+      PMS_PUBLIC_URL: http://localhost:${PMS_DEMO_PORT:-8100}
+
+  app:
+    extends:
+      file: compose.yaml
+      service: app
+    ports:
+      - 127.0.0.1:${PMS_DEMO_PORT:-8100}:8000
+    environment:
+      PMS_PUBLIC_URL: http://localhost:${PMS_DEMO_PORT:-8100}
+      PMS_PAYMENTS: fake
+      PMS_EMAIL_SENDER: fake
+      PMS_SCREENING_PARTNER: fake
+      PMS_GEOCODER: fake
+    depends_on:
+      demo:
+        condition: service_completed_successfully
+
+volumes:
+  books:

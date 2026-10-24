@@ -111,7 +111,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   route functions as its staff, with last month's reconciliation waiting for approval and
   something on every other page, the founder's seed among it (six properties, one of 48 units,
   two groups, applicants, offers, bills, work orders and files at every step; ADR 0006).
-  `demo.books` is its books alone, for the feature tests.
+  `demo.books` is its books alone, for the feature tests. `docker compose -f compose.demo.yaml up`
+  runs it in Docker at http://localhost:8100 with the test partners (`--if-empty`: once per volume).
   Payments and a real screening partner are still out
   (`docs/adr/0002-portals-and-exports.md`).
 - Email (`src/pms/email.py`, migration 0042, `docs/adr/0004-email.md`): entering a bill over

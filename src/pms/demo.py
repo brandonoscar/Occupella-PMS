@@ -27,11 +27,12 @@ file, an expired policy) and files.
 Every name is synthetic, and every email is at example.com. The dates follow today's: the two
 months are the two before this one.
 
-usage: python -m pms.demo
+usage: python -m pms.demo [--if-empty]
 """
 
 from __future__ import annotations
 
+import argparse
 import base64
 import csv
 import io
@@ -1513,9 +1514,20 @@ def invite(conn: psycopg.Connection[Any], demo: Demo, kind: str, person: UUID, w
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    del argv
+    parser = argparse.ArgumentParser(prog="python -m pms.demo", description=__doc__.split("\n")[0])
+    parser.add_argument(
+        "--if-empty",
+        action="store_true",
+        help="add the demo only to a database that holds no PMC yet (compose.demo.yaml starts it"
+        " each time it comes up)",
+    )
+    args = parser.parse_args(argv)
     with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as conn:
         conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier("trust_app")))
+        found = conn.execute("SELECT count(*) FROM trust_pmcs").fetchone()
+        if args.if_empty and found is not None and found[0] > 0:
+            print("This database holds a PMC already, so no demo was added (--if-empty).")
+            return 0
         demo = build(conn, public_url=os.environ.get("PMS_PUBLIC_URL", "http://localhost:8000"))
         with conn.transaction():
             links = {
