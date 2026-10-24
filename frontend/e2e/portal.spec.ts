@@ -543,7 +543,7 @@ test("staff record a vendor's bill with its invoice, record the owner's approval
   await expect(payee.getByRole("cell").nth(6)).toHaveText("$700.00");
   await payee.getByLabel("Pay Payee E2E, E2E Property 7").check();
   await page.getByRole("button", { name: "Pay $700.00" }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Pay" }).click();
   await expect(page.getByRole("main")).toContainText("1 payout of $700.00 recorded, by check.");
   await expect(payee.getByRole("cell").nth(6)).toHaveText("$0.00");
 });
