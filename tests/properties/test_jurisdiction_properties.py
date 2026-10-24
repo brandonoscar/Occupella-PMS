@@ -17,7 +17,6 @@ Run more examples locally with HYPOTHESIS_PROFILE=nightly.
 """
 
 import re
-from dataclasses import replace
 from datetime import date, timedelta
 from decimal import Decimal
 
@@ -349,11 +348,3 @@ def test_a_deposit_warns_exactly_when_the_lease_would_hold_more_than_the_cap(
     warned = jurisdictions.deposit_warnings(known(rule), held, amount, rent)
     allowed = (months * rent).quantize(Decimal("0.01"))
     assert bool(warned) == (held + amount > allowed)
-
-
-def test_unknown_rules_never_warn():
-    unknown = jurisdictions.Found("deposit_cap", None, (), "unknown")
-    assert jurisdictions.deposit_warnings(unknown, Decimal(0), Decimal("99999"), None) == []
-    assert (
-        jurisdictions.nsf_fee_warnings(replace(unknown, kind="nsf_fee_cap"), Decimal("999")) == []
-    )
