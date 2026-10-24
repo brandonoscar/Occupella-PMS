@@ -1190,6 +1190,8 @@ class RentRunDone(RentRun):
     # Autopay payments started (src/pms/autopay.py); they go to the payments partner once the
     # run is in the books.
     autopay: int = 0
+    # Fixed-term leases that ran out with no renewal signed and went month to month.
+    leases_rolled_over: int = 0
 
 
 class RentRunLine(RentRun):
@@ -1208,9 +1210,15 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
     late fee for each rent still open after its grace days as of a day. Each once per lease (or
     recurring charge, or rent) and date, so running it again charges nothing new. While the
     server sends email, it also writes today's emails the company's settings ask for, as the
-    nightly run does, and starts the autopay payments due by today (src/pms/autopay.py)."""
+    nightly run does, and starts the autopay payments due by today (src/pms/autopay.py). First, as
+    each night, each fixed-term lease that ran out with no renewal signed goes month to month."""
     if run.late_fees_as_of > today():
         raise HTTPException(422, "late fees are assessed as of today or an earlier day")
+    # Fixed-term leases that ran out with no renewal go month to month first, as each night.
+    rolled = conn.execute(
+        "SELECT trust_roll_over_leases(%s, %s)", (session.pmc_id, today())
+    ).fetchone()
+    assert rolled is not None
     made = conn.execute(
         "SELECT trust_run_rent(%s, %s, %s)", (session.pmc_id, run.due_on, run.late_fees_as_of)
     ).fetchone()
@@ -1245,6 +1253,7 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
         authority_late_fees=authority[0],
         prepaid_used=prepaid_used,
         autopay=started.payments,
+        leases_rolled_over=rolled[0],
     )
 
 

@@ -12665,6 +12665,50 @@ $$;
 
 
 --
+-- Name: trust_roll_over_leases(uuid, date); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_roll_over_leases(p_pmc_id uuid, p_day date) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_lease record;
+    v_rolled integer := 0;
+BEGIN
+    IF p_day IS NULL THEN
+        RAISE EXCEPTION 'trust: leases roll over on a day; none was given'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    -- Two runs at once roll each lease once: the second waits, then finds the first's.
+    PERFORM pg_advisory_xact_lock(hashtextextended('trust_lease_holdovers:' || p_pmc_id::text, 0));
+    FOR v_lease IN
+        SELECT l.id, l.ends_on
+        FROM trust_leases AS l
+        WHERE l.pmc_id = p_pmc_id
+          AND l.ends_on < p_day AND l.ends_on >= p_day - 7
+          -- Entered while its term still ran: a lease from the past stays as it was.
+          AND l.created_at::date <= l.ends_on
+          AND NOT EXISTS (SELECT 1 FROM trust_lease_holdovers AS h WHERE h.lease_id = l.id)
+          AND NOT EXISTS (SELECT 1 FROM trust_lease_end_notices AS n WHERE n.lease_id = l.id)
+          AND NOT EXISTS (SELECT 1 FROM trust_leases AS later
+                          WHERE later.unit_id = l.unit_id AND later.id <> l.id
+                            AND later.starts_on > l.starts_on)
+          AND NOT EXISTS (SELECT 1 FROM trust_lease_transfers AS t WHERE t.from_lease_id = l.id)
+          AND NOT EXISTS (SELECT 1 FROM trust_deposit_returns AS r WHERE r.lease_id = l.id)
+        ORDER BY l.ends_on, l.id
+    LOOP
+        PERFORM trust_end_lease(p_pmc_id, v_lease.id, NULL);
+        INSERT INTO trust_lease_holdovers (lease_id, pmc_id, term_ended_on, rolled_on)
+        VALUES (v_lease.id, p_pmc_id, v_lease.ends_on, p_day);
+        v_rolled := v_rolled + 1;
+    END LOOP;
+    RETURN v_rolled;
+END;
+$$;
+
+
+--
 -- Name: trust_routing_number_ok(text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -14864,6 +14908,7 @@ CREATE TABLE public.trust_documents (
     unit_id uuid,
     tenant_id uuid,
     request_id uuid,
+    transfer_id text,
     CONSTRAINT trust_documents_check1 CHECK (((kind = 'receipt'::text) = (bill_id IS NOT NULL))),
     CONSTRAINT trust_documents_check3 CHECK (((kind = 'owner_document'::text) = (owner_id IS NOT NULL))),
     CONSTRAINT trust_documents_content_type_check CHECK ((content_type = ANY (ARRAY['application/pdf'::text, 'image/jpeg'::text, 'image/png'::text]))),
@@ -15324,6 +15369,20 @@ CREATE TABLE public.trust_lease_end_adjustments (
 
 
 --
+-- Name: trust_lease_end_notices; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_end_notices (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    pmc_id uuid NOT NULL,
+    lease_id uuid NOT NULL,
+    ends_on date NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL
+);
+
+
+--
 -- Name: trust_lease_guarantors; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -15340,6 +15399,20 @@ CREATE TABLE public.trust_lease_guarantors (
     CONSTRAINT trust_lease_guarantors_display_name_check CHECK (((display_name ~ '\S'::text) AND (length(display_name) <= 200))),
     CONSTRAINT trust_lease_guarantors_email_check CHECK (((email = lower(email)) AND (email ~ '^[^@\s]+@[^@\s]+\.[^@\s]+$'::text) AND (length(email) <= 254))),
     CONSTRAINT trust_lease_guarantors_phone_check CHECK (((phone ~ '\S'::text) AND (length(phone) <= 30)))
+);
+
+
+--
+-- Name: trust_lease_holdovers; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_lease_holdovers (
+    lease_id uuid NOT NULL,
+    pmc_id uuid NOT NULL,
+    term_ended_on date NOT NULL,
+    rolled_on date NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_lease_holdovers_check CHECK ((rolled_on > term_ended_on))
 );
 
 
@@ -16193,6 +16266,20 @@ CREATE TABLE public.trust_payment_holds (
     reason text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT trust_payment_holds_reason_check CHECK ((reason <> ''::text))
+);
+
+
+--
+-- Name: trust_payment_notes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trust_payment_notes (
+    transfer_id text NOT NULL,
+    pmc_id uuid NOT NULL,
+    note text NOT NULL,
+    recorded_by uuid,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT trust_payment_notes_note_check CHECK (((note ~ '\S'::text) AND (length(note) <= 2000)))
 );
 
 
@@ -18226,7 +18313,7 @@ ALTER TABLE ONLY public.trust_document_removals
 --
 
 ALTER TABLE public.trust_documents
-    ADD CONSTRAINT trust_documents_kind_check CHECK ((kind = ANY (ARRAY['w9'::text, 'receipt'::text, 'move_out_photo'::text, 'owner_document'::text, 'work_order_photo'::text, 'property_document'::text, 'unit_document'::text, 'tenant_document'::text, 'lease_document'::text, 'vendor_document'::text, 'company_logo'::text, 'request_photo'::text, 'listing_photo'::text]))) NOT VALID;
+    ADD CONSTRAINT trust_documents_kind_check CHECK ((kind = ANY (ARRAY['w9'::text, 'receipt'::text, 'move_out_photo'::text, 'owner_document'::text, 'work_order_photo'::text, 'property_document'::text, 'unit_document'::text, 'tenant_document'::text, 'lease_document'::text, 'vendor_document'::text, 'company_logo'::text, 'request_photo'::text, 'listing_photo'::text, 'payment_attachment'::text]))) NOT VALID;
 
 
 --
@@ -18291,6 +18378,14 @@ ALTER TABLE public.trust_documents
 
 ALTER TABLE public.trust_documents
     ADD CONSTRAINT trust_documents_tenant_check CHECK (((kind = 'tenant_document'::text) = (tenant_id IS NOT NULL))) NOT VALID;
+
+
+--
+-- Name: trust_documents trust_documents_transfer_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_documents
+    ADD CONSTRAINT trust_documents_transfer_check CHECK (((kind = 'payment_attachment'::text) = (transfer_id IS NOT NULL))) NOT VALID;
 
 
 --
@@ -18704,6 +18799,14 @@ ALTER TABLE ONLY public.trust_lease_end_adjustments
 
 
 --
+-- Name: trust_lease_end_notices trust_lease_end_notices_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_end_notices
+    ADD CONSTRAINT trust_lease_end_notices_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: trust_lease_guarantors trust_lease_guarantors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -18717,6 +18820,14 @@ ALTER TABLE ONLY public.trust_lease_guarantors
 
 ALTER TABLE ONLY public.trust_lease_guarantors
     ADD CONSTRAINT trust_lease_guarantors_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_lease_holdovers trust_lease_holdovers_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_holdovers
+    ADD CONSTRAINT trust_lease_holdovers_pkey PRIMARY KEY (lease_id);
 
 
 --
@@ -19485,6 +19596,14 @@ ALTER TABLE ONLY public.trust_payment_holds
 
 ALTER TABLE ONLY public.trust_payment_holds
     ADD CONSTRAINT trust_payment_holds_pmc_id_id_key UNIQUE (pmc_id, id);
+
+
+--
+-- Name: trust_payment_notes trust_payment_notes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_notes
+    ADD CONSTRAINT trust_payment_notes_pkey PRIMARY KEY (transfer_id);
 
 
 --
@@ -21036,6 +21155,13 @@ CREATE INDEX trust_documents_tenant_id ON public.trust_documents USING btree (te
 
 
 --
+-- Name: trust_documents_transfer_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_documents_transfer_id ON public.trust_documents USING btree (transfer_id);
+
+
+--
 -- Name: trust_documents_unit_id; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21358,6 +21484,20 @@ CREATE INDEX trust_lease_end_adjustments_charge_id ON public.trust_lease_end_adj
 
 
 --
+-- Name: trust_lease_end_notices_lease; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_end_notices_lease ON public.trust_lease_end_notices USING btree (pmc_id, lease_id);
+
+
+--
+-- Name: trust_lease_end_notices_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_end_notices_recorded_by ON public.trust_lease_end_notices USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_lease_guarantors_lease; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -21376,6 +21516,13 @@ CREATE INDEX trust_lease_guarantors_offer ON public.trust_lease_guarantors USING
 --
 
 CREATE INDEX trust_lease_guarantors_recorded_by ON public.trust_lease_guarantors USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_lease_holdovers_pmc; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_lease_holdovers_pmc ON public.trust_lease_holdovers USING btree (pmc_id, rolled_on);
 
 
 --
@@ -21915,6 +22062,13 @@ CREATE INDEX trust_payment_files_recorded_by ON public.trust_payment_files USING
 --
 
 CREATE INDEX trust_payment_holds_lease_id ON public.trust_payment_holds USING btree (lease_id);
+
+
+--
+-- Name: trust_payment_notes_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_payment_notes_recorded_by ON public.trust_payment_notes USING btree (pmc_id, recorded_by);
 
 
 --
@@ -23290,10 +23444,24 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 
 
 --
+-- Name: trust_lease_end_notices trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_end_notices FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
 -- Name: trust_lease_guarantors trust_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_guarantors FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_lease_holdovers trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_lease_holdovers FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -23630,6 +23798,13 @@ CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.t
 --
 
 CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_holds FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
+
+
+--
+-- Name: trust_payment_notes trust_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_append_only BEFORE DELETE OR UPDATE OR TRUNCATE ON public.trust_payment_notes FOR EACH STATEMENT EXECUTE FUNCTION public.trust_refuse_ledger_rewrite();
 
 
 --
@@ -24711,10 +24886,24 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_leas
 
 
 --
+-- Name: trust_lease_end_notices trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_end_notices FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
 -- Name: trust_lease_guarantors trust_audit; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_guarantors FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_lease_holdovers trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_lease_holdovers FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -25072,6 +25261,13 @@ CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_paym
 --
 
 CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_holds FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
+
+
+--
+-- Name: trust_payment_notes trust_audit; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_audit AFTER INSERT OR DELETE OR UPDATE ON public.trust_payment_notes FOR EACH ROW EXECUTE FUNCTION public.trust_audit();
 
 
 --
@@ -26286,6 +26482,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_departures 
 
 
 --
+-- Name: trust_lease_end_notices trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_lease_end_notices FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_lease_guarantors trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26451,6 +26654,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_file_skip
 --
 
 CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_files FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
+-- Name: trust_payment_notes trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_payment_notes FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
 
 
 --
@@ -28549,6 +28759,14 @@ ALTER TABLE ONLY public.trust_documents
 
 
 --
+-- Name: trust_documents trust_documents_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_documents
+    ADD CONSTRAINT trust_documents_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id) NOT VALID;
+
+
+--
 -- Name: trust_draw_run_approvals trust_draw_run_approvals_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29205,6 +29423,30 @@ ALTER TABLE ONLY public.trust_lease_end_adjustments
 
 
 --
+-- Name: trust_lease_end_notices trust_lease_end_notices_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_end_notices
+    ADD CONSTRAINT trust_lease_end_notices_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_end_notices trust_lease_end_notices_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_end_notices
+    ADD CONSTRAINT trust_lease_end_notices_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_lease_end_notices trust_lease_end_notices_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_end_notices
+    ADD CONSTRAINT trust_lease_end_notices_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
 -- Name: trust_lease_guarantors trust_lease_guarantors_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -29234,6 +29476,22 @@ ALTER TABLE ONLY public.trust_lease_guarantors
 
 ALTER TABLE ONLY public.trust_lease_guarantors
     ADD CONSTRAINT trust_lease_guarantors_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_lease_holdovers trust_lease_holdovers_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_holdovers
+    ADD CONSTRAINT trust_lease_holdovers_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_lease_holdovers trust_lease_holdovers_pmc_id_lease_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_lease_holdovers
+    ADD CONSTRAINT trust_lease_holdovers_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
 
 
 --
@@ -30562,6 +30820,30 @@ ALTER TABLE ONLY public.trust_payment_holds
 
 ALTER TABLE ONLY public.trust_payment_holds
     ADD CONSTRAINT trust_payment_holds_pmc_id_lease_id_fkey FOREIGN KEY (pmc_id, lease_id) REFERENCES public.trust_leases(pmc_id, id);
+
+
+--
+-- Name: trust_payment_notes trust_payment_notes_pmc_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_notes
+    ADD CONSTRAINT trust_payment_notes_pmc_id_fkey FOREIGN KEY (pmc_id) REFERENCES public.trust_pmcs(pmc_id);
+
+
+--
+-- Name: trust_payment_notes trust_payment_notes_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_notes
+    ADD CONSTRAINT trust_payment_notes_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
+
+
+--
+-- Name: trust_payment_notes trust_payment_notes_transfer_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_payment_notes
+    ADD CONSTRAINT trust_payment_notes_transfer_id_fkey FOREIGN KEY (transfer_id) REFERENCES public.pgledger_transfers(id);
 
 
 --
@@ -32214,5 +32496,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261023000151'),
     ('20261024000152'),
     ('20261024000153'),
+    ('20261024000154'),
     ('20261025000200'),
     ('20261025000210');

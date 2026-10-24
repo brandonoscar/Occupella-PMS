@@ -7,7 +7,9 @@ turned that on (migration 0117), the recurring bills due by today, each
 with its email to an owner whose approval it waits for, for a company that turned it on, last
 month's management fees from its day of the month, the recurring work orders due by today
 (trust_open_recurring_work_orders, migration 0085), and on its draw day every owner's draw,
-prepared for staff to pay (trust_prepare_owner_draws, migration 0153). Rent and late fees go through
+prepared for staff to pay (trust_prepare_owner_draws, migration 0153). Before the rent, each
+fixed-term lease that ran out with no renewal signed goes month to month at the same rent
+(trust_roll_over_leases, migration 0154). Rent and late fees go through
 trust_run_rent, which records the run; bills through trust_enter_recurring_bills; fees through
 trust_take_monthly_management_fees. Then, for a company that turned them on, the emails of the
 day (src/pms/notices.py), owners' accounts fallen below their reserve among them. A PMC whose run
@@ -81,6 +83,8 @@ class Ran:
     autopay: int = 0
     # Whether the month's owner draws were prepared, on the company's draw day (migration 0153).
     draws_prepared: int = 0
+    # Fixed-term leases that ran out with no renewal and went month to month (migration 0154).
+    leases_rolled_over: int = 0
 
 
 def run_pmc(
@@ -96,6 +100,10 @@ def run_pmc(
     payments partner (its name), the autopay payments due start too, after the rent is charged
     (src/pms/autopay.py); they go to the partner once this commits."""
     with conn.transaction():
+        # First, each fixed-term lease that ran out with no renewal signed goes month to month
+        # (migration 0154), so the month's rent below charges it.
+        rolled = conn.execute("SELECT trust_roll_over_leases(%s, %s)", (pmc_id, day)).fetchone()
+        assert rolled is not None
         made = conn.execute(
             "SELECT trust_run_rent(%s, %s, %s)", (pmc_id, day.replace(day=1), day)
         ).fetchone()
@@ -137,6 +145,7 @@ def run_pmc(
         prepaid,
         started.payments,
         int(draws[0] is not None),
+        rolled[0],
     )
 
 
