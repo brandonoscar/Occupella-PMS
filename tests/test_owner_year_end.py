@@ -185,7 +185,8 @@ def test_money_with_no_part_of_its_own_is_other(conn, pmc):
 
 def test_interest_added_to_a_deposit_is_a_part_of_its_own_not_other(conn, app_conn, pmc):
     """Interest added to a tenant's deposit (migration 0122) leaves the owner's account: its own
-    part of the year (migration 0154). Interest credited against the rent moves no money."""
+    part of the year (migration 20261023000200). Interest credited against the rent moves no
+    money."""
     lease = lease_of(conn, pmc)
     transfer_batch(conn, [(pmc.deposit_cash, pmc.tenant_deposit, "1200.00")], at(1, 1, 2025))
     deposit_interest_terms(conn, pmc.pmc_id, pmc.owners[0].property_id, date(2025, 1, 1), 1)
