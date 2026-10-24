@@ -149,7 +149,34 @@ export type OpenUnit = {
   days_listed: number | null;
   // How many listing photos the unit has (migration 0087).
   photos: number;
+  // Whether its listing goes to listing sites through the feeds (migration 0250), and what the
+  // sites ask that it lacks, in words.
+  in_feed: boolean;
+  feed_needs: string[];
 };
+
+// Where a unit stands with the listing sites: sent; sent but held back from the feeds while it
+// lacks what the sites ask (its details cleared since); or not sent.
+export function feedStanding(unit: OpenUnit): { tone: "positive" | "neutral" | "caution"; label: string } {
+  if (unit.in_feed) {
+    return unit.feed_needs.length > 0 ? { tone: "caution", label: "Held back" } : { tone: "positive", label: "Sent" };
+  }
+  return { tone: "neutral", label: "Not sent" };
+}
+
+// Settings → Listing feeds (migration 0250): each feed's URL for its site, the leasing contact
+// the listings name, what the company still needs and how many listings they carry.
+export type FeedSettings = {
+  contact: { contact_name: string | null; email: string; phone: string } | null;
+  feeds: { site: "zillow" | "mits"; takes: string; url: string }[];
+  missing: string[];
+  listings: number;
+};
+
+// A phone of ten digits as it reads: (202) 555-0142.
+export function feedPhone(digits: string): string {
+  return /^\d{10}$/.test(digits) ? `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}` : digits;
+}
 
 // A unit's listing photo, as staff keep them.
 export type ListingPhoto = { id: string; title: string; uploaded_at: string };

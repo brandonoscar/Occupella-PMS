@@ -584,6 +584,20 @@ browser = [
 ]
 
 [[feature]]
+id = "listing-feeds"
+statement = "On Listings staff send a listed unit to the listing sites or stop sending it (one lacking the property's street address or the unit's bedrooms and bathrooms is refused, naming them); at Settings, Listing feeds staff keep the leasing contact the feeds name and copy each feed's URL to give its site; anyone fetches the feeds without a login, in Zillow's rental listing format and in MITS's, each listing staff sent that is on the public page and has what the sites ask, once the company has its mailing address and a leasing contact."
+operations = [
+  "GET /api/leasing/feeds",
+  "POST /api/leasing/feeds",
+  "POST /api/leasing/listings/{listing_id}/feed",
+  "GET /api/listings/{pmc_id}/feeds/zillow.xml",
+  "GET /api/listings/{pmc_id}/feeds/mits.xml",
+]
+browser = [
+  "features.spec.ts › staff send a listed unit to the listing sites; its feeds, Zillow's and MITS's, carry it until staff stop sending it",
+]
+
+[[feature]]
 id = "leads"
 statement = "On Leasing, Leads (Open, Closed, All, by property group) staff add a prospect who asked about renting (a name, an email or a phone, what they asked about, the source); on the lead's page they schedule showings of a unit, record how each went, and close the lead once, applied or lost."
 operations = [

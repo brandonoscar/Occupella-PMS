@@ -10,7 +10,8 @@ import { money } from "../money";
 import { sizeLine } from "../unitDetails";
 
 // A PMC's public vacancy page: /listings?pmc=<PMC id>, the units its staff listed, each with a
-// way to apply. No login, and nothing here is sent to listing sites.
+// way to apply. No login. The listings staff send to listing sites are in the company's feeds
+// too (Settings, Listing feeds).
 export function ListingsPage() {
   const [pmc] = useState(() => new URLSearchParams(window.location.search).get("pmc") ?? "");
   const [page, setPage] = useState<Vacancies | null>(null);
@@ -36,7 +37,7 @@ export function ListingsPage() {
         <>
           <PageHeader
             title={`Homes for rent from ${page.pmc}`}
-            description="Each home's rent and a way to apply. Nothing here is sent to listing sites."
+            description="Each home's rent and a way to apply."
           />
           {page.listings.length === 0 ? (
             <EmptyState

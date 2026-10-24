@@ -222,7 +222,7 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   Listings at `/rental-listings` (`GET /api/leasing/vacancies`: each unit coming free within 90
   days or with an open link, its rent and available day, days listed and photos; List opens its
   link if it has none and puts it on the public page, Unlist takes it off, Photos keeps the unit's
-  listing photos), Leads at `/leads` (migration 0088, `src/pms/api/leads.py`: Open, Closed, All;
+  listing photos, the ⋯ menu sends it to listing sites), Leads at `/leads` (migration 0088, `src/pms/api/leads.py`: Open, Closed, All;
   Add lead; each at `/leads/<id>` with its showings, Schedule showing and Close lead), Applicants at
   `/applicants` (Open, Rejected,
   Withdrawn, All) with each application's page at `/applicants/<id>` (screen, approve or reject,
@@ -327,7 +327,21 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   login's email. Staff may list an open link on the PMC's public vacancy page
   (`/listings?pmc=<id>`, `src/pms/api/listings.py`, migration 0047): no login, it shows each
   listed unit's property, unit, rent and description, and an applicant applies through the
-  listing as through its link until it is removed or the link closed. Nothing is syndicated.
+  listing as through its link until it is removed or the link closed. Listing syndication
+  (migration 0250, `src/pms/api/listing_feeds.py`, `src/pms/listing_feeds.py`; the founder's
+  decisions of 10/23): staff send a listed unit to listing sites from Listings' ⋯ menu
+  (`trust_listing_feed_choices`: append-only, the latest row per listing holding, each changing
+  it, naming who; refused while the property has no street address or the unit no bedrooms or
+  bathrooms), and the company's feeds carry each one sent that is on the public page and has
+  them: `GET /api/listings/<pmc>/feeds/zillow.xml` (Zillow's rental listing feed, hotPadsItems
+  2.1: a property of one unit one listing, of more one multifamily listing of floorplan and unit
+  models) and `/mits.xml` (MITS Property Marketing/ILS, a Property per listing), no login, with
+  the photos' and apply page's full addresses (`PMS_PUBLIC_URL`). Settings, Listing feeds
+  (`/settings/listing-feeds`, area leasing) shows each feed's URL to give its site and keeps the
+  leasing contact they name (`trust_listing_feed_contacts`: an email and ten digits, the latest
+  holding); a feed lists nothing until the company has its mailing address and that contact.
+  The PMS signs in to no site and sends nothing: signing up with each is the company's step.
+  The AI role reads the choices, never the contact.
   Since migration 0087 a listed unit shows its photos there (`listing_photo` documents about the
   unit: JPEG or PNG, twelve at most, oldest first), each served to anyone by
   `GET /api/listings/<pmc>/photos/<id>` only while the unit is listed and the photo not removed;

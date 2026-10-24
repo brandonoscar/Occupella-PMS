@@ -19,11 +19,13 @@ const VACANT: OpenUnit = {
   last_rent: "1400.00", link_id: null, link_rent: null, applications: 0, listing_id: null, description: null,
   listed_at: null, days_listed: null, photos: 0,
   details: { bedrooms: 0, bathrooms: "1", square_feet: 450, market_rent: "1450.00" },
+  in_feed: false, feed_needs: [],
 };
 const LISTED: OpenUnit = {
   ...VACANT, unit_id: "u2", unit: "Unit 2", available_on: null, link_id: "k2", link_rent: "1550.00",
   applications: 3, listing_id: "s2", description: "Corner unit.", listed_at: "2026-10-09T15:00:00Z",
   days_listed: 10, photos: 2, details: { bedrooms: null, bathrooms: null, square_feet: null, market_rent: null },
+  feed_needs: ["the unit's bedrooms", "the unit's bathrooms"],
 };
 const LINKED: OpenUnit = { ...VACANT, unit_id: "u3", unit: "Unit 3", link_id: "k3", link_rent: "1600.00" };
 
@@ -57,7 +59,7 @@ describe("RentalListingsPage", () => {
       ["Property 1, Unit 3Studio, 1 bath, 450 sq ft", "11/01/2026", "$1,600.00", "$1,450.00", "0", "Not listed"],
     ]);
     // How long each listing has been up, and how many photos its unit has.
-    expect(rows.map((row) => within(row).getAllByRole("cell").slice(6, 8).map((c) => c.textContent))).toEqual([
+    expect(rows.map((row) => within(row).getAllByRole("cell").slice(7, 9).map((c) => c.textContent))).toEqual([
       ["", "0"], ["10 days", "2"], ["", "0"],
     ]);
     expect(screen.getByRole("link", { name: "Property 1, Unit 1" }).getAttribute("href")).toBe("/units/u1");
@@ -104,6 +106,33 @@ describe("RentalListingsPage", () => {
     await screen.findByText("Closed the link for Property 1, Unit 2.");
 
     expect(posted(fetch)).toEqual([["/api/leasing/listings/s2/remove", {}], ["/api/leasing/links/k2/close", {}]]);
+  });
+
+  it("says where each listing stands with the listing sites, and sends one or stops sending it", async () => {
+    const SENT: OpenUnit = { ...LINKED, unit_id: "u4", unit: "Unit 4", listing_id: "s4", in_feed: true };
+    const fetch = server([VACANT, LISTED, SENT]);
+    render(<RentalListingsPage me={ME} />);
+    const listed = await screen.findByRole("row", { name: "Property 1, Unit 2" });
+    const sent = screen.getByRole("row", { name: "Property 1, Unit 4" });
+
+    expect(within(listed).getAllByRole("cell").at(6)?.textContent).toBe(
+      "Not sentNeeds the unit's bedrooms, the unit's bathrooms",
+    );
+    expect(within(sent).getAllByRole("cell").at(6)?.textContent).toBe("Sent");
+    // A unit not on the public page has nothing to send.
+    expect(within(screen.getByRole("row", { name: "Property 1, Unit 1" })).getAllByRole("cell").at(6)?.textContent).toBe("");
+    fireEvent.click(within(listed).getByRole("button", { name: "Actions for Property 1, Unit 2" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Send to listing sites" }));
+    await screen.findByText("Sent Property 1, Unit 2 to the listing sites' feeds.");
+    fireEvent.click(within(sent).getByRole("button", { name: "Actions for Property 1, Unit 4" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Stop sending to listing sites" }));
+    await screen.findByText("Took Property 1, Unit 4 out of the listing sites' feeds.");
+
+    expect(posted(fetch)).toEqual([
+      ["/api/leasing/listings/s2/feed", { in_feed: true }],
+      ["/api/leasing/listings/s4/feed", { in_feed: false }],
+    ]);
+    expect(screen.getByRole("link", { name: "Listing feeds" }).getAttribute("href")).toBe("/settings/listing-feeds");
   });
 
   it("opens an application link and shows it once", async () => {

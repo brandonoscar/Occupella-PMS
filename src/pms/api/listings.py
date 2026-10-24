@@ -91,6 +91,10 @@ class Vacancy(BaseModel):
     photos: int
     # Its bedrooms, bathrooms, square feet and market rent (migration 0124).
     details: unit_details.UnitDetails
+    # Whether its listing goes to listing sites through the feeds (migration 0250), and what
+    # the sites ask that it lacks, in words (src/pms/api/listing_feeds.py).
+    in_feed: bool
+    feed_needs: list[str]
 
 
 class ListingPhoto(BaseModel):
@@ -98,6 +102,16 @@ class ListingPhoto(BaseModel):
     title: str
     uploaded_at: datetime
 
+
+# What a unit (on ud, its latest details) of a property (on a, its address) lacks that the
+# listing sites ask, each in words; an empty array when nothing.
+NEEDS = """
+array_remove(ARRAY[
+    CASE WHEN a.id IS NULL THEN 'the property''s street address' END,
+    CASE WHEN ud.bedrooms IS NULL THEN 'the unit''s bedrooms' END,
+    CASE WHEN ud.bathrooms IS NULL THEN 'the unit''s bathrooms' END
+], NULL)
+"""
 
 VACANCIES = f"""
 WITH units AS (
@@ -126,6 +140,7 @@ SELECT u.id, p.id, p.display_name, u.display_name,
        (SELECT count(*) FROM trust_documents AS d
         WHERE d.unit_id = u.id AND d.kind = 'listing_photo'
           AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)),
+       k.listing_id IS NOT NULL AND trust_listing_in_feed(k.listing_id), {NEEDS},
        {unit_details.COLUMNS}, count(*) OVER ()
 FROM units AS u
 JOIN trust_properties AS p ON p.id = u.property_id
@@ -140,6 +155,7 @@ LEFT JOIN LATERAL (
     LIMIT 1
 ) AS k ON true
 {unit_details.LATEST}
+LEFT JOIN LATERAL trust_property_address(p.id) AS a ON true
 WHERE (u.free_on <= %(until)s OR k.id IS NOT NULL) AND {scope.within("p.id")}
 ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", u.id
 LIMIT %(limit)s OFFSET %(offset)s
@@ -209,6 +225,8 @@ def staff_vacancies(
                 else (day - listed_at.astimezone(UTC).date()).days + 1,
                 photos=photos,
                 details=unit_details.shown(beds, half_baths, size, market),
+                in_feed=in_feed,
+                feed_needs=needs,
             )
             for (
                 unit_id,
@@ -224,6 +242,8 @@ def staff_vacancies(
                 description,
                 listed_at,
                 photos,
+                in_feed,
+                needs,
                 beds,
                 half_baths,
                 size,
