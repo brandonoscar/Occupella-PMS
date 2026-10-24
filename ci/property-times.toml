@@ -71,6 +71,7 @@ nightly_factor = 60
 "tests/properties/test_rent_roll_properties.py::test_the_model_counts_a_charge_paid_twice_by_then_as_the_database_does" = 0.1
 "tests/properties/test_rent_run_properties.py::test_the_nightly_run_charges_what_the_three_runs_charge_and_once" = 15.3
 "tests/properties/test_renters_insurance_properties.py::test_the_policy_running_last_counts_against_the_terms_in_force" = 5.4
+"tests/properties/test_reserve_alert_properties.py::test_an_owner_hears_once_per_drop_below_the_reserve_whatever_moves_and_whenever_it_runs" = 12.2
 "tests/properties/test_signers_properties.py::test_only_the_broker_and_its_signers_pay_out_once_a_broker_is_on_file" = 41.9
 "tests/properties/test_staff_roles_properties.py::test_roles_decide_who_pays_out_and_who_approves" = 51.1
 "tests/properties/test_tax_credit_properties.py::test_a_tax_credit_units_limits_and_certifications_follow_the_tables_in_force" = 6.5
