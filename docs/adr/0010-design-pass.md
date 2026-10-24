@@ -38,6 +38,8 @@ code forced a different choice, with the reason. Later phases add their sections
 
 ## Phase 1a: a bill's life (part A)
 
+Screens before and after: `docs/design-pass/1a/`.
+
 A bill reads in plain words, as one of:
 
 | Status | When |
