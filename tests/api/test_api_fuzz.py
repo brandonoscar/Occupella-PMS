@@ -15,6 +15,7 @@ from people import join_as_staff
 from schemathesis.checks import not_a_server_error
 
 from pms.api import create_app
+from tools.run_rules import in_shard
 
 _fuzz = tomllib.loads((Path(__file__).parents[2] / "ci/thresholds.toml").read_text())["fuzz"]
 _nightly = os.environ.get("HYPOTHESIS_PROFILE") == "nightly"
@@ -27,6 +28,10 @@ def api_schema(settings):
 
 
 schema = schemathesis.pytest.from_fixture("api_schema")
+# Nightly, the operations are shared out over jobs (PMS_FUZZ_SHARD k/n, ledger-invariants.yml),
+# each by a hash of its own "METHOD /path", so together the jobs send every operation its requests.
+if _shard := os.environ.get("PMS_FUZZ_SHARD"):
+    schema = schema.include(lambda ctx: in_shard(ctx.operation.label, _shard, "PMS_FUZZ_SHARD"))
 
 
 @pytest.fixture
