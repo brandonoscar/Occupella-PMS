@@ -4799,7 +4799,7 @@ test("a tenant pays rent online on the payments partner's page, it reaches the b
 });
 
 
-test("a tenant sets up autopay and saves a bank account, Run rent now starts its payment, the bank pays it, and staff turn it off", async ({
+test("a tenant sets up autopay, saves a bank account and turns it off, Run rent now starts a payment, the bank pays it, and staff turn it off", async ({
   browser,
   page,
 }) => {
@@ -4821,6 +4821,13 @@ test("a tenant sets up autopay and saves a bank account, Run rent now starts its
   await expect(part(tenant, "Autopay").getByTestId("autopay")).toHaveText(
     "On: pays the balance due, up to $3,000.00, on each rent due day, from Test bank ••••0000",
   );
+  // The tenant turns it off again: nothing more is taken, and the card offers to set it up.
+  await part(tenant, "Autopay").getByRole("button", { name: "Turn off autopay" }).click();
+  await tenant.getByRole("alertdialog").getByRole("button", { name: "Turn it off" }).click();
+  await expect(part(tenant, "Autopay")).toContainText("Autopay is off.");
+  await expect(
+    part(tenant, "Autopay").getByRole("button", { name: "Save a bank account and turn on autopay" }),
+  ).toBeVisible();
   await tenant.close();
 
   // Drew's autopay, saved before this month's due day: an admin's Run rent now starts its payment.

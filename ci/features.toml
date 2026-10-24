@@ -1036,6 +1036,6 @@ operations = [
   "GET /api/payments/fake",
 ]
 browser = [
-  "features.spec.ts › a tenant sets up autopay and saves a bank account, Run rent now starts its payment, the bank pays it, and staff turn it off",
+  "features.spec.ts › a tenant sets up autopay, saves a bank account and turns it off, Run rent now starts a payment, the bank pays it, and staff turn it off",
 ]
 
