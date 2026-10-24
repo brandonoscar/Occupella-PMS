@@ -246,7 +246,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   screen at `/general-ledger` (`src/pms/api/general_ledger.py`: trust_report_general_ledger's
   rows by account, a page of accounts at a time; cash basis) with its Journal entry button to
   `/journal` (`src/pms/api/journal.py`), Pay owners at `/owner-draws` (several owners at once, all
-  or none, recorded as sent by check or EFT), management fees at `/management-fees` (each
+  or none, each by ACH or check, its owner's way unless staff pick one; the draws prepared on the
+  draw day at the top; maybe with their ACH file and checks), management fees at `/management-fees` (each
   agreement's fee for a period, worked out and rolled back, then Collect fees), budgets at
   `/budgets` (`src/pms/api/budgets.py`: a property's year in one grid, saved at once, or beside
   what happened). The company's fees leave trust from Banking (an
@@ -467,6 +468,22 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   leaves out a declined bill leaves it out; refused once money was taken for the bill. A bill set
   aside before 0152 keeps its money where it went and reads Ready to pay. Statuses: Entered (dated
   after today), Waiting for owner, Ready to pay, Short, Partly paid, Paid, Void.
+- Owner draws and payout files (migration 0153, `docs/adr/0010-design-pass.md` phase 1b,
+  `src/pms/api/payouts.py`): a company's draw day (`trust_owner_draw_settings`, 1 to 28 or none;
+  Company setup, area owners); that night, or the first after, the nightly run prepares each
+  owner's draw once a month (`trust_prepare_owner_draws`: each account's available, as a draw
+  counts it, and its owner's way of being paid; `trust_draw_runs`), which the Dashboard and Pay
+  owners show until staff pay them (`trust_draw_run_approvals`, once); nothing is paid before. An
+  owner is paid by ACH or check (`trust_owner_payout_methods`, a check until changed). An owner's
+  or vendor's bank account (`trust_payee_bank_accounts`) keeps its number sealed under the
+  server's `PMS_DATA_KEY` (`src/pms/sealed.py`, AES-GCM, the row's id bound in; no key, no
+  numbers and no ACH file); only its last four come back. A trust bank account's ACH details from
+  its bank and first check number (`trust_bank_payout_settings`, its Payouts tab, area setup).
+  Pay owners and Pay bills may write their payouts' files (`trust_payout_runs`, per trust bank
+  account and way paid): a NACHA file (PPD to owners, CCD to vendors) and checks to print on
+  pre-printed stock, numbered on; a download takes disburse and is logged
+  (`trust_payout_file_downloads`). The PMS moves no money: the company's bank does. All
+  append-only; the AI role reads no bank account, ACH detail or download.
 - Shared bills and markups (migration 0083, `docs/law.md`): one vendor invoice shared across
   properties (`trust_shared_bills`, `trust_shared_bill_parts`; `POST /api/payables/shared-bills`)
   is a bill for each owner's property account's share, under the invoice's reference with /1,
@@ -930,7 +947,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   rent and recurring charges for the month (due on its first day, or on a lease's own due day
   once it comes; migration 0081), the late fees of rents past
   their grace as of the day, the recurring bills due, with their owners' emails, and the recurring
-  work orders due (migration 0085), and, for a company that turns it on in Company setup
+  work orders due (migration 0085), the owners' draws on the company's draw day (prepared, not
+  paid; migration 0153), and, for a company that turns it on in Company setup
   (`trust_prepaid_rent_settings`, migration 0117: append-only, the latest row holding, naming who
   changed it; `/api/rent/prepaid/automatic`, area rent; off by default), each lease's tenants'
   prepaid rent for what it owes, as Use prepaid rent does, once a day per lease, leaving a lease on

@@ -94,6 +94,33 @@ def test_a_night_charges_the_months_rent_late_fees_and_bills_once(conn, app_conn
     ]
 
 
+def test_a_night_on_or_after_the_draw_day_prepares_the_owners_draws_once_and_pays_none(
+    conn, app_conn, pmc
+):
+    owner = pmc.owners[0]
+    conn.execute(
+        "SELECT trust_record_owner_contribution(%s, %s, 'in-1', 250.00, %s, NULL)",
+        (pmc.pmc_id, owner.account, datetime(2026, 10, 1, tzinfo=UTC)),
+    )
+    conn.execute(
+        "INSERT INTO trust_owner_draw_settings (pmc_id, draw_day) VALUES (%s, 16)", (pmc.pmc_id,)
+    )
+
+    before = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16 - DAY, URL)
+    first = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16, URL)
+    again = nightly.run_pmc(app_conn, pmc.pmc_id, OCT_16 + DAY, URL)
+
+    assert (before.draws_prepared, first.draws_prepared, again.draws_prepared) == (0, 1, 0)
+    assert conn.execute(
+        "SELECT r.prepared_on, l.ledger_account_id, l.amount::text FROM trust_draw_runs AS r"
+        " JOIN trust_draw_run_lines AS l ON l.run_id = r.id WHERE r.pmc_id = %s",
+        (pmc.pmc_id,),
+    ).fetchall() == [(OCT_16, owner.account, "250.00")]
+    assert not conn.execute(
+        "SELECT 1 FROM trust_owner_draws WHERE pmc_id = %s", (pmc.pmc_id,)
+    ).fetchone()
+
+
 def test_a_lease_starting_later_in_the_month_is_charged_its_part_month(conn, app_conn, pmc):
     lease = lease_since(conn, pmc, date(2026, 10, 20), "3100.00")
 
