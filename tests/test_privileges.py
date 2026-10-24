@@ -281,6 +281,10 @@ TABLES = {
     # designation, each from a day, which staff record.
     "trust_tax_credit_limits": {"SELECT", "INSERT"},
     "trust_tax_credit_units": {"SELECT", "INSERT"},
+    # Owners' accounts fallen below their reserve and back (migration 0150), read by the AI as
+    # the ledger is; what failed, told to the company's admins, which it never reads.
+    "trust_reserve_events": {"SELECT", "INSERT"},
+    "trust_admin_alerts": {"SELECT", "INSERT"},
     # A unit's details (migration 0124): bedrooms, bathrooms, square feet and market rent, which
     # staff record; the latest row holds.
     "trust_unit_details": {"SELECT", "INSERT"},
@@ -345,6 +349,8 @@ AI_NEVER_READS = {
     # Emails to owners and their deliveries: people's addresses (ADR 0004).
     "trust_emails",
     "trust_email_deliveries",
+    # What failed, told to an admin, maybe in the database's own words (migration 0150).
+    "trust_admin_alerts",
     # Tenants', owners' and vendors' emails, phones and mailing addresses (ADR 0005).
     "trust_contacts",
     # What staff write about people and their homes (ADR 0006).
@@ -508,6 +514,7 @@ FUNCTIONS = {
     "trust_check_tenant_login()": set(),
     "trust_refuse_closed_year()": set(),
     "trust_check_history_line()": set(),
+    "trust_check_reserve_event()": set(),
     "trust_check_assistance_record()": set(),
     "trust_check_decision_override()": set(),
     "trust_fill_bill_markup()": set(),
