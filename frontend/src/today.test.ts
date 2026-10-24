@@ -7,11 +7,12 @@ import {
 } from "./today";
 
 const BILL: Bill = {
-  id: "b1", vendor_id: "v1", vendor: "Vendor A", reference: "INV-1", account: "a1", owner: "Owner A",
+  id: "b1", vendor_id: "v1", vendor: "Vendor A", reference: "INV-1", account: "a1", owner_id: "o1", owner: "Owner A",
   property_id: "pr1", property: "Property 1", split: false, overdue: false, bill_date: "2026-10-01", due_on: "2026-10-16", amount: "1200.00",
   memo: "Repair", work_order_id: null, expense_account_id: null, expense_account: null,
-  approval_limit: "500.00", approved_by: null,
-  declined_by: null, decline_reason: null, owner_email: null, status: "needs approval", markup: null, markup_percent: null, shared_bill_id: null,
+  approval_limit: "500.00", approved_by: null, voided: false,
+  declined_by: null, decline_reason: null, owner_email: null, status: "waiting for owner", markup: null, markup_percent: null, shared_bill_id: null,
+  paid: "0.00", left: "1200.00", held: "1200.00", held_since: null, short: null, needed: null,
 };
 
 describe("today", () => {
@@ -38,13 +39,13 @@ describe("today", () => {
   });
   it("reads a bill by when it is due", () => {
     expect(billLine(BILL, "2026-10-13")).toBe(
-      "Vendor A INV-1 for Property 1: $1,200.00, due in 3 days (needs approval)",
+      "Vendor A INV-1 for Property 1: $1,200.00, due in 3 days (waiting for owner)",
     );
-    expect(billLine({ ...BILL, due_on: "2026-10-13", status: "set aside" }, "2026-10-13")).toBe(
-      "Vendor A INV-1 for Property 1: $1,200.00, due today (set aside)",
+    expect(billLine({ ...BILL, due_on: "2026-10-13", status: "ready to pay" }, "2026-10-13")).toBe(
+      "Vendor A INV-1 for Property 1: $1,200.00, due today (ready to pay)",
     );
     expect(billLine({ ...BILL, due_on: "2026-10-12" }, "2026-10-13")).toBe(
-      "Vendor A INV-1 for Property 1: $1,200.00, 1 day late (needs approval)",
+      "Vendor A INV-1 for Property 1: $1,200.00, 1 day late (waiting for owner)",
     );
   });
   it("reads where month-end stands", () => {

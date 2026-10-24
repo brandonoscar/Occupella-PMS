@@ -1,5 +1,6 @@
 import { Plus, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { api } from "../api";
 import { Button } from "../components/Button";
 import { useConfirm } from "../components/Confirm";
 import { Field } from "../components/Field";
@@ -9,8 +10,8 @@ import { Select } from "../components/Select";
 import type { ContentType } from "../documents";
 import { MAX_BYTES, titleOf, toBase64, typeOf } from "../documents";
 import { day, money, sumMoney, usDate } from "../money";
-import type { Bill, PayoutMethod } from "../payables";
-import { evenShares, linesNote } from "../payables";
+import type { Bill, PayoutMethod, SimilarBill } from "../payables";
+import { evenShares, linesNote, similarNote } from "../payables";
 import type { Portfolio } from "../setup";
 import { expenseAccountLabel } from "../setup";
 import { sharesLine } from "../rentals";
@@ -137,6 +138,29 @@ function ownersOf(books: Portfolio, account: string): Portfolio["accounts"] {
 
 type Invoice = { title: string; type: ContentType | null; size: number; base64: string };
 
+// The vendor's bills entered under the reference being typed but for case, spaces and punctuation:
+// asked a moment after typing stops, so Record bill warns before a second one is entered.
+function useSimilar(vendor: string, reference: string): SimilarBill[] {
+  const [found, setFound] = useState<SimilarBill[]>([]);
+  useEffect(() => {
+    if (!vendor || !reference.trim()) {
+      setFound([]);
+      return;
+    }
+    let live = true;
+    const wait = setTimeout(() => {
+      const query = new URLSearchParams({ vendor_id: vendor, reference: reference.trim() });
+      api.get<SimilarBill[]>(`/api/payables/similar-bills?${query}`)
+        .then((bills) => live && setFound(bills)).catch(() => live && setFound([]));
+    }, 300);
+    return () => {
+      live = false;
+      clearTimeout(wait);
+    };
+  }, [vendor, reference]);
+  return found;
+}
+
 // Where Record bill starts when a work order's Create bill opens it: its vendor, property, memo
 // and the work order the bill names.
 export type BillStart = { vendorId: string | null; propertyId: string; workOrderId: string; memo: string };
@@ -162,6 +186,7 @@ export function RecordBillForm({ books, record, start }: { books: Portfolio; rec
     books.accounts.slice(0, 2).map((a) => ({ account: a.account, amount: "" })));
   const [markup, setMarkup] = useState(false);
   const [owned, setOwned] = useState(true);
+  const similar = useSimilar(vendor, reference);
   if (books.vendors.length === 0 || books.accounts.length === 0) {
     return <Notice tone="info">Add a vendor from Vendors and a property with an owner from Properties first.</Notice>;
   }
@@ -229,6 +254,9 @@ export function RecordBillForm({ books, record, start }: { books: Portfolio; rec
           {books.accounts.map((a) => <option key={a.account} value={a.account}>{a.owner}, {a.property}</option>)}
         </Select>
       )}
+      <p className="text-sm text-ink-subtle">
+        A bill is paid from an owner's money in trust. The company pays its own bills outside the PMS.
+      </p>
       {owners.length > 1 && (
         <label className="flex items-center gap-2 text-sm text-ink">
           <input type="checkbox" checked={owned} onChange={(e) => setOwned(e.target.checked)} />
@@ -237,6 +265,11 @@ export function RecordBillForm({ books, record, start }: { books: Portfolio; rec
       )}
       <Field label="Ref #" id="bill-reference" required maxLength={200} value={reference}
         onChange={(e) => setReference(e.target.value)} />
+      {similar.length > 0 && (
+        <p role="status" className="text-sm text-danger" data-testid="similar-bills">
+          {similarNote(books.vendors.find((v) => v.id === vendor)?.name ?? "This vendor", similar)}
+        </p>
+      )}
       <div className="flex flex-wrap gap-3">
         <Field label="Bill date" id="bill-date" type="date" required value={dated} onChange={(e) => setDated(e.target.value)} />
         <Field label="Due" id="bill-due" type="date" required value={due} onChange={(e) => setDue(e.target.value)} />
@@ -313,7 +346,7 @@ export function ApprovalForm({ bill, record }: { bill: Bill; record: Recorder })
   );
 }
 
-// The owner's decline as they gave it to staff: the bill is never set aside or paid.
+// The owner's decline as they gave it to staff: the bill is void, never paid.
 export function DeclineForm({ bill, record }: { bill: Bill; record: Recorder }) {
   const [on, setOn] = useState(day(new Date()));
   const [by, setBy] = useState("");
@@ -335,41 +368,88 @@ export function DeclineForm({ bill, record }: { bill: Bill; record: Recorder }) 
   );
 }
 
-// Set aside: the bill's amount moves from the owner's money to the vendor's, to pay it.
-export function SetAsideForm({ bill, record }: { bill: Bill; record: Recorder }) {
+// Record payment: what the trust bank account paid the vendor (all that is left, or a part), on
+// which day, by check (with its number) or ACH, maybe with the receipt. Money leaves trust, so
+// staff confirm the amount first. The PMS records it; it sends nothing. Sent again (a retry), the
+// same request id records nothing new.
+export function PayForm({ bill, record }: { bill: Bill; record: Recorder }) {
   const [on, setOn] = useState(day(new Date()));
+  const [method, setMethod] = useState<PayoutMethod>("check");
+  const [number, setNumber] = useState("");
+  const [amount, setAmount] = useState(bill.left);
+  const [receipt, setReceipt] = useState<Invoice | null>(null);
+  const [request] = useState(() => crypto.randomUUID());
+  const { ask, prompt } = useConfirm();
+  // Worked out only from an amount in cents: a typo leaves the bill's amount left as it was.
+  const valid = /^\d+(\.\d{1,2})?$/.test(amount.trim());
+  const part = valid && sumMoney([amount]) !== sumMoney([bill.left]);
+  const after = valid ? sumMoney([bill.left, `-${amount}`]) : bill.left;
+  const problem = receipt === null ? ""
+    : receipt.type === null ? "A receipt is a PDF, a JPEG or a PNG."
+      : receipt.size > MAX_BYTES ? "A receipt is at most 5 MB." : "";
+  const how = method === "check" ? (number ? `check ${number}` : "check") : "ACH";
   return (
     <Form className="flex flex-col gap-3" onSubmit={(event) => {
       event.preventDefault();
-      void record(`/api/payables/bills/${bill.id}/set-aside`, { on },
-        () => `${money(bill.amount)} is set aside for ${bill.reference}.`);
+      if (problem || !valid) return;
+      const left = part ? ` ${money(after)} is left to pay after it.` : "";
+      ask(`Pay ${money(amount)} to ${bill.vendor} for ${bill.reference} by ${how} on ${usDate(on)}?${left}`, () =>
+        record(`/api/payables/bills/${bill.id}/pay`, {
+          on, method, amount, request_id: request,
+          ...(method === "check" && number ? { check_number: number } : {}),
+          ...(receipt ? { receipt: { title: receipt.title, content_type: receipt.type, content_base64: receipt.base64 } } : {}),
+        }, () => (part ? `${money(amount)} of ${bill.reference} is paid.` : `${bill.reference} is paid.`)), "Pay");
     }}>
-      <Field label="Set aside on" id={`set-aside-on-${bill.id}`} type="date" required value={on}
-        onChange={(e) => setOn(e.target.value)} />
-      <div><Button type="submit">Set aside</Button></div>
+      <Field label="Amount" id={`pay-amount-${bill.id}`} inputMode="decimal" required value={amount}
+        onChange={(e) => setAmount(e.target.value)} />
+      <Select label="Sent by" id={`pay-method-${bill.id}`} value={method}
+        onChange={(e) => setMethod(e.target.value as PayoutMethod)}>
+        <option value="check">Check</option>
+        <option value="EFT">ACH</option>
+      </Select>
+      {method === "check" && (
+        <Field label="Check number" id={`pay-check-${bill.id}`} inputMode="numeric" maxLength={15} pattern="[0-9]*"
+          value={number} onChange={(e) => setNumber(e.target.value)} />
+      )}
+      <Field label="Paid on" id={`pay-on-${bill.id}`} type="date" required value={on} onChange={(e) => setOn(e.target.value)} />
+      <label htmlFor={`pay-receipt-${bill.id}`} className="flex flex-col gap-1.5 text-sm text-ink-muted">
+        Receipt or check stub (PDF, JPEG or PNG)
+        <input id={`pay-receipt-${bill.id}`} type="file" accept=".pdf,.jpg,.jpeg,.png" className="text-sm text-ink"
+          onChange={async (e) => {
+            const picked = e.target.files?.[0];
+            if (!picked) return setReceipt(null);
+            const bytes = new Uint8Array(await picked.arrayBuffer());
+            setReceipt({ title: titleOf(picked.name), type: typeOf(picked), size: picked.size, base64: toBase64(bytes) });
+          }} />
+      </label>
+      <Notice tone="error">{problem}</Notice>
+      <div><Button type="submit" disabled={problem !== "" || !valid}>Pay {money(valid ? amount : "0")}</Button></div>
+      <p className="text-sm text-ink-subtle">
+        Records what the bank paid out of trust{part ? `; ${money(after)} stays left to pay` : ""}. The PMS sends no money.
+        {method === "check" ? " With its number, the check matches its bank statement line by itself." : ""}
+      </p>
+      {prompt}
     </Form>
   );
 }
 
-// Pay: the trust bank account paid the vendor, by check or EFT. It sends money out of trust, so
-// staff confirm the amount first. The PMS records it; it sends nothing.
-export function PayForm({ bill, record }: { bill: Bill; record: Recorder }) {
-  const [on, setOn] = useState(day(new Date()));
-  const [method, setMethod] = useState<PayoutMethod>("check");
+// Void: a bill entered by mistake, with why. Nothing was paid, and its hold goes back to the
+// owner's balance; it is never paid after.
+export function VoidForm({ bill, record }: { bill: Bill; record: Recorder }) {
+  const [why, setWhy] = useState("");
   const { ask, prompt } = useConfirm();
   return (
     <Form className="flex flex-col gap-3" onSubmit={(event) => {
       event.preventDefault();
-      ask(`Pay ${money(bill.amount)} to ${bill.vendor} for ${bill.reference} by ${method} on ${usDate(on)}?`, () =>
-        record(`/api/payables/bills/${bill.id}/pay`, { on, method }, () => `${bill.reference} is paid.`));
+      ask(`Void ${bill.vendor} ${bill.reference} (${money(bill.amount)})? Nothing was paid; the hold goes back to ${bill.owner}'s balance.`,
+        () => record(`/api/payables/bills/${bill.id}/void`, { reason: why }, () => `${bill.reference} is void.`), "Void");
     }}>
-      <Select label="Sent by" id={`pay-method-${bill.id}`} value={method}
-        onChange={(e) => setMethod(e.target.value as PayoutMethod)}>
-        <option value="check">Check</option>
-        <option value="EFT">EFT</option>
-      </Select>
-      <Field label="Paid on" id={`pay-on-${bill.id}`} type="date" required value={on} onChange={(e) => setOn(e.target.value)} />
-      <div><Button type="submit">Pay {money(bill.amount)}</Button></div>
+      <Field label="Why" id={`void-why-${bill.id}`} required maxLength={1000} value={why}
+        onChange={(e) => setWhy(e.target.value)} />
+      <div><Button type="submit" variant="danger">Void</Button></div>
+      <p className="text-sm text-ink-subtle">
+        Nothing was paid; the hold goes back to {bill.owner}'s balance. A void bill is never paid.
+      </p>
       {prompt}
     </Form>
   );

@@ -193,7 +193,7 @@ def test_the_breakdown_is_what_the_account_holds_by_kind_and_by_owner(client, co
     assert [(h["label"], h["amount"]) for h in found["held"]] == [
         ("Owners' money", "725.00"),
         ("Prepaid rent", "0.00"),
-        ("Set aside for vendors", "0.00"),
+        ("Held to pay vendors", "0.00"),
         ("The company's fees", "0.00"),
     ]
     assert sum(Decimal(h["amount"]) for h in found["held"]) == Decimal(found["book_cash"])

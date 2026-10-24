@@ -411,6 +411,10 @@ FUNCTIONS = {
     "trust_take_monthly_management_fees(uuid,date)": {"trust_app"},
     "trust_set_aside_bill(uuid,uuid,timestamptz)": {"trust_app"},
     "trust_pay_bill(uuid,uuid,timestamptz)": {"trust_app"},
+    # A payment of a bill or a part of it, once per request key (ADR 0010).
+    "trust_pay_bill_part(uuid,uuid,numeric,text,timestamptz)": {"trust_app"},
+    # What each open bill holds of its owner's balance: the app's, for the bills pages.
+    "trust_bill_holds(uuid)": {"trust_app"},
     "trust_charge_rent_due(uuid,date)": {"trust_app"},
     "trust_rent_for_month(date,date,numeric,date)": {"trust_app"},
     "trust_rent_on(uuid,date)": {"trust_app"},
@@ -492,6 +496,7 @@ FUNCTIONS = {
     "trust_management_fee_collected(text,timestamptz,timestamptz)": set(),
     "trust_post_fee(trust_ledger_accounts,numeric,timestamptz,text)": set(),
     "trust_lock_bill(uuid,uuid)": set(),
+    "trust_pay_bill_amount(trust_bills,numeric,text,timestamptz)": set(),
     "trust_lock_journal_entry(uuid,uuid)": set(),
     "trust_unpaid_bills(text,date)": set(),
     # Helpers the bank matching functions call as the owner: nobody else.
@@ -700,6 +705,8 @@ SECURITY_DEFINER = {
     "trust_take_owner_fee(uuid,text,text,numeric,text,text,timestamptz)",
     "trust_set_aside_bill(uuid,uuid,timestamptz)",
     "trust_pay_bill(uuid,uuid,timestamptz)",
+    "trust_pay_bill_part(uuid,uuid,numeric,text,timestamptz)",
+    "trust_pay_bill_amount(trust_bills,numeric,text,timestamptz)",
     "trust_assess_late_fees(uuid,date)",
     "trust_charge_nsf_fee(uuid,text)",
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)",

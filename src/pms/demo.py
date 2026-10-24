@@ -378,8 +378,12 @@ def books(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
                 expense_account_id=demo.expense_accounts["Repairs"],
             ),
         ).id
-        payables.set_aside(s, conn, bill, payables.Day(on=month_ago + 11 * DAY))
-        payables.pay(s, conn, bill, payables.Paying(on=month_ago + 14 * DAY))
+        payables.pay(
+            s,
+            conn,
+            bill,
+            payables.Paying(on=month_ago + 14 * DAY, check_number="1041", request_id=uuid.uuid4()),
+        )
     close_month(b, demo, manager, month_ago, last_month)
     reconcile_month(b, demo, month_ago, last_month, approve=True)
 
@@ -418,9 +422,11 @@ def books(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
                 approved_on=last_month + 9 * DAY, approved_by="Demo Owner A, by email"
             ),
         )
-        payables.set_aside(s, conn, roof, payables.Day(on=last_month + 10 * DAY))
         demo.outstanding = payables.pay(
-            s, conn, roof, payables.Paying(on=this_month - DAY)
+            s,
+            conn,
+            roof,
+            payables.Paying(on=this_month - DAY, check_number="1042", request_id=uuid.uuid4()),
         ).transfer_id
     close_month(b, demo, manager, last_month, this_month)
     reconcile_month(b, demo, last_month, this_month, approve=False, skip={demo.outstanding})
@@ -1186,6 +1192,48 @@ def bills_of_every_status(b: Builder, demo: Demo, today: date, public_url: str) 
             payables.PayBills(
                 on=on_or_before(entered + DAY, today), method="EFT", bill_ids=[made["ELC-3005"]]
             ),
+        )
+        # A bill at every step of its life (ADR 0010): the overdue disposal paid in part; the
+        # water heater flush entered twice, the second voided; a roof the owner approved that
+        # their balance is short of.
+        payables.pay(
+            s,
+            conn,
+            made["PLB-3003"],
+            payables.Paying(
+                on=today, amount=D("100.00"), check_number="1043", request_id=uuid.uuid4()
+            ),
+        )
+        twice = payables.enter_bill(
+            s,
+            conn,
+            payables.NewBill(
+                vendor_id=demo.vendors["Demo Plumbing Co"],
+                account=demo.accounts["Oak Terrace"],
+                reference="PLB 3002",
+                bill_date=min(entered, today),
+                due_on=today + 5 * DAY,
+                amount=D("180.00"),
+                memo="Water heater flush",
+            ),
+        ).id
+        payables.void(s, conn, twice, payables.Void(reason="Entered twice: it is PLB-3002"))
+        roof = payables.enter_bill(
+            s,
+            conn,
+            payables.NewBill(
+                vendor_id=demo.vendors["Demo Roofing Co"],
+                account=demo.accounts["Birch Flats"],
+                reference="RF-3006",
+                bill_date=today,
+                due_on=today + 30 * DAY,
+                amount=D("24000.00"),
+                memo="Roof replacement",
+                expense_account_id=demo.expense_accounts["Repairs"],
+            ),
+        ).id
+        payables.approve(
+            s, conn, roof, payables.Approval(approved_on=today, approved_by="Demo Owner, by phone")
         )
     # Tonight's run, as the manager runs it by hand: late fees on rent still open past its
     # grace, and this month's recurring bills.
