@@ -19,6 +19,8 @@ job_minutes = 270
 nightly_factor = 60
 
 [seconds]
+"tests/properties/test_announcement_todo_properties.py::test_an_announcement_reaches_each_address_living_there_once" = 6.3
+"tests/properties/test_announcement_todo_properties.py::test_the_latest_assignment_holds_and_a_done_todo_takes_no_other" = 9.6
 "tests/properties/test_archival_properties.py::test_a_record_is_archived_only_while_nothing_is_open_on_it" = 6.1
 "tests/properties/test_assistance_compliance_properties.py::test_the_compliance_report_says_where_each_assisted_lease_stands_on_any_day" = 8.3
 "tests/properties/test_assistance_properties.py::test_the_rent_splits_between_tenant_and_authority_to_the_cent" = 16.0
