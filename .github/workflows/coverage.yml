@@ -8,7 +8,8 @@ name: coverage
 #
 # Three steps, so the suite runs in half the time and a PR still runs at most 8 jobs at once
 # (docs/CI.md, "Job budget"): the lint (about a minute, most of it building the image); then the
-# suite in two shards side by side (PMS_TEST_SHARD), each with its own coverage data; then
+# suite in two shards side by side (PMS_TEST_SHARD; the property tests dealt by their times in
+# ci/property-times.toml, the rest round robin), each with its own coverage data; then
 # `coverage`, which adds the shards up and applies the gates. `coverage` is the required check,
 # and fails unless the lint and both shards passed.
 on:
@@ -128,6 +129,7 @@ jobs:
       - name: This shard's tests, with Python and PL/pgSQL coverage
         env:
           PMS_TEST_SHARD: ${{ matrix.shard }}/2
+          PMS_TEST_SHARD_TIMES: ci/property-times.toml
           PMS_SQL_COVERAGE_OUT: coverage/sql-raw-${{ matrix.shard }}.json
           COVERAGE_FILE: coverage/tests-${{ matrix.shard }}.coverage
           HYPOTHESIS_PROFILE: pr
