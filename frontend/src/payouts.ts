@@ -76,6 +76,17 @@ export function drawRunLine(run: DrawRun): string {
   return `Prepared ${usDate(run.prepared_on)} for ${n} owner account${n === 1 ? "" : "s"}, ${money(run.total)}.`;
 }
 
+// The draws prepared on the draw day, as Pay owners and the Dashboard choose them: what each had
+// available then, or less if it has less now; one with nothing available now is left out.
+export function drawChoices(run: DrawRun): Record<string, string> {
+  const chosen: Record<string, string> = {};
+  for (const line of run.lines) {
+    const now = Number(line.available_now) < Number(line.amount) ? line.available_now : line.amount;
+    if (Number(now) > 0) chosen[line.account] = now;
+  }
+  return chosen;
+}
+
 // Where a run's file downloads from.
 export function runFile(run: Pick<PayoutRun, "id" | "method">): { href: string; label: string } {
   return run.method === "EFT"

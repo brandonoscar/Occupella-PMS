@@ -79,6 +79,10 @@ async function joinPortal(page: Page, invite: string): Promise<void> {
 const part = (page: Page, title: string) =>
   page.locator("section", { has: page.getByRole("heading", { level: 2, name: title, exact: true }) });
 
+// A row of the Dashboard's Needs attention, by what it is ("Late rent", "Bill due"...).
+const attention = (page: Page, what: string) =>
+  page.getByRole("list", { name: "Needs attention" }).getByRole("listitem", { name: what });
+
 async function section(page: Page, name: string): Promise<void> {
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name, exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name, exact: true })).toBeVisible();
@@ -229,9 +233,9 @@ test("staff charge this month's rent and its late fees, and the Dashboard shows 
 
   // Last month waits for its approval on both trust bank accounts.
   await section(page, "Dashboard");
-  const monthEnd = page.getByRole("region", { name: "Month-end" });
-  await expect(monthEnd).toContainText("Demo operating trust account");
-  await expect(monthEnd).toContainText("Demo security deposit account");
+  const monthEnd = attention(page, "Month-end");
+  await expect(monthEnd.filter({ hasText: "Demo operating trust account" })).toHaveCount(1);
+  await expect(monthEnd.filter({ hasText: "Demo security deposit account" })).toHaveCount(1);
 
   // Rent posts by itself every night (off for these tests); an admin runs it by hand from the
   // rent roll's ⋯ menu: this month's rent and recurring charges, and rent unpaid past five
@@ -278,22 +282,22 @@ test("staff charge this month's rent and its late fees, and the Dashboard shows 
   await expect(page.getByRole("main")).toContainText("$100.00 paid what is owed.");
   await expect(lease("Aspen Row, Unit 1").getByTestId("balance")).toHaveText(late ? "$1,130.00" : "$1,080.00");
 
-  // The Dashboard counts what the six leases owe (and the late fees, less the $100.00 paid), and
-  // the one vacant unit.
+  // The Dashboard counts what the six leases owe past due (and the late fees, less the $100.00
+  // paid), and the one vacant unit, each beside a month before.
   await section(page, "Dashboard");
   const figures = page.getByRole("list", { name: "Figures" });
-  const owing = figures.getByRole("link", { name: /Outstanding balances/ });
+  const owing = figures.getByRole("link", { name: /^Past due/ });
   await expect(owing).toContainText(late ? "$9,645.00" : "$9,345.00");
-  await expect(owing).toContainText("6 leases owe");
-  await expect(figures.getByRole("link", { name: /Vacant units/ })).toContainText("1no lease in effect today");
-  // Needs attention lists the rent due before today and not paid, with the way to the rent roll.
+  await expect(owing).toContainText(/from \d\d\/\d\d\/\d{4}$/);
+  await expect(figures.getByRole("link", { name: /Vacant units/ })).toContainText("Vacant units1, ");
+  // Needs attention lists each lease's rent due before today and not paid, each with Send
+  // reminder.
   if (dayOfMonth() > 1) {
-    const lateRent = page.getByRole("region", { name: "Late rent" });
-    await expect(lateRent.getByRole("listitem")).toHaveCount(6);
-    await lateRent.getByRole("link", { name: "Open Rent roll" }).click();
-    await expect(page.getByRole("heading", { level: 1, name: "Rent roll" })).toBeVisible();
+    const lateRent = attention(page, "Late rent");
+    await expect(lateRent).toHaveCount(6);
+    await expect(lateRent.getByRole("button", { name: "Send reminder" })).toHaveCount(6);
   } else {
-    await expect(page.getByRole("region", { name: "Late rent" })).toHaveCount(0);
+    await expect(attention(page, "Late rent")).toHaveCount(0);
   }
 
   // A payment pays rent first, then the monthly charges, then other fees: Birch Flats Unit A owes
@@ -1101,9 +1105,9 @@ test("staff add a recurring bill and stop it, and record the decline of an owner
   const skylight = billRow(page, "Demo Roofing Co", "RF-3001");
   // It is due today, so the Dashboard lists it.
   await section(page, "Dashboard");
-  const due = page.getByRole("region", { name: "Bills due this week" });
-  await expect(due).toContainText("RF-3001");
-  await due.getByRole("link", { name: "Open Bills" }).click();
+  const due = attention(page, "Bill due").filter({ hasText: "RF-3001" });
+  await expect(due.getByRole("button", { name: "Pay bill" })).toBeVisible();
+  await section(page, "Bills");
   await skylight.getByRole("cell").first().click();
   await expect(page.getByRole("main")).toContainText(
     "No email went to the owner: they have no active portal login. Ask them yourself.",
@@ -1421,7 +1425,7 @@ test("a lease ended mid-month keeps only its days of the month's rent, and its d
   await expect(page.getByText("Kept carpet-cleaning as a receipt for Carpet cleaning.")).toBeVisible();
   await expect(lease.getByRole("link", { name: "carpet-cleaning" })).toBeVisible();
   await section(page, "Dashboard");
-  await expect(page.getByRole("region", { name: "Deposits to return" })).toContainText(
+  await expect(attention(page, "Deposit to return")).toContainText(
     `Unit 1, Aspen Row (Drew Sample): $1,180.00 held, due back by ${returnBy}`,
   );
   await section(page, "Move-outs");
@@ -1505,7 +1509,8 @@ test("staff list a vacant unit on the public page; someone applies from it, staf
 
   // It waits for a decision on the Dashboard; on Applicants staff open it, screen and approve it.
   await section(page, "Dashboard");
-  await expect(page.getByRole("region", { name: "Applications waiting" })).toContainText("Applicant Listing");
+  const waiting = attention(page, "Application").filter({ hasText: "Applicant Listing" });
+  await expect(waiting.getByRole("link", { name: "Review application" })).toBeVisible();
   await section(page, "Applicants");
   const row = page.getByRole("row", { name: "Application from Applicant Listing" });
   await expect(row.getByTestId("status")).toHaveText("New");
@@ -2247,7 +2252,7 @@ test("staff see the company's fees left in trust on Today and take them out to t
   // The demo took the month before last's fees out of trust and left last month's: Today says
   // so, with the day they are to be taken out by.
   await section(page, "Dashboard");
-  const waiting = page.getByRole("region", { name: "Company fees in trust" });
+  const waiting = attention(page, "Company fees in trust");
   await expect(waiting).toContainText("Demo operating trust account: $");
   await expect(waiting).toContainText("of the company's fees, the oldest since");
   await waiting.getByRole("link", { name: "Open Banking" }).click();
@@ -2294,7 +2299,7 @@ test("staff see the company's fees left in trust on Today and take them out to t
   // Nothing waits on Today any more.
   await section(page, "Dashboard");
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
-  await expect(page.getByRole("region", { name: "Company fees in trust" })).toHaveCount(0);
+  await expect(attention(page, "Company fees in trust")).toHaveCount(0);
 });
 
 test("staff carry over the old system's unpaid bills, once, and draws hold them back", async ({ page }) => {
@@ -2337,7 +2342,7 @@ test("an admin names the broker of a trust account, who authorizes a signer; the
   await joinAsStaff(page, people.manager);
   // No broker on file yet: Today asks for one.
   await section(page, "Dashboard");
-  const waiting = page.getByRole("region", { name: "Trust account signers" });
+  const waiting = attention(page, "Trust account signers").filter({ hasText: "Demo operating trust account" });
   await expect(waiting).toContainText("Demo operating trust account: no broker on file");
 
   await settings(page, "Staff and roles");
@@ -2512,7 +2517,7 @@ test("staff require renters insurance on a lease, Today flags it, the tenant rec
   );
 
   await section(page, "Dashboard");
-  const waiting = page.getByRole("region", { name: "Renters insurance" });
+  const waiting = attention(page, "Renters insurance").filter({ hasText: "Cedar House" });
   await expect(waiting).toContainText("House, Cedar House (Quinn Demo, Taylor Demo): renters insurance none on file");
 
   // The tenant records their policy, from the insurer they chose.
@@ -2531,7 +2536,7 @@ test("staff require renters insurance on a lease, Today flags it, the tenant rec
   await tenant.close();
 
   await page.reload();
-  await expect(page.getByRole("region", { name: "Renters insurance" })).toHaveCount(0);
+  await expect(attention(page, "Renters insurance").filter({ hasText: "Cedar House" })).toHaveCount(0);
 
   // The tenant mails in next year's renewal; staff record it, and this year's still counts.
   await openLease(page, "Cedar House, House");
@@ -4981,8 +4986,9 @@ test("staff set the draw day and how owners and vendors are paid, keep the bank'
   await joinAsStaff(page, people.manager);
 
   // The nightly run prepared the owners' draws on the draw day: the Dashboard says they wait.
-  const ready = page.getByRole("region", { name: "Owner draws ready" });
+  const ready = attention(page, "Owner draws ready");
   await expect(ready).toContainText(`Prepared ${us(today())} for 2 owner accounts, $700.00.`);
+  await expect(ready.getByRole("button", { name: "Approve draws" })).toBeVisible();
 
   // Company setup: the draw day, from next month the 15th.
   await settings(page, "Company setup");
@@ -5079,7 +5085,7 @@ test("staff set the draw day and how owners and vendors are paid, keep the bank'
 
   // The Dashboard no longer says draws wait.
   await section(page, "Dashboard");
-  await expect(page.getByRole("region", { name: "Owner draws ready" })).toHaveCount(0);
+  await expect(attention(page, "Owner draws ready")).toHaveCount(0);
 
   // A plumbing bill paid by ACH file.
   await recordContribution(page, "Demo Owner A", "Cedar House", "500.00", "Faucet");
@@ -5223,4 +5229,42 @@ test("staff keep an owner's and a vendor's tax ID by its last four, an admin rev
   await section(bookkeeper, "Reports");
   await bookkeeper.getByRole("link", { name: "1099 summary" }).click();
   await expect(bookkeeper.getByRole("link", { name: "1099 export, with tax IDs" })).toHaveCount(0);
+});
+
+test("staff send a reminder of rent past due from the Dashboard, seeing who gets it first, once a day", async ({
+  page,
+}) => {
+  const people = seed.features.reminders!;
+  await joinAsStaff(page, people.manager);
+
+  // Drew Sample's rent fell due ten days ago and isn't paid: the Dashboard lists it first among
+  // the late rent, with Send reminder right there.
+  const late = attention(page, "Late rent").filter({ hasText: "Unit 1, Aspen Row (Drew Sample)" });
+  await expect(late).toContainText("$1,180.00 of rent past due since");
+  await late.getByRole("button", { name: "Send reminder" }).click();
+
+  // Before it goes: who gets it, their email, how many, and what it says.
+  const panel = page.getByRole("dialog", { name: "Send reminder" });
+  const who = panel.getByRole("region", { name: "Who gets it" });
+  await expect(who.getByRole("heading")).toHaveText("To 1 tenant");
+  await expect(who.getByRole("link", { name: "drew.sample.reminders@example.com" })).toHaveAttribute(
+    "href", "mailto:drew.sample.reminders@example.com");
+  await expect(panel.getByRole("region", { name: "What it says" })).toContainText(
+    "Our records show $1,180.00 of rent at Unit 1, Aspen Row not paid yet");
+  await panel.getByRole("button", { name: "Send to 1 tenant" }).click();
+  await expect(panel).toHaveCount(0);
+  await expect(page.getByRole("main")).toContainText("Sent the reminder to 1 tenant.");
+
+  // Once a day: opened again, it says one went today and sends nothing more.
+  await late.getByRole("button", { name: "Send reminder" }).click();
+  await expect(panel.getByText("A reminder of this rent went to them today already.")).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Send to 1 tenant" })).toBeDisabled();
+  await panel.getByRole("button", { name: "Close" }).click();
+
+  // It is on Drew's Email tab, from the manager.
+  await page.getByLabel("Search people, homes, bills, work orders and files").fill("drew");
+  await page.getByRole("list", { name: "Search results" }).getByRole("link", { name: /Drew Sample/ }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Drew Sample" })).toBeVisible();
+  await page.getByRole("tab", { name: "Email", exact: true }).click();
+  await expect(page.getByRole("main")).toContainText("Rent past due at Unit 1, Aspen Row");
 });

@@ -876,19 +876,21 @@ test("the demo opens on last month waiting for its manager, who approves it and 
   // has its broker, so signers have nothing to say.
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Dashboard", exact: true }).click();
   const thisMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  await expect(page.getByRole("region", { name: "Journal entries waiting" })).toContainText(
+  const attention = (what: string) =>
+    page.getByRole("list", { name: "Needs attention" }).getByRole("listitem", { name: what });
+  await expect(attention("Journal entry")).toContainText(
     `Reserve moved to Birch Flats, as Demo Owner A asked: $25.00, dated ${us(iso(thisMonth))}, proposed by Demo Bookkeeper`,
   );
-  await expect(page.getByRole("region", { name: "Vendor insurance" })).toContainText(
+  await expect(attention("Vendor insurance")).toContainText(
     "Demo Roofing Co, general liability: expires in 20 days",
   );
-  await expect(page.getByRole("region", { name: "Company fees in trust" })).toContainText(
+  await expect(attention("Company fees in trust")).toContainText(
     `Demo operating trust account: $779.20 of the company's fees, the oldest since ${us(iso(last))}`,
   );
-  await expect(page.getByRole("region", { name: "Renters insurance" })).toHaveText(
+  await expect(attention("Renters insurance")).toHaveText(
     /Unit 1, Aspen Row \(Drew Sample\): renters insurance none on file/,
   );
-  await expect(page.getByRole("region", { name: "Trust account signers" })).toHaveCount(0);
+  await expect(attention("Trust account signers")).toHaveCount(0);
   await page.getByRole("button", { name: "Sign out" }).click();
 
   await page.goto(`/invite#${seed.demo_owner_invite}`);

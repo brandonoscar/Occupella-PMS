@@ -471,6 +471,7 @@ def main() -> None:
         seeded["features"] = {name: feature_pmc(app, tag, name) for name in FEATURES}
         autopay_saved_before(app, seeded["features"]["autopay"]["pmc_id"])
         draws_prepared(app, seeded["features"]["payouts"]["pmc_id"])
+        rent_past_due(app, seeded["features"]["reminders"]["pmc_id"])
         # Year close: books as of this year's first day, so last year's November is approved and
         # its December waits for approval in each trust bank account, whatever the day today.
         seeded["features"]["year-close"] = feature_pmc(
@@ -532,6 +533,27 @@ def draws_prepared(app: psycopg.Connection[Any], pmc_id: str) -> None:
         (pmc_id, min(today.day, 28)),
     )
     app.execute("SELECT trust_prepare_owner_draws(%s, %s)", (pmc_id, today))
+
+
+def rent_past_due(app: psycopg.Connection[Any], pmc_id: str) -> None:
+    """The reminders feature's PMC: Drew Sample's lease owes $1,180.00 of rent due ten days ago,
+    whatever the day today, and Drew has an email on file, so the Dashboard's Send reminder has
+    someone to write to."""
+    lease, tenant = app.execute(
+        "SELECT lt.lease_id, lt.tenant_id FROM trust_lease_tenants AS lt"
+        " JOIN trust_tenants AS t ON t.id = lt.tenant_id"
+        " WHERE t.pmc_id = %s AND t.display_name = 'Drew Sample'",
+        (pmc_id,),
+    ).fetchone()
+    app.execute(
+        "INSERT INTO trust_charges (pmc_id, lease_id, due_on, kind, amount)"
+        " VALUES (%s, %s, %s, 'rent', 1180.00)",
+        (pmc_id, lease, datetime.now(UTC).date() - timedelta(days=10)),
+    )
+    app.execute(
+        "INSERT INTO trust_contacts (pmc_id, tenant_id, email) VALUES (%s, %s, %s)",
+        (pmc_id, tenant, "drew.sample.reminders@example.com"),
+    )
 
 
 # The feature tests (frontend/e2e/features.spec.ts), each on a demo PMC of its own.
@@ -610,6 +632,7 @@ FEATURES = (
     "payouts",
     "receive-payment",
     "tax-ids",
+    "reminders",
 )
 
 

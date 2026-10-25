@@ -47,13 +47,14 @@ browser = [
 [[feature]]
 # The Dashboard (ADR 0005); its id is the one it had as the Today page, which it grew from.
 id = "today"
-statement = "Staff open the Dashboard: what tenants owe, open work orders, leases ending in 30, 60 and 90 days, vacant units and applications waiting, each opening its page, and what needs attention: late rent, bills due this week, month-end waiting for approval, applications waiting for a decision, and the rest the work pages flag."
-operations = ["GET /api/today", "GET /api/dashboard"]
+statement = "Staff open the Dashboard: occupancy, rent collected against rent due this month, what is past due and how many tenants owe it, leases ending in 60 days, vacant units and how long, the next draw day and its total, and accounts not reconciled, each beside a month before and opening its page; and what needs attention as one list, most overdue first, each row with its action: Send reminder (who gets it shown first), Pay bill, Approve draws, Approve reconciliation, Review application, or the way to its page."
+operations = ["GET /api/today", "GET /api/dashboard", "GET /api/emails/rent-reminders/{lease_id}", "POST /api/emails/rent-reminders/{lease_id}"]
 browser = [
   "features.spec.ts › staff charge this month's rent and its late fees, and the Dashboard shows the rent that is late",
   "features.spec.ts › staff add a recurring bill and stop it, and record the decline of an owner with no login",
   "features.spec.ts › staff list a vacant unit on the public page; someone applies from it, staff screen and approve it and record its withdrawal, take it off the page and close the link",
   "portal.spec.ts › every page of the demo meets WCAG 2.2 AA as axe checks it: staff's, an owner's, a tenant's and the public ones",
+  "features.spec.ts › staff send a reminder of rent past due from the Dashboard, seeing who gets it first, once a day",
 ]
 
 [[feature]]

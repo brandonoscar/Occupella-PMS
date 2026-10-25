@@ -5,7 +5,7 @@ the PMS wrote them, with whether each went. Every name and address here is synth
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from helpers import add_agreement, add_tenant, add_unit, make_pmc, open_lease
+from helpers import add_agreement, add_tenant, add_unit, charge, make_pmc, open_lease
 from people import join_as_owner, join_as_staff, join_as_tenant, tenant_of
 
 from pms import email
@@ -224,6 +224,123 @@ def test_a_custom_role_without_email_may_not_write(
         ).status_code
         == 200
     )  # reads stay open
+
+
+# --- a reminder of rent past due (the Dashboard's Send reminder) ---------------------------
+
+
+def owing(conn, pmc, names):
+    """A lease in effect for these tenants with 1,500 of rent past due since 10 days ago."""
+    prop = pmc.owners[0].property_id
+    unit = add_unit(conn, pmc.pmc_id, prop, f"Unit {names[0][-1]}")
+    tenants = [add_tenant(conn, pmc.pmc_id, prop, name) for name in names]
+    lease = open_lease(
+        conn, pmc.pmc_id, unit, today() - timedelta(days=60), None, "1500.00", tenants
+    )
+    charge(conn, pmc.pmc_id, lease, today() - timedelta(days=10), "1500.00")
+    charge(conn, pmc.pmc_id, lease, today() + timedelta(days=5), "1500.00")  # not due yet
+    return lease, tenants
+
+
+def test_a_reminder_shows_who_gets_it_and_who_is_left_out_before_it_goes(client, conn, staff, pmc):
+    lease, (a, b) = owing(conn, pmc, ["Tenant A", "Tenant B"])
+    contact(client, "tenant", a, "tenant.a@example.com")
+
+    preview = ok(client.get(f"/api/emails/rent-reminders/{lease}"))
+
+    due = (today() - timedelta(days=10)).strftime("%m/%d/%Y")
+    assert preview == {
+        "lease_id": str(lease),
+        "subject": "Rent past due at Unit A, Property 1",
+        "body": "Our records show $1,500.00 of rent at Unit A, Property 1 not paid yet, the oldest"
+        f" due {due}. Please pay it, or tell us if you already have.",
+        "to": [{"tenant_id": str(a), "name": "Tenant A", "to": "tenant.a@example.com"}],
+        "left_out": [{"name": "Tenant B", "why": "no email on file"}],
+        "sent_today": False,
+    }
+    assert listed(client, "tenant", a) == []  # nothing is written by looking
+
+
+def test_a_reminder_goes_to_each_tenant_with_an_email_once_a_day(client, conn, staff, pmc):
+    lease, (a, b) = owing(conn, pmc, ["Tenant A", "Tenant B"])
+    contact(client, "tenant", a, "tenant.a@example.com")
+    contact(client, "tenant", b, "tenant.b@example.com")
+
+    sent = ok(client.post(f"/api/emails/rent-reminders/{lease}", json={}), 201)
+
+    assert [(s["name"], s["to"]) for s in sent] == [
+        ("Tenant A", "tenant.a@example.com"),
+        ("Tenant B", "tenant.b@example.com"),
+    ]
+    (line,) = listed(client, "tenant", b)
+    assert (line["kind"], line["subject"], line["by"]) == (
+        "message",
+        "Rent past due at Unit A, Property 1",
+        "Writer 1",
+    )
+    assert line["body"].startswith("Our records show $1,500.00 of rent")
+    # Again the same day (a retry, a second click): nothing more is written.
+    again = client.post(f"/api/emails/rent-reminders/{lease}", json={})
+    assert again.status_code == 409
+    assert again.json()["detail"] == "a reminder of this rent went to them today already"
+    assert ok(client.get(f"/api/emails/rent-reminders/{lease}"))["sent_today"] is True
+    assert len(listed(client, "tenant", a)) == 1
+
+
+def test_a_tenant_who_left_the_lease_gets_no_reminder(client, conn, staff, pmc):
+    lease, (a, b) = owing(conn, pmc, ["Tenant A", "Tenant B"])
+    contact(client, "tenant", a, "tenant.a@example.com")
+    contact(client, "tenant", b, "tenant.b@example.com")
+    conn.execute(
+        "SELECT trust_remove_lease_tenant(%s, %s, %s, %s, NULL)",
+        (pmc.pmc_id, lease, b, today() - timedelta(days=1)),
+    )
+
+    preview = ok(client.get(f"/api/emails/rent-reminders/{lease}"))
+
+    assert [r["name"] for r in preview["to"]] == ["Tenant A"]
+    assert preview["left_out"] == []
+
+
+def test_a_reminder_needs_rent_past_due_and_someone_to_send_it_to(client, conn, staff, pmc):
+    lease, (a,) = owing(conn, pmc, ["Tenant A"])
+    refused = client.post(f"/api/emails/rent-reminders/{lease}", json={})
+    assert (refused.status_code, refused.json()["detail"]) == (
+        422,
+        "no tenant on this lease has an email on file",
+    )
+
+    prop = pmc.owners[0].property_id
+    unit = add_unit(conn, pmc.pmc_id, prop, "Unit 9")
+    paid_up = open_lease(
+        conn, pmc.pmc_id, unit, today(), None, "1500.00", [add_tenant(conn, pmc.pmc_id, prop, "T")]
+    )
+    refused = client.get(f"/api/emails/rent-reminders/{paid_up}")
+    assert (refused.status_code, refused.json()["detail"]) == (
+        409,
+        "no rent of this lease is past due",
+    )
+
+
+def test_another_companys_lease_takes_no_reminder(client, conn, staff, pmc):
+    other = make_pmc(conn)
+    theirs, _ = owing(conn, other, ["Tenant A"])
+
+    assert client.get(f"/api/emails/rent-reminders/{theirs}").status_code == 404
+    assert client.post(f"/api/emails/rent-reminders/{theirs}", json={}).status_code == 404
+    assert client.get("/api/emails/rent-reminders/not-a-lease").status_code == 422
+
+
+@pytest.mark.parametrize("caller", ["nobody", "owner", "tenant"])
+def test_only_staff_send_a_reminder(client, conn, app_conn, pmc, caller):
+    if caller == "owner":
+        join_as_owner(client, app_conn, pmc)
+    elif caller == "tenant":
+        join_as_tenant(client, conn, app_conn, pmc)
+    lease, _ = owing(conn, pmc, ["Tenant A"])
+    status = 401 if caller == "nobody" else 403
+    assert client.get(f"/api/emails/rent-reminders/{lease}").status_code == status
+    assert client.post(f"/api/emails/rent-reminders/{lease}", json={}).status_code == status
 
 
 NOWHERE = "00000000-0000-0000-0000-000000000000"
