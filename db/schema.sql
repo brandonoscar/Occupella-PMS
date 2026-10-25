@@ -1325,6 +1325,44 @@ $$;
 
 
 --
+-- Name: trust_bill_holds(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_bill_holds(p_pmc_id uuid) RETURNS TABLE(bill_id uuid, held numeric, short numeric, needed numeric)
+    LANGUAGE sql STABLE
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+    WITH open AS (
+        SELECT b.id, b.ledger_account_id, b.due_on, b.bill_date, b.reference,
+               b.amount + coalesce(m.amount, 0) AS need
+        FROM trust_bills AS b
+        LEFT JOIN trust_bill_markups AS m ON m.bill_id = b.id
+        WHERE b.pmc_id = p_pmc_id
+          AND b.bill_date <= (now() AT TIME ZONE 'UTC')::date
+          AND NOT EXISTS (SELECT 1 FROM trust_bill_payments AS p
+                          WHERE p.bill_id = b.id AND p.step = 'set_aside')
+          AND NOT EXISTS (SELECT 1 FROM trust_bill_declines AS d WHERE d.bill_id = b.id)
+    ),
+    running AS (
+        SELECT o.id, o.need, greatest(a.balance, 0) AS balance,
+               sum(o.need) OVER (
+                   PARTITION BY o.ledger_account_id
+                   ORDER BY o.due_on, o.bill_date, o.reference COLLATE "C", o.id
+               ) AS through
+        FROM open AS o
+        JOIN pgledger_accounts AS a ON a.id = o.ledger_account_id
+    ),
+    laid AS (
+        SELECT r.id, r.need, r.through, r.balance,
+               least(r.need, greatest(r.balance - (r.through - r.need), 0)) AS held
+        FROM running AS r
+    )
+    SELECT l.id, l.held, l.need - l.held, greatest(l.through - l.balance, 0)
+    FROM laid AS l
+$$;
+
+
+--
 -- Name: trust_broker_of(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1867,8 +1905,10 @@ BEGIN
         SELECT v.display_name INTO v_name FROM trust_vendors AS v WHERE v.id = NEW.vendor_id;
         IF EXISTS (SELECT 1 FROM trust_bills AS bill
                    WHERE bill.vendor_id = NEW.vendor_id
-                     AND NOT EXISTS (SELECT 1 FROM trust_bill_payments AS p
-                                     WHERE p.bill_id = bill.id AND p.step = 'paid')
+                     -- Not paid in full (a bill may be paid in parts, migration 0152).
+                     AND (SELECT coalesce(sum(t.amount), 0) FROM trust_bill_payments AS p
+                          JOIN pgledger_transfers AS t ON t.id = p.transfer_id
+                          WHERE p.bill_id = bill.id AND p.step = 'paid') < bill.amount
                      AND NOT EXISTS (SELECT 1 FROM trust_bill_declines AS d
                                      WHERE d.bill_id = bill.id))
         THEN
@@ -1963,8 +2003,9 @@ BEGIN
     IF EXISTS (SELECT 1 FROM trust_bills AS bill
                JOIN trust_ledger_accounts AS a ON a.ledger_account_id = bill.ledger_account_id
                WHERE (a.property_id = NEW.property_id OR a.owner_id = NEW.owner_id)
-                 AND NOT EXISTS (SELECT 1 FROM trust_bill_payments AS p
-                                 WHERE p.bill_id = bill.id AND p.step = 'paid')
+                 AND (SELECT coalesce(sum(t.amount), 0) FROM trust_bill_payments AS p
+                      JOIN pgledger_transfers AS t ON t.id = p.transfer_id
+                      WHERE p.bill_id = bill.id AND p.step = 'paid') < bill.amount
                  AND NOT EXISTS (SELECT 1 FROM trust_bill_declines AS d
                                  WHERE d.bill_id = bill.id))
     THEN
@@ -2371,6 +2412,9 @@ CREATE FUNCTION public.trust_check_bill_decision() RETURNS trigger
 DECLARE
     v_bill trust_bills;
     v_owner uuid;
+    -- Only a decline row says whether it is a void; an approval never is.
+    v_void boolean := coalesce((to_jsonb(NEW) ->> 'void')::boolean, false);
+    v_was trust_bill_declines;
 BEGIN
     SELECT b.* INTO v_bill FROM trust_bills AS b
     WHERE b.id = NEW.bill_id AND b.pmc_id = NEW.pmc_id;
@@ -2378,9 +2422,20 @@ BEGIN
         RETURN NEW;  -- the key to trust_bills refuses it
     END IF;
     PERFORM trust_lock_bill(NEW.pmc_id, NEW.bill_id);
-    IF EXISTS (SELECT a.bill_id FROM trust_bill_approvals AS a WHERE a.bill_id = NEW.bill_id)
-       OR EXISTS (SELECT d.bill_id FROM trust_bill_declines AS d WHERE d.bill_id = NEW.bill_id)
-    THEN
+    SELECT d.* INTO v_was FROM trust_bill_declines AS d WHERE d.bill_id = NEW.bill_id;
+    IF FOUND AND v_was.void THEN
+        RAISE EXCEPTION 'trust: bill % is void already', v_bill.reference
+            USING ERRCODE = 'unique_violation';
+    END IF;
+    IF FOUND AND v_void THEN
+        RAISE EXCEPTION 'trust: bill % was declined by its owner; it is void already',
+            v_bill.reference
+            USING ERRCODE = 'unique_violation';
+    END IF;
+    IF NOT v_void AND (
+        FOUND OR EXISTS (SELECT a.bill_id FROM trust_bill_approvals AS a
+                         WHERE a.bill_id = NEW.bill_id)
+    ) THEN
         RAISE EXCEPTION 'trust: bill % has its owner''s decision already', v_bill.reference
             USING ERRCODE = 'unique_violation';
     END IF;
@@ -2388,8 +2443,13 @@ BEGIN
         SELECT p.bill_id FROM trust_bill_payments AS p
         WHERE p.bill_id = NEW.bill_id AND p.step = 'set_aside'
     ) THEN
-        RAISE EXCEPTION 'trust: bill % is set aside already; it can''t be declined',
-            v_bill.reference
+        IF v_void THEN
+            RAISE EXCEPTION 'trust: money was taken from the owner''s account for bill % '
+                'already; it can''t be voided', v_bill.reference
+                USING ERRCODE = 'check_violation';
+        END IF;
+        RAISE EXCEPTION 'trust: money was taken from the owner''s account for bill % '
+            'already; it can''t be declined', v_bill.reference
             USING ERRCODE = 'check_violation';
     END IF;
     IF NEW.owner_id IS NOT NULL THEN
@@ -4961,12 +5021,13 @@ DECLARE
 BEGIN
     IF EXISTS (SELECT 1 FROM trust_bill_payments AS p
                WHERE p.bill_id = NEW.bill_id AND p.step = 'set_aside') THEN
-        RAISE EXCEPTION 'trust: bill % is set aside already; a markup is added before',
+        RAISE EXCEPTION 'trust: money was taken for bill % already; a markup is added before',
             v_bill.reference
             USING ERRCODE = 'check_violation';
     END IF;
     IF EXISTS (SELECT 1 FROM trust_bill_declines AS d WHERE d.bill_id = NEW.bill_id) THEN
-        RAISE EXCEPTION 'trust: bill % was declined; it takes no markup', v_bill.reference
+        RAISE EXCEPTION 'trust: bill % was declined or voided; it takes no markup',
+            v_bill.reference
             USING ERRCODE = 'check_violation';
     END IF;
     v_percent := coalesce(
@@ -5978,46 +6039,149 @@ CREATE FUNCTION public.trust_pay_bill(p_pmc_id uuid, p_bill_id uuid, p_event_at 
     AS $$
 DECLARE
     v_bill trust_bills := trust_lock_bill(p_pmc_id, p_bill_id);
+    v_paid numeric;
+    v_transfer_id text;
+BEGIN
+    SELECT coalesce(sum(t.amount), 0) INTO v_paid
+    FROM trust_bill_payments AS p
+    JOIN pgledger_transfers AS t ON t.id = p.transfer_id
+    WHERE p.bill_id = p_bill_id AND p.step = 'paid';
+    IF v_paid >= v_bill.amount THEN
+        SELECT p.transfer_id INTO v_transfer_id
+        FROM trust_bill_payments AS p
+        WHERE p.bill_id = p_bill_id AND p.step = 'paid'
+        ORDER BY p.part DESC LIMIT 1;
+        RETURN v_transfer_id;  -- a retry: the bill is paid already
+    END IF;
+    RETURN trust_pay_bill_amount(v_bill, v_bill.amount - v_paid, NULL, p_event_at);
+END;
+$$;
+
+
+--
+-- Name: trust_pay_bill_amount(public.trust_bills, numeric, text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_pay_bill_amount(p_bill public.trust_bills, p_amount numeric, p_request_key text, p_event_at timestamp with time zone) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bank uuid;
     v_set_aside pgledger_transfers;
+    v_paid numeric;
+    v_left numeric;
+    v_part integer;
     v_cash text;
     v_transfer_id text;
 BEGIN
-    SELECT p.transfer_id INTO v_transfer_id
-    FROM trust_bill_payments AS p
-    WHERE p.bill_id = p_bill_id AND p.step = 'paid';
-    IF FOUND THEN
-        RETURN v_transfer_id;  -- a retry: the bill is paid already
+    IF p_amount IS NULL OR p_amount <= 0 OR p_amount <> round(p_amount, 2) THEN
+        RAISE EXCEPTION 'trust: a bill payment is a positive amount in cents, not %', p_amount
+            USING ERRCODE = 'invalid_parameter_value';
     END IF;
+    SELECT o.bank_account_id INTO v_bank
+    FROM trust_ledger_accounts AS o WHERE o.ledger_account_id = p_bill.ledger_account_id;
+    IF NOT EXISTS (
+        SELECT 1 FROM trust_ledger_accounts AS t
+        WHERE t.bank_account_id = v_bank AND t.kind = 'vendor_payable'
+          AND t.vendor_id = p_bill.vendor_id
+    ) THEN
+        PERFORM trust_open_vendor_account(p_bill.pmc_id, v_bank, p_bill.vendor_id);
+    END IF;
+    -- A first payment posts twice (the owner's account to the vendor's, then the vendor's to the
+    -- cash). pgledger locks the accounts of one posting in id order; locking every account this
+    -- payment may move here, in that same order, keeps a payment from deadlocking with a rent
+    -- payment or a draw that locks some of them in one posting of its own.
+    PERFORM 1
+    FROM pgledger_accounts AS a
+    WHERE a.id IN (
+        SELECT l.ledger_account_id
+        FROM trust_ledger_accounts AS l
+        WHERE l.bank_account_id = v_bank
+          AND (l.ledger_account_id = p_bill.ledger_account_id
+               OR l.kind IN ('bank_cash', 'pmc_income')
+               OR (l.kind = 'vendor_payable' AND l.vendor_id = p_bill.vendor_id))
+    )
+    ORDER BY a.id
+    FOR UPDATE;
+    PERFORM trust_set_aside_bill(p_bill.pmc_id, p_bill.id, p_event_at);
 
     SELECT t.* INTO v_set_aside
     FROM trust_bill_payments AS p
     JOIN pgledger_transfers AS t ON t.id = p.transfer_id
-    WHERE p.bill_id = p_bill_id AND p.step = 'set_aside';
-    IF NOT FOUND THEN
-        RAISE EXCEPTION 'trust: bill % is not set aside yet; set it aside, then pay it',
-            v_bill.reference
-            USING ERRCODE = 'invalid_parameter_value';
-    END IF;
+    WHERE p.bill_id = p_bill.id AND p.step = 'set_aside';
     -- pgledger dates a transfer with no date now.
     IF coalesce(p_event_at, now()) < v_set_aside.event_at THEN
-        RAISE EXCEPTION 'trust: bill % was set aside at %; it can''t be paid before that',
-            v_bill.reference, v_set_aside.event_at
+        RAISE EXCEPTION 'trust: money was taken for bill % at %; it can''t be paid before that',
+            p_bill.reference, v_set_aside.event_at
             USING ERRCODE = 'invalid_parameter_value';
     END IF;
 
+    SELECT coalesce(sum(t.amount), 0), coalesce(max(p.part), 0) INTO v_paid, v_part
+    FROM trust_bill_payments AS p
+    JOIN pgledger_transfers AS t ON t.id = p.transfer_id
+    WHERE p.bill_id = p_bill.id AND p.step = 'paid';
+    v_left := p_bill.amount - v_paid;
+    IF v_left = 0 THEN
+        RAISE EXCEPTION 'trust: bill % is paid in full already', p_bill.reference
+            USING ERRCODE = 'check_violation';
+    END IF;
+    IF p_amount > v_left THEN
+        RAISE EXCEPTION 'trust: bill % has % left to pay; % is more than that',
+            p_bill.reference, v_left, p_amount
+            USING ERRCODE = 'check_violation';
+    END IF;
+
     SELECT c.ledger_account_id INTO v_cash
-    FROM trust_ledger_accounts AS v
-    JOIN trust_ledger_accounts AS c ON c.bank_account_id = v.bank_account_id
-    WHERE v.ledger_account_id = v_set_aside.to_account_id AND c.kind = 'bank_cash';
+    FROM trust_ledger_accounts AS c
+    WHERE c.bank_account_id = v_bank AND c.kind = 'bank_cash';
     SELECT t.id INTO v_transfer_id
     FROM pgledger_create_transfers(
-        ARRAY[(v_set_aside.to_account_id, v_cash, v_set_aside.amount)::transfer_request],
+        ARRAY[(v_set_aside.to_account_id, v_cash, p_amount)::transfer_request],
         p_event_at,
-        jsonb_build_object('memo', format('Bill %s paid', v_bill.reference))
+        jsonb_build_object('memo', CASE WHEN p_amount = v_left
+            THEN format('Bill %s paid', p_bill.reference)
+            ELSE format('Bill %s paid in part', p_bill.reference) END)
     ) AS t;
-    INSERT INTO trust_bill_payments (bill_id, step, pmc_id, transfer_id)
-    VALUES (p_bill_id, 'paid', p_pmc_id, v_transfer_id);
+    INSERT INTO trust_bill_payments (bill_id, step, part, pmc_id, transfer_id, request_key)
+    VALUES (p_bill.id, 'paid', v_part + 1, p_bill.pmc_id, v_transfer_id, p_request_key);
     RETURN v_transfer_id;
+END;
+$$;
+
+
+--
+-- Name: trust_pay_bill_part(uuid, uuid, numeric, text, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trust_pay_bill_part(p_pmc_id uuid, p_bill_id uuid, p_amount numeric, p_request_key text, p_event_at timestamp with time zone) RETURNS text
+    LANGUAGE plpgsql SECURITY DEFINER
+    SET search_path TO 'public', 'pg_temp'
+    AS $$
+DECLARE
+    v_bill trust_bills := trust_lock_bill(p_pmc_id, p_bill_id);
+    v_done trust_bill_payments;
+    v_done_amount numeric;
+BEGIN
+    IF coalesce(p_request_key, '') = '' THEN
+        RAISE EXCEPTION 'trust: a bill payment needs a request key, so a retry can''t pay twice'
+            USING ERRCODE = 'invalid_parameter_value';
+    END IF;
+    SELECT p.* INTO v_done
+    FROM trust_bill_payments AS p
+    WHERE p.pmc_id = p_pmc_id AND p.request_key = p_request_key;
+    IF FOUND THEN
+        SELECT t.amount INTO v_done_amount
+        FROM pgledger_transfers AS t WHERE t.id = v_done.transfer_id;
+        IF v_done.bill_id <> p_bill_id OR v_done_amount <> p_amount THEN
+            RAISE EXCEPTION 'trust: request key % already paid % of a bill',
+                p_request_key, v_done_amount
+                USING ERRCODE = 'unique_violation',
+                      HINT = 'Use a new key for a new payment; resend a key only to retry.';
+        END IF;
+        RETURN v_done.transfer_id;  -- a retry: the original payment
+    END IF;
+    RETURN trust_pay_bill_amount(v_bill, p_amount, p_request_key, p_event_at);
 END;
 $$;
 
@@ -11246,27 +11410,31 @@ BEGIN
 
     RETURN QUERY
     WITH steps AS (
-        SELECT p.bill_id, p.step
+        SELECT p.bill_id, p.step, t.amount
         FROM trust_bill_payments AS p
         JOIN pgledger_transfers AS t ON t.id = p.transfer_id
         WHERE p.pmc_id = p_pmc_id AND t.event_at < v_cutoff
     ),
+    -- What was paid of each bill by the day's end: a bill may be paid in parts (migration 0152).
+    paid AS (
+        SELECT s.bill_id, sum(s.amount) AS amount FROM steps AS s
+        WHERE s.step = 'paid' GROUP BY s.bill_id
+    ),
     unpaid AS (
         SELECT v.display_name AS vendor_name, b.reference AS ref, pr.display_name AS place,
                b.bill_date AS billed, b.due_on AS due, greatest(p_as_of - b.due_on, 0) AS late,
-               b.amount AS owed,
+               b.amount - coalesce(pd.amount, 0) AS owed,
                CASE WHEN EXISTS (
                    SELECT s.bill_id FROM steps AS s
                    WHERE s.bill_id = b.id AND s.step = 'set_aside'
-               ) THEN b.amount ELSE 0.00 END AS held
+               ) THEN b.amount - coalesce(pd.amount, 0) ELSE 0.00 END AS held
         FROM trust_bills AS b
         JOIN trust_vendors AS v ON v.id = b.vendor_id
         JOIN trust_ledger_accounts AS t ON t.ledger_account_id = b.ledger_account_id
         JOIN trust_properties AS pr ON pr.id = t.property_id
+        LEFT JOIN paid AS pd ON pd.bill_id = b.id
         WHERE b.pmc_id = p_pmc_id AND b.bill_date <= p_as_of
-          AND NOT EXISTS (
-              SELECT s.bill_id FROM steps AS s WHERE s.bill_id = b.id AND s.step = 'paid'
-          )
+          AND coalesce(pd.amount, 0) < b.amount
           -- Not a bill its owner declined by the day: it won't be paid.
           AND NOT EXISTS (
               SELECT d.bill_id FROM trust_bill_declines AS d
@@ -11463,27 +11631,32 @@ BEGIN
 
     RETURN QUERY
     WITH paid AS (
-        -- Each bill paid by the end of the day, and when the bank paid it.
-        SELECT b.vendor_id, b.amount, tr.event_at
+        -- Each payment of a bill by the end of the day (a bill may be paid in parts), and when
+        -- the bank paid it.
+        SELECT b.vendor_id, tr.amount, tr.event_at
         FROM trust_bills AS b
         JOIN trust_bill_payments AS p ON p.bill_id = b.id AND p.step = 'paid'
         JOIN pgledger_transfers AS tr ON tr.id = p.transfer_id
         WHERE b.pmc_id = p_pmc_id AND tr.event_at < v_cutoff
     ),
     unpaid AS (
-        -- Entered by the day, not paid by its end and not declined by then.
-        SELECT b.vendor_id, b.amount
-        FROM trust_bills AS b
-        WHERE b.pmc_id = p_pmc_id AND b.bill_date <= p_as_of
-          AND NOT EXISTS (
-              SELECT p.bill_id FROM trust_bill_payments AS p
-              JOIN pgledger_transfers AS tr ON tr.id = p.transfer_id
-              WHERE p.bill_id = b.id AND p.step = 'paid' AND tr.event_at < v_cutoff
-          )
-          AND NOT EXISTS (
-              SELECT d.bill_id FROM trust_bill_declines AS d
-              WHERE d.bill_id = b.id AND d.declined_on <= p_as_of
-          )
+        -- Entered by the day, not paid in full by its end and not declined by then: what is left
+        -- of each.
+        SELECT x.vendor_id, x.amount
+        FROM (
+            SELECT b.vendor_id, b.amount - coalesce((
+                SELECT sum(tr.amount) FROM trust_bill_payments AS p
+                JOIN pgledger_transfers AS tr ON tr.id = p.transfer_id
+                WHERE p.bill_id = b.id AND p.step = 'paid' AND tr.event_at < v_cutoff
+            ), 0) AS amount
+            FROM trust_bills AS b
+            WHERE b.pmc_id = p_pmc_id AND b.bill_date <= p_as_of
+              AND NOT EXISTS (
+                  SELECT d.bill_id FROM trust_bill_declines AS d
+                  WHERE d.bill_id = b.id AND d.declined_on <= p_as_of
+              )
+        ) AS x
+        WHERE x.amount > 0
     ),
     assigned AS (
         -- Each work order open at the day's end, and the vendor it was last assigned to.
@@ -12446,7 +12619,11 @@ BEGIN
     END IF;
 
     SELECT d.* INTO v_declined FROM trust_bill_declines AS d WHERE d.bill_id = p_bill_id;
-    IF FOUND THEN
+    IF FOUND AND v_declined.void THEN
+        RAISE EXCEPTION 'trust: bill % is void (%); it is not paid',
+            v_bill.reference, v_declined.reason
+            USING ERRCODE = 'check_violation';
+    ELSIF FOUND THEN
         RAISE EXCEPTION 'trust: bill % was declined by % on %; it is not paid',
             v_bill.reference, v_declined.declined_by, v_declined.declined_on
             USING ERRCODE = 'check_violation';
@@ -14015,8 +14192,11 @@ CREATE TABLE public.trust_bill_declines (
     reason text NOT NULL,
     owner_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    void boolean DEFAULT false NOT NULL,
+    recorded_by uuid,
     CONSTRAINT trust_bill_declines_declined_by_check CHECK (((declined_by <> ''::text) AND (length(declined_by) <= 200))),
-    CONSTRAINT trust_bill_declines_reason_check CHECK (((reason <> ''::text) AND (length(reason) <= 1000)))
+    CONSTRAINT trust_bill_declines_reason_check CHECK (((reason <> ''::text) AND (length(reason) <= 1000))),
+    CONSTRAINT trust_bill_declines_void_check CHECK (((NOT void) OR ((owner_id IS NULL) AND (recorded_by IS NOT NULL))))
 );
 
 
@@ -14085,6 +14265,10 @@ CREATE TABLE public.trust_bill_payments (
     pmc_id uuid NOT NULL,
     transfer_id text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    part integer DEFAULT 1 NOT NULL,
+    request_key text,
+    CONSTRAINT trust_bill_payments_part_check CHECK (((part >= 1) AND ((step = 'paid'::text) OR (part = 1)))),
+    CONSTRAINT trust_bill_payments_request_key_check CHECK (((request_key IS NULL) OR ((step = 'paid'::text) AND (request_key ~ '\S'::text) AND (length(request_key) <= 200)))),
     CONSTRAINT trust_bill_payments_step_check CHECK ((step = ANY (ARRAY['set_aside'::text, 'paid'::text])))
 );
 
@@ -14609,7 +14793,6 @@ CREATE TABLE public.trust_emails (
     alert_id uuid,
     autopay_id uuid,
     CONSTRAINT trust_emails_body_check CHECK (((body <> ''::text) AND (length(body) <= 10000))),
-    CONSTRAINT trust_emails_check CHECK (((kind = 'bill_approval'::text) = (bill_id IS NOT NULL))),
     CONSTRAINT trust_emails_subject_check CHECK (((subject <> ''::text) AND (length(subject) <= 200))),
     CONSTRAINT trust_emails_to_address_check CHECK (((to_address <> ''::text) AND (length(to_address) <= 320)))
 );
@@ -15809,6 +15992,8 @@ CREATE TABLE public.trust_payout_methods (
     method text NOT NULL,
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    check_number text,
+    CONSTRAINT trust_payout_methods_check_number_check CHECK (((check_number IS NULL) OR ((method = 'check'::text) AND (check_number ~ '^[0-9]{1,15}$'::text)))),
     CONSTRAINT trust_payout_methods_method_check CHECK ((method = ANY (ARRAY['check'::text, 'EFT'::text])))
 );
 
@@ -17396,7 +17581,7 @@ ALTER TABLE ONLY public.trust_bill_markups
 --
 
 ALTER TABLE ONLY public.trust_bill_payments
-    ADD CONSTRAINT trust_bill_payments_pkey PRIMARY KEY (bill_id, step);
+    ADD CONSTRAINT trust_bill_payments_pkey PRIMARY KEY (bill_id, step, part);
 
 
 --
@@ -17856,11 +18041,19 @@ ALTER TABLE public.trust_emails
 
 
 --
+-- Name: trust_emails trust_emails_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.trust_emails
+    ADD CONSTRAINT trust_emails_check CHECK (((kind = ANY (ARRAY['bill_approval'::text, 'bill_funds_needed'::text])) = (bill_id IS NOT NULL))) NOT VALID;
+
+
+--
 -- Name: trust_emails trust_emails_kind_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE public.trust_emails
-    ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text, 'rent_reminder'::text, 'late_notice'::text, 'owner_statement'::text, 'work_order'::text, 'adverse_action'::text, 'emergency_request'::text, 'signing_request'::text, 'payment_receipt'::text, 'deposit_statement'::text, 'reserve_low'::text, 'admin_alert'::text, 'autopay_payment'::text, 'autopay_stopped'::text, 'autopay_not_sent'::text]))) NOT VALID;
+    ADD CONSTRAINT trust_emails_kind_check CHECK ((kind = ANY (ARRAY['bill_approval'::text, 'invite'::text, 'password_reset'::text, 'message'::text, 'rent_reminder'::text, 'late_notice'::text, 'owner_statement'::text, 'work_order'::text, 'adverse_action'::text, 'emergency_request'::text, 'signing_request'::text, 'payment_receipt'::text, 'deposit_statement'::text, 'reserve_low'::text, 'admin_alert'::text, 'autopay_payment'::text, 'autopay_stopped'::text, 'autopay_not_sent'::text, 'bill_funds_needed'::text]))) NOT VALID;
 
 
 --
@@ -20080,6 +20273,13 @@ CREATE INDEX trust_bank_matches_bank_account_id ON public.trust_bank_matches USI
 
 
 --
+-- Name: trust_bill_declines_recorded_by; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_bill_declines_recorded_by ON public.trust_bill_declines USING btree (pmc_id, recorded_by);
+
+
+--
 -- Name: trust_bill_expense_accounts_bill; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -20091,6 +20291,13 @@ CREATE INDEX trust_bill_expense_accounts_bill ON public.trust_bill_expense_accou
 --
 
 CREATE INDEX trust_bill_markups_recorded_by ON public.trust_bill_markups USING btree (pmc_id, recorded_by);
+
+
+--
+-- Name: trust_bill_payments_request_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_bill_payments_request_key ON public.trust_bill_payments USING btree (pmc_id, request_key) WHERE (request_key IS NOT NULL);
 
 
 --
@@ -20476,6 +20683,13 @@ CREATE UNIQUE INDEX trust_emails_one_autopay_stopped ON public.trust_emails USIN
 --
 
 CREATE UNIQUE INDEX trust_emails_one_emergency ON public.trust_emails USING btree (staff_id, request_id) WHERE (kind = 'emergency_request'::text);
+
+
+--
+-- Name: trust_emails_one_funds_request; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX trust_emails_one_funds_request ON public.trust_emails USING btree (bill_id, (((created_at AT TIME ZONE 'UTC'::text))::date)) WHERE (kind = 'bill_funds_needed'::text);
 
 
 --
@@ -25239,6 +25453,13 @@ CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_bank_deposits FOR
 
 
 --
+-- Name: trust_bill_declines trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trust_recorded_by BEFORE INSERT ON public.trust_bill_declines FOR EACH ROW EXECUTE FUNCTION public.trust_name_recorder();
+
+
+--
 -- Name: trust_bill_markups trust_recorded_by; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -26757,6 +26978,14 @@ ALTER TABLE ONLY public.trust_bill_declines
 
 ALTER TABLE ONLY public.trust_bill_declines
     ADD CONSTRAINT trust_bill_declines_pmc_id_owner_id_fkey FOREIGN KEY (pmc_id, owner_id) REFERENCES public.trust_owners(pmc_id, id);
+
+
+--
+-- Name: trust_bill_declines trust_bill_declines_pmc_id_recorded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trust_bill_declines
+    ADD CONSTRAINT trust_bill_declines_pmc_id_recorded_by_fkey FOREIGN KEY (pmc_id, recorded_by) REFERENCES public.trust_staff(pmc_id, id);
 
 
 --
@@ -31047,4 +31276,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000150'),
     ('20261023000150'),
     ('20261023000151'),
-    ('20261023000200');
+    ('20261024000152'),
+    ('20261025000200');

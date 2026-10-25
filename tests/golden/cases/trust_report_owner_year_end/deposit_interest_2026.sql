@@ -1,5 +1,5 @@
 -- Owner 1's 2026 year-end package with interest added to a security deposit (migration
--- 20261023000200): a part of its own, not "other". Worked by hand, a year of 365 days:
+-- 20261025000200): a part of its own, not "other". Worked by hand, a year of 365 days:
 --   Unit 1  Tenant 1's 1200.00 from 2026-01-01: January to March, 90 days at 1.5%, is
 --           1200 x 0.015 x 90 / 365 = 4.438356: 4.44 added to the deposit on April 2. April to
 --           June, 91 days on 1204.44: 1204.44 x 0.015 x 91 / 365 = 4.504211: 4.50 added on July 1.

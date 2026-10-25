@@ -179,7 +179,10 @@ starts and control characters, money, days, times in random zones, NULLs), and c
 built yet. A PR can't drop an entry or one of its tests, unless a founder's decision replaced
 what the entry guarded: then a `[[retired]]` row names it, the decision record in `docs/adr/` and
 the entry, with tests, that replaced it (the in-house e-signing of ADR 0008 retired signing
-through a partner). PRs run 200 examples per property. Nightly runs 3,000 examples per property, each
+through a partner). PRs run 200 examples per property, in two halves side by side in the one
+`properties` job, dealt by the same measured times (in one run they had grown to 28 to 31
+minutes and hit the job's 35-minute cap on PR #168; each half is about 19 minutes on a 4-core
+container). Nightly runs 3,000 examples per property, each
 property twice with a seed of its own, and the properties rotate: night n (days since 1970)
 takes part n mod 4 + 1 of them, dealt into 4 shards by each test's measured PR seconds
 (`ci/property-times.toml`, `PMS_TEST_ROTATION`, `PMS_TEST_SHARD_TIMES`), so 8 jobs a night and

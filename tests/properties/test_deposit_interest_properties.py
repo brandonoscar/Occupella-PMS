@@ -207,7 +207,7 @@ def check(conn, app, tenants, terms, moves, runs):
         assert lines[("total expenses", None)] == added
         assert lines[("net income", None)] == rent - added
 
-    # The year-end package (migration 20261023000200): each year's interest added, by the day it
+    # The year-end package (migration 20261025000200): each year's interest added, by the day it
     # moved, is its own part, never "other".
     by_year = dict(
         conn.execute(

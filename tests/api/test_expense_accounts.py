@@ -254,7 +254,11 @@ def test_every_schedule_e_line_is_labelled_as_the_income_statement_labels_it(
                 approved_by="Owner 1, by phone",
             )
         )
-        ok(send(client, f"/api/payables/bills/{entered}/set-aside", on=TODAY))
+        ok(
+            send(
+                client, f"/api/payables/bills/{entered}/pay", on=TODAY, request_id=str(uuid.uuid4())
+            )
+        )
 
     rows = conn.execute(
         "SELECT item FROM trust_report_income_statement(%s, %s, %s, %s)"
@@ -284,7 +288,14 @@ def test_an_owner_reads_and_downloads_their_years_income_statement(
             approved_by="Owner 1, by phone",
         )
     )
-    ok(send(other_client, f"/api/payables/bills/{entered}/set-aside", on=TODAY))
+    ok(
+        send(
+            other_client,
+            f"/api/payables/bills/{entered}/pay",
+            on=TODAY,
+            request_id=str(uuid.uuid4()),
+        )
+    )
     fund(conn, pmc, "75.00", n=1)  # another owner's money is not theirs
 
     found = ok(client.get(f"/api/owner/income-statement?year={TODAY.year}"), 200)

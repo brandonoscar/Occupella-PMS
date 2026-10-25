@@ -9,12 +9,15 @@ and trust_approve_bank_reconciliation approves them for a staff member who holds
 and didn't prepare them, while they still stand (migration 0034). The worksheet is
 trust_report_bank_reconciliation, the same report staff download.
 
-Nothing here moves money: it records what the bank says and compares it with the books.
+Nothing here moves money but one thing: a line staff confirm is a bill's payment records the
+bill paid (ADR 0010), through the bill's own write path. Lines whose check number and amount match
+bill payments recorded with that number are matched by themselves when the statement comes in.
 """
 
 from __future__ import annotations
 
 import hashlib
+import re
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Literal
@@ -25,6 +28,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, StringConstraints
 
 from pms import exports, statements
+from pms.api import deps, payables
 from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/reconcile")
@@ -233,6 +237,8 @@ class Imported(BaseModel):
     last_day: date
     lines: int
     closing_balance: str
+    # Its lines matched by themselves to bill payments by their checks' numbers (ADR 0010).
+    checks_matched: int = 0
 
 
 @router.post("/statements", status_code=201)
@@ -324,12 +330,26 @@ def import_statement(session: Staff, conn: Conn, new: NewStatement) -> Imported:
         ) from None
     except psycopg.errors.CheckViolation as refused:  # not the next statement, a closed period
         raise HTTPException(409, refusal(refused)) from None
+    # A check paid out for bills, recorded with its number, matches its line by itself; the
+    # audit log names who imported the statement.
+    checks = match_checks(
+        conn,
+        session,
+        new.bank_account_id,
+        open_lines(
+            conn,
+            new.bank_account_id,
+            "l.statement_id = %(statement)s AND " + UNMATCHED_LINE,
+            statement=statement,
+        ),
+    )
     return Imported(
         id=statement,
         first_day=first_day,
         last_day=last_day,
         lines=len(lines),
         closing_balance=cents(opening + sum((line.amount for line in lines), Decimal(0))),
+        checks_matched=checks,
     )
 
 
@@ -675,10 +695,14 @@ class Counted(BaseModel):
 
 @router.post("/{bank_account_id}/auto-match")
 def auto_match(session: Staff, conn: Conn, bank_account_id: UUID) -> Counted:
-    """Matches each open line to the one open transfer of the same amount within a week of it,
-    or to the one bank deposit whose open transfers come to it within a week of its day, when
+    """Matches each open line that paid a check to the bill payments recorded with its number
+    and amount; then each open line to the one open transfer of the same amount within a week of
+    it, or to the one bank deposit whose open transfers come to it within a week of its day, when
     neither has another such partner. Anything less sure is left to staff."""
     bank_of(conn, session.pmc_id, bank_account_id)
+    checks = match_checks(
+        conn, session, bank_account_id, open_lines(conn, bank_account_id, UNMATCHED_LINE)
+    )
     lines = open_lines(conn, bank_account_id, UNMATCHED_LINE)
     moved = transfers(conn, bank_account_id, UNMATCHED_TRANSFER)
     # A transfer in a deposit goes to the bank with it: the deposit is its candidate, once every
@@ -720,7 +744,239 @@ def auto_match(session: Staff, conn: Conn, bank_account_id: UUID) -> Counted:
             matched += 1
         except psycopg.errors.CheckViolation:  # in a closed period
             continue
-    return Counted(matched=matched)
+    return Counted(matched=checks + matched)
+
+
+# --- bill payments on the statement (ADR 0010) -----------------------------------------------
+
+# A check's number in a bank line's description ("CHECK 1042", "Chk #1042").
+CHECK_IN_TEXT = re.compile(r"\b(?:check|chk|cheque)\b\W{0,3}(\d{1,15})\b", re.IGNORECASE)
+# How many days after a check's payment was recorded its bank line may come and still be it.
+CHECK_EARLY_DAYS = 7
+
+
+def check_number_of(reference: str | None, description: str) -> str | None:
+    """The number of the check a bank line paid, without leading zeros: its reference when that
+    is a number, else one its description names."""
+    if reference is not None:
+        digits = reference.strip().lstrip("#")
+        if digits.isdigit() and len(digits) <= 15:
+            return digits.lstrip("0") or "0"
+    found = CHECK_IN_TEXT.search(description)
+    return (found[1].lstrip("0") or "0") if found else None
+
+
+class BillPayment(BaseModel):
+    bill_id: UUID
+    transfer_id: str
+    on: date
+    amount: str  # what it paid out of the account's cash
+    check_number: str | None
+
+
+def bill_payments(conn: psycopg.Connection[Any], pmc: UUID, bank: UUID) -> list[BillPayment]:
+    """The bill payments out of a trust bank account's cash that no match holds yet."""
+    return [
+        BillPayment(bill_id=b, transfer_id=t, on=o, amount=cents(a), check_number=n)
+        for b, t, o, a, n in conn.execute(
+            "SELECT p.bill_id, p.transfer_id, (tr.event_at AT TIME ZONE 'UTC')::date, tr.amount,"  # noqa: S608
+            " CASE WHEN m.method = 'check' THEN ltrim(m.check_number, '0') END"
+            " FROM trust_bill_payments AS p"
+            " JOIN pgledger_transfers AS tr ON tr.id = p.transfer_id"
+            " JOIN trust_ledger_accounts AS c ON c.ledger_account_id = tr.to_account_id"
+            " LEFT JOIN trust_payout_methods AS m ON m.transfer_id = p.transfer_id"
+            " WHERE p.pmc_id = %(pmc)s AND p.step = 'paid' AND c.kind = 'bank_cash'"
+            "   AND c.bank_account_id = %(bank)s AND "
+            + UNMATCHED_TRANSFER
+            + " ORDER BY tr.event_at, p.transfer_id",
+            {"pmc": pmc, "bank": bank},
+        )
+    ]
+
+
+def match_checks(
+    conn: psycopg.Connection[Any], session: Any, bank: UUID, lines: list[OpenLine]
+) -> int:
+    """Matches each line that paid out a check to the bill payments recorded with that check's
+    number when they come to its amount exactly, written no later than a week after it cleared;
+    a number on two lines is left to staff. How many lines it matched."""
+    paid: dict[str, list[BillPayment]] = {}
+    for payment in bill_payments(conn, session.pmc_id, bank):
+        if payment.check_number is not None:
+            paid.setdefault(payment.check_number or "0", []).append(payment)
+    numbered = [(line, check_number_of(line.reference, line.description)) for line in lines]
+    seen = [number for _, number in numbered if number is not None]
+    matched = 0
+    for line, number in numbered:
+        if number is None or seen.count(number) != 1 or number not in paid:
+            continue
+        payments = paid[number]
+        total = sum((Decimal(p.amount) for p in payments), Decimal(0))
+        late = max(p.on for p in payments) - line.posted_on
+        if -Decimal(line.amount) != total or late > timedelta(days=CHECK_EARLY_DAYS):
+            continue
+        try:
+            with conn.transaction():  # a savepoint: a refusal leaves the others standing
+                match(conn, session, bank, [line.id], [p.transfer_id for p in payments])
+            matched += 1
+        except psycopg.errors.CheckViolation:  # in a closed period
+            continue
+    return matched
+
+
+class BillSuggestion(BaseModel):
+    line: OpenLine
+    bill_id: UUID
+    vendor: str
+    reference: str
+    owner: str
+    property: str
+    # "match": a payment recorded already, of the line's amount; "record": no payment yet, and
+    # what is left of the bill is the line's amount, so accepting records it paid on the line's
+    # day.
+    kind: Literal["match", "record"]
+    transfer_id: str | None = None
+    amount: str
+    check_number: str | None = None
+
+
+@router.get("/{bank_account_id}/bill-suggestions")
+def bill_suggestions(session: Staff, conn: Conn, bank_account_id: UUID) -> list[BillSuggestion]:
+    """What each money-out line of the account no match holds may be, for staff to confirm: a
+    bill payment recorded already of the same amount within a month of it, or a bill that is
+    ready to pay with exactly that much left. Lines whose check number matched a payment
+    exactly were matched when the statement came in."""
+    bank_of(conn, session.pmc_id, bank_account_id)
+    lines = [
+        line
+        for line in open_lines(conn, bank_account_id, UNMATCHED_LINE)
+        if Decimal(line.amount) < 0
+    ]
+    if not lines:
+        return []
+    bills = {
+        bill.id: bill
+        for bill in payables.find_bills(conn, session.pmc_id, "all")[0]
+        if bill.account
+        in {
+            account
+            for (account,) in conn.execute(
+                "SELECT ledger_account_id FROM trust_ledger_accounts"
+                " WHERE bank_account_id = %s AND kind = 'owner_property'",
+                (bank_account_id,),
+            )
+        }
+    }
+    payments = bill_payments(conn, session.pmc_id, bank_account_id)
+    found = []
+    for line in lines:
+        out = -Decimal(line.amount)
+        number = check_number_of(line.reference, line.description)
+        for payment in payments:
+            bill = bills.get(payment.bill_id)
+            if (
+                bill is not None
+                and Decimal(payment.amount) == out
+                and abs((payment.on - line.posted_on).days) <= 31
+            ):
+                found.append(suggestion(line, bill, "match", payment.transfer_id, number))
+        for bill in bills.values():
+            if bill.status in ("ready to pay", "partly paid") and Decimal(bill.left) == out:
+                found.append(suggestion(line, bill, "record", None, number))
+    return found
+
+
+def suggestion(
+    line: OpenLine,
+    bill: payables.Bill,
+    kind: Literal["match", "record"],
+    transfer: str | None,
+    number: str | None,
+) -> BillSuggestion:
+    return BillSuggestion(
+        line=line,
+        bill_id=bill.id,
+        vendor=bill.vendor,
+        reference=bill.reference,
+        owner=bill.owner,
+        property=bill.property,
+        kind=kind,
+        transfer_id=transfer,
+        amount=cents(-Decimal(line.amount)),
+        check_number=number,
+    )
+
+
+class Accepted(BaseModel):
+    line_id: UUID
+    bill_id: UUID
+    # The payment the line is; none to record the bill paid by the line.
+    transfer_id: Annotated[str, Field(max_length=100)] | None = None
+
+
+@router.post("/{bank_account_id}/bill-suggestions", status_code=201)
+def accept_bill_suggestion(
+    session: Staff, conn: Conn, bank_account_id: UUID, accepted: Accepted
+) -> Created:
+    """Confirms what a line is: matches it to a bill payment recorded already, or records the
+    bill paid by it (what is left of it, on the line's day, by check when the line names one,
+    else ACH) and matches the two. Sent again, it records nothing new."""
+    bank_of(conn, session.pmc_id, bank_account_id)
+    found = open_lines(conn, bank_account_id, "l.id = %(line)s", line=accepted.line_id)
+    if not found:
+        raise HTTPException(404, "no such line of this trust bank account")
+    (line,) = found
+    key = f"bank-line:{line.id}"
+    done = conn.execute(
+        "SELECT transfer_id FROM trust_bill_payments WHERE pmc_id = %s AND request_key = %s",
+        (session.pmc_id, key),
+    ).fetchone()
+    payment = accepted.transfer_id or (done[0] if done else None)
+    if payment is not None:
+        if not any(
+            p.transfer_id == payment and p.bill_id == accepted.bill_id
+            for p in bill_payments(conn, session.pmc_id, bank_account_id)
+        ):
+            standing = conn.execute(
+                "SELECT ml.match_id FROM trust_bank_match_lines AS ml"  # noqa: S608
+                " JOIN trust_bank_match_transfers AS mt ON mt.match_id = ml.match_id"
+                " WHERE ml.line_id = %s AND mt.transfer_id = %s AND " + LIVE.format("ml"),
+                (line.id, payment),
+            ).fetchone()
+            if standing is not None:  # a retry: matched already
+                return Created(id=standing[0])
+            raise HTTPException(404, "no such payment of this bill waiting for its bank line")
+        return add_match(
+            session, conn, bank_account_id, NewMatch(line_ids=[line.id], transfer_ids=[payment])
+        )
+    if not deps.may(conn, session, "bills"):
+        raise HTTPException(403, f"your roles don't let you change {deps.AREAS['bills']}")
+    bills, _ = payables.find_bills(conn, session.pmc_id, bill=accepted.bill_id)
+    if not bills:
+        raise HTTPException(404, "no such bill")
+    (bill,) = bills
+    payables.payable(bill)
+    if Decimal(bill.left) != -Decimal(line.amount):
+        raise HTTPException(
+            409,
+            f"the line is {payables.dollars(cents(-Decimal(line.amount)))}; "
+            f"{payables.dollars(bill.left)} is left to pay of {bill.vendor} {bill.reference}",
+        )
+    number = check_number_of(line.reference, line.description)
+    try:
+        moved = str(
+            one(
+                conn,
+                "SELECT trust_pay_bill_part(%s, %s, %s, %s, %s)",
+                (session.pmc_id, bill.id, Decimal(bill.left), key, payables.at(line.posted_on)),
+            )
+        )
+        payables.record_method(conn, session.pmc_id, moved, "check" if number else "EFT", number)
+    except payables.PAY_REFUSALS as refused:
+        raise HTTPException(409, refusal(refused)) from None
+    return add_match(
+        session, conn, bank_account_id, NewMatch(line_ids=[line.id], transfer_ids=[moved])
+    )
 
 
 # --- preparing and approving --------------------------------------------------------------

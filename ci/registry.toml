@@ -310,12 +310,57 @@ tests = [
 ]
 
 [[invariant]]
-id = "bill-paid-once-after-set-aside"
-statement = "A bill is paid once, out of the vendor's account through the trust bank account's cash, only after its money was set aside and never dated before that. A retry returns the original transfer."
+id = "bill-paid-in-parts-once-per-key"
+statement = "A bill is paid out of the vendor's account through the trust bank account's cash, whole or in parts (ADR 0010), each part once per request key and never more than is left, never dated before its money left the owner's account; paying one whose money hasn't left takes the whole bill from the owner first, as setting it aside did. A retry returns the original transfer."
 tests = [
   "tests/properties/test_bill_properties.py::test_bill_invariants_hold_under_random_bills_approvals_payments_and_draws",
+  "tests/properties/test_payables_properties.py::test_payables_invariants_hold_under_random_bills_contributions_and_draws",
   "tests/test_vendor_bills.py::test_paying_a_bill_sends_the_money_set_aside_out_through_cash",
-  "tests/test_vendor_bills.py::test_a_bill_is_set_aside_before_it_is_paid",
+  "tests/test_vendor_bills.py::test_paying_a_bill_takes_it_from_the_owner_then",
+  "tests/test_vendor_bills.py::test_a_bill_set_aside_is_paid_no_earlier",
+  "tests/test_bill_lifecycle.py::test_the_first_part_takes_the_whole_bill_from_the_owner_and_each_pays_its_part",
+  "tests/test_bill_lifecycle.py::test_a_part_is_never_more_than_is_left_and_a_key_pays_one_payment",
+  "tests/test_bill_lifecycle.py::test_a_bill_set_aside_before_the_change_pays_in_parts_from_what_was_taken",
+  "tests/test_bill_lifecycle.py::test_each_part_counts_toward_the_vendors_year_and_the_reports_show_what_is_left",
+  "tests/api/test_bill_lifecycle_api.py::test_a_bill_is_paid_in_parts_by_check_and_ach_with_a_receipt",
+]
+
+[[invariant]]
+id = "bill-holds-the-owners-balance"
+statement = "A bill not yet paid holds its amount and markup of its owner's property account without moving money (ADR 0010): the balance is laid over the open bills dated by today in the order they are due, so holds never come to more than the balance, what is short of each is what the owner must send, money that arrives clears it, a paid or void bill holds nothing, and a draw never pays held money."
+tests = [
+  "tests/properties/test_payables_properties.py::test_payables_invariants_hold_under_random_bills_contributions_and_draws",
+  "tests/test_bill_lifecycle.py::test_the_balance_is_held_for_the_bill_due_first_and_the_rest_is_short",
+  "tests/test_bill_lifecycle.py::test_a_bill_holds_its_markup_and_a_bill_dated_later_holds_nothing_yet",
+  "tests/test_bill_lifecycle.py::test_money_that_arrives_clears_what_is_short",
+  "tests/test_bill_lifecycle.py::test_a_draw_never_pays_what_is_held",
+  "tests/test_bill_lifecycle.py::test_paid_and_void_bills_hold_nothing",
+  "tests/test_bill_lifecycle.py::test_a_short_owner_pays_no_part",
+  "tests/api/test_bill_lifecycle_api.py::test_the_bills_list_says_what_each_bill_holds_and_what_the_owner_must_send",
+]
+
+[[invariant]]
+id = "bill-void-only-before-money-taken"
+statement = "Staff void a bill entered by mistake, naming who and why, only while no money was taken for it (a bill paid in part, or set aside before ADR 0010, is paid, not voided); a void bill is never paid, takes no decision or markup, holds nothing and leaves draws, the reports and archiving as a declined bill does."
+tests = [
+  "tests/properties/test_payables_properties.py::test_payables_invariants_hold_under_random_bills_contributions_and_draws",
+  "tests/test_bill_lifecycle.py::test_staff_void_a_bill_entered_by_mistake_naming_who",
+  "tests/test_bill_lifecycle.py::test_a_void_names_a_staff_member_and_is_never_the_owners",
+  "tests/test_bill_lifecycle.py::test_no_void_once_money_was_taken_for_the_bill",
+  "tests/test_bill_lifecycle.py::test_a_declined_bill_is_void_already_and_a_void_one_takes_no_decision",
+  "tests/test_bill_lifecycle.py::test_a_void_releases_what_a_draw_held_back_from_its_day",
+  "tests/api/test_bill_lifecycle_api.py::test_staff_void_a_bill_entered_by_mistake_and_its_hold_goes_back",
+  "tests/api/test_bill_lifecycle_api.py::test_no_void_once_money_was_taken_for_the_bill",
+]
+
+[[invariant]]
+id = "bill-payment-matches-its-bank-line"
+statement = "A bank line whose check number and amount exactly match the bill payments recorded with that number is matched to them when the statement comes in, naming who imported it; a number on two lines, or any less certain line, waits for staff, and confirming a suggestion records the bill paid once, on the line's day, by the bill's own write path."
+tests = [
+  "tests/api/test_bill_lifecycle_api.py::test_a_check_paid_for_bills_matches_its_line_by_number_and_amount",
+  "tests/api/test_bill_lifecycle_api.py::test_a_line_that_looks_like_a_bill_is_recorded_paid_once_staff_confirm",
+  "tests/api/test_bill_lifecycle_api.py::test_a_payment_recorded_already_is_suggested_for_its_line",
+  "tests/api/test_bill_lifecycle_api.py::test_a_suggestion_is_refused_in_plain_words",
 ]
 
 [[invariant]]
@@ -706,13 +751,13 @@ tests = [
 ]
 
 [[invariant]]
-id = "owners-page-shows-what-a-draw-takes"
-statement = "What the staff owners page shows as available to draw is exactly what a draw of everything takes: the balance less the reserve of the agreement in force and the unpaid bills the database itself counts (trust_unpaid_bills); a draw of more is refused with nothing written, and sending a draw again pays nothing twice. A bill is set aside only from money the owner holds, and paid once it was."
+id = "owners-page-shows-what-a-draw-takes-past-held-bills"
+statement = "What the staff owners page shows as available to draw is exactly what a draw of everything takes: the balance less the reserve of the agreement in force and the unpaid bills the database itself counts (trust_unpaid_bills); a draw of more is refused with nothing written, and sending a draw again pays nothing twice. A bill's first payment takes it whole from money the owner holds; one the owner is short of pays nothing."
 tests = [
   "tests/properties/test_payables_properties.py::test_payables_invariants_hold_under_random_bills_contributions_and_draws",
   "tests/api/test_payables.py::test_owners_money_shows_what_a_draw_may_take",
   "tests/api/test_payables.py::test_a_draw_pays_out_what_is_available_once",
-  "tests/api/test_payables.py::test_a_bill_is_paid_only_once_set_aside_and_never_into_the_negative",
+  "tests/api/test_payables.py::test_a_bill_the_owner_is_short_of_is_not_paid",
 ]
 
 [[invariant]]
@@ -1471,3 +1516,13 @@ tests = [
   "tests/test_payments.py::test_stripe_charges_a_saved_account_once_finding_the_payment_it_made_before",
   "tests/api/test_autopay_api.py::test_run_rent_now_starts_the_autopay_payment_which_goes_to_the_partner_and_the_books",
 ]
+
+[[retired]]
+id = "invariant:bill-paid-once-after-set-aside"
+decision = "docs/adr/0010-design-pass.md"
+replaced_by = "invariant:bill-paid-in-parts-once-per-key"
+
+[[retired]]
+id = "invariant:owners-page-shows-what-a-draw-takes"
+decision = "docs/adr/0010-design-pass.md"
+replaced_by = "invariant:owners-page-shows-what-a-draw-takes-past-held-bills"

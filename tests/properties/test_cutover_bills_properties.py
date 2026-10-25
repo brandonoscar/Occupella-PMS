@@ -6,8 +6,9 @@ owner's approval limit and some of those approved in the old system, some dated 
 sends it, sometimes twice. After it:
   - the owners page holds back from a draw exactly the bills dated by today, and shows as
     available the balance less the reserve and those bills, at least 0;
-  - a bill over the owner's limit without the old system's approval waits for the owner, and
-    every other bill waits to be set aside;
+  - a bill over the owner's limit without the old system's approval waits for the owner; one
+    dated after today is entered, holding nothing yet; every other is ready to pay, or short
+    when the owner's balance, held for the bills due before it first, can't cover it (ADR 0010);
   - the file sent again adds nothing and keeps every bill.
 
 Run more examples locally with HYPOTHESIS_PROFILE=nightly.
@@ -95,10 +96,21 @@ def check_bills(conn, bills, resend):
         row = owners[owner.account]
         assert (Decimal(row.balance), Decimal(row.unpaid_bills)) == (HELD, unpaid)
         assert Decimal(row.available) == max(HELD - RESERVE - unpaid, Decimal(0))
-    for i, (_, amount, approved, _) in enumerate(bills):
+    # Each owner's balance is held for their bills dated by today in the order they are due:
+    # here all on one day, so by reference.
+    left = dict.fromkeys(range(len(pmc.owners)), HELD)
+    for i, (n, amount, approved, ahead) in enumerate(bills):
         waits = amount > LIMIT and not approved
-        event("waits for the owner" if waits else "to set aside")
-        assert listed[f"OLD-{i}"] == ("needs approval" if waits else "to set aside")
+        if waits:
+            status = "waiting for owner"
+        elif ahead:
+            status = "entered"
+        else:
+            status = "ready to pay" if amount <= left[n] else "short"
+        if not ahead:
+            left[n] = max(left[n] - amount, Decimal(0))
+        event(status)
+        assert listed[f"OLD-{i}"] == status
 
 
 def test_unpaid_bills_carried_over_hold_back_draws_and_wait_for_their_owner(database_url):
