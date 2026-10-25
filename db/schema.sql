@@ -2335,14 +2335,22 @@ CREATE FUNCTION public.trust_check_bank_tie_out() RETURNS trigger
     SET search_path TO 'public', 'pg_temp'
     AS $$
 DECLARE
+    v_banks uuid[];
+    v_mapped bigint;
     v_bank uuid;
     v_off numeric;
 BEGIN
-    FOR v_bank IN
-        SELECT DISTINCT t.bank_account_id
-        FROM trust_ledger_accounts AS t
-        WHERE t.ledger_account_id IN (NEW.from_account_id, NEW.to_account_id)
-    LOOP
+    SELECT array_agg(DISTINCT t.bank_account_id), count(*) INTO v_banks, v_mapped
+    FROM trust_ledger_accounts AS t
+    WHERE t.ledger_account_id IN (NEW.from_account_id, NEW.to_account_id);
+
+    -- Two accounts (each a trust account's, once) of one trust bank account: its sum is as it was.
+    IF NEW.from_account_id <> NEW.to_account_id AND v_mapped = 2
+            AND cardinality(v_banks) = 1 THEN
+        RETURN NULL;
+    END IF;
+
+    FOREACH v_bank IN ARRAY coalesce(v_banks, '{}'::uuid[]) LOOP
         SELECT sum(a.balance) INTO v_off
         FROM trust_ledger_accounts AS t
         JOIN pgledger_accounts AS a ON a.id = t.ledger_account_id
@@ -10366,7 +10374,8 @@ BEGIN
             (4, 'bills paid'),
             (5, 'owner draws'),
             (6, 'owner contributions'),
-            (7, 'other'),
+            (7, 'security deposit interest'),
+            (8, 'other'),
             (9, 'closing balance')
         ) AS v (part, label)
     ),
@@ -10441,6 +10450,12 @@ BEGIN
         FROM trust_owner_contributions AS c
         JOIN pgledger_transfers AS tr ON tr.id = c.transfer_id
         WHERE c.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
+        UNION ALL
+        -- 7: interest added to a tenant's security deposit from the account (migration 0122).
+        SELECT l.owner_account, 7, -l.amount
+        FROM trust_deposit_interest_lines AS l
+        JOIN pgledger_transfers AS tr ON tr.id = l.transfer_id
+        WHERE l.pmc_id = p_pmc_id AND tr.event_at >= v_start AND tr.event_at < v_end
     ),
     balances AS (
         SELECT a.account, a.name,
@@ -10456,7 +10471,7 @@ BEGIN
                CASE p.part
                    WHEN 0 THEN b.opening
                    WHEN 9 THEN b.closing
-                   WHEN 7 THEN b.closing - b.opening - coalesce(
+                   WHEN 8 THEN b.closing - b.opening - coalesce(
                        (SELECT sum(m.change) FROM moved AS m WHERE m.account = b.account), 0)
                    ELSE coalesce(
                        (SELECT sum(m.change) FROM moved AS m
@@ -31269,4 +31284,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261022000150'),
     ('20261023000150'),
     ('20261023000151'),
-    ('20261024000152');
+    ('20261024000152'),
+    ('20261025000200'),
+    ('20261025000210');
