@@ -1,0 +1,56 @@
+# The browser tests' stack on one machine, for scripts/simulate.ps1 (README, "Simulate people
+# using it"): its own Postgres, every migration, and the API serving the built portal on
+# 127.0.0.1:8123 as .github/workflows/e2e.yml serves it: the test partners (no email, screening,
+# address lookup or payment reaches anyone) and no nightly run (the tests charge rent when they
+# mean to). tests/tools/test_simulate.py keeps its settings the same as e2e.yml's.
+#   docker compose -f compose.e2e.yaml up -d --wait app
+#   docker compose -f compose.e2e.yaml run --rm seed     # frontend/e2e/.seed.json
+#   cd frontend; npx playwright test
+#   docker compose -f compose.e2e.yaml down -v           # its books go with it
+#
+# Synthetic books for tests, never a company's: Postgres trusts every connection inside this
+# network, and the PMS is published on this machine only (127.0.0.1), over plain http.
+name: pms-e2e
+
+services:
+  db:
+    extends:
+      file: compose.yaml
+      service: db
+
+  migrate:
+    extends:
+      file: compose.yaml
+      service: migrate
+
+  app:
+    extends:
+      file: compose.yaml
+      service: app
+    ports:
+      - 127.0.0.1:8123:8000
+    environment:
+      PMS_PUBLIC_URL: http://127.0.0.1:8123
+      PMS_SCREENING_PARTNER: fake
+      PMS_EMAIL_SENDER: fake
+      PMS_GEOCODER: fake
+      PMS_PAYMENTS: fake
+      PMS_NIGHTLY: "off"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  # The synthetic PMCs the tests sign in to (frontend/e2e/seed.py), and what the tests need of
+  # them written next to the tests. As root, so it can write into that folder on any host.
+  seed:
+    image: occupella-pms:local
+    profiles: [seed]
+    user: "0:0"
+    command: ["sh", "-c", "python /e2e/seed.py > /e2e/.seed.json"]
+    environment:
+      DATABASE_URL: postgres://postgres@db:5432/pms?sslmode=disable
+    volumes:
+      - ./frontend/e2e:/e2e
+    depends_on:
+      migrate:
+        condition: service_completed_successfully

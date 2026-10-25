@@ -461,6 +461,21 @@ nothing. Grype ran only in CI: the image doesn't build in that sandbox (NOT VERI
 Run the parts locally with the commands above, `cd frontend && npm audit --omit=dev`, and
 `docker compose build`, then syft and grype as in the workflow.
 
+**simulate.yml** (by hand, and on a PR that changes `scripts/simulate.ps1`, `compose.e2e.yaml`,
+`frontend/playwright.config.ts` or the workflow): `scripts/simulate.ps1`, the browser tests played
+against a fresh synthetic company in Docker (`compose.e2e.yaml`: the API with e2e.yml's settings,
+on 127.0.0.1:8123) in each browser and time zone picked, by PowerShell (`pwsh`, on GitHub's
+runners) as on a Windows machine (README, "Simulate people using it"). The e2e job runs the tests
+in Chromium in UTC only; a date that is a day off for someone in Los Angeles or Kiritimati, or a
+page that breaks in Firefox or Edge, shows here. On a PR it runs once, Chromium in UTC, to show
+the script works; by hand it takes any browsers and time zones (default nine runs). What fails
+there is a lead to fix before it runs on a schedule. PSScriptAnalyzer (MIT, pinned) lints the
+script first. `tests/tools/test_simulate.py` keeps the stack's settings the same as e2e.yml's, the
+PMS published on this machine only, the seed writing only where git ignores it, the script plain
+ASCII (Windows PowerShell 5.1 reads a file without a byte order mark as ANSI) and free of what
+only PowerShell 7 has, and every program's exit code read under 'Continue' (5.1 makes a redirected
+stderr an error first). `scripts/check.sh` lists it as NOT RUN: it takes hours in Docker.
+
 **licenses.yml** (PRs and main): every installed dependency, direct or transitive, must carry a
 license on the allowlist in `ci/licenses.toml`: compatible with this repo's Apache-2.0, and never
 non-commercial or source-available. A PMC that self-hosts needs to be able to use every piece
@@ -533,4 +548,5 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
 - A push to main runs the same checks (minus `deps-and-secrets`), plus gitleaks over full
   history, pip-audit and Scorecard: 11 jobs.
 - A new PR job is chained after another one, as `e2e` is, to stay within 8. The daily scan's one
-  job runs on a PR only when the PR changes `daily-scan.yml`.
+  job runs on a PR only when the PR changes `daily-scan.yml`, and the simulate job only when it
+  changes the script, its stack, the browser tests' config or `simulate.yml`.
