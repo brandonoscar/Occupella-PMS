@@ -23,7 +23,7 @@ SET search_path = public, pg_temp
 AS $$
 DECLARE
     v_banks uuid[];
-    v_mapped integer;
+    v_mapped bigint;
     v_bank uuid;
     v_off numeric;
 BEGIN

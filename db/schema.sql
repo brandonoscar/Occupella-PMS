@@ -2336,7 +2336,7 @@ CREATE FUNCTION public.trust_check_bank_tie_out() RETURNS trigger
     AS $$
 DECLARE
     v_banks uuid[];
-    v_mapped integer;
+    v_mapped bigint;
     v_bank uuid;
     v_off numeric;
 BEGIN
