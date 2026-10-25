@@ -9,7 +9,7 @@ charges, and every email it writes (to its outbox: nothing is sent). Then, for e
   2. what people do that day, through the API's own route functions, as the manager: each lease's
      tenants pay by their habit (on time, late, half on time and the rest late, two months at
      once, or on time with one payment in four bouncing three days later); on the 10th every
-     owner is paid what is available; on the 15th the bills waiting are set aside and paid;
+     owner is paid what is available; on the 15th the open bills are paid on Pay bills;
   3. the checks below, on the books as they stand at the day's end.
 
 Every random choice comes from one seed, so a failing night replays exactly (--seed).
@@ -248,28 +248,20 @@ def owners_paid(conn: psycopg.Connection[Any], life: Life, day: date) -> None:
 
 
 def bills_paid(conn: psycopg.Connection[Any], life: Life, day: date) -> None:
-    waiting = [
-        row[0]
-        for row in rows(
-            conn,
-            "SELECT b.id FROM trust_bills AS b WHERE b.pmc_id = %s AND b.bill_date <= %s"
-            " AND NOT EXISTS (SELECT 1 FROM trust_bill_declines AS d WHERE d.bill_id = b.id)"
-            " AND NOT EXISTS (SELECT 1 FROM trust_bill_payments AS p WHERE p.bill_id = b.id)"
-            " ORDER BY b.id",
-            (life.built.pmc_id, day),
-        )
-    ]
+    """Every open bill dated by the day, paid on Pay bills, each on its own: one waiting for its
+    owner, or that its owner's balance is short of, is refused in words, as on the page."""
+    found, _ = payables.find_bills(conn, life.built.pmc_id, "open")
     paid = 0
-    for bill in waiting:
+    for bill in sorted(found, key=lambda b: str(b.id)):
+        if bill.bill_date > day:
+            continue
         try:
             with as_manager(conn, life) as s:
-                payables.set_aside(s, conn, bill, payables.Day(on=day))
-            with as_manager(conn, life) as s:
                 payables.pay_bills(
-                    s, conn, payables.PayBills(on=day, method="check", bill_ids=[bill])
+                    s, conn, payables.PayBills(on=day, method="check", bill_ids=[bill.id])
                 )
             paid += 1
-        except Exception as refused:  # an owner short of money, or approval still wanted
+        except Exception as refused:
             if getattr(refused, "status_code", None) not in (409, 422):
                 raise
     life.count("bills paid", paid)

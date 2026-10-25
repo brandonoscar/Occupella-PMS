@@ -235,8 +235,8 @@ writes, to the outbox), a monthly bill that the nightly run enters by itself, an
 for every tenant and owner. Each day the nightly run runs for it, then its people act through the
 API's own route functions: each lease's tenants pay by a habit of their own (on time, late, half
 on time and the rest late, two months at once, or on time with one payment in four bouncing three
-days later), owners are paid what is available on the 10th and the bills waiting are set aside and
-paid on the 15th. After each night: nothing it posted is dated after it (the part of the PMS that
+days later), owners are paid what is available on the 10th and the open bills are paid on the
+15th (Pay bills). After each night: nothing it posted is dated after it (the part of the PMS that
 reads the real clock instead of the day it runs for would show here), no rent is charged twice for
 a due date, the delinquency report is what is open of the leases' charges, the trial balance
 balances and each trust bank account's book cash is what it holds. On the 1st, each owner's
