@@ -370,8 +370,10 @@ def work_order(session: Staff, conn: Conn, work_order_id: UUID) -> WorkOrder:
         BillLine(id=i, vendor=vendor, reference=reference, amount=cents(amount), paid=paid)
         for i, vendor, reference, amount, paid in conn.execute(
             "SELECT b.id, v.display_name, b.reference, b.amount,"
-            " EXISTS (SELECT 1 FROM trust_bill_payments AS x WHERE x.bill_id = b.id"
-            "         AND x.step = 'paid')"
+            # Paid in full: a bill may be paid in parts (ADR 0010).
+            " (SELECT coalesce(sum(t.amount), 0) FROM trust_bill_payments AS x"
+            "  JOIN pgledger_transfers AS t ON t.id = x.transfer_id"
+            "  WHERE x.bill_id = b.id AND x.step = 'paid') >= b.amount"
             " FROM trust_bills AS b JOIN trust_vendors AS v ON v.id = b.vendor_id"
             " WHERE b.work_order_id = %s ORDER BY b.bill_date, b.created_at, b.id",
             (work_order_id,),

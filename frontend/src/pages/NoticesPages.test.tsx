@@ -120,7 +120,8 @@ describe("NoticeTemplatesPage", () => {
     expect(await screen.findByText("Short lease is saved.")).toBeTruthy();
     expect(posted(fetch)).toEqual([["/api/notices/templates", { name: "Short lease", body: "Deposit {{security_deposit}}", used_for: "lease" }]]);
 
-    fireEvent.click(screen.getByRole("row", { name: "Residential lease" }));
+    // The page behind the panel is hidden from the accessibility tree until the panel has closed.
+    fireEvent.click(await screen.findByRole("row", { name: "Residential lease" }));
     expect((screen.getByLabelText("Used for") as HTMLSelectElement).disabled).toBe(true);
   });
 

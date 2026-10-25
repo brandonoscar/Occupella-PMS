@@ -17,7 +17,7 @@ Rent roll, Run rent now). Each part charges or enters once per date, so a run ag
 this command, an admin's catch-up) charges nothing new. Only the management fees move trust
 money, inside trust, from each owner's account to the company's fee account, once per account and
 month (the founder's answer of 2026-10-18 to q049); charges are what tenants owe, and bills wait
-to be set aside and paid.
+for staff to pay them.
 
 The API runs it when it starts and then every day at 06:00 UTC, unless PMS_NIGHTLY is "off".
 `python -m pms.nightly` runs it once, for a server that schedules it itself. One run at a time,

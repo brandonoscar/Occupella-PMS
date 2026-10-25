@@ -1,19 +1,26 @@
 """Property-based tests for staff's payables and owners' money (src/pms/api/payables.py).
 
-Hypothesis enters bills against an owner's property account (some dated ahead), sets them
-aside and pays them, records owner contributions and draws (some sent again), takes management
-fees and takes the company's fees out of trust (some sent again), in random order. A model
-predicts what the owner's account holds, what its unpaid bills are, what a draw may take and
-what the company's fee account holds; the database and the pages must agree after every step.
+Hypothesis enters bills against an owner's property account (some dated ahead), pays them
+whole or in parts (some sent again), voids them, records owner contributions and draws (some
+sent again), takes management fees and takes the company's fees out of trust (some sent again),
+in random order. A model predicts what the owner's account holds, what each bill holds of it
+(ADR 0010), what its unpaid bills are, what a draw may take and what the company's fee account
+holds; the database and the pages must agree after every step.
 
 Invariants checked after every step (ci/registry.toml maps them to this test):
   - the owners page shows as available exactly what a draw of everything takes, and a draw of
     more is refused with nothing written;
   - its unpaid bills are the database's own (trust_unpaid_bills), which a draw keeps back;
-  - a bill is set aside only from money the owner holds, and paid once it was;
-  - Pay bills sets aside (if it wasn't) and pays every bill it names, or nothing at all when one
-    of them can't be (the refusal naming that bill); sent again it pays nothing twice, and each
-    payment keeps how it was sent;
+  - each bill's status, what it holds, what it is short and what the owner must send are the
+    model's: the balance laid over the bills not paid yet in the order they are due; holds never
+    come to more than the balance, a void bill holds nothing, and a draw never pays held money
+    (every hold is the same after it);
+  - a bill's first payment takes it whole from the owner, each pays at most what is left, a
+    short bill pays nothing, and sent again a payment records nothing new;
+  - a void is refused once money was taken for the bill, and a void bill is never paid;
+  - Pay bills pays what is left of every bill it names, or nothing at all when one of them is
+    short (the refusal naming that bill and what the owner must send); sent again it pays
+    nothing twice, and each payment keeps how it was sent;
   - sending a draw again pays nothing twice;
   - Pay owners pays every account it names what it asks, or nothing at all when one of them
     can't pay (the refusal naming that owner and property); sent again it pays nothing twice,
@@ -36,7 +43,7 @@ from decimal import Decimal
 import psycopg
 import pytest
 from fastapi import HTTPException
-from helpers import add_agreement, balance, bank_sums, make_pmc
+from helpers import add_agreement, add_staff, balance, bank_sums, give_roles, make_pmc
 from hypothesis import event
 from hypothesis import strategies as st
 from hypothesis.stateful import (
@@ -59,18 +66,39 @@ FEE = Decimal("25.00")  # each period's management fee: the agreement's minimum
 @dataclass
 class Bill:
     id: uuid.UUID
+    index: int
     amount: Decimal
     dated_ahead: bool
-    aside: bool = False
-    paid: bool = False
+    taken: bool = False  # its money left the owner's account (its first payment)
+    paid: Decimal = Decimal(0)
+    void: bool = False
+
+    @property
+    def reference(self):
+        return f"INV-{self.index}"
+
+    @property
+    def left(self):
+        return self.amount - self.paid
+
+    @property
+    def open(self):
+        return not self.void and self.paid < self.amount
 
 
 class PayablesMachine(RuleBasedStateMachine):
     def __init__(self, conn):
         super().__init__()
         self.conn = conn
+        # Nobody named until this PMC's staff member is: the last example named another PMC's.
+        conn.execute("SELECT set_config('trust.staff_id', '', false)")
         pmc = make_pmc(conn)
-        self.session = Session(uuid.uuid4(), pmc.pmc_id, "staff", uuid.uuid4(), "s@example.com")
+        # A staff member who may pay, named on every write as the API names whoever is signed in
+        # (a void names who voided it).
+        staff = add_staff(conn, pmc.pmc_id)
+        give_roles(conn, pmc.pmc_id, staff, ["admin", "approve", "disburse"])
+        conn.execute("SELECT set_config('trust.staff_id', %s, false)", (str(staff),))
+        self.session = Session(uuid.uuid4(), pmc.pmc_id, "staff", staff, "s@example.com")
         self.account = pmc.owners[0].account
         # A second owner's account that never holds anything: Pay owners can't pay from it.
         self.empty = pmc.owners[1].account
@@ -95,8 +123,54 @@ class PayablesMachine(RuleBasedStateMachine):
         self.withdrawals: list[tuple[uuid.UUID, Decimal | None, Decimal]] = []
         self.payouts: list[tuple[payables.PayOwners, Decimal]] = []
 
+    def waiting(self):
+        """The bills dated by today whose money is still the owner's: open and not yet taken."""
+        return [b for b in self.bills if b.open and not b.taken and not b.dated_ahead]
+
     def unpaid(self):
-        return sum((b.amount for b in self.bills if not b.aside and not b.dated_ahead), Decimal(0))
+        return sum((b.amount for b in self.waiting()), Decimal(0))
+
+    def holds(self):
+        """What each waiting bill holds of the owner's balance, what it is short and what the
+        owner must send for it and those before it: the balance laid over them in the order they
+        are due (all due the same day here, so by reference)."""
+        laid = {}
+        held = max(self.held, Decimal(0))
+        through = Decimal(0)
+        for bill in sorted(self.waiting(), key=lambda b: b.reference):
+            through += bill.amount
+            holds = min(bill.amount, max(held - (through - bill.amount), Decimal(0)))
+            laid[bill.id] = (holds, bill.amount - holds, max(through - held, Decimal(0)))
+        return laid
+
+    def status(self, bill):
+        if bill.void:
+            return "void"
+        if bill.paid >= bill.amount:
+            return "paid"
+        if bill.paid > 0:
+            return "partly paid"
+        if bill.taken:
+            return "ready to pay"
+        if bill.dated_ahead:
+            return "entered"
+        return "short" if self.holds()[bill.id][1] > 0 else "ready to pay"
+
+    def database_holds(self):
+        return {
+            bill: (held, short, needed)
+            for bill, held, short, needed in self.conn.execute(
+                "SELECT bill_id, held, short, needed FROM trust_bill_holds(%s)",
+                (self.session.pmc_id,),
+            ).fetchall()
+        }
+
+    def short_said(self, bill):
+        _, short, needed = self.holds()[bill.id]
+        return (
+            f"Owner 1's balance is ${short:,.2f} short of Vendor 1 {bill.reference}: they need to"
+            f" send ${needed:,.2f} first"
+        )
 
     def available(self):
         return max(self.held - RESERVE - self.unpaid(), Decimal(0))
@@ -134,72 +208,89 @@ class PayablesMachine(RuleBasedStateMachine):
             memo="Repair",
         )
         created = self.call(payables.enter_bill, new)
-        self.bills.append(Bill(created.id, amount, ahead))
+        self.bills.append(Bill(created.id, len(self.bills), amount, ahead))
 
-    @precondition(lambda self: any(not b.aside and not b.dated_ahead for b in self.bills))
-    @rule(data=st.data())
-    def set_aside(self, data):
-        bill = data.draw(
-            st.sampled_from([b for b in self.bills if not b.aside and not b.dated_ahead])
-        )
-        step = payables.Day(on=TODAY)
-        if bill.amount > self.held:
-            event("set aside: refused, not enough money")
-            short = bill.amount - self.held
-            said = f"not enough money: the owner's account would be ${short:,.2f} short"
-            self.refused(said, payables.set_aside, bill.id, step)
+    def take(self, bill, amount):
+        """The model of a payment: the first takes the whole bill from the owner."""
+        if not bill.taken:
+            self.held -= bill.amount
+            bill.taken = True
+        bill.paid += amount
+
+    @precondition(lambda self: any(b.open and not b.dated_ahead for b in self.bills))
+    @rule(data=st.data(), part=st.none() | CENTS)
+    def pay(self, data, part):
+        """A payment of what is left of a bill, or a part of it, sent twice."""
+        bill = data.draw(st.sampled_from([b for b in self.bills if b.open and not b.dated_ahead]))
+        step = payables.Paying(on=TODAY, amount=part, request_id=uuid.uuid4())
+        if self.status(bill) == "short":
+            event("pay: refused, short")
+            self.refused(self.short_said(bill), payables.pay, bill.id, step)
             return
-        event("set aside")
-        self.call(payables.set_aside, bill.id, step)
-        bill.aside = True
-        self.held -= bill.amount
+        amount = bill.left if part is None else part
+        if amount > bill.left:
+            event("pay: refused, more than is left")
+            said = (
+                f"${bill.left:,.2f} is left to pay of Vendor 1 {bill.reference};"
+                f" ${amount:,.2f} is more than that"
+            )
+            self.refused(said, payables.pay, bill.id, step)
+            return
+        event("pay: all that is left" if amount == bill.left else "pay: a part")
+        moved = self.call(payables.pay, bill.id, step)
+        assert self.call(payables.pay, bill.id, step) == moved  # sent again: nothing new
+        self.take(bill, amount)
 
-    @precondition(lambda self: any(b.aside and not b.paid for b in self.bills))
+    @precondition(lambda self: self.bills)
     @rule(data=st.data())
-    def pay(self, data):
-        bill = data.draw(st.sampled_from([b for b in self.bills if b.aside and not b.paid]))
-        self.call(payables.pay, bill.id, payables.Paying(on=TODAY))
-        bill.paid = True
+    def void(self, data):
+        bill = data.draw(st.sampled_from(self.bills))
+        why = payables.Void(reason="Entered twice")
+        if bill.void:
+            self.refused(f"bill {bill.reference} is void already", payables.void, bill.id, why)
+        elif bill.taken:
+            event("void: refused, money taken")
+            said = (
+                f"money was taken from the owner's account for bill {bill.reference} already;"
+                " it can't be voided"
+            )
+            self.refused(said, payables.void, bill.id, why)
+        else:
+            event("void")
+            self.call(payables.void, bill.id, why)
+            bill.void = True
 
-    @precondition(lambda self: any(not b.paid and not b.dated_ahead for b in self.bills))
+    @precondition(lambda self: any(b.open and not b.dated_ahead for b in self.bills))
     @rule(data=st.data(), method=st.sampled_from(["check", "EFT"]))
     def pay_bills(self, data, method):
-        """Pay bills: each bill chosen set aside if it wasn't and paid, all of them or none."""
+        """Pay bills: what is left of each bill chosen, all of them or none."""
         chosen = data.draw(
             st.lists(
-                st.sampled_from([b for b in self.bills if not b.paid and not b.dated_ahead]),
+                st.sampled_from([b for b in self.bills if b.open and not b.dated_ahead]),
                 min_size=1,
                 max_size=3,
                 unique_by=lambda b: b.id,
             )
         )
         run = payables.PayBills(on=TODAY, method=method, bill_ids=[b.id for b in chosen])
-        held = self.held
-        for bill in chosen:
-            if bill.aside:
-                continue
-            if bill.amount > held:
-                event("pay bills: refused, not enough money for one")
-                short = bill.amount - held
-                said = (
-                    f"Vendor 1 INV-{self.bills.index(bill)}: not enough money:"
-                    f" the owner's account would be ${short:,.2f} short"
-                )
-                self.refused(said, payables.pay_bills, run)
-                return
-            held -= bill.amount
+        short = [b for b in chosen if self.status(b) == "short"]
+        if short:
+            # Paying a ready bill never makes another short, so the first short one is refused.
+            event("pay bills: refused, one is short")
+            said = self.short_said(short[0])
+            self.refused(said, payables.pay_bills, run)
+            return
         event(f"pay bills: {len(chosen)} paid")
         paid = self.call(payables.pay_bills, run)
         assert self.call(payables.pay_bills, run) == paid  # sent again: nothing twice
-        assert [(p.bill_id, Decimal(p.amount)) for p in paid] == [(b.id, b.amount) for b in chosen]
+        assert [(p.bill_id, Decimal(p.amount)) for p in paid] == [(b.id, b.left) for b in chosen]
         methods = self.conn.execute(
             "SELECT method FROM trust_payout_methods WHERE transfer_id = ANY(%s)",
             ([p.transfer_id for p in paid],),
         ).fetchall()
         assert methods == [(method,)] * len(chosen)
         for bill in chosen:
-            bill.aside = bill.paid = True
-        self.held = held
+            self.take(bill, bill.left)
 
     # --- draws ------------------------------------------------------------------------------
 
@@ -231,7 +322,10 @@ class PayablesMachine(RuleBasedStateMachine):
             self.refused(said, payables.pay_owners, new)
             return
         event("draw: everything available" if amount is None else "draw: an amount")
+        before = self.database_holds()
         (paid,) = self.call(payables.pay_owners, new)
+        # A draw never pays held money: every bill holds what it held.
+        assert self.database_holds() == before
         taken = Decimal(paid.amount)
         assert taken == (available if amount is None else amount)
         self.held -= taken
@@ -346,6 +440,9 @@ class PayablesMachine(RuleBasedStateMachine):
         )
         assert Decimal(self.call(payables.take_company_fees, new).amount) == taken
 
+    def teardown(self):
+        self.conn.execute("SELECT set_config('trust.staff_id', '', false)")
+
     # --- invariants -------------------------------------------------------------------------
 
     @invariant()
@@ -369,15 +466,27 @@ class PayablesMachine(RuleBasedStateMachine):
         assert (fees.since is None) == (self.company == 0)
 
     @invariant()
-    def bill_statuses_follow_their_steps(self):
+    def bills_hold_what_the_model_holds(self):
         with self.conn.transaction():
-            listed = {
-                b.id: b.status for b in payables.find_bills(self.conn, self.session.pmc_id)[0]
-            }
+            listed = {b.id: b for b in payables.find_bills(self.conn, self.session.pmc_id)[0]}
+        holds = self.holds()
+        assert self.database_holds() == holds
         for bill in self.bills:
-            assert listed[bill.id] == (
-                "paid" if bill.paid else "set aside" if bill.aside else "to set aside"
+            shown = listed[bill.id]
+            assert shown.status == self.status(bill)
+            assert (Decimal(shown.paid), Decimal(shown.left)) == (
+                bill.paid,
+                Decimal(0) if bill.void else bill.left,
             )
+            held, short, needed = holds.get(bill.id, (None, None, None))
+            if bill.taken and bill.open:
+                held = bill.left  # its money left the owner's account: what is left is held
+            assert shown.held == (None if held is None else f"{held:.2f}")
+            assert shown.short == (f"{short:.2f}" if short else None)
+            assert shown.needed == (f"{needed:.2f}" if needed else None)
+        # Holds never come to more than the balance, and a void bill holds nothing.
+        assert sum((h for h, _, _ in holds.values()), Decimal(0)) <= max(self.held, Decimal(0))
+        assert not any(b.void and b.id in holds for b in self.bills)
 
 
 def test_payables_invariants_hold_under_random_bills_contributions_and_draws(database_url):

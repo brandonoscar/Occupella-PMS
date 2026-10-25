@@ -122,7 +122,7 @@ def test_a_markup_only_where_the_agreement_sets_one(conn, pmc):
 def test_a_markup_comes_once_before_set_aside_and_never_on_a_declined_bill(conn, pmc):
     aside = bill(conn, pmc, "FIX-6")
     set_aside_bill(conn, pmc.pmc_id, aside, at(OCT_20))
-    with pytest.raises(psycopg.errors.CheckViolation, match="set aside already"):
+    with pytest.raises(psycopg.errors.CheckViolation, match="taken for bill .* already"):
         mark_up(conn, pmc, aside)
     declined = bill(conn, pmc, "FIX-7")
     decline_bill(conn, pmc.pmc_id, declined, OCT_5, "Owner 1", "Not this one")
