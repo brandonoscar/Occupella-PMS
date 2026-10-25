@@ -427,6 +427,20 @@ def test_the_founders_seed_puts_something_on_every_list(conn, app_conn, built):
         ("Smoke detector chirping", None, "urgent"),
         ("Water heater rumbles", "scheduled", "normal"),
     ]
+    # Every applicant gave a phone, an address, a previous landlord, an employer and an emergency
+    # contact, and two applications list their households.
+    assert rows(
+        "SELECT count(*), count(previous_landlord), count(employer) FROM trust_applicant_details"
+        " WHERE pmc_id = %s"
+    ) == [(6, 6, 6)]
+    assert rows(
+        "SELECT count(*) FROM trust_emergency_contacts"
+        " WHERE pmc_id = %s AND applicant_id IS NOT NULL"
+    ) == [(6,)]
+    assert rows(
+        "SELECT display_name, assistance_animal FROM trust_application_pets WHERE pmc_id = %s"
+        ' ORDER BY display_name COLLATE "C"'
+    ) == [("Biscuit", False), ("Juniper", True), ("Pepper", False)]
     # Four vendors, a W-9 on file, and files on a lease, an owner, a bill and a work order too.
     assert rows("SELECT count(*) FROM trust_vendors WHERE pmc_id = %s") == [(4,)]
     # Each with their trade, whether they get a 1099 and how they are paid.
@@ -441,6 +455,8 @@ def test_the_founders_seed_puts_something_on_every_list(conn, app_conn, built):
         ("Demo Roofing Co", "Roofing", True, "check"),
     ]
     assert rows("SELECT kind, title FROM trust_documents WHERE pmc_id = %s ORDER BY kind") == [
+        # Each applicant's proof of income (ADR 0010, part G).
+        *[("income_proof", "Proof of income")] * 6,
         ("move_out_photo", "Kitchen at move-out"),
         ("owner_document", "Management agreement"),
         ("receipt", "Roof repair receipt"),
@@ -488,9 +504,16 @@ def test_every_write_but_the_first_staff_member_and_their_role_names_a_staff_mem
         " WHERE pmc_id = %s AND staff_id IS NULL GROUP BY table_name ORDER BY table_name",
         (built.pmc_id,),
     ).fetchall() == [
-        # Applicants apply themselves, through a link: they have no login to name.
+        # Applicants apply themselves, through a link: they have no login to name. With what they
+        # give of themselves and their households (ADR 0010, part G), proofs of income included.
+        ("trust_applicant_details", 6),
         ("trust_applicants", 6),
+        ("trust_application_occupants", 1),
+        ("trust_application_pets", 3),
+        ("trust_application_vehicles", 1),
         ("trust_applications", 5),
+        ("trust_documents", 6),
+        ("trust_emergency_contacts", 6),
         ("trust_pmcs", 1),
         # A signer signs through their link (ADR 0008): they have no login either.
         ("trust_signature_evidence", 1),

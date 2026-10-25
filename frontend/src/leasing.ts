@@ -1,4 +1,5 @@
 // Rental applications as the API sends them (src/pms/api/leasing.py), and how they read.
+import type { Details, Household } from "./applying";
 import type { BadgeTone } from "./components/Badge";
 import type { UnitDetails } from "./unitDetails";
 
@@ -46,7 +47,14 @@ export type ApplicantStatus = {
   notice?: string | null;
 };
 
-export type Applicant = { name: string; email: string };
+export type Applicant = {
+  name: string;
+  email: string;
+  // What they gave with their application, and the tenant they became (ADR 0010 phase 2, part G).
+  id?: string;
+  details?: Details;
+  tenant_id?: string | null;
+};
 
 export type Screening = {
   id: string;
@@ -95,6 +103,8 @@ export type Application = {
   monthly_income: string;
   submitted_at: string;
   applicants: Applicant[];
+  // Who else would live there, their pets and vehicles, as the application gave them.
+  household?: Household;
   screenings: Screening[];
   decision: Decision | null;
   status: ApplicationStatus;

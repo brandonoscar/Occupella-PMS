@@ -230,6 +230,54 @@ describe("ApplicantPage", () => {
     expect(screen.queryByRole("button", { name: /^Actions for/ })).toBeNull();
   });
 
+  it("shows what each applicant gave and the household, and the tenant they became", async () => {
+    server({
+      ...APPLICATION,
+      status: "approved",
+      lease_id: "l9",
+      applicants: [
+        {
+          id: "ap1", name: "Applicant A", email: "a@example.com", tenant_id: "t1",
+          details: {
+            phone: "555-555-0101",
+            address: { line_1: "1 Sample Street", line_2: "Apt 2", city: "Sampleton", state: "ST", postal_code: "00001" },
+            previous_landlord: { name: "Landlord 1", phone: "555-555-0150", from_on: "2023-01-01", to_on: "2025-12-31" },
+            employer: "Employer 1",
+            emergency_contact: { name: "Contact 1", phone: "555-555-0160", recorded_at: "2026-10-12T14:00:00Z" },
+            income_proofs: ["d1"],
+          },
+        },
+        {
+          id: "ap2", name: "Applicant B", email: "b@example.com", tenant_id: null,
+          details: { phone: null, address: null, previous_landlord: null, employer: null, emergency_contact: null, income_proofs: [] },
+        },
+      ],
+      household: {
+        occupants: ["Occupant 1"],
+        pets: [
+          { name: "Pet 1", kind: "Cat", breed: null, weight_lbs: "9.5", assistance_animal: false },
+          { name: "Pet 2", kind: "Dog", breed: null, weight_lbs: null, assistance_animal: true },
+        ],
+        vehicles: [{ make: "Make 1", model: null, color: "Blue", plate: "SAMPLE1", plate_state: "ST" }],
+      },
+    });
+    render(<ApplicantPage me={ME} id="a1" />);
+
+    const gave = await screen.findByLabelText("What Applicant A gave");
+    expect(within(gave).getByText("1 Sample Street, Apt 2, Sampleton, ST 00001")).toBeTruthy();
+    expect(within(gave).getByText("Landlord 1, 555-555-0150, 01/01/2023 – 12/31/2025")).toBeTruthy();
+    expect(within(gave).getByText("Employer 1")).toBeTruthy();
+    expect(within(gave).getByText("Contact 1, 555-555-0160")).toBeTruthy();
+    expect(within(gave).getByRole("link", { name: "Proof of income" }).getAttribute("href")).toBe("/api/documents/d1/file");
+    expect(screen.getByRole("link", { name: "Now a tenant" }).getAttribute("href")).toBe("/tenants/t1");
+    expect(screen.getByText("No details came with this application.")).toBeTruthy();
+    const household = screen.getByLabelText("Household");
+    expect(within(household).getByText("Occupant 1")).toBeTruthy();
+    expect(within(household).getByText("Pet 1, Cat, 9.5 lbs")).toBeTruthy();
+    expect(within(household).getByText(/Pet 2, Dog \(assistance animal: no pet rent, fee or deposit\)/)).toBeTruthy();
+    expect(within(household).getByText("Blue Make 1, SAMPLE1 (ST)")).toBeTruthy();
+  });
+
   it("links a leased application to its lease", async () => {
     server({ ...APPLICATION, status: "approved", lease_id: "l9" });
     render(<ApplicantPage me={ME} id="a1" />);
