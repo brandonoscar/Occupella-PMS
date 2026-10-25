@@ -68,7 +68,7 @@ export function ReceivePayment({ record, close, authority }: {
 // A housing authority's one payment (a check, or a deposit by EFT) for many leases: each lease's
 // part pays what the authority owes on it, oldest first, into its owners' accounts, never more
 // than it owes; all or none.
-export function AuthorityCheckForm({ record, authority, onRecorded }: {
+function AuthorityCheckForm({ record, authority, onRecorded }: {
   record: Recorder;
   authority?: string;
   onRecorded: (another: boolean) => void;
