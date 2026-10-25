@@ -1008,7 +1008,8 @@ UNION ALL
           ELSE '/files'
         END
  FROM trust_documents AS d
- WHERE d.pmc_id = %(pmc)s AND d.title ILIKE %(like)s AND d.kind <> 'company_logo'
+ WHERE d.pmc_id = %(pmc)s AND d.title ILIKE %(like)s
+   AND d.kind NOT IN ('company_logo', 'income_proof')
    AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)
  ORDER BY d.created_at DESC, d.id LIMIT 10)
 """,
