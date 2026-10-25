@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import type { Authority, AuthorityPage, AuthorityPayment } from "../assistance";
-import { lateFeeLine, paymentLines, paymentTotal } from "../assistance";
+import { lateFeeLine } from "../assistance";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
 import { EmptyState } from "../components/EmptyState";
@@ -11,7 +11,6 @@ import { Field } from "../components/Field";
 import { Form } from "../components/Form";
 import { Notice } from "../components/Notice";
 import { Said } from "../components/Said";
-import { Select } from "../components/Select";
 import { RowMenu } from "../components/RowMenu";
 import { PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
@@ -19,11 +18,11 @@ import { Wide } from "../components/Wide";
 import type { Keep } from "../latest";
 import { keepAll, latest } from "../latest";
 import { day, money, usDate } from "../money";
-import type { PaymentMethod } from "../rent";
-import { PAYMENT_METHODS, methodLabel, requestId } from "../rent";
+import { methodLabel } from "../rent";
 import { navigate } from "../router";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
+import { ReceivePayment } from "./ReceivePayment";
 import { useRecord } from "./useRecord";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
@@ -105,8 +104,9 @@ function AddAuthorityForm({ added }: { added: (id: string) => void }) {
 }
 
 // A housing authority: each lease it assists or owes on, what it pays of the rent today and what
-// it owes. Record payment takes its one payment (a check, or a deposit by EFT) for many leases,
-// each lease's part paying what the authority owes on it, oldest first, into its owners' accounts.
+// it owes. Receive payment (ADR 0010 phase 1c: the same panel as the rent roll's, the authority
+// chosen) takes its one payment (a check, or a deposit by EFT) for many leases, each lease's part
+// paying what the authority owes on it, oldest first, into its owners' accounts.
 // Since migration 0116 (q034): its late payment fee (Set late fee), its payments with It bounced
 // in each one's ⋯ menu, and a lease on a payment hold takes a payment only past the hold.
 export function HousingAuthorityPage({ me, id }: { me: Me; id: string }) {
@@ -138,7 +138,7 @@ export function HousingAuthorityPage({ me, id }: { me: Me; id: string }) {
       <PageHeader title={page.name} actions={
         <>
           <Button variant="secondary" onClick={() => setSettingFee(true)}>Set late fee</Button>
-          <Button onClick={() => setPaying(true)} disabled={page.leases.length === 0}>Record payment</Button>
+          <Button onClick={() => setPaying(true)} disabled={page.leases.length === 0}>Receive payment</Button>
         </>
       } />
       <p className="text-sm text-ink-muted" data-testid="authority-owed">{`Owes ${money(page.owed)} in all.`}</p>
@@ -210,12 +210,8 @@ export function HousingAuthorityPage({ me, id }: { me: Me; id: string }) {
         </SidePanel>
       )}
       {paying && (
-        <SidePanel title="Record payment" onClose={() => setPaying(false)}>
-          <PaymentForm page={page} record={async (path, body, done) => {
-            const recorded = await record(path, body, done);
-            if (recorded) setPaying(false);
-            return recorded;
-          }} />
+        <SidePanel title="Receive payment" onClose={() => setPaying(false)}>
+          <ReceivePayment record={record} authority={page.id} close={() => setPaying(false)} />
           <Notice tone="error">{refused}</Notice>
         </SidePanel>
       )}
@@ -268,64 +264,6 @@ function LateFeeForm({ authority, record }: { authority: string; record: ReturnT
       <Field label="Grace days" id="authority-fee-grace" inputMode="numeric" required value={grace} onChange={(e) => setGrace(e.target.value)} />
       <Field label="Late payment fee" id="authority-fee" inputMode="decimal" value={fee} onChange={(e) => setFee(e.target.value)} />
       <div><Button type="submit">Set late fee</Button></div>
-    </Form>
-  );
-}
-
-function PaymentForm({ page, record }: { page: AuthorityPage; record: ReturnType<typeof useRecord>["record"] }) {
-  const [request] = useState(requestId);
-  const [pastHold, setPastHold] = useState(false);
-  const [on, setOn] = useState(day(new Date()));
-  const [method, setMethod] = useState<PaymentMethod>("EFT");
-  const [reference, setReference] = useState("");
-  const [amounts, setAmounts] = useState<Record<string, string>>({});
-  const owing = page.leases.filter((lease) => Number(lease.owed) > 0);
-  const held = owing.some((lease) => lease.hold_since !== null);
-  const total = paymentTotal(amounts);
-  return (
-    <Form className="flex flex-col gap-3" onSubmit={(event) => {
-      event.preventDefault();
-      const body = {
-        request_id: request, housing_authority_id: page.id, received_on: on, method,
-        reference: reference.trim() || null, lines: paymentLines(amounts),
-        ...(held && pastHold ? { past_hold: true } : {}),
-      };
-      return record(`/api/assistance/payments`, body, () => `${money(total)} from ${page.name} recorded.`);
-    }}>
-      <p className="text-sm text-ink-muted">
-        Each lease's part pays what the authority owes on it, oldest first, into its owners' accounts. No more than it owes.
-      </p>
-      <Field label="Received on" id="authority-pay-on" type="date" required value={on} onChange={(e) => setOn(e.target.value)} />
-      <Select label="Method" id="authority-pay-method" value={method} onChange={(e) => setMethod(e.target.value as PaymentMethod)}>
-        {PAYMENT_METHODS.map((m) => <option key={m.value} value={m.value}>{m.label}</option>)}
-      </Select>
-      <Field label="Check or reference" id="authority-pay-ref" maxLength={200} value={reference}
-        onChange={(e) => setReference(e.target.value)} />
-      {owing.length === 0 ? (
-        <Notice tone="info">The authority owes nothing on its leases.</Notice>
-      ) : (
-        <>
-          {owing.map((lease) => (
-            <Field key={lease.lease_id} label={`${lease.home} (owes ${money(lease.owed)})`} id={`authority-pay-${lease.lease_id}`}
-              inputMode="decimal" value={amounts[lease.lease_id] ?? ""}
-              onChange={(e) => setAmounts({ ...amounts, [lease.lease_id]: e.target.value })} />
-          ))}
-          <div>
-            <Button type="button" variant="secondary" onClick={() =>
-              setAmounts(Object.fromEntries(owing.map((lease) => [lease.lease_id, lease.owed])))}>
-              Fill in what it owes
-            </Button>
-          </div>
-        </>
-      )}
-      {held && (
-        <label className="flex items-center gap-2 text-sm text-ink">
-          <input type="checkbox" checked={pastHold} onChange={(e) => setPastHold(e.target.checked)} />
-          Accept this payment past the payment hold
-        </label>
-      )}
-      <p className="text-sm text-ink" data-testid="authority-pay-total">{`Total ${money(total)}`}</p>
-      <div><Button type="submit" disabled={total === "0.00"}>Record payment</Button></div>
     </Form>
   );
 }

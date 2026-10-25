@@ -228,7 +228,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
           </div>
         )}
         {tab === "files" && (
-          <FilesCard kind="move_out_photo" also={["lease_document"]} aboutId={id} name={`${lease.unit}, ${lease.property}`}
+          <FilesCard kind="move_out_photo" also={["lease_document"]} listed={["payment_attachment"]} aboutId={id} name={`${lease.unit}, ${lease.property}`}
             note="Its tenants download its lease documents in the portal, with the lease as signed; move-out photos stay here." />
         )}
         {tab === "files" && <NoticesCard leaseId={id} />}
@@ -236,7 +236,9 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
       </div>
       {panel !== null && (
         <SidePanel title={PANELS[panel]} onClose={() => setPanel(null)}>
-          {panel === "payment" && <PaymentForm lease={lease} record={recordThenClose} />}
+          {panel === "payment" && (
+            <PaymentForm lease={lease} record={record} onRecorded={(another) => { if (!another) setPanel(null); }} />
+          )}
           {panel === "charge" && <ChargeForm lease={lease} record={recordThenClose} />}
           {panel === "rent" && <RentChangeForm lease={lease} record={recordThenClose} />}
           {panel === "due" && <DueDayForm lease={lease} record={recordThenClose} />}

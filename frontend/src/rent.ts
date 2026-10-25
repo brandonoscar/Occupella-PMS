@@ -16,6 +16,10 @@ export type Paid = {
   reference: string | null;
   method: PaymentMethod | "online" | null;
   bounced: boolean;
+  // What staff wrote about it as they received it, and its files (a check's photo, a PDF); a
+  // tenant never sees the note (ADR 0010 phase 1c).
+  note?: string | null;
+  attachments?: string[];
 };
 // How a payment came; recorded as said, nothing sent (ADR 0006).
 export type PaymentMethod = "check" | "cashier's check" | "money order" | "EFT" | "cash";
@@ -153,6 +157,27 @@ export function requestId(): string {
 export function bounceSummary(amount: string, bounce: Bounce): string {
   const fee = bounce.nsf_fee === null ? "" : `; a ${money(bounce.nsf_fee)} NSF fee is charged`;
   return `The ${money(amount)} payment bounced and is undone${fee}.`;
+}
+
+// The open charges staff chose for a payment to pay first, as the API takes them: each ticked one
+// with what it pays of it.
+export type ChargePart = { charge_id: string; amount: string };
+
+export function chosenCharges(picked: Record<string, string>): ChargePart[] {
+  return Object.entries(picked).map(([charge_id, amount]) => ({ charge_id, amount: amount.trim() }));
+}
+
+// The choices with one charge ticked (a part), or unticked (undefined).
+export function withPart(was: Record<string, string>, id: string, part: string | undefined): Record<string, string> {
+  const next = { ...was };
+  if (part === undefined) delete next[id];
+  else next[id] = part;
+  return next;
+}
+
+// What the choices come to, counting only amounts typed in full (a part typed half way counts 0).
+export function partsTotal(parts: ChargePart[]): string {
+  return sumMoney(parts.map((part) => part.amount).filter((amount) => /^\d+(\.\d{1,2})?$/.test(amount)));
 }
 
 // What a recorded payment did, in a line.
