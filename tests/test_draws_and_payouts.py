@@ -219,7 +219,8 @@ def test_a_runs_items_are_its_kinds_payouts_to_their_payee(conn, pmc):
     transfer_batch(conn, [(pmc.operating_cash, owner.account, "500.00")], at(TODAY - 5 * DAY))
     draw_owner(conn, pmc.pmc_id, owner.account, "draw-1", "100.00", at(TODAY))
     drawn = conn.execute(
-        "SELECT transfer_id FROM trust_owner_draws WHERE request_key = 'draw-1'"
+        "SELECT transfer_id FROM trust_owner_draws WHERE pmc_id = %s AND request_key = 'draw-1'",
+        (pmc.pmc_id,),
     ).fetchone()[0]
     add_agreement(conn, pmc.pmc_id, owner.account, TODAY - 30 * DAY, approval_limit="1000")
     bill = enter_bill(
