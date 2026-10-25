@@ -207,6 +207,30 @@ def check(conn, app, tenants, terms, moves, runs):
         assert lines[("total expenses", None)] == added
         assert lines[("net income", None)] == rent - added
 
+    # The year-end package (migration 20261025000200): each year's interest added, by the day it
+    # moved, is its own part, never "other".
+    by_year = dict(
+        conn.execute(
+            "SELECT extract(year FROM tr.event_at AT TIME ZONE 'UTC')::int, sum(l.amount)"
+            " FROM trust_deposit_interest_lines AS l"
+            " JOIN pgledger_transfers AS tr ON tr.id = l.transfer_id"
+            " WHERE l.pmc_id = %s GROUP BY 1",
+            (pmc.pmc_id,),
+        ).fetchall()
+    )
+    for year in range(START.year, max(by_year, default=START.year) + 1):
+        parts = {
+            item: amount
+            for _, place, item, amount in conn.execute(
+                "SELECT * FROM trust_report_owner_year_end(%s, %s, %s)",
+                (pmc.pmc_id, pmc.owners[0].owner_id, year),
+            ).fetchall()
+            if place is None
+        }
+        assert parts["all properties: security deposit interest"] == -by_year.get(year, 0)
+        if year > START.year:  # only interest moved the account after its first year
+            assert parts["all properties: other"] == 0
+
 
 def test_deposit_interest_is_each_days_deposit_at_its_rate_paid_once(database_url):
     with (
