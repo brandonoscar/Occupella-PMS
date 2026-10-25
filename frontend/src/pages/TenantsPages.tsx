@@ -173,8 +173,7 @@ export function TenantPage({ me, id }: { me: Me; id: string }) {
             {tab === "summary" && (
               <div className="flex flex-col gap-6">
                 {home ? (
-                  <TenantLeaseCard line={home} tenant={tenant.name} deposit={tenant.deposit} refresh={refresh}
-                    onRenew={(lease) => navigate(`/draft-leases?lease=${lease.id}`)} />
+                  <TenantLeaseCard line={home} tenant={tenant.name} deposit={tenant.deposit} refresh={refresh} />
                 ) : <NoLeaseCard />}
                 <ContactCard path={`/api/tenants/${id}`} contact={tenant.contact} refresh={refresh} name={tenant.name}
                   byTenantAt={tenant.contact_by_tenant_at} editRequest={editContact} />

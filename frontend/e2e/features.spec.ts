@@ -655,7 +655,8 @@ test("staff open a work order with its details, schedule its vendor (not one who
   // Renewals: the demo's leases run month to month, so none ends in the next 90 days.
   await section(page, "Renewals");
   await expect(page.getByTestId("empty-state")).toContainText("No lease ends in the next 90 days.");
-  await expect(page.getByRole("link", { name: "Draft a renewal" })).toHaveAttribute("href", "/draft-leases");
+  await expect(page.getByText("Open a lease to renew it: Renew lease, on its page or its tenant's.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Draft a renewal" })).toHaveCount(0);
 });
 
 test("staff find a tenant and an owner, keep their contact details and a vendor's, rename them, and archive only what has nothing open", async ({

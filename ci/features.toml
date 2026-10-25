@@ -627,9 +627,10 @@ browser = [
 
 [[feature]]
 id = "lease-offers"
-statement = "On Draft leases (Waiting for signatures, Leases made, Void, All, by property group) staff draft a lease for an approved applicant or a renewal of a lease, with the company's own PDF, the security deposit it asks and its monthly fees and credits, kept as a draft or sent at once; on its page they send it, void it, or activate it once everyone has signed (a tenant signs a renewal from the portal), its monthly charges becoming the lease's."
+statement = "On Draft leases (Waiting for signatures, Leases made, Void, All, by property group) staff draft a lease for an approved applicant or a renewal of a lease, with the company's own PDF, the security deposit it asks and its monthly fees and credits, kept as a draft or sent at once; on its page they send it, void it, or activate it once everyone has signed (a tenant signs a renewal from the portal), its monthly charges becoming the lease's. A lease is renewed from its own page or its tenant's (Renew lease): the new rent and term, starting the day after it ends, the tenants who sign, and a warning when the new rent starts inside the written notice the property's state asks (docs/law.md); before it goes, a confirm names who gets it."
 operations = [
   "GET /api/leasing/leases",
+  "GET /api/leasing/renewals/{lease_id}/plan",
   "POST /api/leasing/applications/{application_id}/offer",
   "POST /api/leasing/leases/{lease_id}/renewal",
   "GET /api/leasing/offers",

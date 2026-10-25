@@ -398,18 +398,32 @@ describe("LeasePage", () => {
     expect(posted(fetch)).toEqual([["/api/rent/payments/tr1/bounce", { on: "2026-09-05" }]]);
   });
 
-  it("sends Record NSF to the ledger, and Renew lease and Move out to their pages", async () => {
+  it("sends Record NSF to the ledger and Move out to its page, and renews the lease in a side panel", async () => {
     server();
     await open();
     fireEvent.click(screen.getByRole("button", { name: "Actions for this lease" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Record NSF" }));
     expect(screen.getByRole("table", { name: "Payments received" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Actions for this lease" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: "Renew lease" }));
-    expect(window.location.pathname + window.location.search).toBe("/draft-leases?lease=l1");
+    // Renew lease stays on the lease (ADR 0010 phase 3, part L): no trip to Draft leases.
+    const renew = await panel("Renew lease", true);
+    expect(renew).toBeTruthy();
+    expect(window.location.pathname).toBe("/");
+    fireEvent.click(within(renew).getByRole("button", { name: "Close" }));
+    await vi.waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(document.querySelector("body > [aria-hidden='true']")).toBeNull();
+    });
     fireEvent.click(screen.getByRole("button", { name: "Actions for this lease" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Move out" }));
     expect(window.location.pathname).toBe("/move-out");
+  });
+
+  it("offers no renewal of a lease that has ended", async () => {
+    server({ ...LEASE, status: "ended", ends_on: "2026-09-30" });
+    await open();
+    fireEvent.click(screen.getByRole("button", { name: "Actions for this lease" }));
+    expect(screen.queryByRole("menuitem", { name: "Renew lease" })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: "End lease" })).toBeTruthy();
   });
 
   it("stops a monthly charge from its ⋯ menu and adds one from the lease's", async () => {

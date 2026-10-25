@@ -37,7 +37,9 @@ describe("RenewalsPage", () => {
     expect(within(first).getByRole("link").getAttribute("href")).toBe("/leases/l1");
     // A lease the page can't name unambiguously reads without a link.
     expect(within(screen.getByRole("row", { name: "Property 2, House" })).queryByRole("link")).toBeNull();
-    expect(screen.getByRole("link", { name: "Draft a renewal" }).getAttribute("href")).toBe("/draft-leases");
+    // A lease is renewed from its own page now, not from Draft leases.
+    expect(screen.queryByRole("link", { name: "Draft a renewal" })).toBeNull();
+    expect(screen.getByText(/Open a lease to renew it/)).toBeTruthy();
   });
 
   it("says when no lease ends soon, and when they can't be read", async () => {

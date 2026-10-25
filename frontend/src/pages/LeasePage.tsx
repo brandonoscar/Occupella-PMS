@@ -56,12 +56,13 @@ import {
 } from "./LeaseForms";
 import { navigate } from "../router";
 import { GoLink } from "./NeedsAttention";
+import { RenewLeaseForm } from "./RenewLeaseForm";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 
 type Panel =
   | "payment" | "charge" | "rent" | "due" | "recurring" | "insurance" | "deposit" | "leasing" | "hold"
-  | "release" | "end" | "remove" | "move" | "interest";
+  | "release" | "end" | "remove" | "move" | "interest" | "renew";
 const PANELS: Record<Panel, string> = {
   payment: "Receive payment",
   charge: "Enter charge",
@@ -77,6 +78,7 @@ const PANELS: Record<Panel, string> = {
   remove: "Take a tenant off the lease",
   move: "Move to another unit",
   interest: "Deposit interest",
+  renew: "Renew lease",
 };
 type Tab = "summary" | "ledger" | "tenants" | "files" | "notes";
 const TABS: { value: Tab; label: string }[] = [
@@ -157,7 +159,8 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
       : { label: "Release payment hold", onSelect: () => setPanel("release") },
     { label: "Record NSF", onSelect: () => setTab("ledger") },
     { label: "Write a notice", onSelect: () => setTab("files") },
-    { label: "Renew lease", onSelect: () => navigate(`/draft-leases?lease=${id}`) },
+    // An ended lease is not renewed: a new one is a new lease, through Leasing.
+    ...(lease.status !== "ended" ? [{ label: "Renew lease", onSelect: () => setPanel("renew") }] : []),
     ...(lease.moved_to === null ? [{ label: "Move to another unit", onSelect: () => setPanel("move") }] : []),
     { label: "End lease", onSelect: () => setPanel("end") },
     { label: "Move out", onSelect: () => navigate("/move-out") },
@@ -251,6 +254,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
           {panel === "end" && <EndLeaseForm lease={lease} record={recordThenClose} />}
           {panel === "move" && <TransferForm lease={lease} record={recordThenClose} />}
           {panel === "interest" && <DepositInterestForm lease={lease} record={recordThenClose} />}
+          {panel === "renew" && <RenewLeaseForm leaseId={lease.id} record={recordThenClose} />}
           {panel === "remove" && leaving !== null && (
             <RemoveTenantForm lease={lease} person={leaving} record={recordThenClose} />
           )}

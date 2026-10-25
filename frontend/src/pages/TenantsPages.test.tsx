@@ -326,6 +326,15 @@ describe("a tenant's lease, invite and archive on their page (ADR 0010 phase 3)"
     fireEvent.click(within(lease).getByRole("button", { name: "Change end date" }));
     const end = await screen.findByRole("dialog", { name: "Change end date" });
     expect(within(end).getByLabelText("Last day")).toBeTruthy();
+    // Renew lease opens its panel right here (ADR 0010 phase 3, part L).
+    fireEvent.click(within(end).getByRole("button", { name: "Close" }));
+    await vi.waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(document.querySelector("body > [aria-hidden='true']")).toBeNull();
+    });
+    fireEvent.click(within(lease).getByRole("button", { name: "Renew lease" }));
+    expect(await screen.findByRole("dialog", { name: "Renew lease" })).toBeTruthy();
+    expect(window.location.pathname).toBe("/");
   });
 
   it("says so when they have no lease, and an ended lease takes no payment or renewal here", async () => {

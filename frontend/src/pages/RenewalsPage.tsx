@@ -14,11 +14,10 @@ import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
-const BUTTON =
-  "inline-flex h-9 items-center rounded-sm bg-iris px-3.5 text-base font-medium text-canvas hover:bg-iris-hover";
 
 // Leasing → Renewals (ADR 0005): the leases ending in the next 90 days, soonest first, with where
-// each one's renewal stands; a renewal is drafted on Draft leases.
+// each one's renewal stands. A lease is renewed from its own page or its tenant's (Renew lease; ADR
+// 0010 phase 3, part L).
 export function RenewalsPage({ me }: { me: Me }) {
   const [leases, setLeases] = useState<Expiring[] | null>(null);
   const [error, setError] = useState("");
@@ -30,7 +29,8 @@ export function RenewalsPage({ me }: { me: Me }) {
   }, []);
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Renewals" actions={<GoLink href="/draft-leases" className={BUTTON}>Draft a renewal</GoLink>} />
+      <PageHeader title="Renewals" />
+      <p className="text-sm text-ink-subtle">Open a lease to renew it: Renew lease, on its page or its tenant's.</p>
       {leases === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
       ) : leases.length === 0 ? (

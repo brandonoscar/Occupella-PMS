@@ -343,11 +343,29 @@ test("staff draft a lease with a deposit and a monthly charge and send it, void 
   await page.getByRole("tab", { name: "Void", exact: true }).click();
   await expect(page.getByRole("row", { name: "Renewal for E2E Property 3, E2E Unit 3" }).getByTestId("status")).toHaveText("Void");
 
-  // The renewal sent at once; the tenant signs it from their portal.
-  panel = await newDraft("E2E Property 3, E2E Unit 3: Renewer E2E");
+  // The renewal sent at once from the tenant's own page (ADR 0010 phase 3, part L): the new rent
+  // and term in a side panel, the company's own PDF, and a confirm naming who gets it. The tenant
+  // signs it from their portal.
+  await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Tenants", exact: true }).click();
+  await page.getByRole("row", { name: /^Renewer E2E/ }).getByRole("link", { name: "Renewer E2E" }).click();
+  const leaseCard = page.locator("section", { has: page.getByRole("heading", { level: 2, name: "Lease", exact: true }) });
+  await leaseCard.getByRole("button", { name: "Renew lease" }).click();
+  panel = page.getByRole("dialog", { name: "Renew lease" });
+  await expect(panel.getByLabel("New rent a month")).toHaveValue("1000.00");
+  await expect(panel.getByLabel("Ends (empty for month to month)")).toHaveValue("");
+  await expect(panel.getByRole("list", { name: "Who signs" })).toContainText("Renewer E2E, renewer.");
   await panel.getByLabel("Starts").fill(day(60));
+  await panel.getByLabel("The lease").selectOption({ label: "Your own PDF" });
   await panel.getByLabel("Lease document (PDF, your own)").setInputFiles(document);
   await panel.getByRole("button", { name: "Send for signing" }).click();
+  const sending = page.getByRole("alertdialog");
+  await expect(sending).toContainText(
+    `Send the renewal of E2E Unit 3, E2E Property 3, $1,000.00 a month from ${us(day(60))}, to sign to Renewer E2E (renewer.`,
+  );
+  await sending.getByRole("button", { name: "Send", exact: true }).click();
+  await expect(leaseCard.getByRole("status")).toContainText("Sent the renewal of E2E Unit 3, E2E Property 3. Sent to 1 signer.");
+  await draftLeases();
+  await page.getByRole("row", { name: "Renewal for E2E Property 3, E2E Unit 3" }).click();
   await expect(page.getByTestId("status")).toHaveText("Sent");
   await expect(page.getByText("0 of 1 signed", { exact: true })).toBeVisible();
   // Staff can make each signer a new link.

@@ -19,6 +19,7 @@ import { EndLeaseForm } from "./LeasePeople";
 import type { Recorder } from "./LeaseForms";
 import { PaymentForm } from "./LeaseForms";
 import { GoLink } from "./NeedsAttention";
+import { RenewLeaseForm } from "./RenewLeaseForm";
 import { useRecord } from "./useRecord";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
@@ -36,16 +37,16 @@ export function autopayWord(autopays: Autopay[], tenant: string): string {
   return on ? `On: ${autopayRule(on)}` : "Not set up";
 }
 
-type Panel = "payment" | "end";
+type Panel = "payment" | "end" | "renew";
+const PANELS: Record<Panel, string> = { payment: "Receive payment", end: "Change end date", renew: "Renew lease" };
 
 // A tenant's lease on their page (ADR 0010 phase 3, part I): its rent, due day, term, the deposit
 // held for them, their autopay and the balance, with Receive payment, Change end date and Renew
 // lease right there. Everything else of the lease is on its own page.
-export function TenantLeaseCard({ line, tenant, deposit, onRenew, refresh }: {
+export function TenantLeaseCard({ line, tenant, deposit, refresh }: {
   line: LeaseLine & { unit: { id: string; name: string }; property: { id: string; name: string } };
   tenant: string;
   deposit: string;
-  onRenew: (lease: LeaseDetail) => void;
   refresh: () => void;
 }) {
   const [lease, setLease] = useState<LeaseDetail | null>(null);
@@ -105,7 +106,7 @@ export function TenantLeaseCard({ line, tenant, deposit, onRenew, refresh }: {
           {open && (
             <div className="flex flex-wrap gap-2">
               <Button onClick={() => setPanel("payment")}>Receive payment</Button>
-              <Button variant="secondary" onClick={() => onRenew(lease)}>Renew lease</Button>
+              <Button variant="secondary" onClick={() => setPanel("renew")}>Renew lease</Button>
             </div>
           )}
           <p className="text-sm text-ink-subtle">
@@ -115,11 +116,12 @@ export function TenantLeaseCard({ line, tenant, deposit, onRenew, refresh }: {
         </div>
       )}
       {panel !== null && lease !== null && (
-        <SidePanel title={panel === "payment" ? "Receive payment" : "Change end date"} onClose={() => setPanel(null)}>
+        <SidePanel title={PANELS[panel]} onClose={() => setPanel(null)}>
           {panel === "payment" && (
             <PaymentForm lease={lease} record={record} onRecorded={(another) => { if (!another) setPanel(null); }} />
           )}
           {panel === "end" && <EndLeaseForm lease={lease} record={recordThenClose} />}
+          {panel === "renew" && <RenewLeaseForm leaseId={lease.id} record={recordThenClose} />}
           <Notice tone="error">{refused}</Notice>
         </SidePanel>
       )}
