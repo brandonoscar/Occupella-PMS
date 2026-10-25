@@ -2335,14 +2335,22 @@ CREATE FUNCTION public.trust_check_bank_tie_out() RETURNS trigger
     SET search_path TO 'public', 'pg_temp'
     AS $$
 DECLARE
+    v_banks uuid[];
+    v_mapped bigint;
     v_bank uuid;
     v_off numeric;
 BEGIN
-    FOR v_bank IN
-        SELECT DISTINCT t.bank_account_id
-        FROM trust_ledger_accounts AS t
-        WHERE t.ledger_account_id IN (NEW.from_account_id, NEW.to_account_id)
-    LOOP
+    SELECT array_agg(DISTINCT t.bank_account_id), count(*) INTO v_banks, v_mapped
+    FROM trust_ledger_accounts AS t
+    WHERE t.ledger_account_id IN (NEW.from_account_id, NEW.to_account_id);
+
+    -- Two accounts (each a trust account's, once) of one trust bank account: its sum is as it was.
+    IF NEW.from_account_id <> NEW.to_account_id AND v_mapped = 2
+            AND cardinality(v_banks) = 1 THEN
+        RETURN NULL;
+    END IF;
+
+    FOREACH v_bank IN ARRAY coalesce(v_banks, '{}'::uuid[]) LOOP
         SELECT sum(a.balance) INTO v_off
         FROM trust_ledger_accounts AS t
         JOIN pgledger_accounts AS a ON a.id = t.ledger_account_id
@@ -31277,4 +31285,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261023000150'),
     ('20261023000151'),
     ('20261024000152'),
-    ('20261025000200');
+    ('20261025000200'),
+    ('20261025000210');

@@ -403,6 +403,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
 - Every trust bank account ties out: its book cash equals everything held in it (owners,
   prepaid rent, deposits, vendors, the PMC's fees). A deferred trigger checks it at commit, so
   held money moves to another trust bank account only with its cash, in the same transaction.
+  It sums a trust bank account only for a transfer into, out of or across one (migration 0210):
+  a transfer between two of one bank account's accounts leaves its sum as it was.
 - An approved reconciliation closes its trust bank account through the period's end
   (`trust_bank_accounts.closed_through`): a transfer dated before it is refused, whoever posts
   it, so a late correction is dated in the next open period. Periods follow one another with no
