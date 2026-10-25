@@ -11,8 +11,10 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from helpers import add_agreement, balance, bank_sums, post
+from helpers import add_agreement, approve, balance, bank_sums, post
 from people import join_as_owner, join_as_staff
+
+from pms import email
 
 NOW = datetime.now(UTC)
 TODAY = NOW.date()
@@ -504,3 +506,158 @@ def test_only_staff_see_and_confirm_suggestions(client, app_conn, pmc, method, p
     answer = client.get(url) if method == "get" else client.post(url, json={})
 
     assert answer.status_code == (401 if caller == "nobody" else 403)
+
+
+# --- what the books refuse, said in words -------------------------------------------------------
+
+
+def bill_dated(client, pmc, amount, reference, days_ago=20):
+    return ok(
+        call(
+            client,
+            "bills",
+            vendor_id=pmc.vendor_id,
+            account=pmc.owners[0].account,
+            reference=reference,
+            bill_date=TODAY - days_ago * DAY,
+            due_on=TODAY + DAY,
+            amount=amount,
+            memo="Gutter repair",
+        )
+    )["id"]
+
+
+def close_through(conn, pmc, days_ago):
+    approve(
+        conn,
+        pmc.pmc_id,
+        pmc.operating_bank_id,
+        datetime.combine(TODAY - 30 * DAY, datetime.min.time(), UTC),
+        datetime.combine(TODAY - days_ago * DAY, datetime.min.time(), UTC),
+    )
+
+
+def test_pay_bills_names_the_bill_a_closed_period_refuses(client, conn, staff, pmc):
+    fund(conn, pmc, "500.00")
+    bill = bill_dated(client, pmc, "45.00", "CLS-2")
+    close_through(conn, pmc, 6)
+
+    refused(
+        call(client, "bills/pay", on=TODAY - 7 * DAY, method="EFT", bill_ids=[bill]),
+        409,
+        "Vendor 1 CLS-2: that day is in a period already reconciled and closed: date it in the"
+        " next open one",
+    )
+    assert page(client, bill)["payments"] == []
+
+
+def test_lines_a_closed_period_covers_are_left_as_they_are(client, conn, staff, pmc):
+    # A statement in, then its days closed: a check paid with a line's number isn't matched to it
+    # by Auto-match, and Record paid on a line in those days is refused in words.
+    fund(conn, pmc, "500.00")
+    matched_by_number = bill_dated(client, pmc, "50.00", "CLS-3")
+    recorded = bill_dated(client, pmc, "45.00", "CLS-4")
+    ok(
+        statement(
+            client,
+            pmc,
+            (TODAY - 9 * DAY, "Deposit", "500.00", ""),
+            (TODAY - 8 * DAY, "CHECK 3001", "-50.00", ""),
+            (TODAY - 8 * DAY, "Withdrawal", "-45.00", ""),
+        )
+    )
+    ok(
+        call(
+            client,
+            "bills/pay",
+            on=TODAY - 8 * DAY,
+            method="check",
+            bill_ids=[matched_by_number],
+            check_numbers={matched_by_number: "3001"},
+        )
+    )
+    close_through(conn, pmc, 6)
+    bank = pmc.operating_bank_id
+
+    ok(client.post(f"/api/reconcile/{bank}/auto-match", json={}), 200)
+    assert page(client, matched_by_number)["payments"][0]["cleared_on"] is None
+    (line,) = [
+        line
+        for line in ok(client.get(f"/api/reconcile/{bank}"), 200)["open_lines"]
+        if line["amount"] == "-45.00"
+    ]
+    refused(
+        client.post(
+            f"/api/reconcile/{bank}/bill-suggestions",
+            json={"line_id": line["id"], "bill_id": recorded},
+        ),
+        409,
+        "that day is in a period already reconciled and closed: date it in the next open one",
+    )
+    assert page(client, recorded)["payments"] == []
+
+
+def test_record_paid_needs_bills_and_a_bill_of_the_company(
+    client, other_client, conn, app_conn, staff, pmc
+):
+    fund(conn, pmc, "500.00")
+    bill = new_bill(client, pmc, "45.00", "ROLE-1")
+    ok(
+        statement(
+            client,
+            pmc,
+            (TODAY - 5 * DAY, "Deposit", "500.00", ""),
+            (TODAY - DAY, "Withdrawal", "-45.00", ""),
+        )
+    )
+    bank = pmc.operating_bank_id
+    (line,) = [
+        line
+        for line in ok(client.get(f"/api/reconcile/{bank}"), 200)["open_lines"]
+        if line["amount"] == "-45.00"
+    ]
+    accept = {"line_id": line["id"], "bill_id": bill}
+
+    refused(
+        client.post(
+            f"/api/reconcile/{bank}/bill-suggestions", json={**accept, "bill_id": str(uuid.uuid4())}
+        ),
+        404,
+        "no such bill",
+    )
+    # A clerk whose roles allow month-end but not bills matches lines, and records no bill paid.
+    clerk = join_as_staff(other_client, conn, app_conn, pmc, name="Clerk 1", roles=[])
+    role = ok(client.post("/api/custom-roles", json={"name": "Month-end", "areas": ["month-end"]}))
+    ok(
+        client.post(
+            f"/api/custom-roles/{role['id']}/staff",
+            json={"staff_id": str(clerk.person_id), "granted": True},
+        ),
+        204,
+    )
+    refused(
+        other_client.post(f"/api/reconcile/{bank}/bill-suggestions", json=accept),
+        403,
+        "your roles don't let you change bills",
+    )
+    assert page(client, bill)["payments"] == []
+
+
+def test_a_bill_set_aside_before_adr_0010_says_when_its_money_was_held(client, conn, staff, pmc):
+    # The old step took the money from the owner's balance before any payment.
+    fund(conn, pmc, "500.00")
+    bill = new_bill(client, pmc, "90.00", "OLD-1")
+    conn.execute("SELECT trust_set_aside_bill(%s, %s, %s)", (pmc.pmc_id, bill, NOW - DAY))
+    ok(call(client, f"bills/{bill}/pay", on=TODAY, method="EFT"))
+
+    whats = [event["what"] for event in page(client, bill)["history"]]
+
+    assert "$90.00 taken from Owner 1's balance and held for this bill" in whats
+    assert page(client, bill)["bill"]["status"] == "paid"
+
+
+def test_the_ask_for_money_needs_a_bill_of_the_company(conn, pmc):
+    with pytest.raises(LookupError, match="no bill"):
+        email.write_bill_funds_needed(
+            conn, pmc.pmc_id, uuid.uuid4(), "owner@example.com", Decimal("10.00"), "http://x"
+        )
