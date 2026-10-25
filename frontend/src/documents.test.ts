@@ -7,7 +7,7 @@ describe("documents", () => {
       ["w9", "Vendor"], ["receipt", "Bill"], ["move_out_photo", "Lease"], ["owner_document", "Owner"],
       ["work_order_photo", "Work order"], ["property_document", "Property"], ["unit_document", "Unit"],
       ["tenant_document", "Tenant"], ["lease_document", "Lease"], ["vendor_document", "Vendor"],
-      ["request_photo", "Maintenance request"], ["listing_photo", "Unit"],
+      ["request_photo", "Maintenance request"], ["listing_photo", "Unit"], ["payment_attachment", "Lease"],
     ]);
     // Upload offers each kind of record once, and each record's kinds are about it.
     expect(ATTACHED.map((a) => a.about)).toEqual([
@@ -16,7 +16,10 @@ describe("documents", () => {
     for (const attached of ATTACHED) {
       expect(attached.kinds.every((k) => KINDS.find((x) => x.kind === k)?.about === attached.about)).toBe(true);
     }
-    expect(KINDS.every((k) => ATTACHED.some((a) => a.kinds.includes(k.kind)))).toBe(true);
+    // Every kind but a payment's file, which comes only with its payment (Receive payment).
+    const uploaded = KINDS.filter((k) => k.kind !== "payment_attachment");
+    expect(uploaded.every((k) => ATTACHED.some((a) => a.kinds.includes(k.kind)))).toBe(true);
+    expect(ATTACHED.some((a) => a.kinds.includes("payment_attachment"))).toBe(false);
     expect(kindLabel("move_out_photo")).toBe("Move-out photo");
     expect(kindLabel("work_order_photo")).toBe("Work order photo");
     expect(kindLabel("listing_photo")).toBe("Listing photo");
