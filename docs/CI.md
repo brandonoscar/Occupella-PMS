@@ -476,6 +476,14 @@ ASCII (Windows PowerShell 5.1 reads a file without a byte order mark as ANSI) an
 only PowerShell 7 has, and every program's exit code read under 'Continue' (5.1 makes a redirected
 stderr an error first). `scripts/check.sh` lists it as NOT RUN: it takes hours in Docker.
 
+Measured 10/25 in the build container, Chromium only, with the API served directly (the image
+doesn't build there and it has no PowerShell, so the script and its stack are NOT VERIFIED there;
+CI's job is their first run): Los Angeles 87 of 87, at a time its day was behind UTC's;
+Kiritimati 84 of 87. Two failed because the run crossed midnight UTC between seeding and the test
+(the seed's days are fixed when it runs; the tests count from when they run), and the housing
+authority test reached its 30-second limit (30.7 s on the rerun too). All three passed on a
+rerun.
+
 **licenses.yml** (PRs and main): every installed dependency, direct or transitive, must carry a
 license on the allowlist in `ci/licenses.toml`: compatible with this repo's Apache-2.0, and never
 non-commercial or source-available. A PMC that self-hosts needs to be able to use every piece
