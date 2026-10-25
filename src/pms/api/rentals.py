@@ -547,35 +547,65 @@ class RentRollRow(BaseModel):
     owed: str
 
 
+# What each lease of the PMC owes, worked out for all of them at once, as rent.OWED works it out
+# for one: only for the leases that owe (show "owing"), otherwise no row at all.
+OWING = """
+SELECT c.lease_id,
+       sum(CASE WHEN c.kind = 'credit' THEN -c.amount ELSE c.amount END)
+       - coalesce(sum(m.paid), 0) + coalesce(sum(m.reversed), 0) AS owed
+FROM trust_charges AS c
+LEFT JOIN LATERAL (
+    SELECT (SELECT sum(p.amount) FROM trust_charge_payments AS p WHERE p.charge_id = c.id) AS paid,
+           (SELECT sum(r.amount) FROM trust_payment_reversals AS r WHERE r.charge_id = c.id)
+               AS reversed
+) AS m ON true
+WHERE c.pmc_id = %(pmc)s AND %(show)s = 'owing'
+GROUP BY c.lease_id
+"""
+
+# The rent roll's page first, by the cheap columns it is found and sorted by; then what each of
+# its leases shows, worked out for that page alone (a deep page used to work out every lease
+# before it: 27 s for page 200 of a company of 20,000 units).
 RENT_ROLL = f"""
+WITH owing AS ({OWING}),
+paged AS (
+    SELECT l.id, count(*) OVER () AS total
+    FROM trust_leases AS l
+    JOIN trust_units AS u ON u.id = l.unit_id
+    JOIN trust_properties AS p ON p.id = u.property_id
+    WHERE l.pmc_id = %(pmc)s
+      AND {scope.within("p.id")}
+      AND (%(like)s::text IS NULL OR p.display_name ILIKE %(like)s
+           OR u.display_name ILIKE %(like)s
+           OR EXISTS (SELECT 1 FROM trust_lease_tenants AS lt
+                      JOIN trust_tenants AS t ON t.id = lt.tenant_id
+                      WHERE lt.lease_id = l.id AND t.display_name ILIKE %(like)s))
+      AND CASE %(show)s
+            WHEN 'current' THEN l.starts_on <= %(day)s
+                                AND (l.ends_on IS NULL OR %(day)s <= l.ends_on)
+            WHEN 'future' THEN %(day)s < l.starts_on
+            WHEN 'past' THEN l.ends_on < %(day)s
+            WHEN 'owing' THEN EXISTS (SELECT 1 FROM owing AS o
+                                      WHERE o.lease_id = l.id AND o.owed > 0)
+            ELSE true
+          END
+    ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", l.starts_on, l.id
+    LIMIT %(per_page)s OFFSET %(offset)s
+)
 SELECT l.id, p.id, p.display_name, u.id, u.display_name, {TENANT_NAMES},
-       l.starts_on, l.ends_on, trust_rent_on(l.id, greatest(l.starts_on, %(day)s)), x.owed,
+       l.starts_on, l.ends_on, trust_rent_on(l.id, greatest(l.starts_on, %(day)s)), {rent.OWED},
        coalesce((SELECT sum(b.balance) FROM trust_lease_tenants AS lt
                  JOIN trust_ledger_accounts AS a
                    ON a.tenant_id = lt.tenant_id AND a.kind = 'tenant_deposit'
                  JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
                  WHERE lt.lease_id = l.id), 0),
-       {unit_details.COLUMNS}, count(*) OVER ()
-FROM trust_leases AS l
+       {unit_details.COLUMNS}, paged.total
+FROM paged
+JOIN trust_leases AS l ON l.id = paged.id
 JOIN trust_units AS u ON u.id = l.unit_id
 JOIN trust_properties AS p ON p.id = u.property_id
-CROSS JOIN LATERAL (SELECT {rent.OWED} AS owed) AS x
 {unit_details.LATEST}
-WHERE l.pmc_id = %(pmc)s
-  AND {scope.within("p.id")}
-  AND (%(like)s::text IS NULL OR p.display_name ILIKE %(like)s OR u.display_name ILIKE %(like)s
-       OR EXISTS (SELECT 1 FROM trust_lease_tenants AS lt
-                  JOIN trust_tenants AS t ON t.id = lt.tenant_id
-                  WHERE lt.lease_id = l.id AND t.display_name ILIKE %(like)s))
-  AND CASE %(show)s
-        WHEN 'current' THEN l.starts_on <= %(day)s AND (l.ends_on IS NULL OR %(day)s <= l.ends_on)
-        WHEN 'future' THEN %(day)s < l.starts_on
-        WHEN 'past' THEN l.ends_on < %(day)s
-        WHEN 'owing' THEN x.owed > 0
-        ELSE true
-      END
 ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", l.starts_on, l.id
-LIMIT %(per_page)s OFFSET %(offset)s
 """  # noqa: S608
 
 

@@ -20469,6 +20469,27 @@ CREATE INDEX trust_company_profiles_recorded_by ON public.trust_company_profiles
 
 
 --
+-- Name: trust_contacts_by_owner; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_contacts_by_owner ON public.trust_contacts USING btree (owner_id, created_at) WHERE (owner_id IS NOT NULL);
+
+
+--
+-- Name: trust_contacts_by_tenant; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_contacts_by_tenant ON public.trust_contacts USING btree (tenant_id, created_at) WHERE (tenant_id IS NOT NULL);
+
+
+--
+-- Name: trust_contacts_by_vendor; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX trust_contacts_by_vendor ON public.trust_contacts USING btree (vendor_id, created_at) WHERE (vendor_id IS NOT NULL);
+
+
+--
 -- Name: trust_contacts_owner; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -31277,4 +31298,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20261023000150'),
     ('20261023000151'),
     ('20261024000152'),
-    ('20261025000200');
+    ('20261025000200'),
+    ('20261025000220');
