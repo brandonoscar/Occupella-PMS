@@ -37,7 +37,9 @@ jobs:
     name: properties
     if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-24.04
-    # 19m26s on PR #121, with more state machines to come; a cap to stop a hung run, not a budget.
+    # The tests run in two halves side by side, dealt by their measured times: in one run they
+    # had grown from 19m26s (PR #121) to 28 to 31 minutes and hit this cap on PR #168. A cap to
+    # stop a hung run, not a budget.
     timeout-minutes: 35
     services:
       postgres:
@@ -69,14 +71,25 @@ jobs:
           chmod +x "$RUNNER_TEMP/bin/dbmate"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: pip install -r requirements-dev.txt
-      - name: Property tests (pr profile)
+      - name: Property tests (pr profile), two halves side by side
         env:
           HYPOTHESIS_PROFILE: pr
+          PMS_TEST_SHARD_TIMES: ci/property-times.toml
         run: |
-          set -o pipefail
           mkdir -p failing-case
-          pytest tests/properties -v -p no:cacheprovider --hypothesis-show-statistics \
-            --junitxml=failing-case/junit.xml 2>&1 | tee failing-case/pytest.log
+          # Each half is dealt by the tests' times (ci/property-times.toml), as coverage's shards
+          # are, and runs on a database of its own, at once on the runner's four cores.
+          pids=()
+          for half in 1 2; do
+            PMS_TEST_SHARD="$half/2" pytest tests/properties -v -p no:cacheprovider \
+              --hypothesis-show-statistics --junitxml="failing-case/junit-$half.xml" \
+              > "failing-case/pytest-$half.log" 2>&1 &
+            pids+=("$!")
+          done
+          status=0
+          for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+          cat failing-case/pytest-1.log failing-case/pytest-2.log
+          exit "$status"
       - name: Upload the failing case
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

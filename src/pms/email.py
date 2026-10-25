@@ -1,7 +1,8 @@
 """Email the PMS sends, behind one interface (docs/adr/0004-email.md, docs/adr/0007-email.md).
 
 The emails: a bill over an owner's approval limit tells its owner it waits for them (nothing in
-it decides anything); a portal invite, and a password reset an owner or a tenant asks for, each
+it decides anything), and staff ask a bill's owner to send what their balance is short of it (ADR
+0010); a portal invite, and a password reset an owner or a tenant asks for, each
 with the link that sets a password; and what staff write to a tenant, an owner or a vendor.
 
 Since migration 0090 (the founder's review, q081), sending a lease offer for signing emails each
@@ -384,6 +385,64 @@ def write_bill_approval(
         ),
     ).fetchone()
     return "written" if written else "written already"
+
+
+FUNDS = """
+SELECT b.amount, coalesce(mk.amount, 0), v.display_name, p.display_name, b.memo, b.reference,
+       b.due_on, o.id, o.display_name, m.display_name, l.balance
+FROM trust_bills AS b
+JOIN trust_ledger_accounts AS t ON t.ledger_account_id = b.ledger_account_id
+JOIN pgledger_accounts AS l ON l.id = b.ledger_account_id
+JOIN trust_owners AS o ON o.id = t.owner_id
+JOIN trust_vendors AS v ON v.id = b.vendor_id
+JOIN trust_properties AS p ON p.id = t.property_id
+JOIN trust_pmcs AS m ON m.pmc_id = b.pmc_id
+LEFT JOIN trust_bill_markups AS mk ON mk.bill_id = b.id
+WHERE b.pmc_id = %s AND b.id = %s
+"""
+
+
+def write_bill_funds_needed(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    bill_id: UUID,
+    to: str,
+    needed: Decimal,
+    public_url: str,
+) -> bool:
+    """Writes the email asking a bill's owner to send what their account is short of it and the
+    bills due before it (trust_bill_holds' needed), to the address given; in the caller's
+    transaction, once per bill a day (UTC). False when one was written today already."""
+    row = conn.execute(FUNDS, (pmc_id, bill_id)).fetchone()
+    if row is None:
+        raise LookupError(f"no bill {bill_id} in PMC {pmc_id}")
+    amount, markup, vendor, prop, memo, reference, due, owner_id, owner, pmc, balance = row
+    marked = "" if not markup else f" and our markup of {dollars(markup)}"
+    body = (
+        f"Hello {owner},\n\n"
+        f"{vendor} billed {dollars(amount)}{marked} for {prop}: {memo}. Reference {reference}, "
+        f"due {due}.\n\n"
+        f"Your account for {prop} holds {dollars(max(balance, Decimal(0)))}, which leaves "
+        f"{dollars(needed)} of this bill and the bills due before it uncovered. Please send "
+        f"{dollars(needed)} so we can pay it. Nothing is paid or charged until it arrives.\n\n"
+        f"Sign in to see the bill:\n{public_url.rstrip('/')}/\n\n"
+        f"{pmc}\n"
+    )
+    written = conn.execute(
+        "INSERT INTO trust_emails (pmc_id, kind, bill_id, owner_id, to_address, subject, body)"
+        " VALUES (%s, 'bill_funds_needed', %s, %s, %s, %s, %s)"
+        " ON CONFLICT (bill_id, ((created_at AT TIME ZONE 'UTC')::date))"
+        " WHERE kind = 'bill_funds_needed' DO NOTHING RETURNING id",
+        (
+            pmc_id,
+            bill_id,
+            owner_id,
+            to,
+            f"Please send {dollars(needed)} for {prop}: {vendor}'s bill",
+            body,
+        ),
+    ).fetchone()
+    return written is not None
 
 
 def write_signing_request(

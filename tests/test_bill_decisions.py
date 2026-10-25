@@ -123,7 +123,9 @@ def test_a_bill_set_aside_is_not_declined(conn, pmc, funded):
     small = bill(conn, pmc, funded, amount="80.00")
     set_aside_bill(conn, pmc.pmc_id, small, at(JAN_15))
 
-    with pytest.raises(psycopg.errors.CheckViolation, match="set aside already"):
+    with pytest.raises(
+        psycopg.errors.CheckViolation, match="taken from the owner.s account for bill .* already"
+    ):
         decline_bill(conn, pmc.pmc_id, small, JAN_20, "Owner 1, by email")
 
 
@@ -220,4 +222,4 @@ def test_a_decline_waits_for_a_set_aside_in_flight_and_is_then_refused(
     thread.join(timeout=30)
 
     assert isinstance(outcome.get("error"), psycopg.errors.CheckViolation)
-    assert "set aside already" in str(outcome["error"])
+    assert "already; it can't be declined" in str(outcome["error"])

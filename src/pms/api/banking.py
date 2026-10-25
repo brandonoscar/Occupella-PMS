@@ -198,7 +198,7 @@ LABELS = {
     "owner_property": "Owners' money",
     "tenant_deposit": "Tenants' security deposits",
     "prepaid_rent": "Prepaid rent",
-    "vendor_payable": "Set aside for vendors",
+    "vendor_payable": "Held to pay vendors",
     "pmc_income": "The company's fees",
 }
 

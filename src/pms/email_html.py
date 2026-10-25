@@ -26,6 +26,7 @@ BUTTONS = {
     "password_reset": "Set a new password",
     "signing_request": "Open and sign",
     "bill_approval": "Sign in to approve or decline",
+    "bill_funds_needed": "Sign in to the owner portal",
     "rent_reminder": "Sign in to the tenant portal",
     "late_notice": "Sign in to the tenant portal",
     "owner_statement": "Sign in to the owner portal",

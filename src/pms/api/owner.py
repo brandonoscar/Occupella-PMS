@@ -234,20 +234,27 @@ class OwnerBill(BaseModel):
     # The company's markup on it, as the owner's agreement sets it (migration 0083).
     markup: str | None = None
     markup_percent: str | None = None
-    # None while it waits for the owner's decision.
-    decision: Literal["approved", "declined"] | None
+    # None while it waits for the owner's decision; void when staff voided it (entered by
+    # mistake, ADR 0010).
+    decision: Literal["approved", "declined", "void"] | None
     decided_on: date | None
     decided_by: str | None
     reason: str | None
+    # While the owner's balance is short of it: by how much, and what they need to send for it
+    # and the bills due before it (ADR 0010).
+    short: str | None = None
+    needed: str | None = None
 
 
 OWNER_BILLS = """
 SELECT b.id, v.display_name, b.reference, p.display_name, b.bill_date, b.due_on, b.amount,
        b.memo, g.approval_limit,
-       CASE WHEN ap.bill_id IS NOT NULL THEN 'approved'
+       CASE WHEN dc.void THEN 'void'
+            WHEN ap.bill_id IS NOT NULL THEN 'approved'
             WHEN dc.bill_id IS NOT NULL THEN 'declined' END,
-       coalesce(ap.approved_on, dc.declined_on), coalesce(ap.approved_by, dc.declined_by),
-       dc.reason, mk.amount, mk.percent
+       CASE WHEN dc.void THEN dc.declined_on ELSE coalesce(ap.approved_on, dc.declined_on) END,
+       CASE WHEN dc.void THEN dc.declined_by ELSE coalesce(ap.approved_by, dc.declined_by) END,
+       dc.reason, mk.amount, mk.percent, h.short, h.needed
 FROM trust_bills AS b
 JOIN trust_ledger_accounts AS t ON t.ledger_account_id = b.ledger_account_id
 JOIN trust_vendors AS v ON v.id = b.vendor_id
@@ -263,8 +270,11 @@ CROSS JOIN LATERAL (
 LEFT JOIN trust_bill_approvals AS ap ON ap.bill_id = b.id
 LEFT JOIN trust_bill_declines AS dc ON dc.bill_id = b.id
 LEFT JOIN trust_bill_markups AS mk ON mk.bill_id = b.id
+-- What the owner's balance is short of it, while it is open (trust_bill_holds).
+LEFT JOIN trust_bill_holds(%s) AS h ON h.bill_id = b.id
 WHERE b.pmc_id = %s AND t.owner_id = %s AND t.kind = 'owner_property'
-  AND (ap.bill_id IS NOT NULL OR dc.bill_id IS NOT NULL OR b.amount > g.approval_limit)
+  AND (ap.bill_id IS NOT NULL OR dc.bill_id IS NOT NULL OR b.amount > g.approval_limit
+       OR h.short > 0)
 ORDER BY b.due_on, b.bill_date, v.display_name COLLATE "C", b.reference COLLATE "C", b.id
 """
 
@@ -272,8 +282,8 @@ ORDER BY b.due_on, b.bill_date, v.display_name COLLATE "C", b.reference COLLATE 
 @router.get("/bills")
 def owner_bills(session: Owner, conn: Conn) -> list[OwnerBill]:
     """The owner's bills over the approval limit, by due date: those waiting for their decision
-    and those decided, by them or as staff recorded it."""
-    rows = conn.execute(OWNER_BILLS, (session.pmc_id, session.person_id)).fetchall()
+    and those decided, by them or as staff recorded it; and those their balance is short of."""
+    rows = conn.execute(OWNER_BILLS, (session.pmc_id, session.pmc_id, session.person_id)).fetchall()
     return [
         OwnerBill(
             id=row[0],
@@ -291,6 +301,8 @@ def owner_bills(session: Owner, conn: Conn) -> list[OwnerBill]:
             reason=row[12],
             markup=None if row[13] is None else cents(row[13]),
             markup_percent=None if row[14] is None else f"{row[14].normalize():f}",
+            short=cents(row[15]) if row[15] else None,
+            needed=cents(row[16]) if row[16] else None,
         )
         for row in rows
     ]
@@ -320,13 +332,15 @@ def decide(conn: psycopg.Connection[Any], query: str, params: tuple[Any, ...]) -
         conn.execute(query, params)
     except psycopg.errors.UniqueViolation:
         raise HTTPException(409, "this bill has its decision already") from None
-    except psycopg.errors.CheckViolation:  # set aside before the owner declined it
-        raise HTTPException(409, "this bill is set aside to pay already") from None
+    except psycopg.errors.CheckViolation:  # its money was taken before the owner declined it
+        raise HTTPException(
+            409, "money was taken from your account to pay this bill already"
+        ) from None
 
 
 @router.post("/bills/{bill_id}/approval", status_code=201)
 def approve_bill(session: Owner, conn: Conn, bill_id: UUID) -> None:
-    """The owner approves one of their bills: staff may then set it aside and pay it."""
+    """The owner approves one of their bills: staff may then pay it."""
     name = your_bill(conn, session, bill_id)
     decide(
         conn,

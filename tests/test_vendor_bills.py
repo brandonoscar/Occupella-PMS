@@ -2,8 +2,9 @@
 limit, set aside from the owner's money, then paid (migration 20261010000017).
 
 Setting a bill aside moves its amount from the owner's account to the vendor's (vendor_payable);
-paying it sends that money out through the trust bank account's cash. Each step happens once per
-bill and is safe to retry. A draw keeps back unpaid bills on top of the reserve.
+paying it sends that money out through the trust bank account's cash, setting it aside first when
+it wasn't (ADR 0010: staff only pay). Each step happens once per bill and is safe to retry. A draw
+keeps back unpaid bills on top of the reserve.
 """
 
 import uuid
@@ -294,12 +295,22 @@ def test_paying_a_bill_sends_the_money_set_aside_out_through_cash(conn, app_conn
     assert steps(conn, bill_id) == [("paid",), ("set_aside",)]
 
 
-def test_a_bill_is_set_aside_before_it_is_paid(conn, pmc, funded):
+def test_paying_a_bill_takes_it_from_the_owner_then(conn, pmc, funded):
+    # ADR 0010: no step before paying. The payment takes the bill from the owner's account into
+    # the vendor's, as setting it aside did, and pays it out in the same moment.
     bill_id = bill(conn, pmc, funded)
 
-    with pytest.raises(psycopg.errors.InvalidParameterValue, match="not set aside"):
-        pay_bill(conn, pmc.pmc_id, bill_id, at(JAN_15))
+    paid = pay_bill(conn, pmc.pmc_id, bill_id, at(JAN_15))
 
+    assert pay_bill(conn, pmc.pmc_id, bill_id, at(FEB_1)) == paid  # a retry
+    assert steps(conn, bill_id) == [("paid",), ("set_aside",)]
+    assert balance(conn, funded) == Decimal("750.00")
+    assert balance(conn, pmc.vendor_payable) == 0
+    assert memos(conn, funded, pmc.vendor_payable) == [(Decimal("250.00"), "Bill INV-1 set aside")]
+
+
+def test_a_bill_set_aside_is_paid_no_earlier(conn, pmc, funded):
+    bill_id = bill(conn, pmc, funded)
     set_aside_bill(conn, pmc.pmc_id, bill_id, at(JAN_15))
     with pytest.raises(psycopg.errors.InvalidParameterValue, match="paid before that"):
         pay_bill(conn, pmc.pmc_id, bill_id, at(JAN_15, 11, 59))

@@ -493,6 +493,7 @@ FEATURES = (
     "rent",
     "recurring",
     "bills",
+    "bill-payments",
     "recurring-bills",
     "owners",
     "roles",
