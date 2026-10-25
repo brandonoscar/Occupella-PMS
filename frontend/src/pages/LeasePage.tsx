@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
-import { Button, LinkButton } from "../components/Button";
+import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Form } from "../components/Form";
 import { NotesCard } from "../components/NotesCard";
@@ -14,9 +14,9 @@ import { Said } from "../components/Said";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
 import { Tabs } from "../components/Tabs";
+import { useAgainOnFocus } from "../components/Updated";
 import { Wide } from "../components/Wide";
-import { day, money, usDate } from "../money";
-import { downloadHref, FORMATS } from "../reports";
+import { money, usDate } from "../money";
 import {
   balanceDue,
   depositAskedLine,
@@ -29,8 +29,8 @@ import {
   moveHome,
   rentChangeLine,
 } from "../rent";
-import type { LeaseDetail, LeasePerson, Ledger } from "../rentals";
-import { LEASE_STATUS, LEDGER_KIND, PORTAL, rentLabel, termLabel } from "../rentals";
+import type { LeaseDetail, LeasePerson } from "../rentals";
+import { LEASE_STATUS, PORTAL, rentLabel, termLabel } from "../rentals";
 import { AssistanceCard } from "./AssistanceCard";
 import { LeaseAutopayCard } from "./AutopayCards";
 import { TaxCreditLeaseCard } from "./TaxCreditCards";
@@ -48,13 +48,13 @@ import {
   HoldForm,
   OpenChargeRow,
   PaymentForm,
-  PaymentRow,
   RecurringForm,
   RecurringLine,
   ReleaseForm,
   RentChangeForm,
 } from "./LeaseForms";
 import { navigate } from "../router";
+import { LedgerTab } from "./LeaseLedger";
 import { GoLink } from "./NeedsAttention";
 import { RenewLeaseForm } from "./RenewLeaseForm";
 import { STAFF_NAV } from "./staffNav";
@@ -101,7 +101,8 @@ const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 // Files and Notes. The PMS records what reached the bank; it takes no payments itself.
 export function LeasePage({ me, id }: { me: Me; id: string }) {
   const [lease, setLease] = useState<LeaseDetail | null>(null);
-  const [ledger, setLedger] = useState<Ledger | null>(null);
+  // Each read of the lease asks its ledger again (LeaseLedger.tsx).
+  const [runs, setRuns] = useState(0);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<Tab>("summary");
   const [panel, setPanel] = useState<Panel | null>(null);
@@ -119,12 +120,14 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
       if (shown.current === asked) set(value);
     };
     api.get<LeaseDetail>(`/api/leases/${asked}`).then(keep(setLease)).catch((failed) => keep(setError)(detail(failed)));
-    api.get<Ledger>(`/api/leases/${asked}/ledger`).then(keep(setLedger)).catch((failed) => keep(setError)(detail(failed)));
+    setRuns((n) => n + 1);
   }
+  // Read again when the browser tab comes back into view (ADR 0010 phase 3, part M).
+  const again = useAgainOnFocus();
   useEffect(() => {
     shown.current = id;
     refresh();
-  }, [id]);
+  }, [id, again]);
 
   // A form in a side panel closes once what it recorded is recorded.
   const recordThenClose: Recorder = async (path, body, done) => {
@@ -222,7 +225,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
       <div>
         <Tabs label="Lease" tabs={TABS} value={tab} onChange={setTab} />
         {tab === "summary" && <Summary lease={lease} record={record} recordDeposit={() => setPanel("deposit")} />}
-        {tab === "ledger" && <LedgerTab lease={lease} ledger={ledger} record={record} />}
+        {tab === "ledger" && <LedgerTab lease={lease} runs={runs} record={record} />}
         {tab === "tenants" && (
           <div className="flex flex-col gap-6">
             <TenantsTab people={lease.people} refresh={refresh}
@@ -336,74 +339,6 @@ function Summary({ lease, record, recordDeposit }: { lease: LeaseDetail; record:
           </p>
         ) : (
           <p className="text-sm text-ink-subtle">Not asked for.</p>
-        )}
-      </Card>
-    </div>
-  );
-}
-
-// Ledger: each charge, payment and bounce with the balance after it (the lease ledger report's
-// own lines), then each payment as it came in, whole, where It bounced is.
-function LedgerTab({ lease, ledger, record }: { lease: LeaseDetail; ledger: Ledger | null; record: Recorder }) {
-  if (ledger === null) return <Notice tone="info">Loading</Notice>;
-  const today = day(new Date());
-  return (
-    <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Download the ledger">
-        <span className="text-sm text-ink-muted">Download the ledger:</span>
-        {FORMATS.map(([format, label]) => (
-          <LinkButton key={format} href={downloadHref("tenant_ledger", [lease.id, today], format)}>{label}</LinkButton>
-        ))}
-      </div>
-      {ledger.lines.length === 0 ? (
-        <p className="text-sm text-ink-subtle">Nothing charged or paid yet.</p>
-      ) : (
-        <Wide>
-          <table className="w-full text-base" aria-label="Ledger">
-            <thead>
-              <tr>
-                <th className="text-left">Date</th>
-                <th className="text-left">Type</th>
-                <th className="text-left">Memo</th>
-                <th className="text-right">Charges</th>
-                <th className="text-right">Payments</th>
-                <th className="text-right">Balance</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ledger.lines.map((line, n) => (
-                <tr key={n}>
-                  <td className="whitespace-nowrap">{usDate(line.on)}</td>
-                  <td>
-                    {LEDGER_KIND[line.kind]}
-                    {line.bounced && <> <Badge tone="danger">Bounced</Badge></>}
-                  </td>
-                  <td className="text-ink-muted">{line.memo ?? ""}</td>
-                  <td className="text-right">{line.charged ? money(line.charged) : ""}</td>
-                  <td className="text-right">{line.paid ? money(line.paid) : ""}</td>
-                  <td className="text-right">{money(line.balance)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Wide>
-      )}
-      <Card title="Payments received">
-        {lease.payments.length === 0 ? (
-          <p className="text-sm text-ink-subtle">No payment yet.</p>
-        ) : (
-          <table className="w-full text-base" aria-label="Payments received">
-            <thead>
-              <tr>
-                <th className="text-left">Received</th>
-                <th className="text-right">Amount</th>
-                <th><span className="sr-only">Actions</span></th>
-              </tr>
-            </thead>
-            <tbody>
-              {lease.payments.map((p) => <PaymentRow key={p.transfer_id} payment={p} record={record} />)}
-            </tbody>
-          </table>
         )}
       </Card>
     </div>

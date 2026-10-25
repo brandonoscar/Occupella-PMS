@@ -523,6 +523,15 @@ test("staff read each account's general ledger, open a trust bank account from B
   const cash = ((await page.getByTestId("book-cash").textContent()) ?? "").replace("Book balance ", "");
   await expect(page.getByTestId("breakdown-cash")).toHaveText(cash);
   await expect(page.getByRole("table", { name: "By owner" }).getByRole("row", { name: "Demo Owner B, Aspen Row" })).toBeVisible();
+  // The register downloads its days as CSV, says when it was read, and each move opens what it
+  // was (ADR 0010 phase 3, part M): a rent payment its lease.
+  await page.getByRole("tab", { name: "Transactions" }).click();
+  await expect(page.getByTestId("updated")).toContainText("Updated ");
+  const moves = await page.request.get((await page.getByRole("link", { name: "Export CSV" }).getAttribute("href")) ?? "");
+  expect(moves.status()).toBe(200);
+  expect((await moves.text()).split("\r\n")[0]).toBe("date,type,party,memo,property,deposit,withdrawal,balance");
+  await register.getByRole("link", { name: "Rent payment" }).first().click();
+  await expect(page.getByRole("tab", { name: "Ledger" })).toBeVisible();
 
   // Pay owners: what each owner's account may pay out; one holding only its reserve can't be chosen.
   await section(page, "Pay owners");
@@ -820,6 +829,25 @@ test("staff add a fee, a credit and a monthly charge to a lease, take a deposit 
   await expect(received.getByRole("row", { name: /Check 501/ })).toContainText("$100.00");
   // It downloads as PDF, CSV and Excel.
   await downloadsEach(page, lease.getByRole("group", { name: "Download the ledger" }));
+  // Each line opens what is behind it (ADR 0010 phase 3, part M): the credit, and the check.
+  await ledger.getByRole("row", { name: /Credit/ }).getByRole("button", { name: "Credit" }).click();
+  let behind = page.getByRole("dialog", { name: "Charge" });
+  await expect(behind.getByTestId("charge-open")).toHaveText("None: a credit comes off the oldest open charges");
+  await behind.getByRole("button", { name: "Close" }).click();
+  await ledger.getByRole("row", { name: /Check 501/ }).getByRole("button", { name: "Payment" }).click();
+  behind = page.getByRole("dialog", { name: "Payment" });
+  await expect(behind.getByRole("table", { name: "The payment" })).toContainText("$100.00");
+  await behind.getByRole("button", { name: "Close" }).click();
+  // From today it brings the balance forward, Export CSV downloads what it shows, and it says
+  // when it was read.
+  await expect(lease.getByTestId("updated")).toContainText("Updated ");
+  await lease.getByLabel("From").fill(today());
+  await expect(ledger.getByRole("row", { name: "Balance forward" })).toBeVisible();
+  const shown = await page.request.get((await lease.getByRole("link", { name: "Export CSV" }).getAttribute("href")) ?? "");
+  expect(shown.status()).toBe(200);
+  expect((await shown.text()).split("\r\n")[1]).toMatch(new RegExp(`^${today()},Balance forward,`));
+  await lease.getByLabel("From").fill("");
+  await expect(ledger.getByRole("row", { name: "Balance forward" })).toHaveCount(0);
 
   // A payment when nothing is owed is all prepaid rent; it is listed with how it came (a money
   // order here), and it can bounce.

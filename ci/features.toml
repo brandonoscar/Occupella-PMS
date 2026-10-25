@@ -138,7 +138,7 @@ browser = [
 
 [[feature]]
 id = "general-ledger"
-statement = "Staff read the general ledger on screen for any days: each account's prior balance, its entries with a running balance and its totals, a page of accounts at a time, found by account or bank, as trust_report_general_ledger has them; Banking opens each trust bank account with its book balance, on its register (each move of its cash with what it was, who paid or was paid, its memo, its property and the balance after it, a page at a time) and its balance breakdown (what it holds by kind, coming to its book cash, and each owner's money in it); Pay owners shows what each owner's account may pay out."
+statement = "Staff read the general ledger on screen for any days: each account's prior balance, its entries with a running balance and its totals, a page of accounts at a time, found by account or bank, as trust_report_general_ledger has them; Banking opens each trust bank account with its book balance, on its register (each move of its cash with what it was, who paid or was paid, its memo, its property and the balance after it, a page at a time, each opening its lease, bill, owner or tenant, the days exported as CSV) and its balance breakdown (what it holds by kind, coming to its book cash, and each owner's money in it); Pay owners shows what each owner's account may pay out."
 operations = [
   "GET /api/general-ledger",
   "GET /api/bank-accounts/{bank_account_id}/register",
@@ -174,7 +174,7 @@ browser = [
 
 [[feature]]
 id = "rent-work"
-statement = "On a lease's own page (its balance due at the top, then Summary, Ledger, Tenants, Files and Notes), staff add a fee, a credit or a monthly charge to it and stop one; record a tenant's payment (what the lease owes to the owner, the rest prepaid rent; since ADR 0010 with what staff write about it and the check's photo or PDF, paying the open charges staff choose first, and Save and add another), use prepaid rent, take a security, pet or key deposit (each held apart, the lease showing each kind; migration 0092), and record a bounce, which undoes the payment and charges the NSF fee; and read its ledger, each charge, payment and bounce with the balance after it."
+statement = "On a lease's own page (its balance due at the top, then Summary, Ledger, Tenants, Files and Notes), staff add a fee, a credit or a monthly charge to it and stop one; record a tenant's payment (what the lease owes to the owner, the rest prepaid rent; since ADR 0010 with what staff write about it and the check's photo or PDF, paying the open charges staff choose first, and Save and add another), use prepaid rent, take a security, pet or key deposit (each held apart, the lease showing each kind; migration 0092), and record a bounce, which undoes the payment and charges the NSF fee; and read its ledger, each charge, payment and bounce with the balance after it, over the days they pick with the balance brought forward, each line opening its charge or payment, exported as CSV, and read again when the browser tab comes back."
 operations = [
   "GET /api/leases/{lease_id}",
   "GET /api/leases/{lease_id}/ledger",

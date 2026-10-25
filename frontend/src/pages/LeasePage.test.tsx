@@ -55,13 +55,18 @@ const HELD: LeaseDetail = {
 
 const LEDGER: Ledger = {
   lines: [
-    { on: "2026-08-01", kind: "rent", memo: "Rent due 2026-08-01", charged: "1500.00", paid: null, balance: "1500.00", bounced: false },
-    { on: "2026-08-01", kind: "payment", memo: null, charged: null, paid: "1500.00", balance: "0.00", bounced: true },
-    { on: "2026-08-05", kind: "NSF fee", memo: "NSF fee", charged: "35.00", paid: null, balance: "35.00", bounced: false },
-    { on: "2026-08-05", kind: "bounced payment", memo: null, charged: null, paid: "-1500.00", balance: "1535.00", bounced: false },
+    { on: "2026-08-01", kind: "rent", memo: "Rent due 2026-08-01", charged: "1500.00", paid: null, balance: "1500.00", bounced: false, charge_id: "c1", transfer_id: null },
+    { on: "2026-08-01", kind: "payment", memo: null, charged: null, paid: "1500.00", balance: "0.00", bounced: true, charge_id: null, transfer_id: "tr0" },
+    { on: "2026-08-05", kind: "NSF fee", memo: "NSF fee", charged: "35.00", paid: null, balance: "35.00", bounced: false, charge_id: "c9", transfer_id: null },
+    { on: "2026-08-05", kind: "bounced payment", memo: null, charged: null, paid: "-1500.00", balance: "1535.00", bounced: false, charge_id: null, transfer_id: "tr0" },
   ],
+  start: null,
+  end: "2026-10-25",
+  opening: "0.00",
   balance: "1535.00",
 };
+// From 08/03/2026: the rent and payment of 08/01 brought forward.
+const FROM_AUGUST_3: Ledger = { ...LEDGER, start: "2026-08-03", lines: LEDGER.lines.slice(2), opening: "0.00" };
 
 // The API: the lease and its ledger on GET; each POST answers `answers[path]` (or 201 {}), or 409.
 function server(lease: LeaseDetail = LEASE, answers: Record<string, unknown> = {}, refuse: Record<string, string> = {}) {
@@ -70,6 +75,7 @@ function server(lease: LeaseDetail = LEASE, answers: Record<string, unknown> = {
       const reads: Record<string, unknown> = {
         "/api/leases/l1": lease,
         "/api/leases/l1/ledger": LEDGER,
+        "/api/leases/l1/ledger?start=2026-08-03": FROM_AUGUST_3,
         "/api/documents": { documents: [], subjects: { w9: [], receipt: [], move_out_photo: [], owner_document: [] } },
         "/api/assistance/leases/l1": {
           in_force: null, monthly_rent: lease.monthly_rent, tenant_part: lease.monthly_rent, terms: [], charges: [], owed: "0.00",
@@ -362,7 +368,7 @@ describe("LeasePage", () => {
     const fetch = server(LEASE, { "/api/rent/payments/tr1/bounce": { transfers: ["r"], nsf_fee: "35.00" } });
     await open();
     fireEvent.click(screen.getByRole("tab", { name: "Ledger" }));
-    const ledger = screen.getByRole("table", { name: "Ledger" });
+    const ledger = await screen.findByRole("table", { name: "Ledger" });
     expect(within(ledger).getAllByRole("row").slice(1).map((r) => within(r).getAllByRole("cell").map((c) => c.textContent))).toEqual([
       ["08/01/2026", "Rent", "Rent due 2026-08-01", "$1,500.00", "", "$1,500.00"],
       ["08/01/2026", "Payment Bounced", "", "", "$1,500.00", "$0.00"],
@@ -594,6 +600,57 @@ describe("LeasePage", () => {
     fireEvent.click(within(charges).getByRole("button", { name: "Waive $20.00" }));
     expect(await screen.findByText("Waived $20.00 of Late fee.")).toBeTruthy();
     expect(posted(fetch)).toEqual([["/api/rent/charges/c2/waive", { amount: "20.00", reason: "First time late" }]]);
+  });
+
+  it("opens each ledger line's charge or payment in a side panel", async () => {
+    server();
+    await open();
+    fireEvent.click(screen.getByRole("tab", { name: "Ledger" }));
+    const ledger = await screen.findByRole("table", { name: "Ledger" });
+    const line = (n: number) => within(ledger).getAllByRole("row")[n] as HTMLElement;
+
+    // The rent: still open, waived from right there.
+    fireEvent.click(within(line(1)).getByRole("button", { name: "Rent" }));
+    let item = screen.getByRole("dialog", { name: "Charge" });
+    expect(within(item).getByTestId("charge-open").textContent).toBe("$1,500.00");
+    expect(within(item).getByRole("list", { name: "Open charge" }).textContent).toContain("Rent");
+    fireEvent.click(within(item).getByRole("button", { name: "Close" }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // The NSF fee, nothing open of it now.
+    fireEvent.click(line(3));
+    item = await screen.findByRole("dialog", { name: "Charge" });
+    expect(within(item).getByTestId("charge-open").textContent).toBe("Nothing: paid, credited or waived");
+    fireEvent.click(within(item).getByRole("button", { name: "Close" }));
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    // The bounce opens the payment that bounced, with its receipt.
+    fireEvent.click(line(4));
+    item = await screen.findByRole("dialog", { name: "Bounced payment" });
+    expect(item.textContent).toContain("This payment bounced: $1,500.00 came back on 08/05/2026.");
+    expect(within(item).getByRole("link", { name: "Receipt (PDF)" }).getAttribute("href")).toBe("/api/rent/payments/tr0/receipt");
+  });
+
+  it("narrows the ledger to days with the balance brought forward, exports what it shows, and reads it again on focus", async () => {
+    const fetch = server();
+    await open();
+    fireEvent.click(screen.getByRole("tab", { name: "Ledger" }));
+    await screen.findByRole("table", { name: "Ledger" });
+    expect(screen.getByRole("link", { name: "Export CSV" }).getAttribute("href")).toBe("/api/leases/l1/ledger?format=csv");
+    expect(screen.getByTestId("updated").textContent).toMatch(/^Updated \d\d:\d\d [AP]M$/);
+
+    fireEvent.change(screen.getByLabelText("From"), { target: { value: "2026-08-03" } });
+
+    const ledger = screen.getByRole("table", { name: "Ledger" });
+    await vi.waitFor(() => expect(within(ledger).getAllByRole("row")).toHaveLength(4));
+    expect(within(ledger).getAllByRole("row").slice(1, 2).map((r) => within(r).getAllByRole("cell").map((c) => c.textContent)))
+      .toEqual([["08/03/2026", "Balance forward", "$0.00"]]);
+    expect(screen.getByRole("link", { name: "Export CSV" }).getAttribute("href"))
+      .toBe("/api/leases/l1/ledger?start=2026-08-03&format=csv");
+
+    // The browser tab back in view: the lease and its ledger are read again.
+    const reads = () => fetch.mock.calls.filter(([path]) => String(path).startsWith("/api/leases/l1/ledger")).length;
+    const before = reads();
+    act(() => { window.dispatchEvent(new Event("focus")); });
+    await vi.waitFor(() => expect(reads()).toBe(before + 1));
   });
 
   it("links each payment to its receipt", async () => {
