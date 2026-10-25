@@ -9,6 +9,7 @@ import {
   companyFeesLine,
   depositBackLine,
   depositDueLine,
+  holdoverLine,
   insuranceLine,
   journalLine,
   lateLine,
@@ -51,6 +52,8 @@ function attentionGroups(today: Today): Group[] {
       lines: today.deposits_to_receive.map(depositDueLine) },
     { title: "Deposits to return", go: "/move-out", goLabel: "Move-outs",
       lines: today.deposits_to_return.map(depositBackLine) },
+    { title: "Leases gone month to month", go: "/renewals", goLabel: "Renewals",
+      lines: (today.month_to_month ?? []).map(holdoverLine) },
   ].filter((group) => group.lines.length > 0);
 }
 
@@ -59,7 +62,7 @@ export function NeedsAttention({ today }: { today: Today }) {
   if (groups.length === 0) {
     return (
       <EmptyState icon={CircleCheck} title="Nothing is late or waiting."
-        body="Late rent, bills due this week, owner draws ready to pay, month-end, applications, unsigned offers, journal entries waiting, vendor insurance running out, the company's fees left in trust, trust accounts' signers, renters insurance, security deposits still to receive and deposits due back show here." />
+        body="Late rent, bills due this week, owner draws ready to pay, month-end, applications, unsigned offers, journal entries waiting, vendor insurance running out, the company's fees left in trust, trust accounts' signers, renters insurance, security deposits still to receive, deposits due back and leases gone month to month show here." />
     );
   }
   return (
