@@ -384,19 +384,22 @@ def test_the_founders_seed_puts_something_on_every_list(conn, app_conn, built):
         ("Harbor Tower", "sent", f"{demo.harbor_rent(demo.APPLICANTS[2][0]):.2f}"),
         ("Oak Terrace", "partially signed", None),
     ]
-    # Eight bills: two due this week, one overdue, one waiting for its owner, three paid and
-    # this month's landscaping, entered by the nightly run.
+    # Ten bills: two due this week, one overdue and paid in part, one waiting for its owner, one
+    # its owner approved that their balance is short of, one voided, three paid and this month's
+    # landscaping, entered by the nightly run (ADR 0010's words for each).
     with demo.Builder(app_conn, pmc).as_staff(built.manager):
         bills, _ = payables.find_bills(app_conn, pmc)
     assert sorted((b.reference, b.status, b.overdue) for b in bills) == [
         ("ELC-3005", "paid", False),
-        (f"LAWN-{this_month:%Y-%m}", "to set aside", on.day > 28),
-        ("LND-3001", "to set aside", False),
+        (f"LAWN-{this_month:%Y-%m}", "ready to pay", on.day > 28),
+        ("LND-3001", "ready to pay", False),
+        ("PLB 3002", "void", False),
         ("PLB-1001", "paid", False),
-        ("PLB-3002", "to set aside", False),
-        ("PLB-3003", "to set aside", True),
+        ("PLB-3002", "ready to pay", False),
+        ("PLB-3003", "partly paid", True),
         ("RF-2207", "paid", False),
-        ("RF-3004", "needs approval", False),
+        ("RF-3004", "waiting for owner", False),
+        ("RF-3006", "short", False),
     ]
     # Six work orders, one at each step, the roofer's among them, each with its priority.
     assert rows(

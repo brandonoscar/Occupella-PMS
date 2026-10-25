@@ -50,7 +50,7 @@ def test_each_account_has_the_pms_name_until_the_company_names_it(conn, app_conn
     # A colon in a holder's name would nest it: it becomes a dash.
     assert before[pmc.owners[0].account] == "Owner funds:Owner- One - Property 1"
     assert before[pmc.tenant_deposit].startswith("Tenant deposits:")
-    assert before[pmc.vendor_payable] == "Vendor bills set aside:Vendor 1"
+    assert before[pmc.vendor_payable] == "Vendor bills to pay:Vendor 1"
     assert after[pmc.operating_cash] == "Trust checking"
     assert after[pmc.pmc_income] == before[pmc.pmc_income]
 

@@ -408,9 +408,9 @@ def test_unpaid_bills_come_over_and_hold_back_draws(client, conn, staff, pmc):
     assert {
         r: (b["bill_date"], b["due_on"], b["amount"], b["status"]) for r, b in bills.items()
     } == {
-        "INV-1": ("2025-12-20", "2026-01-20", "300.00", "to set aside"),
-        "INV-2": ("2025-12-28", "2026-01-28", "700.00", "to set aside"),
-        "INV-3": ("2025-12-30", "2026-02-01", "650.00", "needs approval"),
+        "INV-1": ("2025-12-20", "2026-01-20", "300.00", "ready to pay"),
+        "INV-2": ("2025-12-28", "2026-01-28", "700.00", "ready to pay"),
+        "INV-3": ("2025-12-30", "2026-02-01", "650.00", "waiting for owner"),
     }
     assert bills["INV-2"]["approved_by"] == "Owner A"
     (owner,) = [o for o in ok(client.get("/api/payables/owners")) if o["account"] == account]

@@ -1,13 +1,14 @@
 """Staff's bills and owners' money: vendor bills (entered, maybe split across expense accounts
-and with the vendor's invoice, approved by the owner when over the agreement's limit, set aside
-from the owner's account, paid, several at once by Pay bills), a bill's own page, monthly
+and with the vendor's invoice, approved by the owner when over the agreement's limit, held from
+the owner's balance until paid, paid whole or in parts, several at once by Pay bills, or voided),
+a bill's own page, monthly
 recurring bills (each month's entered by the nightly run, src/pms/nightly.py, and any already
 due when one is added), the PMC's
 management and leasing fees (the management fees maybe taken each month by the nightly run, as the
 company chooses), other fees taken from an owner, owner draws and owner contributions, and the
 company's earned fees taken out of trust.
 
-Every step goes through the database's write paths (trust_set_aside_bill, trust_pay_bill,
+Every step goes through the database's write paths (trust_pay_bill_part, trust_pay_bill,
 trust_post_management_fee, trust_post_leasing_fee, trust_take_owner_fee, trust_draw_owner,
 trust_record_owner_contribution, trust_withdraw_pmc_fees), each once per
 bill, period, lease or request key, so a retry does nothing twice. A draw, a bill payment or
@@ -25,7 +26,7 @@ import psycopg
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, StringConstraints
 
-from pms import email, exports
+from pms import email, exports, notices
 from pms.api import documents, outbox, scope
 from pms.api.deps import Conn, Staff, refusal
 from pms.api.rentals import Page, Paged, PerPage
@@ -80,7 +81,9 @@ def owner_account(conn: psycopg.Connection[Any], pmc_id: UUID, account: str) -> 
 
 # --- bills ---------------------------------------------------------------------------------------
 
-Status = Literal["needs approval", "declined", "to set aside", "set aside", "paid"]
+Status = Literal[
+    "entered", "waiting for owner", "ready to pay", "short", "partly paid", "paid", "void"
+]
 EmailStatus = Literal["sent", "waiting", "failed"]
 PayoutMethod = Literal["check", "EFT"]
 
@@ -101,6 +104,7 @@ class Bill(BaseModel):
     vendor: str
     reference: str
     account: str
+    owner_id: UUID
     owner: str
     property_id: UUID
     property: str
@@ -116,44 +120,62 @@ class Bill(BaseModel):
     split: bool = False
     approval_limit: str
     approved_by: str | None
-    # Who declined it for the owner (the owner in the portal, or as staff recorded it), and why.
+    # Who declined it for the owner (the owner in the portal, or as staff recorded it), and why;
+    # for a void, the staff member who voided it and why.
     declined_by: str | None = None
     decline_reason: str | None = None
+    # Voided by staff (entered by mistake), rather than declined by its owner: void either way.
+    voided: bool = False
     # The email asking the owner to decide it (ADR 0004): None when none was written.
     owner_email: EmailStatus | None = None
     status: Status
-    # Neither paid nor declined, and due before today (UTC).
+    # Neither paid nor void, and due before today (UTC).
     overdue: bool = False
     # The company's markup on it (migration 0083): its amount and the agreement's percent.
     markup: str | None = None
     markup_percent: str | None = None
     # The invoice shared across properties it is a part of, if it is one.
     shared_bill_id: UUID | None = None
+    # What was paid of it, and what is left to pay the vendor.
+    paid: str = "0.00"
+    left: str = "0.00"
+    # While it is not paid in full or void: what it holds of the owner's balance (its markup
+    # included), and since when, once the money was taken from the owner's account (its first
+    # payment, or set aside before ADR 0010); short of it, and what the owner must send to cover
+    # it and the bills due before it.
+    held: str | None = None
+    held_since: date | None = None
+    short: str | None = None
+    needed: str | None = None
 
 
 # Every bill of the PMC with its status, then narrowed by what is shown, the vendor, the day it
-# is due by and the property group or property.
+# is due by and the property group or property. A bill not yet paid holds its owner's balance as
+# trust_bill_holds lays it (migration 0152).
 BILLS = (
     """
 WITH listed AS (
     SELECT b.id, b.vendor_id, v.display_name AS vendor, b.reference, b.ledger_account_id,
-           o.display_name AS owner, p.id AS property_id, p.display_name AS property, b.bill_date,
-           b.due_on, b.amount, b.memo, b.work_order_id,
+           o.id AS owner_id, o.display_name AS owner, p.id AS property_id,
+           p.display_name AS property, b.bill_date, b.due_on, b.amount, b.memo, b.work_order_id,
            CASE WHEN ex.split THEN NULL ELSE ex.expense_account_id END AS expense_id,
            CASE WHEN ex.split THEN NULL ELSE ex.name END AS expense,
            coalesce(ex.split, false) AS split,
            coalesce((SELECT g.approval_limit FROM trust_management_agreements AS g
                      WHERE g.ledger_account_id = b.ledger_account_id AND g.starts_on <= b.bill_date
                      ORDER BY g.starts_on DESC LIMIT 1), 0) AS approval_limit,
-           ap.approved_by, dc.declined_by, dc.reason,
+           ap.approved_by, dc.declined_by, dc.reason, coalesce(dc.void, false) AS void,
            CASE WHEN em.id IS NOT NULL THEN """  # noqa: S608
     + EMAIL_STATUS.format(e="em")
     + """ END AS owner_email,
-           EXISTS (SELECT 1 FROM trust_bill_payments AS s WHERE s.bill_id = b.id
-                   AND s.step = 'set_aside') AS aside,
-           EXISTS (SELECT 1 FROM trust_bill_payments AS s WHERE s.bill_id = b.id
-                   AND s.step = 'paid') AS paid,
-           mk.amount AS markup, mk.percent AS markup_percent, sh.shared_bill_id
+           (SELECT (t.event_at AT TIME ZONE 'UTC')::date FROM trust_bill_payments AS s
+            JOIN pgledger_transfers AS t ON t.id = s.transfer_id
+            WHERE s.bill_id = b.id AND s.step = 'set_aside') AS aside_on,
+           coalesce((SELECT sum(t.amount) FROM trust_bill_payments AS s
+                     JOIN pgledger_transfers AS t ON t.id = s.transfer_id
+                     WHERE s.bill_id = b.id AND s.step = 'paid'), 0) AS paid,
+           mk.amount AS markup, mk.percent AS markup_percent, sh.shared_bill_id,
+           h.held, h.short, h.needed
     FROM trust_bills AS b
     JOIN trust_vendors AS v ON v.id = b.vendor_id
     JOIN trust_ledger_accounts AS a ON a.ledger_account_id = b.ledger_account_id
@@ -164,6 +186,7 @@ WITH listed AS (
     LEFT JOIN trust_emails AS em ON em.kind = 'bill_approval' AND em.bill_id = b.id
     LEFT JOIN trust_bill_markups AS mk ON mk.bill_id = b.id
     LEFT JOIN trust_shared_bill_parts AS sh ON sh.bill_id = b.id
+    LEFT JOIN trust_bill_holds(%(pmc)s) AS h ON h.bill_id = b.id
     LEFT JOIN LATERAL (
         SELECT e.id AS expense_account_id, e.name,
                EXISTS (SELECT 1 FROM trust_bill_splits AS sp WHERE sp.categorized_id = x.id)
@@ -179,19 +202,24 @@ WITH listed AS (
       AND {within}
 ), statused AS (
     SELECT l.*,
-           CASE WHEN l.paid THEN 'paid'
-                WHEN l.aside THEN 'set aside'
-                WHEN l.declined_by IS NOT NULL THEN 'declined'
-                WHEN l.amount > l.approval_limit AND l.approved_by IS NULL THEN 'needs approval'
-                ELSE 'to set aside' END AS status
+           CASE WHEN l.declined_by IS NOT NULL THEN 'void'
+                WHEN l.paid >= l.amount THEN 'paid'
+                WHEN l.paid > 0 THEN 'partly paid'
+                WHEN l.aside_on IS NOT NULL THEN 'ready to pay'
+                WHEN l.amount > l.approval_limit AND l.approved_by IS NULL
+                    THEN 'waiting for owner'
+                WHEN l.held IS NULL THEN 'entered'
+                WHEN l.short > 0 THEN 'short'
+                ELSE 'ready to pay' END AS status
     FROM listed AS l
 )
-SELECT s.id, s.vendor_id, s.vendor, s.reference, s.ledger_account_id, s.owner, s.property_id,
-       s.property, s.bill_date, s.due_on, s.amount, s.memo, s.work_order_id, s.expense_id,
-       s.expense, s.split, s.approval_limit, s.approved_by, s.declined_by, s.reason,
-       s.owner_email, s.status, s.markup, s.markup_percent, s.shared_bill_id, count(*) OVER ()
+SELECT s.id, s.vendor_id, s.vendor, s.reference, s.ledger_account_id, s.owner_id, s.owner,
+       s.property_id, s.property, s.bill_date, s.due_on, s.amount, s.memo, s.work_order_id,
+       s.expense_id, s.expense, s.split, s.approval_limit, s.approved_by, s.declined_by,
+       s.reason, s.void, s.owner_email, s.status, s.markup, s.markup_percent, s.shared_bill_id,
+       s.paid, s.aside_on, s.held, s.short, s.needed, count(*) OVER ()
 FROM statused AS s
-WHERE CASE %(show)s WHEN 'open' THEN s.status NOT IN ('paid', 'declined')
+WHERE CASE %(show)s WHEN 'open' THEN s.status NOT IN ('paid', 'void')
                     WHEN 'all' THEN true
                     ELSE s.status = %(show)s END
 ORDER BY s.due_on, s.bill_date, s.vendor COLLATE "C", s.reference COLLATE "C", s.id
@@ -200,7 +228,7 @@ LIMIT %(limit)s OFFSET %(offset)s
 ).format(within=scope.within("p.id"))
 
 
-BillsShown = Literal["open", "paid", "declined", "all"]
+BillsShown = Literal["open", "paid", "void", "all"]
 
 
 def find_bills(
@@ -232,64 +260,83 @@ def find_bills(
             **scope.params(group, property_id),
         },
     ).fetchall()
-    found = [
-        Bill(
-            id=i,
-            vendor_id=vendor_id,
-            vendor=vendor_name,
-            reference=reference,
-            account=account,
-            owner=owner,
-            property_id=prop_id,
-            property=prop,
-            bill_date=billed,
-            due_on=due,
-            amount=cents(amount),
-            memo=memo,
-            work_order_id=order,
-            expense_account_id=expense_id,
-            expense_account=expense,
-            split=split,
-            approval_limit=cents(limit_),
-            approved_by=approved_by,
-            declined_by=declined_by,
-            decline_reason=decline_reason,
-            owner_email=owner_email,
-            status=status,
-            overdue=status not in ("paid", "declined") and due < day,
-            markup=None if markup is None else cents(markup),
-            markup_percent=None if markup_percent is None else percent_text(markup_percent),
-            shared_bill_id=shared,
+    found = []
+    for (
+        i,
+        vendor_id,
+        vendor_name,
+        reference,
+        account,
+        owner_id,
+        owner,
+        prop_id,
+        prop,
+        billed,
+        due,
+        amount,
+        memo,
+        order,
+        expense_id,
+        expense,
+        split,
+        limit_,
+        approved_by,
+        declined_by,
+        decline_reason,
+        void,
+        owner_email,
+        status,
+        markup,
+        markup_percent,
+        shared,
+        paid,
+        aside_on,
+        held,
+        short,
+        needed,
+        _,
+    ) in rows:
+        open_ = status not in ("paid", "void")
+        if aside_on is not None:  # the money left the owner's account: what is left is held
+            held = amount - paid
+        found.append(
+            Bill(
+                id=i,
+                vendor_id=vendor_id,
+                vendor=vendor_name,
+                reference=reference,
+                account=account,
+                owner_id=owner_id,
+                owner=owner,
+                property_id=prop_id,
+                property=prop,
+                bill_date=billed,
+                due_on=due,
+                amount=cents(amount),
+                memo=memo,
+                work_order_id=order,
+                expense_account_id=expense_id,
+                expense_account=expense,
+                split=split,
+                approval_limit=cents(limit_),
+                approved_by=approved_by,
+                declined_by=declined_by,
+                decline_reason=decline_reason,
+                voided=void,
+                owner_email=owner_email,
+                status=status,
+                overdue=open_ and due < day,
+                markup=None if markup is None else cents(markup),
+                markup_percent=None if markup_percent is None else percent_text(markup_percent),
+                shared_bill_id=shared,
+                paid=cents(paid),
+                left=cents(amount - paid) if status != "void" else "0.00",
+                held=cents(held) if open_ and held is not None else None,
+                held_since=aside_on if open_ else None,
+                short=cents(short) if open_ and aside_on is None and short else None,
+                needed=cents(needed) if open_ and aside_on is None and needed else None,
+            )
         )
-        for (
-            i,
-            vendor_id,
-            vendor_name,
-            reference,
-            account,
-            owner,
-            prop_id,
-            prop,
-            billed,
-            due,
-            amount,
-            memo,
-            order,
-            expense_id,
-            expense,
-            split,
-            limit_,
-            approved_by,
-            declined_by,
-            decline_reason,
-            owner_email,
-            status,
-            markup,
-            markup_percent,
-            shared,
-            _,
-        ) in rows
-    ]
     return found, rows[0][-1] if rows else 0
 
 
@@ -306,8 +353,8 @@ def bills(
     per_page: PerPage = 50,
 ) -> Paged[Bill]:
     """The PMC's vendor bills, by due date, a page at a time: by default those still to pay
-    (not paid, nor declined by the owner); or the paid ones, the declined ones, or all. Maybe
-    of one vendor, due by a day, or of a property group or property."""
+    (neither paid in full nor void); or the paid ones, the void ones, or all. Maybe of one
+    vendor, due by a day, or of a property group or property."""
     found, total = find_bills(
         conn,
         session.pmc_id,
@@ -338,6 +385,8 @@ class BillEmail(BaseModel):
     to: str
     subject: str
     written_at: datetime
+    # When it went, once it did.
+    sent_at: datetime | None = None
     status: EmailStatus
     attempts: int
     # Why the last delivery failed, while it isn't sent.
@@ -371,6 +420,28 @@ class SharedBill(BaseModel):
     parts: list[SharedPart]
 
 
+class BillPayment(BaseModel):
+    part: int
+    on: date
+    amount: str
+    method: PayoutMethod | None
+    check_number: str | None
+    transfer_id: str
+    # The day of the bank statement line matched to it, once one is.
+    cleared_on: date | None
+
+
+class AskOwner(BaseModel):
+    """Who the email asking the bill's owner for what their balance is short of goes to."""
+
+    owner: str
+    # None: the owner has no email on file (contact details or a portal login).
+    to: str | None
+    amount: str
+    # Asked already today: once a day per bill.
+    asked_today: bool
+
+
 class BillPage(BaseModel):
     bill: Bill
     # The invoice shared across properties it is a part of (migration 0083).
@@ -379,14 +450,94 @@ class BillPage(BaseModel):
     lines: list[BillLine]
     files: list[BillFile]
     email: BillEmail | None
-    # What happened to it, oldest first: entered, emailed, decided, set aside, paid.
+    # The emails asking the owner to send money for it, oldest first.
+    asks: list[BillEmail] = []
+    payments: list[BillPayment] = []
+    # While the owner's balance is short of it: whom an ask goes to, and for how much.
+    ask: AskOwner | None = None
+    # What happened to it, oldest first: entered, emailed, decided, paid, cleared, void.
     history: list[BillEvent]
+
+
+# The emails about a bill of a kind, oldest first, each with whether and when it went.
+BILL_EMAILS = (
+    "SELECT e.to_address, e.subject, e.created_at, "  # noqa: S608
+    + EMAIL_STATUS.format(e="e")
+    + ", (SELECT count(*) FROM trust_email_deliveries AS d WHERE d.email_id = e.id),"
+    " (SELECT d.error FROM trust_email_deliveries AS d WHERE d.email_id = e.id"
+    "  ORDER BY d.attempted_at DESC LIMIT 1),"
+    " (SELECT min(d.attempted_at) FROM trust_email_deliveries AS d"
+    "  WHERE d.email_id = e.id AND d.error IS NULL)"
+    " FROM trust_emails AS e WHERE e.kind = %s AND e.bill_id = %s ORDER BY e.created_at, e.id"
+)
+
+
+def bill_emails(conn: psycopg.Connection[Any], kind: str, bill_id: UUID) -> list[BillEmail]:
+    return [
+        BillEmail(
+            to=to,
+            subject=subject,
+            written_at=written,
+            sent_at=sent_at,
+            status=status,
+            attempts=attempts,
+            error=None if status == "sent" else error,
+        )
+        for to, subject, written, status, attempts, error, sent_at in conn.execute(
+            BILL_EMAILS, (kind, bill_id)
+        ).fetchall()
+    ]
+
+
+def payments_of(conn: psycopg.Connection[Any], bill_id: UUID) -> list[BillPayment]:
+    """A bill's payments, in order, each with how it went and when the bank showed it."""
+    return [
+        BillPayment(
+            part=part,
+            on=on,
+            amount=cents(amount),
+            method=method,
+            check_number=number,
+            transfer_id=transfer,
+            cleared_on=cleared,
+        )
+        for part, on, amount, method, number, transfer, cleared in conn.execute(
+            "SELECT s.part, (t.event_at AT TIME ZONE 'UTC')::date, t.amount, m.method,"
+            " m.check_number, s.transfer_id,"
+            " (SELECT min(l.posted_on) FROM trust_bank_match_transfers AS mt"
+            "  JOIN trust_bank_match_lines AS ml ON ml.match_id = mt.match_id"
+            "  JOIN trust_bank_statement_lines AS l ON l.id = ml.line_id"
+            "  WHERE mt.transfer_id = s.transfer_id AND NOT EXISTS ("
+            "    SELECT 1 FROM trust_bank_unmatches AS u WHERE u.match_id = mt.match_id))"
+            " FROM trust_bill_payments AS s JOIN pgledger_transfers AS t ON t.id = s.transfer_id"
+            " LEFT JOIN trust_payout_methods AS m ON m.transfer_id = s.transfer_id"
+            " WHERE s.bill_id = %s AND s.step = 'paid' ORDER BY s.part",
+            (bill_id,),
+        ).fetchall()
+    ]
+
+
+def ask_of(conn: psycopg.Connection[Any], pmc_id: UUID, bill: Bill) -> AskOwner | None:
+    """Whom an ask for what the owner's balance is short of this bill would go to, while it is."""
+    if bill.needed is None:
+        return None
+    asked = conn.execute(
+        "SELECT 1 FROM trust_emails WHERE kind = 'bill_funds_needed' AND bill_id = %s"
+        " AND (created_at AT TIME ZONE 'UTC')::date = %s",
+        (bill.id, today()),
+    ).fetchone()
+    return AskOwner(
+        owner=bill.owner,
+        to=notices.address(conn, pmc_id, "owner", bill.owner_id),
+        amount=bill.needed,
+        asked_today=asked is not None,
+    )
 
 
 @router.get("/bills/{bill_id}")
 def bill_page(session: Staff, conn: Conn, bill_id: UUID) -> BillPage:
     """A bill's own page: the bill, its expense account lines, its invoices and receipts, the
-    email asking the owner to decide it, and its history."""
+    emails to its owner, its payments and its history."""
     found, _ = find_bills(conn, session.pmc_id, bill=bill_id)
     if not found:
         raise HTTPException(404, "no such bill")
@@ -428,34 +579,20 @@ def bill_page(session: Staff, conn: Conn, bill_id: UUID) -> BillPage:
             (session.pmc_id, bill_id),
         ).fetchall()
     ]
-    row = conn.execute(
-        "SELECT e.to_address, e.subject, e.created_at, "  # noqa: S608
-        + EMAIL_STATUS.format(e="e")
-        + ", (SELECT count(*) FROM trust_email_deliveries AS d WHERE d.email_id = e.id),"
-        " (SELECT d.error FROM trust_email_deliveries AS d WHERE d.email_id = e.id"
-        "  ORDER BY d.attempted_at DESC LIMIT 1)"
-        " FROM trust_emails AS e WHERE e.kind = 'bill_approval' AND e.bill_id = %s",
-        (bill_id,),
-    ).fetchone()
-    sent = (
-        None
-        if row is None
-        else BillEmail(
-            to=row[0],
-            subject=row[1],
-            written_at=row[2],
-            status=row[3],
-            attempts=row[4],
-            error=None if row[3] == "sent" else row[5],
-        )
-    )
+    approval = bill_emails(conn, "bill_approval", bill_id)
+    sent = approval[0] if approval else None
+    asks = bill_emails(conn, "bill_funds_needed", bill_id)
+    payments = payments_of(conn, bill_id)
     return BillPage(
         bill=bill,
         shared=None if bill.shared_bill_id is None else shared_of(conn, session.pmc_id, bill),
         lines=lines,
         files=files,
         email=sent,
-        history=history_of(conn, bill, sent),
+        asks=asks,
+        payments=payments,
+        ask=ask_of(conn, session.pmc_id, bill),
+        history=history_of(conn, bill, sent, asks, payments),
     )
 
 
@@ -485,8 +622,16 @@ def shared_of(conn: psycopg.Connection[Any], pmc_id: UUID, bill: Bill) -> Shared
     return SharedBill(id=head[0], reference=head[1], amount=cents(head[2]), parts=parts)
 
 
+SENT_WORDS = {"sent": "sent", "waiting": "waiting to be sent", "failed": "not sent"}
+HOW = {"check": "check", "EFT": "ACH"}
+
+
 def history_of(
-    conn: psycopg.Connection[Any], bill: Bill, sent: BillEmail | None
+    conn: psycopg.Connection[Any],
+    bill: Bill,
+    sent: BillEmail | None,
+    asks: list[BillEmail],
+    payments: list[BillPayment],
 ) -> list[BillEvent]:
     """A bill's steps, oldest first, each on its day (UTC)."""
     events = [
@@ -500,11 +645,19 @@ def history_of(
         )
     ]
     if sent is not None:
-        words = {"sent": "sent", "waiting": "waiting to be sent", "failed": "not sent"}
         events.append(
             BillEvent(
-                on=sent.written_at.astimezone(UTC).date(),
-                what=f"Email to {sent.to} asking the owner to decide it: {words[sent.status]}",
+                on=(sent.sent_at or sent.written_at).astimezone(UTC).date(),
+                what=f"Email to {sent.to} asking {bill.owner} to approve or decline it: "
+                f"{SENT_WORDS[sent.status]}",
+            )
+        )
+    for ask in asks:
+        events.append(
+            BillEvent(
+                on=(ask.sent_at or ask.written_at).astimezone(UTC).date(),
+                what=f"Email to {ask.to} asking {bill.owner} to send money for it: "
+                f"{SENT_WORDS[ask.status]}",
             )
         )
     approved = conn.execute(
@@ -513,33 +666,69 @@ def history_of(
     if approved is not None:
         events.append(BillEvent(on=approved[0], what=f"Approved by {approved[1]}"))
     declined = conn.execute(
-        "SELECT declined_on, declined_by, reason FROM trust_bill_declines WHERE bill_id = %s",
+        "SELECT declined_on, declined_by, reason, void FROM trust_bill_declines WHERE bill_id = %s",
         (bill.id,),
     ).fetchone()
     if declined is not None:
-        events.append(BillEvent(on=declined[0], what=f"Declined by {declined[1]}: {declined[2]}"))
-    for step, on, method in conn.execute(
-        "SELECT s.step, (t.event_at AT TIME ZONE 'UTC')::date, m.method"
-        " FROM trust_bill_payments AS s JOIN pgledger_transfers AS t ON t.id = s.transfer_id"
-        " LEFT JOIN trust_payout_methods AS m ON m.transfer_id = s.transfer_id"
-        " WHERE s.bill_id = %s ORDER BY t.event_at, s.step DESC",
-        (bill.id,),
-    ).fetchall():
-        if step == "set_aside":
-            events.append(
-                BillEvent(on=on, what=f"{dollars(bill.amount)} set aside from the owner's money")
+        on, by, reason, void = declined
+        events.append(
+            BillEvent(
+                on=on,
+                what=f"Voided by {by}: {reason}. Nothing was paid; the hold went back to "
+                f"{bill.owner}'s balance."
+                if void
+                else f"Declined by {by}: {reason}",
             )
-            if bill.markup is not None:
-                events.append(
-                    BillEvent(
-                        on=on,
-                        what=f"Markup of {dollars(bill.markup)} ({bill.markup_percent}%) taken"
-                        " into the company's fees",
-                    )
+        )
+    aside = conn.execute(
+        "SELECT (t.event_at AT TIME ZONE 'UTC')::date, t.event_at FROM trust_bill_payments AS s"
+        " JOIN pgledger_transfers AS t ON t.id = s.transfer_id"
+        " WHERE s.bill_id = %s AND s.step = 'set_aside'",
+        (bill.id,),
+    ).fetchone()
+    first = conn.execute(
+        "SELECT t.event_at FROM trust_bill_payments AS s"
+        " JOIN pgledger_transfers AS t ON t.id = s.transfer_id"
+        " WHERE s.bill_id = %s AND s.step = 'paid' AND s.part = 1",
+        (bill.id,),
+    ).fetchone()
+    if aside is not None:
+        # Set aside before its first payment (ADR 0010: the old step): the money left the
+        # owner's balance then. Otherwise it left with the first payment.
+        if first is None or first[0] != aside[1]:
+            events.append(
+                BillEvent(
+                    on=aside[0],
+                    what=f"{dollars(bill.amount)} taken from {bill.owner}'s balance and held "
+                    "for this bill",
                 )
-        else:
-            how = f" by {method}" if method else ""
-            events.append(BillEvent(on=on, what=f"Paid{how}"))
+            )
+        if bill.markup is not None:
+            events.append(
+                BillEvent(
+                    on=aside[0],
+                    what=f"Markup of {dollars(bill.markup)} ({bill.markup_percent}%) taken"
+                    " into the company's fees",
+                )
+            )
+    paid = Decimal(0)
+    for payment in payments:
+        paid += Decimal(payment.amount)
+        how = ""
+        if payment.method is not None:
+            how = f" by {HOW[payment.method]}"
+            if payment.check_number is not None:
+                how += f" {payment.check_number}"
+        left = Decimal(bill.amount) - paid
+        rest = f"; {dollars(str(left))} left to pay" if left > 0 else ""
+        events.append(BillEvent(on=payment.on, what=f"Paid {dollars(payment.amount)}{how}{rest}"))
+        if payment.cleared_on is not None:
+            events.append(
+                BillEvent(
+                    on=payment.cleared_on,
+                    what=f"The bank paid {dollars(payment.amount)}{how} (bank statement)",
+                )
+            )
     return sorted(events, key=lambda event: event.on)
 
 
@@ -923,7 +1112,7 @@ class Decline(BaseModel):
 
 @router.post("/bills/{bill_id}/decline", status_code=201)
 def decline(session: Staff, conn: Conn, bill_id: UUID, declined: Decline) -> None:
-    """Records the owner's decline of a bill: it is never set aside or paid, and holds nothing
+    """Records the owner's decline of a bill: it is void, never paid, and holds nothing
     back from the owner's draws from that day."""
     bill_of(conn, session.pmc_id, bill_id)
     try:
@@ -954,71 +1143,184 @@ class Moved(BaseModel):
     transfer_id: str
 
 
-def vendor_account(conn: psycopg.Connection[Any], pmc_id: UUID, bill: UUID) -> None:
-    """Opens the bill's vendor's account in the owner account's trust bank account, if new."""
-    row = conn.execute(
-        "SELECT b.vendor_id, a.bank_account_id FROM trust_bills AS b"
-        " JOIN trust_ledger_accounts AS a ON a.ledger_account_id = b.ledger_account_id"
-        " WHERE b.id = %s",
-        (bill,),
-    ).fetchone()
-    assert row is not None
-    vendor, bank = row
-    if not conn.execute(
-        "SELECT 1 FROM trust_ledger_accounts WHERE bank_account_id = %s AND kind = 'vendor_payable'"
-        " AND vendor_id = %s",
-        (bank, vendor),
-    ).fetchone():
-        conn.execute("SELECT trust_open_vendor_account(%s, %s, %s)", (pmc_id, bank, vendor))
-
-
-@router.post("/bills/{bill_id}/set-aside", status_code=201)
-def set_aside(session: Staff, conn: Conn, bill_id: UUID, step: Day) -> Moved:
-    """Moves the bill's amount from the owner's account to the vendor's, once."""
-    not_after_today(step.on)
-    bill_of(conn, session.pmc_id, bill_id)
-    vendor_account(conn, session.pmc_id, bill_id)
-    try:
-        moved = one(
-            conn, "SELECT trust_set_aside_bill(%s, %s, %s)", (session.pmc_id, bill_id, at(step.on))
-        )
-    except psycopg.errors.CheckViolation as refused:  # no approval, not enough money, closed
-        raise HTTPException(409, refusal(refused)) from None
-    return Moved(transfer_id=moved)
+# A check's number as printed on it: a bank statement line with it is matched to the payment.
+CheckNumber = Annotated[str, StringConstraints(strip_whitespace=True, pattern=r"^[0-9]{1,15}$")]
 
 
 class Paying(BaseModel):
     on: date
     # How it was sent; recorded, nothing sent (the PMS writes no bank file).
     method: PayoutMethod = "check"
+    check_number: CheckNumber | None = None
+    # What is paid: all that is left by default, or a part of it.
+    amount: Amount | None = None
+    # Made by the page, so sending the same payment again records nothing new.
+    request_id: UUID | None = None
+    # The vendor's receipt or the check's stub, kept with the bill.
+    receipt: Attachment | None = None
+
+
+def payable(bill: Bill) -> None:
+    """Refuses, in plain words, a bill that can't be paid now: void, waiting for its owner, or
+    one the owner's balance is short of (it is held for the bills due before it, or isn't
+    there). The database refuses the same, in its words."""
+    if bill.status == "void":
+        raise HTTPException(409, f"{bill.vendor} {bill.reference} is void: it is never paid")
+    if bill.status == "waiting for owner":
+        raise HTTPException(
+            409, f"{bill.vendor} {bill.reference} waits for {bill.owner}'s approval"
+        )
+    if bill.status == "short":
+        raise HTTPException(
+            409,
+            f"{bill.owner}'s balance is {dollars(bill.short or '0')} short of {bill.vendor} "
+            f"{bill.reference}: they need to send {dollars(bill.needed or '0')} first",
+        )
+
+
+def record_method(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    transfer: str,
+    method: PayoutMethod,
+    check_number: str | None,
+) -> None:
+    """How a payment went, once: the same again keeps how it was first recorded."""
+    conn.execute(
+        "INSERT INTO trust_payout_methods (pmc_id, transfer_id, method, check_number)"
+        " VALUES (%s, %s, %s, %s) ON CONFLICT (transfer_id) DO NOTHING",
+        (pmc_id, transfer, method, check_number if method == "check" else None),
+    )
 
 
 def pay_one(
-    conn: psycopg.Connection[Any], pmc_id: UUID, bill_id: UUID, on: date, method: PayoutMethod
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    bill_id: UUID,
+    on: date,
+    method: PayoutMethod,
+    check_number: str | None = None,
 ) -> str:
-    """Records that the trust bank account paid the vendor a bill set aside, once, and how; the
-    same again returns that payment, keeping how it was first recorded as sent."""
-    moved = one(conn, "SELECT trust_pay_bill(%s, %s, %s)", (pmc_id, bill_id, at(on)))
-    conn.execute(
-        "INSERT INTO trust_payout_methods (pmc_id, transfer_id, method) VALUES (%s, %s, %s)"
-        " ON CONFLICT (transfer_id) DO NOTHING",
-        (pmc_id, moved, method),
-    )
-    return str(moved)
+    """Records that the trust bank account paid the vendor all that is left of a bill, and how;
+    the same again returns its last payment, keeping how it was first recorded as sent."""
+    moved = str(one(conn, "SELECT trust_pay_bill(%s, %s, %s)", (pmc_id, bill_id, at(on))))
+    record_method(conn, pmc_id, moved, method, check_number)
+    return moved
+
+
+# What the database refuses of a payment: void, waiting, short, more than is left, a closed
+# period, a key used for another payment, a day before the money was taken.
+PAY_REFUSALS = (
+    psycopg.errors.CheckViolation,
+    psycopg.errors.InvalidParameterValue,
+    psycopg.errors.UniqueViolation,
+)
 
 
 @router.post("/bills/{bill_id}/pay", status_code=201)
 def pay(session: Staff, conn: Conn, bill_id: UUID, step: Paying) -> Moved:
-    """Records that the trust bank account paid the vendor the bill, once, by check or EFT."""
+    """Records that the trust bank account paid the vendor the bill, or a part of it, by check
+    (with its number) or ACH, maybe with a receipt: the first payment takes the whole bill from
+    the owner's balance, which held it. Sent again with its request id, it records nothing new."""
     not_after_today(step.on)
-    bill_of(conn, session.pmc_id, bill_id)
+    found, _ = find_bills(conn, session.pmc_id, bill=bill_id)
+    if not found:
+        raise HTTPException(404, "no such bill")
+    bill = found[0]
+    key = None if step.request_id is None else f"bill-payment:{step.request_id}"
+    if key is not None:
+        done = conn.execute(
+            "SELECT transfer_id FROM trust_bill_payments WHERE pmc_id = %s AND request_key = %s",
+            (session.pmc_id, key),
+        ).fetchone()
+        if done is not None:
+            return Moved(transfer_id=done[0])  # a retry: recorded already
+    if bill.status == "paid":
+        raise HTTPException(409, f"{bill.vendor} {bill.reference} is paid in full already")
+    payable(bill)
+    if step.amount is not None and step.amount > Decimal(bill.left):
+        raise HTTPException(
+            409,
+            f"{dollars(bill.left)} is left to pay of {bill.vendor} {bill.reference}; "
+            f"{dollars(str(step.amount))} is more than that",
+        )
     try:
-        moved = pay_one(conn, session.pmc_id, bill_id, step.on, step.method)
-    except psycopg.errors.InvalidParameterValue as refused:  # not set aside, or before that
+        if key is None:
+            moved = pay_one(conn, session.pmc_id, bill_id, step.on, step.method, step.check_number)
+        else:
+            moved = str(
+                one(
+                    conn,
+                    "SELECT trust_pay_bill_part(%s, %s, %s, %s, %s)",
+                    (session.pmc_id, bill_id, step.amount or Decimal(bill.left), key, at(step.on)),
+                )
+            )
+            record_method(conn, session.pmc_id, moved, step.method, step.check_number)
+    except PAY_REFUSALS as refused:
         raise HTTPException(409, refusal(refused)) from None
-    except psycopg.errors.CheckViolation as refused:  # a closed period
-        raise HTTPException(409, refusal(refused)) from None
+    if step.receipt is not None:
+        documents.keep(
+            conn,
+            session.pmc_id,
+            documents.NewDocument(kind="receipt", about_id=bill_id, **step.receipt.model_dump()),
+        )
     return Moved(transfer_id=moved)
+
+
+class Void(BaseModel):
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=1000)]
+
+
+@router.post("/bills/{bill_id}/void", status_code=201)
+def void(session: Staff, conn: Conn, bill_id: UUID, why: Void) -> None:
+    """Voids a bill entered by mistake, naming who and why: nothing is paid, and its hold goes
+    back to the owner's balance. Refused once money was taken for it (paid in part, or set aside
+    before ADR 0010)."""
+    bill_of(conn, session.pmc_id, bill_id)
+    name = one(
+        conn,
+        "SELECT display_name FROM trust_staff WHERE pmc_id = %s AND id = %s",
+        (session.pmc_id, session.person_id),
+    )
+    try:
+        with conn.transaction():  # a savepoint: a refusal leaves the request's transaction usable
+            conn.execute(
+                "INSERT INTO trust_bill_declines"
+                " (pmc_id, bill_id, declined_on, declined_by, reason, void)"
+                " VALUES (%s, %s, %s, %s, %s, true)",
+                (session.pmc_id, bill_id, today(), name, why.reason),
+            )
+    except (psycopg.errors.UniqueViolation, psycopg.errors.CheckViolation) as refused:
+        raise HTTPException(409, refusal(refused)) from None
+
+
+class Asked(BaseModel):
+    to: str
+    amount: str
+
+
+@router.post("/bills/{bill_id}/ask-owner", status_code=201)
+def ask_owner(session: Staff, conn: Conn, bill_id: UUID) -> Asked:
+    """Emails the bill's owner, once a day, asking them to send what their balance is short of
+    the bill and the bills due before it. Nothing is paid or charged; the bill is ready to pay
+    once the money arrives."""
+    found, _ = find_bills(conn, session.pmc_id, bill=bill_id)
+    if not found:
+        raise HTTPException(404, "no such bill")
+    bill = found[0]
+    ask = ask_of(conn, session.pmc_id, bill)
+    if ask is None:
+        raise HTTPException(409, f"{bill.owner}'s balance covers this bill: nothing to ask for")
+    if ask.to is None:
+        raise HTTPException(
+            409, f"{bill.owner} has no email on file: add one to their contact details first"
+        )
+    written = email.write_bill_funds_needed(
+        conn, session.pmc_id, bill_id, ask.to, Decimal(ask.amount), outbox.PUBLIC_URL.get()
+    )
+    if not written:
+        raise HTTPException(409, f"{bill.owner} was asked about this bill today already")
+    return Asked(to=ask.to, amount=ask.amount)
 
 
 class PayBills(BaseModel):
@@ -1026,6 +1328,8 @@ class PayBills(BaseModel):
     # How they were sent; recorded, nothing sent (the PMS writes no bank file).
     method: PayoutMethod
     bill_ids: Annotated[list[UUID], Field(min_length=1, max_length=200)]
+    # Each check's number, by bill, when they went by check.
+    check_numbers: dict[UUID, CheckNumber] = {}
 
 
 class BillPaid(BaseModel):
@@ -1038,42 +1342,84 @@ class BillPaid(BaseModel):
 
 @router.post("/bills/pay", status_code=201)
 def pay_bills(session: Staff, conn: Conn, run: PayBills) -> list[BillPaid]:
-    """Pay bills (Buildium's): each bill chosen set aside from its owner's money, if it wasn't,
-    and paid from its trust bank account, all of them or none, each recorded with how it was
-    sent. Sent again, it pays nothing twice. A refusal names the bill it is about."""
+    """Pay bills (Buildium's): all that is left of each bill chosen, paid from its trust bank
+    account, all of them or none, each recorded with how it was sent. Sent again, it pays
+    nothing twice. A refusal names the bill it is about."""
     not_after_today(run.on)
     if len(set(run.bill_ids)) != len(run.bill_ids):
         raise HTTPException(422, "pay each bill once")
-    names = {
-        bill: (vendor, reference, amount)
-        for bill, vendor, reference, amount in conn.execute(
-            "SELECT b.id, v.display_name, b.reference, b.amount FROM trust_bills AS b"
-            " JOIN trust_vendors AS v ON v.id = b.vendor_id"
-            " WHERE b.pmc_id = %s AND b.id = ANY(%s)",
-            (session.pmc_id, run.bill_ids),
-        ).fetchall()
-    }
     paid = []
-    for bill in run.bill_ids:
-        if bill not in names:
+    for bill_id in run.bill_ids:
+        found, _ = find_bills(conn, session.pmc_id, bill=bill_id)
+        if not found:
             raise HTTPException(404, "no such bill")
-        vendor, reference, amount = names[bill]
-        vendor_account(conn, session.pmc_id, bill)
+        bill = found[0]
+        payable(bill)
         try:
-            one(conn, "SELECT trust_set_aside_bill(%s, %s, %s)", (session.pmc_id, bill, at(run.on)))
-            moved = pay_one(conn, session.pmc_id, bill, run.on, run.method)
-        except (psycopg.errors.CheckViolation, psycopg.errors.InvalidParameterValue) as refused:
-            raise HTTPException(409, f"{vendor} {reference}: {refusal(refused)}") from None
+            moved = pay_one(
+                conn,
+                session.pmc_id,
+                bill_id,
+                run.on,
+                run.method,
+                run.check_numbers.get(bill_id),
+            )
+        except PAY_REFUSALS as refused:
+            why = refusal(refused)
+            raise HTTPException(409, f"{bill.vendor} {bill.reference}: {why}") from None
         paid.append(
             BillPaid(
-                bill_id=bill,
-                vendor=vendor,
-                reference=reference,
-                amount=cents(amount),
+                bill_id=bill_id,
+                vendor=bill.vendor,
+                reference=bill.reference,
+                # What its payment paid: the same when sent again, which pays nothing twice.
+                amount=cents(
+                    one(conn, "SELECT amount FROM pgledger_transfers WHERE id = %s", (moved,))
+                ),
                 transfer_id=moved,
             )
         )
     return paid
+
+
+class SimilarBill(BaseModel):
+    id: UUID
+    reference: str
+    bill_date: date
+    amount: str
+    status: Status
+
+
+@router.get("/similar-bills")
+def similar_bills(
+    session: Staff,
+    conn: Conn,
+    vendor_id: Annotated[UUID, Query()],
+    reference: Annotated[str, Query(min_length=1, max_length=200)],
+) -> list[SimilarBill]:
+    """The vendor's bills whose reference is the one being entered but for case, spaces and
+    punctuation: Record bill warns before a second is entered."""
+    key = "".join(c for c in reference.lower() if c.isalnum())
+    if not key:
+        return []
+    similar = []
+    for (bill_id,) in conn.execute(
+        "SELECT id FROM trust_bills WHERE pmc_id = %s AND vendor_id = %s"
+        " AND regexp_replace(lower(reference), '[^[:alnum:]]', '', 'g') = %s"
+        " ORDER BY bill_date, id LIMIT 10",
+        (session.pmc_id, vendor_id, key),
+    ).fetchall():
+        (bill,), _ = find_bills(conn, session.pmc_id, bill=bill_id)
+        similar.append(
+            SimilarBill(
+                id=bill.id,
+                reference=bill.reference,
+                bill_date=bill.bill_date,
+                amount=bill.amount,
+                status=bill.status,
+            )
+        )
+    return similar
 
 
 # --- recurring bills ------------------------------------------------------------------------

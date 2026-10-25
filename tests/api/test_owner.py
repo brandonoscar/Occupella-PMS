@@ -241,6 +241,8 @@ def test_an_owner_sees_the_bills_waiting_for_them_and_approves_one(client, conn,
             "decided_on": None,
             "decided_by": None,
             "reason": None,
+            "short": None,
+            "needed": None,
         }
     ]
     assert approved.status_code == 201
@@ -281,7 +283,7 @@ def test_an_owner_decides_a_bill_once(client, conn, app_conn, pmc):
     assert again.json()["detail"] == "this bill has its decision already"
 
 
-def test_a_bill_set_aside_is_not_declined_in_the_portal(client, conn, app_conn, pmc):
+def test_a_bill_whose_money_was_taken_is_not_declined_in_the_portal(client, conn, app_conn, pmc):
     _, light, _ = bills_of(conn, pmc)
     set_aside_bill(conn, pmc.pmc_id, light, datetime(2026, 1, 11, tzinfo=UTC))
     join_as_owner(client, app_conn, pmc)
@@ -289,7 +291,7 @@ def test_a_bill_set_aside_is_not_declined_in_the_portal(client, conn, app_conn, 
     answer = client.post(f"/api/owner/bills/{light}/decline", json={"reason": "Too much"})
 
     assert answer.status_code == 409
-    assert answer.json()["detail"] == "this bill is set aside to pay already"
+    assert answer.json()["detail"] == "money was taken from your account to pay this bill already"
 
 
 def test_another_owners_bill_reads_as_not_found(client, conn, app_conn, pmc):

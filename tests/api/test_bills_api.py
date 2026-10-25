@@ -1,8 +1,9 @@
 """Bills as Buildium has them (src/pms/api/payables.py, ADR 0006): a page of bills at a time,
 narrowed by vendor, a due day and a property, each overdue or not; a bill's own page with its
 expense account lines, its invoice, the email asking its owner and its history; a bill entered
-split across expense accounts and with its invoice; and Pay bills, which sets aside and pays
-every bill chosen, all or none, recorded as sent by check or EFT. Always the session's PMC."""
+split across expense accounts and with its invoice; and Pay bills, which pays every bill chosen
+(what is left of each), all or none, recorded as sent by check or EFT. Always the session's
+PMC."""
 
 import base64
 import json
@@ -11,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
 import pytest
-from helpers import add_agreement, balance, bank_sums, make_pmc, post
+from helpers import add_agreement, balance, bank_sums, make_pmc, post, set_aside_bill
 from people import join_as_staff
 
 from pms import accounts, email
@@ -223,16 +224,13 @@ def owner_signs_in(conn, pmc):
     return address
 
 
-def test_a_bills_page_tells_its_story_email_approval_set_aside_and_payment(
-    client, conn, staff, pmc
-):
+def test_a_bills_page_tells_its_story_email_approval_and_payment(client, conn, staff, pmc):
     client.app.state.email = email.FakeSender()
     to = owner_signs_in(conn, pmc)
     fund(conn, pmc, "1000.00")
     add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 59 * DAY, approval_limit="500")
     made = ok(new_bill(client, pmc, "800.00"))["id"]
     ok(call(client, f"bills/{made}/approval", approved_on=TODAY, approved_by="Owner 1, by phone"))
-    ok(call(client, f"bills/{made}/set-aside", on=TODAY))
     ok(call(client, f"bills/{made}/pay", on=TODAY, method="EFT"))
 
     page = ok(client.get(f"/api/payables/bills/{made}"), 200)
@@ -241,11 +239,11 @@ def test_a_bills_page_tells_its_story_email_approval_set_aside_and_payment(
     assert (page["email"]["to"], page["email"]["status"]) == (to, "sent")
     assert [e["what"] for e in page["history"]] == [
         "Entered",
-        f"Email to {to} asking the owner to decide it: sent",
+        f"Email to {to} asking Owner 1 to approve or decline it: sent",
         "Approved by Owner 1, by phone",
-        "$800.00 set aside from the owner's money",
-        "Paid by EFT",
+        "Paid $800.00 by ACH",
     ]
+    assert page["email"]["sent_at"] is not None
 
 
 def test_another_companys_bill_has_no_page(client, conn, staff):
@@ -261,12 +259,14 @@ def test_another_companys_bill_has_no_page(client, conn, staff):
     refused(client.get("/api/payables/bills/not-an-id"), 422)
 
 
-def test_pay_bills_sets_aside_and_pays_each_bill_once_by_check_or_eft(client, conn, staff, pmc):
+def test_pay_bills_pays_each_bill_once_by_check_or_eft(client, conn, staff, pmc):
     fund(conn, pmc, "1000.00")
     fund(conn, pmc, "500.00", n=1)
     first = ok(new_bill(client, pmc, "200.00", "INV-1"))["id"]
     second = ok(new_bill(client, pmc, "150.00", "INV-2", n=1))["id"]
-    ok(call(client, f"bills/{first}/set-aside", on=TODAY))  # set aside already: paid only
+    # Set aside before ADR 0010: its money left the owner's account then, and it pays as before.
+    set_aside_bill(conn, pmc.pmc_id, first, datetime.combine(TODAY, datetime.min.time(), UTC))
+    (legacy,) = [b for b in listed(client)["items"] if b["id"] == first]
     run = {"on": TODAY, "method": "EFT", "bill_ids": [first, second]}
 
     paid = ok(call(client, "bills/pay", **run))
@@ -277,6 +277,11 @@ def test_pay_bills_sets_aside_and_pays_each_bill_once_by_check_or_eft(client, co
         (second, "Vendor 1", "INV-2", "150.00"),
     ]
     assert again == paid  # sent again: nothing twice
+    assert (legacy["status"], legacy["held"], legacy["held_since"]) == (
+        "ready to pay",
+        "200.00",
+        str(TODAY),
+    )
     assert (balance(conn, pmc.owners[0].account), balance(conn, pmc.owners[1].account)) == (
         Decimal("800.00"),
         Decimal("350.00"),
@@ -299,10 +304,10 @@ def test_pay_bills_pays_none_when_one_cant_be_paid(client, conn, staff, pmc):
     refused(
         answer,
         409,
-        "Vendor 1 INV-2: not enough money: the owner's account would be $50.00 short",
+        "Owner 1's balance is $50.00 short of Vendor 1 INV-2: they need to send $50.00 first",
     )
     assert balance(conn, pmc.owners[0].account) == Decimal("250.00")
-    assert {b["status"] for b in listed(client)["items"]} == {"to set aside"}
+    assert [b["status"] for b in listed(client)["items"]] == ["ready to pay", "short"]
 
 
 def test_pay_bills_waits_for_the_owners_approval_and_refuses_a_declined_bill(
