@@ -265,9 +265,11 @@ describe("ApplicantPage", () => {
 
     const gave = await screen.findByLabelText("What Applicant A gave");
     expect(within(gave).getByText("1 Sample Street, Apt 2, Sampleton, ST 00001")).toBeTruthy();
-    expect(within(gave).getByText("Landlord 1, 555-555-0150, 01/01/2023 – 12/31/2025")).toBeTruthy();
+    const landlord = within(gave).getByText((_, node) => node?.tagName === "DD" && node.textContent === "Landlord 1, 555-555-0150, 01/01/2023 – 12/31/2025");
+    // Phones are tel: links (ADR 0010, rule 6).
+    expect(within(landlord).getByRole("link", { name: "555-555-0150" }).getAttribute("href")).toBe("tel:5555550150");
     expect(within(gave).getByText("Employer 1")).toBeTruthy();
-    expect(within(gave).getByText("Contact 1, 555-555-0160")).toBeTruthy();
+    expect(within(gave).getByText((_, node) => node?.tagName === "DD" && node.textContent === "Contact 1, 555-555-0160")).toBeTruthy();
     expect(within(gave).getByRole("link", { name: "Proof of income" }).getAttribute("href")).toBe("/api/documents/d1/file");
     expect(screen.getByRole("link", { name: "Now a tenant" }).getAttribute("href")).toBe("/tenants/t1");
     expect(screen.getByText("No details came with this application.")).toBeTruthy();

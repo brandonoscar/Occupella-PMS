@@ -80,3 +80,13 @@ describe("TenantApplicationCards", () => {
     expect(await within(panel).findByText("a phone is digits")).toBeTruthy();
   });
 });
+
+describe("phones", () => {
+  it("are tel: links (ADR 0010, rule 6)", async () => {
+    server(APPLIED);
+    render(<TenantApplicationCards id="t1" name="Tenant 1" />);
+    const links = await screen.findAllByRole("link", { name: "555-555-0160" });
+    expect(links.map((a) => a.getAttribute("href"))).toEqual(["tel:5555550160", "tel:5555550160"]);
+    expect(screen.getByRole("link", { name: "555-555-0101" }).getAttribute("href")).toBe("tel:5555550101");
+  });
+});

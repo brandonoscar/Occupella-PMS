@@ -5,6 +5,7 @@ import { Button } from "../components/Button";
 import { Field } from "../components/Field";
 import { Form } from "../components/Form";
 import { Notice } from "../components/Notice";
+import { PhoneLink } from "../components/PhoneLink";
 import { Said } from "../components/Said";
 import { Card } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
@@ -37,7 +38,7 @@ export function TenantApplicationCards({ id, name }: { id: string; name: string 
         <Said>{said}</Said>
         <div className="flex flex-col gap-3">
           <p className="text-base" data-testid="emergency-contact">
-            {contact ? `${contact.name}, ${contact.phone}` : "None on file"}
+            {contact ? <>{contact.name}, <PhoneLink phone={contact.phone} /></> : "None on file"}
           </p>
           <div>
             <Button variant="secondary" onClick={() => setEditing(true)}>

@@ -317,8 +317,15 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   through a link staff open for a unit (`/apply#<token>`) and follow it with a status link;
   both tokens travel in JSON bodies and are kept only as SHA-256. Screening goes through
   `pms.leasing.screening.Partner`; the server's `PMS_SCREENING_PARTNER` picks one ("fake" for
-  development and CI, none by default). The PMS keeps only applicants' names and emails; the
-  partner collects anything else on its own side. Lease offers (`src/pms/api/offers.py`) carry
+  development and CI, none by default). Since migration 0155 (ADR 0010, part G,
+  `src/pms/api/applicant_details.py`) the form asks each applicant for a phone, current address,
+  previous landlord and employer if they have them, an emergency contact and a proof of income
+  (an `income_proof` document, in no list of files), and the household's others, animals (an
+  assistance animal marked) and vehicles: nothing more, nothing fair housing protects, never an
+  SSN or a birth date; the partner collects anything else on its own side. When its offer becomes
+  the lease, each tenant who was an applicant is linked to them once (`trust_tenant_applicants`),
+  with their email, phone and emergency contact (`trust_emergency_contacts`, which staff change on
+  the tenant's page), and the household goes on the lease. Lease offers (`src/pms/api/offers.py`) carry
   the PMC's own lease PDF, or one of its lease templates filled in from the offer's terms
   (migration 0121; the PMS writes no lease text either way), and are signed on the PMS's own signing
   page (ADR 0008, migration 0097, `src/pms/api/signing.py`, `pms.leasing.esign`; it replaced the
@@ -391,7 +398,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   it a new table's SELECT only if `trust_app` has it, and never a write path. It never reads
   logins, invites, sessions or credentials, nor rental applications, applicants and their
   screenings, nor lease offers and signatures, nor documents' files, nor contact details, nor notes,
-  nor notices made for a lease, nor vendors' links, nor leads and showings, nor screening criteria (`AI_NEVER_READS` in
+  nor notices made for a lease, nor vendors' links, nor leads and showings, nor screening criteria,
+  nor tax IDs and who saw them, nor what applicants give of themselves (`AI_NEVER_READS` in
   `tests/test_privileges.py`), nor their rows in the audit log: row-level security shows it only
   the audit rows of tables it may read (migration 0043).
 - A new table starts with `REVOKE ALL ... FROM PUBLIC` and grants `trust_app` only what it
@@ -1133,6 +1141,13 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   holding, naming who recorded it; the same again writes nothing). No tax ID is kept: it stays on
   the W-9. A profile moves no money; whether a vendor gets a 1099 decides only whether the 1099
   summary lists them (migration 0113). The AI role reads it.
+- Tax IDs (migration 0155, ADR 0010, part F, `src/pms/api/tax_ids.py`): an owner's or vendor's
+  EIN or SSN, sealed by the app under `PMS_DATA_KEY` (`src/pms/sealed.py`, its row's id bound in)
+  with only its last four in the clear (`trust_tax_ids`, append-only, the latest holding). Every
+  staff member sees the last four; only an admin sees one whole, by Reveal or in the year's 1099
+  export (`GET /api/tax-ids/1099`, amounts as the vendor payments report and the owner year-end
+  count them), each time a row of `trust_tax_id_reveals` naming them, which the database refuses
+  for anyone else. Never in a path, a log or another export.
 - A lease's people (migration 0080, `docs/law.md`): a tenant leaves a lease others stay on, once,
   from a day within it (`trust_remove_lease_tenant`, writing `trust_lease_departures`, naming
   who recorded it); the last tenant can't (the lease ends instead), nor anyone once its deposit

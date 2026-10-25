@@ -1,5 +1,6 @@
 import type { Details, Household } from "../applying";
 import { addressLine } from "../applying";
+import { PhoneLink } from "../components/PhoneLink";
 import { usDate } from "../money";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
@@ -14,23 +15,28 @@ export function DetailsList({ details, label }: { details: Details; label: strin
   return (
     <dl className="grid grid-cols-[max-content_1fr] gap-x-6 gap-y-1 text-base" aria-label={label}>
       <dt className="text-ink-muted">Phone</dt>
-      <dd>{details.phone ?? "Not given"}</dd>
+      <dd>{details.phone ? <PhoneLink phone={details.phone} /> : "Not given"}</dd>
       <dt className="text-ink-muted">Lived at</dt>
       <dd>{details.address ? addressLine(details.address) : "Not given"}</dd>
       <dt className="text-ink-muted">Previous landlord</dt>
       <dd>
-        {landlord === null ? "None given" : [
-          landlord.name,
-          landlord.phone,
-          landlord.from_on || landlord.to_on
-            ? `${landlord.from_on ? usDate(landlord.from_on) : "?"} – ${landlord.to_on ? usDate(landlord.to_on) : "?"}`
-            : null,
-        ].filter(Boolean).join(", ")}
+        {landlord === null ? "None given" : (
+          <>
+            {landlord.name}
+            {landlord.phone && <>, <PhoneLink phone={landlord.phone} /></>}
+            {(landlord.from_on || landlord.to_on) &&
+              `, ${landlord.from_on ? usDate(landlord.from_on) : "?"} – ${landlord.to_on ? usDate(landlord.to_on) : "?"}`}
+          </>
+        )}
       </dd>
       <dt className="text-ink-muted">Employer</dt>
       <dd>{details.employer ?? "None given"}</dd>
       <dt className="text-ink-muted">Emergency contact</dt>
-      <dd>{details.emergency_contact ? `${details.emergency_contact.name}, ${details.emergency_contact.phone}` : "None given"}</dd>
+      <dd>
+        {details.emergency_contact ? (
+          <>{details.emergency_contact.name}, <PhoneLink phone={details.emergency_contact.phone} /></>
+        ) : "None given"}
+      </dd>
       <dt className="text-ink-muted">Proof of income</dt>
       <dd>
         {details.income_proofs.length === 0 ? "None given" : details.income_proofs.map((doc, n) => (

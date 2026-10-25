@@ -1604,3 +1604,31 @@ replaced_by = "invariant:bill-paid-in-parts-once-per-key"
 id = "invariant:owners-page-shows-what-a-draw-takes"
 decision = "docs/adr/0010-design-pass.md"
 replaced_by = "invariant:owners-page-shows-what-a-draw-takes-past-held-bills"
+
+[[invariant]]
+id = "tax-id-whole-only-to-an-admin"
+statement = "An owner's or vendor's tax ID is kept sealed under the server's key, its row's id bound in, with only its last four in the clear (ADR 0010 phase 2, part F; migration 0155). Only an admin sees one whole, on screen or in the year's 1099 export, and each time is a row naming them, which the database refuses for anyone else; it is never in the audit log in the clear, and the AI role reads none of it."
+tests = [
+  "tests/api/test_tax_ids_api.py::test_staff_keep_a_tax_id_sealed_and_see_its_last_four",
+  "tests/api/test_tax_ids_api.py::test_an_admin_sees_one_whole_and_each_time_is_recorded",
+  "tests/api/test_tax_ids_api.py::test_staff_who_are_not_admins_see_the_last_four_only",
+  "tests/api/test_tax_ids_api.py::test_the_database_shows_a_whole_tax_id_only_to_an_admin",
+  "tests/api/test_tax_ids_api.py::test_the_1099_export_gives_each_payee_their_tax_id_whole_and_records_it",
+]
+
+[[invariant]]
+id = "the-1099-export-counts-as-the-reports-do"
+statement = "The 1099 export's amounts are the vendor payments report's 1099 vendors at or over the year's threshold and the owner year-end package's 1099-MISC rents: one count, read from both sides (ADR 0010 phase 2, part F)."
+tests = [
+  "tests/api/test_tax_ids_api.py::test_the_1099_export_counts_as_the_reports_do",
+]
+
+[[invariant]]
+id = "applicant-details-carried-once"
+statement = "What an applicant gave (phone, address, previous landlord, employer, emergency contact, proof of income) and the household they listed come all or none with the application, ask nothing fair housing protects and never a Social Security number or birth date; once the application's offer is the lease, each tenant who was an applicant is linked to them once, with their contact details and emergency contact, and the household goes on the lease once, a retry carrying nothing twice (ADR 0010 phase 2, part G; migration 0155)."
+tests = [
+  "tests/api/test_applicant_details_api.py::test_bad_details_refuse_the_whole_application",
+  "tests/api/test_applicant_details_api.py::test_an_applicant_who_becomes_a_tenant_takes_what_they_gave_with_them",
+  "tests/api/test_applicant_details_api.py::test_the_database_links_a_tenant_only_to_the_applicant_they_were",
+  "tests/api/test_applicant_details_api.py::test_a_signer_who_was_not_an_applicant_takes_nothing",
+]
