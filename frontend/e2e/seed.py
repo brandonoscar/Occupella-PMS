@@ -590,6 +590,7 @@ FEATURES = (
     "online-payments",
     "autopay",
     "payouts",
+    "receive-payment",
 )
 
 
