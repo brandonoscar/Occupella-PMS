@@ -136,6 +136,8 @@ export type RentRun = {
   prepaid_used?: number;
   // Autopay payments started (src/pms/autopay.py), on a server that takes payments online.
   autopay?: number;
+  // Fixed-term leases whose term ran out with no renewal, gone month to month (ADR 0010 phase 1c).
+  leases_rolled_over?: number;
 };
 // A run as recorded: the nightly run (by null) or an admin's by hand.
 export type RentRunLine = RentRun & { at: string; due_on: string; late_fees_as_of: string; by: string | null };
@@ -180,9 +182,12 @@ export function rentRunSummary(run: RentRun): string {
   // Prepaid rent used by itself (migration 0117), for a company that turned it on.
   const prepaid = run.prepaid_used ? ` Prepaid rent paid what ${count(run.prepaid_used, "lease")} owed.` : "";
   const autopay = run.autopay ? ` ${count(run.autopay, "autopay payment")} started.` : "";
+  const rolled = run.leases_rolled_over
+    ? ` ${count(run.leases_rolled_over, "lease")} went month to month.`
+    : "";
   return run.emails
-    ? `${charged}${prepaid}${autopay} ${count(run.emails, "email")} written.`
-    : `${charged}${prepaid}${autopay}`;
+    ? `${charged}${prepaid}${autopay}${rolled} ${count(run.emails, "email")} written.`
+    : `${charged}${prepaid}${autopay}${rolled}`;
 }
 
 const SERVED: Record<RentChange["served_by"], string> = {

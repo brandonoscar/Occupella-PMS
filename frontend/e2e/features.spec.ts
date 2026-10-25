@@ -2673,14 +2673,14 @@ test("staff turn on the emails the PMS writes by itself, and a run of rent sends
   await editing.getByLabel("Day of the month they go").selectOption("1");
   await editing.getByLabel("Work orders to vendors").check();
   await editing.getByLabel("Low balance alerts to owners").check();
-  await editing.getByLabel("Payment receipts to tenants").check();
   await editing.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Saved the automatic emails.")).toBeVisible();
   await expect(editing).toHaveCount(0);
   await expect(shown).toContainText("Last month's, from the 1st of each month");
   await expect(shown).toContainText("Work orders to vendorsOn");
   await expect(shown).toContainText("Low balance alerts to ownersOn");
-  await expect(shown).toContainText("Payment receipts to tenantsOn, the PDF attached");
+  // A receipt goes for every payment (ADR 0010 phase 1c): nothing to turn on.
+  await expect(shown).toContainText("Payment receipts to tenantsEvery payment, the PDF attached");
 
   // Elm Court's reserve raised to $400.00 from today: its $250.00 is now below it (q054).
   await openProperty(page, "Elm Court");

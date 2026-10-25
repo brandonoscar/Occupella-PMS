@@ -18321,7 +18321,7 @@ ALTER TABLE public.trust_documents
 --
 
 ALTER TABLE public.trust_documents
-    ADD CONSTRAINT trust_documents_lease_check CHECK (((kind = ANY (ARRAY['move_out_photo'::text, 'lease_document'::text])) = (lease_id IS NOT NULL))) NOT VALID;
+    ADD CONSTRAINT trust_documents_lease_check CHECK (((kind = ANY (ARRAY['move_out_photo'::text, 'lease_document'::text, 'payment_attachment'::text])) = (lease_id IS NOT NULL))) NOT VALID;
 
 
 --

@@ -48,6 +48,7 @@ Kind = Literal[
     "vendor_document",
     "request_photo",
     "listing_photo",
+    "payment_attachment",
 ]
 ContentType = Literal["application/pdf", "image/jpeg", "image/png"]
 Title = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
@@ -74,6 +75,8 @@ COLUMN: dict[Kind, str] = {
     "vendor_document": "vendor_id",
     "request_photo": "request_id",
     "listing_photo": "unit_id",
+    # A tenant's payment's check photo or PDF (migration 0154): about its lease, and the payment.
+    "payment_attachment": "lease_id",
 }
 
 VENDORS = (
@@ -125,6 +128,7 @@ SUBJECTS: dict[Kind, str] = {
     " WHERE r.pmc_id = %(pmc)s ORDER BY r.submitted_at DESC, r.id",
     # A unit's photos for the public vacancy page (migration 0087).
     "listing_photo": UNITS,
+    "payment_attachment": LEASES,
 }
 
 # Where each kind's record has its page.
@@ -134,6 +138,7 @@ PAGE: dict[Kind, str] = {
     "receipt": "/bills/",
     "move_out_photo": "/leases/",
     "lease_document": "/leases/",
+    "payment_attachment": "/leases/",
     "owner_document": "/owners/",
     "work_order_photo": "/work-orders/",
     "property_document": "/properties/",
@@ -322,10 +327,14 @@ class Created(BaseModel):
 @router.post("", status_code=201)
 def upload(session: Staff, conn: Conn, new: NewDocument) -> Created:
     """Keeps a file as a document about one of the PMC's vendors, bills, leases or owners."""
+    if new.kind == "payment_attachment":
+        raise HTTPException(422, "a payment's file comes with the payment, on Receive payment")
     return Created(id=keep(conn, session.pmc_id, new))
 
 
-def keep(conn: psycopg.Connection[Any], pmc_id: UUID, new: NewDocument) -> UUID:
+def keep(
+    conn: psycopg.Connection[Any], pmc_id: UUID, new: NewDocument, transfer_id: str | None = None
+) -> UUID:
     """Keeps a file as a document of the PMC, checked: its type, its size and what it is
     about. A bill's invoice comes this way too, with the bill (src/pms/api/payables.py)."""
     try:
@@ -353,8 +362,8 @@ def keep(conn: psycopg.Connection[Any], pmc_id: UUID, new: NewDocument) -> UUID:
                 409, f"a unit shows at most {LISTING_PHOTOS} photos; remove one first"
             )
     insert = sql.SQL(
-        "INSERT INTO trust_documents (pmc_id, kind, {}, title, content_type, size, sha256)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id"
+        "INSERT INTO trust_documents (pmc_id, kind, {}, title, content_type, size, sha256,"
+        " transfer_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING id"
     ).format(sql.Identifier(COLUMN[new.kind]))
     row = conn.execute(
         insert,
@@ -366,6 +375,7 @@ def keep(conn: psycopg.Connection[Any], pmc_id: UUID, new: NewDocument) -> UUID:
             new.content_type,
             len(content),
             hashlib.sha256(content).digest(),
+            transfer_id,
         ),
     ).fetchone()
     assert row is not None

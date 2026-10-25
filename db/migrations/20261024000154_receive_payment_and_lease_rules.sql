@@ -5,7 +5,8 @@
 --   trust_payment_notes          what staff wrote about a tenant's payment as they received it,
 --                                once per payment (its first transfer). The AI never reads it.
 --   trust_documents              a payment's attachment (a check's photo, a PDF): the kind
---                                'payment_attachment', about the payment's first transfer.
+--                                'payment_attachment', about the payment's lease and its first
+--                                transfer.
 --   trust_lease_end_notices      each end date staff gave a lease (a move-out, a tenant's notice,
 --                                an end moved earlier): the lease ends there because someone said
 --                                so. Append-only, naming who.
@@ -61,6 +62,12 @@ ALTER TABLE trust_documents ADD CONSTRAINT trust_documents_kind_check CHECK (
 ) NOT VALID;
 ALTER TABLE trust_documents ADD CONSTRAINT trust_documents_transfer_check
 CHECK ((kind = 'payment_attachment') = (transfer_id IS NOT NULL)) NOT VALID;
+-- A payment's attachment is about its lease too, so the lease's Files tab lists it.
+-- squawk-ignore ban-drop-constraint
+ALTER TABLE trust_documents DROP CONSTRAINT trust_documents_lease_check;
+ALTER TABLE trust_documents ADD CONSTRAINT trust_documents_lease_check CHECK (
+    (kind IN ('move_out_photo', 'lease_document', 'payment_attachment')) = (lease_id IS NOT NULL)
+) NOT VALID;
 -- squawk-ignore adding-foreign-key-constraint
 ALTER TABLE trust_documents ADD CONSTRAINT trust_documents_transfer_id_fkey
 FOREIGN KEY (transfer_id) REFERENCES pgledger_transfers (id) NOT VALID;

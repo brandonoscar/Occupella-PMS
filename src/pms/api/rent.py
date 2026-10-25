@@ -394,15 +394,40 @@ def lock_lease(conn: psycopg.Connection[Any], lease_id: UUID) -> None:
 
 
 def match(
-    conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID, transfer: str, amount: Decimal
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    lease_id: UUID,
+    transfer: str,
+    amount: Decimal,
+    wanted: dict[UUID, Decimal] | None = None,
 ) -> list[tuple[UUID, Decimal]]:
-    """Matches a transfer to the lease's open charges, oldest first. A transfer matched before
-    (posted again by a retry that asked for the very same thing) is left as it was."""
+    """Matches a transfer to the lease's open charges, oldest first, or first to the charges
+    staff chose (`wanted`, each with what is still to pay of it; what this transfer pays of them
+    comes off). A transfer matched before (posted again by a retry that asked for the very same
+    thing) is left as it was."""
     if conn.execute(
         "SELECT 1 FROM trust_charge_payments WHERE transfer_id = %s LIMIT 1", (transfer,)
     ).fetchone():
         return []
-    matched = allocate(open_charges(conn, pmc_id, lease_id), amount)
+    order = open_charges(conn, pmc_id, lease_id)
+    if wanted:
+        opens = dict(order)
+        first = allocate(
+            [(c, min(w, opens.get(c, ZERO))) for c, w in wanted.items() if w > 0], amount
+        )
+        for charge, part in first:
+            wanted[charge] -= part
+            opens[charge] -= part
+        rest = allocate(
+            [(c, opens[c]) for c, _ in order if opens[c] > 0],
+            amount - sum((part for _, part in first), ZERO),
+        )
+        together: dict[UUID, Decimal] = {}
+        for charge, part in first + rest:
+            together[charge] = together.get(charge, ZERO) + part
+        matched = list(together.items())
+    else:
+        matched = allocate(order, amount)
     for charge, part in matched:
         conn.execute("SELECT trust_apply_payment(%s, %s, %s, %s)", (pmc_id, charge, transfer, part))
     return matched
@@ -426,6 +451,7 @@ def record_payment(
     account: str | None = None,
     method: PaidBy | None = None,
     past_hold_by: str | None = None,
+    chosen: list[tuple[UUID, Decimal]] | None = None,
 ) -> Recorded:
     """A tenant's payment into the operating trust bank account: the owner's account takes
     what the lease owes, matched to its rent first, then its other charges, each oldest first
@@ -435,7 +461,9 @@ def record_payment(
     owner's account its lease or move names. The same
     request id again returns the payment as it was recorded. A lease on a payment hold refuses
     it, unless staff accept it past the hold (`past_hold_by` names them): then every hold in
-    force that day allows it, in the same transaction."""
+    force that day allows it, in the same transaction. Staff may choose the open charges it pays
+    (`chosen`: each charge with how much, in that order); what is left of it pays the rest in the
+    usual order."""
     lease = lease_of(conn, pmc_id, lease_id)
     owners = owners_of(conn, pmc_id, lease.property_id, received_on, account)
     bank = owners.bank
@@ -443,8 +471,9 @@ def record_payment(
     earlier_leases = moved_from(conn, lease_id)
     for prior, _, _ in earlier_leases:
         lock_lease(conn, prior)
+    wanted = chosen_charges(conn, pmc_id, lease_id, amount, chosen, bool(earlier_leases))
     key = f"payment/{request_id}"
-    metadata = {
+    metadata: dict[str, Any] = {
         "key": key,
         "kind": "tenant payment",
         "lease_id": str(lease_id),
@@ -454,6 +483,8 @@ def record_payment(
         "method": method,
         "memo": f"Rent – {lease_memo(conn, lease_id)}",
     }
+    if chosen:
+        metadata["charges"] = [[str(charge), cents(part)] for charge, part in chosen]
     # Each lease's part, oldest first. Every lease's rent comes before any lease's other charges.
     chain = [*(each for each, _, _ in earlier_leases), lease_id]
     still = {each: open_rent_and_fees(conn, pmc_id, each) for each in chain}
@@ -484,8 +515,44 @@ def record_payment(
     for (each, _, _, part), transfer in zip(parts, posted[: len(parts)], strict=True):
         if past_hold_by is not None:
             allow_past_holds(conn, pmc_id, each, transfer, received_on, past_hold_by)
-        match(conn, pmc_id, each, transfer, part)
+        match(conn, pmc_id, each, transfer, part, wanted if each == lease_id else None)
     return Recorded(posted, to_owner, to_prepaid)
+
+
+def chosen_charges(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    lease_id: UUID,
+    amount: Decimal,
+    chosen: list[tuple[UUID, Decimal]] | None,
+    moved: bool,
+) -> dict[UUID, Decimal] | None:
+    """The charges staff chose for a payment to pay first, each with how much: each an open
+    charge of the lease, once, never past what is open of it, together never past the payment."""
+    if not chosen:
+        return None
+    if moved:
+        raise HTTPException(
+            422,
+            "this lease's tenants moved from another lease: a payment pays what each lease owes,"
+            " oldest lease first",
+        )
+    opens = dict(open_charges(conn, pmc_id, lease_id))
+    wanted: dict[UUID, Decimal] = {}
+    for charge, part in chosen:
+        if charge in wanted:
+            raise HTTPException(422, "choose each charge once")
+        if charge not in opens:
+            raise HTTPException(422, "a charge chosen isn't open on this lease")
+        if part > opens[charge]:
+            raise HTTPException(
+                422,
+                f"only {cents(opens[charge])} is open of a charge chosen; {cents(part)} is more",
+            )
+        wanted[charge] = part
+    if sum(wanted.values(), ZERO) > amount:
+        raise HTTPException(422, "the charges chosen come to more than the payment")
+    return wanted
 
 
 # The payment holds of a lease in force on a day: from a hold's first day until its release ends
@@ -712,6 +779,9 @@ class Paid(BaseModel):
     # How it came: as staff record one, or online (src/pms/api/online_payments.py).
     method: PaidBy | None
     bounced: bool
+    # What staff wrote about it as they received it, and its files (a check's photo, a PDF).
+    note: str | None = None
+    attachments: list[UUID] = []
 
 
 # A deposit's kind (migration 0092): each held in its own account.
@@ -980,7 +1050,19 @@ PAYMENTS = """
 SELECT p.lease_id, p.first_id, p.received_at, p.amount, p.reference, p.method,
        EXISTS (SELECT 1 FROM pgledger_transfers AS b
                JOIN trust_ledger_accounts AS ba ON ba.ledger_account_id = b.to_account_id
-               WHERE ba.pmc_id = %(pmc)s AND b.metadata ->> 'key' = 'bounce/' || p.key)
+               WHERE ba.pmc_id = %(pmc)s AND b.metadata ->> 'key' = 'bounce/' || p.key),
+       -- Its note and files, kept with the transfer the answer named, whichever of the
+       -- payment's that was.
+       (SELECT n.note FROM trust_payment_notes AS n
+        JOIN pgledger_transfers AS o ON o.id = n.transfer_id
+        WHERE o.metadata ->> 'key' = p.key
+        ORDER BY n.created_at LIMIT 1),
+       ARRAY(SELECT d.id FROM trust_documents AS d
+             JOIN pgledger_transfers AS o ON o.id = d.transfer_id
+             WHERE o.metadata ->> 'key' = p.key AND d.kind = 'payment_attachment'
+               AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r
+                               WHERE r.document_id = d.id)
+             ORDER BY d.created_at, d.id)
 FROM (SELECT t.metadata ->> 'key' AS key,
              (t.metadata ->> 'lease_id')::uuid AS lease_id,
              (array_agg(t.id ORDER BY t.created_at, t.id))[1] AS first_id,
@@ -1062,7 +1144,7 @@ def built(
             )
         )
     payments: dict[UUID, list[Paid]] = {}
-    for lease, transfer, event_at, amount, reference, method, bounced in conn.execute(
+    for lease, transfer, event_at, amount, reference, method, bounced, note, files in conn.execute(
         PAYMENTS, names
     ).fetchall():
         payments.setdefault(lease, []).append(
@@ -1073,6 +1155,8 @@ def built(
                 reference=reference,
                 method=method,
                 bounced=bounced,
+                note=note,
+                attachments=list(files),
             )
         )
     charges: dict[UUID, list[OpenCharge]] = {}
@@ -1578,6 +1662,14 @@ def stop_recurring_charge(session: Staff, conn: Conn, recurring_id: UUID, stop: 
         raise HTTPException(409, "this recurring charge has stopped already") from None
 
 
+Note = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=2000)]
+
+
+class ChargePart(BaseModel):
+    charge_id: UUID
+    amount: Amount
+
+
 class NewPayment(BaseModel):
     # Made by the page once per payment it records, so sending it again records nothing new.
     request_id: UUID
@@ -1589,12 +1681,19 @@ class NewPayment(BaseModel):
     account: Annotated[str, Field(min_length=1, max_length=100)] | None = None
     # Accept it although the lease is on a payment hold (an eviction filed): the PMC's choice.
     past_hold: bool = False
+    # What staff write about it (ADR 0010 phase 1c): kept with the payment; the AI never reads it.
+    note: Note | None = None
+    # The open charges it pays, each with how much, in this order; what is left of the payment
+    # pays the rest as before (rent first, oldest first). None: the usual order.
+    charges: Annotated[list[ChargePart], Field(min_length=1, max_length=100)] | None = None
 
 
 class Payment(BaseModel):
     transfers: list[str]
     to_owner: str
     to_prepaid: str
+    # The payment as the lease page lists it (its first transfer): its file is attached to it.
+    payment_id: str
 
 
 def answer(recorded: Recorded) -> Payment:
@@ -1602,6 +1701,7 @@ def answer(recorded: Recorded) -> Payment:
         transfers=recorded.transfers,
         to_owner=cents(recorded.to_owner),
         to_prepaid=cents(recorded.to_prepaid),
+        payment_id=recorded.transfers[0],
     )
 
 
@@ -1612,8 +1712,9 @@ def not_after_today(day: date) -> None:
 
 @router.post("/leases/{lease_id}/payments", status_code=201)
 def pay(session: Staff, conn: Conn, lease_id: UUID, new: NewPayment) -> Payment:
-    """Records a tenant's payment; each tenant of the lease is emailed its receipt when the
-    company asks for receipts and the server sends email (once per payment)."""
+    """Records a tenant's payment, maybe paying the charges staff chose first, with what they
+    wrote about it; each tenant of the lease is emailed its receipt while the server sends email
+    (once per payment, ADR 0010)."""
     not_after_today(new.received_on)
     try:
         recorded = record_payment(
@@ -1627,10 +1728,18 @@ def pay(session: Staff, conn: Conn, lease_id: UUID, new: NewPayment) -> Payment:
             new.account,
             new.method,
             staff_name(conn, session.pmc_id, session.person_id) if new.past_hold else None,
+            [(c.charge_id, c.amount) for c in new.charges] if new.charges else None,
         )
     except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
         # a payment hold, a closed period, or a match made differently before
         raise HTTPException(409, refusal(refused)) from None
+    if new.note is not None:
+        # Sent again, the note stays as first written.
+        conn.execute(
+            "INSERT INTO trust_payment_notes (transfer_id, pmc_id, note) VALUES (%s, %s, %s)"
+            " ON CONFLICT (transfer_id) DO NOTHING",
+            (recorded.transfers[0], session.pmc_id, new.note),
+        )
     if outbox.SENDING.get():
         notices.write_payment_receipts(
             conn,
@@ -1641,6 +1750,46 @@ def pay(session: Staff, conn: Conn, lease_id: UUID, new: NewPayment) -> Payment:
             new.received_on,
         )
     return answer(recorded)
+
+
+class NewAttachment(BaseModel):
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+    content_type: Literal["application/pdf", "image/jpeg", "image/png"]
+    # The file, base64: 5 MB comes to about 7 million characters.
+    content_base64: str = Field(min_length=4, max_length=7_000_000)
+
+
+class Attached(BaseModel):
+    id: UUID
+
+
+@router.post("/payments/{transfer_id}/attachments", status_code=201)
+def attach(session: Staff, conn: Conn, transfer_id: str, new: NewAttachment) -> Attached:
+    """Keeps a file with a tenant's payment (a check's photo, a PDF): about its lease too, so the
+    lease's Files tab lists it."""
+    from pms.api import documents  # documents reads the rent roll's leases (rentals, rent)
+
+    row = conn.execute(
+        "SELECT (t.metadata ->> 'lease_id')::uuid FROM pgledger_transfers AS t"
+        " JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id"
+        " WHERE t.id = %s AND a.pmc_id = %s AND t.metadata ->> 'kind' = 'tenant payment'",
+        (transfer_id, session.pmc_id),
+    ).fetchone()
+    if row is None:
+        raise HTTPException(404, "no such payment")
+    kept = documents.keep(
+        conn,
+        session.pmc_id,
+        documents.NewDocument(
+            kind="payment_attachment",
+            about_id=row[0],
+            title=new.title,
+            content_type=new.content_type,
+            content_base64=new.content_base64,
+        ),
+        transfer_id,
+    )
+    return Attached(id=kept)
 
 
 class UsePrepaid(BaseModel):
