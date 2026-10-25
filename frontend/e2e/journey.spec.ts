@@ -368,7 +368,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await page.getByRole("combobox", { name: "Status" }).selectOption({ label: "All" });
     const row = page.getByRole("row", { name: "Aspen Row, Unit 2", exact: true });
     await expect(row.getByRole("cell")).toHaveText([
-      "Aspen Row", "Unit 2", "Applicant Journey", us(nextMonth), us(lastDay), /^\d*$/, "$1,240.00", "$1,240.00", "$0.00",
+      "Aspen Row", "Unit 2", "Applicant Journey", us(nextMonth), us(lastDay), /^\d*$/, "$1,240.00", "", "$1,240.00", "$0.00",
     ]);
   });
 
@@ -771,7 +771,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
       "kept $150.00 of $1,180.00, $1,030.00 back to the tenants",
     );
     const statement = await page.request.get(
-      (await lease.getByRole("link", { name: "Statement for the tenants (PDF)" }).getAttribute("href")) ?? "",
+      (await lease.getByRole("link", { name: "Statement for Drew Sample (PDF)" }).getAttribute("href")) ?? "",
     );
     expect(statement.status()).toBe(200);
     expect(statement.headers()["content-type"]).toBe("application/pdf");
