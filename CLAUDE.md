@@ -153,7 +153,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   from a day of the month (1 to 28); a vendor's work order when assigned or scheduled; the
   adverse action notice to each applicant when a decision rests on a screening (the PDF's text,
   shown on the applicant's page); and, since migration 0111 (q029), a payment's receipt to each
-  tenant on its lease when staff record it (`payment_receipt`, once per tenant and payment). Each
+  tenant on its lease (`payment_receipt`, once per tenant and payment), since ADR 0010 phase 1c
+  for every payment, staff's, a payment file's, online and autopay, with no switch. Each
   names what it is about and is written once (a unique index per kind); a lease under a payment
   hold gets no reminder or late notice. The nightly run and an admin's Run rent now write the
   first three, after the run, in its transaction. A receipt carries the receipt's PDF and an owner's
@@ -486,6 +487,20 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   pre-printed stock, numbered on; a download takes disburse and is logged
   (`trust_payout_file_downloads`). The PMS moves no money: the company's bank does. All
   append-only; the AI role reads no bank account, ACH detail or download.
+- Receive payment and the lease money rules (migration 0154, `docs/adr/0010-design-pass.md` phase
+  1c): one panel (`pages/ReceivePayment.tsx`) from the rent roll, a lease's page and a housing
+  authority's page takes a tenant's payment or an authority's check split across its leases (it
+  replaced the authority page's Record payment). A tenant's payment may carry a note
+  (`trust_payment_notes`, once, naming who; staff only, the AI never reads it) and the check's
+  photo or a PDF (a `payment_attachment` document about the lease and its first transfer), both in
+  its own request, kept once; and the open charges it pays first (`charges`, each all or part),
+  the rest of it in the usual order; Save and add another keeps the panel open. A fixed-term lease
+  whose term ran out with no renewal goes month to month at the same rent (`trust_roll_over_leases`,
+  the nightly run and Run rent now, the first night after its end within a week, once;
+  `trust_lease_holdovers`), never one whose end staff gave (`trust_lease_end_notices`, written by
+  Move-out's end; earlier ends found in the audit log), one another lease follows at its unit, one
+  its tenants moved from, one whose deposit was returned, or one entered after its end. The
+  Dashboard notes it for 30 days. All append-only.
 - Shared bills and markups (migration 0083, `docs/law.md`): one vendor invoice shared across
   properties (`trust_shared_bills`, `trust_shared_bill_parts`; `POST /api/payables/shared-bills`)
   is a bill for each owner's property account's share, under the invoice's reference with /1,
