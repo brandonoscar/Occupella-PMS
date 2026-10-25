@@ -376,11 +376,16 @@ class AuditMachine(RuleBasedStateMachine):
 
     @invariant()
     def every_transfer_has_one_audit_row(self):
+        # Every audit row of a transfer counted once, whichever PMC it names, then each of this
+        # PMC's transfers held to one: a scan of the log per check, not one per transfer (the
+        # log holds every earlier test's rows, so that grew with the square of the suite).
         (off,) = self.conn.execute(
             "SELECT count(*) FROM pgledger_transfers tr"
             " JOIN trust_ledger_accounts t ON t.ledger_account_id = tr.from_account_id"
-            " WHERE t.pmc_id = %s AND (SELECT count(*) FROM trust_audit_log a"
-            "   WHERE a.table_name = 'pgledger_transfers' AND a.row_data ->> 'id' = tr.id) <> 1",
+            " LEFT JOIN (SELECT a.row_data ->> 'id' AS id, count(*) AS rows FROM trust_audit_log a"
+            "   WHERE a.table_name = 'pgledger_transfers' GROUP BY 1) AS logged"
+            " ON logged.id = tr.id"
+            " WHERE t.pmc_id = %s AND coalesce(logged.rows, 0) <> 1",
             (self.pmc_id,),
         ).fetchone()
         assert off == 0
