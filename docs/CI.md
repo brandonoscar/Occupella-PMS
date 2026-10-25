@@ -464,6 +464,28 @@ nothing. Grype ran only in CI: the image doesn't build in that sandbox (NOT VERI
 Run the parts locally with the commands above, `cd frontend && npm audit --omit=dev`, and
 `docker compose build`, then syft and grype as in the workflow.
 
+**zap.yml** (daily at 07:47 UTC, by hand, and on a PR that changes it or its tools): OWASP ZAP
+(Apache-2.0, `ghcr.io/zaproxy/zaproxy` pinned by digest) on the running PMS, synthetic data only,
+in two jobs:
+- passive: the browser tests (`frontend/e2e`, seeded as e2e.yml seeds them) run with ZAP as their
+  proxy (`PW_PROXY` in `playwright.config.ts`, loopback included), so ZAP reads every page and API
+  answer the tests' sessions get, owners' and tenants' as well as staff's, and flags what it sees:
+  headers, cookies, what an answer gives away. A test failing through the proxy fails the job.
+- active: `zap-api-scan` attacks every operation of the API's own OpenAPI schema (injections,
+  traversal, what a broken request makes the server say) as a staff member of the demo PMC
+  signed in with password and authenticator (`tools/zap_session.py`), for at most 45 minutes.
+  The schema leaves out only what would end that session (`LEFT_OUT`: signing out, disabling a
+  login). The session reaches ZAP through its environment (`ZAP_AUTH_HEADER_VALUE`), never a
+  command line or the log; it is a throwaway login's in a throwaway database. A server error in
+  the API's log fails the job too.
+
+`tools/zap_alerts.py` judges each report: an alert of low risk or higher fails the job unless
+`ci/zap-ignore.toml` names its rule with why it is no risk here (an entry without a reason is
+refused); informational alerts are listed. `check.sh` runs both tools (the session on a throwaway
+database of its own, served as `python -m pms.api` serves it, and the ignore list); the scan
+itself needs ZAP's image, which the sandbox this was written in can't pull (NOT VERIFIED locally:
+its first run is this PR's).
+
 **licenses.yml** (PRs and main): every installed dependency, direct or transitive, must carry a
 license on the allowlist in `ci/licenses.toml`: compatible with this repo's Apache-2.0, and never
 non-commercial or source-available. A PMC that self-hosts needs to be able to use every piece
@@ -532,7 +554,8 @@ Plan: 20 concurrent jobs across the account; PR CI at most 8, nightly at most 20
   - 04:17 mutation (8 SQL shards and 1 Python job, then 1 scoring job);
   - 05:17 selfhost (1);
   - Mondays 06:17 security (codeql, gitleaks history, pip-audit, scorecard: 4);
-  - 07:17 daily-scan (1).
+  - 07:17 daily-scan (1);
+  - 07:47 zap (2, the active one up to 90 minutes).
 - A push to main runs the same checks (minus `deps-and-secrets`), plus gitleaks over full
   history, pip-audit and Scorecard: 11 jobs.
 - A new PR job is chained after another one, as `e2e` is, to stay within 8. The daily scan's one

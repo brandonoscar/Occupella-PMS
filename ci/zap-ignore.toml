@@ -1,0 +1,7 @@
+# ZAP rules whose alerts are no risk here (tools/zap_alerts.py, zap.yml). Every alert of low risk
+# or higher fails the scan unless its rule is here, each with why. A new entry needs a reason a
+# reviewer can check against the code; never add one to get green.
+#
+# [[ignore]]
+# rule = "10000"
+# reason = "why this alert is no risk in this app"

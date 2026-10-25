@@ -1,0 +1,207 @@
+name: zap
+
+# OWASP ZAP (Apache-2.0) on the running PMS, synthetic data only, two ways:
+#   passive: the browser tests (frontend/e2e) run through ZAP as their proxy, so it reads every
+#            page and API answer real people's sessions get, and flags what it sees (headers,
+#            cookies, what an answer gives away);
+#   active:  ZAP attacks every API operation (its OpenAPI schema) as a signed-in staff member of
+#            the demo PMC (tools/zap_session.py): injections, traversal, what a broken request
+#            makes the server say.
+# Each judged by tools/zap_alerts.py: an alert of low risk or higher fails unless
+# ci/zap-ignore.toml names its rule with why. Nightly, by hand, and on a PR that changes it. No
+# secrets: the session is a throwaway login's in a throwaway database, handed to ZAP through its
+# environment and never printed.
+on:
+  schedule:
+    - cron: "47 7 * * *" # daily 07:47 UTC, after the daily scan (07:17)
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/zap.yml
+      - tools/zap_session.py
+      - tools/zap_alerts.py
+      - ci/zap-ignore.toml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  DBMATE_VERSION: v2.36.0
+  DBMATE_SHA256: 47e284b3d8cbad1ba5f090495aa05afd1bbd5f35e2ed5577aad06da74ce780ce
+  DATABASE_URL: postgres://postgres@localhost:5432/pms?sslmode=disable
+  NODE_IMAGE: mirror.gcr.io/library/node:22.22.0-slim@sha256:dd9d21971ec4395903fa6143c2b9267d048ae01ca6d3ea96f16cb30df6187d94
+  PLAYWRIGHT_IMAGE: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
+  ZAP_IMAGE: ghcr.io/zaproxy/zaproxy:2.16.1@sha256:7840969c7c9fead565bf9734b12f49f6886db90b1d35b1f74d79710bbd081dab
+  ORIGIN: http://127.0.0.1:8123
+
+jobs:
+  passive:
+    name: zap, the browser tests through ZAP
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dbmate
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+            "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
+          echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/bin/dbmate"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: pip install -r requirements.txt
+      - name: Build the portal (Node 22)
+        run: |
+          docker run --rm -v "$PWD/frontend:/w" -w /w "$NODE_IMAGE" \
+            sh -c "npm ci --no-audit --no-fund && npm run build"
+      - name: Apply every migration
+        run: dbmate --no-dump-schema up
+      - name: Serve the portal and seed a synthetic PMC (as e2e.yml does)
+        run: |
+          PYTHONPATH=src PMS_STATIC_DIR=frontend/dist PMS_PORT=8123 \
+            PMS_PUBLIC_URL="$ORIGIN" PMS_COOKIE_SECURE=false \
+            PMS_SCREENING_PARTNER=fake PMS_EMAIL_SENDER=fake PMS_GEOCODER=fake PMS_PAYMENTS=fake \
+            PMS_NIGHTLY=off \
+            nohup python -m pms.api > "$RUNNER_TEMP/api.log" 2>&1 &
+          for _ in $(seq 30); do curl -fsS "$ORIGIN/health" && break; sleep 1; done
+          PYTHONPATH=src python frontend/e2e/seed.py > frontend/e2e/.seed.json
+      - name: Start ZAP as a proxy (its API only on this runner's loopback)
+        run: |
+          docker run -d --name zap --network host "$ZAP_IMAGE" zap.sh -daemon \
+            -host 127.0.0.1 -port 8090 -config api.disablekey=true \
+            -config api.addrs.addr.name=127.0.0.1 -config api.addrs.addr.regex=false
+          for _ in $(seq 120); do
+            curl -fsS http://127.0.0.1:8090/JSON/core/view/version/ && break; sleep 1
+          done
+      # The tests are the judge of the app here only through ZAP: a test failing through the
+      # proxy fails the job too, as it would in e2e.yml.
+      - name: The browser tests, every request through ZAP
+        run: |
+          docker run --rm --network host --ipc host -v "$PWD/frontend:/w" -w /w -e CI=1 \
+            -e PW_PROXY=http://127.0.0.1:8090 "$PLAYWRIGHT_IMAGE" npx playwright test
+      - name: What ZAP saw, judged (tools/zap_alerts.py)
+        if: ${{ !cancelled() }}
+        run: |
+          for _ in $(seq 300); do
+            left=$(curl -fsS http://127.0.0.1:8090/JSON/pscan/view/recordsToScan/ \
+              | python -c 'import json,sys; print(json.load(sys.stdin)["recordsToScan"])')
+            [ "$left" = "0" ] && break; sleep 2
+          done
+          curl -fsS http://127.0.0.1:8090/OTHER/core/other/jsonreport/ > "$RUNNER_TEMP/zap-passive.json"
+          curl -fsS http://127.0.0.1:8090/OTHER/core/other/htmlreport/ > "$RUNNER_TEMP/zap-passive.html"
+          set -o pipefail
+          python -m tools.zap_alerts "$RUNNER_TEMP/zap-passive.json" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Keep ZAP's reports and the API's log
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: zap-passive
+          path: |
+            ${{ runner.temp }}/zap-passive.json
+            ${{ runner.temp }}/zap-passive.html
+            ${{ runner.temp }}/api.log
+          retention-days: 14
+
+  active:
+    name: zap, every API operation attacked as staff
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - name: Install dbmate
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL -o "$RUNNER_TEMP/bin/dbmate" \
+            "https://github.com/amacneil/dbmate/releases/download/${DBMATE_VERSION}/dbmate-linux-amd64"
+          echo "${DBMATE_SHA256}  $RUNNER_TEMP/bin/dbmate" | sha256sum --check
+          chmod +x "$RUNNER_TEMP/bin/dbmate"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - run: pip install -r requirements-dev.txt
+      - name: Apply every migration
+        run: dbmate --no-dump-schema up
+      - name: Serve the API, and sign the scan in as staff of the demo PMC
+        run: |
+          PYTHONPATH=src PMS_PORT=8123 PMS_PUBLIC_URL="$ORIGIN" PMS_COOKIE_SECURE=false \
+            PMS_SCREENING_PARTNER=fake PMS_EMAIL_SENDER=fake PMS_GEOCODER=fake PMS_PAYMENTS=fake \
+            PMS_NIGHTLY=off \
+            nohup python -m pms.api > "$RUNNER_TEMP/api.log" 2>&1 &
+          for _ in $(seq 30); do curl -fsS "$ORIGIN/health" && break; sleep 1; done
+          mkdir -p "$RUNNER_TEMP/zap" && chmod 777 "$RUNNER_TEMP/zap"
+          PYTHONPATH=src python -m tools.zap_session --origin "$ORIGIN" \
+            --cookie-file "$RUNNER_TEMP/cookie" --schema-file "$RUNNER_TEMP/zap/openapi.json"
+      # ZAP sends the session's cookie on every request to the app (its ZAP_AUTH_HEADER_*
+      # variables, read from the environment, never the command line). Exit 1 and 2 are alerts,
+      # which tools/zap_alerts.py judges; 3 is ZAP failing, which fails the job.
+      - name: Every operation attacked (zap-api-scan, at most 45 minutes)
+        run: |
+          ZAP_AUTH_HEADER_VALUE="$(cat "$RUNNER_TEMP/cookie")"
+          export ZAP_AUTH_HEADER_VALUE ZAP_AUTH_HEADER=Cookie ZAP_AUTH_HEADER_SITE=127.0.0.1
+          set +e
+          docker run --rm --network host -v "$RUNNER_TEMP/zap:/zap/wrk:rw" \
+            -e ZAP_AUTH_HEADER -e ZAP_AUTH_HEADER_VALUE -e ZAP_AUTH_HEADER_SITE \
+            "$ZAP_IMAGE" zap-api-scan.py -t /zap/wrk/openapi.json -f openapi \
+            -J zap-active.json -r zap-active.html \
+            -z "-config scanner.maxScanDurationInMins=45 -config scanner.threadPerHost=4"
+          scanned=$?
+          set -e
+          if [ "$scanned" -gt 2 ]; then echo "::error::ZAP failed (exit $scanned)"; exit 1; fi
+      - name: What the attack found, judged (tools/zap_alerts.py)
+        run: |
+          set -o pipefail
+          python -m tools.zap_alerts "$RUNNER_TEMP/zap/zap-active.json" | tee -a "$GITHUB_STEP_SUMMARY"
+          # No answer was a server error: the API refuses in words what it can't take.
+          if grep -E '" 5[0-9][0-9] ' "$RUNNER_TEMP/api.log"; then
+            echo "::error::the attack got a server error from the API (above)"; exit 1
+          fi
+      - name: Keep ZAP's reports and the API's log
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: zap-active
+          path: |
+            ${{ runner.temp }}/zap/zap-active.json
+            ${{ runner.temp }}/zap/zap-active.html
+            ${{ runner.temp }}/api.log
+          retention-days: 14
