@@ -99,6 +99,7 @@ from pms.api import (
     staff,
     switching,
     tax_credit,
+    tax_ids,
     tenant,
     today,
     unit_details,
@@ -603,6 +604,7 @@ def create_app(settings: Settings) -> FastAPI:
     app.include_router(emails.router)
     app.include_router(today.router)
     app.include_router(dashboard.router)
+    app.include_router(tax_ids.router)
     if settings.static_dir is not None:
         serve_portal(app, settings.static_dir)
     return app
