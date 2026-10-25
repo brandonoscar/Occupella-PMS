@@ -2351,7 +2351,7 @@ test("an admin names the broker of a trust account, who authorizes a signer; the
   await expect(card).toContainText("Demo Bookkeeper signs Demo operating trust account.");
   await expect(operating).toContainText("bond runs out in 20 days");
   await bookkeeper.getByRole("button", { name: "Pay $10.00" }).click();
-  await bookkeeper.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
+  await bookkeeper.getByRole("alertdialog").getByRole("button", { name: "Pay" }).click();
   await expect(bookkeeper.getByRole("main")).toContainText("1 payout of $10.00 recorded, by check.");
   await bookkeeper.close();
 });
