@@ -5,6 +5,7 @@ file, and the files of payouts recorded together: an ACH file and checks to prin
 only by staff who may pay out money and logged."""
 
 import base64
+import io
 import json
 import os
 import uuid
@@ -14,6 +15,7 @@ from decimal import Decimal
 import pytest
 from helpers import add_agreement, post
 from people import join_as_owner, join_as_staff
+from pypdf import PdfReader
 
 NOW = datetime.now(UTC)
 TODAY = NOW.date()
@@ -496,3 +498,79 @@ def test_only_staff_reach_payouts(client, app_conn, pmc, method, path):
     assert client.request(method, path, json={}).status_code == 401
     join_as_owner(client, app_conn, pmc)
     assert client.request(method, path, json={}).status_code == 403
+
+
+# --- what a file needs at the moment it is made ----------------------------------------------
+
+
+def test_a_server_without_its_key_records_no_ach_payout(client, conn, staff, pmc, monkeypatch):
+    fund(conn, pmc, "500.00")
+    ach_details(client, pmc)
+    owner_bank(client, pmc)
+    monkeypatch.delenv("PMS_DATA_KEY")
+
+    answer = pay_owners(client, pmc, "EFT")
+
+    refused(answer, 409)
+    assert answer.json()["detail"].endswith(", so it makes no ACH file")
+    assert (
+        conn.execute(
+            "SELECT count(*) FROM trust_owner_draws WHERE pmc_id = %s", (pmc.pmc_id,)
+        ).fetchone()[0]
+        == 0
+    )
+
+
+def test_an_ach_file_opens_its_numbers_only_under_the_key_they_were_sealed_with(
+    client, conn, staff, pmc, monkeypatch
+):
+    fund(conn, pmc, "500.00")
+    ach_details(client, pmc)
+    owner_bank(client, pmc)
+    run = ok(pay_owners(client, pmc, "EFT"), 201)[0]["run_id"]
+
+    monkeypatch.delenv("PMS_DATA_KEY")
+    gone = client.get(f"/api/payouts/runs/{run}/ach")
+    refused(gone, 409)
+    assert gone.json()["detail"].endswith(", so it makes no ACH file")
+    monkeypatch.setenv("PMS_DATA_KEY", base64.b64encode(os.urandom(32)).decode())
+    refused(
+        client.get(f"/api/payouts/runs/{run}/ach"),
+        409,
+        "Owner 1's account number doesn't open under this server's key",
+    )
+
+
+def test_a_check_is_addressed_to_the_payees_mailing_address(client, conn, staff, pmc):
+    fund(conn, pmc, "500.00")
+    ach_details(client, pmc, first_check=101)
+    owner = pmc.owners[0].owner_id
+    address = {
+        "address_line_1": "1 Example Road",
+        "address_line_2": "Suite 2",
+        "city": "Sampletown",
+    }
+    saved = send(client, f"owners/{owner}/contact", **address, state="ZZ", postal_code="00000")
+    assert saved.status_code == 204, saved.text
+    run = ok(pay_owners(client, pmc, "check"), 201)[0]["run_id"]
+
+    pdf = client.get(f"/api/payouts/runs/{run}/checks")
+
+    assert pdf.status_code == 200, pdf.text
+    text = "".join(page.extract_text() for page in PdfReader(io.BytesIO(pdf.content)).pages)
+    assert "1 Example Road" in text and "Suite 2" in text and "Sampletown, ZZ 00000" in text
+
+
+def test_saving_the_same_way_paid_or_bank_details_again_writes_nothing(client, conn, staff, pmc):
+    owner = pmc.owners[0].owner_id
+    ok(send(client, f"payouts/owners/{owner}/method", method="EFT"))
+    ok(send(client, f"payouts/owners/{owner}/method", method="EFT"))
+    ach_details(client, pmc)
+    ach_details(client, pmc)
+
+    counts = conn.execute(
+        "SELECT (SELECT count(*) FROM trust_owner_payout_methods WHERE pmc_id = %(p)s),"
+        " (SELECT count(*) FROM trust_bank_payout_settings WHERE pmc_id = %(p)s)",
+        {"p": pmc.pmc_id},
+    ).fetchone()
+    assert counts == (1, 1)

@@ -82,12 +82,19 @@ def test_an_ach_file_writes_names_in_capitals_with_its_own_characters_only():
         ({"amount": Decimal("1.005")}, "positive amount in cents"),
         ({"routing_number": "12345"}, "nine digits"),
         ({"account_number": "1" * 18}, "at most 17 digits"),
+        # An entry's amount has ten digits of cents: $99,999,999.99 at most.
+        ({"amount": Decimal("100000000.00")}, "doesn't fit in 10 digits"),
     ],
 )
 def test_an_ach_file_refuses_an_entry_a_bank_would(change, why):
     bad = nacha.Entry(**{**entry("00987654", "1.00").__dict__, **change})
     with pytest.raises(ValueError, match=why):
         write(nacha.Batch("PPD", "OWNER DRAW", date(2026, 10, 26), [bad]))
+
+
+def test_an_ach_file_has_no_empty_batch():
+    with pytest.raises(ValueError, match="a batch credits someone"):
+        write(nacha.Batch("PPD", "OWNER DRAW", date(2026, 10, 26), []))
 
 
 @pytest.mark.parametrize(

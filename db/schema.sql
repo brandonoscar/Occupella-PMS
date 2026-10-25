@@ -16272,7 +16272,7 @@ CREATE TABLE public.trust_payout_runs (
     recorded_by uuid,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     CONSTRAINT trust_payout_runs_kind_check CHECK ((kind = ANY (ARRAY['owners'::text, 'bills'::text]))),
-    CONSTRAINT trust_payout_runs_method_check CHECK ((method = ANY (ARRAY['EFT'::text, 'check'::text, 'record'::text])))
+    CONSTRAINT trust_payout_runs_method_check CHECK ((method = ANY (ARRAY['EFT'::text, 'check'::text])))
 );
 
 
@@ -19545,11 +19545,11 @@ ALTER TABLE ONLY public.trust_payout_runs
 
 
 --
--- Name: trust_payout_runs trust_payout_runs_pmc_id_request_id_bank_account_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+-- Name: trust_payout_runs trust_payout_runs_pmc_id_request_id_bank_account_id_method_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.trust_payout_runs
-    ADD CONSTRAINT trust_payout_runs_pmc_id_request_id_bank_account_id_key UNIQUE (pmc_id, request_id, bank_account_id);
+    ADD CONSTRAINT trust_payout_runs_pmc_id_request_id_bank_account_id_method_key UNIQUE (pmc_id, request_id, bank_account_id, method);
 
 
 --

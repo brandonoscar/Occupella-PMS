@@ -72,6 +72,12 @@ def test_a_routing_number_is_nine_digits_whose_check_digit_holds(conn):
         assert not conn.execute("SELECT trust_routing_number_ok(%s)", (number,)).fetchone()[0]
 
 
+def test_draws_are_prepared_on_a_day(conn, pmc):
+    set_draw_day(conn, pmc, 1)
+    with pytest.raises(psycopg.errors.InvalidParameterValue, match="prepared on a day"):
+        prepare(conn, pmc, None)
+
+
 def test_no_draw_day_prepares_nothing_and_a_day_not_come_yet_neither(conn, pmc):
     assert prepare(conn, pmc, date(2026, 10, 20)) is None
     set_draw_day(conn, pmc, 25)
