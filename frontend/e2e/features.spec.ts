@@ -2671,9 +2671,12 @@ test("staff email a tenant from their page and every tenant of a property, an ow
   await expect(page.getByRole("heading", { level: 1, name: "Aspen Row" })).toBeVisible();
   await page.getByRole("button", { name: "Email tenants" }).click();
   const all = page.getByRole("dialog", { name: "Email tenants of Aspen Row" });
+  // Before it goes: who gets it (Drew Sample has an email now), current tenants only.
+  await expect(all).toContainText("Current tenants only, not past or future.");
+  await expect(all.getByRole("checkbox", { name: /^Drew Sample, / })).toBeChecked();
   await all.getByLabel("Subject").fill("Water shutoff Tuesday");
   await all.getByLabel("Message").fill("The water is off Tuesday from 9 to 11.");
-  await all.getByRole("button", { name: "Send email" }).click();
+  await all.getByRole("button", { name: /^Send to \d+ tenants?$/ }).click();
   await expect(page.getByText(/^Emailed \d+ tenants?\./)).toBeVisible();
 
   // The owner's reset is on their Email tab, its link never kept.

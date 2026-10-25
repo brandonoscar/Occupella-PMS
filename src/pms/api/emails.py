@@ -56,6 +56,23 @@ class NewPropertyEmail(BaseModel):
     property_id: UUID
     subject: Subject
     body: Text
+    # The tenants chosen from the preview (ADR 0010 phase 3, rule 3), each living there today;
+    # none given: everyone living there with an email on file.
+    tenant_ids: Annotated[list[UUID], Field(min_length=1, max_length=500)] | None = None
+
+
+class Living(BaseModel):
+    tenant_id: UUID
+    name: str
+    # None: no email on file, so nothing can be written to them.
+    to: str | None
+
+
+class PropertyRecipients(BaseModel):
+    property_id: UUID
+    # Tenants on a lease in effect today at the property: current tenants only, not past or
+    # future ones.
+    tenants: list[Living]
 
 
 class Sent(BaseModel):
@@ -174,34 +191,64 @@ ORDER BY t.display_name COLLATE "C", t.id
 """
 
 
-@router.post("/emails/property", status_code=201)
-def email_property(session: Staff, conn: Conn, new: NewPropertyEmail) -> PropertySent:
-    """Writes the same email to every tenant on a lease in effect today at a property: one email
-    each, on each tenant's Email tab. Tenants with no email on file are named, not written to."""
+def living_at(conn: psycopg.Connection[Any], pmc: UUID, property_id: UUID) -> list[Living]:
+    """The tenants on a lease in effect today at a property of the PMC, each with the address their
+    email goes to, if any."""
     if (
         conn.execute(
-            "SELECT 1 FROM trust_properties WHERE pmc_id = %s AND id = %s",
-            (session.pmc_id, new.property_id),
+            "SELECT 1 FROM trust_properties WHERE pmc_id = %s AND id = %s", (pmc, property_id)
         ).fetchone()
         is None
     ):
         raise HTTPException(404, "no such property")
-    living = conn.execute(
-        LIVING_AT, {"property": new.property_id, "pmc": session.pmc_id, "day": today()}
-    ).fetchall()
-    if not living:
+    return [
+        Living(tenant_id=tenant_id, name=name, to=address_of(conn, pmc, "tenant", tenant_id)[1])
+        for tenant_id, name in conn.execute(
+            LIVING_AT, {"property": property_id, "pmc": pmc, "day": today()}
+        ).fetchall()
+    ]
+
+
+@router.get("/emails/property/{property_id}")
+def property_recipients(session: Staff, conn: Conn, property_id: UUID) -> PropertyRecipients:
+    """Who an email to a property's tenants would go to, before it is written (ADR 0010, rule 3):
+    each tenant living there today, with their email, or none on file."""
+    return PropertyRecipients(
+        property_id=property_id, tenants=living_at(conn, session.pmc_id, property_id)
+    )
+
+
+@router.post("/emails/property", status_code=201)
+def email_property(session: Staff, conn: Conn, new: NewPropertyEmail) -> PropertySent:
+    """Writes the same email to the tenants on a lease in effect today at a property (those chosen,
+    or all of them): one email each, on each tenant's Email tab. Tenants with no email on file are
+    named, not written to."""
+    everyone = living_at(conn, session.pmc_id, new.property_id)
+    if not everyone:
         raise HTTPException(422, "no tenant lives there today")
+    chosen = everyone
+    if new.tenant_ids is not None:
+        picked = set(new.tenant_ids)
+        if not picked <= {t.tenant_id for t in everyone}:
+            raise HTTPException(422, "choose only tenants living there today")
+        chosen = [t for t in everyone if t.tenant_id in picked]
     emailed: list[Sent] = []
     without: list[str] = []
-    for tenant_id, name in living:
-        _, to = address_of(conn, session.pmc_id, "tenant", tenant_id)
-        if to is None:
-            without.append(name)
+    for tenant in chosen:
+        if tenant.to is None:
+            without.append(tenant.name)
             continue
         made = email.write_message(
-            conn, session.pmc_id, "tenant", tenant_id, to, new.subject, new.body, session.person_id
+            conn,
+            session.pmc_id,
+            "tenant",
+            tenant.tenant_id,
+            tenant.to,
+            new.subject,
+            new.body,
+            session.person_id,
         )
-        emailed.append(Sent(id=made, name=name, to=to))
+        emailed.append(Sent(id=made, name=tenant.name, to=tenant.to))
     return PropertySent(emailed=emailed, without_email=without)
 
 

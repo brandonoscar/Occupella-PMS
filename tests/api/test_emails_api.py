@@ -166,6 +166,62 @@ def test_staff_email_every_tenant_living_at_a_property(client, conn, staff, pmc)
     assert listed(client, "tenant", b) == []
 
 
+def test_the_preview_names_who_would_get_it_current_tenants_only(client, conn, staff, pmc):
+    prop = pmc.owners[0].property_id
+    a, b = lived_in(conn, pmc, ["Tenant A", "Tenant B"])
+    contact(client, "tenant", a, "a@example.com")
+    # A lease that ended and one still to come: neither's tenants are written to.
+    unit = add_unit(conn, pmc.pmc_id, prop, "Unit P")
+    past = add_tenant(conn, pmc.pmc_id, prop, "Tenant Past")
+    open_lease(
+        conn,
+        pmc.pmc_id,
+        unit,
+        today() - timedelta(days=90),
+        today() - timedelta(days=31),
+        "900.00",
+        [past],
+    )
+    later = add_tenant(conn, pmc.pmc_id, prop, "Tenant Later")
+    open_lease(conn, pmc.pmc_id, unit, today() + timedelta(days=5), None, "900.00", [later])
+
+    preview = ok(client.get(f"/api/emails/property/{prop}"))
+
+    assert preview == {
+        "property_id": str(prop),
+        "tenants": [
+            {"tenant_id": str(a), "name": "Tenant A", "to": "a@example.com"},
+            {"tenant_id": str(b), "name": "Tenant B", "to": None},
+        ],
+    }
+
+
+def test_staff_email_only_the_tenants_they_chose(client, conn, staff, pmc):
+    prop = str(pmc.owners[0].property_id)
+    a, b = lived_in(conn, pmc, ["Tenant A", "Tenant B"])
+    contact(client, "tenant", a, "a@example.com")
+    contact(client, "tenant", b, "b@example.com")
+    body = {"property_id": prop, "subject": "Gate code", "body": "The gate code is 0000."}
+
+    sent = ok(client.post("/api/emails/property", json={**body, "tenant_ids": [str(b)]}), 201)
+
+    assert [(s["name"], s["to"]) for s in sent["emailed"]] == [("Tenant B", "b@example.com")]
+    assert listed(client, "tenant", a) == []
+    # Someone not living there today can't be chosen, nor can no one.
+    other = add_tenant(conn, pmc.pmc_id, pmc.owners[0].property_id, "Tenant Elsewhere")
+    refused = client.post("/api/emails/property", json={**body, "tenant_ids": [str(other)]})
+    assert refused.status_code == 422
+    assert refused.json()["detail"] == "choose only tenants living there today"
+    assert client.post("/api/emails/property", json={**body, "tenant_ids": []}).status_code == 422
+    assert listed(client, "tenant", a) == []
+
+
+def test_the_preview_of_another_companys_property_is_not_found(client, conn, staff, pmc):
+    other = make_pmc(conn)
+    assert client.get(f"/api/emails/property/{other.owners[0].property_id}").status_code == 404
+    assert client.get("/api/emails/property/not-a-property").status_code == 422
+
+
 def test_a_property_where_no_one_lives_or_of_another_company_is_refused(client, conn, staff, pmc):
     body = {"subject": "Hi", "body": "Hi"}
     empty = client.post(
@@ -200,6 +256,7 @@ def test_only_staff_read_or_write_email(client, conn, app_conn, pmc, caller):
         json={"property_id": str(pmc.owners[0].property_id), "subject": "s", "body": "b"},
     )
     assert answer.status_code == status
+    assert client.get(f"/api/emails/property/{pmc.owners[0].property_id}").status_code == status
 
 
 def test_a_custom_role_without_email_may_not_write(

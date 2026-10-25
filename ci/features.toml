@@ -759,10 +759,11 @@ browser = [
 
 [[feature]]
 id = "email"
-statement = "Staff email a tenant, an owner or a vendor from their page's Email tab, and every tenant living at a property from its page; each email is signed with the staff member's name and the company's and kept on the person's Email tab with whether it went (an invite, a password reset or a bill waiting for an owner's approval too). An owner or a tenant resets a forgotten password from sign-in by an emailed link, never kept in the outbox; the answer never says whether the email has a login (docs/adr/0007-email.md)."
+statement = "Staff email a tenant, an owner or a vendor from their page's Email tab, and the tenants living at a property from its page, seeing first who gets it (each with a box, the count and who has no email on file; current tenants only); each email is signed with the staff member's name and the company's and kept on the person's Email tab with whether it went (an invite, a password reset or a bill waiting for an owner's approval too). An owner or a tenant resets a forgotten password from sign-in by an emailed link, never kept in the outbox; the answer never says whether the email has a login (docs/adr/0007-email.md)."
 operations = [
   "GET /api/emails",
   "POST /api/emails",
+  "GET /api/emails/property/{property_id}",
   "POST /api/emails/property",
   "GET /api/password-reset",
   "POST /api/password-reset",
