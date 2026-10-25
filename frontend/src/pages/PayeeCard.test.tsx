@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Payee } from "../payouts";
 import { PayeeCard } from "./PayeeCard";
@@ -46,7 +46,8 @@ describe("PayeeCard", () => {
     fireEvent.change(screen.getByLabelText("Paid by"), { target: { value: "EFT" } });
 
     expect(await screen.findByText("Owner 1 is paid by ACH.")).toBeTruthy();
-    expect((await screen.findByTestId("payout-method")).textContent).toBe("ACH");
+    // The card reads the payee again after the toast; until then it still says Check.
+    await waitFor(() => expect(screen.getByTestId("payout-method").textContent).toBe("ACH"));
     // ACH with no bank account can't go into a file yet, and the card says so.
     expect(screen.getByText(/an ACH file can't pay Owner 1 yet/)).toBeTruthy();
     expect(posts(fetch)).toEqual([["/api/payouts/owners/o1/method", { method: "EFT" }]]);
@@ -65,7 +66,8 @@ describe("PayeeCard", () => {
 
     expect(await screen.findByText("Saved Owner 1's bank account.")).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect((await screen.findByTestId("payout-bank")).textContent).toBe("Checking ····6789, routing 001234561, Owner 1");
+    await waitFor(() =>
+      expect(screen.getByTestId("payout-bank").textContent).toBe("Checking ····6789, routing 001234561, Owner 1"));
     expect(screen.getByRole("button", { name: "Change bank account" })).toBeTruthy();
     expect(posts(fetch)).toEqual([["/api/payouts/owners/o1/bank-account", {
       routing_number: "001234561", account_number: "123456789", account_type: "savings", holder_name: "Owner 1",

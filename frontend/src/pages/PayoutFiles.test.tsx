@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BankSettings, PayoutRun } from "../payouts";
 import { achLine, PayoutFiles, PayoutsTab } from "./PayoutFiles";
@@ -81,9 +81,10 @@ describe("PayoutsTab", () => {
     fireEvent.click(within(panel).getByRole("button", { name: "Save" }));
 
     expect(await screen.findByText("Saved the account's ACH details and checks.")).toBeTruthy();
-    expect((await screen.findByTestId("ach-details")).textContent).toBe(
+    // The tab reads the account again after the toast; until then it still says Not set.
+    await waitFor(() => expect(screen.getByTestId("ach-details").textContent).toBe(
       "Synthetic Bank, routing 001234561; origin 1000000000 Golden PMC; company 1000000000 Golden",
-    );
+    ));
     expect(screen.getByTestId("next-check").textContent).toBe("Number 2001");
     const post = fetch.mock.calls.find(([, init]) => init?.method === "POST");
     expect(post?.[0]).toBe("/api/payouts/bank-accounts/b1");
