@@ -176,7 +176,7 @@ Screens before and after: `docs/design-pass/1c/`.
   the rest in the usual order, and anything past what is owed is prepaid rent as before. A choice
   that doesn't fit (not open on the lease, chosen twice, more than is open, more than the payment)
   records nothing. *Forced by the code:* a lease whose tenants moved to it from another lease
-  pays what each lease owes, oldest lease first (migration 0119), so no choice is offered there.
+  pays what each lease owes, oldest lease first (migration 0091), so no choice is offered there.
 - **Save and add another** records the payment and keeps the panel open, cleared, for the next
   one: on the rent roll, the next lease; on a lease's page, the same lease.
 - **A receipt for every payment.** Each tenant on the lease is emailed its receipt, the PDF
