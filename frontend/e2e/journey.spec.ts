@@ -475,7 +475,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
 
   const owner = await someone(browser);
 
-  await test.step("a repair: the tenant asks with a photo, a vendor with an email and insurance takes it through their link, and its bill over the owner's limit is approved in the portal, set aside and paid", async () => {
+  await test.step("a repair: the tenant asks with a photo, a vendor with an email and insurance takes it through their link, and its bill over the owner's limit is approved in the portal and paid", async () => {
     // Taylor asks for the repair from the portal, with a photo.
     const requests = part(taylor, "Maintenance requests");
     await requests.getByLabel("What needs fixing?").fill("The kitchen faucet drips");
@@ -569,22 +569,21 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await waiting.getByRole("button", { name: "Approve" }).click();
     await expect(owner.getByText(`Approved ${PLUMBER}'s PLB-J101.`)).toBeVisible();
 
-    // Staff set it aside and pay it; paying names the amount before it leaves trust.
+    // Staff pay it from its page (ADR 0010: the owner's money is held for it, no step between);
+    // paying names the amount before it leaves trust.
     await section(page, "Bills");
     const bill = page.getByRole("row", { name: `${PLUMBER} PLB-J101`, exact: true });
-    await expect(bill.getByTestId("status")).toHaveText("Approved");
+    await expect(bill.getByTestId("status")).toHaveText("Ready to pay");
     await bill.getByRole("cell").first().click();
     await expect(page.getByRole("heading", { level: 1, name: `${PLUMBER} PLB-J101` })).toBeVisible();
-    await page.getByRole("button", { name: "Set aside", exact: true }).click();
-    await page.getByRole("dialog", { name: "Set aside" }).getByRole("button", { name: "Set aside" }).click();
-    await expect(page.getByTestId("status")).toHaveText("Set aside");
-    await page.getByRole("button", { name: "Pay", exact: true }).click();
-    await page.getByRole("dialog", { name: "Pay" }).getByRole("button", { name: "Pay $640.00" }).click();
+    await page.getByRole("button", { name: "Record payment", exact: true }).click();
+    await page.getByRole("dialog", { name: "Record payment" }).getByRole("button", { name: "Pay $640.00" }).click();
     const confirm = page.getByRole("alertdialog");
     await expect(confirm).toContainText(`Pay $640.00 to ${PLUMBER} for PLB-J101 by check on `);
-    await confirm.getByRole("button", { name: "Confirm" }).click();
+    await confirm.getByRole("button", { name: "Pay", exact: true }).click();
+    await expect(page.getByText("PLB-J101 is paid.")).toBeVisible();
     await expect(page.getByTestId("status")).toHaveText("Paid");
-    await expect(page.getByRole("list", { name: "History" })).toContainText("Paid by check");
+    await expect(page.getByRole("list", { name: "History" })).toContainText("Paid $640.00");
 
     // The plumber's next bill, under the limit, waits to be paid.
     await section(page, "Bills");
@@ -599,7 +598,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     await expect(page.getByText("Bill PLB-J102 recorded.")).toBeVisible();
 
     // Cedar House's account: its $250.00 reserve and the $2,250.00 paid, less the $1,050.00 that
-    // bounced and the $640.00 bill; the $120.00 bill not yet set aside is held back from a draw.
+    // bounced and the $640.00 bill; the $120.00 bill not yet paid is held back from a draw.
     expect(await ownerAccount(page, "Demo Owner A, Cedar House")).toEqual({
       holds: 81_000, reserve: 25_000, bills: 12_000, available: 44_000,
     });
@@ -957,7 +956,7 @@ test("a month of a company, start to end: a lease signed, rent in and a bounce, 
     }
     const operatingBank = `${OPERATING} (operating)`;
     expect(await amountIn(amount(operatingBank, "owners' funds"))).toBe(owners);
-    // Nothing set aside for a vendor waits (the $120.00 bill isn't set aside yet), and the
+    // Nothing waits paid out to a vendor (the $120.00 bill is held, not paid yet), and the
     // company's fees left trust.
     expect(await amountIn(amount(operatingBank, "set aside for vendors' bills"))).toBe(0);
     expect(await amountIn(amount(operatingBank, "the company's fees not yet taken"))).toBe(0);

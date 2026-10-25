@@ -1056,7 +1056,7 @@ browser = [
 # A month run start to end (frontend/e2e/journey.spec.ts), on its own demo PMC (e2e/seed.py,
 # "journey"); its operations are claimed by the features above too.
 id = "a-month"
-statement = "A company's month, start to end, as its people do it, with the money agreeing on every page that shows it: staff list a vacant unit, an applicant applies from the public page, is screened and approved, signs the lease (a deposit and a monthly charge) on the PMS's own page, and staff activate it and take the deposit; the month's rent and late fees run, a tenant's check pays rent first and has its receipt, a second check bounces with the NSF fee, and the tenant's portal, the lease page and the rent roll owe the same; a tenant's repair request with a photo becomes a work order a vendor with an email and insurance schedules and finishes through their link, its bill over the owner's limit is approved in the owner's portal, set aside and paid after a question naming the amount; last month's management fees are each agreement's percent of what was collected, and exactly what Banking and the Dashboard hold as the company's fees, which leave trust; Pay owners pays an owner everything available, leaving their reserves and the bill not yet paid; a lease is renewed at a new rent, signed from the tenant's portal and by link, and activated; a tenant who moved out gets their deposit back less damage, and each trust bank account's cash moves by exactly what moved; the bookkeeper imports a bank statement of every move the register shows, matches it all, and prepares the month through yesterday, which the manager approves, closing the account; the owner's statement adds up and closes at what staff see; and the balance sheet ties every trust bank account's cash to what it holds and to Banking."
+statement = "A company's month, start to end, as its people do it, with the money agreeing on every page that shows it: staff list a vacant unit, an applicant applies from the public page, is screened and approved, signs the lease (a deposit and a monthly charge) on the PMS's own page, and staff activate it and take the deposit; the month's rent and late fees run, a tenant's check pays rent first and has its receipt, a second check bounces with the NSF fee, and the tenant's portal, the lease page and the rent roll owe the same; a tenant's repair request with a photo becomes a work order a vendor with an email and insurance schedules and finishes through their link, its bill over the owner's limit is approved in the owner's portal and paid after a question naming the amount; last month's management fees are each agreement's percent of what was collected, and exactly what Banking and the Dashboard hold as the company's fees, which leave trust; Pay owners pays an owner everything available, leaving their reserves and the bill not yet paid; a lease is renewed at a new rent, signed from the tenant's portal and by link, and activated; a tenant who moved out gets their deposit back less damage, and each trust bank account's cash moves by exactly what moved; the bookkeeper imports a bank statement of every move the register shows, matches it all, and prepares the month through yesterday, which the manager approves, closing the account; the owner's statement adds up and closes at what staff see; and the balance sheet ties every trust bank account's cash to what it holds and to Banking."
 operations = [
   "GET /api/leasing/vacancies",
   "POST /api/leasing/links",
@@ -1106,7 +1106,6 @@ operations = [
   "POST /api/owner/bills/{bill_id}/approval",
   "GET /api/payables/bills",
   "GET /api/payables/bills/{bill_id}",
-  "POST /api/payables/bills/{bill_id}/set-aside",
   "POST /api/payables/bills/{bill_id}/pay",
   "GET /api/payables/management-fees",
   "GET /api/today",
@@ -1124,7 +1123,7 @@ operations = [
   "POST /api/inspections",
   "POST /api/move-out/{lease_id}/deductions",
   "POST /api/move-out/{lease_id}/return",
-  "GET /api/tenant/leases/{lease_id}/deposit-return/download",
+  "GET /api/tenant/leases/{lease_id}/deposit-statement",
   "GET /api/reconcile",
   "GET /api/bank-accounts/{bank_account_id}/register",
   "GET /api/reconcile/{bank_account_id}",
