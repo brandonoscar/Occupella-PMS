@@ -47,6 +47,7 @@ import { PayDonePage, PayFakePage, PayFakeSavePage } from "./pages/PayPages";
 import { RentPage } from "./pages/RentPage";
 import { LeasePage } from "./pages/LeasePage";
 import { PropertiesPage, PropertyPage, UnitPage } from "./pages/RentalsPages";
+import { PropertyUtilitiesPage } from "./pages/PropertyUtilitiesPage";
 import { PMC_KEY, SignInPage } from "./pages/SignInPage";
 import { SetupPage } from "./pages/SetupPage";
 import { ChartOfAccountsPage } from "./pages/ChartOfAccountsPage";
@@ -55,7 +56,6 @@ import { StaffPage } from "./pages/StaffPage";
 import { SwitchPage } from "./pages/SwitchPage";
 import { TenantHome } from "./pages/TenantHome";
 import { VendorLinkPage } from "./pages/VendorLinkPage";
-import { UtilityBillingPage } from "./pages/UtilityBillingPage";
 import { VendorsPage } from "./pages/VendorsPage";
 import { navigate, usePath } from "./router";
 
@@ -128,7 +128,6 @@ const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/renewals": (me) => <RenewalsPage me={me} />,
   "/banking": (me) => <BankingPage me={me} />,
   "/bills": (me) => <BillsPage me={me} />,
-  "/utility-billing": (me) => <UtilityBillingPage me={me} />,
   "/pay-bills": (me) => <PayBillsPage me={me} />,
   "/general-ledger": (me) => <GeneralLedgerPage me={me} />,
   "/journal": (me) => <JournalPage me={me} />,
@@ -155,6 +154,7 @@ const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
 // A record's own page, by its address (ADR 0005).
 const RECORDS: [RegExp, (me: Me, id: string) => React.ReactNode][] = [
   [/^\/properties\/([0-9a-f-]{36})$/, (me, id) => <PropertyPage me={me} id={id} />],
+  [/^\/properties\/([0-9a-f-]{36})\/utilities$/, (me, id) => <PropertyUtilitiesPage me={me} id={id} />],
   [/^\/units\/([0-9a-f-]{36})$/, (me, id) => <UnitPage me={me} id={id} />],
   [/^\/leases\/([0-9a-f-]{36})$/, (me, id) => <LeasePage me={me} id={id} />],
   [/^\/payment-files\/([0-9a-f-]{36})$/, (me, id) => <PaymentFilePage me={me} id={id} />],

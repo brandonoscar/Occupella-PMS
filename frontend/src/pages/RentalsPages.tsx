@@ -45,6 +45,10 @@ import {
   TermsPanel,
 } from "./SetupPanels";
 
+// A link to another page that looks like a secondary button, as LinkButton does for a download.
+const SECONDARY =
+  "inline-flex h-9 items-center rounded-sm border border-line-strong bg-canvas px-3.5 text-base font-medium text-ink hover:bg-raised";
+
 function detail(failed: unknown): string {
   return failed instanceof ApiError ? failed.detail : String(failed);
 }
@@ -163,6 +167,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
           <PageHeader title={property.name} actions={
             <div className="flex flex-wrap items-center gap-2">
               <Button variant="secondary" onClick={() => setOpen("email")}>Email tenants</Button>
+              <GoLink href={`/properties/${id}/utilities`} className={SECONDARY}>Utilities</GoLink>
               <RecordActions path={`/api/properties/${id}`} name={property.name} archived={property.archived}
                 onChange={(done) => { setSaid(done); refresh(); }} />
             </div>

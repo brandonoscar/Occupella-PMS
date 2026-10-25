@@ -1,9 +1,7 @@
-import { Droplets } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
 import { ApiError, api } from "../api";
 import { Button } from "../components/Button";
-import { EmptyState } from "../components/EmptyState";
 import { Field } from "../components/Field";
 import { Form } from "../components/Form";
 import { Notice } from "../components/Notice";
@@ -16,9 +14,9 @@ import { Wide } from "../components/Wide";
 import type { Keep } from "../latest";
 import { keepAll, latest } from "../latest";
 import { day, money, usDate } from "../money";
-import type { Paged, PropertyRow } from "../rentals";
 import type { BilledLease, Method, Plan, Preview, PropertyUtilities, UnitArea, Utility } from "../utilities";
 import { METHODS, UTILITIES, methodLabel, plansInForce, shareAmount, utilityLabel, weightLabel } from "../utilities";
+import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
@@ -30,33 +28,26 @@ type Panel =
   | { kind: "bill" };
 const TITLES = { plan: "Set plan", area: "Square feet", billed: "Utilities billed", bill: "Bill back a utility" };
 
+const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
+
 function detail(failed: unknown): string {
   return failed instanceof ApiError ? failed.detail : String(failed);
 }
 
-// Accounting → Utility billing (RUBS and submeters; migration 0096, the founder's review q021):
-// a property's plan for each utility, its units' square feet, the utilities each lease is billed
-// for, and its bills, each shared among the leases. Bill back a utility previews each lease's
-// share before anything is charged. Tenants are never charged more than the bill less the
-// owner's share; a vacant unit's days and a lease not billed stay with the owner.
-export function UtilityBillingPage({ me }: { me: Me }) {
-  const [properties, setProperties] = useState<PropertyRow[] | null>(null);
-  const [property, setProperty] = useState("");
+// A property's Utilities page (RUBS and submeters; migration 0096, the founder's review q021; ADR
+// 0010 phase 3, part N: the only place a utility is billed back, opened from the property's page):
+// its plan for each utility, its units' square feet, the utilities each lease is billed for, and
+// its bills, each shared among the leases. Bill back a utility previews each lease's share before
+// anything is charged. Tenants are never charged more than the bill less the owner's share; a
+// vacant unit's days and a lease not billed stay with the owner.
+export function PropertyUtilitiesPage({ me, id }: { me: Me; id: string }) {
+  const property = id;
   const [page, setPage] = useState<PropertyUtilities | null>(null);
   const [error, setError] = useState("");
   const [panel, setPanel] = useState<Panel | null>(null);
   const { said, error: refused, record } = useRecord(refresh);
 
-  useEffect(() => {
-    api.get<Paged<PropertyRow>>("/api/properties?page=1&per_page=200")
-      .then((paged) => {
-        setProperties(paged.items);
-        setProperty((chosen) => chosen || (paged.items[0]?.id ?? ""));
-      })
-      .catch((failed) => setError(detail(failed)));
-  }, []);
   function refresh(keep: Keep = keepAll) {
-    if (!property) return;
     api.get<PropertyUtilities>(`/api/utilities/properties/${property}`).then(keep(setPage)).catch(keep((failed) => setError(detail(failed))));
   }
   useEffect(() => {
@@ -74,22 +65,21 @@ export function UtilityBillingPage({ me }: { me: Me }) {
 
   return (
     <Shell me={me} nav={STAFF_NAV}>
-      <PageHeader title="Utility billing" actions={
+      <PageHeader title={page ? `Utilities · ${page.property}` : "Utilities"} actions={
         page && <Button onClick={() => setPanel({ kind: "bill" })}>Bill back a utility</Button>
       } />
+      {page && (
+        <p className="text-sm text-ink-subtle">
+          <GoLink href={`/properties/${property}`} className={LINK}>{page.property}</GoLink>: its utility plans,
+          what each lease is billed for, and each bill shared among the leases.
+        </p>
+      )}
       <Notice tone="error">{error}</Notice>
       <Said>{said}</Said>
-      {properties === null ? (
+      {page === null ? (
         !error && <Notice tone="info">Loading</Notice>
-      ) : properties.length === 0 ? (
-        <EmptyState icon={Droplets} title="No properties yet" />
       ) : (
         <>
-          <div className="max-w-xs">
-            <Select label="Property" id="utility-property" value={property} onChange={(e) => setProperty(e.target.value)}>
-              {properties.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </Select>
-          </div>
           {page && (
             <div className="flex flex-col gap-6">
               <Card title="Plans">

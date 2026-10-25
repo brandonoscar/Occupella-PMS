@@ -3,9 +3,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Me } from "../api";
 import { holdBack } from "../holdBack";
 import type { Preview, PropertyUtilities } from "../utilities";
-import { UtilityBillingPage } from "./UtilityBillingPage";
+import { PropertyUtilitiesPage } from "./PropertyUtilitiesPage";
 
-beforeEach(() => window.history.replaceState(null, "", "/utility-billing"));
+beforeEach(() => window.history.replaceState(null, "", "/properties/p1/utilities"));
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -14,14 +14,6 @@ afterEach(() => {
 const ME: Me = {
   kind: "staff", email: "staff@example.com", name: "Staff 1", person_id: "s1", pmc_id: "p1",
   pmc_name: "Synthetic PMC",
-};
-
-const PROPERTIES = {
-  items: [
-    { id: "p1", name: "Birch Flats", owners: [], units: 3, occupied: 2, archived: false },
-    { id: "p2", name: "Cedar House", owners: [], units: 1, occupied: 1, archived: false },
-  ],
-  total: 2, page: 1, per_page: 200,
 };
 
 const PAGE: PropertyUtilities = {
@@ -59,7 +51,6 @@ function server(page: PropertyUtilities = PAGE, refuse = "") {
       if (path === "/api/utilities/preview") return new Response(JSON.stringify(PREVIEW), { status: 200 });
       return new Response(JSON.stringify({ id: "new", ...PREVIEW }), { status: 201 });
     }
-    if (path.startsWith("/api/properties")) return new Response(JSON.stringify(PROPERTIES), { status: 200 });
     if (path === "/api/utilities/properties/p1") return new Response(JSON.stringify(page), { status: 200 });
     if (path === "/api/utilities/properties/p2") return new Response(JSON.stringify({ ...page, property: "Cedar House", bills: [] }), { status: 200 });
     return new Response(JSON.stringify({ detail: "no such page" }), { status: 404 });
@@ -74,11 +65,11 @@ const posted = (fetch: ReturnType<typeof server>) =>
 const cells = (row: HTMLElement) => within(row).getAllByRole("cell").map((c) => c.textContent);
 
 async function open() {
-  render(<UtilityBillingPage me={ME} />);
+  render(<PropertyUtilitiesPage me={ME} id="p1" />);
   await screen.findByRole("table", { name: "Plans" });
 }
 
-describe("UtilityBillingPage", () => {
+describe("PropertyUtilitiesPage (ADR 0010 phase 3, part N)", () => {
   it("shows a property's plans, leases, units and bills", async () => {
     server();
     await open();
@@ -102,22 +93,24 @@ describe("UtilityBillingPage", () => {
     ]);
   });
 
-  it("switches property", async () => {
+  it("is its property's own page, with Bill back a utility and a link back to the property", async () => {
     server();
     await open();
-    fireEvent.change(screen.getByLabelText("Property"), { target: { value: "p2" } });
-    expect(await screen.findByText("No bill billed back yet.")).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Utilities · Birch Flats");
+    expect(screen.getByRole("link", { name: "Birch Flats" }).getAttribute("href")).toBe("/properties/p1");
+    expect(screen.getByRole("button", { name: "Bill back a utility" })).toBeTruthy();
   });
 
-  it("shows the property picked now, even when an earlier property's answer comes back last", async () => {
+  it("shows the property opened now, even when an earlier property's answer comes back last", async () => {
     server();
     const release = holdBack((path) => path === "/api/utilities/properties/p1");
-    render(<UtilityBillingPage me={ME} />);
-    fireEvent.change(await screen.findByLabelText("Property"), { target: { value: "p2" } });
+    const { rerender } = render(<PropertyUtilitiesPage me={ME} id="p1" />);
+    rerender(<PropertyUtilitiesPage me={ME} id="p2" />);
     await screen.findByText("No bill billed back yet.");
     await release();
 
     expect(screen.getByText("No bill billed back yet.")).toBeTruthy();
+    expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Utilities · Cedar House");
     expect(screen.queryByRole("listitem", { name: "Water, 09/01/2026 to 09/30/2026" })).toBeNull();
   });
 
@@ -234,22 +227,15 @@ describe("UtilityBillingPage", () => {
     expect(await within(form).findByText("the property bills no gas back on 2026-09-01")).toBeTruthy();
   });
 
-  it("says when there's nothing yet, or the list didn't load", async () => {
+  it("says when there's nothing yet, or the page didn't load", async () => {
     server({ ...PAGE, plans: [], leases: [], bills: [] });
-    await new Promise<void>((resolve) => { render(<UtilityBillingPage me={ME} />); resolve(); });
+    await new Promise<void>((resolve) => { render(<PropertyUtilitiesPage me={ME} id="p1" />); resolve(); });
     expect(await screen.findByText("No utility is billed back yet.")).toBeTruthy();
     expect(screen.getByText("No lease in effect.")).toBeTruthy();
 
     cleanup();
-    vi.stubGlobal("fetch", vi.fn(async (path: string) => path.startsWith("/api/properties")
-      ? new Response(JSON.stringify({ ...PROPERTIES, items: [], total: 0 }), { status: 200 })
-      : new Response("{}", { status: 404 })));
-    render(<UtilityBillingPage me={ME} />);
-    expect(await screen.findByText("No properties yet")).toBeTruthy();
-
-    cleanup();
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));
-    render(<UtilityBillingPage me={ME} />);
+    render(<PropertyUtilitiesPage me={ME} id="p1" />);
     expect(await screen.findByText("sign in first")).toBeTruthy();
   });
 });

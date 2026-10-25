@@ -427,6 +427,8 @@ describe("PropertyPage", () => {
     vi.stubGlobal("fetch", fetch);
     render(<PropertyPage me={ME} id="p1" />);
     await screen.findByRole("heading", { name: "Property 1" });
+    // Its utilities are a page of its own (ADR 0010 phase 3, part N).
+    expect(screen.getByRole("link", { name: "Utilities" }).getAttribute("href")).toBe("/properties/p1/utilities");
 
     fireEvent.click(screen.getByRole("button", { name: "Email tenants" }));
     let panel = screen.getByRole("dialog", { name: "Email tenants of Property 1" });

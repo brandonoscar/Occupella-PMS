@@ -276,7 +276,7 @@ browser = [
 
 [[feature]]
 id = "utility-billing"
-statement = "Staff set how a property bills each utility back (by unit, square feet, occupants or submeter, the owner keeping a share for the common areas), its units' square feet and which utilities each lease is billed for, preview a bill's shares and bill it back: each billed lease's share, rounded down to the cent, is a fee charged to it, and a vacant unit's days, a lease not billed and the common areas stay with the owner."
+statement = "On a property's own Utilities page (opened from the property's page, the only place a utility is billed back), staff set how the property bills each utility back (by unit, square feet, occupants or submeter, the owner keeping a share for the common areas), its units' square feet and which utilities each lease is billed for, preview a bill's shares and bill it back: each billed lease's share, rounded down to the cent, is a fee charged to it, and a vacant unit's days, a lease not billed and the common areas stay with the owner."
 operations = [
   "GET /api/utilities/properties/{property_id}",
   "POST /api/utilities/properties/{property_id}/plans",

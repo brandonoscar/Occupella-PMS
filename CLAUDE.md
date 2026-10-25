@@ -602,8 +602,9 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   share comes off and each billed lease's share of the rest is rounded down to the cent and
   charged to it as a fee (`trust_utility_shares`), so tenants are never charged more than the
   bill; a vacant unit's days, a lease not billed and every part of a cent stay with the owner.
-  Accounting, Utility billing (`/utility-billing`, `src/pms/api/utilities.py`, area rent). The
-  AI role reads all five tables.
+  A property's own Utilities page (`/properties/<id>/utilities`, from its page; ADR 0010: the
+  only place a utility is billed back; `src/pms/api/utilities.py`, area rent). The AI role reads
+  all five tables.
 - Work orders: a job at a property (maybe one of its units). Its steps (assigned to a vendor,
   scheduled for a day, completed, cancelled) are append-only and in order, and nothing follows a
   close. A bill may name a work order of its property, never a cancelled one. Migration 0072: a

@@ -3589,8 +3589,12 @@ test("staff bill last month's water back to Birch Flats' leases by unit, the own
   const from = firstOfMonthsAgo(1);
   const to = new Date(Date.parse(`${firstOfThisMonth()}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
 
-  await section(page, "Utility billing");
-  await page.getByRole("combobox", { name: "Property", exact: true }).selectOption({ label: "Birch Flats" });
+  // Utilities is the property's own page (ADR 0010 phase 3, part N), and the only place a
+  // utility is billed back: no menu entry of its own.
+  await expect(page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Utility billing" })).toHaveCount(0);
+  await openProperty(page, "Birch Flats");
+  await page.getByRole("link", { name: "Utilities", exact: true }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Utilities · Birch Flats" })).toBeVisible();
   await expect(page.getByText("No utility is billed back yet.")).toBeVisible();
 
   // Water by unit from last month, the owner keeping 10% for the common areas.
