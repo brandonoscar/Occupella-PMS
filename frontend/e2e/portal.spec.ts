@@ -28,7 +28,7 @@ type Seed = {
   switch_invite: string;
   demo_manager_invite: string;
   demo_owner_invite: string;
-  accessibility: { pmc_id: string; manager: string; owner: string; tenant: string };
+  accessibility: { pmc_id: string; authority: string; manager: string; owner: string; tenant: string };
 };
 const seed: Seed = JSON.parse(readFileSync(new URL("./.seed.json", import.meta.url), "utf8"));
 const PASSWORD = "a long synthetic passphrase";
@@ -949,7 +949,6 @@ const DETAILS: [string, RegExp][] = [
   ["/applicants", /^\/applicants\/[^/]+$/],
   ["/leads", /^\/leads\/[^/]+$/],
   ["/draft-leases", /^\/draft-leases\/[^/]+$/],
-  ["/housing-authorities", /^\/housing-authorities\/[^/]+$/],
   ["/reports", /^\/reports\/[^/]+$/],
 ];
 
@@ -1002,6 +1001,8 @@ test("every page of the demo meets WCAG 2.2 AA as axe checks it: staff's, an own
     expect(found, `a link from ${list} matching ${kind}`).toBeTruthy();
     await scanned(page, found!);
   }
+  // A housing authority's page, which a lease's housing assistance opens; no list does.
+  await scanned(page, `/housing-authorities/${demo.authority}`);
 
   for (const who of [demo.owner, demo.tenant]) {
     const portal = await (await browser.newContext()).newPage();

@@ -455,8 +455,13 @@ def main() -> None:
         # Another demo for the accessibility sweep (portal.spec.ts), so it reads every page as
         # the demo first shows it: its manager, an owner and a tenant.
         sweep = demo.build(app)
+        # Its housing authority's page, which no list opens (ADR 0010 phase 3, part O).
+        (authority,) = app.execute(
+            "SELECT id FROM trust_housing_authorities WHERE pmc_id = %s", (sweep.pmc_id,)
+        ).fetchone()
         seeded["accessibility"] = {
             "pmc_id": str(sweep.pmc_id),
+            "authority": str(authority),
             **{
                 who: accounts.create_invite(
                     app, sweep.pmc_id, kind, person, f"a11y-{who}.{tag}@example.com", None

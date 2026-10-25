@@ -23,7 +23,6 @@ export const STAFF_NAV: NavEntry[] = [
       { href: "/payment-files", label: "Payment files" },
       { href: "/tenants", label: "Tenants" },
       { href: "/owners", label: "Owners" },
-      { href: "/housing-authorities", label: "Housing authorities" },
       { href: "/move-out", label: "Move-outs" },
     ],
   },

@@ -3303,21 +3303,17 @@ test("staff add a housing authority, set a lease's assistance, charge and credit
   const people = seed.features["housing-assistance"]!;
   await joinAsStaff(page, people.manager);
 
-  await section(page, "Housing authorities");
-  await expect(page.getByText("No housing authorities yet")).toBeVisible();
-  await page.getByRole("button", { name: "Add housing authority" }).click();
-  const add = page.getByRole("dialog", { name: "Add housing authority" });
-  await add.getByLabel("Housing authority's name").fill("Demo Housing Authority");
-  await add.getByRole("button", { name: "Add housing authority" }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Demo Housing Authority" })).toBeVisible();
-  await expect(page.getByText("No leases yet")).toBeVisible();
-
-  // From next month the authority pays $800.00 of each month's rent; this month is charged already.
+  // Housing authorities have no menu page (ADR 0010 phase 3, part O): the first is added right
+  // on the lease as its assistance is set. From next month it pays $800.00 of each month's rent;
+  // this month is charged already.
+  await expect(page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Housing authorities" })).toHaveCount(0);
   await openLease(page, "Birch Flats, Unit A");
   const card = part(page, "Housing assistance");
   await expect(card.getByTestId("assistance-split")).toHaveText(/^The tenant pays all of the \$[\d,]+\.\d\d rent\.$/);
   await card.getByRole("button", { name: "Set housing assistance" }).click();
   const terms = page.getByRole("dialog", { name: "Set housing assistance" });
+  await expect(terms.getByRole("combobox", { name: "Housing authority", exact: true })).toHaveValue("new");
+  await terms.getByLabel("The new housing authority's name").fill("Demo Housing Authority");
   const from = await terms.getByLabel("From (the first of a month)").inputValue();
   await terms.getByLabel("The authority pays each month").fill("800.00");
   await terms.getByLabel("HAP contract (optional)").fill("HAP-DEMO-1");
@@ -3347,13 +3343,11 @@ test("staff add a housing authority, set a lease's assistance, charge and credit
   await expect(page.getByText("$50.00 credited off This month's part.")).toBeVisible();
   await expect(card.getByTestId("authority-owes")).toHaveText("The housing authority owes $750.00 for this lease.");
 
-  // Its payment: what it owes on the lease, into the owner's account.
-  await section(page, "Housing authorities");
-  await expect(page.getByRole("row", { name: "Demo Housing Authority" }).getByRole("cell")).toHaveText([
-    "Demo Housing Authority", "0", "$750.00",
-  ]);
-  // Its page opens Receive payment, the rent roll's panel, with its check chosen (ADR 0010).
-  await page.getByRole("row", { name: "Demo Housing Authority" }).click();
+  // Its payment: what it owes on the lease, into the owner's account. The lease links its page,
+  // which opens Receive payment, the rent roll's panel, with its check chosen (ADR 0010).
+  await card.getByRole("link", { name: "Demo Housing Authority" }).click();
+  await expect(page.getByRole("heading", { level: 1, name: "Demo Housing Authority" })).toBeVisible();
+  await expect(page.getByTestId("authority-owed")).toHaveText("Owes $750.00 in all.");
   await page.getByRole("button", { name: "Receive payment" }).click();
   const pay = page.getByRole("dialog", { name: "Receive payment" });
   await expect(pay.getByLabel("From")).toHaveValue("authority");
@@ -3371,8 +3365,7 @@ test("staff add a housing authority, set a lease's assistance, charge and credit
 
   // Its late payment fee, as its HAP contract provides (q034): charged on the authority, never
   // the tenant, by the run once its part is still open after the grace days.
-  await section(page, "Housing authorities");
-  await page.getByRole("row", { name: "Demo Housing Authority" }).click();
+  await part(page, "Housing assistance").getByRole("link", { name: "Demo Housing Authority" }).click();
   await page.getByRole("button", { name: "Set late fee" }).click();
   const fee = page.getByRole("dialog", { name: "Set late fee" });
   await fee.getByLabel("In force from").fill(firstOfThisMonth());
@@ -3399,8 +3392,7 @@ test("staff add a housing authority, set a lease's assistance, charge and credit
   await hold.getByLabel("Hold payments from").fill(firstOfThisMonth());
   await hold.getByRole("button", { name: "Place hold" }).click();
   await expect(page.getByText(`On a payment hold since ${us(firstOfThisMonth())}.`)).toBeVisible();
-  await section(page, "Housing authorities");
-  await page.getByRole("row", { name: "Demo Housing Authority" }).click();
+  await part(page, "Housing assistance").getByRole("link", { name: "Demo Housing Authority" }).click();
   await expect(page.getByRole("table", { name: "Leases" })).toContainText(
     `On a payment hold since ${us(firstOfThisMonth())}`,
   );
@@ -3418,19 +3410,15 @@ test("staff record an assisted household's annual certification and a failed ins
 }) => {
   const people = seed.features["assistance-compliance"]!;
   await joinAsStaff(page, people.manager);
-  await section(page, "Housing authorities");
-  await page.getByRole("button", { name: "Add housing authority" }).click();
-  const add = page.getByRole("dialog", { name: "Add housing authority" });
-  await add.getByLabel("Housing authority's name").fill("Demo Housing Authority");
-  await add.getByRole("button", { name: "Add housing authority" }).click();
-  await expect(page.getByRole("heading", { level: 1, name: "Demo Housing Authority" })).toBeVisible();
 
-  // Assistance from next month; nothing to certify or inspect for until it is on file.
+  // Assistance from next month, its authority added with it; nothing to certify or inspect for
+  // until it is on file.
   await openLease(page, "Birch Flats, Unit A");
   const card = part(page, "Housing assistance");
   await expect(card.getByRole("button", { name: "Record certification" })).toHaveCount(0);
   await card.getByRole("button", { name: "Set housing assistance" }).click();
   const terms = page.getByRole("dialog", { name: "Set housing assistance" });
+  await terms.getByLabel("The new housing authority's name").fill("Demo Housing Authority");
   const from = await terms.getByLabel("From (the first of a month)").inputValue();
   await terms.getByLabel("The authority pays each month").fill("800.00");
   await expect(page.getByTestId("toaster")).toHaveCount(0, { timeout: 10_000 });
@@ -5160,7 +5148,7 @@ test("staff receive a payment with a note and the check's photo, choose the char
   await page.getByRole("button", { name: "Receive payment", exact: true }).click();
   const receive = page.getByRole("dialog", { name: "Receive payment" });
   await receive.getByLabel("From").selectOption({ label: "A housing authority's check" });
-  await expect(receive).toContainText("No housing authority yet: add one under Rentals, Housing authorities.");
+  await expect(receive).toContainText("No housing authority yet: one is added when a lease's housing assistance is set, on the lease's page.");
   await receive.getByRole("button", { name: "Close" }).click();
 
   // This month's rent charged (Run rent now), and Birch Flats Unit A owes a key fee from last

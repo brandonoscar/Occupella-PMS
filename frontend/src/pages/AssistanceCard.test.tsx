@@ -210,21 +210,37 @@ describe("AssistanceCard", () => {
     ]);
   });
 
-  it("asks for a housing authority first, and shows a refusal in the panel", async () => {
-    server({ ...ASSISTED, in_force: null, terms: [], charges: [], owed: "0.00" }, []);
+  it("adds a new housing authority right here as its assistance is set (ADR 0010 phase 3, part O)", async () => {
+    const fetch = server({ ...ASSISTED, in_force: null, terms: [], charges: [], owed: "0.00" }, []);
     render(<AssistanceCard leaseId="l1" unit="Unit 1" />);
     expect((await screen.findByTestId("assistance-split")).textContent).toBe("The tenant pays all of the $1,000.00 rent.");
     expect(screen.queryByTestId("authority-owes")).toBeNull();
-    // No assistance on file: nothing to certify or inspect for.
+    // No assistance on file: nothing to certify or inspect for, and no authority to link to.
     expect(screen.queryByTestId("recertification")).toBeNull();
     expect(screen.queryByRole("button", { name: "Record certification" })).toBeNull();
+    expect(screen.queryByRole("link")).toBeNull();
 
+    // With none on file, a new one is the choice; it is added, then its assistance set.
     const form = open("Set housing assistance");
-    expect(within(form).getByText("Add the housing authority first, under Rentals, Housing authorities.")).toBeTruthy();
-    expect((within(form).getByRole("button", { name: "Save assistance" }) as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.click(within(form).getByRole("button", { name: "Close" }));
+    expect((within(form).getByLabelText("Housing authority") as HTMLSelectElement).value).toBe("new");
+    fireEvent.change(within(form).getByLabelText("The new housing authority's name"), { target: { value: "Synthetic Housing Authority" } });
+    fireEvent.change(within(form).getByLabelText("The authority pays each month"), { target: { value: "800.00" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Save assistance" }));
+    await vi.waitFor(() => expect(posted(fetch)).toHaveLength(2));
+    expect(posted(fetch)).toEqual([
+      ["/api/assistance/authorities", { name: "Synthetic Housing Authority" }],
+      ["/api/assistance/leases/l1/terms", expect.objectContaining({ housing_authority_id: "new", amount: "800.00" })],
+    ]);
+  });
+
+  it("charges only an authority on file, and links the one paying to its own page", async () => {
+    server({ ...ASSISTED, charges: [], owed: "0.00" }, []);
+    render(<AssistanceCard leaseId="l1" unit="Unit 1" />);
+    await screen.findByTestId("assistance-split");
+    expect(screen.getByRole("link", { name: "Synthetic Housing Authority" }).getAttribute("href")).toBe("/housing-authorities/h1");
 
     const charge = open("Charge the authority");
+    expect(within(charge).getByText("Set the lease's housing assistance first: it names the housing authority.")).toBeTruthy();
     expect((within(charge).getByRole("button", { name: "Charge the authority" }) as HTMLButtonElement).disabled).toBe(true);
   });
 

@@ -16,7 +16,7 @@ import { ListingsPage } from "./pages/ListingsPage";
 import { OwnerHome } from "./pages/OwnerHome";
 import { DocumentsPage } from "./pages/DocumentsPage";
 import { GroupsPage } from "./pages/GroupsPage";
-import { HousingAuthoritiesPage, HousingAuthorityPage } from "./pages/HousingAuthoritiesPages";
+import { HousingAuthorityPage } from "./pages/HousingAuthoritiesPages";
 import { MoveOutPage } from "./pages/MoveOutPage";
 import { GeneralLedgerPage } from "./pages/GeneralLedgerPage";
 import { ManagementFeesPage } from "./pages/ManagementFeesPage";
@@ -119,7 +119,6 @@ const STAFF_PAGES: Record<string, (me: Me) => React.ReactNode> = {
   "/payment-files": (me) => <PaymentFilesPage me={me} />,
   "/tenants": (me) => <TenantsPage me={me} />,
   "/owners": (me) => <OwnersPage me={me} />,
-  "/housing-authorities": (me) => <HousingAuthoritiesPage me={me} />,
   "/move-out": (me) => <MoveOutPage me={me} />,
   "/rental-listings": (me) => <RentalListingsPage me={me} />,
   "/applicants": (me) => <ApplicantsPage me={me} />,

@@ -548,9 +548,10 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   what is open). `trust_apply_assistance_payment` matches an authority's payment (cash into the
   property's owners' accounts, never a tenant's payment or a contribution; a transfer pays a
   tenant's charges or an authority's, never both) to its charges; the management fee, income
-  statement and year-end count it as rent. Rentals, Housing authorities
-  (`/housing-authorities`, `src/pms/api/assistance.py`, area rent) records its payment for many
-  leases at once; the lease's Summary shows the split. The AI role reads all four tables. Since
+  statement and year-end count it as rent. An authority has no menu page (ADR 0010): it is added
+  as a lease's assistance is set, on the lease's Summary (which shows the split and links the
+  authority's own page, `/housing-authorities/<id>`, `src/pms/api/assistance.py`, area rent), and
+  Receive payment (the rent roll's or the authority's page) records its check for many leases. The AI role reads all four tables. Since
   migration 0116 (the rest of q034): an authority's late payment fee from a day
   (`trust_authority_late_fees`: grace days, a flat fee, 0 none; append-only, naming who; Set late
   fee on its page) is charged on the authority by `trust_assess_authority_late_fees` (the nightly
