@@ -35,6 +35,7 @@ tests = [
   "tests/test_tie_out.py::test_held_money_cannot_change_trust_account_without_its_cash",
   "tests/test_tie_out.py::test_a_deposit_kept_for_damages_moves_with_its_cash",
   "tests/test_tie_out.py::test_the_check_runs_at_commit",
+  "tests/properties/test_tie_out_properties.py::test_the_tie_out_refuses_exactly_what_leaves_a_trust_bank_account_untied",
 ]
 
 [[invariant]]
