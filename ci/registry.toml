@@ -1241,6 +1241,16 @@ tests = [
 ]
 
 [[invariant]]
+id = "every-night-over-years"
+statement = "Night after night for months (tools/fast_forward.py; five years nightly), with everything the PMS does by itself turned on and tenants paying late, in part, ahead or with a bounce: what each night posts is dated by that night, never later; no rent is charged twice for a due date; the delinquency report is what is open of the leases' charges; the trial balance balances and every trust bank account's book cash is what it holds; each owner's statement ends at their accounts' balances; and every account under an agreement has each month's management fee taken by the month after's end."
+tests = [
+  "tests/tools/test_fast_forward.py::test_every_night_of_thirteen_months_leaves_the_books_right",
+  "tests/tools/test_fast_forward.py::test_a_charge_dated_after_the_night_fails_it",
+  "tests/tools/test_fast_forward.py::test_a_payment_dated_after_the_night_fails_it",
+  "tests/tools/test_fast_forward.py::test_a_delinquency_report_that_disagrees_with_the_leases_fails_the_night",
+]
+
+[[invariant]]
 id = "pay-bills-all-or-none"
 statement = "Pay bills sets aside from its owner's money (if it wasn't) and pays from its trust bank account every bill it names, or nothing at all when one of them can't be paid, the refusal naming that bill; sent again it pays nothing twice, and each payment keeps how it was first recorded as sent (check or EFT)."
 tests = [
