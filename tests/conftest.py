@@ -62,6 +62,10 @@ settings.register_profile(
 settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "pr"))
 
 
+# The advisory lock a run holds while it migrates its database; it ends with the connection.
+MIGRATE_LOCK = 0x706D735F6D6967  # "pms_mig"
+
+
 def _url_for_database(url: str, name: str) -> str:
     return urlunsplit(urlsplit(url)._replace(path="/" + name))
 
@@ -84,13 +88,19 @@ def database_url():
     with psycopg.connect(admin_url, autocommit=True) as admin:
         admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
     try:
-        # The URL goes to dbmate through the environment, never the command line.
-        migrate = subprocess.run(
-            [dbmate, "--migrations-dir", str(migrations), "--no-dump-schema", "up"],
-            env={**os.environ, "DATABASE_URL": test_url},
-            capture_output=True,
-            text=True,
-        )
+        # The migrations create roles (trust_app, trust_ai_agent), which every database on the
+        # server shares: two runs migrating a new server at once both find a role missing, and
+        # one fails creating it. So runs migrate one at a time, under a lock on the server's
+        # postgres database that both see.
+        with psycopg.connect(admin_url, autocommit=True) as admin:
+            admin.execute("SELECT pg_advisory_lock(%s)", (MIGRATE_LOCK,))
+            # The URL goes to dbmate through the environment, never the command line.
+            migrate = subprocess.run(
+                [dbmate, "--migrations-dir", str(migrations), "--no-dump-schema", "up"],
+                env={**os.environ, "DATABASE_URL": test_url},
+                capture_output=True,
+                text=True,
+            )
         if migrate.returncode != 0:
             raise RuntimeError(f"dbmate up failed:\n{migrate.stdout}\n{migrate.stderr}")
         if coverage_out:
