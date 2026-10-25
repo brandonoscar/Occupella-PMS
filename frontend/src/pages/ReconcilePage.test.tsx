@@ -112,7 +112,9 @@ function server(
     if (init?.method !== "POST") {
       const body = path === "/api/reconcile" ? banks
         : path === "/api/payables/company-fees" ? (answers[path] ?? [])
+        : path === "/api/payments/waiting" ? (answers[path] ?? [])
         : path === "/api/year-close" ? (answers[path] ?? NOTHING_TO_CLOSE)
+        : path.endsWith("/bill-suggestions") ? (answers.suggestions ?? [])
         : path.startsWith("/api/bank-accounts/") && path.includes("/register") ? (answers.register ?? NO_MOVES)
         : path.startsWith("/api/bank-accounts/") ? (answers.breakdown ?? BREAKDOWN)
         : path.startsWith("/api/reconcile/b2") ? { ...sheet, through: null, rows: [], open_lines: [], open_transfers: [], matches: [] } : sheet;
@@ -444,6 +446,77 @@ describe("ReconcilePage", () => {
   });
 });
 
+describe("ReconcilePage bank lines that look like bills", () => {
+  const SUGGESTED = [
+    {
+      line: { id: "l2", posted_on: "2026-01-28", amount: "-125.00", description: "CHECK 4412", reference: null },
+      bill_id: "bill-2", vendor: "Vendor 1", reference: "INV-2", owner: "Owner 1", property: "Property 1",
+      kind: "record", transfer_id: null, amount: "125.00", check_number: "4412",
+    },
+    {
+      line: { id: "l3", posted_on: "2026-01-29", amount: "-60.00", description: "ACH VENDOR 2", reference: null },
+      bill_id: "bill-3", vendor: "Vendor 2", reference: "INV-3", owner: "Owner 2", property: "Property 2",
+      kind: "match", transfer_id: "t9", amount: "60.00", check_number: null,
+    },
+  ];
+
+  it("says how many checks a statement matched by number and amount", async () => {
+    server(SHEET, {
+      "/api/reconcile/statements": { lines: 2, first_day: "2026-02-01", last_day: "2026-02-28", checks_matched: 1 },
+    });
+    render(<ReconcilePage me={ME} id="b1" />);
+    await open("Statements");
+    const file = new File(["Date,Amount\n2026-02-03,-5.00\n"], "february.csv", { type: "text/csv" });
+    fireEvent.change(screen.getByLabelText("Statement file (CSV or OFX)"), { target: { files: [file] } });
+    await screen.findByText(/Ready: february.csv./);
+    fireEvent.change(screen.getByLabelText("First day"), { target: { value: "2026-02-01" } });
+    fireEvent.change(screen.getByLabelText("Last day"), { target: { value: "2026-02-28" } });
+    fireEvent.change(screen.getByLabelText("Closing balance"), { target: { value: "4070.00" } });
+    fireEvent.click(screen.getByRole("button", { name: "Import statement" }));
+    expect(await screen.findByText(
+      "Imported 2 lines, 02/01/2026 to 02/28/2026. 1 check matched to bill payments by number and amount.",
+    )).toBeTruthy();
+  });
+
+  it("lists them, asks before recording a bill paid or matching a payment, and sends nothing until confirmed", async () => {
+    const fetch = server(SHEET, { suggestions: SUGGESTED });
+    render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
+    const table = await screen.findByRole("table", { name: "Bank lines that look like bills" });
+    expect(cells(table)).toEqual([
+      ["01/28/2026 CHECK 4412", "$125.00", "Vendor 1 INV-2, Owner 1, Property 1 (not paid yet)", "Record paid"],
+      ["01/29/2026 ACH VENDOR 2", "$60.00", "Vendor 2 INV-3, Owner 2, Property 2 (payment recorded)", "Match"],
+    ]);
+
+    fireEvent.click(within(table).getByRole("button", { name: "Record paid" }));
+    const asking = await screen.findByRole("alertdialog");
+    expect(asking.textContent).toContain(
+      "Record Vendor 1 INV-2 paid $125.00 by check 4412 on 01/28/2026, and match it to this bank line? It comes out of Owner 1's money in trust for Property 1.",
+    );
+    expect(posted(fetch)).toEqual([]);
+    fireEvent.click(within(asking).getByRole("button", { name: "Record paid" }));
+    expect(await screen.findByText("Vendor 1 INV-2 is paid and matched.")).toBeTruthy();
+
+    fireEvent.click(within(table).getByRole("button", { name: "Match" }));
+    const matching = await screen.findByRole("alertdialog");
+    expect(matching.textContent).toContain("to the payment of Vendor 2 INV-3? No money moves.");
+    fireEvent.click(within(matching).getByRole("button", { name: "Match" }));
+    expect(await screen.findByText("Matched to Vendor 2 INV-3.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([
+      ["/api/reconcile/b1/bill-suggestions", { line_id: "l2", bill_id: "bill-2", transfer_id: null }],
+      ["/api/reconcile/b1/bill-suggestions", { line_id: "l3", bill_id: "bill-3", transfer_id: "t9" }],
+    ]);
+  });
+
+  it("shows no card when no bank line looks like a bill", async () => {
+    server();
+    render(<ReconcilePage me={ME} id="b1" />);
+    await open("Reconciliations");
+    await screen.findByRole("table", { name: "Figures" });
+    expect(screen.queryByRole("table", { name: "Bank lines that look like bills" })).toBeNull();
+  });
+});
+
 describe("BankingPage", () => {
   it("lists each trust bank account with its book balance, how far it is reconciled and what waits", async () => {
     server(SHEET, {}, {}, [{ ...BANKS[0]!, prepared: PREPARED[0]!.prepared }, BANKS[1]!]);
@@ -498,7 +571,8 @@ describe("BankingPage", () => {
         if (reads > 1) await new Promise<void>((resolve) => { gate.open = resolve; });
         return json(reads > 1 ? after : before);
       }
-      return json(path === "/api/reconcile" ? BANKS : path === "/api/year-close" ? NOTHING_TO_CLOSE : {});
+      return json(path === "/api/reconcile" ? BANKS : path === "/api/year-close" ? NOTHING_TO_CLOSE
+        : path === "/api/payments/waiting" ? [] : {});
     }));
     render(<BankingPage me={ME} />);
     const operating = await screen.findByRole("row", { name: "Operating trust account" });

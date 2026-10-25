@@ -164,6 +164,8 @@ AREA_PATHS = (
     ("/api/assistance/", "rent"),  # a housing authority's part of the rent
     ("/api/utilities/", "rent"),  # utility bills charged to the leases
     ("/api/bank-accounts/", "rent"),  # bank deposits of what came in
+    ("/api/payments/settings", "setup"),  # whether tenants pay online, who pays the fee
+    ("/api/payments/", "rent"),  # online payments waiting, the company's cover of the fees
     ("/api/payables/bills", "bills"),
     ("/api/payables/recurring", "bills"),
     ("/api/payables/shared-bills", "bills"),
@@ -179,6 +181,7 @@ AREA_PATHS = (
     ("/api/year-close", "month-end"),
     ("/api/switching/", "switching"),
     ("/api/setup/", "setup"),
+    ("/api/tax-credit/", "setup"),  # a property's income limits and a unit's designation
     ("/api/quickbooks/", "setup"),
     ("/api/company", "setup"),
     ("/api/properties/", "setup"),
@@ -192,6 +195,7 @@ AREA_PATHS = (
     ("/api/inspections", "move-out"),
     ("/api/documents", "documents"),
     ("/api/notes", "documents"),
+    ("/api/notices", "documents"),  # notice templates and the notices made from them
     ("/api/leasing/", "leasing"),
     ("/api/maintenance/", "maintenance"),
     ("/api/work-orders", "maintenance"),

@@ -1,24 +1,31 @@
 """What posts by itself every night (docs/adr/0006-buildium-punch-list.md): for each PMC, this
 month's rent and recurring charges (due on its first day, each lease in effect for its days and
 each starting later in the month its first part month; a lease due on another day on that day),
-the late fees of rents still open after their grace days, the recurring bills due by today, each
+the late fees of rents still open after their grace days (and housing authorities' late payment
+fees, migration 0116), each lease's tenants' prepaid rent for what it owes for a company that
+turned that on (migration 0117), the recurring bills due by today, each
 with its email to an owner whose approval it waits for, for a company that turned it on, last
 month's management fees from its day of the month, and the recurring work orders due by today
 (trust_open_recurring_work_orders, migration 0085). Rent and late fees go through
 trust_run_rent, which records the run; bills through trust_enter_recurring_bills; fees through
-trust_take_monthly_management_fees.
+trust_take_monthly_management_fees. Then, for a company that turned them on, the emails of the
+day (src/pms/notices.py), owners' accounts fallen below their reserve among them. A PMC whose run
+fails is left for the next run, and its admins are emailed what failed (q149).
 
 Each PMC in its own transaction, as trust_app, naming nobody (a run by hand is an admin's, at
 Rent roll, Run rent now). Each part charges or enters once per date, so a run again (a restart,
 this command, an admin's catch-up) charges nothing new. Only the management fees move trust
 money, inside trust, from each owner's account to the company's fee account, once per account and
 month (the founder's answer of 2026-10-18 to q049); charges are what tenants owe, and bills wait
-to be set aside and paid.
+for staff to pay them.
 
 The API runs it when it starts and then every day at 06:00 UTC, unless PMS_NIGHTLY is "off".
 `python -m pms.nightly` runs it once, for a server that schedules it itself. One run at a time,
 whatever starts it (two API servers, or this command while the API runs): a run holds a database
 lock while it lasts, and one that finds it held leaves the work to that run.
+
+With a payments partner (PMS_PAYMENTS), each tenant's autopay payment due starts too, after the
+rent is charged, and goes to the partner once the run commits (src/pms/autopay.py).
 
 usage: python -m pms.nightly    (DATABASE_URL and PMS_PUBLIC_URL, acting as trust_app)
 """
@@ -38,7 +45,8 @@ from uuid import UUID
 import psycopg
 from psycopg import sql
 
-from pms import email, notices
+from pms import autopay, email, notices, payments
+from pms.api import payables, rent
 
 log = logging.getLogger("pms.nightly")
 
@@ -64,6 +72,12 @@ class Ran:
     management_fees: int = 0
     # Work orders opened from recurring ones (migration 0085).
     work_orders: int = 0
+    # Housing authorities' parts of rents charged their late payment fee (migration 0116).
+    authority_late_fees: int = 0
+    # Leases whose tenants' prepaid rent paid what they owe (migration 0117).
+    prepaid_used: int = 0
+    # Autopay payments started (migration 0151).
+    autopay: int = 0
 
 
 def run_pmc(
@@ -72,9 +86,12 @@ def run_pmc(
     day: date,
     public_url: str,
     sending: bool = False,
+    partner: str | None = None,
 ) -> Ran:
     """One PMC's run for a day, in one transaction. While the server sends email, it also writes
-    the rent reminders, late notices and owner statements the company's settings ask for."""
+    the rent reminders, late notices and owner statements the company's settings ask for. With a
+    payments partner (its name), the autopay payments due start too, after the rent is charged
+    (src/pms/autopay.py); they go to the partner once this commits."""
     with conn.transaction():
         made = conn.execute(
             "SELECT trust_run_rent(%s, %s, %s)", (pmc_id, day.replace(day=1), day)
@@ -83,26 +100,36 @@ def run_pmc(
         run = conn.execute(
             "SELECT rents, recurring, late_fees FROM trust_rent_runs WHERE id = %s", (made[0],)
         ).fetchone()
-        entered = conn.execute(
-            "SELECT trust_enter_recurring_bills(%s, %s)", (pmc_id, day)
-        ).fetchone()
+        # The recurring bills due, each with the email to an owner whose approval it waits for.
+        entered = payables.enter_recurring_bills(conn, pmc_id, day, public_url)
         fees = conn.execute(
             "SELECT trust_take_monthly_management_fees(%s, %s)", (pmc_id, day)
         ).fetchone()
         opened = conn.execute(
             "SELECT trust_open_recurring_work_orders(%s, %s)", (pmc_id, day)
         ).fetchone()
-        assert run is not None and entered is not None and fees is not None and opened is not None
-        # The bills this transaction entered (their created_at is its start, now()), each with
-        # the email to an owner whose approval it waits for.
-        for (bill,) in conn.execute(
-            "SELECT id FROM trust_bills WHERE pmc_id = %s AND created_at = now() ORDER BY id",
-            (pmc_id,),
-        ).fetchall():
-            email.write_bill_approval(conn, pmc_id, bill, public_url)
+        authority = conn.execute(
+            "SELECT trust_assess_authority_late_fees(%s, %s)", (pmc_id, day)
+        ).fetchone()
+        assert run is not None and fees is not None and opened is not None
+        assert authority is not None
+        prepaid = rent.use_prepaid_by_itself(conn, pmc_id, day)
+        started = autopay.start_due(conn, pmc_id, day, partner, sending, public_url)
         written = notices.write_scheduled(conn, pmc_id, day, public_url) if sending else None
-    emails = 0 if written is None else sum(vars(written).values())
-    return Ran(pmc_id, run[0], run[1], run[2], entered[0], emails, fees[0], opened[0])
+    emails = started.emails + (0 if written is None else sum(vars(written).values()))
+    return Ran(
+        pmc_id,
+        run[0],
+        run[1],
+        run[2],
+        entered,
+        emails,
+        fees[0],
+        opened[0],
+        authority[0],
+        prepaid,
+        started.payments,
+    )
 
 
 def run_all(
@@ -111,10 +138,11 @@ def run_all(
     public_url: str,
     pmcs: Iterable[UUID] | None = None,
     sending: bool = False,
+    partner: str | None = None,
 ) -> list[Ran]:
     """Every PMC's run for a day (or only those named). One that fails is logged and left for
-    the next run; the others still run. While another run holds the lock, this one runs
-    nothing."""
+    the next run, and while the server sends email its admins are told (once a day); the others
+    still run. While another run holds the lock, this one runs nothing."""
     held = conn.execute("SELECT pg_try_advisory_lock(hashtextextended(%s, 0))", (LOCK,)).fetchone()
     conn.commit()
     if held is None or not held[0]:
@@ -127,14 +155,29 @@ def run_all(
         done = []
         for pmc_id in pmcs:
             try:
-                done.append(run_pmc(conn, pmc_id, day, public_url, sending))
-            except psycopg.Error:
+                done.append(run_pmc(conn, pmc_id, day, public_url, sending, partner))
+            except Exception as failed:
                 log.exception("the nightly run of PMC %s failed; the next run tries again", pmc_id)
+                if sending:
+                    alert(conn, pmc_id, day, failed, public_url)
         return done
     finally:
         if not conn.closed:
             conn.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (LOCK,))
             conn.commit()
+
+
+def alert(
+    conn: psycopg.Connection[Any], pmc_id: UUID, day: date, failed: Exception, public_url: str
+) -> None:
+    """Tells the PMC's admins its run failed, in a transaction of its own; when even that fails
+    (the database down), the log is all there is."""
+    what = f"{type(failed).__name__}: {str(failed).splitlines()[0] if str(failed) else ''}"
+    try:
+        with conn.transaction():
+            email.write_admin_alert(conn, pmc_id, "nightly_failed", day, what, public_url)
+    except Exception:
+        log.exception("the admins of PMC %s could not be told its nightly run failed", pmc_id)
 
 
 def seconds_until(now: datetime, at: time = AT) -> float:
@@ -160,6 +203,7 @@ class Scheduler:
         at: time = AT,
         retry: float = RETRY,
         pmcs: Sequence[UUID] | None = None,
+        payments: payments.Partner | None = None,
     ) -> None:
         self.database_url = database_url
         self.role = role
@@ -169,6 +213,7 @@ class Scheduler:
         self.at = at
         self.retry = retry
         self.pmcs = pmcs
+        self.payments = payments
         self.ran = threading.Event()  # set after each run that finished
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._loop, name="pms-nightly", daemon=True)
@@ -185,10 +230,17 @@ class Scheduler:
             conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(self.role)))
             conn.commit()
             done = run_all(
-                conn, self.clock().date(), self.public_url, self.pmcs, self.sender is not None
+                conn,
+                self.clock().date(),
+                self.public_url,
+                self.pmcs,
+                self.sender is not None,
+                None if self.payments is None else self.payments.name,
             )
+            conn.autocommit = True
+            if self.payments is not None:
+                autopay.submit_waiting(conn, self.payments, now=self.clock())
             if self.sender is not None:
-                conn.autocommit = True
                 email.deliver_pending(conn, self.sender)
         self.ran.set()
         return done
@@ -216,16 +268,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         conn.commit()
         # What it writes to the outbox goes out with `python -m pms.email deliver`.
         sending = bool(os.environ.get("PMS_EMAIL_SENDER"))
-        done = run_all(conn, datetime.now(UTC).date(), public_url, sending=sending)
+        partner = payments.partner_named(os.environ.get("PMS_PAYMENTS", ""), os.environ)
+        done = run_all(
+            conn,
+            datetime.now(UTC).date(),
+            public_url,
+            sending=sending,
+            partner=None if partner is None else partner.name,
+        )
+        if partner is not None:
+            conn.autocommit = True
+            autopay.submit_waiting(conn, partner)
     rents = sum(r.rents for r in done)
     late_fees = sum(r.late_fees for r in done)
     bills = sum(r.bills for r in done)
     emails = sum(r.emails for r in done)
     fees = sum(r.management_fees for r in done)
     orders = sum(r.work_orders for r in done)
+    autopays = sum(r.autopay for r in done)
     print(
         f"{len(done)} companies: {rents} rents, {late_fees} late fees, {bills} bills,"
-        f" {emails} emails, {fees} management fees, {orders} work orders"
+        f" {emails} emails, {fees} management fees, {orders} work orders,"
+        f" {autopays} autopay payments"
     )
     return 0
 

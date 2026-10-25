@@ -60,14 +60,34 @@ The placement decision and the Phase 0 plan live in AgenticHelixis:
 
 ## Try the demo
 
-On a migrated database (`dbmate up`), `PYTHONPATH=src python -m pms.demo` adds a synthetic PMC
-and prints sign-in links for its manager, an owner with three properties and a tenant. Serve
-the portal (`python -m pms.api`, with `PMS_STATIC_DIR=frontend/dist` and `PMS_PUBLIC_URL` set to
-where it's served) and open the manager's link: last month's reconciliation is prepared and
-waits for their approval, with a check not yet cleared at the bank. Every other page has
-something on it, and the Dashboard lists what else waits: a journal entry, the company's fees still in
-trust, a vendor's insurance running out and a lease without renters insurance. Like every staff
-member, the manager signs in with a password and an authenticator app.
+With Docker (Docker Desktop on Windows or a Mac), from the repository's folder:
+
+```sh
+docker compose -f compose.demo.yaml up --build
+```
+
+The first run builds the image (several minutes), applies the migrations, adds a synthetic PMC
+and prints links to sign in as its manager, an owner with three properties and a tenant; then
+the PMS answers at http://localhost:8100. Open the manager's link: last month's reconciliation
+is prepared and waits for their approval, with a check not yet cleared at the bank. Every other
+page has something on it, and the Dashboard lists what else waits: a journal entry, the
+company's fees still in trust, a vendor's insurance running out and a lease without renters
+insurance. Like every staff member, the manager signs in with a password and an authenticator
+app (any app that shows six-digit codes). The partners are the test ones: payments online are
+paid on the PMS's own test page, emails stay in the PMS (each person's Email tab), and nothing
+reaches anyone.
+
+- Ctrl+C stops it; the same command starts it again with the same books, and adds no second
+  demo. The links are printed once: `docker compose -f compose.demo.yaml logs demo` shows them
+  again.
+- `docker compose -f compose.demo.yaml down -v` deletes its books, so the next start is a fresh
+  demo with new links.
+- Port 8100 taken? Start it with another: `PMS_DEMO_PORT=8200` in front of the command (in
+  PowerShell, `$env:PMS_DEMO_PORT = "8200"` first).
+
+Without Docker: on a migrated database (`dbmate up`), `PYTHONPATH=src python -m pms.demo` adds
+the demo and prints its links; serve it with `python -m pms.api`, with `PMS_STATIC_DIR=frontend/dist`
+and `PMS_PUBLIC_URL` set to where it's served.
 
 ## Working here
 
@@ -79,5 +99,6 @@ workflow and lists the required checks.
 
 A company runs the PMS on its own server with its own Postgres 16: [docs/release.md](docs/release.md)
 says how a release reaches it and how to upgrade (fixed forward, never rolled back once money is
-posted), and [docs/backup.md](docs/backup.md) how to back up the books and restore them
-(`scripts/backup.sh`).
+posted), [docs/backup.md](docs/backup.md) how to back up the books and restore them
+(`scripts/backup.sh`), and [docs/support.md](docs/support.md) who looks when something fails and
+where.

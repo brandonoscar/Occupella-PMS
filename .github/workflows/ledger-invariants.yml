@@ -2,10 +2,11 @@ name: ledger-invariants
 
 # Property-based tests (Hypothesis): random sequences of postings against the ledger, with the
 # money invariants checked after every step. PRs: ci/thresholds.toml pr_examples per property.
-# Nightly: nightly_examples per property, every property twice with a seed of its own, the
-# tests shared out over 8 shards (16 jobs). Any failing case is uploaded as an artifact
-# (synthetic data only). Nightly also runs the timing tests 50 times, the API fuzz deeper, the
-# many-staff soak (tools/contention.py) and the speed test (tools/speed.py).
+# Nightly: nightly_examples per property, each twice with a seed of its own; the tests rotate,
+# a part of them each night (ci/property-times.toml), shared out over 4 shards (8 jobs). Any
+# failing case is uploaded as an artifact (synthetic data only). Nightly also runs the timing
+# tests 50 times, the API fuzz deeper, the many-staff soak (tools/contention.py) and the speed
+# test (tools/speed.py).
 on:
   pull_request:
   push:
@@ -13,6 +14,11 @@ on:
   schedule:
     - cron: "17 3 * * *" # nightly 03:17 UTC
   workflow_dispatch:
+    inputs:
+      rotation:
+        description: "Which part of the property tests to run, 1 to ci/property-times.toml's rotations (empty: tonight's)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -31,7 +37,9 @@ jobs:
     name: properties
     if: github.event_name == 'pull_request' || github.event_name == 'push'
     runs-on: ubuntu-24.04
-    # 19m26s on PR #121, with more state machines to come; a cap to stop a hung run, not a budget.
+    # The tests run in two halves side by side, dealt by their measured times: in one run they
+    # had grown from 19m26s (PR #121) to 28 to 31 minutes and hit this cap on PR #168. A cap to
+    # stop a hung run, not a budget.
     timeout-minutes: 35
     services:
       postgres:
@@ -63,14 +71,25 @@ jobs:
           chmod +x "$RUNNER_TEMP/bin/dbmate"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: pip install -r requirements-dev.txt
-      - name: Property tests (pr profile)
+      - name: Property tests (pr profile), two halves side by side
         env:
           HYPOTHESIS_PROFILE: pr
+          PMS_TEST_SHARD_TIMES: ci/property-times.toml
         run: |
-          set -o pipefail
           mkdir -p failing-case
-          pytest tests/properties -v -p no:cacheprovider --hypothesis-show-statistics \
-            --junitxml=failing-case/junit.xml 2>&1 | tee failing-case/pytest.log
+          # Each half is dealt by the tests' times (ci/property-times.toml), as coverage's shards
+          # are, and runs on a database of its own, at once on the runner's four cores.
+          pids=()
+          for half in 1 2; do
+            PMS_TEST_SHARD="$half/2" pytest tests/properties -v -p no:cacheprovider \
+              --hypothesis-show-statistics --junitxml="failing-case/junit-$half.xml" \
+              > "failing-case/pytest-$half.log" 2>&1 &
+            pids+=("$!")
+          done
+          status=0
+          for pid in "${pids[@]}"; do wait "$pid" || status=1; done
+          cat failing-case/pytest-1.log failing-case/pytest-2.log
+          exit "$status"
       - name: Upload the failing case
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -83,19 +102,22 @@ jobs:
           retention-days: 14
 
   nightly:
-    name: properties (nightly, shard ${{ matrix.shard }}/8, seed ${{ matrix.seed }})
+    name: properties (nightly, shard ${{ matrix.shard }}/4, seed ${{ matrix.seed }})
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
-    # Every property in every job no longer fit: the whole suite at 3,000 examples is about 15
-    # times the PR job's 19m26s (200 examples, PR #121), some 290 minutes, and every nightly job
-    # from 10/11 to 10/18 was cancelled at this limit with nothing checked. An eighth of it is
-    # about 36 minutes; the limit stops a hung run.
-    timeout-minutes: 90
+    # 3,000 examples cost far more than 15 times 200: Hypothesis starts small and grows its
+    # examples, so 200 are mostly small ones. The audit property alone ran past 100 minutes
+    # (2026-10-23, measured locally), and every nightly job from 10/11 to 10/23 was cancelled
+    # at the old 90-minute limit with nothing checked. So the tests rotate: night n (days since
+    # 1970) runs part n mod rotations + 1, each part dealt into 4 shards by measured time
+    # (ci/property-times.toml, which tests/tools/test_property_times.py checks fits), and every
+    # property gets its full nightly run once a rotation. The step stops at job_minutes; this
+    # limit only catches a hang in setup.
+    timeout-minutes: 285
     strategy:
       fail-fast: false
-      max-parallel: 16
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+        shard: [1, 2, 3, 4]
         seed: [1, 2]
     services:
       postgres:
@@ -127,18 +149,26 @@ jobs:
           chmod +x "$RUNNER_TEMP/bin/dbmate"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: pip install -r requirements-dev.txt
-      - name: Property tests (nightly profile, this job's shard and seed)
+      - name: Property tests (nightly profile, tonight's part, this job's shard and seed)
         env:
           HYPOTHESIS_PROFILE: nightly
-          # Every nth test from the kth (tools/run_rules.py), a slow file shared out too.
-          PMS_TEST_SHARD: ${{ matrix.shard }}/8
+          # Tonight's part of the tests dealt into 4 shards by their measured seconds, longest
+          # first (tools/run_rules.py part_of).
+          PMS_TEST_SHARD: ${{ matrix.shard }}/4
+          PMS_TEST_SHARD_TIMES: ci/property-times.toml
+          ROTATION: ${{ inputs.rotation }}
           # A different seed per job and per night: the run id, the shard and the matrix seed.
           SEED: ${{ github.run_id }}${{ matrix.shard }}${{ matrix.seed }}
+        # Stopped at job_minutes with an interrupt, pytest reports what it ran and the job fails
+        # (red, and in the failing-case artifact), never cancelled with nothing said.
         run: |
           set -o pipefail
           mkdir -p failing-case
-          echo "seed=$SEED" | tee failing-case/seed.txt
-          pytest tests/properties -v -p no:cacheprovider --hypothesis-seed="$SEED" \
+          read -r parts minutes < <(python -c "import tomllib; t = tomllib.load(open('ci/property-times.toml', 'rb')); print(t['rotations'], t['job_minutes'])")
+          export PMS_TEST_ROTATION="${ROTATION:-$(( $(date -u +%s) / 86400 % parts + 1 ))}/$parts"
+          echo "seed=$SEED rotation=$PMS_TEST_ROTATION" | tee failing-case/seed.txt
+          timeout --signal=INT --kill-after=2m "${minutes}m" \
+            pytest tests/properties -v -p no:cacheprovider --durations=0 --hypothesis-seed="$SEED" \
             --junitxml=failing-case/junit.xml 2>&1 | tee failing-case/pytest.log
       - name: Upload the failing case
         if: failure()
@@ -204,11 +234,18 @@ jobs:
   fuzz:
     # Every PR sends each API operation the schema's boundary cases and [fuzz] pr_examples
     # generated requests (tests/api/test_api_fuzz.py, in ci.yml's tests); nightly sends
-    # nightly_examples, with a new seed each night. A server error fails the job.
-    name: API fuzz (nightly)
+    # nightly_examples, with a new seed each night. A server error fails the job. All 331
+    # operations in one job no longer fit its hour (every night from 10/11 to 10/23 was
+    # cancelled at it), so four jobs each take the operations a hash of "METHOD /path" gives
+    # them (PMS_FUZZ_SHARD, tools/run_rules.py), together every operation once.
+    name: API fuzz (nightly, shard ${{ matrix.shard }}/4)
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16
@@ -239,11 +276,16 @@ jobs:
           chmod +x "$RUNNER_TEMP/bin/dbmate"
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
       - run: pip install -r requirements-dev.txt
-      - name: Every API operation, nightly depth
+      - name: This job's API operations, nightly depth
         env:
           HYPOTHESIS_PROFILE: nightly
-          SEED: ${{ github.run_id }}
-        run: pytest -v -p no:cacheprovider --hypothesis-seed="$SEED" tests/api/test_api_fuzz.py
+          PMS_FUZZ_SHARD: ${{ matrix.shard }}/4
+          SEED: ${{ github.run_id }}${{ matrix.shard }}
+        # Stopped ten minutes before the job's limit, the run fails (not cancelled) and says
+        # where it was, so a night that runs long is seen.
+        run: |
+          timeout --signal=INT --kill-after=2m 50m \
+            pytest -v -p no:cacheprovider --hypothesis-seed="$SEED" tests/api/test_api_fuzz.py
 
   contention:
     # Many staff at once on one company's books (tools/contention.py): 16 workers taking

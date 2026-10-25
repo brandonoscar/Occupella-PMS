@@ -6,7 +6,9 @@
 --   Vendor 2 (Golden Plumbing): paid only in the old system, 1,250.75 before March 1, 2026.
 --   0 payments here, 1250.75 in all, all carried over.
 --   Vendor 3 (Golden Roofing): 400.00 carried over for 2025 is the year before.
---   Total: 2 payments here, 1850.75.
+--   All three are marked for a 1099 and the 2026 ones were paid under 2026's threshold of
+--   2000.00 (q060): under the threshold, with what was carried over under each, and the 1099s'
+--   total is 0 payments, 0.00.
 INSERT INTO trust_pmcs (pmc_id, display_name)
 VALUES ('00000000-0000-4000-8000-000000000001', 'Golden PMC');
 
@@ -27,6 +29,10 @@ INSERT INTO trust_vendors (id, pmc_id, display_name) VALUES
  'Golden Plumbing'),
 ('00000000-0000-4000-8000-000000000053', '00000000-0000-4000-8000-000000000001',
  'Golden Roofing');
+
+INSERT INTO trust_vendor_profiles (pmc_id, vendor_id, gets_1099)
+SELECT '00000000-0000-4000-8000-000000000001', v.id, true
+FROM trust_vendors AS v WHERE v.pmc_id = '00000000-0000-4000-8000-000000000001';
 
 SELECT trust_open_ledger_account(
     '00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000011',

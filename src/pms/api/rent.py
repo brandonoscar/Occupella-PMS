@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import Decimal
 from typing import Annotated, Any, Literal
-from uuid import UUID
+from uuid import UUID, uuid5
 
 import psycopg
 from fastapi import APIRouter, HTTPException
@@ -26,7 +26,7 @@ from psycopg import sql
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, StringConstraints
 
-from pms import exports, notices
+from pms import autopay, exports, notices
 from pms.api import outbox
 from pms.api.deps import Conn, Staff, refusal
 
@@ -361,6 +361,8 @@ def post(
 DESCRIBED = ("reference", "method", "memo")
 # How a tenant's payment came: recorded as said, nothing sent (ADR 0006).
 Method = Literal["check", "cashier's check", "money order", "EFT", "cash"]
+# ... or paid online through the payments partner (pms.api.online_payments), never said by staff.
+PaidBy = Method | Literal["online"]
 
 
 def earlier(
@@ -422,7 +424,7 @@ def record_payment(
     received_on: date,
     reference: str | None = None,
     account: str | None = None,
-    method: Method | None = None,
+    method: PaidBy | None = None,
     past_hold_by: str | None = None,
 ) -> Recorded:
     """A tenant's payment into the operating trust bank account: the owner's account takes
@@ -707,7 +709,8 @@ class Paid(BaseModel):
     received_on: date
     amount: str
     reference: str | None
-    method: Method | None
+    # How it came: as staff record one, or online (src/pms/api/online_payments.py).
+    method: PaidBy | None
     bounced: bool
 
 
@@ -814,6 +817,17 @@ class LeaseOwner(BaseModel):
     percent: str | None
 
 
+class DepositAsked(BaseModel):
+    """The security deposit a lease's signed offer asked (migration 0071). Asking holds nothing:
+    staff record the deposit when it comes in (Record deposit), into the security deposit trust
+    account. Held counts the security deposits held for the lease's tenants (a pet or key
+    deposit is its own)."""
+
+    asked: str
+    held: str
+    to_receive: str
+
+
 class RentLease(BaseModel):
     id: UUID
     property: str
@@ -842,6 +856,48 @@ class RentLease(BaseModel):
     recurring: list[RecurringCharge]
     # A lease in effect on the day: its renters insurance; None for one that isn't.
     renters_insurance: RentersInsurance | None
+    # The security deposit its signed lease offer asked, what is held of it and what is still to
+    # receive; None when no offer asked one, or once its deposits were returned.
+    deposit_asked: DepositAsked | None = None
+
+
+# The security deposit each lease's signed offer asked, and the security deposits held for its
+# tenants: of the PMC, or one lease, or those not ended by a day; none once its deposits were
+# returned at move-out.
+DEPOSITS_ASKED = """
+SELECT c.lease_id, o.security_deposit,
+       coalesce((SELECT sum(b.balance) FROM trust_lease_tenants AS lt
+                 JOIN trust_ledger_accounts AS a
+                   ON a.tenant_id = lt.tenant_id AND a.kind = 'tenant_deposit'
+                  AND coalesce(a.deposit_kind, 'security') = 'security'
+                 JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
+                 WHERE lt.lease_id = c.lease_id), 0)
+FROM trust_lease_offer_completions AS c
+JOIN trust_lease_offers AS o ON o.id = c.offer_id
+JOIN trust_leases AS l ON l.id = c.lease_id
+WHERE c.pmc_id = %(pmc)s AND o.security_deposit IS NOT NULL
+  AND (%(lease)s::uuid IS NULL OR c.lease_id = %(lease)s)
+  AND (%(open_on)s::date IS NULL OR l.ends_on IS NULL OR l.ends_on >= %(open_on)s)
+  AND NOT EXISTS (SELECT 1 FROM trust_deposit_returns AS r WHERE r.lease_id = c.lease_id)
+"""
+
+
+def deposits_asked(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    lease_id: UUID | None = None,
+    open_on: date | None = None,
+) -> dict[UUID, DepositAsked]:
+    """The deposit each lease's signed offer asked, of the PMC's leases (or the one named, or
+    those not ended by `open_on`)."""
+    found = {}
+    for lease, asked, held in conn.execute(
+        DEPOSITS_ASKED, {"pmc": pmc_id, "lease": lease_id, "open_on": open_on}
+    ).fetchall():
+        found[lease] = DepositAsked(
+            asked=cents(asked), held=cents(held), to_receive=cents(max(asked - held, ZERO))
+        )
+    return found
 
 
 LEASES = f"""
@@ -1073,6 +1129,7 @@ def built(
         moved_from[new] = Move(lease_id=old, property=old_prop, unit=old_unit, moved_on=on)
         carried[new] = owing
     insured = renters_insurance(conn, pmc, day)
+    asked = deposits_asked(conn, pmc, only)
     found = []
     for i, prop, unit, starts, ends, rent, due_day, due, on_hold in conn.execute(
         LEASES, names
@@ -1102,6 +1159,7 @@ def built(
                 payments=payments.get(i, []) if only else payments.get(i, [])[:12],
                 recurring=recurring.get(i, []),
                 renters_insurance=insured.get(i),
+                deposit_asked=asked.get(i),
             )
         )
     return found
@@ -1125,6 +1183,13 @@ class RentRun(BaseModel):
 class RentRunDone(RentRun):
     # Rent reminders, late notices and owner statements written (src/pms/notices.py).
     emails: int
+    # Housing authorities' parts of rents charged their late payment fee (migration 0116).
+    authority_late_fees: int = 0
+    # Leases whose tenants' prepaid rent paid what they owe, for a company that turned it on.
+    prepaid_used: int = 0
+    # Autopay payments started (src/pms/autopay.py); they go to the payments partner once the
+    # run is in the books.
+    autopay: int = 0
 
 
 class RentRunLine(RentRun):
@@ -1143,7 +1208,7 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
     late fee for each rent still open after its grace days as of a day. Each once per lease (or
     recurring charge, or rent) and date, so running it again charges nothing new. While the
     server sends email, it also writes today's emails the company's settings ask for, as the
-    nightly run does."""
+    nightly run does, and starts the autopay payments due by today (src/pms/autopay.py)."""
     if run.late_fees_as_of > today():
         raise HTTPException(422, "late fees are assessed as of today or an earlier day")
     made = conn.execute(
@@ -1154,13 +1219,32 @@ def run_rent(session: Staff, conn: Conn, run: RunRent) -> RentRunDone:
         "SELECT rents, recurring, late_fees FROM trust_rent_runs WHERE id = %s", (made[0],)
     ).fetchone()
     assert row is not None
+    authority = conn.execute(
+        "SELECT trust_assess_authority_late_fees(%s, %s)", (session.pmc_id, run.late_fees_as_of)
+    ).fetchone()
+    assert authority is not None
+    prepaid_used = use_prepaid_by_itself(conn, session.pmc_id, today())
+    started = autopay.start_due(
+        conn,
+        session.pmc_id,
+        today(),
+        outbox.PARTNER.get(),
+        outbox.SENDING.get(),
+        outbox.PUBLIC_URL.get(),
+    )
     written = (
         notices.write_scheduled(conn, session.pmc_id, today(), outbox.PUBLIC_URL.get())
         if outbox.SENDING.get()
         else notices.Written()
     )
     return RentRunDone(
-        rents=row[0], recurring=row[1], late_fees=row[2], emails=sum(vars(written).values())
+        rents=row[0],
+        recurring=row[1],
+        late_fees=row[2],
+        emails=started.emails + sum(vars(written).values()),
+        authority_late_fees=authority[0],
+        prepaid_used=prepaid_used,
+        autopay=started.payments,
     )
 
 
@@ -1519,25 +1603,35 @@ def not_after_today(day: date) -> None:
 
 @router.post("/leases/{lease_id}/payments", status_code=201)
 def pay(session: Staff, conn: Conn, lease_id: UUID, new: NewPayment) -> Payment:
+    """Records a tenant's payment; each tenant of the lease is emailed its receipt when the
+    company asks for receipts and the server sends email (once per payment)."""
     not_after_today(new.received_on)
     try:
-        return answer(
-            record_payment(
-                conn,
-                session.pmc_id,
-                lease_id,
-                new.request_id,
-                new.amount,
-                new.received_on,
-                new.reference,
-                new.account,
-                new.method,
-                staff_name(conn, session.pmc_id, session.person_id) if new.past_hold else None,
-            )
+        recorded = record_payment(
+            conn,
+            session.pmc_id,
+            lease_id,
+            new.request_id,
+            new.amount,
+            new.received_on,
+            new.reference,
+            new.account,
+            new.method,
+            staff_name(conn, session.pmc_id, session.person_id) if new.past_hold else None,
         )
     except (psycopg.errors.CheckViolation, psycopg.errors.UniqueViolation) as refused:
         # a payment hold, a closed period, or a match made differently before
         raise HTTPException(409, refusal(refused)) from None
+    if outbox.SENDING.get():
+        notices.write_payment_receipts(
+            conn,
+            session.pmc_id,
+            lease_id,
+            recorded.transfers[0],
+            new.amount,
+            new.received_on,
+        )
+    return answer(recorded)
 
 
 class UsePrepaid(BaseModel):
@@ -1555,6 +1649,99 @@ def prepaid(session: Staff, conn: Conn, lease_id: UUID, use: UsePrepaid) -> Paym
         )
     except psycopg.errors.CheckViolation as refused:
         raise HTTPException(409, refusal(refused)) from None
+
+
+# --- prepaid rent used by itself (migration 0117, the founder's review q031) -------------------
+
+
+class AutomaticPrepaid(BaseModel):
+    automatic: bool
+
+
+class AutomaticPrepaidSet(AutomaticPrepaid):
+    # When it was last changed, and by whom (None: never, or by the command line).
+    changed_at: datetime | None
+    changed_by: str | None
+
+
+PREPAID_SETTINGS = (
+    "SELECT s.automatic, s.created_at, st.display_name FROM trust_prepaid_rent_settings AS s"
+    " LEFT JOIN trust_staff AS st ON st.id = s.recorded_by"
+    " WHERE s.pmc_id = %s ORDER BY s.created_at DESC, s.id DESC LIMIT 1"
+)
+
+
+def prepaid_settings(conn: psycopg.Connection[Any], pmc_id: UUID) -> AutomaticPrepaidSet:
+    row = conn.execute(PREPAID_SETTINGS, (pmc_id,)).fetchone()
+    if row is None:
+        return AutomaticPrepaidSet(automatic=False, changed_at=None, changed_by=None)
+    return AutomaticPrepaidSet(automatic=row[0], changed_at=row[1], changed_by=row[2])
+
+
+@router.get("/prepaid/automatic")
+def automatic_prepaid(session: Staff, conn: Conn) -> AutomaticPrepaidSet:
+    """Whether tenants' prepaid rent pays what their lease owes by itself, each night once new
+    charges post; off until a company turns it on."""
+    return prepaid_settings(conn, session.pmc_id)
+
+
+@router.post("/prepaid/automatic")
+def set_automatic_prepaid(
+    session: Staff, conn: Conn, wanted: AutomaticPrepaid
+) -> AutomaticPrepaidSet:
+    """Turns using prepaid rent by itself on or off. Saving what holds already writes nothing."""
+    if prepaid_settings(conn, session.pmc_id).automatic != wanted.automatic:
+        conn.execute(
+            "INSERT INTO trust_prepaid_rent_settings (pmc_id, automatic) VALUES (%s, %s)",
+            (session.pmc_id, wanted.automatic),
+        )
+    return prepaid_settings(conn, session.pmc_id)
+
+
+# The leases whose tenants hold prepaid rent, in the order they were made.
+PREPAID_LEASES = """
+SELECT l.id FROM trust_leases AS l
+WHERE l.pmc_id = %s AND EXISTS (
+    SELECT 1 FROM trust_lease_tenants AS lt
+    JOIN trust_ledger_accounts AS a ON a.tenant_id = lt.tenant_id AND a.kind = 'prepaid_rent'
+    JOIN pgledger_accounts AS b ON b.id = a.ledger_account_id
+    WHERE lt.lease_id = l.id AND a.pmc_id = l.pmc_id AND b.balance > 0
+)
+ORDER BY l.created_at, l.id
+"""
+# Each day's use of a lease's prepaid rent is keyed by the lease and the day, so a run again
+# that day uses nothing more.
+PREPAID_DAYS = UUID("0f7c6c0e-6b1a-5c55-9a59-2f1f7d5d0117")
+
+
+def use_prepaid_by_itself(conn: psycopg.Connection[Any], pmc_id: UUID, day: date) -> int:
+    """For a company that turned it on: each lease's tenants' prepaid rent pays what the lease
+    owes, as Use prepaid rent does, once a day per lease; the number of leases it paid. A lease on
+    a payment hold that day, or one whose owner's account staff must choose, is left for staff,
+    each in a savepoint of its own."""
+    if not prepaid_settings(conn, pmc_id).automatic:
+        return 0
+    used = 0
+    for (lease_id,) in conn.execute(PREPAID_LEASES, (pmc_id,)).fetchall():
+        if owed(conn, lease_id) <= 0:
+            continue
+        if conn.execute(IN_FORCE, {"pmc": pmc_id, "lease": lease_id, "day": day}).fetchone():
+            continue
+        request = uuid5(PREPAID_DAYS, f"{lease_id}/{day.isoformat()}")
+        if conn.execute(
+            "SELECT 1 FROM pgledger_transfers AS t"
+            " JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id"
+            " WHERE a.pmc_id = %s AND t.metadata ->> 'key' = %s LIMIT 1",
+            (pmc_id, f"prepaid/{request}"),
+        ).fetchone():
+            continue  # used already that day
+        try:
+            with conn.transaction():
+                use_prepaid(conn, pmc_id, lease_id, request, day)
+        except (HTTPException, psycopg.errors.CheckViolation):
+            continue  # an owner's account to choose, a period closed, or nothing to use after all
+        used += 1
+    return used
 
 
 class NewDeposit(BaseModel):

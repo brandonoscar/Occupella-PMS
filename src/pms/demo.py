@@ -27,11 +27,12 @@ file, an expired policy) and files.
 Every name is synthetic, and every email is at example.com. The dates follow today's: the two
 months are the two before this one.
 
-usage: python -m pms.demo
+usage: python -m pms.demo [--if-empty]
 """
 
 from __future__ import annotations
 
+import argparse
 import base64
 import csv
 import io
@@ -73,6 +74,7 @@ from pms.api import (
     signers,
     signing,
     staff,
+    unit_details,
     vendors,
     work_orders,
 )
@@ -376,8 +378,12 @@ def books(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
                 expense_account_id=demo.expense_accounts["Repairs"],
             ),
         ).id
-        payables.set_aside(s, conn, bill, payables.Day(on=month_ago + 11 * DAY))
-        payables.pay(s, conn, bill, payables.Paying(on=month_ago + 14 * DAY))
+        payables.pay(
+            s,
+            conn,
+            bill,
+            payables.Paying(on=month_ago + 14 * DAY, check_number="1041", request_id=uuid.uuid4()),
+        )
     close_month(b, demo, manager, month_ago, last_month)
     reconcile_month(b, demo, month_ago, last_month, approve=True)
 
@@ -416,9 +422,11 @@ def books(conn: psycopg.Connection[Any], today: date | None = None) -> Demo:
                 approved_on=last_month + 9 * DAY, approved_by="Demo Owner A, by email"
             ),
         )
-        payables.set_aside(s, conn, roof, payables.Day(on=last_month + 10 * DAY))
         demo.outstanding = payables.pay(
-            s, conn, roof, payables.Paying(on=this_month - DAY)
+            s,
+            conn,
+            roof,
+            payables.Paying(on=this_month - DAY, check_number="1042", request_id=uuid.uuid4()),
         ).transfer_id
     close_month(b, demo, manager, last_month, this_month)
     reconcile_month(b, demo, last_month, this_month, approve=False, skip={demo.outstanding})
@@ -546,6 +554,18 @@ def harbor_rent(unit: str) -> D:
     return D("1050.00") + D("25.00") * int(unit.split()[1][0])
 
 
+def harbor_details(unit: str) -> unit_details.NewUnitDetails:
+    """Harbor Tower's units by their place on the floor: studios, one and two bedrooms, each
+    asking a little more than its rent today."""
+    bedrooms = (int(unit.split()[1][1:]) - 1) % 3
+    return unit_details.NewUnitDetails(
+        bedrooms=bedrooms,
+        bathrooms=D("1.5") if bedrooms == 2 else D(1),
+        square_feet=450 + 250 * bedrooms,
+        market_rent=harbor_rent(unit) + D("75.00"),
+    )
+
+
 class _Request:
     """What the leasing and signing routes read off a request: the server's settings and its
     screening partner, here the fake the demo screens with; no address or browser."""
@@ -628,6 +648,7 @@ def showcase(conn: psycopg.Connection[Any], demo: Demo, today: date, public_url:
                 units[unit] = uid(
                     setup.add_unit(s, conn, setup.NewUnit(property_id=harbor, name=unit))
                 )
+                unit_details.change_details(s, conn, units[unit], harbor_details(unit))
         for unit in units:
             if unit in HARBOR_VACANT:
                 continue
@@ -797,6 +818,8 @@ def company_profile(b: Builder, demo: Demo) -> None:
                 owner_statement_day=5,
                 work_order_notices=True,
                 adverse_action_notices=True,
+                reserve_alerts=True,
+                payment_receipts=True,
             ),
         )
 
@@ -1170,6 +1193,48 @@ def bills_of_every_status(b: Builder, demo: Demo, today: date, public_url: str) 
                 on=on_or_before(entered + DAY, today), method="EFT", bill_ids=[made["ELC-3005"]]
             ),
         )
+        # A bill at every step of its life (ADR 0010): the overdue disposal paid in part; the
+        # water heater flush entered twice, the second voided; a roof the owner approved that
+        # their balance is short of.
+        payables.pay(
+            s,
+            conn,
+            made["PLB-3003"],
+            payables.Paying(
+                on=today, amount=D("100.00"), check_number="1043", request_id=uuid.uuid4()
+            ),
+        )
+        twice = payables.enter_bill(
+            s,
+            conn,
+            payables.NewBill(
+                vendor_id=demo.vendors["Demo Plumbing Co"],
+                account=demo.accounts["Oak Terrace"],
+                reference="PLB 3002",
+                bill_date=min(entered, today),
+                due_on=today + 5 * DAY,
+                amount=D("180.00"),
+                memo="Water heater flush",
+            ),
+        ).id
+        payables.void(s, conn, twice, payables.Void(reason="Entered twice: it is PLB-3002"))
+        roof = payables.enter_bill(
+            s,
+            conn,
+            payables.NewBill(
+                vendor_id=demo.vendors["Demo Roofing Co"],
+                account=demo.accounts["Birch Flats"],
+                reference="RF-3006",
+                bill_date=today,
+                due_on=today + 30 * DAY,
+                amount=D("24000.00"),
+                memo="Roof replacement",
+                expense_account_id=demo.expense_accounts["Repairs"],
+            ),
+        ).id
+        payables.approve(
+            s, conn, roof, payables.Approval(approved_on=today, approved_by="Demo Owner, by phone")
+        )
     # Tonight's run, as the manager runs it by hand: late fees on rent still open past its
     # grace, and this month's recurring bills.
     with b.as_staff(demo.manager):
@@ -1497,9 +1562,20 @@ def invite(conn: psycopg.Connection[Any], demo: Demo, kind: str, person: UUID, w
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    del argv
+    parser = argparse.ArgumentParser(prog="python -m pms.demo", description=__doc__.split("\n")[0])
+    parser.add_argument(
+        "--if-empty",
+        action="store_true",
+        help="add the demo only to a database that holds no PMC yet (compose.demo.yaml starts it"
+        " each time it comes up)",
+    )
+    args = parser.parse_args(argv)
     with psycopg.connect(os.environ["DATABASE_URL"], autocommit=True) as conn:
         conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier("trust_app")))
+        found = conn.execute("SELECT count(*) FROM trust_pmcs").fetchone()
+        if args.if_empty and found is not None and found[0] > 0:
+            print("This database holds a PMC already, so no demo was added (--if-empty).")
+            return 0
         demo = build(conn, public_url=os.environ.get("PMS_PUBLIC_URL", "http://localhost:8000"))
         with conn.transaction():
             links = {

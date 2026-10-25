@@ -21,10 +21,10 @@ const ME: Me = {
 
 const ROLL: Preview = {
   title: "rent roll",
-  columns: ["line", "item", "property", "unit", "monthly_rent"],
+  columns: ["line", "item", "property", "unit", "unit_id", "monthly_rent"],
   rows: [
-    ["1", "PMC", "", "", ""],
-    ["2", "lease", "Property 1", "Unit A", "1000.00"],
+    ["1", "PMC", "", "", "", ""],
+    ["2", "lease", "Property 1", "Unit A", "00000000-0000-4000-8000-000000000001", "1000.00"],
   ],
   total_rows: 2,
 };
@@ -57,7 +57,7 @@ describe("ReportPage", () => {
 
     expect(await screen.findByRole("heading", { level: 1, name: "Rent roll" })).toBeTruthy();
     const table = await screen.findByRole("table", { name: "Rent roll" });
-    // Line numbers are for joining rows up, not for reading.
+    // Line numbers and ids are for joining rows up, not for reading.
     expect(within(table).getAllByRole("columnheader").map((c) => c.textContent)).toEqual([
       "Item", "Property", "Unit", "Monthly rent",
     ]);
@@ -115,7 +115,7 @@ describe("ReportPage", () => {
     const first = new Promise<void>((resolve) => {
       releaseFirst = resolve;
     });
-    const of = (who: string): Preview => ({ ...ROLL, rows: [["1", "owner", who, "", ""]], total_rows: 1 });
+    const of = (who: string): Preview => ({ ...ROLL, rows: [["1", "owner", who, "", "", ""]], total_rows: 1 });
     const fetch = vi.fn(async (path: string) => {
       if (path === "/api/setup") return new Response(JSON.stringify(BOOKS));
       if (path.includes("arg=o1&")) {

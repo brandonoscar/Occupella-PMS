@@ -27,29 +27,29 @@ import { navigate } from "../router";
 import { scopeParams, useScope } from "../scope";
 import type { Portfolio } from "../setup";
 import { expenseAccountLabel } from "../setup";
-import { ApprovalForm, DeclineForm, PayForm, RecordBillForm, SetAsideForm } from "./BillForms";
+import { ApprovalForm, DeclineForm, PayForm, RecordBillForm, VoidForm } from "./BillForms";
 import { GoLink } from "./NeedsAttention";
 import { STAFF_NAV } from "./staffNav";
 import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
 
-type Show = "open" | "paid" | "declined" | "recurring";
+type Show = "open" | "paid" | "void" | "recurring";
 const TABS: { value: Show; label: string }[] = [
   { value: "open", label: "Unpaid" },
   { value: "paid", label: "Paid" },
   { value: "recurring", label: "Recurring" },
-  { value: "declined", label: "Declined" },
+  { value: "void", label: "Void" },
 ];
 const NONE: Record<Exclude<Show, "recurring">, string> = {
   open: "Nothing left to pay.",
   paid: "No bill is paid yet.",
-  declined: "No bill was declined.",
+  void: "No bill is void.",
 };
 
 // A side panel open on the page: Record bill, a bill's next step, or a recurring bill's.
 type Panel =
   | { kind: "record" }
-  | { kind: "approve" | "decline" | "set-aside" | "pay"; bill: Bill }
+  | { kind: "approve" | "decline" | "pay" | "void"; bill: Bill }
   | { kind: "add-recurring" }
   | { kind: "stop" | "recurring-account"; recurring: Recurring };
 
@@ -57,15 +57,16 @@ const TITLES: Record<Panel["kind"], string> = {
   record: "Record bill",
   approve: "Record approval",
   decline: "Record decline",
-  "set-aside": "Set aside",
-  pay: "Pay",
+  pay: "Record payment",
+  void: "Void",
   "add-recurring": "Add recurring bill",
   stop: "Stop recurring bill",
   "recurring-account": "Expense account",
 };
 
-// Accounting → Bills (ADR 0006, Buildium's): Unpaid, Paid, Recurring and Declined, narrowed by
-// property group, vendor and the day they are due by, a page at a time; the row opens the bill.
+// Accounting → Bills (ADR 0006, Buildium's; ADR 0010's statuses): Unpaid, Paid, Recurring and Void,
+// narrowed by property group, vendor and the day they are due by, a page at a time; the row opens
+// the bill.
 // Record bill and each bill's next step open a side panel; Pay bills pays several at once. Each
 // month's recurring bills are entered by the nightly run. The PMS records what the bank did; it
 // sends no payment itself.
@@ -152,8 +153,8 @@ export function BillsPage({ me }: { me: Me }) {
           {panel.kind === "record" && (books ? <RecordBillForm books={books} record={recordThenClose} /> : <Notice tone="info">Loading</Notice>)}
           {panel.kind === "approve" && <ApprovalForm bill={panel.bill} record={recordThenClose} />}
           {panel.kind === "decline" && <DeclineForm bill={panel.bill} record={recordThenClose} />}
-          {panel.kind === "set-aside" && <SetAsideForm bill={panel.bill} record={recordThenClose} />}
           {panel.kind === "pay" && <PayForm bill={panel.bill} record={recordThenClose} />}
+          {panel.kind === "void" && <VoidForm bill={panel.bill} record={recordThenClose} />}
           {panel.kind === "add-recurring" && books && <NewRecurringForm books={books} record={recordThenClose} />}
           {panel.kind === "stop" && <StopForm recurring={panel.recurring} record={recordThenClose} />}
           {panel.kind === "recurring-account" && books && (
@@ -166,17 +167,22 @@ export function BillsPage({ me }: { me: Me }) {
   );
 }
 
-// A bill's next steps, in its row's ⋯ menu.
+// A bill's next steps, in its row's ⋯ menu; Void only while nothing was taken for it.
 function stepsOf(bill: Bill, onPanel: (panel: Panel) => void): RowAction[] {
-  if (bill.status === "needs approval") {
-    return [
+  const steps: RowAction[] = [];
+  if (bill.status === "waiting for owner") {
+    steps.push(
       { label: "Record approval", onSelect: () => onPanel({ kind: "approve", bill }) },
       { label: "Record decline", onSelect: () => onPanel({ kind: "decline", bill }) },
-    ];
+    );
   }
-  if (bill.status === "to set aside") return [{ label: "Set aside", onSelect: () => onPanel({ kind: "set-aside", bill }) }];
-  if (bill.status === "set aside") return [{ label: "Pay", onSelect: () => onPanel({ kind: "pay", bill }) }];
-  return [];
+  if (bill.status === "ready to pay" || bill.status === "partly paid") {
+    steps.push({ label: "Record payment", onSelect: () => onPanel({ kind: "pay", bill }) });
+  }
+  if (bill.held_since === null && ["entered", "waiting for owner", "ready to pay", "short"].includes(bill.status)) {
+    steps.push({ label: "Void", danger: true, onSelect: () => onPanel({ kind: "void", bill }) });
+  }
+  return steps;
 }
 
 function BillsTable({ bills, onPanel }: { bills: Bill[]; onPanel: (panel: Panel) => void }) {
@@ -208,7 +214,14 @@ function BillsTable({ bills, onPanel }: { bills: Bill[]; onPanel: (panel: Panel)
                 <td className="text-ink-muted">{bill.memo}</td>
                 <td><GoLink href={`/bills/${bill.id}`} className="font-medium text-iris hover:text-iris-hover hover:underline">{bill.reference}</GoLink></td>
                 <td className="text-right">{money(bill.amount)}</td>
-                <td><Badge tone={badge.tone} data-testid="status">{badge.word}</Badge></td>
+                <td>
+                  <span className="flex flex-wrap items-center gap-1.5">
+                    <Badge tone={badge.tone} data-testid="status">{badge.word}</Badge>
+                    {bill.overdue && <Badge tone="danger">Overdue</Badge>}
+                    {bill.status === "partly paid" && <span className="text-sm text-ink-muted">{money(bill.left)} left</span>}
+                    {bill.needed !== null && <span className="text-sm text-ink-muted">needs {money(bill.needed)}</span>}
+                  </span>
+                </td>
                 <td className="text-right" onClick={(event) => event.stopPropagation()}>
                   {steps.length > 0 && <RowMenu label={`${bill.vendor} ${bill.reference}`} actions={steps} />}
                 </td>
@@ -302,7 +315,11 @@ function NewRecurringForm({ books, record }: { books: Portfolio; record: Recorde
         day_of_month: Number(dayOfMonth), starts_on: starts,
         ...(expense ? { expense_account_id: expense } : {}),
       };
-      void record("/api/payables/recurring", body, () => `${prefix} is entered each month.`);
+      // The months already due are entered as it is added; the nightly run enters the rest.
+      void record<{ entered: number }>("/api/payables/recurring", body, ({ entered }) =>
+        `${prefix} is entered each month${entered === 0 ? ""
+          : entered === 1 ? "; 1 bill already due is entered now"
+            : `; ${entered} bills already due are entered now`}.`);
     }}>
       <Select label="Vendor" id="recurring-vendor" value={vendor} onChange={(e) => setVendor(e.target.value)}>
         {books.vendors.map((v) => <option key={v.id} value={v.id}>{v.name}</option>)}

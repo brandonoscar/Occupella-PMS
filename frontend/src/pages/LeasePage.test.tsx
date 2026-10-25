@@ -111,8 +111,15 @@ const TWO_DEPOSIT_ACCOUNTS = {
   owners: [], properties: [], accounts: [], tenants: [], vendors: [], expense_accounts: [], schedule_e_lines: [],
 };
 
-// One of the lease's side panels, from its button or its ⋯ menu.
-function panel(name: string, fromMenu = false) {
+// One of the lease's side panels, from its button or its ⋯ menu, once the panel before it is gone
+// and the page behind it, which React Aria hides from screen readers while a panel is open, is
+// shown again. React Aria lifts that a moment after the panel goes, so a click at once can miss
+// the button on a busy machine.
+async function panel(name: string, fromMenu = false) {
+  await vi.waitFor(() => {
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(document.querySelector("body > [aria-hidden='true']")).toBeNull();
+  });
   if (fromMenu) {
     fireEvent.click(screen.getByRole("button", { name: "Actions for this lease" }));
     fireEvent.click(screen.getByRole("menuitem", { name }));
@@ -194,7 +201,7 @@ describe("LeasePage", () => {
   it("opens Move to another unit from the ⋯ menu", async () => {
     server();
     await open();
-    const moving = panel("Move to another unit", true);
+    const moving = await panel("Move to another unit", true);
     expect(await within(moving).findByText(/no such page|Loading/)).toBeTruthy();
   });
 
@@ -210,7 +217,7 @@ describe("LeasePage", () => {
       "/api/rent/leases/l1/payments": { transfers: ["a", "b"], to_owner: "1550.00", to_prepaid: "50.00" },
     });
     await open();
-    let form = panel("Receive payment");
+    let form = await panel("Receive payment");
     fireEvent.change(within(form).getByLabelText("Payment received"), { target: { value: "1600.00" } });
     fireEvent.change(within(form).getByLabelText("Received on"), { target: { value: "2026-10-02" } });
     fireEvent.change(within(form).getByLabelText("Check or reference"), { target: { value: "Check 102" } });
@@ -223,7 +230,7 @@ describe("LeasePage", () => {
     expect(body.request_id).toMatch(/^[0-9a-f-]{36}$/);
 
     // The next payment is a new request.
-    form = panel("Receive payment");
+    form = await panel("Receive payment");
     fireEvent.change(within(form).getByLabelText("Payment received"), { target: { value: "10.00" } });
     fireEvent.click(within(form).getByRole("button", { name: "Record payment" }));
     await vi.waitFor(() => expect(posted(fetch)).toHaveLength(2));
@@ -236,7 +243,7 @@ describe("LeasePage", () => {
     const owners = [{ account: "a1", owner: "Owner 1", percent: "60" }, { account: "a2", owner: "Owner 2", percent: "40" }];
     let fetch = server({ ...LEASE, owners });
     await open();
-    let form = panel("Receive payment");
+    let form = await panel("Receive payment");
     expect(within(form).getByTestId("split-by-ownership").textContent).toBe("Split by ownership: Owner 1 60% · Owner 2 40%");
     expect(within(form).queryByLabelText("Owner's account")).toBeNull();
     fireEvent.change(within(form).getByLabelText("Payment received"), { target: { value: "100.00" } });
@@ -248,7 +255,7 @@ describe("LeasePage", () => {
     // Two owners without shares: staff choose the account, for the payment and the prepaid rent.
     fetch = server({ ...LEASE, owners: owners.map((o) => ({ ...o, percent: null })) });
     await open();
-    form = panel("Receive payment");
+    form = await panel("Receive payment");
     expect(within(form).queryByTestId("split-by-ownership")).toBeNull();
     expect([...(within(form).getByLabelText("Owner's account") as HTMLSelectElement).options].map((o) => o.textContent))
       .toEqual(["Owner 1", "Owner 2"]);
@@ -257,9 +264,7 @@ describe("LeasePage", () => {
     fireEvent.click(within(form).getByRole("button", { name: "Record payment" }));
     await vi.waitFor(() => expect(posted(fetch)).toHaveLength(1));
     expect(posted(fetch)[0]?.[1]).toMatchObject({ amount: "100.00", account: "a2" });
-    // The page behind a panel is hidden until the panel closes.
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    form = panel("Receive payment");
+    form = await panel("Receive payment");
     fireEvent.change(within(form).getByLabelText("Owner's account"), { target: { value: "a2" } });
     fireEvent.click(within(form).getByRole("button", { name: "Use prepaid rent" }));
     await vi.waitFor(() => expect(posted(fetch)).toHaveLength(2));
@@ -271,21 +276,21 @@ describe("LeasePage", () => {
       "/api/rent/leases/l1/use-prepaid": { transfers: ["p"], to_owner: "50.00", to_prepaid: "0.00" },
     });
     await open();
-    fireEvent.click(within(panel("Receive payment")).getByRole("button", { name: "Use prepaid rent" }));
+    fireEvent.click(within(await panel("Receive payment")).getByRole("button", { name: "Use prepaid rent" }));
     expect(await screen.findByText("$50.00 paid what is owed.")).toBeTruthy();
-    const charge = panel("Enter charge");
+    const charge = await panel("Enter charge");
     fireEvent.change(within(charge).getByLabelText("Add a"), { target: { value: "credit" } });
     fireEvent.change(within(charge).getByLabelText("Amount"), { target: { value: "25.00" } });
     fireEvent.change(within(charge).getByLabelText("What for"), { target: { value: "Leak repair" } });
     fireEvent.click(within(charge).getByRole("button", { name: "Add" }));
     expect(await screen.findByText("Credit of $25.00 added.")).toBeTruthy();
-    const deposit = panel("Record deposit", true);
+    const deposit = await panel("Record deposit", true);
     fireEvent.change(within(deposit).getByLabelText("Deposit from"), { target: { value: "t2" } });
     fireEvent.change(within(deposit).getByLabelText("Deposit received"), { target: { value: "500.00" } });
     fireEvent.click(within(deposit).getByRole("button", { name: "Record deposit" }));
     expect(await screen.findByText("Security deposit of $500.00 held.")).toBeTruthy();
     // A pet deposit, held apart from the security deposit.
-    const pet = panel("Record deposit", true);
+    const pet = await panel("Record deposit", true);
     expect([...(within(pet).getByLabelText("Kind of deposit") as HTMLSelectElement).options].map((o) => o.textContent))
       .toEqual(["Security deposit", "Pet deposit", "Key deposit"]);
     fireEvent.change(within(pet).getByLabelText("Kind of deposit"), { target: { value: "pet" } });
@@ -306,6 +311,34 @@ describe("LeasePage", () => {
     expect(calls[3]?.[1]).toMatchObject({ tenant_id: "t1", amount: "300.00", kind: "pet" });
   });
 
+  it("says what deposit the signed lease asked and records the rest from its card", async () => {
+    const ASKED: LeaseDetail = { ...LEASE, deposit_asked: { asked: "2000.00", held: "1200.00", to_receive: "800.00" } };
+    const fetch = server(ASKED);
+    await open(ASKED);
+
+    const asked = screen.getByTestId("deposit-asked");
+    expect(asked.textContent).toBe("The signed lease asked $2,000.00: $1,200.00 held, $800.00 still to receiveTo receive");
+    fireEvent.click(within(asked.closest("section") as HTMLElement).getByRole("button", { name: "Record deposit" }));
+    const deposit = screen.getByRole("dialog", { name: "Record deposit" });
+    // It starts from what the signed lease asked and isn't held yet.
+    expect((within(deposit).getByLabelText("Deposit received") as HTMLInputElement).value).toBe("800.00");
+    fireEvent.click(within(deposit).getByRole("button", { name: "Record deposit" }));
+    expect(await screen.findByText("Security deposit of $800.00 held.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([
+      ["/api/rent/deposits", expect.objectContaining({ tenant_id: "t1", amount: "800.00", kind: "security" })],
+    ]);
+  });
+
+  it("shows a deposit the signed lease asked as held once it all is, with nothing to record", async () => {
+    const HELD: LeaseDetail = { ...LEASE, deposit_asked: { asked: "1200.00", held: "1200.00", to_receive: "0.00" } };
+    server(HELD);
+    await open(HELD);
+
+    const asked = screen.getByTestId("deposit-asked");
+    expect(asked.textContent).toBe("The signed lease asked $1,200.00: all heldHeld");
+    expect(within(asked.closest("section") as HTMLElement).queryByRole("button", { name: "Record deposit" })).toBeNull();
+  });
+
   it("asks which deposit account a deposit goes in when the company has two, and only then", async () => {
     const base = server();
     const fetch = vi.fn((path: string, init?: RequestInit) =>
@@ -314,7 +347,7 @@ describe("LeasePage", () => {
     vi.stubGlobal("fetch", fetch);
     await open();
 
-    const deposit = panel("Record deposit", true);
+    const deposit = await panel("Record deposit", true);
     const account = await within(deposit).findByLabelText("Deposit account");
     expect([...(account as HTMLSelectElement).options].map((o) => o.textContent)).toEqual(["Deposits 1", "Deposits 2"]);
     fireEvent.change(account, { target: { value: "b3" } });
@@ -393,7 +426,7 @@ describe("LeasePage", () => {
     fireEvent.click(screen.getByRole("button", { name: "Stop it" }));
     expect(await screen.findByText("Pet rent stops 11/01/2026.")).toBeTruthy();
 
-    const form = panel("Add recurring charge", true);
+    const form = await panel("Add recurring charge", true);
     fireEvent.change(within(form).getByLabelText("Every month, a"), { target: { value: "fee" } });
     fireEvent.change(within(form).getByLabelText("Monthly amount"), { target: { value: "50.00" } });
     fireEvent.change(within(form).getByLabelText("First due on"), { target: { value: "2026-11-01" } });
@@ -418,7 +451,7 @@ describe("LeasePage", () => {
     expect(screen.getByRole("list", { name: "Rent changes, Unit 1" }).textContent).toBe(
       "From 12/01/2026: $1,575.00 a month (notice by mail on 10/15/2026)",
     );
-    const form = panel("Change rent", true);
+    const form = await panel("Change rent", true);
     // A month-to-month lease names no lease term.
     expect(within(form).queryByLabelText("The lease term that allows it")).toBeNull();
     fireEvent.change(within(form).getByLabelText("New monthly rent"), { target: { value: "1600.00" } });
@@ -446,7 +479,7 @@ describe("LeasePage", () => {
     expect(screen.getByRole("list", { name: "Rent due day, Unit 1" }).textContent).toBe(
       "From 09/01/2026: due on the 5th of each month",
     );
-    const form = panel("Change rent due day", true);
+    const form = await panel("Change rent due day", true);
     expect((within(form).getByLabelText("Rent due on day") as HTMLInputElement).value).toBe("5");
     fireEvent.change(within(form).getByLabelText("Rent due on day"), { target: { value: "12" } });
     fireEvent.change(within(form).getByLabelText("From (the first of a month)"), { target: { value: "2027-01-01" } });
@@ -460,7 +493,7 @@ describe("LeasePage", () => {
       "/api/rent/leases/l1/due-day": "rent due 2026-11-01 is charged already; a new due day starts after its month",
     });
     await open();
-    const form = panel("Change rent due day", true);
+    const form = await panel("Change rent due day", true);
     fireEvent.click(within(form).getByRole("button", { name: "Change due day" }));
     expect(await within(form).findByText(
       "rent due 2026-11-01 is charged already; a new due day starts after its month",
@@ -471,7 +504,7 @@ describe("LeasePage", () => {
   it("asks a lease with an end date for the term that allows a rent change", async () => {
     server({ ...LEASE, ends_on: "2026-12-31" });
     await open();
-    expect(within(panel("Change rent", true)).getByLabelText("The lease term that allows it")).toBeTruthy();
+    expect(within(await panel("Change rent", true)).getByLabelText("The lease term that allows it")).toBeTruthy();
   });
 
   it("shows the lease's housing assistance on its summary", async () => {
@@ -493,12 +526,12 @@ describe("LeasePage", () => {
     expect(screen.getByTestId("renters-insurance").textContent).toBe(
       "Renters insurance required (at least $100,000.00 of liability): none on filenone on file",
     );
-    let form = panel("Renters insurance", true);
+    let form = await panel("Renters insurance", true);
     fireEvent.change(within(form).getByLabelText("Least liability coverage (optional)"), { target: { value: "200000.00" } });
     fireEvent.change(within(form).getByLabelText("Asked from"), { target: { value: "2026-11-01" } });
     fireEvent.click(within(form).getByRole("button", { name: "Set insurance terms" }));
     expect(await screen.findByText("Renters insurance is required from 11/01/2026.")).toBeTruthy();
-    form = panel("Renters insurance", true);
+    form = await panel("Renters insurance", true);
     fireEvent.change(within(form).getByLabelText("Insurer"), { target: { value: "Carrier A" } });
     fireEvent.change(within(form).getByLabelText("Policy number"), { target: { value: "RI-1" } });
     fireEvent.change(within(form).getByLabelText("Policy starts"), { target: { value: "2026-11-01" } });
@@ -519,7 +552,7 @@ describe("LeasePage", () => {
     server(HELD, {}, { "/api/rent/leases/l1/payments": "lease is on a payment hold" });
     await open();
     expect(screen.getByText(/On a payment hold/)).toBeTruthy();
-    const form = panel("Receive payment");
+    const form = await panel("Receive payment");
     fireEvent.change(within(form).getByLabelText("Payment received"), { target: { value: "10.00" } });
     fireEvent.click(within(form).getByRole("button", { name: "Record payment" }));
     expect(await within(form).findByText("lease is on a payment hold")).toBeTruthy();
@@ -565,13 +598,13 @@ describe("LeasePage", () => {
       "/api/rent/leases/l1/holds": { id: "h1", starts_on: "2026-10-01", reason: "Eviction filed", ends_on: null, released_by: null, allowed: 0, in_force: true },
     });
     await open();
-    const form = panel("Place payment hold", true);
+    const form = await panel("Place payment hold", true);
     fireEvent.change(within(form).getByLabelText("Hold payments from"), { target: { value: "2026-10-01" } });
     fireEvent.click(within(form).getByRole("button", { name: "Place hold" }));
     expect(await screen.findByText("On a payment hold since 10/01/2026.")).toBeTruthy();
     expect(posted(fetch)).toEqual([["/api/rent/leases/l1/holds", { starts_on: "2026-10-01", reason: "Eviction filed" }]]);
     // A lease with no hold has nothing to accept a payment past.
-    expect(within(panel("Receive payment")).queryByLabelText("Accept this payment past the payment hold")).toBeNull();
+    expect(within(await panel("Receive payment")).queryByLabelText("Accept this payment past the payment hold")).toBeNull();
   });
 
   it("says since when and why a lease is on hold, accepts one payment past it and releases it", async () => {
@@ -580,16 +613,15 @@ describe("LeasePage", () => {
     });
     await open();
     expect(screen.getByText(/Since 10\/01\/2026: Eviction filed\. A payment is refused unless you accept it past the hold\./)).toBeTruthy();
-    const pay = panel("Receive payment");
+    const pay = await panel("Receive payment");
     fireEvent.change(within(pay).getByLabelText("Payment received"), { target: { value: "700.00" } });
     fireEvent.click(within(pay).getByLabelText("Accept this payment past the payment hold"));
     fireEvent.click(within(pay).getByRole("button", { name: "Record payment" }));
     await vi.waitFor(() => expect(posted(fetch).map(([path]) => path)).toContain("/api/rent/leases/l1/payments"));
     const [, body] = posted(fetch).find(([path]) => path === "/api/rent/leases/l1/payments") ?? [];
     expect(body).toMatchObject({ amount: "700.00", past_hold: true });
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 
-    const release = panel("Release payment hold", true);
+    const release = await panel("Release payment hold", true);
     expect(within(release).getByText("On hold since 10/01/2026: Eviction filed")).toBeTruthy();
     fireEvent.change(within(release).getByLabelText("Accept payments again from"), { target: { value: "2026-10-20" } });
     fireEvent.click(within(release).getByRole("button", { name: "Release hold" }));
@@ -647,7 +679,7 @@ describe("LeasePage", () => {
   it("ends the lease from its ⋯ menu", async () => {
     const fetch = server();
     await open();
-    const dialog = panel("End lease", true);
+    const dialog = await panel("End lease", true);
     fireEvent.change(within(dialog).getByLabelText("Last day"), { target: { value: "2026-11-30" } });
     fireEvent.click(within(dialog).getByRole("button", { name: "End lease" }));
     expect(await screen.findByText("The lease ends on 11/30/2026.")).toBeTruthy();

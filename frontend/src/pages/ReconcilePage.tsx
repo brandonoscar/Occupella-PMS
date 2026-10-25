@@ -1,3 +1,4 @@
+import { OnlinePaymentsWaiting } from "./OnlinePaymentsCards";
 import { Landmark } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Me } from "../api";
@@ -20,7 +21,9 @@ import { SidePanel } from "../components/SidePanel";
 import { CompanyFeesForm } from "./CompanyFeesForm";
 import { BreakdownTab, DepositsTab, RegisterTab } from "./BankAccountTabs";
 import { Tabs } from "../components/Tabs";
-import type { BankBooks, OpenItem, OpenLine, OpenTransfer, Worksheet } from "../reconcile";
+import type { BankBooks, BillSuggestion, OpenItem, OpenLine, OpenTransfer, Worksheet } from "../reconcile";
+import { suggestionQuestion } from "../reconcile";
+import { useConfirm } from "../components/Confirm";
 import {
   approver,
   byDay,
@@ -78,6 +81,7 @@ export function BankingPage({ me }: { me: Me }) {
         <Button variant="secondary" onClick={() => setAdding(true)}>Add bank account</Button>
       } />
       <Said>{said}</Said>
+      <OnlinePaymentsWaiting refresh={runs} />
       {transfer === null && <Notice tone="error">{refused}</Notice>}
       {banks === null ? (
         <Notice tone={error ? "error" : "info"}>{error || "Loading"}</Notice>
@@ -258,6 +262,7 @@ export function ReconcilePage({ me, id }: { me: Me; id: string }) {
                 {sheet.opening && <OpeningCard bank={bank} sheet={sheet} refresh={refresh} />}
                 <WorksheetCard me={me} bank={bank} sheet={sheet} through={through}
                   setThrough={setThrough} refresh={refresh} />
+                <BillSuggestionsCard bank={bank} sheet={sheet} refresh={refresh} />
                 <MatchCard bank={bank} sheet={sheet} refresh={refresh} />
                 <ApprovedCard bank={bank} />
               </div>
@@ -322,8 +327,11 @@ function StatementsCard({ bank, refresh }: BankProps) {
             opening_balance: opening || null,
             closing_balance: closing || null,
           };
-          const done = (made: { lines: number; first_day: string; last_day: string }) =>
-            `Imported ${made.lines} line${made.lines === 1 ? "" : "s"}, ${usDate(made.first_day)} to ${usDate(made.last_day)}.`;
+          const done = (made: { lines: number; first_day: string; last_day: string; checks_matched: number }) =>
+            `Imported ${made.lines} line${made.lines === 1 ? "" : "s"}, ${usDate(made.first_day)} to ${usDate(made.last_day)}.`
+            + (made.checks_matched > 0
+              ? ` ${made.checks_matched} check${made.checks_matched === 1 ? "" : "s"} matched to bill payments by number and amount.`
+              : "");
           if (await record("/api/reconcile/statements", body, done)) {
             setFile(null);
             setFirstDay("");
@@ -491,6 +499,69 @@ function WorksheetCard({
   );
 }
 
+// What the bank lines no match holds may be among the bills (ADR 0010): a payment recorded already
+// of the line's amount, or a bill ready to pay with exactly that much left. Nothing happens until
+// staff confirm one; a check whose number and amount matched was matched when the statement came in.
+function BillSuggestionsCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
+  const { said, error, record } = useRecord(refresh);
+  const { ask, prompt } = useConfirm();
+  const [found, setFound] = useState<BillSuggestion[]>([]);
+  useEffect(() => {
+    const run = latest();
+    api.get<BillSuggestion[]>(`/api/reconcile/${bank.id}/bill-suggestions`)
+      .then(run.keep(setFound)).catch(run.keep(() => setFound([])));
+    return run.stop;
+  }, [bank.id, sheet]);
+  if (found.length === 0 && !said && !error) return null;
+  return (
+    <Card title="Bank lines that look like bills">
+      {found.length > 0 && (
+        <Wide>
+          <table className="w-full text-base" aria-label="Bank lines that look like bills">
+            <thead>
+              <tr>
+                <th className="text-left">Bank line</th>
+                <th className="text-right">Amount</th>
+                <th className="text-left">Looks like</th>
+                <th><span className="sr-only">Confirm</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {found.map((s) => (
+                <tr key={`${s.line.id}-${s.bill_id}-${s.transfer_id ?? ""}`}>
+                  <td>{usDate(s.line.posted_on)} {s.line.description}</td>
+                  <td className="text-right">{money(s.amount)}</td>
+                  <td>
+                    <GoLink href={`/bills/${s.bill_id}`} className="font-medium text-iris hover:text-iris-hover hover:underline">
+                      {s.vendor} {s.reference}
+                    </GoLink>
+                    , {s.owner}, {s.property}{s.kind === "match" ? " (payment recorded)" : " (not paid yet)"}
+                  </td>
+                  <td className="text-right">
+                    <Button variant="secondary" size="sm" onClick={() => ask(suggestionQuestion(s), () =>
+                      record(`/api/reconcile/${bank.id}/bill-suggestions`,
+                        { line_id: s.line.id, bill_id: s.bill_id, transfer_id: s.transfer_id },
+                        () => (s.kind === "match" ? `Matched to ${s.vendor} ${s.reference}.` : `${s.vendor} ${s.reference} is paid and matched.`)),
+                    s.kind === "match" ? "Match" : "Record paid")}>
+                      {s.kind === "match" ? "Match" : "Record paid"}
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </Wide>
+      )}
+      <p className="mt-3 text-sm text-ink-subtle">
+        Nothing is recorded until you confirm one. Record paid takes the bill's money from its owner's balance.
+      </p>
+      <Said>{said}</Said>
+      <Notice tone="error">{error}</Notice>
+      {prompt}
+    </Card>
+  );
+}
+
 function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
   const { said, error, record } = useRecord(refresh);
   const [lines, setLines] = useState<string[]>([]);
@@ -511,7 +582,8 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
           Match the sure ones
         </Button>
         <span className="text-sm text-ink-subtle">
-          Pairs a line with the one transfer of its amount within a week, when there is no other.
+          Pairs a check with the bill payments recorded under its number and amount, then a line with
+          the one transfer of its amount within a week, when there is no other. No money moves.
         </span>
       </div>
       <div className={`grid gap-6 ${sheet.open_items.length > 0 ? "md:grid-cols-3" : "md:grid-cols-2"}`}>

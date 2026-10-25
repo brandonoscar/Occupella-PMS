@@ -8,14 +8,16 @@ describe("reports", () => {
     expect(new Set(REPORTS.map((r) => r.name)).size).toBe(REPORTS.length);
     expect(REPORTS.every((r) => GROUPS.includes(r.group))).toBe(true);
     expect(REPORTS.filter((r) => r.group === "Financial").map((r) => r.label)).toEqual([
-      "Balance sheet", "Income statement", "Income statement, accrual basis", "Cash flow", "Trial balance",
-      "General ledger", "Security deposits",
+      "Balance sheet", "Income statement", "Income statement, accrual basis", "Income statement, all owners",
+      "Cash flow", "Trial balance", "General ledger", "Security deposits", "Deposit interest",
     ]);
+    expect(reportSpec("deposit_interest")?.byProperty).toBe(true);
     expect(reportSpec("vendor_payments")?.label).toBe("1099 summary");
     expect(REPORTS.filter((r) => r.group === "Compliance").map((r) => r.label)).toEqual([
-      "Trust account signers", "Housing assistance compliance", "Audit log",
+      "Trust account signers", "Housing assistance compliance", "Tax credit compliance", "Audit log",
     ]);
     expect(reportSpec("assistance_compliance")?.byProperty).toBe(true);
+    expect(reportSpec("tax_credit_compliance")?.byProperty).toBe(true);
     expect(reportSpec("nope")).toBeUndefined();
   });
 
@@ -40,6 +42,10 @@ describe("reports", () => {
       "o1", "2026-03-01T00:00:00Z", "2026-03-01T00:00:00Z",
     ]);
     expect(reportArgs(reportSpec("income_statement")!, { ...filters, owner: "" })).toBeNull();
+    // Across every owner, it takes no owner (q108).
+    expect(reportArgs(reportSpec("income_statement_all_owners")!, { ...filters, owner: "" })).toEqual([
+      "2026-03-01", "2026-03-10",
+    ]);
   });
 
   it("links the preview and each export, narrowed only when the report is by property", () => {

@@ -193,6 +193,7 @@ TABLES = {
     # A lease's rent due day from a month: staff record it with an insert (migration 0081).
     "trust_rent_due_days": {"SELECT", "INSERT"},
     "trust_management_fee_settings": {"SELECT", "INSERT"},
+    "trust_prepaid_rent_settings": {"SELECT", "INSERT"},
     "trust_owner_fees": {"SELECT"},  # written only by trust_take_owner_fee
     # One invoice shared across properties: staff enter it and its parts with inserts, and a
     # markup on a bill too; the markup taken is written only by trust_set_aside_bill
@@ -212,6 +213,10 @@ TABLES = {
     "trust_rent_assistance": {"SELECT", "INSERT"},
     "trust_assistance_charges": {"SELECT", "INSERT"},
     "trust_assistance_payments": {"SELECT"},
+    # An authority's late fee terms, inserted by staff; its returned payments, written only by
+    # trust_reverse_assistance_payment (migration 0116).
+    "trust_authority_late_fees": {"SELECT", "INSERT"},
+    "trust_assistance_payment_reversals": {"SELECT"},
     # Utility billing (migration 0096): staff record units' square feet, a property's plans and
     # which utilities a lease is billed for; bills and their shares are written only by
     # trust_bill_back_utility, with the lease charges they make.
@@ -251,6 +256,48 @@ TABLES = {
     # A property's street address and where it is (migration 0109); the AI reads both.
     "trust_property_addresses": {"SELECT", "INSERT"},
     "trust_property_locations": {"SELECT", "INSERT"},
+    # A bank's or lockbox's payment files (migration 0118): what each line says, and the payment
+    # it became or why staff set it aside. The money moves through rent.record_payment.
+    "trust_payment_files": {"SELECT", "INSERT"},
+    "trust_payment_file_lines": {"SELECT", "INSERT"},
+    "trust_payment_file_postings": {"SELECT", "INSERT"},
+    "trust_payment_file_skips": {"SELECT", "INSERT"},
+    # The company's notice templates and the notices made from them (migration 0119).
+    "trust_notice_templates": {"SELECT", "INSERT"},
+    "trust_notice_template_versions": {"SELECT", "INSERT"},
+    "trust_notice_template_removals": {"SELECT", "INSERT"},
+    "trust_notices": {"SELECT", "INSERT"},
+    # A receipt for a fee a deposit keeps: one of the lease's documents linked to the fee
+    # (migration 0120). The AI reads the link, never the file.
+    "trust_deduction_receipts": {"SELECT", "INSERT"},
+    # The lease template version a lease offer's document was filled from (migration 0121).
+    "trust_lease_offer_templates": {"SELECT", "INSERT"},
+    # Interest on security deposits (migration 0122): a property's rate from a day, which staff
+    # record; payments and their lines, written only by trust_pay_deposit_interest.
+    "trust_deposit_interest_terms": {"SELECT", "INSERT"},
+    "trust_deposit_interest_payments": {"SELECT"},
+    "trust_deposit_interest_lines": {"SELECT"},
+    # Tax credit (LIHTC) terms (migration 0123): a property's income limits and a unit's
+    # designation, each from a day, which staff record.
+    "trust_tax_credit_limits": {"SELECT", "INSERT"},
+    "trust_tax_credit_units": {"SELECT", "INSERT"},
+    # Owners' accounts fallen below their reserve and back (migration 0150), read by the AI as
+    # the ledger is; what failed, told to the company's admins, which it never reads.
+    "trust_reserve_events": {"SELECT", "INSERT"},
+    "trust_admin_alerts": {"SELECT", "INSERT"},
+    # A unit's details (migration 0124): bedrooms, bathrooms, square feet and market rent, which
+    # staff record; the latest row holds.
+    "trust_unit_details": {"SELECT", "INSERT"},
+    # Online payments (migration 0150): a company's choices, each payment and what its partner
+    # reported. The AI role reads them: amounts, leases, references, no account number.
+    "trust_payment_settings": {"SELECT", "INSERT"},
+    "trust_online_payments": {"SELECT", "INSERT"},
+    "trust_online_payment_events": {"SELECT", "INSERT"},
+    "trust_autopay": {"SELECT", "INSERT"},
+    "trust_autopay_accounts": {"SELECT", "INSERT"},
+    "trust_autopay_stops": {"SELECT", "INSERT"},
+    "trust_autopay_runs": {"SELECT", "INSERT"},
+    "trust_autopay_submissions": {"SELECT", "INSERT"},
     "schema_migrations": set(),  # dbmate's record of applied migrations
 }
 # Tables trust_app updates column by column, and the only columns it may update.
@@ -272,12 +319,16 @@ COLUMN_UPDATES = {
 # their credentials, and rental applicants with their consumer report results, are no business
 # of the role behind Occupella's key.
 AI_NEVER_READS = {
+    # A notice made for a lease, as filled in (migration 0119): like a document's file.
+    "trust_notices",
     "trust_screening_criteria",
     "trust_leads",
     "trust_lead_closings",
     "trust_showings",
     "trust_showing_outcomes",
     "trust_vendor_links",
+    # A tenant's saved bank account at the payments partner: its references are what charges it.
+    "trust_autopay_accounts",
     "trust_vendor_link_revocations",
     "trust_logins",
     "trust_invites",
@@ -310,6 +361,8 @@ AI_NEVER_READS = {
     # Emails to owners and their deliveries: people's addresses (ADR 0004).
     "trust_emails",
     "trust_email_deliveries",
+    # What failed, told to an admin, maybe in the database's own words (migration 0150).
+    "trust_admin_alerts",
     # Tenants', owners' and vendors' emails, phones and mailing addresses (ADR 0005).
     "trust_contacts",
     # What staff write about people and their homes (ADR 0006).
@@ -358,6 +411,10 @@ FUNCTIONS = {
     "trust_take_monthly_management_fees(uuid,date)": {"trust_app"},
     "trust_set_aside_bill(uuid,uuid,timestamptz)": {"trust_app"},
     "trust_pay_bill(uuid,uuid,timestamptz)": {"trust_app"},
+    # A payment of a bill or a part of it, once per request key (ADR 0010).
+    "trust_pay_bill_part(uuid,uuid,numeric,text,timestamptz)": {"trust_app"},
+    # What each open bill holds of its owner's balance: the app's, for the bills pages.
+    "trust_bill_holds(uuid)": {"trust_app"},
     "trust_charge_rent_due(uuid,date)": {"trust_app"},
     "trust_rent_for_month(date,date,numeric,date)": {"trust_app"},
     "trust_rent_on(uuid,date)": {"trust_app"},
@@ -375,6 +432,9 @@ FUNCTIONS = {
     "trust_assistance_part(numeric,numeric,numeric)": {"trust_app"},
     "trust_assistance_open(uuid)": {"trust_app"},
     "trust_apply_assistance_payment(uuid,uuid,text,numeric)": {"trust_app"},
+    "trust_reverse_assistance_payment(uuid,uuid,text,text,numeric)": {"trust_app"},
+    "trust_assistance_open_at(uuid,timestamptz)": {"trust_app"},
+    "trust_assess_authority_late_fees(uuid,date)": {"trust_app"},
     # Whether a signing link still signs (migration 0097).
     "trust_signing_link_open(uuid)": {"trust_app"},
     # Utility billing (migration 0096): what holds on a day, a bill's shares (a preview writes
@@ -433,8 +493,10 @@ FUNCTIONS = {
     # Helpers the fee, draw and bill functions call as the owner: nobody else.
     "trust_lock_owner_account(uuid,text)": set(),
     "trust_agreement_on(text,date)": set(),
+    "trust_management_fee_collected(text,timestamptz,timestamptz)": set(),
     "trust_post_fee(trust_ledger_accounts,numeric,timestamptz,text)": set(),
     "trust_lock_bill(uuid,uuid)": set(),
+    "trust_pay_bill_amount(trust_bills,numeric,text,timestamptz)": set(),
     "trust_lock_journal_entry(uuid,uuid)": set(),
     "trust_unpaid_bills(text,date)": set(),
     # Helpers the bank matching functions call as the owner: nobody else.
@@ -449,6 +511,10 @@ FUNCTIONS = {
     "trust_check_bank_deposit_item()": set(),  # a trigger's: no one calls it
     "trust_check_charge_waiver()": set(),
     "trust_check_rent_due_day()": set(),
+    "trust_check_online_payment_event()": set(),  # a trigger's: no one calls it
+    "trust_check_autopay()": set(),  # a trigger's: no one calls it
+    "trust_check_autopay_run()": set(),  # a trigger's: no one calls it
+    "trust_lock_autopay_stop()": set(),  # a trigger's: no one calls it
     "trust_check_bill_reference()": set(),  # a trigger's: no one calls it
     "trust_check_shared_bill()": set(),
     "trust_check_ownership_share_line()": set(),
@@ -469,9 +535,29 @@ FUNCTIONS = {
     "trust_check_tenant_login()": set(),
     "trust_refuse_closed_year()": set(),
     "trust_check_history_line()": set(),
+    "trust_check_reserve_event()": set(),
     "trust_check_assistance_record()": set(),
     "trust_check_decision_override()": set(),
     "trust_fill_bill_markup()": set(),
+    "trust_check_payment_file_line()": set(),
+    "trust_check_payment_file_lines()": set(),
+    "trust_check_payment_file_outcome()": set(),
+    "trust_check_payment_file_posting()": set(),
+    "trust_check_notice_template_version()": set(),
+    "trust_lock_notice_templates()": set(),
+    "trust_check_deduction_receipt()": set(),
+    "trust_check_template_use()": set(),
+    # Deposit interest (migration 0122): what it comes to, and paying it, for the app; the AI
+    # reads it through the report.
+    "trust_deposit_interest_rate(uuid,date)": {"trust_app"},
+    "trust_deposit_interest_on(text,uuid,date,date)": {"trust_app"},
+    "trust_deposit_interest_from(uuid)": {"trust_app"},
+    "trust_deposit_interest_due(uuid,date,date)": {"trust_app"},
+    "trust_pay_deposit_interest(uuid,uuid,date,text,text,text,timestamptz)": {"trust_app"},
+    # Tax credit limits (migration 0123), for the app; the AI reads them through the report.
+    "trust_tax_credit_unit_on(uuid,date)": {"trust_app"},
+    "trust_tax_credit_income_limit(uuid,date,integer,integer)": {"trust_app"},
+    "trust_tax_credit_rent_limit(uuid,date,integer,integer)": {"trust_app"},
     # Reports read trust records, so only the app and the AI; they run with the caller's own
     # read grants.
     "trust_report_three_way_reconciliation(uuid,uuid)": {"trust_app", "trust_ai_agent"},
@@ -501,12 +587,15 @@ FUNCTIONS = {
     "trust_report_owner_year_end(uuid,uuid,integer)": {"trust_app", "trust_ai_agent"},
     "trust_report_income_statement(uuid,uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_income_statement_accrual(uuid,uuid,date,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_income_statement_all_owners(uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_owner_balance_sheet(uuid,uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_balance_sheet(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_budget_vs_actual(uuid,uuid,date,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_vendor_insurance(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_trust_account_signers(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_report_renters_insurance(uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_deposit_interest(uuid,date)": {"trust_app", "trust_ai_agent"},
+    "trust_report_tax_credit_compliance(uuid,date)": {"trust_app", "trust_ai_agent"},
     "trust_is_archived(uuid,uuid,uuid,uuid,uuid)": {"trust_app"},
     "trust_group_properties(uuid)": {"trust_app"},
     "trust_run_rent(uuid,date,date)": {"trust_app"},
@@ -606,6 +695,7 @@ SECURITY_DEFINER = {
     "trust_end_lease(uuid,uuid,date)",
     "trust_apply_payment(uuid,uuid,text,numeric)",
     "trust_apply_assistance_payment(uuid,uuid,text,numeric)",  # an authority's payment (0095)
+    "trust_reverse_assistance_payment(uuid,uuid,text,text,numeric)",  # and its bounce (0116)
     "trust_bill_back_utility(uuid,uuid,text,date,date,numeric,date,text,numeric,jsonb,uuid)",
     "trust_reverse_payment(uuid,uuid,text,text,numeric)",
     "trust_post_management_fee(uuid,text,date,date,timestamptz)",
@@ -615,6 +705,8 @@ SECURITY_DEFINER = {
     "trust_take_owner_fee(uuid,text,text,numeric,text,text,timestamptz)",
     "trust_set_aside_bill(uuid,uuid,timestamptz)",
     "trust_pay_bill(uuid,uuid,timestamptz)",
+    "trust_pay_bill_part(uuid,uuid,numeric,text,timestamptz)",
+    "trust_pay_bill_amount(trust_bills,numeric,text,timestamptz)",
     "trust_assess_late_fees(uuid,date)",
     "trust_charge_nsf_fee(uuid,text)",
     "trust_post_opening_balances(uuid,uuid,date,jsonb,numeric,text)",
@@ -626,6 +718,7 @@ SECURITY_DEFINER = {
     "trust_prepare_bank_reconciliation(uuid,uuid,date)",
     "trust_approve_bank_reconciliation(uuid,uuid)",
     "trust_return_deposit(uuid,uuid,text,text,timestamptz)",
+    "trust_pay_deposit_interest(uuid,uuid,date,text,text,text,timestamptz)",
     "trust_remove_lease_tenant(uuid,uuid,uuid,date,uuid)",
     "trust_transfer_lease(uuid,uuid,uuid,date,date,numeric,text,date)",
     "trust_close_year(uuid,integer)",
@@ -650,6 +743,12 @@ SECURITY_DEFINER = {
     # Reads households' certifications for the AI role, which never reads them, and returns only
     # days and where each stands, never income or household size (migration 0108).
     "trust_report_assistance_compliance(uuid,date)",
+    # Works out each lease's deposit interest for the AI role with functions only the app calls
+    # (migration 0122).
+    "trust_report_deposit_interest(uuid,date)",
+    # Reads households' certifications for the AI role, which never reads them, and prints words,
+    # limits and rents, never income or household size (migration 0123).
+    "trust_report_tax_credit_compliance(uuid,date)",
 }
 
 

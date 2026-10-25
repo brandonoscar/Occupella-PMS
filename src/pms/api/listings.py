@@ -26,7 +26,7 @@ from fastapi import APIRouter, HTTPException, Response
 from pydantic import BaseModel, StringConstraints
 
 from pms import exports
-from pms.api import scope
+from pms.api import scope, unit_details
 from pms.api.deps import Conn, Staff
 from pms.api.rentals import Page, Paged, PerPage
 
@@ -56,6 +56,10 @@ class PublicListing(BaseModel):
     listed_at: datetime
     # The unit's listing photos, oldest first (migration 0087).
     photos: list[UUID]
+    # What the unit has (migration 0124); its market rent stays with staff.
+    bedrooms: int | None
+    bathrooms: str | None
+    square_feet: int | None
 
 
 class Vacancies(BaseModel):
@@ -85,6 +89,8 @@ class Vacancy(BaseModel):
     days_listed: int | None
     # The unit's listing photos (migration 0087).
     photos: int
+    # Its bedrooms, bathrooms, square feet and market rent (migration 0124).
+    details: unit_details.UnitDetails
 
 
 class ListingPhoto(BaseModel):
@@ -120,7 +126,7 @@ SELECT u.id, p.id, p.display_name, u.display_name,
        (SELECT count(*) FROM trust_documents AS d
         WHERE d.unit_id = u.id AND d.kind = 'listing_photo'
           AND NOT EXISTS (SELECT 1 FROM trust_document_removals AS r WHERE r.document_id = d.id)),
-       count(*) OVER ()
+       {unit_details.COLUMNS}, count(*) OVER ()
 FROM units AS u
 JOIN trust_properties AS p ON p.id = u.property_id
 LEFT JOIN LATERAL (
@@ -133,6 +139,7 @@ LEFT JOIN LATERAL (
     ORDER BY s.id IS NULL, l.opened_at DESC, l.id
     LIMIT 1
 ) AS k ON true
+{unit_details.LATEST}
 WHERE (u.free_on <= %(until)s OR k.id IS NOT NULL) AND {scope.within("p.id")}
 ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", u.id
 LIMIT %(limit)s OFFSET %(offset)s
@@ -201,6 +208,7 @@ def staff_vacancies(
                 if listed_at is None
                 else (day - listed_at.astimezone(UTC).date()).days + 1,
                 photos=photos,
+                details=unit_details.shown(beds, half_baths, size, market),
             )
             for (
                 unit_id,
@@ -216,6 +224,10 @@ def staff_vacancies(
                 description,
                 listed_at,
                 photos,
+                beds,
+                half_baths,
+                size,
+                market,
                 _,
             ) in rows
         ],
@@ -284,12 +296,14 @@ def vacancies(conn: Conn, pmc_id: UUID) -> Vacancies:
     if pmc is None:
         raise HTTPException(404, "no such PMC")
     rows = conn.execute(
-        "SELECT s.id, p.display_name, u.display_name, l.monthly_rent, s.description, s.listed_at,"  # noqa: S608
+        "SELECT s.id, u.id, p.display_name, u.display_name, l.monthly_rent, s.description,"  # noqa: S608
+        " s.listed_at,"
         f" array({PHOTOS.format(unit='u.id')})"
         f" FROM {LISTED}"
         ' ORDER BY p.display_name COLLATE "C", u.display_name COLLATE "C", s.id',
         (pmc_id,),
     ).fetchall()
+    details = unit_details.details_of(conn, [row[1] for row in rows])
     return Vacancies(
         pmc=pmc[0],
         listings=[
@@ -301,8 +315,11 @@ def vacancies(conn: Conn, pmc_id: UUID) -> Vacancies:
                 description=text,
                 listed_at=at,
                 photos=photos,
+                bedrooms=details[unit_id].bedrooms,
+                bathrooms=details[unit_id].bathrooms,
+                square_feet=details[unit_id].square_feet,
             )
-            for i, prop, unit, rent, text, at, photos in rows
+            for i, unit_id, prop, unit, rent, text, at, photos in rows
         ],
     )
 

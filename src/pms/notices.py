@@ -5,15 +5,22 @@ holding; none at all until it does):
 - a rent reminder to each tenant of a lease in effect on the next first of the month, from some
   days before it (once per tenant, lease and due day);
 - a late notice to each tenant of a lease a late fee was just charged to (once per tenant and fee);
-- last month's statement in brief to each owner with a property account, from a day of the month
-  (once per owner and month);
+- last month's statement to each owner with a property account, from a day of the month, in
+  brief with the whole statement attached as a PDF (once per owner and month);
 - a work order to its vendor when it is assigned to them or their visit is scheduled (once per
   step);
 - the adverse action notice to each applicant of an application declined or approved on
   conditions on a screening, when the decision is recorded (once per applicant and application);
+- a receipt to each tenant of a lease a payment is recorded to, with the receipt attached as a PDF
+  (migration 0111, the founder's review q029; once per tenant and payment);
 - an emergency a tenant files, to each staff member on call (migration 0084; once per request and
   staff member, to their login's email). No setting turns it on: the company's list of who is
-  on call does.
+  on call does;
+- an owner's property account fallen below the reserve its management agreement keeps, to the
+  owner (the founder, 2026-10-22, q054; once per drop below it, found by the nightly run);
+- what failed, to each of the company's admins at their login's email: its nightly run, or an
+  email given up on (q149; src/pms/email.py's write_admin_alert, once per admin, kind and day).
+  No setting: admins hear of both.
 
 Each is written to the outbox in the transaction that causes it (src/pms/email.py), and only while
 the server sends email: none piles up to go out late on a server that sends none. A lease under a
@@ -26,6 +33,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
+from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
 
@@ -45,6 +53,9 @@ class Settings:
     owner_statement_day: int | None = None
     work_order_notices: bool = False
     adverse_action_notices: bool = False
+    payment_receipts: bool = False
+    # An owner hears when one of their property accounts falls below its reserve.
+    reserve_alerts: bool = False
 
 
 FIELDS = (
@@ -53,6 +64,8 @@ FIELDS = (
     "owner_statement_day",
     "work_order_notices",
     "adverse_action_notices",
+    "payment_receipts",
+    "reserve_alerts",
 )
 
 
@@ -347,11 +360,10 @@ def write_owner_statements(
             if item in TOTALS
         }
         month = f"{period:%B %Y}"
-        more = (
-            f"Sign in to see each property's lines and download the whole statement:\n"
-            f"{public_url.rstrip('/')}/\n\n"
+        more = "The whole statement, each property's lines, is attached as a PDF.\n\n" + (
+            f"Sign in to see it on screen:\n{public_url.rstrip('/')}/\n\n"
             if can_sign_in(conn, pmc_id, "owner", owner)
-            else f"Ask {company} for the whole statement.\n\n"
+            else ""
         )
         body = (
             f"Hello {name},\n\n"
@@ -377,6 +389,212 @@ def write_owner_statements(
     return written
 
 
+# --- an owner's account below its reserve --------------------------------------------------------
+
+# Each owner's property account of a property and owner not archived: what it holds today, the
+# reserve of the agreement in force on the day (0 with none) and its latest drop or return.
+RESERVES = """
+SELECT a.ledger_account_id, o.id, o.display_name, p.display_name, l.balance,
+       coalesce(g.reserve, 0), e.number, e.kind
+FROM trust_ledger_accounts AS a
+JOIN trust_owners AS o ON o.id = a.owner_id
+JOIN trust_properties AS p ON p.id = a.property_id
+JOIN pgledger_accounts AS l ON l.id = a.ledger_account_id
+LEFT JOIN LATERAL (
+    SELECT g.reserve FROM trust_management_agreements AS g
+    WHERE g.ledger_account_id = a.ledger_account_id AND g.starts_on <= %(day)s
+    ORDER BY g.starts_on DESC LIMIT 1
+) AS g ON true
+LEFT JOIN LATERAL (
+    SELECT e.number, e.kind, e.found_on FROM trust_reserve_events AS e
+    WHERE e.ledger_account_id = a.ledger_account_id
+    ORDER BY e.number DESC LIMIT 1
+) AS e ON true
+WHERE a.pmc_id = %(pmc)s AND a.kind = 'owner_property'
+  AND NOT trust_is_archived(NULL, NULL, NULL, o.id)
+  AND NOT trust_is_archived(p.id, NULL)
+  -- A look on a day before the last one changes nothing.
+  AND (e.found_on IS NULL OR e.found_on <= %(day)s)
+ORDER BY o.display_name COLLATE "C", p.display_name COLLATE "C", a.ledger_account_id
+"""
+
+
+def write_reserve_alerts(
+    conn: psycopg.Connection[Any], pmc_id: UUID, day: date, public_url: str
+) -> int:
+    """Records each owner's property account that fell below its reserve since the last look, and
+    each that came back to it; tells the owner of each drop, once. In the caller's transaction:
+    two runs at once record a drop once (its number is unique), and the second writes nothing."""
+    company = company_of(conn, pmc_id)
+    written = 0
+    for account, owner, name, prop, held, reserve, number, kind in conn.execute(
+        RESERVES, {"pmc": pmc_id, "day": day}
+    ).fetchall():
+        below = held < reserve
+        if below == (kind == "below"):
+            continue  # nothing changed since the last look
+        made = conn.execute(
+            "INSERT INTO trust_reserve_events"
+            " (pmc_id, ledger_account_id, number, kind, found_on, balance, reserve)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s)"
+            " ON CONFLICT (ledger_account_id, number) DO NOTHING RETURNING id",
+            (pmc_id, account, (number or 0) + 1, "below" if below else "back", day, held, reserve),
+        ).fetchone()
+        if made is None or not below:
+            continue
+        to = address(conn, pmc_id, "owner", owner)
+        if to is None:
+            continue
+        portal = (
+            f"See the account on your statement in the owner portal:\n{public_url.rstrip('/')}/\n\n"
+            if can_sign_in(conn, pmc_id, "owner", owner)
+            else ""
+        )
+        body = (
+            f"Hello {name},\n\n"
+            f"Your account for {prop} holds {email.dollars(held)} as of {us(day)}, below the"
+            f" reserve of {email.dollars(reserve)} your management agreement keeps in it for"
+            f" bills.\n"
+            f"{email.dollars(reserve - held)} would bring it back up. Send it to {company} by"
+            f" check or bank transfer; it shows on your statement once recorded.\n\n"
+            f"{portal}{company}\n"
+        )
+        written += _insert(
+            conn,
+            pmc_id,
+            "reserve_low",
+            {
+                "owner_id": owner,
+                "reserve_event_id": made[0],
+                "to_address": to,
+                "subject": one_line(f"{prop}: your account is below its reserve")[:200],
+                "body": body,
+            },
+        )
+    return written
+
+
+# --- payment receipts ----------------------------------------------------------------------
+
+PAYERS = """
+SELECT lt.tenant_id, t.display_name, p.display_name, u.display_name
+FROM trust_leases AS l
+JOIN trust_units AS u ON u.id = l.unit_id
+JOIN trust_properties AS p ON p.id = u.property_id
+JOIN trust_lease_tenants AS lt ON lt.lease_id = l.id
+JOIN trust_tenants AS t ON t.id = lt.tenant_id
+WHERE l.pmc_id = %(pmc)s AND l.id = %(lease)s
+  -- Not a tenant who left the lease before the payment came (others staying on it).
+  AND NOT EXISTS (SELECT 1 FROM trust_lease_departures AS d
+                  WHERE d.lease_id = l.id AND d.tenant_id = lt.tenant_id AND d.left_on < %(day)s)
+ORDER BY t.display_name COLLATE "C", lt.tenant_id
+"""
+
+
+def write_payment_receipts(
+    conn: psycopg.Connection[Any],
+    pmc_id: UUID,
+    lease_id: UUID,
+    transfer_id: str,
+    amount: Decimal,
+    received_on: date,
+) -> int:
+    """Sends each tenant of the lease the receipt of a payment recorded to it, as the company's
+    settings ask; in the caller's transaction, once per tenant and payment. The receipt's PDF is
+    made when the email is sent (src/pms/attachments.py)."""
+    if not settings_of(conn, pmc_id).payment_receipts:
+        return 0
+    company = company_of(conn, pmc_id)
+    written = 0
+    rows = conn.execute(PAYERS, {"pmc": pmc_id, "lease": lease_id, "day": received_on})
+    for tenant, name, prop, unit in rows.fetchall():
+        to = address(conn, pmc_id, "tenant", tenant)
+        if to is None:
+            continue
+        portal = (
+            "It is in the tenant portal too, with your lease's payments.\n\n"
+            if can_sign_in(conn, pmc_id, "tenant", tenant)
+            else ""
+        )
+        body = (
+            f"Hello {name},\n\n"
+            f"{company} received a payment of {email.dollars(amount)} on {us(received_on)} for "
+            f"{prop}, {unit}. Its receipt is attached as a PDF.\n\n{portal}{company}\n"
+        )
+        written += _insert(
+            conn,
+            pmc_id,
+            "payment_receipt",
+            {
+                "tenant_id": tenant,
+                "lease_id": lease_id,
+                "transfer_id": transfer_id,
+                "to_address": to,
+                "subject": one_line(
+                    f"Your receipt: {email.dollars(amount)} received {us(received_on)}"
+                ),
+                "body": body,
+            },
+        )
+    return written
+
+
+# A lease's tenants, each with the home the statement is about (migration 0120).
+STATEMENT_TO = """
+SELECT lt.tenant_id, t.display_name, p.display_name, u.display_name
+FROM trust_lease_tenants AS lt
+JOIN trust_tenants AS t ON t.id = lt.tenant_id
+JOIN trust_leases AS l ON l.id = lt.lease_id
+JOIN trust_units AS u ON u.id = l.unit_id
+JOIN trust_properties AS p ON p.id = u.property_id
+WHERE l.pmc_id = %(pmc)s AND l.id = %(lease)s
+ORDER BY t.display_name COLLATE "C", lt.tenant_id
+"""
+
+
+def write_deposit_statements(
+    conn: psycopg.Connection[Any], pmc_id: UUID, lease_id: UUID
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """Writes each tenant of a lease whose deposit was returned their deposit statement, when
+    staff send it (again after a receipt comes in); its PDF is made when the email is sent
+    (src/pms/attachments.py). Returns who was written to, at which address, and who has no
+    email on file."""
+    company = company_of(conn, pmc_id)
+    emailed: list[tuple[str, str]] = []
+    without: list[str] = []
+    for tenant, name, prop, unit in conn.execute(
+        STATEMENT_TO, {"pmc": pmc_id, "lease": lease_id}
+    ).fetchall():
+        to = address(conn, pmc_id, "tenant", tenant)
+        if to is None:
+            without.append(name)
+            continue
+        portal = (
+            "It is in the tenant portal too.\n\n"
+            if can_sign_in(conn, pmc_id, "tenant", tenant)
+            else ""
+        )
+        _insert(
+            conn,
+            pmc_id,
+            "deposit_statement",
+            {
+                "tenant_id": tenant,
+                "lease_id": lease_id,
+                "to_address": to,
+                "subject": one_line(f"Your security deposit statement: {prop}, {unit}"),
+                "body": (
+                    f"Hello {name},\n\n"
+                    f"Your security deposit statement for {prop}, {unit} is attached as a PDF: "
+                    "what your deposit came to, what was kept and why, what came back to you, "
+                    f"and the receipts and move-out photos it names.\n\n{portal}{company}\n"
+                ),
+            },
+        )
+        emailed.append((name, to))
+    return emailed, without
+
+
 # --- what the nightly run (and an admin's run by hand) writes --------------------------------
 
 
@@ -385,13 +603,14 @@ class Written:
     rent_reminders: int = 0
     late_notices: int = 0
     owner_statements: int = 0
+    reserve_alerts: int = 0
 
 
 def write_scheduled(
     conn: psycopg.Connection[Any], pmc_id: UUID, day: date, public_url: str
 ) -> Written:
-    """The rent reminders, late notices and owner statements due on a day, as the company's
-    settings ask; in the caller's transaction, after its rent run. Each once."""
+    """The rent reminders, late notices, owner statements and reserve alerts due on a day, as the
+    company's settings ask; in the caller's transaction, after its rent run. Each once."""
     wanted = settings_of(conn, pmc_id)
     return Written(
         rent_reminders=0
@@ -403,6 +622,9 @@ def write_scheduled(
         owner_statements=0
         if wanted.owner_statement_day is None
         else write_owner_statements(conn, pmc_id, day, wanted.owner_statement_day, public_url),
+        reserve_alerts=write_reserve_alerts(conn, pmc_id, day, public_url)
+        if wanted.reserve_alerts
+        else 0,
     )
 
 
@@ -516,14 +738,6 @@ SELECT DISTINCT ON (o.staff_id) o.staff_id, o.on_call
 FROM trust_on_call_staff AS o WHERE o.pmc_id = %s
 ORDER BY o.staff_id, o.created_at DESC, o.id DESC
 """
-# A staff member's active login: accepted (a password set) and not disabled.
-STAFF_LOGIN = """
-SELECT s.display_name, l.email
-FROM trust_staff AS s
-JOIN trust_logins AS l ON l.pmc_id = s.pmc_id AND l.kind = 'staff' AND l.staff_id = s.id
-JOIN trust_login_secrets AS x ON x.login_id = l.id
-WHERE s.pmc_id = %s AND s.id = %s AND l.disabled_at IS NULL
-"""
 EMERGENCY = """
 SELECT r.summary, r.entry_allowed, p.display_name, u.display_name, t.display_name
 FROM trust_maintenance_requests AS r
@@ -552,7 +766,7 @@ def write_emergency(
     company = company_of(conn, pmc_id)
     written = 0
     for staff in on_call(conn, pmc_id):
-        login = conn.execute(STAFF_LOGIN, (pmc_id, staff)).fetchone()
+        login = conn.execute(email.STAFF_LOGIN, (pmc_id, staff)).fetchone()
         if login is None:
             continue  # no login to email
         name, address = login

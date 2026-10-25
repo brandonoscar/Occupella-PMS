@@ -150,7 +150,15 @@ def test_an_admin_runs_rent_by_hand_and_it_is_listed_with_the_nightly_runs(
     runs = ok(client.get("/api/rent/runs"))
 
     assert by_hand["rents"] == 1 and by_hand["recurring"] == 0
-    assert again == {"rents": 0, "recurring": 0, "late_fees": 0, "emails": 0}
+    assert again == {
+        "rents": 0,
+        "recurring": 0,
+        "late_fees": 0,
+        "emails": 0,
+        "authority_late_fees": 0,
+        "prepaid_used": 0,
+        "autopay": 0,
+    }
     assert [(r["due_on"], r["by"]) for r in runs] == [
         (str(FIRST), "Staff 1"),
         (str(FIRST), "Staff 1"),

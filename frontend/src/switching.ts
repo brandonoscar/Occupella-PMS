@@ -32,7 +32,11 @@ export const ROSTER: { kind: RosterKind; label: string; columns: string }[] = [
   { kind: "owners", label: "Owners", columns: `Name, ${CONTACT_COLUMNS}` },
   { kind: "vendors", label: "Vendors", columns: `Name, ${CONTACT_COLUMNS}` },
   { kind: "properties", label: "Properties and their owners", columns: "Property, Owner (and Bank account if there are several)" },
-  { kind: "units", label: "Units", columns: "Property, Unit" },
+  {
+    kind: "units",
+    label: "Units",
+    columns: "Property, Unit, and, if the old system has them, Bedrooms, Bathrooms, Square feet, Market rent",
+  },
   { kind: "tenants", label: "Tenants", columns: `Property, Tenant, ${CONTACT_COLUMNS}` },
   { kind: "leases", label: "Leases in place", columns: "Property, Unit, Tenants (separated by ;), Starts on, Ends on, Monthly rent" },
   { kind: "charges", label: "Unpaid charges", columns: "Property, Unit, Due on, Amount, Kind (rent or fee), Memo" },

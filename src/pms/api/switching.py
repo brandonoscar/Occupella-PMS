@@ -31,7 +31,7 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, StringConstraints, ValidationError
 
 from pms import email, exports, statements
-from pms.api import directory, outbox
+from pms.api import directory, outbox, unit_details
 from pms.api.deps import Conn, Staff, refusal
 
 router = APIRouter(prefix="/api/switching")
@@ -85,8 +85,12 @@ class Row:
 
 def rows(content: str, needs: tuple[str, ...]) -> list[Row]:
     """A CSV file's rows, by lower-case column name (spaces and underscores alike)."""
-    reader = csv.reader(io.StringIO(content.lstrip("\ufeff")))
-    found = [r for r in reader if any(c.strip() for c in r)]
+    # newline="": the csv module itself reads \r\n, \n and a bare \r as the end of a row.
+    reader = csv.reader(io.StringIO(content.lstrip("\ufeff"), newline=""))
+    try:
+        found = [r for r in reader if any(c.strip() for c in r)]
+    except csv.Error as bad:
+        raise Bad(f"line {reader.line_num}: this isn't CSV the PMS can read ({bad})") from None
     if not found:
         raise Bad("the file is empty")
     headers = [h.strip().lower().replace("_", " ") for h in found[0]]
@@ -304,6 +308,34 @@ def import_contact(names: Names, person: directory.Person, person_id: UUID, row:
     directory.record_contact(names.conn, names.pmc, person, person_id, details)
 
 
+# The detail columns a units file may have, each optional, and the detail each fills (migration
+# 0124). A row with any of them sets the unit's details to those, as staff saving them on the
+# unit's page does (the same again writes nothing); a row with none leaves what is on file.
+DETAIL_COLUMNS = {
+    "bedrooms": "bedrooms",
+    "bathrooms": "bathrooms",
+    "square feet": "square_feet",
+    "market rent": "market_rent",
+}
+
+
+def import_unit_details(names: Names, unit_id: UUID, row: Row) -> None:
+    given = {
+        field: row.get(column, required=False).replace(",", "").replace("$", "") or None
+        for column, field in DETAIL_COLUMNS.items()
+    }
+    if not any(given.values()):
+        return
+    try:
+        details = unit_details.NewUnitDetails.model_validate(given)
+    except ValidationError as bad:
+        error = bad.errors()[0]
+        field = str(error["loc"][0]) if error["loc"] else ""
+        column = next((c for c, f in DETAIL_COLUMNS.items() if f == field), "a detail")
+        raise Bad(f"line {row.line}: the {column} isn't one the PMS can keep") from None
+    unit_details.record_details(names.conn, names.pmc, unit_id, details)
+
+
 def import_row(names: Names, kind: str, row: Row) -> None:
     conn, pmc = names.conn, names.pmc
     if kind == "owners":
@@ -330,7 +362,7 @@ def import_row(names: Names, kind: str, row: Row) -> None:
     elif kind == "units":
         prop = names.property(row.get("property"), row.line)
         unit = row.get("unit")
-        names.counted(
+        unit_id = names.counted(
             one(
                 conn,
                 "SELECT id FROM trust_units WHERE property_id = %s AND display_name = %s",
@@ -343,6 +375,7 @@ def import_row(names: Names, kind: str, row: Row) -> None:
                 (pmc, prop, unit),
             ),
         )
+        import_unit_details(names, unit_id, row)
     elif kind == "tenants":
         prop = names.property(row.get("property"), row.line)
         import_contact(names, "tenant_id", names.tenant(prop, row.get("tenant"), add=True), row)

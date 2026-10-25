@@ -1,7 +1,8 @@
 """Staff's day at a glance (/today): late rent, bills due, months not reconciled, applications
 waiting for a decision, lease offers waiting for signatures, journal entries waiting to be
-posted, vendor insurance expired or running out, the company's earned fees still in trust, and
-trust bank accounts with no broker on file or a signer's bond running out.
+posted, vendor insurance expired or running out, the company's earned fees still in trust,
+trust bank accounts with no broker on file or a signer's bond running out, and security deposits a
+signed lease asked that are not all held yet.
 
 Read only. Each part comes from the route of the page that does that work (rent, bills,
 month-end, leasing, the journal, vendors), so the two never disagree; this only picks out what needs
@@ -18,7 +19,17 @@ from uuid import UUID
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
-from pms.api import journal, leasing, offers, payables, reconcile, rent, signers, vendors
+from pms.api import (
+    journal,
+    leasing,
+    moveout,
+    offers,
+    payables,
+    reconcile,
+    rent,
+    signers,
+    vendors,
+)
 from pms.api.deps import Conn, Staff
 
 router = APIRouter(prefix="/api/today")
@@ -69,6 +80,15 @@ class Uninsured(BaseModel):
     standing: str
 
 
+class DepositDue(BaseModel):
+    lease_id: UUID
+    property: str
+    unit: str
+    tenants: list[str]
+    asked: str  # what the signed lease offer asked
+    to_receive: str  # what is not held yet
+
+
 class Today(BaseModel):
     on: date
     late_rent: list[LateLease]
@@ -84,6 +104,11 @@ class Today(BaseModel):
     signers: list[SignerNote]
     # Leases that require renters insurance with none current on file, or below the minimum.
     renters_insurance: list[Uninsured]
+    # Leases not ended whose signed offer asked a security deposit not all held yet.
+    deposits_to_receive: list[DepositDue]
+    # Leases past their last day whose deposits are still held, with the day they are due back
+    # by the strictest deadline found (migration 0120, docs/law.md).
+    deposits_to_return: list[moveout.DueBack]
 
 
 # The leases named as the rent page names them: property, unit and every tenant on it.
@@ -130,6 +155,22 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
             oldest_due_on=min(when for when, _ in due[lease]),
         )
         for lease, prop, unit, tenants in conn.execute(LATE, (session.pmc_id, list(due)))
+    ]
+    asked = {
+        lease: d
+        for lease, d in rent.deposits_asked(conn, session.pmc_id, open_on=day).items()
+        if Decimal(d.to_receive) > 0
+    }
+    deposits = [
+        DepositDue(
+            lease_id=lease,
+            property=prop,
+            unit=unit,
+            tenants=tenants,
+            asked=asked[lease].asked,
+            to_receive=asked[lease].to_receive,
+        )
+        for lease, prop, unit, tenants in conn.execute(LATE, (session.pmc_id, list(asked)))
     ]
     unreconciled = []
     for bank in reconcile.books(session, conn):
@@ -182,6 +223,8 @@ def today(session: Staff, conn: Conn, on: Annotated[date | None, Query()] = None
         company_fees=[
             f for f in payables.held_fees(conn, session.pmc_id, day) if Decimal(f.held) > 0
         ],
+        deposits_to_receive=deposits,
+        deposits_to_return=moveout.due_back(conn, session.pmc_id, day),
         renters_insurance=[
             Uninsured(
                 lease_id=lease,

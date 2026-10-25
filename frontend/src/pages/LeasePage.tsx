@@ -9,6 +9,7 @@ import { NotesCard } from "../components/NotesCard";
 import { Notice } from "../components/Notice";
 import type { RowAction } from "../components/RowMenu";
 import { RowMenu } from "../components/RowMenu";
+import { DepositInterestForm } from "./DepositInterestForm";
 import { Said } from "../components/Said";
 import { Card, PageHeader, Shell } from "../components/Shell";
 import { SidePanel } from "../components/SidePanel";
@@ -18,6 +19,7 @@ import { day, money, usDate } from "../money";
 import { downloadHref, FORMATS } from "../reports";
 import {
   balanceDue,
+  depositAskedLine,
   depositKindsLine,
   dueDayLabel,
   dueDayLine,
@@ -30,7 +32,10 @@ import {
 import type { LeaseDetail, LeasePerson, Ledger } from "../rentals";
 import { LEASE_STATUS, LEDGER_KIND, PORTAL, rentLabel, termLabel } from "../rentals";
 import { AssistanceCard } from "./AssistanceCard";
+import { LeaseAutopayCard } from "./AutopayCards";
+import { TaxCreditLeaseCard } from "./TaxCreditCards";
 import { FilesCard } from "./FilesCard";
+import { NoticesCard } from "./NoticesCard";
 import { InsuranceForms } from "./InsuranceForms";
 import { LeasingFeeForm } from "./LeasingFeeForm";
 import { EndLeaseForm, HouseholdCards, RemoveTenantForm } from "./LeasePeople";
@@ -56,7 +61,7 @@ import { useRecord } from "./useRecord";
 
 type Panel =
   | "payment" | "charge" | "rent" | "due" | "recurring" | "insurance" | "deposit" | "leasing" | "hold"
-  | "release" | "end" | "remove" | "move";
+  | "release" | "end" | "remove" | "move" | "interest";
 const PANELS: Record<Panel, string> = {
   payment: "Receive payment",
   charge: "Enter charge",
@@ -71,6 +76,7 @@ const PANELS: Record<Panel, string> = {
   end: "End lease",
   remove: "Take a tenant off the lease",
   move: "Move to another unit",
+  interest: "Deposit interest",
 };
 type Tab = "summary" | "ledger" | "tenants" | "files" | "notes";
 const TABS: { value: Tab; label: string }[] = [
@@ -144,11 +150,13 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
     { label: "Add recurring charge", onSelect: () => setPanel("recurring") },
     { label: "Renters insurance", onSelect: () => setPanel("insurance") },
     { label: "Record deposit", onSelect: () => setPanel("deposit") },
+    { label: "Deposit interest", onSelect: () => setPanel("interest") },
     { label: "Take leasing fee", onSelect: () => setPanel("leasing") },
     open === null
       ? { label: "Place payment hold", onSelect: () => setPanel("hold") }
       : { label: "Release payment hold", onSelect: () => setPanel("release") },
     { label: "Record NSF", onSelect: () => setTab("ledger") },
+    { label: "Write a notice", onSelect: () => setTab("files") },
     { label: "Renew lease", onSelect: () => navigate(`/draft-leases?lease=${id}`) },
     ...(lease.moved_to === null ? [{ label: "Move to another unit", onSelect: () => setPanel("move") }] : []),
     { label: "End lease", onSelect: () => setPanel("end") },
@@ -210,7 +218,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
       {panel === null && <Notice tone="error">{refused}</Notice>}
       <div>
         <Tabs label="Lease" tabs={TABS} value={tab} onChange={setTab} />
-        {tab === "summary" && <Summary lease={lease} record={record} />}
+        {tab === "summary" && <Summary lease={lease} record={record} recordDeposit={() => setPanel("deposit")} />}
         {tab === "ledger" && <LedgerTab lease={lease} ledger={ledger} record={record} />}
         {tab === "tenants" && (
           <div className="flex flex-col gap-6">
@@ -223,6 +231,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
           <FilesCard kind="move_out_photo" also={["lease_document"]} aboutId={id} name={`${lease.unit}, ${lease.property}`}
             note="Its tenants download its lease documents in the portal, with the lease as signed; move-out photos stay here." />
         )}
+        {tab === "files" && <NoticesCard leaseId={id} />}
         {tab === "notes" && <NotesCard about="lease" aboutId={id} name={`${lease.unit}, ${lease.property}`} />}
       </div>
       {panel !== null && (
@@ -239,6 +248,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
           {panel === "release" && open !== null && <ReleaseForm hold={open} record={recordThenClose} />}
           {panel === "end" && <EndLeaseForm lease={lease} record={recordThenClose} />}
           {panel === "move" && <TransferForm lease={lease} record={recordThenClose} />}
+          {panel === "interest" && <DepositInterestForm lease={lease} record={recordThenClose} />}
           {panel === "remove" && leaving !== null && (
             <RemoveTenantForm lease={lease} person={leaving} record={recordThenClose} />
           )}
@@ -252,7 +262,7 @@ export function LeasePage({ me, id }: { me: Me; id: string }) {
 // Summary: the term and rent (and its changes), what is held for the tenants, what is still
 // open, the monthly charges (each stopped from its ⋯ menu), housing assistance and renters
 // insurance.
-function Summary({ lease, record }: { lease: LeaseDetail; record: Recorder }) {
+function Summary({ lease, record, recordDeposit }: { lease: LeaseDetail; record: Recorder; recordDeposit: () => void }) {
   const deposit = lease.tenants.reduce((sum, t) => sum + Number(t.deposit), 0).toFixed(2);
   const prepaid = lease.tenants.reduce((sum, t) => sum + Number(t.prepaid), 0).toFixed(2);
   const kinds = depositKindsLine(lease.tenants);
@@ -266,6 +276,19 @@ function Summary({ lease, record }: { lease: LeaseDetail; record: Recorder }) {
           {kinds && <dd className="text-sm text-ink-muted" data-testid="deposit-kinds">{kinds}</dd>}</div>
         <div><dt className="text-sm text-ink-muted">Prepaid rent</dt><dd data-testid="prepaid">{money(prepaid)}</dd></div>
       </dl>
+      {lease.deposit_asked && (
+        <Card title="Security deposit asked">
+          <p className="flex flex-wrap items-center gap-2 text-base" data-testid="deposit-asked">
+            <span>{depositAskedLine(lease.deposit_asked)}</span>
+            {Number(lease.deposit_asked.to_receive) > 0
+              ? <Badge tone="caution">To receive</Badge>
+              : <Badge tone="positive">Held</Badge>}
+          </p>
+          {Number(lease.deposit_asked.to_receive) > 0 && (
+            <div className="mt-3"><Button variant="secondary" onClick={recordDeposit}>Record deposit</Button></div>
+          )}
+        </Card>
+      )}
       {lease.rent_changes.length > 0 && (
         <Card title="Rent changes">
           <ul className="text-base" aria-label={`Rent changes, ${lease.unit}`}>
@@ -296,7 +319,9 @@ function Summary({ lease, record }: { lease: LeaseDetail; record: Recorder }) {
           </ul>
         )}
       </Card>
+      <LeaseAutopayCard leaseId={lease.id} />
       <AssistanceCard leaseId={lease.id} unit={lease.unit} />
+      <TaxCreditLeaseCard leaseId={lease.id} />
       <Card title="Renters insurance">
         {lease.renters_insurance ? (
           <p className="flex flex-wrap items-center gap-2 text-base" data-testid="renters-insurance">

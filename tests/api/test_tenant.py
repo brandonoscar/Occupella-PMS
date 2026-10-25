@@ -2,7 +2,6 @@
 they owe and what comes due, each lease's ledger and the statement of a deposit returned at
 move-out, and files maintenance requests, never anyone else's."""
 
-import csv
 import io
 import uuid
 from datetime import UTC, date, datetime, timedelta
@@ -23,6 +22,7 @@ from helpers import (
     transfer_batch,
 )
 from people import join_as, join_as_owner, join_as_staff, join_as_tenant, tenant_of
+from pypdf import PdfReader
 
 JAN_1, FEB_1 = date(2026, 1, 1), date(2026, 2, 1)
 JAN_3 = datetime(2026, 1, 3, 12, tzinfo=UTC)
@@ -110,6 +110,7 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
             ],
             "coming_due": [],
             "deposit_returned": False,
+            "deposit_asked": None,
             "renters_insurance": {
                 "required": False,
                 "minimum_liability": None,
@@ -140,6 +141,7 @@ def test_a_tenant_sees_their_leases_with_what_they_owe(client, conn, app_conn, h
             "each_month": [],  # it has ended
             "coming_due": [],
             "deposit_returned": False,
+            "deposit_asked": None,
             "renters_insurance": None,  # not in effect
             "payments": [],
             "files": [],
@@ -190,47 +192,42 @@ def moved_out(client, conn, app_conn):
     return pmc, lease
 
 
-@pytest.mark.parametrize(("fmt", "magic"), [("pdf", b"%PDF-"), ("csv", b"line,")])
-def test_a_tenant_downloads_the_statement_of_their_returned_deposit(client, moved_out, fmt, magic):
+def test_a_tenant_downloads_the_statement_of_their_returned_deposit(client, moved_out):
     _, lease = moved_out
 
     (seen,) = client.get("/api/tenant/leases").json()
-    answer = client.get(
-        f"/api/tenant/leases/{lease}/deposit-return/download", params={"format": fmt}
-    )
+    answer = client.get(f"/api/tenant/leases/{lease}/deposit-statement")
 
     assert seen["deposit_returned"] is True
     assert answer.status_code == 200
-    assert answer.content.startswith(magic)
-    assert answer.headers["content-disposition"] == f'attachment; filename="deposit-return.{fmt}"'
+    assert answer.content.startswith(b"%PDF-")
+    assert answer.headers["content-disposition"] == (
+        'attachment; filename="security-deposit-statement.pdf"'
+    )
 
 
-def test_the_deposit_statement_is_the_deposit_return_report(client, conn, moved_out):
+def test_the_deposit_statement_reads_the_deposit_return_report(client, conn, moved_out):
     pmc, lease = moved_out
     direct = conn.execute(
-        "SELECT item, detail, amount FROM trust_report_deposit_return(%s, %s)",
+        "SELECT item, amount FROM trust_report_deposit_return(%s, %s) WHERE amount IS NOT NULL",
         (pmc.pmc_id, lease),
     ).fetchall()
 
-    answer = client.get(
-        f"/api/tenant/leases/{lease}/deposit-return/download", params={"format": "csv"}
-    )
+    answer = client.get(f"/api/tenant/leases/{lease}/deposit-statement")
 
-    header, *rows = csv.reader(io.StringIO(answer.content.decode(), newline=""))
-    assert header == ["line", "item", "detail", "amount"]
-    assert [tuple(row[1:]) for row in rows] == [
-        (item, detail or "", "" if amount is None else str(amount))
-        for item, detail, amount in direct
-    ]
+    letter = PdfReader(io.BytesIO(answer.content)).pages[0].extract_text()
+    for item, amount in direct:
+        assert item[:1].upper() + item[1:] in letter
+        assert f"${amount:,.2f}" in letter
 
 
 def test_a_deposit_not_yet_returned_has_no_statement(client, conn, app_conn, home):
     join_as_tenant(client, conn, app_conn, home.pmc)
 
-    answer = client.get(f"/api/tenant/leases/{home.old_lease}/deposit-return/download")
+    answer = client.get(f"/api/tenant/leases/{home.old_lease}/deposit-statement")
 
-    assert answer.status_code == 404
-    assert answer.json()["detail"] == "this lease's deposit has not been returned"
+    assert answer.status_code == 409
+    assert answer.json()["detail"] == "the deposit hasn't been returned yet"
 
 
 def test_the_ledger_is_the_tenant_ledger_report(client, conn, app_conn, home):
@@ -288,7 +285,7 @@ def test_a_lease_that_isnt_theirs_reads_as_not_found(client, conn, app_conn, hom
     answers = [
         client.get(f"/api/tenant/leases/{lease}/ledger"),
         client.get(f"/api/tenant/leases/{lease}/ledger/download"),
-        client.get(f"/api/tenant/leases/{lease}/deposit-return/download"),
+        client.get(f"/api/tenant/leases/{lease}/deposit-statement"),
         client.post("/api/tenant/requests", json=new_request(home, lease)),
     ]
 
@@ -308,7 +305,7 @@ def test_only_a_tenant_reaches_the_tenant_endpoints(client, conn, app_conn, home
         client.get("/api/tenant/leases"),
         client.get(f"/api/tenant/leases/{home.lease}/ledger"),
         client.get(f"/api/tenant/leases/{home.lease}/ledger/download"),
-        client.get(f"/api/tenant/leases/{home.lease}/deposit-return/download"),
+        client.get(f"/api/tenant/leases/{home.lease}/deposit-statement"),
         client.get("/api/tenant/requests"),
         client.post("/api/tenant/requests", json=new_request(home)),
     ]
@@ -323,8 +320,7 @@ def test_only_a_tenant_reaches_the_tenant_endpoints(client, conn, app_conn, home
         ("/api/tenant/leases/not-a-lease/ledger", {}),
         ("/api/tenant/leases/{lease}/ledger/download", {"format": "docx"}),
         ("/api/tenant/leases/{lease}/ledger/download", {"as_of": "2026-02-30"}),
-        ("/api/tenant/leases/{lease}/deposit-return/download", {"format": "docx"}),
-        ("/api/tenant/leases/not-a-lease/deposit-return/download", {}),
+        ("/api/tenant/leases/not-a-lease/deposit-statement", {}),
     ],
 )
 def test_a_bad_ledger_request_is_refused(client, conn, app_conn, home, path, params):

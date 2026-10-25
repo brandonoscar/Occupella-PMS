@@ -24,16 +24,20 @@ import { STAFF_NAV } from "./staffNav";
 import { Said } from "../components/Said";
 import { AddressCard } from "./AddressCard";
 import { FilesCard } from "./FilesCard";
+import { TaxCreditLimitsCard, TaxCreditUnitCard } from "./TaxCreditCards";
 import { navigate } from "../router";
 import { agreementSummary, lateFeeSummary, leaseBreakFeeSummary, nsfFeeSummary } from "../setup";
+import { rateLine } from "../depositInterest";
 import { day, usDate } from "../money";
 import type { Panel } from "./SetupPanels";
+import { MarketRent, UnitDetailsCard, UnitSize } from "./UnitDetailsCard";
 import {
   AddLeasePanel,
   AddOwnerPanel,
   AddPropertyPanel,
   AddUnitPanel,
   LateFeesPanel,
+  DepositInterestPanel,
   LeaseBreakFeePanel,
   NsfFeePanel,
   OwnershipPanel,
@@ -137,7 +141,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
   const [property, setProperty] = useState<Property | null>(null);
   const [said, setSaid] = useState("");
   const [error, setError] = useState("");
-  const [open, setOpen] = useState<"" | "unit" | "owner" | "terms" | "ownership" | "late" | "nsf" | "break" | "email">("");
+  const [open, setOpen] = useState<"" | "unit" | "owner" | "terms" | "ownership" | "late" | "nsf" | "break" | "interest" | "email">("");
   const [account, setAccount] = useState("");
 
   function refresh(keep: Keep = keepAll) {
@@ -231,8 +235,14 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
                 </dd>
                 <dd><Button size="sm" variant="secondary" onClick={() => setOpen("break")}>Set lease-break fee</Button></dd>
               </div>
+              <div>
+                <dt className="text-sm text-ink-muted">Deposit interest</dt>
+                <dd data-testid="deposit-interest">{rateLine(property.deposit_interest)}</dd>
+                <dd><Button size="sm" variant="secondary" onClick={() => setOpen("interest")}>Set deposit interest</Button></dd>
+              </div>
             </dl>
           </Card>
+          <TaxCreditLimitsCard propertyId={id} />
           <Card title="Units">
             {property.units.length === 0 ? (
               <EmptyState icon={Building2} title="No units yet." />
@@ -245,6 +255,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
                       <th className="text-left">State</th>
                       <th className="text-left">Tenants</th>
                       <th className="text-right">Rent</th>
+                      <th className="text-right">Market rent</th>
                       <th className="text-right">Owes</th>
                       <th><span className="sr-only">Actions</span></th>
                     </tr>
@@ -252,10 +263,14 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
                   <tbody>
                     {property.units.map((unit) => (
                       <tr key={unit.id} aria-label={unit.name}>
-                        <td><RecordLink href={`/units/${unit.id}`}>{unit.name}</RecordLink></td>
+                        <td>
+                          <RecordLink href={`/units/${unit.id}`}>{unit.name}</RecordLink>
+                          <UnitSize details={unit.details} />
+                        </td>
                         <td><Badge tone={unitState(unit).tone}>{unitState(unit).word}</Badge></td>
                         <td>{unit.lease && <TenantLinks people={unit.lease.people} />}</td>
                         <td className="text-right">{unit.lease && money(unit.lease.monthly_rent)}</td>
+                        <td className="text-right"><MarketRent details={unit.details} /></td>
                         <td className="text-right">{unit.lease && money(unit.lease.owed)}</td>
                         <td className="text-right">
                           {unit.lease && <RecordLink href={`/leases/${unit.lease.id}`}>Open lease</RecordLink>}
@@ -277,6 +292,7 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
           {open === "late" && <LateFeesPanel panel={panel} propertyId={id} />}
           {open === "nsf" && <NsfFeePanel panel={panel} propertyId={id} />}
           {open === "break" && <LeaseBreakFeePanel panel={panel} propertyId={id} />}
+          {open === "interest" && <DepositInterestPanel panel={panel} propertyId={id} />}
           {open === "email" && (
             <WriteEmail title={`Email tenants of ${property.name}`} onClose={panel.close}
               note="Everyone on a lease in effect today gets their own copy, kept on their Email tab."
@@ -293,7 +309,8 @@ export function PropertyPage({ me, id }: { me: Me; id: string }) {
           {open === "terms" && (
             <TermsPanel panel={panel} accounts={property.owners
               .map((o) => ({ account: o.account, label: `${o.owner}, ${property.name}` }))
-              .sort((a, b) => (a.account === account ? -1 : b.account === account ? 1 : 0))} />
+              .sort((a, b) => (a.account === account ? -1 : b.account === account ? 1 : 0))}
+              everyOwnerOf={property.owners.length > 1 ? property.name : undefined} />
           )}
         </>
       )}
@@ -375,6 +392,7 @@ export function UnitPage({ me, id }: { me: Me; id: string }) {
             <RecordLink href={`/properties/${unit.property.id}`}>{unit.property.name}</RecordLink>
           </p>
           <Said>{said}</Said>
+          <UnitDetailsCard unitId={id} details={unit.details} refresh={refresh} />
           <Card title="Leases">
             {unit.leases.length === 0 ? (
               <EmptyState icon={Building2} title="No lease yet." body="A new tenant's lease comes through Leasing, Draft leases." />
@@ -406,6 +424,7 @@ export function UnitPage({ me, id }: { me: Me; id: string }) {
             )}
             <div className="mt-3"><Button variant="secondary" onClick={() => setAdding(true)}>Add lease in place</Button></div>
           </Card>
+          <TaxCreditUnitCard unitId={id} />
           {adding && (
             <AddLeasePanel panel={{ say: setSaid, refresh, close: () => setAdding(false) }} unitId={id}
               propertyId={unit.property.id} propertyName={unit.property.name} />

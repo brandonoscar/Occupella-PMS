@@ -11,8 +11,9 @@ Invariants checked after every step (ci/registry.toml maps each to this test):
   - the bills, decisions and payment steps are the model's: a vendor's reference is entered
     once; a bill takes one decision, an approval or a decline, and a decline only before it is
     set aside; a bill is set aside at most once, never once declined, and only with the owner's
-    approval when it is over the limit in force on its date; it is paid at most once, after it
-    was set aside and never dated before that;
+    approval when it is over the limit in force on its date; it is paid at most once, never
+    dated before it was set aside, and paying one not set aside sets it aside first (ADR 0010),
+    opening the vendor's account if they have none;
   - each vendor's account holds exactly what was set aside for its bills and not yet paid, and
     every balance is the model's;
   - a draw never pays out more than the balance above the reserve and the unpaid bills (a bill
@@ -60,6 +61,7 @@ from helpers import (
     set_aside_bill,
     transfer_batch,
 )
+from hypothesis import event
 from hypothesis import strategies as st
 from hypothesis.stateful import (
     RuleBasedStateMachine,
@@ -161,6 +163,8 @@ class BillMachine(RuleBasedStateMachine):
         self.recurring: dict[UUID, Recurring] = {}
         # (vendor index, year) -> (paid before, amount) the old system paid it that year
         self.carried: dict[tuple[int, int], tuple[date, Decimal]] = {}
+        # vendor -> whether their latest profile says they get a 1099 (none: no profile)
+        self.gets_1099: dict[int, bool] = {}
         # Expense accounts (id, name, Schedule E line), and the latest of each bill and
         # recurring bill, by its place in that list.
         self.expense_accounts = [
@@ -312,7 +316,10 @@ class BillMachine(RuleBasedStateMachine):
             with pytest.raises(psycopg.errors.UniqueViolation, match="decision already"):
                 send()
         elif bill_id in self.set_aside:
-            with pytest.raises(psycopg.errors.CheckViolation, match="set aside already"):
+            with pytest.raises(
+                psycopg.errors.CheckViolation,
+                match="taken from the owner.s account for bill .* already",
+            ):
                 send()
         else:
             send()
@@ -342,10 +349,24 @@ class BillMachine(RuleBasedStateMachine):
             self.approved.add(bill_id)
         self.attempt_set_aside(role, bill_id, day, second)
 
+    def set_aside_refusal(self, bill_id, opens=False):
+        """Why the bill's money can't be taken from its owner now, or None: declined, over the
+        limit without approval, no vendor's account (which paying opens, ADR 0010), or the
+        owner's account short of it."""
+        bill = self.bills[bill_id]
+        terms = self.agreement_on(bill.account, bill.bill_date)
+        if bill_id in self.declined:
+            return (psycopg.errors.CheckViolation, "declined")
+        if bill.amount > (terms.limit if terms else 0) and bill_id not in self.approved:
+            return (psycopg.errors.CheckViolation, "approval limit")
+        if self.vendors[bill.vendor][1] is None and not opens:
+            return (psycopg.errors.InvalidParameterValue, "open the vendor's account")
+        if bill.amount > self.balance.get(bill.account, Decimal(0)):
+            return (psycopg.errors.CheckViolation, "below zero")
+        return None
+
     def attempt_set_aside(self, role, bill_id, day, second):
         bill, when = self.bills[bill_id], moment(day, second)
-        terms = self.agreement_on(bill.account, bill.bill_date)
-        payable = self.vendors[bill.vendor][1]
 
         def send():
             return set_aside_bill(self.conns[role], self.pmc_id, bill_id, when)
@@ -353,17 +374,10 @@ class BillMachine(RuleBasedStateMachine):
         if bill_id in self.set_aside:
             assert send() == self.set_aside[bill_id][0]  # a retry: nothing moves again
             return
-        if bill_id in self.declined:
-            refusal = (psycopg.errors.CheckViolation, "declined")
-        elif bill.amount > (terms.limit if terms else 0) and bill_id not in self.approved:
-            refusal = (psycopg.errors.CheckViolation, "approval limit")
-        elif payable is None:
-            refusal = (psycopg.errors.InvalidParameterValue, "open the vendor's account")
-        elif bill.amount > self.balance.get(bill.account, Decimal(0)):
-            refusal = (psycopg.errors.CheckViolation, "below zero")
-        else:
+        refusal = self.set_aside_refusal(bill_id)
+        if refusal is None:
             self.set_aside[bill_id] = (send(), when)
-            self.record(bill.account, payable, bill.amount, when)
+            self.record(bill.account, self.vendors[bill.vendor][1], bill.amount, when)
             return
         with pytest.raises(refusal[0], match=refusal[1]):
             send()
@@ -412,7 +426,28 @@ class BillMachine(RuleBasedStateMachine):
             assert send() == self.paid[bill_id][0]  # a retry
             return
         if bill_id not in self.set_aside:
-            refusal = (psycopg.errors.InvalidParameterValue, "not set aside")
+            # ADR 0010: paying takes the bill from its owner first, as setting it aside did,
+            # opening the vendor's account if they have none.
+            refusal = self.set_aside_refusal(bill_id, opens=True)
+            if refusal is None:
+                self.paid[bill_id] = (send(), when)
+                vendor_id, payable = self.vendors[bill.vendor]
+                if payable is None:
+                    (payable,) = self.conn.execute(
+                        "SELECT ledger_account_id FROM trust_ledger_accounts"
+                        " WHERE vendor_id = %s AND kind = 'vendor_payable'",
+                        (vendor_id,),
+                    ).fetchone()
+                    self.vendors[bill.vendor] = (vendor_id, payable)
+                (aside,) = self.conn.execute(
+                    "SELECT transfer_id FROM trust_bill_payments"
+                    " WHERE bill_id = %s AND step = 'set_aside'",
+                    (bill_id,),
+                ).fetchone()
+                self.set_aside[bill_id] = (aside, when)
+                self.record(bill.account, payable, bill.amount, when)
+                self.record(payable, self.pmc.operating_cash, bill.amount, when)
+                return
         elif when < self.set_aside[bill_id][1]:
             refusal = (psycopg.errors.InvalidParameterValue, "paid before that")
         else:
@@ -784,11 +819,22 @@ class BillMachine(RuleBasedStateMachine):
             )
             self.carried[(vendor, year)] = (paid_before, amount)
 
+    @rule(role=ROLES, vendor=st.integers(min_value=0, max_value=2), gets=st.booleans())
+    def mark_a_vendor_for_a_1099_or_not(self, role, vendor, gets):
+        """A vendor's profile says whether they get a 1099 (migration 0073); the latest holds."""
+        self.conns[role].execute(
+            "INSERT INTO trust_vendor_profiles (pmc_id, vendor_id, gets_1099) VALUES (%s, %s, %s)",
+            (self.pmc_id, self.vendors[vendor][0], gets),
+        )
+        self.gets_1099[vendor] = gets
+
     @rule(data=st.data(), role=st.sampled_from(["owner", "app", "ai"]))
     def check_vendor_payments(self, data, role):
-        """What each vendor was paid in a year (UTC), by payment date, and what the old system
-        paid it that year before the cutover, as the model has it: mostly a year with payments,
-        now and then one either side."""
+        """The 1099 summary (q060): what each vendor was paid in a year (UTC), by payment date,
+        and what the old system paid it that year before the cutover, as the model has it,
+        mostly a year with payments, now and then one either side. A vendor marked for a 1099
+        and paid the year's threshold or more is on it, in its total; one paid less is under the
+        threshold; one with no profile is listed apart; those marked for none are one line."""
         years = sorted(
             {when.year for _, when in self.paid.values()} | {y for _, y in self.carried}
         ) or [2000]
@@ -799,11 +845,12 @@ class BillMachine(RuleBasedStateMachine):
             self.conns[role]
             .execute(
                 "SELECT item, vendor, payments, paid FROM trust_report_vendor_payments(%s, %s)"
-                " WHERE item IN ('vendor', 'carried over', 'total')",
+                " WHERE item NOT IN ('PMC', 'year')",
                 (self.pmc_id, year),
             )
             .fetchall()
         )
+        threshold = Decimal("600.00") if year <= 2025 else Decimal("2000.00")
         paid: dict[int, tuple[int, Decimal]] = {}
         for bill_id, (_, when) in self.paid.items():
             if when.astimezone(UTC).year == year:
@@ -811,25 +858,48 @@ class BillMachine(RuleBasedStateMachine):
                 count, total = paid.get(vendor, (0, Decimal(0)))
                 paid[vendor] = (count + 1, total + self.bills[bill_id].amount)
         carried = {v: kept for (v, y), kept in self.carried.items() if y == year}
-        expected = []
+        on, under, unset, none = [], [], [], []
+        on_count, on_total = 0, Decimal(0)
         for vendor in sorted(set(paid) | set(carried)):
             count, here = paid.get(vendor, (0, Decimal(0)))
             before = carried.get(vendor)
-            expected.append(
-                ("vendor", f"Vendor {vendor + 1}", count, here + (before[1] if before else 0))
-            )
-            if before:
-                expected.append(
-                    ("carried over", f"paid in the old system before {before[0]}", None, before[1])
-                )
-        assert rows == [
-            *expected,
+            total = here + (before[1] if before else 0)
+            lines = [
+                (f"Vendor {vendor + 1}", count, total),
+                *(
+                    [(f"paid in the old system before {before[0]}", None, before[1])]
+                    if before
+                    else []
+                ),
+            ]
+            gets = self.gets_1099.get(vendor)
+            if gets is None:
+                part, item = unset, "no 1099 setting"
+            elif not gets:
+                none.append((count, total))
+                continue
+            elif total >= threshold:
+                part, item = on, "vendor"
+                on_count, on_total = on_count + count, on_total + total
+            else:
+                part, item = under, "under the threshold"
+            part.extend((item if i == 0 else "carried over", *line) for i, line in enumerate(lines))
+        if on and under:
+            event("1099 summary: vendors over and under the threshold")
+        if none and unset:
+            event("1099 summary: vendors marked for none and with no setting")
+        assert rows[0][0] == "threshold"
+        assert rows[0][2:] == (None, threshold)
+        assert rows[1:] == [
+            *on,
+            ("total", None, on_count, on_total),
+            *under,
+            *unset,
             (
-                "total",
-                None,
-                sum(c for c, _ in paid.values()),
-                sum((t for _, t in paid.values()), Decimal(0))
-                + sum((a for _, a in carried.values()), Decimal(0)),
+                "not marked for a 1099",
+                f"{len(none)} vendor" + ("" if len(none) == 1 else "s"),
+                sum(c for c, _ in none),
+                sum((t for _, t in none), Decimal(0)),
             ),
         ]
 

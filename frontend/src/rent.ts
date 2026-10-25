@@ -14,7 +14,7 @@ export type Paid = {
   received_on: string;
   amount: string;
   reference: string | null;
-  method: PaymentMethod | null;
+  method: PaymentMethod | "online" | null;
   bounced: boolean;
 };
 // How a payment came; recorded as said, nothing sent (ADR 0006).
@@ -26,7 +26,9 @@ export const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "EFT", label: "EFT" },
   { value: "cash", label: "Cash" },
 ];
-export function methodLabel(method: PaymentMethod): string {
+export function methodLabel(method: PaymentMethod | "online"): string {
+  // A payment the tenant made online, through the payments partner (never one staff record).
+  if (method === "online") return "Paid online (bank)";
   return PAYMENT_METHODS.find((m) => m.value === method)?.label ?? method;
 }
 // A deposit's kind (migration 0092): each held apart, the security deposit first.
@@ -113,7 +115,12 @@ export type RentLease = {
   payments: Paid[];
   recurring: RecurringCharge[];
   renters_insurance: RentersInsurance | null;
+  // The security deposit its signed lease offer asked, what is held of it and what is still to
+  // receive; null when no offer asked one, or once its deposits were returned.
+  deposit_asked?: DepositAsked | null;
 };
+// Asking holds nothing: staff record the deposit when it comes in (migration 0071, q036).
+export type DepositAsked = { asked: string; held: string; to_receive: string };
 export type LeaseOwner = { account: string; owner: string; percent: string | null };
 export type Payment = { transfers: string[]; to_owner: string; to_prepaid: string };
 // A payment the bank returned: nsf_fee is the NSF fee the lease was charged for it, if the
@@ -121,7 +128,15 @@ export type Payment = { transfers: string[]; to_owner: string; to_prepaid: strin
 export type Bounce = { transfers: string[]; nsf_fee: string | null };
 // What a rent run charged: leases their rent, recurring charges and late fees.
 // A run by hand also says how many emails it wrote (rent reminders, late notices, statements).
-export type RentRun = { rents: number; recurring: number; late_fees: number; emails?: number };
+export type RentRun = {
+  rents: number;
+  recurring: number;
+  late_fees: number;
+  emails?: number;
+  prepaid_used?: number;
+  // Autopay payments started (src/pms/autopay.py), on a server that takes payments online.
+  autopay?: number;
+};
 // A run as recorded: the nightly run (by null) or an admin's by hand.
 export type RentRunLine = RentRun & { at: string; due_on: string; late_fees_as_of: string; by: string | null };
 
@@ -162,7 +177,12 @@ export function recurringLabel(recurring: RecurringCharge): string {
 export function rentRunSummary(run: RentRun): string {
   const count = (n: number, one: string) => `${n} ${one}${n === 1 ? "" : "s"}`;
   const charged = `${count(run.rents, "rent")}, ${count(run.recurring, "recurring charge")} and ${count(run.late_fees, "late fee")} charged.`;
-  return run.emails ? `${charged} ${count(run.emails, "email")} written.` : charged;
+  // Prepaid rent used by itself (migration 0117), for a company that turned it on.
+  const prepaid = run.prepaid_used ? ` Prepaid rent paid what ${count(run.prepaid_used, "lease")} owed.` : "";
+  const autopay = run.autopay ? ` ${count(run.autopay, "autopay payment")} started.` : "";
+  return run.emails
+    ? `${charged}${prepaid}${autopay} ${count(run.emails, "email")} written.`
+    : `${charged}${prepaid}${autopay}`;
 }
 
 const SERVED: Record<RentChange["served_by"], string> = {
@@ -261,4 +281,21 @@ export function balanceDue(lease: RentLease): string {
 // "Birch Flats · Unit A": the other home of a move.
 export function moveHome(move: Move): string {
   return `${move.property} · ${move.unit}`;
+}
+
+// "The signed lease asked $1,500.00: $1,000.00 held, $500.00 still to receive", or "... all held".
+export function depositAskedLine(deposit: DepositAsked): string {
+  const asked = `The signed lease asked ${money(deposit.asked)}`;
+  return Number(deposit.to_receive) > 0
+    ? `${asked}: ${money(deposit.held)} held, ${money(deposit.to_receive)} still to receive`
+    : `${asked}: all held`;
+}
+
+// The tenant's words: "Security deposit your lease asks: $1,500.00. Held: $1,000.00; $500.00 still
+// to give the manager", or "... Held: all of it".
+export function tenantDepositLine(deposit: DepositAsked): string {
+  const asks = `Security deposit your lease asks: ${money(deposit.asked)}.`;
+  return Number(deposit.to_receive) > 0
+    ? `${asks} Held: ${money(deposit.held)}; ${money(deposit.to_receive)} still to give the manager.`
+    : `${asks} Held: all of it.`;
 }

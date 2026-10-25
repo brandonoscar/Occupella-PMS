@@ -1,6 +1,6 @@
 """Staff's bills and owners' money through the API (src/pms/api/payables.py): vendor bills,
-the owner's approval over the limit, setting aside and paying them, recurring bills, management
-and leasing fees, owner draws and contributions."""
+the owner's approval over the limit, paying them (ADR 0010: held from the owner's balance until
+then), recurring bills, management and leasing fees, owner draws and contributions."""
 
 import json
 import uuid
@@ -90,26 +90,32 @@ def statuses(client, show="open"):
     }
 
 
-def test_a_bill_is_entered_set_aside_and_paid_once_each(client, conn, staff, pmc):
+def test_a_bill_is_held_from_the_owner_then_paid_once(client, conn, staff, pmc):
     fund(conn, pmc, "1000.00")
     add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 60 * DAY, approval_limit="500")
     bill = ok(new_bill(client, pmc))["id"]
 
-    entered = statuses(client)
-    aside = ok(call(client, f"bills/{bill}/set-aside", on=TODAY))
-    again = ok(call(client, f"bills/{bill}/set-aside", on=TODAY))
-    held = balance(conn, pmc.owners[0].account)
-    paid = ok(call(client, f"bills/{bill}/pay", on=TODAY))
+    (entered,) = ok(client.get("/api/payables/bills"), 200)["items"]
+    untouched = balance(conn, pmc.owners[0].account)
+    request = uuid.uuid4()
+    paid = ok(call(client, f"bills/{bill}/pay", on=TODAY, request_id=request))
+    again = ok(call(client, f"bills/{bill}/pay", on=TODAY, request_id=request))
     (listed,) = ok(client.get("/api/payables/bills?show=all"), 200)["items"]
 
-    assert entered == {"INV-1": "to set aside"}
-    assert again == aside
-    assert held == Decimal("800.00")
-    assert paid["transfer_id"] != aside["transfer_id"]
+    # Held, not moved, until it is paid.
+    assert (entered["status"], entered["held"], entered["short"]) == (
+        "ready to pay",
+        "200.00",
+        None,
+    )
+    assert untouched == Decimal("1000.00")
+    assert again == paid
+    assert balance(conn, pmc.owners[0].account) == Decimal("800.00")
     assert statuses(client) == {}
     # The paid ones, apart.
     assert statuses(client, "paid") == {"INV-1": "paid"}
-    assert statuses(client, "declined") == {}
+    assert statuses(client, "void") == {}
+    assert (listed["paid"], listed["left"], listed["held"]) == ("200.00", "0.00", None)
     assert (listed["status"], listed["amount"], listed["owner"], listed["vendor"]) == (
         "paid",
         "200.00",
@@ -128,7 +134,6 @@ def test_a_new_vendors_first_bill_opens_its_account(client, conn, staff, pmc):
     ).fetchone()
     bill = ok(new_bill(client, pmc, vendor_id=vendor))["id"]
 
-    ok(call(client, f"bills/{bill}/set-aside", on=TODAY))
     ok(call(client, f"bills/{bill}/pay", on=TODAY))
 
     (account,) = conn.execute(
@@ -144,7 +149,6 @@ def test_a_bill_is_not_paid_in_a_closed_period(client, conn, staff, pmc):
     fund(conn, pmc, "1000.00")
     add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 60 * DAY, approval_limit="500")
     bill = ok(new_bill(client, pmc, bill_date=TODAY - 25 * DAY))["id"]
-    ok(call(client, f"bills/{bill}/set-aside", on=TODAY - 20 * DAY))
     approve(
         conn,
         pmc.pmc_id,
@@ -166,18 +170,17 @@ def test_a_bill_over_the_limit_needs_the_owners_approval_once(client, conn, staf
     bill = ok(new_bill(client, pmc, "800.00"))["id"]
 
     waiting = statuses(client)
-    early = call(client, f"bills/{bill}/set-aside", on=TODAY)
+    early = call(client, f"bills/{bill}/pay", on=TODAY)
     ok(call(client, f"bills/{bill}/approval", approved_on=TODAY, approved_by="Owner 1, by phone"))
     twice = call(client, f"bills/{bill}/approval", approved_on=TODAY, approved_by="Owner 1")
     approved = statuses(client)
-    ok(call(client, f"bills/{bill}/set-aside", on=TODAY))
+    ok(call(client, f"bills/{bill}/pay", on=TODAY))
 
-    assert waiting == {"INV-1": "needs approval"}
-    refused(early, 409)
-    assert "approval limit" in early.json()["detail"]
+    assert waiting == {"INV-1": "waiting for owner"}
+    refused(early, 409, "Vendor 1 INV-1 waits for Owner 1's approval")
     refused(twice, 409, "this bill is approved already")
-    assert approved == {"INV-1": "to set aside"}
-    assert statuses(client) == {"INV-1": "set aside"}
+    assert approved == {"INV-1": "ready to pay"}
+    assert statuses(client, "paid") == {"INV-1": "paid"}
 
 
 def test_staff_record_an_owners_decline_and_the_bill_is_never_paid(client, conn, staff, pmc):
@@ -199,39 +202,39 @@ def test_staff_record_an_owners_decline_and_the_bill_is_never_paid(client, conn,
         b for b in ok(client.get("/api/payables/bills?show=all"), 200)["items"] if b["id"] == bill
     )
     after = ok(client.get("/api/payables/owners"), 200)[0]
-    aside = call(client, f"bills/{bill}/set-aside", on=TODAY)
+    aside = call(client, f"bills/{bill}/pay", on=TODAY)
     approval = call(client, f"bills/{bill}/approval", approved_on=TODAY, approved_by="Owner 1")
     again = call(
         client, f"bills/{bill}/decline", declined_on=TODAY, declined_by="Owner 1", reason="No"
     )
 
-    assert (shown["status"], shown["declined_by"], shown["decline_reason"]) == (
-        "declined",
+    assert (shown["status"], shown["declined_by"], shown["decline_reason"], shown["voided"]) == (
+        "void",
         "Owner 1, by email",
         "Get a second quote",
+        False,
     )
     assert statuses(client) == {}  # nothing left to pay
-    assert statuses(client, "declined") == {"INV-1": "declined"}
+    assert statuses(client, "void") == {"INV-1": "void"}
     assert statuses(client, "paid") == {}
     assert (before["unpaid_bills"], after["unpaid_bills"]) == ("800.00", "0.00")
-    refused(aside, 409)
-    assert "declined by Owner 1, by email" in aside.json()["detail"]
+    refused(aside, 409, "Vendor 1 INV-1 is void: it is never paid")
     refused(approval, 409, "the owner declined this bill")
     refused(again, 409, "the owner declined this bill")
 
 
-def test_a_bill_set_aside_is_not_declined_by_staff_either(client, conn, staff, pmc):
+def test_a_bill_paid_in_part_is_not_declined_by_staff_either(client, conn, staff, pmc):
     fund(conn, pmc, "1000.00")
     bill = ok(new_bill(client, pmc, "80.00"))["id"]
     add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 60 * DAY, approval_limit="500")
-    ok(call(client, f"bills/{bill}/set-aside", on=TODAY))
+    ok(call(client, f"bills/{bill}/pay", on=TODAY, amount="30.00", request_id=uuid.uuid4()))
 
     answer = call(
         client, f"bills/{bill}/decline", declined_on=TODAY, declined_by="Owner 1", reason="No"
     )
 
     refused(answer, 409)
-    assert "set aside already" in answer.json()["detail"]
+    assert "taken from the owner's account" in answer.json()["detail"]
 
 
 @pytest.mark.parametrize(
@@ -249,17 +252,26 @@ def test_a_decline_says_when_who_and_why(client, conn, staff, pmc, body):
     refused(client.post(f"/api/payables/bills/{bill}/decline", json=body), 422)
 
 
-def test_a_bill_is_paid_only_once_set_aside_and_never_into_the_negative(client, conn, staff, pmc):
+def test_a_bill_the_owner_is_short_of_is_not_paid(client, conn, staff, pmc):
     add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 60 * DAY, approval_limit="500")
+    fund(conn, pmc, "50.00")
     bill = ok(new_bill(client, pmc))["id"]
 
-    unpaid = call(client, f"bills/{bill}/pay", on=TODAY)
-    no_money = call(client, f"bills/{bill}/set-aside", on=TODAY)
+    (shown,) = ok(client.get("/api/payables/bills"), 200)["items"]
+    no_money = call(client, f"bills/{bill}/pay", on=TODAY)
 
-    refused(unpaid, 409)
-    assert "not set aside yet" in unpaid.json()["detail"]
-    # The ledger's refusal, in words: whose money, and how much it is short.
-    refused(no_money, 409, "not enough money: the owner's account would be $200.00 short")
+    assert (shown["status"], shown["held"], shown["short"], shown["needed"]) == (
+        "short",
+        "50.00",
+        "150.00",
+        "150.00",
+    )
+    refused(
+        no_money,
+        409,
+        "Owner 1's balance is $150.00 short of Vendor 1 INV-1: they need to send $150.00 first",
+    )
+    assert balance(conn, pmc.owners[0].account) == Decimal("50.00")
 
 
 def test_a_bill_is_entered_once_per_vendor_reference_with_sound_terms(client, conn, staff, pmc):
@@ -286,6 +298,34 @@ def test_a_bill_is_entered_once_per_vendor_reference_with_sound_terms(client, co
     assert "was cancelled" in gone.json()["detail"]
 
 
+def test_a_recurring_bill_added_enters_this_months_and_none_to_come(client, conn, staff, pmc):
+    # Bills over 50.00 wait for the owner's approval.
+    add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 60 * DAY, approval_limit="50")
+    body = {
+        "vendor_id": pmc.vendor_id,
+        "account": pmc.owners[0].account,
+        "reference_prefix": "POOL",
+        "amount": "75.00",
+        "memo": "Pool service",
+        "day_of_month": 1,
+        "starts_on": TODAY.replace(day=1),
+    }
+
+    added = ok(call(client, "recurring", **body))
+    # One starting next month has nothing due yet.
+    later = ok(
+        call(
+            client,
+            "recurring",
+            **{**body, "reference_prefix": "SPA", "starts_on": TODAY.replace(day=28) + 4 * DAY},
+        )
+    )
+
+    assert (added["entered"], later["entered"]) == (1, 0)
+    reference = f"POOL-{TODAY:%Y-%m}"
+    assert statuses(client) == {reference: "waiting for owner"}
+
+
 def test_recurring_bills_are_entered_each_month_once_and_stop(client, conn, app_conn, staff, pmc):
     start = TODAY.replace(day=1) - timedelta(days=60)
     body = {
@@ -298,9 +338,11 @@ def test_recurring_bills_are_entered_each_month_once_and_stop(client, conn, app_
         "starts_on": start,
     }
 
-    made = ok(call(client, "recurring", **body))["id"]
+    added = ok(call(client, "recurring", **body))
+    made = added["id"]
     same = call(client, "recurring", **body)
-    # The nightly run enters them (src/pms/nightly.py); there is no button for it.
+    # Adding it entered the months already due; the nightly run (src/pms/nightly.py) enters each
+    # month once, so it finds nothing new.
     first = nightly.run_pmc(app_conn, pmc.pmc_id, TODAY, "http://pms.test").bills
     again = nightly.run_pmc(app_conn, pmc.pmc_id, TODAY, "http://pms.test").bills
     ok(call(client, f"recurring/{made}/end", ends_on=TODAY))
@@ -308,7 +350,8 @@ def test_recurring_bills_are_entered_each_month_once_and_stop(client, conn, app_
     (listed,) = ok(client.get("/api/payables/recurring"), 200)
 
     refused(same, 409, "this vendor has a recurring bill with that reference already")
-    assert first >= 2 and again == 0
+    assert added["entered"] >= 2 and first == 0 and again == 0
+    assert len(statuses(client)) == added["entered"]
     refused(ended_twice, 409, "this recurring bill has ended already")
     assert (listed["reference_prefix"], listed["day_of_month"], listed["ends_on"]) == (
         "LAWN",
@@ -539,8 +582,10 @@ def test_another_pmcs_records_are_not_found(client, conn, staff, pmc):
     cases = [
         (new_bill(client, pmc, vendor_id=other.vendor_id), "no such vendor"),
         (new_bill(client, pmc, account=other.owners[0].account), "no such owner account"),
-        (call(client, f"bills/{theirs}/set-aside", on=TODAY), "no such bill"),
         (call(client, f"bills/{theirs}/pay", on=TODAY), "no such bill"),
+        (call(client, f"bills/{theirs}/void", reason="Twice"), "no such bill"),
+        (call(client, f"bills/{theirs}/ask-owner"), "no such bill"),
+        (client.get(f"/api/payables/bills/{theirs}"), "no such bill"),
         (
             call(
                 client,
@@ -681,7 +726,7 @@ def test_no_email_when_the_bill_needs_none_or_the_owner_cannot_sign_in(
 def test_recurring_bills_over_the_limit_email_their_owner(client, conn, app_conn, staff, pmc):
     to = owner_signs_in(conn, pmc)
     add_agreement(conn, pmc.pmc_id, pmc.owners[0].account, TODAY - 400 * DAY, approval_limit="500")
-    ok(
+    added = ok(
         call(
             client,
             "recurring",
@@ -695,12 +740,13 @@ def test_recurring_bills_over_the_limit_email_their_owner(client, conn, app_conn
         )
     )
 
-    entered = nightly.run_pmc(app_conn, pmc.pmc_id, TODAY, "http://pms.test").bills
+    # Adding it entered the months due; the nightly run finds nothing new.
+    again = nightly.run_pmc(app_conn, pmc.pmc_id, TODAY, "http://pms.test").bills
 
     bills = ok(client.get("/api/payables/bills"), 200)["items"]
     emailed = [ok(client.get(f"/api/payables/bills/{b['id']}"), 200)["email"] for b in bills]
-    assert entered >= 1 and len(bills) == entered
-    # Written with the bills; the nightly run hands them to the server's sender after.
+    assert added["entered"] >= 1 and len(bills) == added["entered"] and again == 0
+    # Written with the bills; the server's sender (none here) takes them after the request.
     assert {(e["to"], e["status"]) for e in emailed} == {(to, "waiting")}
 
 
@@ -724,7 +770,7 @@ def test_an_email_given_up_on_shows_as_failed_with_why(client, conn, staff, pmc)
         email.MAX_ATTEMPTS,
         "SMTPRecipientsRefused: no such mailbox",
     )
-    assert shown["history"][1]["what"].endswith("asking the owner to decide it: not sent")
+    assert shown["history"][1]["what"].endswith("asking Owner 1 to approve or decline it: not sent")
 
 
 ENDPOINTS = [
@@ -732,8 +778,10 @@ ENDPOINTS = [
     ("post", "/api/payables/bills"),
     ("post", f"/api/payables/bills/{uuid.uuid4()}/approval"),
     ("post", f"/api/payables/bills/{uuid.uuid4()}/decline"),
-    ("post", f"/api/payables/bills/{uuid.uuid4()}/set-aside"),
     ("post", f"/api/payables/bills/{uuid.uuid4()}/pay"),
+    ("post", f"/api/payables/bills/{uuid.uuid4()}/void"),
+    ("post", f"/api/payables/bills/{uuid.uuid4()}/ask-owner"),
+    ("get", f"/api/payables/similar-bills?vendor_id={uuid.uuid4()}&reference=x"),
     ("get", "/api/payables/recurring"),
     ("post", "/api/payables/recurring"),
     ("post", f"/api/payables/recurring/{uuid.uuid4()}/end"),
@@ -809,7 +857,21 @@ def test_only_staff_handle_bills_and_owners_money(
             "management-fees",
             {"period_start": "2026-10-01", "period_end": "2026-10-01", "on": "2026-10-01"},
         ),
-        ("bills/x/set-aside", {"on": "2026-10-01"}),
+        ("bills/x/pay", {"on": "2026-10-01"}),
+        (f"bills/{uuid.uuid4()}/pay", {"on": "2026-10-01", "amount": "0"}),
+        (f"bills/{uuid.uuid4()}/pay", {"on": "2026-10-01", "check_number": "12a"}),
+        (f"bills/{uuid.uuid4()}/pay", {"on": "2026-10-01", "method": "cash"}),
+        (f"bills/{uuid.uuid4()}/void", {"reason": " "}),
+        (f"bills/{uuid.uuid4()}/void", {}),
+        (
+            "bills/pay",
+            {
+                "on": "2026-10-01",
+                "method": "check",
+                "bill_ids": [str(uuid.uuid4())],
+                "check_numbers": {"x": "1"},
+            },
+        ),
     ],
 )
 def test_bad_input_is_refused(client, staff, path, body):
@@ -823,7 +885,6 @@ def test_a_bills_list_of_no_kind_is_refused(client, staff):
 @pytest.mark.parametrize(
     "path",
     [
-        "bills/{bill}/set-aside",
         "bills/{bill}/pay",
         "management-fees",
         "leasing-fees",

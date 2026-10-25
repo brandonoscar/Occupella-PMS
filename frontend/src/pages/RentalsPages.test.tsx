@@ -49,6 +49,8 @@ const LINE = {
   monthly_rent: "1500.00", owed: "50.00", status: "current" as const,
 };
 
+const NO_DETAILS = { bedrooms: null, bathrooms: null, square_feet: null, market_rent: null };
+const TWO_BED = { bedrooms: 2, bathrooms: "1.5", square_feet: 850, market_rent: "1250.00" };
 const PROPERTY: Property = {
   id: "p1",
   name: "Property 1",
@@ -66,14 +68,15 @@ const PROPERTY: Property = {
   }],
   ownership: [],
   units: [
-    { id: "u1", name: "Unit 1", archived: false, lease: LINE },
-    { id: "u2", name: "Unit 2", archived: false, lease: { ...LINE, id: "l2", status: "future", starts_on: "2026-11-01", owed: "0.00" } },
-    { id: "u3", name: "Unit 3", archived: false, lease: null },
-    { id: "u4", name: "Unit 4", archived: true, lease: null },
+    { id: "u1", name: "Unit 1", archived: false, details: TWO_BED, lease: LINE },
+    { id: "u2", name: "Unit 2", archived: false, details: NO_DETAILS, lease: { ...LINE, id: "l2", status: "future", starts_on: "2026-11-01", owed: "0.00" } },
+    { id: "u3", name: "Unit 3", archived: false, details: NO_DETAILS, lease: null },
+    { id: "u4", name: "Unit 4", archived: true, details: NO_DETAILS, lease: null },
   ],
   late_fees: { starts_on: "2026-10-01", grace_days: 5, flat_fee: "50.00", percent: "0", maximum: null },
   nsf_fee: null,
   lease_break_fee: null,
+  deposit_interest: null,
 };
 
 const UNIT: Unit = {
@@ -81,6 +84,7 @@ const UNIT: Unit = {
   name: "Unit 1",
   archived: false,
   property: { id: "p1", name: "Property 1" },
+  details: TWO_BED,
   leases: [LINE, { ...LINE, id: "l0", tenants: ["Tenant 0"], people: [{ id: "t0", name: "Tenant 0" }], starts_on: "2025-01-01", ends_on: "2025-12-31", owed: "0.00", status: "ended" }],
 };
 
@@ -103,12 +107,18 @@ function server(answers: Record<string, unknown>, refuse: Record<string, string>
     }
     // Every record page's Files card reads the library; this one is empty.
     if (path === "/api/documents" && !(path in answers)) return new Response(JSON.stringify(NO_FILES), { status: 200 });
+    // Every property's and unit's tax credit card reads its own; none here (TaxCreditCards.test.tsx).
+    if (path.startsWith("/api/tax-credit/") && !(path in answers)) {
+      return new Response(JSON.stringify(path.includes("/units/") ? NOT_TAX_CREDIT : []), { status: 200 });
+    }
     if (!(path in answers)) return new Response(JSON.stringify({ detail: "no such page" }), { status: 404 });
     return new Response(JSON.stringify(answers[path]), { status: 200 });
   });
   vi.stubGlobal("fetch", fetch);
   return fetch;
 }
+
+const NOT_TAX_CREDIT = { in_force: null, max_gross_rent: null, designations: [] };
 
 const asked = (fetch: ReturnType<typeof server>) => fetch.mock.calls.map(([path, init]) =>
   init?.method === "POST" ? [path, JSON.parse(String(init.body))] : path);
@@ -218,13 +228,18 @@ describe("PropertyPage", () => {
     expect(screen.getByTestId("late-fees").textContent).toBe("After 5 days' grace: $50.00 (from 10/01/2026)");
     expect(screen.getByTestId("nsf-fee").textContent).toBe("No NSF fee");
     expect(screen.getByTestId("lease-break-fee").textContent).toBe("No lease-break fee");
+    expect(screen.getByTestId("deposit-interest").textContent).toBe("No deposit interest");
     const units = ["Unit 1", "Unit 2", "Unit 3", "Unit 4"].map((name) => screen.getByRole("row", { name }));
     expect(units.map((row) => within(row).getAllByRole("cell")[1]?.textContent)).toEqual([
       "Occupied", "Starts 11/01/2026", "Vacant", "Archived",
     ]);
     expect(within(units[0]!).getAllByRole("cell").map((c) => c.textContent)).toEqual([
-      "Unit 1", "Occupied", "Tenant 1, Tenant 2", "$1,500.00", "$50.00", "Open lease",
+      "Unit 12 beds, 1.5 baths, 850 sq ft", "Occupied", "Tenant 1, Tenant 2", "$1,500.00", "$1,250.00", "$50.00",
+      "Open lease",
     ]);
+    // A unit without details shows no size and no market rent.
+    expect(within(units[2]!).queryByTestId("unit-size")).toBeNull();
+    expect(within(units[2]!).getAllByRole("cell")[4]?.textContent).toBe("");
     expect(within(units[0]!).getByRole("link", { name: "Unit 1" }).getAttribute("href")).toBe("/units/u1");
     expect(within(units[0]!).getByRole("link", { name: "Open lease" }).getAttribute("href")).toBe("/leases/l1");
     expect(within(units[2]!).queryByRole("link", { name: "Open lease" })).toBeNull();

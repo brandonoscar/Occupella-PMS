@@ -20,11 +20,12 @@ const BOOKS = {
   schedule_e_lines: [{ line: 14, label: "Repairs" }, { line: 17, label: "Utilities" }],
 } as unknown as Portfolio;
 const BILL: Bill = {
-  id: "b1", vendor_id: "v1", vendor: "Vendor 1", reference: "FIX-1", account: "a1", owner: "Owner 1",
+  id: "b1", vendor_id: "v1", vendor: "Vendor 1", reference: "FIX-1", account: "a1", owner_id: "o1", owner: "Owner 1",
   property_id: "pr1", property: "Property 1", bill_date: "2026-10-01", due_on: "2026-10-15", amount: "300.00",
   memo: "Plumbing", work_order_id: "w1", expense_account_id: null, expense_account: null, split: true,
-  approval_limit: "200.00", approved_by: null, declined_by: null, decline_reason: null, owner_email: "failed",
-  status: "needs approval", overdue: false, markup: null, markup_percent: null, shared_bill_id: null,
+  approval_limit: "200.00", approved_by: null, declined_by: null, decline_reason: null, voided: false, owner_email: "failed",
+  status: "waiting for owner", overdue: false, markup: null, markup_percent: null, shared_bill_id: null,
+  paid: "0.00", left: "300.00", held: "300.00", held_since: null, short: null, needed: null,
 };
 const PAGE: BillPageData = {
   bill: BILL,
@@ -36,11 +37,15 @@ const PAGE: BillPageData = {
   files: [],
   email: {
     to: "owner1@example.com", subject: "A bill waits for your approval: Vendor 1, $300.00",
-    written_at: "2026-10-01T09:00:00Z", status: "failed", attempts: 5, error: "SMTPRecipientsRefused: no such mailbox",
+    written_at: "2026-10-01T09:00:00Z", sent_at: null, status: "failed", attempts: 5,
+    error: "SMTPRecipientsRefused: no such mailbox",
   },
+  asks: [],
+  payments: [],
+  ask: null,
   history: [
     { on: "2026-10-01", what: "Entered" },
-    { on: "2026-10-01", what: "Email to owner1@example.com asking the owner to decide it: not sent" },
+    { on: "2026-10-01", what: "Email to owner1@example.com asking Owner 1 to approve or decline it: not sent" },
   ],
 };
 
@@ -62,13 +67,105 @@ const posted = (fetch: ReturnType<typeof server>) =>
   fetch.mock.calls.filter(([, init]) => init?.method === "POST").map(([path, init]) => [path, JSON.parse(String(init?.body))]);
 
 describe("BillPage", () => {
+  it("records part of a payment by check with its number, after saying what is left", async () => {
+    const fetch = server({ ...PAGE, bill: { ...BILL, status: "ready to pay" } });
+    render(<BillPage me={ME} id="b1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Record payment" }));
+    const panel = screen.getByRole("dialog", { name: "Record payment" });
+    expect((within(panel).getByLabelText("Amount") as HTMLInputElement).value).toBe("300.00");
+    fireEvent.change(within(panel).getByLabelText("Amount"), { target: { value: "100.00" } });
+    fireEvent.change(within(panel).getByLabelText("Check number"), { target: { value: "1042" } });
+    fireEvent.change(within(panel).getByLabelText("Paid on"), { target: { value: "2026-10-03" } });
+    expect(panel.textContent).toContain("$200.00 stays left to pay");
+    fireEvent.click(within(panel).getByRole("button", { name: "Pay $100.00" }));
+    const confirm = screen.getByRole("alertdialog");
+    expect(confirm.textContent).toContain(
+      "Pay $100.00 to Vendor 1 for FIX-1 by check 1042 on 10/03/2026? $200.00 is left to pay after it.",
+    );
+    fireEvent.click(within(confirm).getByRole("button", { name: "Pay" }));
+
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const [[path, body]] = posted(fetch) as [[string, Record<string, unknown>]];
+    expect(path).toBe("/api/payables/bills/b1/pay");
+    expect({ ...body, request_id: typeof body.request_id }).toEqual({
+      on: "2026-10-03", method: "check", amount: "100.00", check_number: "1042", request_id: "string",
+    });
+  });
+
+  it("voids a bill entered by mistake from its ⋯ menu, saying nothing was paid", async () => {
+    const fetch = server({ ...PAGE, bill: { ...BILL, status: "ready to pay" } });
+    render(<BillPage me={ME} id="b1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for Vendor 1 FIX-1" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Void" }));
+    const panel = screen.getByRole("dialog", { name: "Void" });
+    expect(panel.textContent).toContain("Nothing was paid; the hold goes back to Owner 1's balance.");
+    fireEvent.change(within(panel).getByLabelText("Why"), { target: { value: "Entered twice" } });
+    fireEvent.click(within(panel).getByRole("button", { name: "Void" }));
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Void" }));
+
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    expect(posted(fetch)).toEqual([["/api/payables/bills/b1/void", { reason: "Entered twice" }]]);
+  });
+
+  it("asks the owner for what their balance is short of, naming who gets the email first", async () => {
+    const short = { ...BILL, status: "short" as const, held: "100.00", short: "200.00", needed: "200.00" };
+    const fetch = server({ ...PAGE, bill: short, ask: { owner: "Owner 1", to: "owner1@example.com", amount: "200.00", asked_today: false } });
+    render(<BillPage me={ME} id="b1" />);
+    expect((await screen.findByTestId("hold")).textContent).toBe(
+      "$100.00 held from Owner 1's balance for this bill. Owner 1 needs to send $200.00.",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Ask Owner 1 for $200.00" }));
+    const confirm = screen.getByRole("alertdialog");
+    expect(confirm.textContent).toContain("Email Owner 1 at owner1@example.com asking them to send $200.00? Nothing is paid or charged");
+    fireEvent.click(within(confirm).getByRole("button", { name: "Send email" }));
+
+    expect(await screen.findByText("Owner 1 is asked to send $200.00.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/payables/bills/b1/ask-owner", {}]]);
+  });
+
+  it("says when the owner has no email to ask, and when they were asked today", async () => {
+    const short = { ...BILL, status: "short" as const, held: "0.00", short: "300.00", needed: "300.00" };
+    server({ ...PAGE, bill: short, ask: { owner: "Owner 1", to: null, amount: "300.00", asked_today: false } });
+    render(<BillPage me={ME} id="b1" />);
+    expect((await screen.findByRole("link", { name: "Add one to their contact details" })).getAttribute("href")).toBe("/owners/o1");
+    expect(screen.queryByRole("button", { name: /Ask Owner 1/ })).toBeNull();
+    cleanup();
+
+    server({ ...PAGE, bill: short, ask: { owner: "Owner 1", to: "owner1@example.com", amount: "300.00", asked_today: true } });
+    render(<BillPage me={ME} id="b1" />);
+    expect(await screen.findByText("Owner 1 was asked for it today; you can ask again tomorrow.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Ask Owner 1/ })).toBeNull();
+  });
+
+  it("lists its payments and when the bank showed them", async () => {
+    server({
+      ...PAGE,
+      bill: { ...BILL, status: "partly paid", paid: "100.00", left: "200.00", held: "200.00", held_since: "2026-10-03" },
+      payments: [
+        { part: 1, on: "2026-10-03", amount: "100.00", method: "check", check_number: "1042", transfer_id: "t1", cleared_on: "2026-10-07" },
+        { part: 2, on: "2026-10-04", amount: "50.00", method: "EFT", check_number: null, transfer_id: "t2", cleared_on: null },
+      ],
+    });
+    render(<BillPage me={ME} id="b1" />);
+    const rows = within(await screen.findByRole("table", { name: "Payments" })).getAllByRole("row").slice(1);
+    expect(rows.map((r) => r.textContent)).toEqual([
+      "10/03/2026$100.00Check 1042Cleared 10/07/2026",
+      "10/04/2026$50.00ACHNot on a statement yet",
+    ]);
+    // Money was taken for it: no void.
+    expect(screen.queryByRole("button", { name: "Actions for Vendor 1 FIX-1" })).toBeNull();
+  });
+
   it("shows the bill, its split lines, the email that was not sent and its history", async () => {
     server();
     render(<BillPage me={ME} id="b1" />);
 
     expect((await screen.findByRole("heading", { level: 1 })).textContent).toBe("Vendor 1 FIX-1");
-    expect(screen.getByTestId("status").textContent).toBe("Awaiting owner approval");
+    expect(screen.getByTestId("status").textContent).toBe("Waiting for owner");
     expect(screen.getByTestId("bill-amount").textContent).toBe("$300.00");
+    expect(screen.getByTestId("hold").textContent).toBe(
+      "$300.00 held from Owner 1's balance for this bill until Owner 1 decides.",
+    );
     const summary = screen.getByLabelText("Summary");
     expect(summary.textContent).toContain("Due10/15/2026");
     expect(within(summary).getByRole("link", { name: "Open it" }).getAttribute("href")).toBe("/work-orders/w1");
@@ -80,7 +177,7 @@ describe("BillPage", () => {
     );
     expect(within(screen.getByRole("list", { name: "History" })).getAllByRole("listitem").map((l) => l.textContent)).toEqual([
       "10/01/2026 Entered",
-      "10/01/2026 Email to owner1@example.com asking the owner to decide it: not sent",
+      "10/01/2026 Email to owner1@example.com asking Owner 1 to approve or decline it: not sent",
     ]);
   });
 
@@ -91,7 +188,7 @@ describe("BillPage", () => {
       shared: {
         id: "s1", reference: "ROOF-1", amount: "900.00",
         parts: [
-          { bill_id: "b1", part: 1, reference: "ROOF-1/1", owner: "Owner 1", property: "Property 1", amount: "300.00", status: "needs approval" },
+          { bill_id: "b1", part: 1, reference: "ROOF-1/1", owner: "Owner 1", property: "Property 1", amount: "300.00", status: "waiting for owner" },
           { bill_id: "b9", part: 2, reference: "ROOF-1/2", owner: "Owner 2", property: "Property 2", amount: "600.00", status: "paid" },
         ],
       },
@@ -102,7 +199,7 @@ describe("BillPage", () => {
     expect(summary.textContent).toContain("Markup$30.00 (10% in the owner's terms)");
     const shares = within(screen.getByRole("table", { name: "Shares" })).getAllByRole("row").slice(1);
     expect(shares.map((r) => r.textContent)).toEqual([
-      "ROOF-1/1Owner 1Property 1$300.00Awaiting owner approval",
+      "ROOF-1/1Owner 1Property 1$300.00Waiting for owner",
       "ROOF-1/2Owner 2Property 2$600.00Paid",
     ]);
     // This share is the page itself; the other links to its own.
@@ -125,9 +222,9 @@ describe("BillPage", () => {
   });
 
   it("changes a split bill to one expense account, and back to lines that come to the bill", async () => {
-    const fetch = server({ ...PAGE, bill: { ...BILL, status: "set aside" } });
+    const fetch = server({ ...PAGE, bill: { ...BILL, status: "ready to pay" } });
     render(<BillPage me={ME} id="b1" />);
-    expect(await screen.findByRole("button", { name: "Pay" })).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "Record payment" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Change" }));
     let panel = screen.getByRole("dialog", { name: "Expense accounts" });
     // It opens on the bill's own lines.
@@ -170,7 +267,9 @@ describe("BillPage", () => {
     server({ ...PAGE, bill: { ...BILL, status: "paid" }, email: null });
     render(<BillPage me={ME} id="b1" />);
     expect((await screen.findByTestId("status")).textContent).toBe("Paid");
-    expect(screen.queryByRole("button", { name: /Record|Pay|Set aside/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Record|Pay|Ask/ })).toBeNull();
+    // Nothing to void once it is paid: the ⋯ menu is hidden.
+    expect(screen.queryByRole("button", { name: "Actions for Vendor 1 FIX-1" })).toBeNull();
     expect(screen.queryByTestId("bill-email")).toBeNull();
     cleanup();
 

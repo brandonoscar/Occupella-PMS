@@ -12,6 +12,11 @@ Environment knobs, all optional:
   PMS_SQL_COVERAGE_OUT   write PL/pgSQL coverage (plpgsql_check profiler) to this JSON file
   PMS_TEST_SHARD         k/n: run only shard k of n (every nth test from the kth); the
                          coverage job runs 1/2 and 2/2 side by side
+  PMS_TEST_SHARD_TIMES   a TOML file of the property tests' seconds ([seconds],
+                         ci/property-times.toml): deal the property tests to the shards by
+                         time, longest first, and the rest round robin (coverage, nightly)
+  PMS_TEST_ROTATION      r/R, with PMS_TEST_SHARD_TIMES: deal the tests into R parts by time
+                         first and shard only part r (each night's part of the nightly)
   HYPOTHESIS_PROFILE     pr (default), nightly or mutation; example counts live in
                          ci/thresholds.toml
 
@@ -32,7 +37,7 @@ from hypothesis import HealthCheck, Phase, settings
 from psycopg import sql
 
 from tools import sql_coverage
-from tools.run_rules import marker_problems, outcome_problems, shard
+from tools.run_rules import balanced_shard, marker_problems, outcome_problems, shard
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -57,6 +62,10 @@ settings.register_profile(
 settings.load_profile(os.environ.get("HYPOTHESIS_PROFILE", "pr"))
 
 
+# The advisory lock a run holds while it migrates its database; it ends with the connection.
+MIGRATE_LOCK = 0x706D735F6D6967  # "pms_mig"
+
+
 def _url_for_database(url: str, name: str) -> str:
     return urlunsplit(urlsplit(url)._replace(path="/" + name))
 
@@ -79,13 +88,19 @@ def database_url():
     with psycopg.connect(admin_url, autocommit=True) as admin:
         admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(name)))
     try:
-        # The URL goes to dbmate through the environment, never the command line.
-        migrate = subprocess.run(
-            [dbmate, "--migrations-dir", str(migrations), "--no-dump-schema", "up"],
-            env={**os.environ, "DATABASE_URL": test_url},
-            capture_output=True,
-            text=True,
-        )
+        # The migrations create roles (trust_app, trust_ai_agent), which every database on the
+        # server shares: two runs migrating a new server at once both find a role missing, and
+        # one fails creating it. So runs migrate one at a time, under a lock on the server's
+        # postgres database that both see.
+        with psycopg.connect(admin_url, autocommit=True) as admin:
+            admin.execute("SELECT pg_advisory_lock(%s)", (MIGRATE_LOCK,))
+            # The URL goes to dbmate through the environment, never the command line.
+            migrate = subprocess.run(
+                [dbmate, "--migrations-dir", str(migrations), "--no-dump-schema", "up"],
+                env={**os.environ, "DATABASE_URL": test_url},
+                capture_output=True,
+                text=True,
+            )
         if migrate.returncode != 0:
             raise RuntimeError(f"dbmate up failed:\n{migrate.stdout}\n{migrate.stderr}")
         if coverage_out:
@@ -138,9 +153,24 @@ def pytest_collection_modifyitems(config, items):
     if problems:
         raise pytest.UsageError("\n".join(problems))
     spec = os.environ.get("PMS_TEST_SHARD")
+    times = os.environ.get("PMS_TEST_SHARD_TIMES")
+    rotation = os.environ.get("PMS_TEST_ROTATION")
+    if rotation and not (spec and times):
+        raise pytest.UsageError("PMS_TEST_ROTATION needs PMS_TEST_SHARD and PMS_TEST_SHARD_TIMES")
     if spec:
         try:
-            kept, rest = shard(items, spec)
+            if times:
+                seconds = tomllib.loads((ROOT / times).read_text())["seconds"]
+                kept, rest = balanced_shard(
+                    items,
+                    spec,
+                    seconds,
+                    lambda item: item.nodeid.split("[")[0],
+                    rotation,
+                    lambda item: item.nodeid.startswith("tests/properties/"),
+                )
+            else:
+                kept, rest = shard(items, spec)
         except ValueError as error:
             raise pytest.UsageError(str(error)) from error
         config.hook.pytest_deselected(items=rest)

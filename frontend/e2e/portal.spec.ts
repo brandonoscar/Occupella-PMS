@@ -292,6 +292,15 @@ test("staff draft a lease with a deposit and a monthly charge and send it, void 
   // The lease owes the pet rent every month from its first day.
   await page.getByRole("link", { name: "Open the lease" }).click();
   await expect(page.getByRole("main")).toContainText("Pet rent");
+  // Asking a deposit held nothing: the lease says what its signed offer asked and is still to
+  // receive, and Record deposit starts from it (q036).
+  const asked = page.getByTestId("deposit-asked");
+  await expect(asked).toContainText("The signed lease asked $1,000.00: $0.00 held, $1,000.00 still to receive");
+  await page.locator("section", { has: asked }).getByRole("button", { name: "Record deposit" }).click();
+  const received = page.getByRole("dialog", { name: "Record deposit" });
+  await expect(received.getByLabel("Deposit received", { exact: true })).toHaveValue("1000.00");
+  await received.getByRole("button", { name: "Record deposit" }).click();
+  await expect(asked).toContainText("The signed lease asked $1,000.00: all held");
 
   // A renewal kept as a draft, then voided: it is never sent.
   panel = await newDraft("E2E Property 3, E2E Unit 3: Renewer E2E");
@@ -484,7 +493,7 @@ test("staff record a tenant's payment, the rest held as prepaid rent, and then i
   await expect(lease.getByTestId("prepaid")).toHaveText("$0.00");
 });
 
-test("staff record a vendor's bill with its invoice, record the owner's approval, set it aside and pay it on its page, then draw the rest", async ({
+test("staff record a vendor's bill with its invoice, record the owner's approval, record its payment on its page, then draw the rest", async ({
   page,
 }) => {
   await page.goto(`/invite#${seed.bills_invite}`);
@@ -513,22 +522,20 @@ test("staff record a vendor's bill with its invoice, record the owner's approval
 
   // No agreement: every bill needs the owner's approval first. Its own page takes each step.
   const bill = page.getByRole("row", { name: "Vendor E2E E2E-INV-1", exact: true });
-  await expect(bill.getByTestId("status")).toHaveText("Awaiting owner approval");
+  await expect(bill.getByTestId("status")).toHaveText("Waiting for owner");
   await bill.getByRole("cell").first().click();
   await expect(page.getByRole("heading", { level: 1, name: "Vendor E2E E2E-INV-1" })).toBeVisible();
   await expect(page.getByRole("list", { name: "Files, Vendor E2E E2E-INV-1" })).toContainText("invoice-e2e");
   await page.getByRole("button", { name: "Record approval" }).click();
   await page.getByRole("dialog", { name: "Record approval" }).getByLabel("Approved by").fill("Payee E2E");
   await page.getByRole("dialog", { name: "Record approval" }).getByRole("button", { name: "Record approval" }).click();
-  await expect(page.getByTestId("status")).toHaveText("Approved");
-  await page.getByRole("button", { name: "Set aside" }).click();
-  await page.getByRole("dialog", { name: "Set aside" }).getByRole("button", { name: "Set aside" }).click();
-  await expect(page.getByTestId("status")).toHaveText("Set aside");
-  await page.getByRole("button", { name: "Pay", exact: true }).click();
-  await page.getByRole("dialog", { name: "Pay" }).getByRole("button", { name: "Pay $300.00" }).click();
-  await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
+  await expect(page.getByTestId("status")).toHaveText("Ready to pay");
+  await expect(page.getByTestId("hold")).toHaveText("$300.00 held from Payee E2E's balance for this bill.");
+  await page.getByRole("button", { name: "Record payment" }).click();
+  await page.getByRole("dialog", { name: "Record payment" }).getByRole("button", { name: "Pay $300.00" }).click();
+  await page.getByRole("alertdialog").getByRole("button", { name: "Pay" }).click();
   await expect(page.getByTestId("status")).toHaveText("Paid");
-  await expect(page.getByRole("list", { name: "History" })).toContainText("Paid by check");
+  await expect(page.getByRole("list", { name: "History" })).toContainText("Paid $300.00 by check");
 
   // Pay owners pays the rest out: everything available, by check.
   await sections.getByRole("link", { name: "Pay owners" }).click();
@@ -558,6 +565,18 @@ test("staff charge a tenant's damage at move-out, return the rest of the deposit
   await card.getByRole("button", { name: "Charge it" }).click();
   await expect(card.getByText("Charged $150.00: Carpet cleaning.")).toBeVisible();
   await expect(card.getByText(/Keeps \$150.00 for what the lease owes; \$750.00 goes back/)).toBeVisible();
+  // The day its deposit is due back (the strictest deadline found), and a receipt for what it keeps
+  // (migration 0120): over $125 with none on file, it asks for one.
+  await expect(card.getByText(/^(Return by|Was due back) \d\d\/\d\d\/\d{4}$/)).toBeVisible();
+  const fees = card.getByRole("list", { name: "Fees and receipts, E2E Property 8 / E2E Unit 8: Leaver E2E" });
+  await expect(fees.getByText("Receipt needed")).toBeVisible();
+  await fees.getByLabel("Receipt for Carpet cleaning").setInputFiles({
+    name: "carpet-invoice.pdf", mimeType: "application/pdf", buffer: Buffer.from("%PDF-1.4\n% synthetic invoice\n"),
+  });
+  await fees.getByRole("button", { name: "Add receipt" }).click();
+  await expect(card.getByText("Kept carpet-invoice as a receipt for Carpet cleaning.")).toBeVisible();
+  await expect(fees.getByRole("link", { name: "carpet-invoice" })).toBeVisible();
+  await expect(fees.getByText("Receipt needed")).toHaveCount(0);
 
   await card.getByRole("button", { name: "Return the deposit" }).click();
   await page.getByRole("alertdialog").getByRole("button", { name: "Confirm" }).click();
@@ -565,14 +584,17 @@ test("staff charge a tenant's damage at move-out, return the rest of the deposit
   await expect(card.getByLabel("Returned, E2E Property 8 / E2E Unit 8: Leaver E2E")).toContainText(
     "kept $150.00 of $900.00, $750.00 back to the tenants",
   );
+  // Each tenant's statement: a letter with the receipt, to print and mail or to email.
   const statement = await page.request.get(
-    (await card.getByRole("link", { name: "Statement for the tenants (PDF)" }).getAttribute("href")) ?? "",
+    (await card.getByRole("link", { name: "Statement for Leaver E2E (PDF)" }).getAttribute("href")) ?? "",
   );
   expect(statement.status()).toBe(200);
   expect(statement.headers()["content-type"]).toBe("application/pdf");
+  await card.getByRole("button", { name: "Email the statement" }).click();
+  await expect(card.getByText(/^(Emailed Leaver E2E at .+\.|No email on file for Leaver E2E: add one on their page\.)$/)).toBeVisible();
 });
 
-test("staff keep an owner's document and the owner downloads it from the portal", async ({ page, browser }) => {
+test("staff keep an owner's document and a property's, and the owner downloads them from the portal", async ({ page, browser }) => {
   await page.goto(`/invite#${seed.documents_invite}`);
   await page.getByLabel("Choose a password (12 characters or more)").fill(PASSWORD);
   await page.getByLabel("The same password again").fill(PASSWORD);
@@ -596,6 +618,17 @@ test("staff keep an owner's document and the owner downloads it from the portal"
   await expect(kept).toContainText("Owner E2E");
   await expect(kept).toContainText("Owner document");
 
+  // A file about one of the owner's properties (q046): the owner reads it too.
+  await page.getByRole("button", { name: "Upload" }).click();
+  const another = page.getByRole("dialog", { name: "Upload" });
+  await another.getByLabel("File").setInputFiles({ name: "roof-inspection.pdf", mimeType: "application/pdf", buffer: pdf });
+  await another.getByLabel("Name").fill("Roof inspection");
+  await another.getByRole("combobox", { name: "Attached to" }).selectOption("Property");
+  await another.getByRole("combobox", { name: "Property" }).selectOption({ label: "E2E Property 1" });
+  await expect(another.getByRole("combobox", { name: "Category" })).toHaveValue("property_document");
+  await another.getByRole("button", { name: "Upload" }).click();
+  await expect(page.getByText("Uploaded Roof inspection.")).toBeVisible();
+
   // The owner, who joined in the first test, signs in on their own and downloads it.
   const owner = await (await browser.newContext()).newPage();
   await owner.goto(`/sign-in?pmc=${seed.pmc_id}`);
@@ -608,6 +641,11 @@ test("staff keep an owner's document and the owner downloads it from the portal"
   expect(file.headers()["content-type"]).toBe("application/pdf");
   expect(file.headers()["content-disposition"]).toBe('attachment; filename="Management-agreement-2026.pdf"');
   expect(Buffer.from(await file.body()).equals(pdf)).toBe(true);
+  const theirs = owner.getByRole("list", { name: "Your documents" });
+  await expect(theirs).toContainText("E2E Property 1");
+  const roof = await owner.request.get((await theirs.getByRole("link", { name: "Roof inspection" }).getAttribute("href")) ?? "");
+  expect(roof.status()).toBe(200);
+  expect(roof.headers()["content-type"]).toBe("application/pdf");
   await owner.context().close();
 });
 
@@ -672,6 +710,20 @@ test("staff import last month's statement, match it to the books and prepare it;
   await page.getByLabel(`${us(fifth)} Rent: $1,250.00`).check();
   await page.getByRole("button", { name: "Match these" }).click();
   await expect(page.getByText("Matched.")).toBeVisible();
+
+  // The day's bank reconciliation downloads as PDF, CSV and Excel.
+  const files = page.getByRole("group", { name: "Download the reconciliation" });
+  for (const [name, type] of [
+    ["PDF", "application/pdf"],
+    ["CSV", "text/csv"],
+    ["Excel", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+  ] as const) {
+    const href = (await files.getByRole("link", { name, exact: true }).getAttribute("href")) ?? "";
+    expect(href).toContain(iso(last));
+    const answer = await page.request.get(href);
+    expect(answer.status(), `${name}: ${href}`).toBe(200);
+    expect(answer.headers()["content-type"]).toContain(type);
+  }
 
   await prepare.click();
   await expect(page.getByLabel("Prepared")).toContainText(

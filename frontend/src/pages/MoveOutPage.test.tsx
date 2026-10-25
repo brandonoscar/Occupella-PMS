@@ -15,16 +15,19 @@ const ME: Me = {
 };
 
 const ENDED: MoveOut = {
-  lease_id: "l1", property: "Property 1", unit: "Unit 1", tenants: ["Tenant 1"],
+  lease_id: "l1", property: "Property 1", unit: "Unit 1", tenants: ["Tenant 1"], tenant_ids: ["t1"],
   starts_on: "2026-01-01", ends_on: "2026-06-30", owed: "350.00", carried: "0.00", held: "1200.00",
   open_charges: [{ id: "c1", due_on: "2026-06-30", kind: "fee", memo: "Broken window", open: "350.00" }],
   owner_accounts: [{ id: "a1", owner: "Owner 1", percent: null }, { id: "a2", owner: "Owner 2", percent: null }],
-  settled: null,
+  settled: null, return_by: "2026-07-14",
+  fees: [{ id: "c1", due_on: "2026-06-30", memo: "Broken window", amount: "350.00", receipts: [] }],
 };
 const OPEN: MoveOut = { ...ENDED, lease_id: "l2", unit: "Unit 2", ends_on: null, open_charges: [], owner_accounts: [{ id: "a1", owner: "Owner 1", percent: null }] };
 const DONE: MoveOut = {
-  ...ENDED, lease_id: "l3", unit: "Unit 3", held: "0.00",
+  ...ENDED, lease_id: "l3", unit: "Unit 3", held: "0.00", return_by: null,
   settled: { held: "1200.00", kept: "350.00", returned: "850.00", returned_on: "2026-07-05" },
+  fees: [{ id: "c3", due_on: "2026-06-30", memo: "Carpet cleaning", amount: "350.00",
+    receipts: [{ id: "d1", title: "CleanCo invoice" }] }],
 };
 
 function server(refuse: Record<string, string> = {}, leases: MoveOut[] = [ENDED, OPEN, DONE]) {
@@ -33,6 +36,9 @@ function server(refuse: Record<string, string> = {}, leases: MoveOut[] = [ENDED,
     if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
     if (path.endsWith("/end")) return new Response(null, { status: 204 });
     if (path.endsWith("/return")) return new Response(JSON.stringify({ returned: "850.00" }), { status: 201 });
+    if (path.endsWith("/statement/send")) {
+      return new Response(JSON.stringify({ emailed: [{ name: "Tenant 1", to: "t1@example.com" }], without_email: [] }), { status: 201 });
+    }
     return new Response(JSON.stringify({ id: "c9" }), { status: 201 });
   });
   vi.stubGlobal("fetch", fetch);
@@ -134,8 +140,8 @@ describe("MoveOutPage", () => {
     render(<MoveOutPage me={ME} />);
     expect((await screen.findByLabelText("Returned, Property 1 / Unit 3: Tenant 1")).textContent)
       .toBe("Returned on 07/05/2026: kept $350.00 of $1,200.00, $850.00 back to the tenants.");
-    expect(screen.getByRole("link", { name: "Statement for the tenants (PDF)" }).getAttribute("href"))
-      .toBe("/api/reports/trust_report_deposit_return?arg=l3&format=pdf");
+    expect(screen.getByRole("link", { name: "Statement for Tenant 1 (PDF)" }).getAttribute("href"))
+      .toBe("/api/move-out/l3/statement?tenant_id=t1");
     fireEvent.click(screen.getByRole("button", { name: "Return the deposit" }));
     fireEvent.click(screen.getByRole("button", { name: "Confirm" }));
     expect(await screen.findByText("Clerk 1 may not pay out money (the disburse role)")).toBeTruthy();
@@ -149,5 +155,44 @@ describe("MoveOutPage", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ detail: "sign in first" }), { status: 401 })));
     render(<MoveOutPage me={ME} />);
     expect((await screen.findAllByRole("alert"))[0]?.textContent).toBe("sign in first");
+  });
+
+  it("shows when a deposit is due back and keeps a receipt for a fee that needs one", async () => {
+    const fetch = server({}, [ENDED]);
+    render(<MoveOutPage me={ME} />);
+    // Its day passed: the badge says it was due.
+    expect(await screen.findByText("Was due back 07/14/2026")).toBeTruthy();
+    const fees = screen.getByRole("list", { name: "Fees and receipts, Property 1 / Unit 1: Tenant 1" });
+    expect(within(fees).getByText("Receipt needed")).toBeTruthy();
+    expect(within(fees).getByText("Broken window, due 06/30/2026: $350.00")).toBeTruthy();
+
+    const add = within(fees).getByRole("button", { name: "Add receipt" });
+    expect((add as HTMLButtonElement).disabled).toBe(true);
+    const picked = new File([new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d])], "glazier-invoice.pdf", { type: "application/pdf" });
+    fireEvent.change(within(fees).getByLabelText("Receipt for Broken window"), { target: { files: [picked] } });
+    await vi.waitFor(() => expect((add as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(add);
+
+    expect(await screen.findByText("Kept glazier-invoice as a receipt for Broken window.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/move-out/l1/fees/c1/receipts",
+      { title: "glazier-invoice", content_type: "application/pdf", content_base64: "JVBERi0=" }]]);
+  });
+
+  it("refuses a receipt that isn't a PDF, JPEG or PNG before sending it", async () => {
+    server({}, [ENDED]);
+    render(<MoveOutPage me={ME} />);
+    const input = await screen.findByLabelText("Receipt for Broken window");
+    fireEvent.change(input, { target: { files: [new File(["x"], "note.txt", { type: "text/plain" })] } });
+    expect(await screen.findByText("A receipt is a PDF, JPEG or PNG.")).toBeTruthy();
+  });
+
+  it("emails a returned deposit's statement and links each receipt", async () => {
+    const fetch = server({}, [DONE]);
+    render(<MoveOutPage me={ME} />);
+    expect((await screen.findByRole("link", { name: "CleanCo invoice" })).getAttribute("href")).toBe("/api/documents/d1/file");
+    expect(screen.queryByText("Receipt needed")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Email the statement" }));
+    expect(await screen.findByText("Emailed Tenant 1 at t1@example.com.")).toBeTruthy();
+    expect(posted(fetch)).toEqual([["/api/move-out/l3/statement/send", {}]]);
   });
 });

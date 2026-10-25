@@ -304,6 +304,102 @@ the old lease, and the written agreement itself.
 **Left to the company.** Its state's cap and whether it allows a separate pet or key deposit at
 all, and any non-refundable fee (which the PMS records as a charge, not a deposit).
 
+### A deposit's return deadline and its statement (migration 0120)
+
+The founder's review q040 and q039, brought in scope on 2026-10-22. Checked 2026-10-22 from
+search excerpts: the state code sites (mca.legmt.gov, nysenate.gov, leginfo.legislature.ca.gov)
+did not resolve from the container, so no statute was read in full.
+
+**The rule.**
+- Every state sets a deadline to return a deposit, with an itemized statement of anything kept,
+  counted from the tenancy's end, the tenant's leaving or the surrender of the home. Most give 30
+  days; the shortest found:
+  - Hawaii, HRS 521-44(c): the deposit, less what is lawfully kept, within 14 days after the
+    rental agreement ends, with written notice of what was kept and why; a landlord who misses it
+    keeps none of it. Mailed to an address the tenant supplied, postmarked by the 14th day, it is
+    presumed on time (the statute's text as the search quoted it).
+  - New York, General Obligations Law 7-108(1-a)(e): within 14 days after the tenant vacates, an
+    itemized statement of what was kept and the rest returned; missing it forfeits the right to
+    keep any (quoted by the search; whether the money itself is due in 14 days or only the
+    statement, secondary sources disagree: NOT VERIFIED).
+  - Montana, MCA 70-25-202: 30 days with an itemized list, but 10 days when nothing is to be kept
+    (no damage, no cleaning, no rent or utilities owing). Secondary sources only (hemlane.com,
+    ipropertymanagement.com, ezel.ai): NOT VERIFIED.
+  - Arizona gives 14 business days and Alaska 14 days when the tenant gave notice (secondary
+    sources: NOT VERIFIED); California 21 days (Civil Code 1950.5).
+- The statement: California asks the most found. With the itemized statement, copies of the
+  receipts or invoices for repairs over $125 and for cleaning done by someone else (or, for work
+  not done within the deadline, a good-faith estimate, then the receipts within 14 days of it), and
+  since April 1, 2025 (AB 2801) photos of the home taken after the tenant left and before the
+  repairs, and after them. Sources: law-firm and property-manager summaries (castelblanco.com,
+  bhrealestatelaw.com, snslawgroup.com, lifetimepm.com); the dates for AB 2801's move-in photos
+  differ between them: NOT VERIFIED.
+- Florida (s. 83.49(3)) asks a written notice of a claim on the deposit, in words the statute
+  gives, sent within 30 days, before anything is kept. Secondary sources only: NOT VERIFIED.
+- Local ordinances may set shorter deadlines than the state's.
+
+**What the PMS does.**
+- Each lease past its last day whose deposit is still held shows the day it is due back: 14 days
+  after its last day, 10 while the lease owes nothing (so nothing would be kept), the strictest
+  found. The Move-outs page shows it on each lease, past due once the day has passed, and the
+  Dashboard lists every one until the deposit is returned.
+- Staff keep a receipt or invoice for each fee a deposit keeps (one of the lease's documents,
+  linked to the fee), before or after the return; a fee over $125 with none on file is marked.
+- Each tenant's statement is a letter on the company's letterhead to their forwarding address
+  (the mailing address on their page; a line says when none is on file): what each tenant held,
+  what was kept for what and why with each fee's receipts named, what went back to whom and when,
+  then the receipts and the lease's move-out photos themselves. Staff download it to mail or
+  email it to each tenant (their contact email, else their login's), again after a receipt comes
+  in; the tenant downloads their own in the portal.
+- The PMS returns nothing by itself and decides nothing a state leaves to the landlord.
+
+**Left to the company.** Its state's own deadline when it is longer, and mailing the letter where
+its state asks for mail (the PMS emails it, which not every state counts); Florida's notice of a
+claim, which the company can write as a notice template and send from the lease; any state's own
+required wording; photos taken at move-in.
+
+### Interest on security deposits (migration 0122)
+
+The founder's review q041, brought in scope on 2026-10-22. Written from what was known before
+this session; no statute or regulator's page was read in it, so every state's detail below is
+NOT VERIFIED.
+
+**The rule.** Most states ask no interest on a residential deposit. Those that do differ in each
+part of it:
+- The rate. A fixed rate (Massachusetts: 5% a year, or what the bank paid if less, under G.L. c.
+  186 s. 15B; Minnesota: 1% a year, simple, Stat. 504B.178), or one a regulator publishes each
+  year (Connecticut's deposit index, C.G.S. 47a-22a; Chicago's rate under its Residential Landlord
+  and Tenant Ordinance), or what the bank account the deposit sits in earns (New Jersey, N.J.S.A.
+  46:8-19; New York, General Obligations Law 7-103, in buildings of six or more units, less a 1%
+  a year fee the landlord may keep; Pennsylvania after the second year, 68 P.S. 250.511b).
+- Who it applies to. Some only above a size (New York's six units, Illinois' 25 under 765 ILCS
+  715) or a time and amount (Ohio, R.C. 5321.16: 5% a year on what exceeds $50 or a month's rent,
+  whichever is more, held six months or more).
+- When it is paid. Each year of the tenancy, paid or credited against the rent (Massachusetts, New
+  Jersey, Connecticut, Ohio), at the tenant's choice in New York, and what is left with the
+  deposit's return.
+
+**What the PMS does.**
+- A property's terms say its deposits' yearly rate from a day (0 earns none), as late fee terms
+  do; a new row from a later day changes it, so a rate published each year is entered each year.
+- Each day's deposit (what each tenant's deposit held at the day's end, UTC) earns the day's rate
+  over the days in its year, summed over the days and rounded to the cent per deposit: simple
+  interest, never compounded except on interest staff add to the deposit, which then earns too.
+- Staff pay it from the lease's page for the days since the last payment through a day gone by,
+  once per request: as a credit against the lease's rent while the lease is in effect (it moves no
+  money: the lease owes less), or added to the deposits from the owner's account, its cash moving
+  from the owner's trust bank account to the deposits' (taking the disburse role; an owner short
+  of it is refused). Added to a deposit, it goes back with the deposit at move-out.
+- Reports, Deposit interest lists each lease with deposits held, the rate, the first day its next
+  payment is for and what it would pay through the report's day.
+
+**Left to the company.** Its state's rate and whether its law applies at all (sizes, thresholds,
+how long the deposit was held), a fee the landlord may keep, paying it each year on time (the PMS
+pays nothing by itself), interest the bank pays on the deposit account (the PMS keeps none of the
+bank's interest apart), and an owner's income statement: interest added to a deposit is on the
+owner statement and in the year-end package's "anything else", not on its own line of the income
+statement; a rent credit shows as less rent collected.
+
 ## A bill shared across properties, and the company's markup on a bill (migration 0083)
 
 **The rule.** A manager is the owner's agent: it pays out an owner's trust money only for that
@@ -420,8 +516,30 @@ force is NOT VERIFIED.
 - The HAP contract itself and the agency's rent reasonableness review: the PMS keeps the amount
   staff enter and the contract's number, nothing more. The agency's inspections and the
   household's certifications are recorded since migration 0108 (below).
-- A late HAP payment's fee, and an authority's payment that bounces: neither is built; staff
-  charge the authority by hand, and a returned authority payment is corrected by a journal entry.
+- Whether its HAP contract provides a late payment fee and how much: staff set the fee and grace
+  days the contract says (since migration 0116, below).
+
+### An authority's late fee, a returned payment and a payment hold (migration 0116)
+
+**The rule.** 24 CFR 982.451(b)(4) (above): the agency pays the HAP promptly, and the HAP contract
+may provide a penalty for a late payment, the agency's to pay, never the family's; the agency
+isn't obligated to pay it when HUD finds the delay beyond the agency's control. (Full text NOT
+VERIFIED, as above.) A payment hold (an eviction filed, migration 0025) is about whether accepting
+rent waives the eviction, which state law decides; no state's rule is built in.
+
+**What the PMS does.**
+- Staff set an authority's late payment fee from a day: grace days and a flat fee, as its HAP
+  contract says (0 charges none). The nightly run and Run rent now charge it to each part of a
+  rent the authority still owes at the end of its last grace day (UTC), once, on the authority.
+  The tenant is never charged it. A late fee paid is a late fee on the income statements, not
+  rent for the management fee.
+- A payment of the authority's that the bank returned is marked bounced from its ⋯ menu: its
+  money moves back out of the owners' accounts, and what it paid of each charge is owed again.
+- A lease on a payment hold takes the authority's payment only when staff accept it past the
+  hold, as a tenant's, naming who did.
+
+**Left to the company.** Whether its contract provides a late fee and collecting it from the
+agency; whether accepting a payment during an eviction is right in its state.
 - Payment holds (an eviction filed) hold the tenant's payments only; an authority's payment is
   not held.
 
@@ -463,6 +581,53 @@ force is NOT VERIFIED.
   50059) and TRACS: the PMS files and sends nothing, and checks no income limit, rent limit or
   inspection standard.
 - An agency that inspects every year, or a stricter schedule: staff give the due day.
+
+## Tax credit units (LIHTC, migration 0123)
+
+**The rule.** A low-income housing tax credit property keeps a share of its units for households
+under an income limit, at a rent under a limit, for its compliance period. It is federal law,
+the same in every state; each state's housing finance agency monitors it.
+
+- 26 U.S.C. 42(g)(1): the owner elects a minimum set-aside: 20% of units for households at or
+  under 50% of area median gross income, 40% at or under 60%, or the average income test (40% of
+  units, each designated 20% to 80% in steps of 10, averaging 60% or under).
+- 42(g)(2): a unit's gross rent (the rent and a utility allowance) is at most 30% of the income
+  limit imputed to it: one person for a unit with no bedroom, one and a half people a bedroom.
+- 42(g)(2)(D)(ii): a household that qualified at move-in stays qualified as its income rises;
+  once it is over 140% of the limit, the next available unit of comparable or smaller size in the
+  building must go to a qualified household (the next available unit rule).
+- HUD publishes the Multifamily Tax Subsidy Project income limits each year at 50% of median for
+  households of one to eight; 60% is 120% of them, and each person over eight adds 8% of the
+  four-person limit.
+
+Read in search excerpts of 26 U.S.C. 42, Treasury's regulations and HUD's limits; their full text as
+now in force is NOT VERIFIED.
+
+**What the PMS does.**
+- Staff enter a property's 50% limits for households of one to eight from a day, on its page,
+  each year as published; the PMS looks nothing up. Each other percent is in proportion, to the
+  dollar, and nine people or more add 8% of the four-person limit each.
+- Staff make a unit a tax credit unit from a day, on its page: the percent of median its
+  household may earn, its bedrooms and the utility allowance; a later row ends it. The page says
+  the most the rent and the allowance may come to: 30% of the imputed household's limit a year,
+  by the month, down to the dollar.
+- A tax credit unit's lease takes income certifications as an assisted lease does (migration
+  0108). Its page, and the Tax credit compliance report on a day, say where it stands: the
+  certification's standing, the income test (the move-in certification against the limit on its
+  day; after it, over 140% of the latest one's limit is the next available unit rule) and the rent
+  test (within the limit, or over by how much); then each property's units held by qualified
+  households, of all its tax credit units.
+- A household's income stays private as in migration 0108: the AI never reads a certification,
+  and the report prints words, limits and rents, never income or household size.
+
+**Left to the company.**
+- The election and whether the property meets it (the report counts units; it decides nothing),
+  the average income test's average, the next available unit itself, and any building-by-building
+  count.
+- An agency's own table or rounding where it differs from the proportion above: staff enter the
+  50% limits the agency uses.
+- The tenant income certification form, student status, the state agency's reporting and file
+  reviews, and IRS forms 8609 and 8823: the PMS files and sends nothing.
 
 ## Utility billing: RUBS and submeters (migration 0096)
 
@@ -687,3 +852,85 @@ same way to every applicant, and its reasons when it departs from them.
   charge, to whoever asks.
 - Whether its state asks more of a lease's signing (a separate signature beside a disclosure, a
   witness) and the lease's own words.
+
+## The 1099 summary's threshold (migration 0113)
+
+**The rule.** A business that pays a non-employee for services reports it on Form 1099-NEC (rents
+and some other payments on 1099-MISC) once the year's payments reach a threshold. That threshold
+was $600 for payments made through December 31, 2025. The One Big Beautiful Bill Act (Pub. L.
+119-21, section 70433) raised it to $2,000 for payments made after December 31, 2025, adjusted
+for inflation from 2027. (From tax practitioners' summaries of the Act, e.g. NATP and Sovos; the
+statute's text and the IRS's Publication 1099 figures are NOT VERIFIED here.)
+
+**What the PMS does.**
+- The 1099 summary lists the vendors whose latest profile marks them for a 1099. Each paid the
+  year's threshold or more (600.00 through 2025, 2000.00 for 2026) is on it and in its total;
+  one paid less is listed under the threshold, so nothing marked disappears.
+- A vendor with no profile is listed apart as having no 1099 setting, so staff can say; those
+  marked for none are one line with how many and what they were paid.
+- For 2027 and later it uses 2000.00 and says on its threshold line that the inflation
+  adjustment is not known to it.
+- It counts what the old system paid a vendor in the cutover's year.
+
+**Left to the company.** Whether a vendor gets a 1099 at all (a corporation usually doesn't; the
+W-9 says), the year's adjusted threshold from 2027, and filing: the PMS files nothing and keeps
+no tax ID.
+
+## Rent paid online (migration 0150, ADR 0009)
+
+**The rules, as researched on 2026-10-23** (`docs/research/state-rules-2026-10-23.md`, from search
+excerpts, every one NOT VERIFIED against the statute):
+- No state found bans paying rent online, but several require a way to pay that is neither cash
+  nor online, or free: California Civil Code 1947.3 (at least one form of payment that is neither
+  cash nor electronic transfer, and a waiver is void), Oregon SB 1523 (from June 5, 2026: a tenant
+  may not be required to pay electronically) and ORS 90.302 (a card fee passes through only when
+  the card company allows it and the landlord takes cash or check), Illinois Public Act 103-0809
+  (a portal charging for e-checks needs a free alternative), Colorado HB25-1090 (no processing
+  charge unless a free way to pay exists).
+- Card surcharges are banned in Connecticut, Massachusetts and Maine and capped at 2% in Colorado
+  and Oklahoma; a debit card is never surcharged; Visa reportedly forbids a convenience fee on a
+  recurring payment. The PMS takes no card yet.
+- Trust money: the company is the merchant of record (the payment is its, into its trust bank
+  account), and no fee is taken out of the rent: rent is owners' trust money. No regulator
+  guidance was found on a processor keeping its fee out of what it pays into trust, or on returns
+  and disputes taken back from a trust account; that is the largest legal question left, for
+  counsel.
+
+**What the PMS does.**
+- Online payments are off until the company turns them on; staff still record checks, money
+  orders and cash, so a free way to pay is always there.
+- The company chooses who pays the processing fee on a bank payment: the company (free for
+  tenants) or the tenant, the fee shown before they pay and no more than the processor's own
+  (0.8%, at most $5.00, as Stripe published it; NOT VERIFIED against its current prices).
+- The payment is recorded at its whole amount for the owner. The processor's fee leaves trust
+  only from the company's fee account (the company's money), once that holds it; until then it
+  waits, and the company deposits what is short from its own account, never more, so its money
+  covers a cost and doesn't sit in trust. A return is recorded as a bounce, with the property's
+  NSF fee, and a tenant's fee that came back leaves the company's account the same way.
+
+**Left to the company.** Whether its state lets it pass the fee to tenants, and when a payment
+counts as received for its state's deposit deadline (a bank payment takes days to clear). Oregon
+forbids a broker's own money in trust and Iowa requires the broker to cover bank charges from its
+own: a company in Oregon should keep its fee account able to pay the processor without a deposit.
+
+
+## Autopay (migration 0151, ADR 0009)
+
+**The rules, as researched** (every one NOT VERIFIED against the rule's text):
+- NACHA's rules for a recurring debit from a consumer's account (a "PPD"/"WEB" entry) need the
+  consumer's written authorization, which the payments partner's page takes and keeps (Stripe
+  calls it the mandate), and a way to revoke it. When the amount varies, the consumer is to be told
+  the amount and the day ahead of each debit (reportedly 10 days), unless they agreed to a range.
+- California Civil Code 1947.3 and the other states that require a way to pay that isn't
+  electronic (see Rent paid online) apply to autopay as to any payment online: it is never the
+  only way.
+
+**What the PMS does.** A balance autopay asks the tenant for the most it may take, so the range
+is agreed when they set it up; a fixed one takes the same each month. The tenant is emailed of
+each payment, its amount and due date, when it starts, before the bank is debited (the server must
+send email). The tenant turns it off whenever they like, and it stops by itself after two payments
+in a row didn't go through. A payment hold stops it for that month.
+
+**Left to the company.** Whether its partner's authorization text meets NACHA's rules and its
+state's, and whether an email the day a debit starts is notice enough for a varying amount where
+the tenant expects more lead time.

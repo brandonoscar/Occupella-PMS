@@ -35,6 +35,7 @@ const lease = (id: string, inEffect: boolean): Lease => ({
   each_month: [],
   coming_due: [],
   deposit_returned: false,
+  deposit_asked: null,
   payments: [],
   files: [],
 });
@@ -132,7 +133,24 @@ describe("TenantHome", () => {
     expect(within(card).getByText("Pet rent: $35.00")).toBeTruthy();
     expect(within(card).getByText("01/01/2099 Key replacement: $50.00")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Deposit statement (PDF)" }).getAttribute("href")).toBe(
-      "/api/tenant/leases/1/deposit-return/download?format=pdf",
+      "/api/tenant/leases/1/deposit-statement",
+    );
+  });
+
+  it("says what security deposit the signed lease asks and what is still to give", async () => {
+    server({
+      "GET /api/tenant/leases": [{
+        ...lease("1", true),
+        deposit_asked: { asked: "1500.00", held: "1000.00", to_receive: "500.00" },
+      }],
+      "GET /api/tenant/requests": [],
+      "GET /api/tenant/renewals": [],
+      "GET /api/tenant/leases/1/ledger": LEDGER,
+    });
+    render(<TenantHome me={ME} />);
+
+    expect((await screen.findByTestId("deposit-asked")).textContent).toBe(
+      "Security deposit your lease asks: $1,500.00. Held: $1,000.00; $500.00 still to give the manager.",
     );
   });
 

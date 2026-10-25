@@ -5,7 +5,7 @@ import type { Portfolio } from "../setup";
 import { ChartOfAccountsPage } from "./ChartOfAccountsPage";
 import type { Panel } from "./SetupPanels";
 import {
-  AddLeasePanel, AddOwnerPanel, AddPropertyPanel, AddUnitPanel, LateFeesPanel, LeaseBreakFeePanel, NsfFeePanel,
+  AddLeasePanel, AddOwnerPanel, AddPropertyPanel, AddUnitPanel, DepositInterestPanel, LateFeesPanel, LeaseBreakFeePanel, NsfFeePanel,
   TermsPanel,
 } from "./SetupPanels";
 
@@ -174,6 +174,25 @@ describe("setup panels", () => {
     }]]);
   });
 
+  it("sets the same terms for every owner of a property owned by several (q044)", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-17T12:00:00Z") });
+    const fetch = server();
+    const p = panel();
+    render(<TermsPanel panel={p} everyOwnerOf="Property A"
+      accounts={[{ account: "acct-1", label: "Owner A, Property A" }, { account: "acct-2", label: "Owner B, Property A" }]} />);
+
+    expect((screen.getByLabelText("For") as HTMLSelectElement).value).toBe("acct-1");
+    type("For", "every-owner");
+    type("Fee, percent of rent and recurring fees collected", "8");
+    type("Minimum fee", "50.00");
+    press("Set terms");
+    await vi.waitFor(() => expect(p.said).toEqual(["New terms for every owner of Property A from 2026-10-17."]));
+    expect(posted(fetch)).toEqual([["/api/setup/agreements", {
+      account: "acct-1", starts_on: "2026-10-17", every_owner: true, fee_percent: "8", minimum_fee: "50.00",
+      flat_fee: "0", leasing_fee_percent: "0", reserve: "0", approval_limit: "0", bill_markup_percent: "0",
+    }]]);
+  });
+
   it("sets late fees, with no cap when none is given, and an NSF fee", async () => {
     vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-17T12:00:00Z") });
     const fetch = server();
@@ -207,6 +226,19 @@ describe("setup panels", () => {
     await vi.waitFor(() => expect(p.said).toEqual(["New lease-break fee for leases starting from 2026-10-17."]));
     expect(posted(fetch)).toEqual([["/api/setup/lease-break-fees", {
       property_id: "p1", starts_on: "2026-10-17", flat_fee: "250.00", rent_months: "1.5",
+    }]]);
+  });
+
+  it("sets the yearly rate a property's deposits earn from a day", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: new Date("2026-10-17T12:00:00Z") });
+    const fetch = server();
+    const p = panel();
+    render(<DepositInterestPanel panel={p} propertyId="p1" />);
+    type("Percent a year", "1.5");
+    press("Set deposit interest");
+    await vi.waitFor(() => expect(p.said).toEqual(["Deposits earn 1.5% a year from 10/17/2026."]));
+    expect(posted(fetch)).toEqual([["/api/setup/deposit-interest", {
+      property_id: "p1", starts_on: "2026-10-17", annual_percent: "1.5",
     }]]);
   });
 

@@ -1,0 +1,48 @@
+line	property	item	schedule_e	amount
+1	Golden PMC	PMC	NULL	NULL
+2	all owners	owner	NULL	NULL
+3	2026-01-01 to 2026-12-31 UTC, cash basis	period	NULL	NULL
+4	Property 1, Owner 1	income: rent	3	1000.00
+5	Property 1, Owner 1	income: recurring charges	3	0.00
+6	Property 1, Owner 1	income: late fees	3	0.00
+7	Property 1, Owner 1	income: NSF fees	3	0.00
+8	Property 1, Owner 1	income: other charges	3	0.00
+9	Property 1, Owner 1	total income	NULL	1000.00
+10	Property 1, Owner 1	expense: management fees	11	0.00
+11	Property 1, Owner 1	expense: leasing fees	8	0.00
+12	Property 1, Owner 1	total expenses	NULL	0.00
+13	Property 1, Owner 1	net income	NULL	1000.00
+14	Property 1, Owner 1	Schedule E line 3: Rents received	3	1000.00
+15	Property 2, Owner 2	income: rent	3	800.00
+16	Property 2, Owner 2	income: recurring charges	3	0.00
+17	Property 2, Owner 2	income: late fees	3	0.00
+18	Property 2, Owner 2	income: NSF fees	3	0.00
+19	Property 2, Owner 2	income: other charges	3	0.00
+20	Property 2, Owner 2	total income	NULL	800.00
+21	Property 2, Owner 2	expense: management fees	11	0.00
+22	Property 2, Owner 2	expense: leasing fees	8	0.00
+23	Property 2, Owner 2	total expenses	NULL	0.00
+24	Property 2, Owner 2	net income	NULL	800.00
+25	Property 2, Owner 2	Schedule E line 3: Rents received	3	800.00
+26	Property 3, Owner 3	income: rent	3	0.00
+27	Property 3, Owner 3	income: recurring charges	3	0.00
+28	Property 3, Owner 3	income: late fees	3	0.00
+29	Property 3, Owner 3	income: NSF fees	3	0.00
+30	Property 3, Owner 3	income: other charges	3	0.00
+31	Property 3, Owner 3	total income	NULL	0.00
+32	Property 3, Owner 3	expense: management fees	11	0.00
+33	Property 3, Owner 3	expense: leasing fees	8	0.00
+34	Property 3, Owner 3	total expenses	NULL	0.00
+35	Property 3, Owner 3	net income	NULL	0.00
+36	Property 3, Owner 3	Schedule E line 3: Rents received	3	0.00
+37	NULL	all properties: income: rent	3	1800.00
+38	NULL	all properties: income: recurring charges	3	0.00
+39	NULL	all properties: income: late fees	3	0.00
+40	NULL	all properties: income: NSF fees	3	0.00
+41	NULL	all properties: income: other charges	3	0.00
+42	NULL	all properties: total income	NULL	1800.00
+43	NULL	all properties: expense: management fees	11	0.00
+44	NULL	all properties: expense: leasing fees	8	0.00
+45	NULL	all properties: total expenses	NULL	0.00
+46	NULL	all properties: net income	NULL	1800.00
+47	NULL	all properties: Schedule E line 3: Rents received	3	1800.00

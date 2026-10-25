@@ -28,10 +28,14 @@ export const REPORTS: ReportSpec[] = [
   { name: "income_statement", label: "Income statement", group: "Financial", args: ["owner", "from", "to"], byProperty: false },
   // The same counting what was charged and billed in the days, not what moved (q115).
   { name: "income_statement_accrual", label: "Income statement, accrual basis", group: "Financial", args: ["owner", "from", "to"], byProperty: false },
+  // Every owner's in one, each property named with its owner (q108).
+  { name: "income_statement_all_owners", label: "Income statement, all owners", group: "Financial", args: DAYS, byProperty: false },
   { name: "cash_flow", label: "Cash flow", group: "Financial", args: DAYS, byProperty: false },
   { name: "trial_balance", label: "Trial balance", group: "Financial", args: AS_OF, byProperty: true },
   { name: "general_ledger", label: "General ledger", group: "Financial", args: DAYS, byProperty: true },
   { name: "security_deposits", label: "Security deposits", group: "Financial", args: AS_OF, byProperty: true },
+  // Each lease's deposits with what they earned since their last interest payment (q041).
+  { name: "deposit_interest", label: "Deposit interest", group: "Financial", args: AS_OF, byProperty: true },
   { name: "rent_roll", label: "Rent roll", group: "Rentals", args: AS_OF, byProperty: true },
   { name: "delinquency", label: "Delinquency", group: "Rentals", args: AS_OF, byProperty: true },
   { name: "vacancy", label: "Vacancy", group: "Rentals", args: AS_OF, byProperty: true },
@@ -52,6 +56,8 @@ export const REPORTS: ReportSpec[] = [
   { name: "trust_account_signers", label: "Trust account signers", group: "Compliance", args: AS_OF, byProperty: false },
   // Each lease with housing assistance: its income certification and inspection, where each stands (q143).
   { name: "assistance_compliance", label: "Housing assistance compliance", group: "Compliance", args: AS_OF, byProperty: true },
+  // Each tax credit unit: its household's certification, the income and rent tests (q143).
+  { name: "tax_credit_compliance", label: "Tax credit compliance", group: "Compliance", args: AS_OF, byProperty: true },
   { name: "audit_log", label: "Audit log", group: "Compliance", args: DAYS, byProperty: false },
 ];
 
