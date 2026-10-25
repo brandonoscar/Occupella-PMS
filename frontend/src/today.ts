@@ -163,26 +163,26 @@ export function insuranceLine(policy: Lapsing): string {
 
 // "Operating trust: $150.00 of the company's fees, the oldest since 09/20/2026 (25 days); take
 // them out by 10/15/2026" (or "past 10/15/2026").
-export function companyFeesLine(fees: CompanyFees, on: string): string {
+function companyFeesLine(fees: CompanyFees, on: string): string {
   const by = fees.take_by === null ? "" : fees.take_by < on ? `; past ${usDate(fees.take_by)} to take them out` : `; take them out by ${usDate(fees.take_by)}`;
   return `${fees.bank_account}: ${companyFeesLabel(fees)}${by}`;
 }
 
 // "Operating trust: no broker on file", or "Operating trust, Clerk 1: bond runs out in 5 days".
-export function signerNoteLine(note: SignerNote): string {
+function signerNoteLine(note: SignerNote): string {
   return note.signer === null
     ? `${note.bank_account}: ${note.standing}`
     : `${note.bank_account}, ${note.signer}: ${note.standing}`;
 }
 
 // "Unit 1, Property 1 (Tenant A): renters insurance none on file".
-export function uninsuredLine(lease: Uninsured): string {
+function uninsuredLine(lease: Uninsured): string {
   const who = lease.tenants ? ` (${lease.tenants})` : "";
   return `${lease.unit}, ${lease.property}${who}: renters insurance ${lease.standing}`;
 }
 
 // "Unit 1, Property 1 (Tenant 1): $1,200.00 held, due back by 11/04/2026 (due in 13 days)".
-export function depositBackLine(back: DepositBack): string {
+function depositBackLine(back: DepositBack): string {
   const who = back.tenants.length ? ` (${back.tenants.join(", ")})` : "";
   return `${back.unit}, ${back.property}${who}: ${money(back.held)} held, due back by ${usDate(back.return_by)} (${back.standing})`;
 }
@@ -191,13 +191,13 @@ export function depositBackLine(back: DepositBack): string {
 // still to receive".
 // "Unit 4, Elm Court (Tenant 1): its term ended 10/31/2026 with no renewal signed; month to month
 // at the same rent since 11/01/2026".
-export function holdoverLine(lease: Holdover): string {
+function holdoverLine(lease: Holdover): string {
   const who = lease.tenants.length ? ` (${lease.tenants.join(", ")})` : "";
   return `${lease.unit}, ${lease.property}${who}: its term ended ${usDate(lease.term_ended_on)} with no renewal signed;`
     + ` month to month at the same rent since ${usDate(lease.rolled_on)}`;
 }
 
-export function depositDueLine(due: DepositDue): string {
+function depositDueLine(due: DepositDue): string {
   const who = due.tenants.length ? ` (${due.tenants.join(", ")})` : "";
   return `${due.unit}, ${due.property}${who}: ${money(due.to_receive)} of the ${money(due.asked)} security deposit the signed lease asked still to receive`;
 }

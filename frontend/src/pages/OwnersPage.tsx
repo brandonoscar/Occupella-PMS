@@ -34,6 +34,7 @@ import { EmailsCard } from "../components/EmailsCard";
 import { FilesCard } from "./FilesCard";
 import { PayeeCard } from "./PayeeCard";
 import { TaxIdCard } from "./TaxIdCard";
+import { OwnerTop } from "./OwnerTop";
 import { PortalCard } from "./PortalCard";
 import { TermsPanel } from "./SetupPanels";
 import { GoLink } from "./NeedsAttention";
@@ -160,7 +161,9 @@ const OWNER_TABS: { value: OwnerTab; label: string }[] = [
   { value: "files", label: "Files" },
 ];
 
-// An owner (ADR 0006): Summary (contact details, portal login, the agreements' terms), Properties
+// An owner (ADR 0006; ADR 0010 phase 3, part J): on top how to reach them, how they are paid,
+// their tax ID's last four, their balance and the next draw; Summary (contact details, portal
+// login in one click, the agreements' terms), Properties
 // (what each account holds, keeps back and may pay out), Financials (their statement, and a
 // contribution recorded), Statements (each month's, and the year's income statement) and Files.
 export function OwnerPage({ me, id }: { me: Me; id: string }) {
@@ -191,6 +194,7 @@ export function OwnerPage({ me, id }: { me: Me; id: string }) {
         <RecordActions path={`/api/owners/${id}`} name={owner.name} archived={owner.archived}
           onChange={(done) => { setSaid(done); refresh(); }} />
       } />
+      <OwnerTop owner={owner} today={day(new Date())} />
       <Said>{said}</Said>
       <div>
         <Tabs label="Owner" tabs={OWNER_TABS} value={tab} onChange={setTab} />
@@ -213,12 +217,15 @@ export function OwnerPage({ me, id }: { me: Me; id: string }) {
 function OwnerSummary({ owner, refresh }: { owner: Owner; refresh: () => void }) {
   const [setting, setSetting] = useState(false);
   const [said, setSaid] = useState("");
+  const [editContact, setEditContact] = useState(0);
   const property = (account: string) => owner.accounts.find((a) => a.account === account)?.property ?? account;
   return (
     <div className="flex flex-col gap-6">
-      <ContactCard path={`/api/owners/${owner.id}`} contact={owner.contact} refresh={refresh} name={owner.name} />
+      <ContactCard path={`/api/owners/${owner.id}`} contact={owner.contact} refresh={refresh} name={owner.name}
+        editRequest={editContact} />
       <PortalCard kind="owner" personId={owner.id} name={owner.name} portal={owner.portal}
-        loginEmail={owner.login_email} email={owner.contact.email} refresh={refresh} />
+        loginEmail={owner.login_email} contactEmail={owner.contact.email} refresh={refresh}
+        onEditContact={() => setEditContact((n) => n + 1)} />
       <PayeeCard kind="owner" id={owner.id} name={owner.name} />
       <TaxIdCard kind="owner" id={owner.id} name={owner.name} />
       <Card title="Management agreements">

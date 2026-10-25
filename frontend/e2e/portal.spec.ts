@@ -133,8 +133,18 @@ test("staff enroll an authenticator, invite a tenant and see a repair through", 
   await page.getByRole("row", { name: /^Tenant E2E/ }).getByRole("link", { name: "Tenant E2E" }).click();
   const portal = page.locator("section", { has: page.getByRole("heading", { level: 2, name: "Portal", exact: true }) });
   await expect(portal).toContainText("None");
-  await portal.getByLabel("Email to sign in with").fill("tenant.e2e@example.com");
+  // The invite goes to the email in their contact details: with none on file the portal says so
+  // and opens their contact details to add one.
+  await expect(portal).toContainText("No email on file, so no invite can go to Tenant E2E.");
+  await portal.getByRole("button", { name: "Edit contact details" }).click();
+  const contact = page.getByRole("group", { name: "Contact details, Tenant E2E" });
+  await contact.getByLabel("Email").fill("tenant.e2e@example.com");
+  await contact.getByRole("button", { name: "Save contact details" }).click();
+  await expect(portal).toContainText("Goes to tenant.e2e@example.com, the email in their contact details.");
   await portal.getByRole("button", { name: "Invite to the portal" }).click();
+  const ask = page.getByRole("alertdialog");
+  await expect(ask).toContainText("Send Tenant E2E an invite to the portal at tenant.e2e@example.com?");
+  await ask.getByRole("button", { name: "Send invite" }).click();
   await expect(portal.getByLabel("Invite link, Tenant E2E")).toHaveValue(/\/invite#/);
   await expect(portal).toContainText("Invited");
   await page.getByRole("navigation", { name: "Sections" }).getByRole("link", { name: "Settings", exact: true }).click();
@@ -881,7 +891,7 @@ test("the demo opens on last month waiting for its manager, who approves it and 
   await expect(attention("Journal entry")).toContainText(
     `Reserve moved to Birch Flats, as Demo Owner A asked: $25.00, dated ${us(iso(thisMonth))}, proposed by Demo Bookkeeper`,
   );
-  await expect(attention("Vendor insurance")).toContainText(
+  await expect(attention("Vendor insurance").filter({ hasText: "Demo Roofing Co" })).toContainText(
     "Demo Roofing Co, general liability: expires in 20 days",
   );
   await expect(attention("Company fees in trust")).toContainText(

@@ -4,7 +4,8 @@ import type { Me } from "../api";
 import type { Contact, Tenant, TenantRow } from "../directory";
 import { holdBack } from "../holdBack";
 import type { Paged } from "../rentals";
-import { TenantPage, TenantsPage } from "./TenantsPages";
+import { archivable, TenantPage, TenantsPage } from "./TenantsPages";
+import { autopayWord, leaseShown } from "./TenantLeaseCard";
 
 afterEach(() => {
   cleanup();
@@ -59,6 +60,24 @@ const TENANT: Tenant = {
   portal: "invited",
   login_email: "tenant1.login@example.com",
   same_person: [],
+};
+
+// The lease in effect as its page has it: rent due on the 5th, $50.00 owed.
+const LEASE = {
+  id: "l1", property: "Property 1", unit: "Unit 1", property_id: "p1", unit_id: "u1", status: "current",
+  starts_on: "2026-01-01", ends_on: null, monthly_rent: "1500.00", rent_changes: [], rent_due_day: 5, due_days: [],
+  tenants: [{ id: "t1", name: "Tenant 1", prepaid: "25.00", deposit: "1500.00" }],
+  owners: [{ account: "a1", owner: "Owner 1", percent: null }], owed: "50.00", carried: "0.00",
+  moved_from: null, moved_to: null, on_hold: false, open_charges: [], payments: [], recurring: [],
+  renters_insurance: null, people: [], holds: [],
+};
+const AUTOPAY = [{ id: "ap1", tenant: "Tenant 1", rule: "balance", amount: "2000.00", account: "Test bank ••••0000",
+  started_at: "2026-09-01T00:00:00Z", stopped_at: null, stopped: null, runs: [] }];
+const HOUSEHOLD = { occupants: [], pets: [], vehicles: [], guarantors: [] };
+const LEASE_ANSWERS = {
+  "/api/leases/l1": LEASE,
+  "/api/payments/autopay?lease=l1": AUTOPAY,
+  "/api/leases/l1/household": HOUSEHOLD,
 };
 
 // The API: `answers[path]` on GET; a POST answers 204, or 409/422 with `refuse[path]`.
@@ -151,12 +170,17 @@ describe("TenantsPage", () => {
 });
 
 describe("TenantPage", () => {
-  it("shows their property, money held, contact details and every lease", async () => {
-    server({ "/api/tenants/t1": TENANT });
+  it("shows their home, phone, email, money held, contact details and every lease", async () => {
+    server({ "/api/tenants/t1": TENANT, ...LEASE_ANSWERS });
     render(<TenantPage me={ME} id="t1" />);
 
     expect(await screen.findByRole("heading", { level: 1, name: "Tenant 1" })).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Property 1" }).getAttribute("href")).toBe("/properties/p1");
+    const header = screen.getByTestId("tenant-header");
+    expect(within(header).getByRole("link", { name: "Unit 1, Property 1" }).getAttribute("href")).toBe("/units/u1");
+    expect(within(header).getByRole("link", { name: "555-555-0100" }).getAttribute("href")).toBe("tel:5555550100");
+    expect(within(header).getByRole("link", { name: "tenant1@example.com" }).getAttribute("href")).toBe(
+      "mailto:tenant1@example.com",
+    );
     expect(screen.getByTestId("held").textContent).toBe("Prepaid rent $25.00 · Deposit held $1,500.00");
     const contact = screen.getByRole("group", { name: "Contact details, Tenant 1" });
     expect(within(contact).getByRole("link", { name: "tenant1@example.com" }).getAttribute("href")).toBe(
@@ -166,9 +190,11 @@ describe("TenantPage", () => {
     expect(contact.textContent).toContain("100 Example Street, Apt 2Sampletown, ZZ 00000");
     expect(contact.textContent).not.toContain("changed these in the portal");
     const portal = screen.getByRole("heading", { name: "Portal" }).closest("section") as HTMLElement;
-    expect(portal.textContent).toContain("Invitedtenant1.login@example.com");
-    expect((within(portal).getByLabelText("Email to sign in with") as HTMLInputElement).value).toBe("tenant1.login@example.com");
+    expect(portal.textContent).toContain("InvitedSigns in as tenant1.login@example.com");
+    // No email box: the invite goes to the contact email, in one click.
+    expect(within(portal).queryByLabelText("Email to sign in with")).toBeNull();
     expect(within(portal).getByRole("button", { name: "Send a new invite" })).toBeTruthy();
+    expect(portal.textContent).toContain("Goes to tenant1@example.com, the email in their contact details.");
     fireEvent.click(screen.getByRole("tab", { name: "Leases" }));
     const rows = screen.getAllByRole("row", { name: "Property 1, Unit 1" });
     expect(rows.map((row) => within(row).getAllByRole("cell").map((c) => c.textContent))).toEqual([
@@ -179,7 +205,7 @@ describe("TenantPage", () => {
   });
 
   it("shows the tenant opened now, even when an earlier tenant's answer comes back last", async () => {
-    server({ "/api/tenants/t1": TENANT, "/api/tenants/t2": { ...TENANT, id: "t2", name: "Tenant 2" } });
+    server({ "/api/tenants/t1": TENANT, "/api/tenants/t2": { ...TENANT, id: "t2", name: "Tenant 2" }, ...LEASE_ANSWERS });
     const release = holdBack((path) => path === "/api/tenants/t1");
     const { rerender } = render(<TenantPage me={ME} id="t1" />);
 
@@ -192,17 +218,21 @@ describe("TenantPage", () => {
   });
 
   it("says when the tenant changed their contact details themselves, in the portal", async () => {
-    server({ "/api/tenants/t1": { ...TENANT, contact_by_tenant_at: "2026-10-20T15:00:00Z" } });
+    server({ "/api/tenants/t1": { ...TENANT, contact_by_tenant_at: "2026-10-20T15:00:00Z" }, ...LEASE_ANSWERS });
     render(<TenantPage me={ME} id="t1" />);
 
     const contact = await screen.findByRole("group", { name: "Contact details, Tenant 1" });
     expect(contact.textContent).toContain("Tenant 1 changed these in the portal on 10/20/2026.");
   });
 
-  it("invites them to the portal from their page", async () => {
-    const fetch = server({ "/api/tenants/t1": { ...TENANT, portal: "no login", login_email: null } });
+  it("invites them to the portal from their page, naming the email first", async () => {
+    const fetch = server({ "/api/tenants/t1": { ...TENANT, portal: "no login", login_email: null }, ...LEASE_ANSWERS });
     render(<TenantPage me={ME} id="t1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Invite to the portal" }));
+    const ask = await screen.findByRole("alertdialog");
+    expect(ask.textContent).toContain("Send Tenant 1 an invite to the portal at tenant1@example.com?");
+    expect(posted(fetch)).toEqual([]);
+    fireEvent.click(within(ask).getByRole("button", { name: "Send invite" }));
     await vi.waitFor(() => expect(posted(fetch)).toEqual([
       ["/api/invites", { kind: "tenant", person_id: "t1", email: TENANT.contact.email }],
     ]));
@@ -273,5 +303,85 @@ describe("TenantPage", () => {
     server({});
     render(<TenantPage me={ME} id="nope" />);
     expect((await screen.findByRole("alert")).textContent).toBe("no such tenant");
+  });
+});
+
+describe("a tenant's lease, invite and archive on their page (ADR 0010 phase 3)", () => {
+  it("shows the lease's rent, due day, term, deposit held, autopay and balance, with its actions", async () => {
+    server({ "/api/tenants/t1": TENANT, ...LEASE_ANSWERS });
+    render(<TenantPage me={ME} id="t1" />);
+
+    const lease = (await screen.findByRole("heading", { name: "Lease" })).closest("section") as HTMLElement;
+    expect((await within(lease).findByTestId("lease-rent")).textContent).toBe("$1,500.00 a month, due on the 5th");
+    expect(within(lease).getByTestId("lease-ends").textContent).toBe("Month to month");
+    expect(within(lease).getByTestId("lease-deposit").textContent).toBe("$1,500.00");
+    expect((await within(lease).findByTestId("lease-autopay")).textContent).toBe("On: the balance due, up to $2,000.00");
+    expect(within(lease).getByTestId("lease-balance").textContent).toBe("$50.00");
+    expect(within(lease).getByRole("link", { name: "Unit 1, Property 1" }).getAttribute("href")).toBe("/leases/l1");
+    expect(within(lease).getByRole("button", { name: "Renew lease" })).toBeTruthy();
+
+    fireEvent.click(within(lease).getByRole("button", { name: "Receive payment" }));
+    expect(await screen.findByRole("dialog", { name: "Receive payment" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.click(within(lease).getByRole("button", { name: "Change end date" }));
+    const end = await screen.findByRole("dialog", { name: "Change end date" });
+    expect(within(end).getByLabelText("Last day")).toBeTruthy();
+  });
+
+  it("says so when they have no lease, and an ended lease takes no payment or renewal here", async () => {
+    server({ "/api/tenants/t2": { ...TENANT, id: "t2", name: "Tenant 2", leases: [] } });
+    render(<TenantPage me={ME} id="t2" />);
+    expect((await screen.findByTestId("empty-state")).textContent).toContain("No lease yet.");
+    cleanup();
+
+    server({ "/api/tenants/t1": { ...TENANT, leases: [{ ...LINE, status: "ended", ends_on: "2026-06-30" }] }, ...LEASE_ANSWERS });
+    render(<TenantPage me={ME} id="t1" />);
+    const lease = (await screen.findByRole("heading", { name: "Lease" })).closest("section") as HTMLElement;
+    await within(lease).findByTestId("lease-rent");
+    expect(within(lease).queryByRole("button", { name: "Receive payment" })).toBeNull();
+    expect(within(lease).queryByRole("button", { name: "Change end date" })).toBeNull();
+  });
+
+  it("with no email on file, says so and opens their contact details to add one", async () => {
+    server({ "/api/tenants/t1": { ...TENANT, contact: NO_CONTACT, portal: "no login", login_email: null }, ...LEASE_ANSWERS });
+    render(<TenantPage me={ME} id="t1" />);
+
+    const header = await screen.findByTestId("tenant-header");
+    expect(header.textContent).toContain("No phone on file");
+    expect(header.textContent).toContain("No email on file");
+    const portal = screen.getByRole("heading", { name: "Portal" }).closest("section") as HTMLElement;
+    expect(portal.textContent).toContain("No email on file, so no invite can go to Tenant 1.");
+    expect(within(portal).queryByRole("button", { name: "Invite to the portal" })).toBeNull();
+    fireEvent.click(within(portal).getByRole("button", { name: "Edit contact details" }));
+    expect(await screen.findByLabelText("Street address")).toBeTruthy();
+  });
+
+  it("offers Archive only once they have moved out or never had a lease", async () => {
+    server({ "/api/tenants/t1": TENANT, ...LEASE_ANSWERS });
+    render(<TenantPage me={ME} id="t1" />);
+    await screen.findByRole("heading", { level: 1, name: "Tenant 1" });
+    expect(screen.queryByRole("button", { name: "Actions for Tenant 1" })).toBeNull();
+    cleanup();
+
+    server({ "/api/tenants/t1": { ...TENANT, leases: [{ ...LINE, status: "ended", ends_on: "2026-06-30" }] }, ...LEASE_ANSWERS });
+    render(<TenantPage me={ME} id="t1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Actions for Tenant 1" }));
+    expect(await screen.findByRole("menuitem", { name: "Archive" })).toBeTruthy();
+
+    expect(archivable({ leases: [] })).toBe(true);
+    expect(archivable({ leases: [{ ...LINE, status: "future" }] })).toBe(false);
+  });
+
+  it("shows the lease in effect, else the next to start, else the last; and autopay as it stands", () => {
+    const ended = { ...LINE, id: "old", status: "ended" as const, starts_on: "2024-01-01" };
+    const later = { ...LINE, id: "later", status: "ended" as const, starts_on: "2025-01-01" };
+    const next = { ...LINE, id: "next", status: "future" as const, starts_on: "2027-01-01" };
+    const soon = { ...LINE, id: "soon", status: "future" as const, starts_on: "2026-12-01" };
+    expect(leaseShown([ended, LINE, next])?.id).toBe("l1");
+    expect(leaseShown([ended, next, soon])?.id).toBe("soon");
+    expect(leaseShown([ended, later])?.id).toBe("later");
+    expect(leaseShown([])).toBeNull();
+    expect(autopayWord([], "Tenant 1")).toBe("Not set up");
+    expect(autopayWord([{ ...AUTOPAY[0]!, stopped_at: "2026-10-01T00:00:00Z" }] as never, "Tenant 1")).toBe("Not set up");
   });
 });

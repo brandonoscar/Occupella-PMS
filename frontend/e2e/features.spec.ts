@@ -1103,10 +1103,12 @@ test("staff add a recurring bill and stop it, and record the decline of an owner
   // the owner's answer themselves, here a decline.
   await recordBill(page, "Demo Roofing Co", "Demo Owner A, Elm Court", "RF-3001", "900.00", "Skylight");
   const skylight = billRow(page, "Demo Roofing Co", "RF-3001");
-  // It is due today, so the Dashboard lists it.
+  // It is due today, so the Dashboard lists it; it waits for its owner, so its row opens the bill
+  // rather than paying it.
   await section(page, "Dashboard");
   const due = attention(page, "Bill due").filter({ hasText: "RF-3001" });
-  await expect(due.getByRole("button", { name: "Pay bill" })).toBeVisible();
+  await expect(due).toContainText("(waiting for owner)");
+  await expect(due.getByRole("link", { name: "Open bill" })).toBeVisible();
   await section(page, "Bills");
   await skylight.getByRole("cell").first().click();
   await expect(page.getByRole("main")).toContainText(
