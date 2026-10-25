@@ -1670,6 +1670,15 @@ class ChargePart(BaseModel):
     amount: Amount
 
 
+class PaymentFile(BaseModel):
+    """A check's photo or a PDF kept with the payment, as Files keeps a document."""
+
+    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+    content_type: Literal["application/pdf", "image/jpeg", "image/png"]
+    # The file, base64: 5 MB comes to about 7 million characters.
+    content_base64: str = Field(min_length=4, max_length=7_000_000)
+
+
 class NewPayment(BaseModel):
     # Made by the page once per payment it records, so sending it again records nothing new.
     request_id: UUID
@@ -1686,14 +1695,14 @@ class NewPayment(BaseModel):
     # The open charges it pays, each with how much, in this order; what is left of the payment
     # pays the rest as before (rent first, oldest first). None: the usual order.
     charges: Annotated[list[ChargePart], Field(min_length=1, max_length=100)] | None = None
+    # Its file, kept with it (about its lease too, so the lease's Files tab lists it).
+    attachment: PaymentFile | None = None
 
 
 class Payment(BaseModel):
     transfers: list[str]
     to_owner: str
     to_prepaid: str
-    # The payment as the lease page lists it (its first transfer): its file is attached to it.
-    payment_id: str
 
 
 def answer(recorded: Recorded) -> Payment:
@@ -1701,7 +1710,6 @@ def answer(recorded: Recorded) -> Payment:
         transfers=recorded.transfers,
         to_owner=cents(recorded.to_owner),
         to_prepaid=cents(recorded.to_prepaid),
-        payment_id=recorded.transfers[0],
     )
 
 
@@ -1713,8 +1721,8 @@ def not_after_today(day: date) -> None:
 @router.post("/leases/{lease_id}/payments", status_code=201)
 def pay(session: Staff, conn: Conn, lease_id: UUID, new: NewPayment) -> Payment:
     """Records a tenant's payment, maybe paying the charges staff chose first, with what they
-    wrote about it; each tenant of the lease is emailed its receipt while the server sends email
-    (once per payment, ADR 0010)."""
+    wrote about it and its file; each tenant of the lease is emailed its receipt while the server
+    sends email (once per payment, ADR 0010)."""
     not_after_today(new.received_on)
     try:
         recorded = record_payment(
@@ -1740,6 +1748,24 @@ def pay(session: Staff, conn: Conn, lease_id: UUID, new: NewPayment) -> Payment:
             " ON CONFLICT (transfer_id) DO NOTHING",
             (recorded.transfers[0], session.pmc_id, new.note),
         )
+    if (
+        new.attachment is not None
+        and not conn.execute(
+            "SELECT 1 FROM trust_documents WHERE transfer_id = ANY(%s)", (recorded.transfers,)
+        ).fetchone()
+    ):
+        # Kept once: sent again, the payment keeps the file it came with. A file that isn't what
+        # it says refuses the payment too.
+        from pms.api import documents  # documents reads the rent roll's leases (rentals, rent)
+
+        documents.keep(
+            conn,
+            session.pmc_id,
+            documents.NewDocument(
+                kind="payment_attachment", about_id=lease_id, **new.attachment.model_dump()
+            ),
+            recorded.transfers[0],
+        )
     if outbox.SENDING.get():
         notices.write_payment_receipts(
             conn,
@@ -1750,46 +1776,6 @@ def pay(session: Staff, conn: Conn, lease_id: UUID, new: NewPayment) -> Payment:
             new.received_on,
         )
     return answer(recorded)
-
-
-class NewAttachment(BaseModel):
-    title: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
-    content_type: Literal["application/pdf", "image/jpeg", "image/png"]
-    # The file, base64: 5 MB comes to about 7 million characters.
-    content_base64: str = Field(min_length=4, max_length=7_000_000)
-
-
-class Attached(BaseModel):
-    id: UUID
-
-
-@router.post("/payments/{transfer_id}/attachments", status_code=201)
-def attach(session: Staff, conn: Conn, transfer_id: str, new: NewAttachment) -> Attached:
-    """Keeps a file with a tenant's payment (a check's photo, a PDF): about its lease too, so the
-    lease's Files tab lists it."""
-    from pms.api import documents  # documents reads the rent roll's leases (rentals, rent)
-
-    row = conn.execute(
-        "SELECT (t.metadata ->> 'lease_id')::uuid FROM pgledger_transfers AS t"
-        " JOIN trust_ledger_accounts AS a ON a.ledger_account_id = t.to_account_id"
-        " WHERE t.id = %s AND a.pmc_id = %s AND t.metadata ->> 'kind' = 'tenant payment'",
-        (transfer_id, session.pmc_id),
-    ).fetchone()
-    if row is None:
-        raise HTTPException(404, "no such payment")
-    kept = documents.keep(
-        conn,
-        session.pmc_id,
-        documents.NewDocument(
-            kind="payment_attachment",
-            about_id=row[0],
-            title=new.title,
-            content_type=new.content_type,
-            content_base64=new.content_base64,
-        ),
-        transfer_id,
-    )
-    return Attached(id=kept)
 
 
 class UsePrepaid(BaseModel):

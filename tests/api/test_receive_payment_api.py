@@ -11,8 +11,8 @@ from decimal import Decimal
 
 import pytest
 from fastapi.testclient import TestClient
-from helpers import PDF, PNG, add_unit, balance, charge, make_pmc, open_lease, post
-from people import join_as_owner, join_as_staff, join_as_tenant, tenant_of
+from helpers import PDF, PNG, add_unit, balance, charge, open_lease
+from people import join_as_staff, join_as_tenant, tenant_of
 
 from pms.api import create_app
 
@@ -70,15 +70,12 @@ def matched(conn, transfers):
     )
 
 
-def attach(client, payment, content=PNG, content_type="image/png", title="Check 1042"):
-    return client.post(
-        f"/api/rent/payments/{payment}/attachments",
-        json={
-            "title": title,
-            "content_type": content_type,
-            "content_base64": base64.b64encode(content).decode(),
-        },
-    )
+def a_file(content=PNG, content_type="image/png", title="Check 1042"):
+    return {
+        "title": title,
+        "content_type": content_type,
+        "content_base64": base64.b64encode(content).decode(),
+    }
 
 
 # --- a note --------------------------------------------------------------------------------
@@ -250,81 +247,59 @@ def test_a_lease_its_tenants_moved_to_pays_each_lease_in_turn_and_takes_no_choic
 # --- a file --------------------------------------------------------------------------------
 
 
-def test_a_file_is_kept_with_the_payment_and_listed_on_the_lease(client, conn, staff, pmc, lease):
+def test_a_file_is_kept_with_the_payment_once_and_listed_on_the_lease(
+    client, conn, staff, pmc, lease
+):
     charge(conn, pmc.pmc_id, lease, START, "1500.00")
-    paid = ok(pay(client, lease, "1500.00", reference="Check 1042"))
+    request = uuid.uuid4()
 
-    photo = ok(attach(client, paid["payment_id"]))["id"]
-    scan = ok(attach(client, paid["payment_id"], PDF, "application/pdf", "Deposit slip"))["id"]
+    first = ok(pay(client, lease, "1500.00", request, attachment=a_file()))
+    # Sent again (a double click), the payment keeps the one file it came with.
+    again = ok(pay(client, lease, "1500.00", request, attachment=a_file(PDF, "application/pdf")))
 
+    assert again == first
     (listed,) = payments(client, lease)
-    assert listed["transfer_id"] == paid["payment_id"]
-    assert listed["attachments"] == [photo, scan]
+    (kept,) = listed["attachments"]
     library = ok(client.get("/api/documents"), 200)["documents"]
-    kept = {d["id"]: (d["kind"], d["about_id"], d["title"]) for d in library}
-    assert kept[photo] == ("payment_attachment", str(lease), "Check 1042")
-    assert kept[scan] == ("payment_attachment", str(lease), "Deposit slip")
-    assert client.get(f"/api/documents/{photo}/file").content == PNG
-
-
-def test_a_file_is_kept_only_with_a_tenants_payment_of_the_pmc(client, conn, staff, pmc, lease):
-    theirs = make_pmc(conn)
-    their_unit = add_unit(conn, theirs.pmc_id, theirs.owners[0].property_id)
-    their_lease = open_lease(
-        conn, theirs.pmc_id, their_unit, START, None, "900.00", [tenant_of(conn, theirs)]
+    (document,) = [d for d in library if d["id"] == kept]
+    assert (document["kind"], document["about_id"], document["title"]) == (
+        "payment_attachment",
+        str(lease),
+        "Check 1042",
     )
-    (their_payment,) = post(
-        conn,
-        theirs.pmc_id,
-        "their-payment",
-        [(theirs.operating_cash, theirs.owners[0].account, "100.00")],
-        metadata={"kind": "tenant payment", "lease_id": str(their_lease)},
-    )
-    (contribution,) = post(
-        conn, pmc.pmc_id, "not-a-payment", [(pmc.operating_cash, pmc.owners[0].account, "100.00")]
+    assert client.get(f"/api/documents/{kept}/file").content == PNG
+    assert (
+        conn.execute("SELECT transfer_id FROM trust_documents WHERE id = %s", (kept,)).fetchone()[0]
+        in first["transfers"]
     )
 
-    for transfer in (their_payment, contribution, "pglt_nothing"):
-        refused(attach(client, transfer), 404, "no such payment")
+
+def test_a_file_that_is_not_what_it_says_refuses_the_payment(client, conn, staff, pmc, lease):
+    charge(conn, pmc.pmc_id, lease, START, "1500.00")
+
+    refused(pay(client, lease, "1500.00", attachment=a_file(PDF, "image/png")), 422)
+
+    # All or none: no payment, no file.
+    assert payments(client, lease) == []
+    assert balance(conn, pmc.owners[0].account) == Decimal("0.00")
     assert (
         conn.execute(
-            "SELECT count(*) FROM trust_documents WHERE pmc_id = ANY(%s)",
-            ([pmc.pmc_id, theirs.pmc_id],),
+            "SELECT count(*) FROM trust_documents WHERE pmc_id = %s", (pmc.pmc_id,)
         ).fetchone()[0]
         == 0
     )
 
 
-def test_a_files_bytes_must_be_what_its_type_says(client, conn, staff, pmc, lease):
-    paid = ok(pay(client, lease, "100.00"))
-    refused(attach(client, paid["payment_id"], PDF, "image/png"), 422)
-    # A payment's file comes with its payment, never by itself from Files.
+def test_a_payments_file_comes_only_with_its_payment(client, conn, staff, pmc, lease):
+    # Never by itself from Files.
     refused(
         client.post(
             "/api/documents",
-            json={
-                "kind": "payment_attachment",
-                "about_id": str(lease),
-                "title": "Check",
-                "content_type": "image/png",
-                "content_base64": base64.b64encode(PNG).decode(),
-            },
+            json={"kind": "payment_attachment", "about_id": str(lease), **a_file()},
         ),
         422,
         "a payment's file comes with the payment, on Receive payment",
     )
-
-
-@pytest.mark.parametrize("caller", ["nobody", "owner", "tenant"])
-def test_only_staff_keep_a_payments_file(client, conn, app_conn, pmc, lease, caller):
-    if caller == "owner":
-        join_as_owner(client, app_conn, pmc)
-    elif caller == "tenant":
-        join_as_tenant(client, conn, app_conn, pmc)
-
-    answer = attach(client, "pglt_anything")
-
-    assert answer.status_code == (401 if caller == "nobody" else 403)
 
 
 # --- bad input -----------------------------------------------------------------------------
@@ -346,13 +321,12 @@ def test_bad_input_is_refused(client, staff, lease, more):
 
 
 @pytest.mark.parametrize(
-    "body",
+    "attachment",
     [
         {"title": " ", "content_type": "image/png", "content_base64": "aGVsbG8="},
         {"title": "Check", "content_type": "image/gif", "content_base64": "aGVsbG8="},
         {"title": "Check", "content_type": "image/png"},
     ],
 )
-def test_a_file_needs_a_title_a_type_and_its_bytes(client, conn, staff, pmc, lease, body):
-    paid = ok(pay(client, lease, "100.00"))
-    refused(client.post(f"/api/rent/payments/{paid['payment_id']}/attachments", json=body), 422)
+def test_a_file_needs_a_title_a_type_and_its_bytes(client, staff, lease, attachment):
+    refused(pay(client, lease, "100.00", attachment=attachment), 422)
