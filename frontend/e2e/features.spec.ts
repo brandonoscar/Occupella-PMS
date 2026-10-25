@@ -705,11 +705,9 @@ test("staff find a tenant and an owner, keep their contact details and a vendor'
   await page.getByLabel("Name", { exact: true }).fill("Drew Q. Sample");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByRole("heading", { level: 1, name: "Drew Q. Sample" })).toBeVisible();
-  // On a lease in effect, they stay; the refusal says why, in words.
-  await chooseAction(page, "Drew Q. Sample", "Archive");
-  await expect(page.getByRole("alert")).toHaveText(
-    "Drew Q. Sample is on a lease in effect or to come; end it before archiving",
-  );
+  // On a lease in effect, Archive isn't offered at all (ADR 0010 phase 3, part I; rule 4). The
+  // API still refuses it in words should anything ask (tests/api).
+  await expect(page.getByRole("button", { name: "Actions for Drew Q. Sample" })).toHaveCount(0);
   await section(page, "Tenants");
   await expect(page.getByRole("row", { name: "Drew Q. Sample", exact: true })).toContainText(
     "drew.sample@example.com",
