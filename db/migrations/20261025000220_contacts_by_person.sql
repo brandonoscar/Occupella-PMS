@@ -9,6 +9,7 @@
 -- 35 s. These indexes find a person's rows by their id, newest last.
 
 SET LOCAL lock_timeout = '5s';
+SET LOCAL statement_timeout = '60s';
 
 -- squawk-ignore require-concurrent-index-creation
 CREATE INDEX trust_contacts_by_tenant ON trust_contacts (tenant_id, created_at)
