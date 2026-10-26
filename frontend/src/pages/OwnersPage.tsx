@@ -198,7 +198,7 @@ export function OwnerPage({ me, id }: { me: Me; id: string }) {
       <Said>{said}</Said>
       <div>
         <Tabs label="Owner" tabs={OWNER_TABS} value={tab} onChange={setTab} />
-        {tab === "summary" && <OwnerSummary owner={owner} refresh={refresh} />}
+        {tab === "summary" && <OwnerSummary owner={owner} emailOn={me.email_on ?? false} refresh={refresh} />}
         {tab === "properties" && <OwnerProperties accounts={owner.accounts} />}
         {tab === "financials" && <OwnerFinancials owner={owner} refresh={refresh} />}
         {tab === "statements" && (
@@ -214,7 +214,7 @@ export function OwnerPage({ me, id }: { me: Me; id: string }) {
   );
 }
 
-function OwnerSummary({ owner, refresh }: { owner: Owner; refresh: () => void }) {
+function OwnerSummary({ owner, emailOn, refresh }: { owner: Owner; emailOn: boolean; refresh: () => void }) {
   const [setting, setSetting] = useState(false);
   const [said, setSaid] = useState("");
   const [editContact, setEditContact] = useState(0);
@@ -224,7 +224,7 @@ function OwnerSummary({ owner, refresh }: { owner: Owner; refresh: () => void })
       <ContactCard path={`/api/owners/${owner.id}`} contact={owner.contact} refresh={refresh} name={owner.name}
         editRequest={editContact} />
       <PortalCard kind="owner" personId={owner.id} name={owner.name} portal={owner.portal}
-        loginEmail={owner.login_email} contactEmail={owner.contact.email} refresh={refresh}
+        loginEmail={owner.login_email} contactEmail={owner.contact.email} emailOn={emailOn} refresh={refresh}
         onEditContact={() => setEditContact((n) => n + 1)} />
       <PayeeCard kind="owner" id={owner.id} name={owner.name} />
       <TaxIdCard kind="owner" id={owner.id} name={owner.name} />

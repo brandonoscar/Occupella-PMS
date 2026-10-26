@@ -18,6 +18,7 @@ import type { Recorder } from "./useRecord";
 import { useRecord } from "./useRecord";
 import { Said } from "../components/Said";
 import { Form } from "../components/Form";
+import { AskFirst } from "../components/Confirm";
 
 const MAX_LINES = 20;
 
@@ -198,11 +199,12 @@ function EntryRow({ journal, entry, refresh, say }: {
       {entry.status === "waiting" && (
         <div className="flex flex-wrap items-end gap-3">
           {mayPost(journal, entry) ? (
-            <Button
+            <AskFirst
               says={`Moves ${money(entryTotal(entry))} as its lines say, dated ${usDate(entry.event_on)}. It isn't undone later: correct it with a new entry.`}
-              onClick={() => record(`/api/journal/${entry.id}/post`, {}, () => `Posted: ${entry.memo}.`)}>
+              question={`Post ${entry.memo}? It moves ${money(entryTotal(entry))} as its lines say, dated ${usDate(entry.event_on)}, and isn't undone later.`}
+              onConfirm={() => record(`/api/journal/${entry.id}/post`, {}, () => `Posted: ${entry.memo}.`)}>
               Post
-            </Button>
+            </AskFirst>
           ) : (
             <p className="text-sm text-ink-subtle">{why}</p>
           )}

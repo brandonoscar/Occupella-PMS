@@ -122,7 +122,16 @@ describe("MoveOutPage", () => {
     expect(within(done).getByText("Deposit returned").closest("[data-tone]")?.getAttribute("data-tone")).toBe("positive");
 
     fireEvent.change(screen.getAllByLabelText("Last day")[1]!, { target: { value: "2026-07-31" } });
+    // Ending the lease asks first; Cancel sends nothing.
+    const question = "End Property 1, Unit 2's lease on 07/31/2026? Rent is charged only through that day.";
     fireEvent.click(screen.getAllByRole("button", { name: "End the lease" })[1]!);
+    expect(screen.getByRole("alertdialog", { name: question }).textContent).toContain(question);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(posted(fetch)).toEqual([]);
+    fireEvent.click(screen.getAllByRole("button", { name: "End the lease" })[1]!);
+    expect(posted(fetch)).toEqual([]);
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: question })).getByRole("button", { name: "End the lease" }));
     expect(await screen.findByText("The lease ends on 07/31/2026.")).toBeTruthy();
     fireEvent.change(screen.getAllByLabelText("Cleaning or damage")[0]!, { target: { value: " Carpet cleaning " } });
     fireEvent.change(screen.getAllByLabelText("Amount")[0]!, { target: { value: "120.00" } });

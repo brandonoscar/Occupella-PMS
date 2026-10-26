@@ -20,6 +20,7 @@ import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
 import { Said } from "../components/Said";
 import { Form } from "../components/Form";
+import { AskFirst } from "../components/Confirm";
 
 // The switching tool: a PMC moving from another system brings its roster in from CSV files,
 // opens each trust bank account with the balances it held there, lists the checks and deposits
@@ -145,7 +146,7 @@ function CutoverCard({ cutover, refresh }: { cutover: Cutover; refresh: () => vo
   return (
     <Card title={`Cutover: ${cutover.name}`}>
       {cutover.opened_on === null && !cutover.can_open ? (
-        <Notice tone="info">This account has postings or a reconciliation already; it can't open with balances.</Notice>
+        <Notice tone="info">This account has money recorded or a month-end already; it can't open with balances.</Notice>
       ) : cutover.opened_on === null ? (
         <Form
           className="flex flex-wrap items-end gap-3"
@@ -200,11 +201,12 @@ function CutoverCard({ cutover, refresh }: { cutover: Cutover; refresh: () => vo
               </Form>
             )}
             {!cutover.signed_off && (
-              <Button says="Freezes the items carried over: none can be added after, and it isn't undone. No money moves."
-                onClick={() => record("/api/switching/sign-off", { bank_account_id: bank },
+              <AskFirst says="Freezes the items carried over: none can be added after, and it isn't undone. No money moves."
+                question="Sign off the tie-out? The items carried over are frozen: none can be added after, and it isn't undone."
+                onConfirm={() => record("/api/switching/sign-off", { bank_account_id: bank },
                   () => "Signed off. The items carried over are frozen.")}>
                 Sign off the tie-out
-              </Button>
+              </AskFirst>
             )}
             <LinkButton href={`/api/reports/trust_report_cutover?arg=${bank}&format=pdf`}>
               Tie-out (PDF)

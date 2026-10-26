@@ -47,6 +47,7 @@ import { YearCloseCard } from "./YearCloseCard";
 import { Said } from "../components/Said";
 import { Form } from "../components/Form";
 import type { BankKind } from "../setup";
+import { AskFirst } from "../components/Confirm";
 
 // Accounting → Banking (ADR 0005): each trust bank account with what the books hold in it, how
 // far it is reconciled and whether a month waits for approval, each opening its own page. Add
@@ -466,16 +467,17 @@ function WorksheetCard({
                 {money(prepared.bank_balance)}, books {money(prepared.book_cash)}.
               </span>
               {who === "may" ? (
-                <Button
+                <AskFirst
                   says={`Closes the account through ${usDate(prepared.through)}: nothing dated on or before it can be added after. No money moves.`}
-                  onClick={() =>
+                  question={`Approve through ${usDate(prepared.through)}? The account closes through that day: nothing dated on or before it can be added after.`}
+                  onConfirm={() =>
                     record<{ id: string }>(`/api/reconcile/${bank.id}/approve`,
                       { preparation_id: prepared.id },
                       () => `Approved through ${usDate(prepared.through)}; the account is closed through it.`)
                   }
                 >
-                  Approve through {usDate(prepared.through)}
-                </Button>
+                  {`Approve through ${usDate(prepared.through)}`}
+                </AskFirst>
               ) : (
                 <span className="text-sm text-ink-subtle">
                   {who === "preparer"
@@ -595,7 +597,7 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
         </Button>
         <span className="text-sm text-ink-subtle">
           Pairs a check with the bill payments recorded under its number and amount, then a line with
-          the one transfer of its amount within a week, when there is no other.
+          the one amount in the books like it within a week, when there is no other.
         </span>
       </div>
       <div className={`grid gap-6 ${sheet.open_items.length > 0 ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
@@ -607,7 +609,7 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
           )}
         </fieldset>
         <fieldset>
-          <legend className="mb-2 text-sm font-medium">Transfers not matched</legend>
+          <legend className="mb-2 text-sm font-medium">In the books, not matched</legend>
           {sheet.open_transfers.length === 0 ? <p className="text-sm text-ink-subtle">None.</p> : (
             <Checks items={sheet.open_transfers} label={transferLabel} chosen={moved}
               toggle={(id) => setMoved(toggleTransfer(sheet.open_transfers, moved, id))} />
@@ -623,7 +625,7 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <span className="text-sm" data-testid="picked">
-          Lines {money(lineTotal)} · Transfers {money(movedTotal)}
+          Bank lines {money(lineTotal)} · Books {money(movedTotal)}
         </span>
         <Button
           disabled={lines.length + moved.length + carried.length === 0 || lineTotal !== movedTotal}
@@ -655,7 +657,7 @@ function MatchCard({ bank, sheet, refresh }: BankProps & { sheet: Worksheet }) {
                 <td>{m.lines.map(lineLabel).join("; ") || "No bank line"}</td>
                 <td>
                   {[...m.transfers.map(transferLabel), ...m.items.map(itemLabel)].join("; ") ||
-                    "No transfer"}
+                    "Nothing in the books"}
                 </td>
                 <td className="text-right">
                   <Button variant="ghost" size="sm" says="Unpairs them; both sides go back to the lists above. No money moves."

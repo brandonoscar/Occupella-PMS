@@ -214,13 +214,13 @@ describe("ReconcilePage", () => {
 
     fireEvent.click(screen.getByLabelText("01/05/2026 Deposit (D1): $2,750.00"));
     fireEvent.click(screen.getByLabelText("01/03/2026 Rent, Property 1: $1,500.00"));
-    expect(screen.getByTestId("picked").textContent).toBe("Lines $2,750.00 · Transfers $1,500.00");
+    expect(screen.getByTestId("picked").textContent).toBe("Bank lines $2,750.00 · Books $1,500.00");
     expect(matching.disabled).toBe(true);
     fireEvent.click(screen.getByLabelText("01/04/2026 Rent, Property 2: $1,250.00"));
     expect(matching.disabled).toBe(false);
     fireEvent.click(matching);
     expect(await screen.findByText("Matched.")).toBeTruthy();
-    expect(screen.getByTestId("picked").textContent).toBe("Lines $0.00 · Transfers $0.00");
+    expect(screen.getByTestId("picked").textContent).toBe("Bank lines $0.00 · Books $0.00");
 
     fireEvent.click(screen.getByRole("button", { name: "Match the sure ones" }));
     expect(await screen.findByText("1 line matched.")).toBeTruthy();
@@ -265,7 +265,19 @@ describe("ReconcilePage", () => {
     const prepared = await screen.findByLabelText("Prepared");
     expect(screen.getByRole("tab", { name: "Reconciliations" }).getAttribute("aria-selected")).toBe("true");
     expect(prepared.textContent).toContain("Prepared through 01/31/2026 by Staff 2: bank $4,075.00, books $4,075.00.");
+    // Approving asks first: it closes the account through the day. Cancel sends nothing.
+    const question =
+      "Approve through 01/31/2026? The account closes through that day: nothing dated on or before it can be added after.";
     fireEvent.click(screen.getByRole("button", { name: "Approve through 01/31/2026" }));
+    expect(screen.getByRole("alertdialog", { name: question }).textContent).toContain(question);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(posted(fetch)).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Approve through 01/31/2026" }));
+    expect(posted(fetch)).toEqual([]);
+    fireEvent.click(
+      within(screen.getByRole("alertdialog", { name: question })).getByRole("button", { name: "Approve through 01/31/2026" }),
+    );
 
     expect(await screen.findByText("Approved through 01/31/2026; the account is closed through it.")).toBeTruthy();
     expect(posted(fetch)).toEqual([["/api/reconcile/b1/approve", { preparation_id: "pr1" }]]);
@@ -298,6 +310,13 @@ describe("ReconcilePage", () => {
     }));
     render(<ReconcilePage me={{ ...ME, roles: ["approve"] }} id="b1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Approve through 01/31/2026" }));
+    fireEvent.click(
+      within(
+        screen.getByRole("alertdialog", {
+          name: "Approve through 01/31/2026? The account closes through that day: nothing dated on or before it can be added after.",
+        }),
+      ).getByRole("button", { name: "Approve through 01/31/2026" }),
+    );
 
     expect(await screen.findByText("Approved through 01/31/2026; the account is closed through it.")).toBeTruthy();
     expect(screen.getByRole("tab", { name: "Reconciliations" }).getAttribute("aria-selected")).toBe("true");
@@ -386,7 +405,7 @@ describe("ReconcilePage", () => {
 
     fireEvent.click(screen.getByLabelText("01/09/2026 Check 1041 (1041): ($200.00)"));
     fireEvent.click(screen.getByLabelText("12/30/2025 Check to Vendor 1 (1041), from before the cutover: ($200.00)"));
-    expect(screen.getByTestId("picked").textContent).toBe("Lines ($200.00) · Transfers ($200.00)");
+    expect(screen.getByTestId("picked").textContent).toBe("Bank lines ($200.00) · Books ($200.00)");
     fireEvent.click(screen.getByRole("button", { name: "Match these" }));
     expect(await screen.findByText("Matched.")).toBeTruthy();
 

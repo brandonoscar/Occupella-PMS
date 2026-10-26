@@ -77,15 +77,17 @@ export function InviteForm({ kind, personId, name, portal, email, emailOn, refre
 }
 
 // An owner's or a tenant's portal login on their page (ADR 0010 phase 3): its state and, in one
-// click, an invite to the email in their contact details, named before it goes (rule 3). With no
+// click, an invite to the email in their contact details, named before it goes (rule 3): emailed
+// while this server sends email (`emailOn`), else a link shown once for staff to give. With no
 // email on file it says so and opens their contact details to add one.
-export function PortalCard({ kind, personId, name, portal, loginEmail, contactEmail, refresh, onEditContact }: {
+export function PortalCard({ kind, personId, name, portal, loginEmail, contactEmail, emailOn, refresh, onEditContact }: {
   kind: "owner" | "tenant";
   personId: string;
   name: string;
   portal: Portal;
   loginEmail: string | null;
   contactEmail: string | null;
+  emailOn: boolean;
   refresh: () => void;
   onEditContact: () => void;
 }) {
@@ -112,19 +114,23 @@ export function PortalCard({ kind, personId, name, portal, loginEmail, contactEm
           <>
             <div>
               <Button variant="secondary" onClick={() => ask(
-                `Send ${name} an invite to the portal at ${contactEmail}?`
+                (emailOn
+                  ? `Email ${name} an invite to the portal at ${contactEmail}?`
+                  : `Make ${name} an invite link for ${contactEmail}? Nothing is emailed: you give them the link shown here.`)
                   + (portal === "active"
                     ? " Using it sets a new password; until then, the one they have still works."
                     : " They set their own password with it; the link works once, within 7 days."),
                 () => record<Made>("/api/invites", { kind, person_id: personId, email: contactEmail }, (made) => {
                   setLink(made.url);
                   return said(made, contactEmail, name);
-                }), "Send invite")}>
+                }), emailOn ? "Send invite" : "Make the link")}>
                 {label}
               </Button>
             </div>
             <p className="text-sm text-ink-subtle">
-              Goes to {contactEmail}, the email in their contact details. The link works once.
+              {emailOn
+                ? `Goes to ${contactEmail}, the email in their contact details. The link works once.`
+                : `For ${contactEmail}, the email in their contact details. This server sends no email, so you give them the link; it works once.`}
             </p>
           </>
         )}

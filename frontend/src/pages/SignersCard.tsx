@@ -15,6 +15,7 @@ import { holds } from "../staff";
 import { useRecord } from "./useRecord";
 import { Said } from "../components/Said";
 import { Form } from "../components/Form";
+import { AskFirst } from "../components/Confirm";
 
 // Who may pay money out of each trust bank account: its broker on file and the signers the broker
 // authorized in writing, licensed or bonded. Once an account has its broker on file, the
@@ -52,15 +53,16 @@ export function SignersCard({ me, members }: { me: Me; members: Member[] }) {
                       <span>{signerLine(signer)}</span>
                       <Badge tone={standingTone(signer.standing)}>{signer.standing}</Badge>
                       {signer.role === "signer" && (
-                        <Button variant="secondary"
+                        <AskFirst variant="secondary" danger
                           says={`${signer.name} can no longer pay out of this account. Their earlier authorization stays in the history.`}
-                          onClick={() =>
+                          question={`Take away ${signer.name}? They can no longer pay out of ${account.bank_account}; their earlier authorization stays in the history.`}
+                          onConfirm={() =>
                           record("/api/signers", {
                             bank_account_id: account.bank_account_id, staff_id: signer.staff_id,
                             role: "signer", granted: false, authorized_on: today,
                           }, () => `${signer.name} no longer signs ${account.bank_account}.`)}>
-                          Take away {signer.name}
-                        </Button>
+                          {`Take away ${signer.name}`}
+                        </AskFirst>
                       )}
                     </li>
                   ))}

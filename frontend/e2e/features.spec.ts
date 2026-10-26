@@ -1449,6 +1449,10 @@ test("a lease ended mid-month keeps only its days of the month's rent, and its d
   await lease.getByText("Move-out for Unit 1").click();
   await lease.getByLabel("Last day").fill(yesterday);
   await lease.getByRole("button", { name: "End the lease" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    `End Aspen Row, Unit 1's lease on ${us(yesterday)}? Rent is charged only through that day.`,
+  );
+  await page.getByRole("alertdialog").getByRole("button", { name: "End the lease" }).click();
   await expect(lease).toContainText(`The lease ends on ${us(yesterday)}.`);
   await expect(lease.getByText("Ended, deposit to return")).toBeVisible();
   await expect(lease).toContainText(`owes ${dollars(cents)}`);
@@ -1604,6 +1608,8 @@ test("staff list a vacant unit on the public page; someone applies from it, staf
   await section(page, "Listings");
   const again = page.getByRole("row", { name: "Aspen Row, Unit 2" });
   await again.getByRole("button", { name: "Unlist" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("Take Aspen Row, Unit 2 off the public page? Its link stays open");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Unlist" }).click();
   await expect(page.getByText("Took Aspen Row, Unit 2 off the public page.")).toBeVisible();
   await expect(again.getByTestId("listed")).toHaveText("Not listed");
   await visitor.goto(`/listings?pmc=${people.pmc_id}`);
@@ -2067,12 +2073,18 @@ test("a bookkeeper proposes journal entries; the manager posts one, the ledger r
   const toPost = entry(manager, "Birch Flats rent deposited as Aspen Row");
   await expect(toPost.getByRole("row", { name: /Demo Owner B \/ Aspen Row .*Demo Owner A \/ Birch Flats \$10\.00/ })).toBeVisible();
   await toPost.getByRole("button", { name: "Post" }).click();
+  await expect(manager.getByRole("alertdialog")).toContainText(
+    `Post Birch Flats rent deposited as Aspen Row? It moves $10.00 as its lines say, dated ${us(today())}, and isn't undone later.`,
+  );
+  await manager.getByRole("alertdialog").getByRole("button", { name: "Post" }).click();
   await expect(manager.getByText("Posted: Birch Flats rent deposited as Aspen Row.")).toBeVisible();
   await expect(toPost.getByTestId("status")).toHaveText("posted");
   await expect(toPost).toContainText("Posted by Demo Manager.");
 
   const tooMuch = entry(manager, "Typed an extra zero");
   await tooMuch.getByRole("button", { name: "Post" }).click();
+  await expect(manager.getByRole("alertdialog")).toContainText("Post Typed an extra zero? It moves $1,000,000.00 as its lines say");
+  await manager.getByRole("alertdialog").getByRole("button", { name: "Post" }).click();
   await expect(tooMuch.getByRole("alert")).toHaveText(/^not enough money: the owner's account would be \$[\d,]+\.\d\d short$/);
   await expect(tooMuch.getByTestId("status")).toHaveText("waiting");
   await tooMuch.getByRole("button", { name: "Decline" }).click();
@@ -2669,6 +2681,8 @@ test("staff keep the company's name, address, logo and the fees new properties s
   // Removed, there is no logo.
   await settings(page, "Company setup");
   await page.getByRole("button", { name: "Remove logo" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("Remove this logo? Owners and tenants stop seeing it");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Remove logo" }).click();
   await expect(page.getByText("The logo is removed.")).toBeVisible();
   await expect(page.getByText("No logo yet")).toBeVisible();
 });
@@ -3820,6 +3834,10 @@ test("staff send a plumber their link; the plumber schedules the visit and says 
 
   await job.getByLabel("What you did (optional)").fill("Cleared the trap");
   await job.getByRole("button", { name: "The work is done" }).click();
+  await expect(plumber.getByRole("alertdialog")).toContainText(
+    /Mark #\d+ done\? It closes the work order and leaves your list; it can't be reopened\./,
+  );
+  await plumber.getByRole("alertdialog").getByRole("button", { name: "The work is done" }).click();
   await expect(plumber.getByText(/is done\. Thank you\./)).toBeVisible();
   await expect(plumber.getByRole("region", { name: "Kitchen sink drains slowly" })).toHaveCount(0);
   await page.reload();
@@ -3882,6 +3900,8 @@ test("staff add photos to a listed unit, which its public listing shows; a remov
   // Removed, a photo leaves the public page.
   await unit.getByRole("button", { name: "Photos, Aspen Row, Unit 2" }).click();
   await photos.getByRole("button", { name: "Remove Porch" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("Remove Porch? It leaves this unit's listing");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Remove" }).click();
   await expect(photos.getByText("Removed Porch.")).toBeVisible();
   await visitor.reload();
   await expect(shown).toHaveCount(1);
@@ -3918,6 +3938,8 @@ test("staff add a lead who asked about a unit, show it to them, record how it we
   await expect(row).toContainText("Unit 2, Aspen Row");
   await row.getByRole("button", { name: /^Actions for Showing / }).click();
   await page.getByRole("menuitem", { name: "Shown" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText("showing shown? It can't be changed after.");
+  await page.getByRole("alertdialog").getByRole("button", { name: "Shown" }).click();
   await expect(row).toContainText("Shown");
 
   // They applied: the lead closes and takes no more showings.
@@ -4176,6 +4198,10 @@ test("staff make a tenant a tenant at a second property and lease them a unit th
   await same.getByLabel("Name, email or phone").fill("Taylor");
   await same.getByRole("button", { name: "Find" }).click();
   await same.getByRole("button", { name: /^Same person: Taylor Demo, .*Cedar House/ }).click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    /Link Drew Sample and Taylor Demo \(.*Cedar House\) for good\? They get one portal sign-in/,
+  );
+  await page.getByRole("alertdialog").getByRole("button", { name: "This is them" }).click();
   await expect(same.getByRole("alert")).toContainText("Drew Sample signs in to the portal: link Taylor Demo to them instead");
 
   // Taylor signs in once and has both homes; a repair asked for at Aspen Row is theirs there.
@@ -4211,6 +4237,10 @@ test("staff approve last December in each trust bank account, close the year, an
   for (const account of ["Demo operating trust account", "Demo security deposit account"]) {
     await ready.getByRole("link", { name: account }).click();
     await page.getByRole("button", { name: `Approve through ${december}` }).click();
+    await expect(page.getByRole("alertdialog")).toContainText(
+      `Approve through ${december}? The account closes through that day: nothing dated on or before it can be added after.`,
+    );
+    await page.getByRole("alertdialog").getByRole("button", { name: `Approve through ${december}` }).click();
     await expect(page.getByText(`Approved through ${december}; the account is closed through it.`)).toBeVisible();
     await section(page, "Banking");
   }

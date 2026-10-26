@@ -109,6 +109,7 @@ export function LeadPage({ me, id }: { me: Me; id: string }) {
                 const when = showingTime(showing.starts_at);
                 const went = (outcome: ShowingOutcome): RowAction => ({
                   label: OUTCOME[outcome].word,
+                  confirm: `Mark the ${when} showing ${OUTCOME[outcome].word.toLowerCase()}? It can't be changed after.`,
                   onSelect: () => record(`/api/leasing/showings/${showing.id}/outcome`, { outcome },
                     () => `The ${when} showing: ${OUTCOME[outcome].word.toLowerCase()}.`),
                 });

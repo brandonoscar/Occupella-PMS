@@ -21,6 +21,7 @@ import { OnlinePaymentsCard } from "./OnlinePaymentsCards";
 import { ScreeningCriteriaCard } from "./ScreeningCriteriaCard";
 import { STAFF_NAV } from "./staffNav";
 import { useRecord } from "./useRecord";
+import { AskFirst } from "../components/Confirm";
 
 // Settings → Company setup (ADR 0006, step 12): the company itself, its name, mailing address and
 // logo (which owners and tenants see in their portal), the late fee and NSF fee terms each
@@ -223,8 +224,10 @@ function LogoCard({ company, refresh }: { company: Company; refresh: () => void 
             }} />
         </label>
         {company.logo && (
-          <Button variant="ghost" says="Takes this logo off owners' and tenants' portals. Its file stays in the records."
-            onClick={() => record("/api/company/logo/remove", {}, () => "The logo is removed.")}>Remove logo</Button>
+          <AskFirst variant="ghost" danger
+            says="Takes this logo off the portals; an earlier logo you didn't remove shows again. Its file stays in the records."
+            question="Remove this logo? Owners and tenants stop seeing it; an earlier logo you didn't remove shows again."
+            onConfirm={() => record("/api/company/logo/remove", {}, () => "The logo is removed.")}>Remove logo</AskFirst>
         )}
       </div>
       <Said>{said}</Said>

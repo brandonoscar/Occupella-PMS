@@ -118,7 +118,17 @@ describe("Other properties on a tenant's page", () => {
     expect(within(found).getAllByRole("listitem").map((item) => item.textContent)).toEqual([
       "Tenant 1 Unit 2, Property 3This is themLinks the two for good: one portal sign-in, and each record keeps its own leases and money.",
     ]);
+    // Linking asks first; Cancel sends nothing.
+    const question =
+      "Link Tenant 1 and Tenant 1 (Unit 2, Property 3) for good? They get one portal sign-in; each record keeps its own leases and money.";
     fireEvent.click(within(found).getByRole("button", { name: "Same person: Tenant 1, Unit 2, Property 3" }));
+    expect(screen.getByRole("alertdialog", { name: question }).textContent).toContain(question);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(posted(fetch)).toEqual([]);
+    fireEvent.click(within(found).getByRole("button", { name: "Same person: Tenant 1, Unit 2, Property 3" }));
+    expect(posted(fetch)).toEqual([]);
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: question })).getByRole("button", { name: "This is them" }));
 
     expect(await within(panel).findByText("Tenant 1 signs in to the portal: link Tenant 1 to them instead")).toBeTruthy();
     expect(posted(fetch)).toEqual([["/api/tenants/t1/same-person", { tenant_id: "t7" }]]);

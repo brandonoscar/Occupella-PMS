@@ -151,8 +151,17 @@ describe("SetupPage", () => {
     fireEvent.change(input, { target: { files: [new File(["\x89PNG\r\n\x1a\n"], "logo.png", { type: "image/png" })] } });
     expect(await screen.findByText("The logo is saved.")).toBeTruthy();
     expect(says(screen.getByRole("button", { name: "Remove logo" })))
-      .toBe("Takes this logo off owners' and tenants' portals. Its file stays in the records.");
+      .toBe("Takes this logo off the portals; an earlier logo you didn't remove shows again. Its file stays in the records.");
+    // Removing the logo asks first; Cancel sends nothing.
+    const question = "Remove this logo? Owners and tenants stop seeing it; an earlier logo you didn't remove shows again.";
     fireEvent.click(screen.getByRole("button", { name: "Remove logo" }));
+    expect(screen.getByRole("alertdialog", { name: question }).textContent).toContain(question);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(posted(fetch).map(([path]) => path)).toEqual(["/api/company/logo"]);
+    fireEvent.click(screen.getByRole("button", { name: "Remove logo" }));
+    expect(posted(fetch).map(([path]) => path)).toEqual(["/api/company/logo"]);
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: question })).getByRole("button", { name: "Remove logo" }));
     expect(await screen.findByText("The logo is removed.")).toBeTruthy();
     expect(posted(fetch).map(([path]) => path)).toEqual(["/api/company/logo", "/api/company/logo/remove"]);
     expect(posted(fetch)[0]?.[1]).toMatchObject({ content_type: "image/png" });

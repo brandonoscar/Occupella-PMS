@@ -132,7 +132,17 @@ describe("LeadPage", () => {
     const when = showingTime(SHOWING.starts_at);
     const row = screen.getByRole("row", { name: `Showing ${when}` });
     fireEvent.click(within(row).getByRole("button", { name: `Actions for Showing ${when}` }));
+    // Recording how it went asks first; Cancel sends nothing.
+    const question = `Mark the ${when} showing no-show? It can't be changed after.`;
     fireEvent.click(screen.getByRole("menuitem", { name: "No-show" }));
+    expect(screen.getByRole("alertdialog", { name: question }).textContent).toContain(question);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(posted(fetch)).toEqual([]);
+    fireEvent.click(within(row).getByRole("button", { name: `Actions for Showing ${when}` }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "No-show" }));
+    expect(posted(fetch)).toEqual([]);
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: question })).getByRole("button", { name: "No-show" }));
     await screen.findByText(`The ${when} showing: no-show.`);
 
     fireEvent.click(screen.getByRole("button", { name: "Schedule showing" }));
@@ -190,6 +200,8 @@ describe("LeadPage", () => {
     const row = await screen.findByRole("row", { name: `Showing ${when}` });
     fireEvent.click(within(row).getByRole("button", { name: `Actions for Showing ${when}` }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Shown" }));
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: `Mark the ${when} showing shown? It can't be changed after.` }))
+      .getByRole("button", { name: "Shown" }));
     expect(await screen.findByText("how this showing went is recorded already")).toBeTruthy();
     cleanup();
 

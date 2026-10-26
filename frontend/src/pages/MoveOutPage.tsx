@@ -95,7 +95,9 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
         className="flex flex-wrap items-end gap-3"
         onSubmit={(event) => {
           event.preventDefault();
-          record(`/api/move-out/${id}/end`, { ends_on: ends }, () => `The lease ends on ${usDate(ends)}.`);
+          ask(`End ${lease.property}, ${lease.unit}'s lease on ${usDate(ends)}? Rent is charged only through that day.`,
+            () => record(`/api/move-out/${id}/end`, { ends_on: ends }, () => `The lease ends on ${usDate(ends)}.`),
+            "End the lease");
         }}
       >
         <Field label="Last day" id={`ends-${id}`} type="date" required value={ends}
@@ -232,7 +234,7 @@ function LeaseRow({ lease, refresh }: { lease: MoveOut; refresh: () => void }) {
                 </Button>
               </Form>
             ) : null}
-            {ended && prompt}
+            {prompt}
           </>
         )}
         <Said>{said}</Said>

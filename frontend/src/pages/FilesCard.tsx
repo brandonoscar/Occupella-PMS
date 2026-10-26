@@ -11,6 +11,7 @@ import { usDate } from "../money";
 import { useRecord } from "./useRecord";
 import { Said } from "../components/Said";
 import { Form } from "../components/Form";
+import { AskFirst } from "../components/Confirm";
 
 type Chosen = { type: ContentType | null; size: number; base64: string };
 
@@ -93,11 +94,12 @@ export function FilesCard({ kind, also = [], listed = [], aboutId, name, note }:
               <span className="text-ink-muted">
                 {kindLabel(d.kind)}, {sizeLabel(d.size)}, uploaded {usDate(d.uploaded_at)}
               </span>
-              <Button variant="secondary" aria-label={`Remove ${d.title}`}
+              <AskFirst variant="secondary" aria-label={`Remove ${d.title}`} danger
+                question={`Remove ${d.title}? It leaves every list here and in the portals, and its download stops. Its record stays.`}
                 says="Takes it off every list, here and in the portals, and stops its download. Its record stays."
-                onClick={() => record(`/api/documents/${d.id}/remove`, {}, () => `Removed ${d.title}.`)}>
+                onConfirm={() => record(`/api/documents/${d.id}/remove`, {}, () => `Removed ${d.title}.`)}>
                 Remove
-              </Button>
+              </AskFirst>
             </li>
           ))}
         </ul>

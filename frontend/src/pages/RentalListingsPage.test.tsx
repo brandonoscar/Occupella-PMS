@@ -101,7 +101,16 @@ describe("RentalListingsPage", () => {
 
     expect(says(within(listed).getByRole("button", { name: "Unlist" })))
       .toBe("Takes it off the public page; its link stays open. To list it again, open a new link.");
+    // Unlisting asks first; Cancel sends nothing.
+    const question = "Take Property 1, Unit 2 off the public page? Its link stays open; to list it again you open a new link.";
     fireEvent.click(within(listed).getByRole("button", { name: "Unlist" }));
+    expect(screen.getByRole("alertdialog", { name: question }).textContent).toContain(question);
+    fireEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(posted(fetch)).toEqual([]);
+    fireEvent.click(within(listed).getByRole("button", { name: "Unlist" }));
+    expect(posted(fetch)).toEqual([]);
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: question })).getByRole("button", { name: "Unlist" }));
     await screen.findByText("Took Property 1, Unit 2 off the public page.");
     fireEvent.click(within(listed).getByRole("button", { name: "Actions for Property 1, Unit 2" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Close its link" }));
@@ -136,6 +145,8 @@ describe("RentalListingsPage", () => {
     render(<RentalListingsPage me={ME} />);
     const listed = await screen.findByRole("row", { name: "Property 1, Unit 2" });
     fireEvent.click(within(listed).getByRole("button", { name: "Unlist" }));
+    fireEvent.click(within(screen.getByRole("alertdialog", { name: "Take Property 1, Unit 2 off the public page? Its link stays open; to list it again you open a new link." }))
+      .getByRole("button", { name: "Unlist" }));
     await screen.findByText("Took Property 1, Unit 2 off the public page.");
 
     fireEvent.click(screen.getByRole("button", { name: "Copy public page link" }));
@@ -184,6 +195,11 @@ describe("RentalListingsPage", () => {
     expect(says(within(panel).getByRole("button", { name: "Remove Porch" })))
       .toBe("Takes the photo off this unit's listing. Its file stays in the records.");
     fireEvent.click(within(panel).getByRole("button", { name: "Remove Porch" }));
+    const asked = screen.getByRole("alertdialog", {
+      name: "Remove Porch? It leaves this unit's listing; its file stays in the records.",
+    });
+    expect(asked.textContent).toContain("Remove Porch? It leaves this unit's listing; its file stays in the records.");
+    fireEvent.click(within(asked).getByRole("button", { name: "Remove" }));
     await within(panel).findByText("Removed Porch.");
 
     const sent = fetch.mock.calls.filter(([, init]) => init?.method === "POST").map(([path, init]) => [path, JSON.parse(String(init?.body))]);

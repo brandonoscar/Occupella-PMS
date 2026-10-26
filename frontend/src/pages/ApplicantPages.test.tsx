@@ -27,8 +27,9 @@ const APPLICATION: Application = {
   screenings: [SCREENING], decision: null, status: "screening", withdrawal: null, lease_id: null,
 };
 
-function server(found: Application = APPLICATION, refuse: Record<string, string> = {}) {
+function server(found: Application = APPLICATION, refuse: Record<string, string> = {}, emails?: object) {
   const fetch = vi.fn(async (path: string, init?: RequestInit) => {
+    if (path === "/api/emails/settings" && emails) return new Response(JSON.stringify(emails));
     if (init?.method === "POST") {
       if (path in refuse) return new Response(JSON.stringify({ detail: refuse[path] }), { status: 409 });
       return new Response(JSON.stringify(found), { status: 201 });
@@ -120,7 +121,7 @@ describe("ApplicantPage", () => {
   });
 
   it("rejects on the screening with the adverse action notice", async () => {
-    const fetch = server();
+    const fetch = server(APPLICATION, {}, { adverse_action_notices: true, sending: true });
     render(<ApplicantPage me={ME} id="a1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Reject" }));
 
@@ -131,9 +132,11 @@ describe("ApplicantPage", () => {
     fireEvent.change(within(panel).getByLabelText("Why decide against the screening's recommendation"), {
       target: { value: " No co-signer came forward " },
     });
-    expect(says(within(panel).getByRole("button", { name: "Reject" }))).toBe(
-      "Rejects it; this is final. Each applicant gets the notice by email only if adverse action emails are on.",
-    );
+    // Who gets the notice, by name and email, counted, before it goes (rule 3).
+    await vi.waitFor(() => expect(says(within(panel).getByRole("button", { name: "Reject" }))).toBe(
+      "Rejects it; this is final. Emails the notice to all 2 applicants: Applicant A at a@example.com,"
+      + " Applicant B at b@example.com.",
+    ));
     fireEvent.click(within(panel).getByRole("button", { name: "Reject" }));
 
     await screen.findByText("Rejected: Applicant A, Applicant B.");

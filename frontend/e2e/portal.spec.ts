@@ -144,7 +144,7 @@ test("staff enroll an authenticator, invite a tenant and see a repair through", 
   await expect(portal).toContainText("Goes to tenant.e2e@example.com, the email in their contact details.");
   await portal.getByRole("button", { name: "Invite to the portal" }).click();
   const ask = page.getByRole("alertdialog");
-  await expect(ask).toContainText("Send Tenant E2E an invite to the portal at tenant.e2e@example.com?");
+  await expect(ask).toContainText("Email Tenant E2E an invite to the portal at tenant.e2e@example.com?");
   await ask.getByRole("button", { name: "Send invite" }).click();
   await expect(portal.getByLabel("Invite link, Tenant E2E")).toHaveValue(/\/invite#/);
   await expect(portal).toContainText("Invited");
@@ -786,6 +786,10 @@ test("staff import last month's statement, match it to the books and prepare it;
   await page.getByRole("row", { name: "E2E operating trust account", exact: true }).getByRole("link").click();
   await expect(page.getByRole("heading", { level: 1, name: "E2E operating trust account" })).toBeVisible();
   await page.getByRole("button", { name: `Approve through ${us(iso(last))}` }).click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    `Approve through ${us(iso(last))}? The account closes through that day: nothing dated on or before it can be added after.`,
+  );
+  await page.getByRole("alertdialog").getByRole("button", { name: `Approve through ${us(iso(last))}` }).click();
   await expect(page.getByText(`Approved through ${us(iso(last))}; the account is closed through it.`)).toBeVisible();
   const approved = page.getByRole("table", { name: "Approved" }).getByRole("row", {
     name: `${us(iso(first))} to ${us(iso(last))} $4,700.00 $4,700.00 Approver E2E`,
@@ -837,6 +841,10 @@ test("staff bring a roster in, open an account with its old balances and a check
   await expect(card).toContainText("1 item carried over.");
   await expect(card).toContainText("The bank's statement should open at $1,050.00.");
   await card.getByRole("button", { name: "Sign off the tie-out" }).click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    "Sign off the tie-out? The items carried over are frozen: none can be added after, and it isn't undone.",
+  );
+  await page.getByRole("alertdialog").getByRole("button", { name: "Sign off the tie-out" }).click();
   await expect(card).toContainText("Signed off. The items carried over are frozen.");
   await expect(card).toContainText("Switch E2E at ");
 
@@ -886,6 +894,10 @@ test("the demo opens on last month waiting for its manager, who approves it and 
     `Prepared through ${us(iso(last))} by Demo Bookkeeper: bank $2,379.20, books $1,729.20.`,
   );
   await page.getByRole("button", { name: `Approve through ${us(iso(last))}` }).click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    `Approve through ${us(iso(last))}? The account closes through that day: nothing dated on or before it can be added after.`,
+  );
+  await page.getByRole("alertdialog").getByRole("button", { name: `Approve through ${us(iso(last))}` }).click();
   await expect(page.getByText(`Approved through ${us(iso(last))}; the account is closed through it.`)).toBeVisible();
   const approved = page.getByRole("table", { name: "Approved" }).getByRole("row", {
     name: `${us(iso(first))} to ${us(iso(last))} $2,379.20 $1,729.20 Demo Manager`,

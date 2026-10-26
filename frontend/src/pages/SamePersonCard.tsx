@@ -13,6 +13,7 @@ import type { Paged, PropertyRow } from "../rentals";
 import { navigate } from "../router";
 import { GoLink } from "./NeedsAttention";
 import { useRecord } from "./useRecord";
+import { AskFirst } from "../components/Confirm";
 
 const LINK = "font-medium text-iris hover:text-iris-hover hover:underline";
 
@@ -129,13 +130,14 @@ function SamePerson({ tenant, refresh, say, onClose }: {
           {found.map((hit) => (
             <li key={hit.id} className="flex flex-wrap items-center justify-between gap-2 text-base">
               <span>{hit.label} <span className="text-ink-muted">{hit.detail}</span></span>
-              <Button variant="secondary" aria-label={`Same person: ${hit.label}, ${hit.detail}`} onClick={async () => {
+              <AskFirst variant="secondary" aria-label={`Same person: ${hit.label}, ${hit.detail}`} onConfirm={async () => {
                 const done = await record(`/api/tenants/${tenant.id}/same-person`, { tenant_id: hit.id },
                   () => `${tenant.name} and ${hit.label} (${hit.detail}) are the same person now.`);
                 if (done) onClose();
-              }} says="Links the two for good: one portal sign-in, and each record keeps its own leases and money.">
+              }} says="Links the two for good: one portal sign-in, and each record keeps its own leases and money."
+                question={`Link ${tenant.name} and ${hit.label} (${hit.detail}) for good? They get one portal sign-in; each record keeps its own leases and money.`}>
                 This is them
-              </Button>
+              </AskFirst>
             </li>
           ))}
         </ul>

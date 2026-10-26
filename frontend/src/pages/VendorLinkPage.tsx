@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ApiError, api } from "../api";
 import { Badge } from "../components/Badge";
 import { Button } from "../components/Button";
+import { useConfirm } from "../components/Confirm";
 import { Field } from "../components/Field";
 import { Form } from "../components/Form";
 import { Notice } from "../components/Notice";
@@ -62,6 +63,7 @@ function VendorOrder({ order, step }: { order: VendorWorkOrder; step: Step }) {
   const [on, setOn] = useState(order.visit_on ?? "");
   const [slot, setSlot] = useState(order.visit_window ?? "");
   const [note, setNote] = useState("");
+  const { ask, prompt } = useConfirm();
   const where = order.unit ? `${order.unit}, ${order.property}` : order.property;
   return (
     <Card title={`#${order.number} ${order.summary}`}>
@@ -94,7 +96,9 @@ function VendorOrder({ order, step }: { order: VendorWorkOrder; step: Step }) {
         </Form>
         <Form className="flex flex-wrap items-end gap-2" onSubmit={(event) => {
           event.preventDefault();
-          return step(order, { step: "completed", note: note.trim() || null }, `#${order.number} is done. Thank you.`);
+          ask(`Mark #${order.number} done? It closes the work order and leaves your list; it can't be reopened.`,
+            () => step(order, { step: "completed", note: note.trim() || null }, `#${order.number} is done. Thank you.`),
+            "The work is done");
         }}>
           <Field label="What you did (optional)" id={`note-${order.id}`} maxLength={2000} value={note} onChange={(e) => setNote(e.target.value)} />
           <Button type="submit"
@@ -103,6 +107,7 @@ function VendorOrder({ order, step }: { order: VendorWorkOrder; step: Step }) {
           </Button>
         </Form>
       </section>
+      {prompt}
     </Card>
   );
 }

@@ -225,6 +225,7 @@ function DecideForm({ application, rejecting, record }: {
   const [noticeOn, setNoticeOn] = useState(day(new Date()));
   const [why, setWhy] = useState("");
   const notice = needsNotice(decision, screening || null);
+  const emailing = useNoticeEmails();
   const against = againstScreening(application, decision);
   const names = applicantNames(application);
   return (
@@ -275,7 +276,7 @@ function DecideForm({ application, rejecting, record }: {
         </>
       )}
       <div>
-        <Button type="submit" variant={rejecting ? "danger" : "primary"} says={decideSays(decision, notice)}>
+        <Button type="submit" variant={rejecting ? "danger" : "primary"} says={decideSays(decision, notice, emailing, application.applicants)}>
           {rejecting ? "Reject" : "Approve"}
         </Button>
       </div>
@@ -283,17 +284,38 @@ function DecideForm({ application, rejecting, record }: {
   );
 }
 
+type NoticeEmails = { on: boolean; sending: boolean };
+
+// Whether an adverse action notice is emailed now: the server sends email and the company has those
+// notices on (Company setup). Null until read.
+function useNoticeEmails(): NoticeEmails | null {
+  const [found, setFound] = useState<NoticeEmails | null>(null);
+  useEffect(() => {
+    const run = latest();
+    api.get<{ adverse_action_notices: boolean; sending: boolean }>("/api/emails/settings")
+      .then(run.keep((settings) => setFound({ on: settings.adverse_action_notices, sending: settings.sending })))
+      .catch(() => undefined);
+    return run.stop;
+  }, []);
+  return found;
+}
+
 // What a decision does (ADR 0010, rule 1): it is final, and its adverse action notice is emailed to
-// each applicant only while the server sends email and the company has those notices on.
-function decideSays(decision: Decision["decision"], notice: boolean): string {
+// each applicant, named with their email and counted before it goes (rule 3), only while the server
+// sends email and the company has those notices on.
+function decideSays(decision: Decision["decision"], notice: boolean, emailing: NoticeEmails | null,
+  applicants: { name: string; email: string }[]): string {
   const does = {
     approved: "Approves it; this is final. A draft lease comes next.",
     conditional: "Approves it on these conditions; this is final.",
     declined: "Rejects it; this is final.",
   }[decision];
-  return notice
-    ? `${does} Each applicant gets the notice by email only if adverse action emails are on.`
-    : `${does} Nothing is sent to the applicants.`;
+  if (!notice) return `${does} Nothing is sent to the applicants.`;
+  if (emailing === null) return `${does} Each applicant gets the notice by email only if adverse action emails are on.`;
+  if (!emailing.sending) return `${does} This server sends no email: give each applicant the notice (PDF) yourself.`;
+  if (!emailing.on) return `${does} Adverse action emails are off: give each applicant the notice (PDF) yourself.`;
+  const to = applicants.map((person) => `${person.name} at ${person.email}`).join(", ");
+  return `${does} Emails the notice to ${applicants.length === 1 ? "the applicant" : `all ${applicants.length} applicants`}: ${to}.`;
 }
 
 // Records that the applicants withdrew the application, and why if they said.

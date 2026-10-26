@@ -18,6 +18,8 @@ const ME: Me = {
   kind: "staff", email: "staff@example.com", name: "Staff 1", person_id: "s1", pmc_id: "p1",
   pmc_name: "Synthetic PMC",
 };
+// A server that sends email: an invite is emailed.
+const EMAIL_ON: Me = { ...ME, email_on: true };
 
 const NO_CONTACT: Contact = {
   email: null, phone: null, alternate_phone: null, address_line_1: null, address_line_2: null,
@@ -172,7 +174,7 @@ describe("TenantsPage", () => {
 describe("TenantPage", () => {
   it("shows their home, phone, email, money held, contact details and every lease", async () => {
     server({ "/api/tenants/t1": TENANT, ...LEASE_ANSWERS });
-    render(<TenantPage me={ME} id="t1" />);
+    render(<TenantPage me={EMAIL_ON} id="t1" />);
 
     expect(await screen.findByRole("heading", { level: 1, name: "Tenant 1" })).toBeTruthy();
     const header = screen.getByTestId("tenant-header");
@@ -227,12 +229,28 @@ describe("TenantPage", () => {
 
   it("invites them to the portal from their page, naming the email first", async () => {
     const fetch = server({ "/api/tenants/t1": { ...TENANT, portal: "no login", login_email: null }, ...LEASE_ANSWERS });
-    render(<TenantPage me={ME} id="t1" />);
+    render(<TenantPage me={EMAIL_ON} id="t1" />);
     fireEvent.click(await screen.findByRole("button", { name: "Invite to the portal" }));
     const ask = await screen.findByRole("alertdialog");
-    expect(ask.textContent).toContain("Send Tenant 1 an invite to the portal at tenant1@example.com?");
+    expect(ask.textContent).toContain("Email Tenant 1 an invite to the portal at tenant1@example.com?");
     expect(posted(fetch)).toEqual([]);
     fireEvent.click(within(ask).getByRole("button", { name: "Send invite" }));
+    await vi.waitFor(() => expect(posted(fetch)).toEqual([
+      ["/api/invites", { kind: "tenant", person_id: "t1", email: TENANT.contact.email }],
+    ]));
+  });
+
+  it("says an invite is only a link to give them when this server sends no email", async () => {
+    const fetch = server({ "/api/tenants/t1": { ...TENANT, portal: "no login", login_email: null }, ...LEASE_ANSWERS });
+    render(<TenantPage me={ME} id="t1" />);
+    const invite = await screen.findByRole("button", { name: "Invite to the portal" });
+    expect(screen.getByText(/This server sends no email, so you give them the link/)).toBeTruthy();
+    fireEvent.click(invite);
+    const ask = await screen.findByRole("alertdialog");
+    expect(ask.textContent).toContain(
+      "Make Tenant 1 an invite link for tenant1@example.com? Nothing is emailed: you give them the link shown here.",
+    );
+    fireEvent.click(within(ask).getByRole("button", { name: "Make the link" }));
     await vi.waitFor(() => expect(posted(fetch)).toEqual([
       ["/api/invites", { kind: "tenant", person_id: "t1", email: TENANT.contact.email }],
     ]));

@@ -13,6 +13,7 @@ import type { FeePayer, PaymentSettings, Waiting } from "../payments";
 import { PAYMENT_SETTINGS, settingsLine, waitingLine } from "../payments";
 import { requestId } from "../rent";
 import { useRecord } from "./useRecord";
+import { AskFirst } from "../components/Confirm";
 
 // Company setup: whether tenants may pay online, and who pays the processing fee on a bank
 // payment (the founder, 2026-10-23: the company chooses). Off until a company turns it on.
@@ -129,10 +130,11 @@ export function OnlinePaymentsWaiting({ refresh }: { refresh: number }) {
                 "Record it")}>Accept past the hold</Button>
             )}
             {item.what === "return" && (
-              <Button variant="secondary"
+              <AskFirst variant="secondary"
                 says="Records the return if the owner's balance now covers it: the payment comes off the lease and any NSF fee is charged."
-                onClick={() => record(`/api/payments/${item.payment_id}/record`, {},
-                () => "Recorded what came back.")}>Try again</Button>
+                question={`Record that ${money(item.amount)} for ${item.memo} came back? The payment comes off the lease, and the property's NSF fee, if any, is charged.`}
+                onConfirm={() => record(`/api/payments/${item.payment_id}/record`, {},
+                () => "Recorded what came back.")}>Try again</AskFirst>
             )}
           </li>
         ))}

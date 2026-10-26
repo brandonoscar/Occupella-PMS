@@ -365,7 +365,11 @@ describe("WorkOrderPage", () => {
 
   it("assigns a vendor in the Next step panel, and says why one was refused", async () => {
     const fetch = server(
-      { "/api/work-orders/w1": { ...ORDER, vendor_id: null, vendor: null, status: "open", steps: [] } },
+      {
+        "/api/work-orders/w1": { ...ORDER, vendor_id: null, vendor: null, status: "open", steps: [] },
+        "/api/emails/to?about=vendor&about_id=v2": { name: "Vendor 2", to: "vendor2@example.com" },
+        "/api/emails/settings": { work_order_notices: true, sending: true },
+      },
       { "/api/maintenance/work-orders/w1/steps": "the vendor's insurance expired on 09/30/2026; record its renewal before assigning them" },
     );
     render(<WorkOrderPage me={ME} id="w1" />);
@@ -378,9 +382,10 @@ describe("WorkOrderPage", () => {
     expect(within(panel).queryByRole("option", { name: "Schedule the visit" })).toBeNull();
     fireEvent.change(await within(panel).findByLabelText("Vendor"), { target: { value: "v2" } });
     fireEvent.change(within(panel).getByLabelText("Note (optional)"), { target: { value: " Friday " } });
-    expect(says(within(panel).getByRole("button", { name: "Record" }))).toBe(
-      "Assigns them; it stays in the timeline. They're emailed the work order only if work order emails are on.",
-    );
+    // Whom it emails, and where, before it is recorded (rule 3).
+    await vi.waitFor(() => expect(says(within(panel).getByRole("button", { name: "Record" }))).toBe(
+      "Assigns them; it stays in the timeline. Emails Vendor 2 the work order at vendor2@example.com.",
+    ));
     fireEvent.click(within(panel).getByRole("button", { name: "Record" }));
     expect((await within(panel).findByRole("alert")).textContent).toBe(
       "the vendor's insurance expired on 09/30/2026; record its renewal before assigning them",
@@ -396,7 +401,10 @@ describe("WorkOrderPage", () => {
   });
 
   it("schedules the visit once a vendor is assigned, and closes the panel", async () => {
-    const fetch = server();
+    const fetch = server({
+      "/api/emails/to?about=vendor&about_id=v1": { name: "Vendor 1", to: "vendor1@example.com" },
+      "/api/emails/settings": { work_order_notices: false, sending: true },
+    });
     render(<WorkOrderPage me={ME} id="w1" />);
     await screen.findByRole("heading", { level: 1 });
 
@@ -405,8 +413,8 @@ describe("WorkOrderPage", () => {
     expect((within(panel).getByLabelText("What happens next") as HTMLSelectElement).value).toBe("scheduled");
     fireEvent.change(within(panel).getByLabelText("Visit on"), { target: { value: "2026-10-20" } });
     fireEvent.change(within(panel).getByLabelText("Window (optional, like 8-10 am)"), { target: { value: " 9-11 am " } });
-    expect(says(within(panel).getByRole("button", { name: "Record" })))
-      .toBe("Adds the visit to the timeline. The vendor is emailed the day only if work order emails are on.");
+    await vi.waitFor(() => expect(says(within(panel).getByRole("button", { name: "Record" })))
+      .toBe("Adds the visit to the timeline. Work order emails are off, so Vendor 1 isn't emailed."));
     fireEvent.click(within(panel).getByRole("button", { name: "Record" }));
     expect(await screen.findByText("Scheduled for 10/20/2026.")).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
