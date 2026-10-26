@@ -1,0 +1,23 @@
+owner statement (<uuid1>, <uuid2>, 2026-01-01 00:00:00+00, 2026-02-01 00:00:00+00)
+Generated 2026-02-01 09:30:00 UTC
+line property posted_on item detail amount balance
+1 PMC Golden PMC 
+2 owner Owner 1 
+3 period 2026-01-01 00:00:00 to 2026-02-01 00:00:00 UTC 
+4 Property 1 opening balance 1000.00
+5 Property 1 2026-01-03 posting bank_cash: Golden operating trust account - January rent 1500.00 2500.00
+6 Property 1 2026-01-05 posting pmc_income: Golden PMC - Management fee -150.00 2350.00
+7 Property 1 2026-01-12 posting vendor_payable: Vendor 1 - Plumbing repair -240.00 2110.00
+8 Property 1 2026-01-25 posting owner_property: Owner 1 / Property 2 -100.00 2010.00
+9 Property 1 closing balance 2010.00
+10 Property 2 opening balance 0.00
+11 Property 2 2026-01-04 posting bank_cash: Golden operating trust account - January rent 1250.00 1250.00
+12 Property 2 2026-01-20 posting pmc_income: Golden PMC - Management fee -125.00 1125.00
+13 Property 2 2026-01-25 posting owner_property: Owner 1 / Property 1 100.00 1225.00
+14 Property 2 2026-01-30 posting bank_cash: Golden operating trust account - Owner draw -500.00 725.00
+15 Property 2 closing balance 725.00
+16 all properties: opening balance 1000.00
+17 all properties: money in 2850.00 
+18 all properties: money out -1115.00 
+19 all properties: closing balance 2735.00
+Page 1 of 1
