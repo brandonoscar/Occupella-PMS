@@ -401,8 +401,11 @@ The browser sweep that checks every page of the demo for accessibility also fail
 text carries a name from the code, "set aside", "PMC", "EFT", a value printed as nothing or a day
 as YYYY-MM-DD (`frontend/e2e/words.ts`). **Left to the founder:** the reports, the general ledger
 page and every download print the ledger's own words (`bank_cash:`, `owner_property:`, "PMC",
-"posting", "Bill X set aside", times in UTC). An earlier decision keeps a report's text as the
-report writes it, so the sweep leaves those pages out until the founder decides (asked in this PR).
+"posting", "Bill X set aside", times in UTC). An earlier decision kept a report's text as the
+report writes it, so the sweep leaves those pages out here. **The founder's answer (2026-10-26):
+translate them everywhere**, on screen and in every download, from one word list, with the report
+functions and their golden cases unchanged; a follow-up PR does it and takes the exception out
+of the sweep.
 
 **Rule 3, who gets it before it sends.** Write email names the address it goes to, or says the
 person has no email on file and sends nothing (`GET /api/emails/to`). A portal invite says whether
