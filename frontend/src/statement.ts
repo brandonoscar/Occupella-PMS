@@ -84,8 +84,8 @@ export function group(data: StatementData): Grouped {
 // A posting as an owner reads it. The report names the other side of each posting by its ledger
 // kind, then its name, then the posting's memo ("bank_cash: Demo operating trust account -
 // Owner draw"); the page says what it was ("Owner draw") and with whom (the bank, the vendor,
-// the management company). Without a memo, the kind says what it was. The report's own text
-// stays as it is in the downloads.
+// the management company). Without a memo, the kind says what it was. A download says it in
+// the API's plain words (src/pms/wording.py).
 const WITHOUT_MEMO: Record<string, (amount: string) => string> = {
   bank_cash: (amount) => (amount.startsWith("-") ? "Paid out" : "Received"),
   pmc_income: () => "Management company",

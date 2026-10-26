@@ -53,15 +53,15 @@ def test_each_account_has_its_prior_balance_entries_and_totals(client, staff, bo
     names = [(a["bank"], a["account"]) for a in page["items"]]
     assert names[0] == ("Synthetic operating trust account (operating)", "book cash")
     assert page["total"] == len(names)
-    owner = next(a for a in page["items"] if a["account"] == "owner_property: Owner 1 / Property 1")
+    owner = next(a for a in page["items"] if a["account"] == "Owner: Owner 1 / Property 1")
     assert owner == {
         "bank": "Synthetic operating trust account (operating)",
-        "account": "owner_property: Owner 1 / Property 1",
+        "account": "Owner: Owner 1 / Property 1",
         "prior_balance": "1000.00",
         "entries": [
             {
                 "posted_at": "2026-02-03 15:00:00",
-                "description": f"pmc_income: {owner_pmc_name(page)} - Fee",
+                "description": f"Company fees: {owner_pmc_name(page)} - Fee",
                 "debit": "80.00",
                 "credit": "0.00",
                 "balance": "920.00",
@@ -77,13 +77,16 @@ def test_each_account_has_its_prior_balance_entries_and_totals(client, staff, bo
 
 
 def owner_pmc_name(page):
-    (income,) = [a for a in page["items"] if a["account"].startswith("pmc_income: ")]
-    return income["account"].removeprefix("pmc_income: ")
+    (income,) = [a for a in page["items"] if a["account"].startswith("Company fees: ")]
+    return income["account"].removeprefix("Company fees: ")
 
 
 def test_accounts_are_found_by_words_and_come_a_page_at_a_time(client, staff, books):
     found = ledger(client, q="PROPERTY 1")
-    assert [a["account"] for a in found["items"]] == ["owner_property: Owner 1 / Property 1"]
+    assert [a["account"] for a in found["items"]] == ["Owner: Owner 1 / Property 1"]
+    # By the words it is shown with, not the ledger's own.
+    assert ledger(client, q="company fees")["total"] == 1
+    assert ledger(client, q="pmc_income")["total"] == 0
 
     every = ledger(client)["total"]
     first = ledger(client, per_page=2)
@@ -99,7 +102,7 @@ def test_it_is_the_sessions_pmc(client, conn, staff, books):
     )
 
     accounts = [a["account"] for a in ledger(client)["items"]]
-    assert "owner_property: Owner 1 / Property 1" in accounts
+    assert "Owner: Owner 1 / Property 1" in accounts
     assert all(b["bank"].startswith("Synthetic") for b in ledger(client)["items"])
     assert sum(len(a["entries"]) for a in ledger(client)["items"]) == 2
 

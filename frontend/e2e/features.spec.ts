@@ -494,7 +494,7 @@ test("staff read each account's general ledger, open a trust bank account from B
   await section(page, "General ledger");
   await page.getByLabel("From").fill(firstOfMonthsAgo(2));
   await page.getByLabel("Find an account").fill("aspen row");
-  const aspen = page.getByRole("table", { name: "owner_property: Demo Owner B / Aspen Row, Demo operating trust account (operating)" });
+  const aspen = page.getByRole("table", { name: "Owner: Demo Owner B / Aspen Row, Demo operating trust account (operating)" });
   await expect(aspen.getByRole("row").first()).toBeVisible();
   await expect(aspen.getByRole("row", { name: /^Prior balance/ })).toBeVisible();
   await expect(aspen.getByRole("row", { name: /^Total/ })).toBeVisible();
@@ -1734,7 +1734,7 @@ test("staff open a report from Reports, see it on screen narrowed to one propert
   await expect(trial).toContainText("book cash");
   await page.getByRole("combobox", { name: "Owner" }).selectOption({ label: "Demo Owner B" });
   await expect(trial).toContainText("narrowed to Demo Owner B's properties: lines across all properties left out");
-  await expect(trial).toContainText("owner_property: Demo Owner B / Aspen Row");
+  await expect(trial).toContainText("Owner: Demo Owner B / Aspen Row");
   await expect(trial).not.toContainText("book cash");
   await expect(trial).not.toContainText("Demo Owner A");
   expect(await page.getByRole("link", { name: "CSV", exact: true }).getAttribute("href")).toContain("owner=");

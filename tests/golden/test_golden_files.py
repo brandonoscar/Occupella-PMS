@@ -70,7 +70,8 @@ def test_an_owners_statement_as_they_download_it(conn, request):
         owner_id = uuid.UUID("00000000-0000-4000-8000-000000000021")
         start, end = date(2026, 1, 1), date(2026, 1, 31)
         table = owner.titled_statement(conn, PMC, owner_id, start, end)
-        actual = pdf_text(exports.to_pdf(table, GENERATED))
+        # Through the download's own path (owner.statement_download), in its plain words.
+        actual = pdf_text(exports.export(table, "pdf", GENERATED))
     matches(request, "owner_statement", actual)
 
 

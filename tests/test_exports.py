@@ -6,6 +6,7 @@ and types are covered; the property test covers arbitrary values.
 
 import csv
 import io
+import re
 import uuid
 import zipfile
 from datetime import UTC, date, datetime, timedelta, timezone
@@ -18,7 +19,7 @@ from helpers import make_pmc, post, transfer_batch
 from openpyxl import load_workbook
 from pypdf import PdfReader
 
-from pms import exports
+from pms import exports, wording
 from tools import golden
 
 CASES = Path(__file__).parent / "golden" / "cases"
@@ -67,21 +68,47 @@ def test_every_report_exports_in_every_format(conn, case):
             cursor.execute(statement.encode())
         cursor.execute(query.encode())
         columns = tuple(column.name for column in cursor.description)
-        table = exports.Table(case.parent.name, columns, tuple(cursor.fetchall()))
+        # Titled as run_report titles it, which is how the audit log is known.
+        title = case.parent.name.removeprefix("trust_report_").replace("_", " ") + " (golden)"
+        table = exports.Table(title, columns, tuple(cursor.fetchall()))
 
     assert table.rows, "a golden case with no rows exports nothing worth checking"
-    assert read_csv(exports.export(table, "csv")) == [
-        list(columns),
-        *([exports._csv_cell(value) for value in row] for row in table.rows),
+    # Each download says what the report says, in the word list's words (src/pms/wording.py).
+    plain = wording.plain_table(table)
+    headings = [wording.heading(column) for column in columns]
+    downloaded = read_csv(exports.export(table, "csv"))
+    assert downloaded == [
+        headings,
+        *([exports._csv_cell(wording.as_text(value)) for value in row] for row in plain.rows),
     ]
     sheet = read_xlsx(exports.export(table, "xlsx", GENERATED))
-    assert sheet[0] == list(columns)
+    assert sheet[0] == headings
     assert len(sheet) == len(table.rows) + 1
-    for row, read in zip(table.rows, sheet[1:], strict=True):
+    for row, read in zip(plain.rows, sheet[1:], strict=True):
         assert all(same_in_excel(v, r) for v, r in zip(row, read, strict=True)), (row, read)
     pages = read_pdf(exports.export(table, "pdf", GENERATED))
-    assert case.parent.name in pages[0]
-    assert "Generated 2026-03-02 08:30:00 UTC" in pages[0]
+    assert title in pages[0]
+    assert "Generated 03/02/2026 08:30:00 UTC" in pages[0]
+    # And none of the ledger's own words is left: an account's kind, "PMC", "posting",
+    # "set aside" or a day as YYYY-MM-DD. The audit log keeps the rows the database wrote.
+    if wording.is_audit_log(table):
+        assert plain.rows == table.rows
+        return
+    left = [
+        cell
+        for row in downloaded[1:]
+        for cell in row
+        if re.match(
+            r"(bank_cash|owner_property|pmc_income|prepaid_rent|tenant_deposit|"
+            r"vendor_payable): ",
+            cell,
+        )
+        or cell in ("PMC", "posting")
+        or "set aside" in cell
+        or "_deposit)" in cell
+        or re.search(r"(?<![\w-])\d{4}-\d{2}-\d{2}(?![\w-])", cell)
+    ]
+    assert left == []
 
 
 # --- running a report by name -------------------------------------------------------------
@@ -329,7 +356,7 @@ def test_the_command_line_writes_a_report_file(conn, database_url, monkeypatch, 
     )
 
     assert code == 0
-    assert read_xlsx(out.read_bytes())[0] == ["line", "item", "vendor", "payments", "paid"]
+    assert read_xlsx(out.read_bytes())[0] == ["Line", "Item", "Vendor", "Payments", "Paid"]
 
 
 def test_the_command_line_writes_the_ledger_to_standard_output(

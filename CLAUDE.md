@@ -95,7 +95,11 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   except through the `trust_*` write paths.
 - Exports: `src/pms/exports.py` turns any `trust_report_*` (named through the catalog, run
   under the caller's role) into CSV, Excel or PDF, and a PMC's ledger into a zip of CSV.
-  Text a spreadsheet would run as a formula is never a formula.
+  Text a spreadsheet would run as a formula is never a formula. A download, Reports on screen
+  and the general ledger page read in plain words from one word list (`src/pms/wording.py`,
+  founder 2026-10-26): "Owner: ..." for `owner_property: ...`, "Company" for "PMC", days as
+  MM/DD/YYYY, columns as headings. The report functions, their golden cases, what the portals
+  parse (`deps.Rows`) and the audit log's rows keep the ledger's own words.
 - The API (`src/pms/api`, `python -m pms.api`, FastAPI) runs every request in one transaction
   as `trust_app` (the planner's JIT off: it cost more than it saved), committed before the answer
   is sent; a staff member's request names them to the audit log. How fast it answers ten staff
@@ -194,8 +198,8 @@ each API operation belongs to one, and e2e fails a feature whose browser tests s
   with nothing to list says so with `EmptyState`, an error comes with its icon (`Notice`), and
   mono type is only for links, keys and hashes (the same test checks it). Money stays text from
   the database to the screen, never a float. On screen a day reads MM/DD/YYYY (`usDate` in
-  `money.ts`; inputs, links and the API keep YYYY-MM-DD, and a report's own text reads as the
-  report wrote it) and money in accounting form, a negative in parentheses; a lease's term reads
+  `money.ts`; inputs, links and the API keep YYYY-MM-DD, and a report reads as
+  `src/pms/wording.py` writes it) and money in accounting form, a negative in parentheses; a lease's term reads
   `11/01/2025 – Month to month`. Money leaving trust (a draw, a bill paid, the company's fees
   taken out, a deposit returned) waits for staff to confirm a question naming the amount
   (`components/Confirm.tsx`), and a row's risky actions (It bounced, Archive...) sit in its ⋯ menu

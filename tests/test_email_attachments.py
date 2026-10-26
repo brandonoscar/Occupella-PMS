@@ -104,7 +104,7 @@ def test_a_receipt_and_a_statement_carry_their_pdf_and_nothing_else_does(conn, a
     assert "Payment receipt" in receipt
     assert "$125.00" in receipt
     statement = text(sent["statement"].attachments[0].data)
-    assert "Owner statement, 2026-09-01 to 2026-09-30" in statement
+    assert "Owner statement, 09/01/2026 to 09/30/2026" in statement
     assert "250.00" in statement
     assert {a.content_type for m in sent.values() for a in m.attachments} == {"application/pdf"}
 

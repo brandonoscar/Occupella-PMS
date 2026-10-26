@@ -59,7 +59,7 @@ def test_the_statement_is_the_owners_report_over_whole_days(client, conn, app_co
     assert statement["rows"][0][3:5] == ["PMC", direct[0][4]]
 
 
-@pytest.mark.parametrize(("fmt", "magic"), [("pdf", b"%PDF-"), ("csv", b"line,"), ("xlsx", b"PK")])
+@pytest.mark.parametrize(("fmt", "magic"), [("pdf", b"%PDF-"), ("csv", b"Line,"), ("xlsx", b"PK")])
 def test_the_owner_downloads_their_statement(client, conn, app_conn, pmc, fmt, magic):
     rent(conn, pmc, 0, "1500.00")
     join_as_owner(client, app_conn, pmc)
@@ -99,7 +99,7 @@ def test_the_year_end_package_is_the_owners_report_for_the_year(client, conn, ap
     assert "999.00" not in flat and "Owner 1" in flat
 
 
-@pytest.mark.parametrize(("fmt", "magic"), [("pdf", b"%PDF-"), ("csv", b"line,"), ("xlsx", b"PK")])
+@pytest.mark.parametrize(("fmt", "magic"), [("pdf", b"%PDF-"), ("csv", b"Line,"), ("xlsx", b"PK")])
 def test_the_owner_downloads_their_year_end_package(client, conn, app_conn, pmc, fmt, magic):
     rent(conn, pmc, 0, "1500.00")
     join_as_owner(client, app_conn, pmc)
