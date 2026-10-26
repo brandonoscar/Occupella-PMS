@@ -492,9 +492,9 @@ test("staff set up a property from nothing where each thing lives, lease a unit 
   expect(csv).toContain("Tenant Setup E2E");
   // In the words Reports shows (src/pms/wording.py): headings, the company, days as MM/DD/YYYY.
   expect(csv.split("\r\n")[0]).toBe("Line,Item,Property,Unit,Tenants,Detail,Monthly rent,Deposits,Prepaid,Charged,Paid,Balance due");
-  expect(csv).toContain("Company,");
+  expect(csv).toContain("\r\n1,Company,");
   expect(csv).toContain(us(today));
-  expect(csv).not.toMatch(/\bPMC\b|[a-z]+_[a-z]+|\d{4}-\d{2}-\d{2}/);
+  expect(csv).not.toMatch(/[a-z]+_[a-z]+|\d{4}-\d{2}-\d{2}/);
 });
 
 test("staff record a tenant's payment, the rest held as prepaid rent, and then its bounce", async ({

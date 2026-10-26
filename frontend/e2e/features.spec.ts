@@ -2255,7 +2255,7 @@ test("staff add a vendor with their trade, 1099 and how they are paid, record a 
   const href = (await page.getByRole("link", { name: "PDF", exact: true }).getAttribute("href")) ?? "";
   const csv = await (await page.request.get(href.replace("format=pdf", "format=csv"))).text();
   expect(csv).toContain(`Demo Plumbing Co,`);
-  expect(csv).toContain(`general liability,Synthetic Mutual,GL-0002,${today()},${daysFromToday(365)},,current`);
+  expect(csv).toContain(`general liability,Synthetic Mutual,GL-0002,${us(today())},${us(daysFromToday(365))},,current`);
   expect(csv).toContain("no insurance on file,Demo Roofing Co,");
 });
 
@@ -2295,7 +2295,7 @@ test("staff record a lease's move-in and move-out inspections room by room, and 
   await downloads(page, "Inspection report (PDF)", PDF);
   const href = (await panel.getByRole("link", { name: "Inspection report (PDF)" }).getAttribute("href")) ?? "";
   const csv = await (await page.request.get(href.replace("format=pdf", "format=csv"))).text();
-  expect(csv).toContain(`inspected,,${firstOfMonthsAgo(11)},${today()},,`);
+  expect(csv).toContain(`inspected,,${us(firstOfMonthsAgo(11))},${us(today())},,`);
   expect(csv).toContain("room,Kitchen,good,damaged,true,move-out: Burn on the counter");
   expect(csv).toContain("room,Bathroom,good,good,false,");
   expect(csv).toContain("room,Hallway,,missing,,move-out: Smoke detector gone");
@@ -3494,7 +3494,7 @@ test("staff record an assisted household's annual certification and a failed ins
   await expect(report).not.toContainText("24,000");
   const href = (await page.getByRole("link", { name: "CSV", exact: true }).getAttribute("href")) ?? "";
   const csv = await (await page.request.get(href)).text();
-  expect(csv).toContain(`${due},current,failed ${us(today())},${daysFromToday(45)},"failed, reinspection due"`);
+  expect(csv).toContain(`${us(due)},current,failed ${us(today())},${us(daysFromToday(45))},"failed, reinspection due"`);
   expect(csv).not.toContain("24000");
 });
 
